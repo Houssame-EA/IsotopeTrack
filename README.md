@@ -4,9 +4,11 @@ First stable release!
 A comprehensive software application for analyzing single particle ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.
 Download
 macOS (Apple Silicon - M1/M2/M3)
+
 [IsotopeTrack-v1.0.0-macOS-arm64.dmg]
 Windows
 [IsotopeTrack-v1.0.0-Windows-x64.exe]
+
 Installation
 macOS
 1.	Download the DMG file
@@ -16,6 +18,7 @@ Windows
 1.	Download the Windows installer
 2.	Run the installer
 3.	Follow the installation wizard
+   
 What's New
 •	Multi-isotope particle detection
 •	Transport rate & ionic calibration
