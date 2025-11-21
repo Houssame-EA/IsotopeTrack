@@ -36,5 +36,3 @@ Windows
 •	3 GB free disk space
 
 Documentation
-Support
- 
