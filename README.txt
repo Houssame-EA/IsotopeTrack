@@ -8,14 +8,14 @@ Windows
 [IsotopeTrack-v1.0.0-Windows-x64.exe]
 
 Installation
+
 macOS
 1.	Download the DMG file
 2.	Open and drag to Applications
 3.	Right-click → Open (first time only)
+
 Windows
-1.	Download the Windows installer
-2.	Run the installer
-3.	Follow the installation wizard
+1.	Download the Windows exe
 
 What's New
 •	Multi-isotope particle detection
