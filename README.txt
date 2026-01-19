@@ -37,4 +37,4 @@ Windows
 
 Documentation
 
-![Demo](./images/1.gif)
+![Demo](IsotopeTrack/images/1.gif)
