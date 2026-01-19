@@ -38,8 +38,8 @@ Windows
 Documentation
 
 
-### Step 1: Launch the tool
-![Step 1](https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif)
+## Step 1 – Run the application
 
-### Step 2: Select your isotope
-Explain what the user should do next.
+![Demo](https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif)
+
+Follow the animation above to see how the interface works.
