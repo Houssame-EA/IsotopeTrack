@@ -36,3 +36,5 @@ Windows
 •	3 GB free disk space
 
 Documentation
+
+![Demo](./images/1.gif)
