@@ -199,3 +199,6 @@ For accurate particle sizing, specify for each sample:
 - Mass fraction of the target element in the particles  
 - Particle density selected from the materials database  
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
+</p>
