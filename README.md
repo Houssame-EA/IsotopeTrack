@@ -118,9 +118,13 @@ Pace, H. E., et al. (2011).
 Analytical Chemistry, **83**, 9361–9369.  
 https://doi.org/10.1021/ac201952t
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/4.gif" width="700">
+</p>
+
 #### After Calibration
 - Average multiple transport efficiency measurements **or**  
-- Select the most reliable single value  
+- Select the most reliable single value
 
 The chosen transport rate is applied to all subsequent particle mass and number concentration calculations.
 
