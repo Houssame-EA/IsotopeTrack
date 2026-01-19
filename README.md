@@ -138,6 +138,41 @@ For accurate particle sizing, specify for each sample:
 
 ---
 
+**Single Element Results**
+
+The "Single Element Results" tab displays data for individual elements, including:
+
+Start and end times of each detected particle.
+
+Total counts for each particle.
+
+Peak height and signal-to-noise ratio.
+
+**Particle Results**
+
+The "Particle Results" tab provides information on multi-element particles, such as:
+
+Particle identification numbers.
+
+Temporal overlap information.
+
+Count data for each element in coincident particles.
+
+**Data Export Options**
+
+Summary File Export
+
+Ideal for comparative analysis, this export includes:
+
+Data for all samples and elements.
+
+Statistical summaries (mean, median, and standard deviation).
+
+Particle concentrations.
+
+Calibration information and method parameters.
+
+---
 ## Detection Parameters
 
 ### Element Parameters Table
@@ -206,6 +241,23 @@ To apply identical parameters to multiple elements:
 5. Apply settings to all selected elements simultaneously  
 
 This approach is particularly useful when analyzing identical elements across multiple samples.
+
+---
+
+#### Results Canvas & Visualization
+Results Canvas
+
+The results canvas provides interactive visualization of your analysis. This tool allows you to:
+
+1. Select specific samples from the dropdown menu.
+2. Choose elements to display from available options.
+3. Select different figure types for various visualization needs.
+4. View updates in real-time as you change your selections.
+
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/4.gif" width="700">
+</p>
 
 
 <p align="center">
