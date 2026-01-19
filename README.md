@@ -40,12 +40,12 @@ Documentation
 ## Data Loading
 
 ### Supported Data Formats
-- **Folder with `run.info`**: Raw data from TOF Vitesse  
+- **Folder with `run.info`**: Raw data from TOF Vitesse and for multiple files from **TOFWERK .h5** type file
 - **CSV files**: Time-series data  
 
 ### Loading Process
 1. Click **Import Data** in the *File* menu or sidebar  
-2. Select **Folder(s) with `run.info`** or **CSV file(s)**  
+2. Select **Folder(s) with `run.info`** or **CSV file(s)** or **TOFWERK .h5** 
 3. Browse to your data location and select one or more folders/files  
 4. The application validates the data and displays loading progress  
 5. Successfully loaded samples appear in the **Samples** table in the sidebar  
