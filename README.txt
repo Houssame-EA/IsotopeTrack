@@ -38,8 +38,6 @@ Windows
 Documentation
 
 
-## Step 1 – Run the application
-
-![Demo](https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif)
-
-Follow the animation above to see how the interface works.
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif" width="700">
+</p>
