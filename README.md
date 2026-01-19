@@ -98,6 +98,10 @@ Establishes the relationship between elemental concentration and instrument resp
 5. The model with the highest R² is automatically selected  
 6. Manual override is available  
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/3.gif" width="700">
+</p>
+
 ---
 
 ### Transport Rate Calibration
