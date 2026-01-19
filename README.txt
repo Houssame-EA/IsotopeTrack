@@ -38,6 +38,3 @@ Windows
 Documentation
 
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif" width="700">
-</p>
