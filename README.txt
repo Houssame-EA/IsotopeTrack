@@ -37,4 +37,9 @@ Windows
 
 Documentation
 
-![Demo](https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif)
+
+### Step 1: Launch the tool
+![Step 1](https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif)
+
+### Step 2: Select your isotope
+Explain what the user should do next.
