@@ -82,6 +82,54 @@ The interactive periodic table allows selection of elements and specific isotope
 
 ---
 
+## Calibration Methods
+
+### Ionic Calibration (Sensitivity)
+Establishes the relationship between elemental concentration and instrument response.
+
+#### Process
+1. Selected isotopes are automatically imported from the main window  
+2. Create one or more calibration sets  
+3. Enter `-1` to exclude samples from specific calibration sets  
+4. The system automatically evaluates three calibration models:
+   - **Simple Linear** (no intercept)
+   - **Linear** (with intercept)
+   - **Weighted Linear**
+5. The model with the highest R² is automatically selected  
+6. Manual override is available  
+
+---
+
+### Transport Rate Calibration
+Determines the efficiency of aerosol transport into the plasma.
+
+#### Available Methods
+- Mass-based method  
+- Number-based method  
+- Weighted liquid method  
+
+**Reference:**  
+Pace, H. E., et al. (2011).  
+*Determining transport efficiency for the purpose of counting and sizing nanoparticles via single-particle ICP-MS*.  
+Analytical Chemistry, **83**, 9361–9369.  
+https://doi.org/10.1021/ac201952t
+
+#### After Calibration
+- Average multiple transport efficiency measurements **or**  
+- Select the most reliable single value  
+
+The chosen transport rate is applied to all subsequent particle mass and number concentration calculations.
+
+---
+
+### Mass Fraction and Density Configuration
+For accurate particle sizing, specify for each sample:
+
+- Mass fraction of the target element in the particles  
+- Particle density selected from the materials database  
+
+---
+
 ## Detection Parameters
 
 ### Element Parameters Table
@@ -151,53 +199,6 @@ To apply identical parameters to multiple elements:
 
 This approach is particularly useful when analyzing identical elements across multiple samples.
 
----
-
-## Calibration Methods
-
-### Ionic Calibration (Sensitivity)
-Establishes the relationship between elemental concentration and instrument response.
-
-#### Process
-1. Selected isotopes are automatically imported from the main window  
-2. Create one or more calibration sets  
-3. Enter `-1` to exclude samples from specific calibration sets  
-4. The system automatically evaluates three calibration models:
-   - **Simple Linear** (no intercept)
-   - **Linear** (with intercept)
-   - **Weighted Linear**
-5. The model with the highest R² is automatically selected  
-6. Manual override is available  
-
----
-
-### Transport Rate Calibration
-Determines the efficiency of aerosol transport into the plasma.
-
-#### Available Methods
-- Mass-based method  
-- Number-based method  
-- Weighted liquid method  
-
-**Reference:**  
-Pace, H. E., et al. (2011).  
-*Determining transport efficiency for the purpose of counting and sizing nanoparticles via single-particle ICP-MS*.  
-Analytical Chemistry, **83**, 9361–9369.  
-https://doi.org/10.1021/ac201952t
-
-#### After Calibration
-- Average multiple transport efficiency measurements **or**  
-- Select the most reliable single value  
-
-The chosen transport rate is applied to all subsequent particle mass and number concentration calculations.
-
----
-
-### Mass Fraction and Density Configuration
-For accurate particle sizing, specify for each sample:
-
-- Mass fraction of the target element in the particles  
-- Particle density selected from the materials database  
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
