@@ -69,4 +69,133 @@ Once data are loaded, you can:
   <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif" width="700">
 </p>
 
+## Element Selection
+
+### Using the Periodic Table
+The interactive periodic table allows selection of elements and specific isotopes for analysis:
+
+1. Left-click an element to select the most abundant isotope with minimal interferences  
+2. Right-click an element to display all available isotopes and select specific ones  
+3. Right-click again on a selected element to deselect it  
+4. Click **Confirm** to finalize the selection  
+5. Gray elements indicate elements not present in the loaded dataset  
+
+---
+
+## Detection Parameters
+
+### Element Parameters Table
+Each element includes customizable detection parameters:
+
+- **Include**: Enable or disable the element in analysis  
+- **Method**: Detection algorithm  
+  - Currie  
+  - Formula C  
+  - Compound Poisson Log-Normal  
+  - Manual  
+- **Min Points**: Minimum consecutive points above threshold to define a particle  
+- **Confidence Level**: Statistical confidence for threshold determination (default: 99.999%)  
+- Optional smoothing  
+- Alpha error rate  
+- Iterative threshold calculation  
+- Window size for threshold calculation  
+
+---
+
+### Detection Methods
+
+#### Currie Method
+Classical detection approach based on Poisson statistics and critical level determination.
+
+**Reference:**  
+Currie, L. A. (2008). *Detection and quantification limits: Origins and historical overview*.  
+Journal of Radioanalytical and Nuclear Chemistry, **276**, 285–297.  
+https://doi.org/10.1007/s10967-007-0451-1
+
+---
+
+#### Formula C
+MARLAP-based method offering a balanced trade-off between false positives and false negatives.
+
+**Reference:**  
+MARLAP Manual, Volume III – Chapter 20: Detection and Quantification Capabilities (Formula C, Eq. 20.52).  
+U.S. EPA.  
+https://www.epa.gov/radiation/marlap-manual
+
+---
+
+#### Compound Poisson Log-Normal
+Advanced method accounting for signal distribution characteristics; includes a sigma parameter describing distribution shape.
+
+**Reference:**  
+Lockwood, T. E., Schlatt, L., & Clases, D. (2025).  
+*SPCal – an open-source processing platform for ICP-TOFMS-based single-event data*.  
+Journal of Analytical Atomic Spectrometry.  
+https://pubs.rsc.org/en/journal/jaas
+
+---
+
+#### Manual
+User-defined detection threshold.
+
+---
+
+### Batch Parameter Editing
+To apply identical parameters to multiple elements:
+
+1. Click **Batch Edit Parameters**  
+2. Select elements to modify  
+3. Define shared parameters  
+4. Optionally select target samples  
+5. Apply settings to all selected elements simultaneously  
+
+This approach is particularly useful when analyzing identical elements across multiple samples.
+
+---
+
+## Calibration Methods
+
+### Ionic Calibration (Sensitivity)
+Establishes the relationship between elemental concentration and instrument response.
+
+#### Process
+1. Selected isotopes are automatically imported from the main window  
+2. Create one or more calibration sets  
+3. Enter `-1` to exclude samples from specific calibration sets  
+4. The system automatically evaluates three calibration models:
+   - **Simple Linear** (no intercept)
+   - **Linear** (with intercept)
+   - **Weighted Linear**
+5. The model with the highest R² is automatically selected  
+6. Manual override is available  
+
+---
+
+### Transport Rate Calibration
+Determines the efficiency of aerosol transport into the plasma.
+
+#### Available Methods
+- Mass-based method  
+- Number-based method  
+- Weighted liquid method  
+
+**Reference:**  
+Pace, H. E., et al. (2011).  
+*Determining transport efficiency for the purpose of counting and sizing nanoparticles via single-particle ICP-MS*.  
+Analytical Chemistry, **83**, 9361–9369.  
+https://doi.org/10.1021/ac201952t
+
+#### After Calibration
+- Average multiple transport efficiency measurements **or**  
+- Select the most reliable single value  
+
+The chosen transport rate is applied to all subsequent particle mass and number concentration calculations.
+
+---
+
+### Mass Fraction and Density Configuration
+For accurate particle sizing, specify for each sample:
+
+- Mass fraction of the target element in the particles  
+- Particle density selected from the materials database  
 
