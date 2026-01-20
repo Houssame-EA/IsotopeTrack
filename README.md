@@ -256,7 +256,7 @@ The results canvas provides interactive visualization of your analysis. This too
 
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/4.gif" width="700">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/5.gif" width="700">
 </p>
 
 
