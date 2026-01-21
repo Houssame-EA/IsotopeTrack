@@ -224,6 +224,13 @@ Lockwood, T. E., Schlatt, L., & Clases, D. (2025).
 Journal of Analytical Atomic Spectrometry.  
 https://pubs.rsc.org/en/journal/jaas
 
+**SIA**
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
+</p>
+
+
 ---
 
 #### Manual
@@ -260,6 +267,3 @@ The results canvas provides interactive visualization of your analysis. This too
 </p>
 
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
-</p>
