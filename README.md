@@ -230,14 +230,6 @@ https://pubs.rsc.org/en/journal/jaas
   <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
 </p>
 
-
----
-
-#### Manual
-User-defined detection threshold.
-
----
-
 ### Batch Parameter Editing
 To apply identical parameters to multiple elements:
 
