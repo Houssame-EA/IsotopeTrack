@@ -1,415 +1,469 @@
-from PySide6.QtWidgets import (QDialog, QTabWidget, QVBoxLayout, QPushButton, 
-                              QLabel, QScrollArea, QWidget)
-from PySide6.QtCore import Qt
+"""User guide dialog for IsotopeTrack — content mirrors the README."""
+from PySide6.QtWidgets import (
+    QDialog, QTabWidget, QVBoxLayout, QPushButton,
+    QLabel, QScrollArea, QWidget, QHBoxLayout, QSizePolicy,
+)
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QMovie, QPixmap
+from pathlib import Path
+import sys
 
 
+def get_resource_path(relative_path):
+    try:
+        base_path = Path(sys._MEIPASS)
+    except AttributeError:
+        base_path = Path(__file__).parent.parent
+    return base_path / relative_path
+
+
+# ---------------------------------------------------------------------------
+#  Helpers
+# ---------------------------------------------------------------------------
+def _section(html: str) -> QLabel:
+    """Rich-text section label with consistent styling."""
+    lbl = QLabel(html)
+    lbl.setWordWrap(True)
+    lbl.setOpenExternalLinks(True)
+    lbl.setTextFormat(Qt.RichText)
+    lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+    lbl.setStyleSheet("font-size:13px; line-height:1.5;")
+    return lbl
+
+
+def _gif_widget(filename: str, width: int = 680) -> QWidget:
+    """
+    Return a widget displaying an animated GIF from the images/ folder.
+    Falls back to a styled placeholder if the file is not found.
+    """
+    path = get_resource_path(f"images/{filename}")
+
+    container = QWidget()
+    lay = QVBoxLayout(container)
+    lay.setContentsMargins(0, 8, 0, 8)
+    lay.setAlignment(Qt.AlignHCenter)
+
+    if Path(path).exists():
+        movie_label = QLabel()
+        movie_label.setAlignment(Qt.AlignCenter)
+        movie = QMovie(str(path))
+        # Scale to desired width while keeping aspect ratio
+        movie.setScaledSize(QSize(width, width * 9 // 16))
+        movie_label.setMovie(movie)
+        movie.start()
+        lay.addWidget(movie_label)
+    else:
+        placeholder = QLabel(f"[ Animation: {filename} ]")
+        placeholder.setAlignment(Qt.AlignCenter)
+        placeholder.setStyleSheet(
+            "background:#f0f4ff; border:2px dashed #4a90d9; "
+            "border-radius:8px; padding:24px; color:#4a90d9; "
+            "font-size:12px; font-style:italic;"
+        )
+        placeholder.setMinimumHeight(80)
+        lay.addWidget(placeholder)
+
+    return container
+
+
+def _scroll_tab(*widgets) -> QScrollArea:
+    """Wrap a list of widgets in a scrollable tab."""
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+
+    content = QWidget()
+    lay = QVBoxLayout(content)
+    lay.setContentsMargins(20, 16, 20, 24)
+    lay.setSpacing(10)
+
+    for w in widgets:
+        lay.addWidget(w)
+    lay.addStretch()
+
+    scroll.setWidget(content)
+    return scroll
+
+
+def _hr() -> QLabel:
+    lbl = QLabel("<hr>")
+    lbl.setTextFormat(Qt.RichText)
+    return lbl
+
+
+# ---------------------------------------------------------------------------
+#  User guide dialog
+# ---------------------------------------------------------------------------
 class UserGuideDialog(QDialog):
     """
-    User guide dialog with comprehensive documentation.
+    User guide dialog — content mirrors the IsotopeTrack README.
     """
-    
-    def __init__(self, parent=None):
-        """
-        Initialize the user guide dialog.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
-        super().__init__(parent)
-        self.setWindowTitle("IsotopeTrack User Guide")
-        
-        layout = QVBoxLayout(self)
-        
-        tab_widget = QTabWidget()
-        
-        tab_widget.addTab(self.create_overview_tab(), "Overview")
-        tab_widget.addTab(self.create_workflow_tab(), "Workflow")
-        tab_widget.addTab(self.create_data_loading_tab(), "Data Loading")
-        tab_widget.addTab(self.create_element_selection_tab(), "Element Selection")
-        tab_widget.addTab(self.create_calibration_tab(), "Calibration")
-        tab_widget.addTab(self.create_parameters_tab(), "Parameters")
-        tab_widget.addTab(self.create_results_tab(), "Results & Export")
-        
-        layout.addWidget(tab_widget)
-        
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignRight)
-        
-    def create_formatted_text_widget(self, html_content):
-        """
-        Create a formatted text widget with HTML content.
-        
-        Args:
-            html_content (str): HTML formatted content
-            
-        Returns:
-            QScrollArea: Scrollable widget with formatted content
-        """
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        
-        content = QLabel(html_content)
-        content.setWordWrap(True)
-        content.setOpenExternalLinks(True)
-        content.setTextFormat(Qt.RichText)
-        
-        scroll.setWidget(content)
-        return scroll
-        
-    def create_overview_tab(self):
-        """
-        Create overview tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Overview tab widget
-        """
-        content = """
-        <h2>IsotopeTrack Overview</h2>
-        <p>IsotopeTrack is a comprehensive software for analyzing single particle ICP-MS data, providing tools for peak detection, calibration, and quantitative analysis of nanoparticles in solution.</p>
-        
-        <h3>Key Features:</h3>
-        <ul>
-            <li>Multiple detection algorithms (Currie, Formula C, Compound Poisson LogNormal, Manual)</li>
-            <li>Ionic and transport efficiency calibration tools</li>
-            <li>Interactive visualization and data exploration</li>
-            <li>Batch processing capabilities</li>
-            <li>Comprehensive export options</li>
-            <li>Real-time parameter adjustment and optimization</li>
-        </ul>
-        
-        <h3>Main Interface Components:</h3>
-        <ul>
-            <li>Sample loading and management panel</li>
-            <li>Interactive periodic table for isotope selection</li>
-            <li>Parameter configuration table</li>
-            <li>Real-time data visualization canvas</li>
-            <li>Results tables and summary statistics</li>
-        </ul>
-        """
-        return self.create_formatted_text_widget(content)
-        
-    def create_workflow_tab(self):
-        """
-        Create workflow tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Workflow tab widget
-        """
-        content = """
-        <h2>Recommended Workflow for IsotopeTrack</h2>
-        
-        <h3>1. Load Sample Data</h3>
-        <p>Start by loading your sample data files. IsotopeTrack supports both raw data folders with run.info files and CSV formatted time-series data. It is best practice to load all samples you plan to analyze in a single session to ensure consistent processing parameters.</p>
-        
-        <h3>2. Choose Isotopes</h3>
-        <p>After data is loaded, use the periodic table interface to select the isotopes of interest. The selected isotopes in the main window will automatically be selected when you proceed to calibration. Available isotopes are highlighted based on your loaded data.</p>
-        
-        <h3>3. Ionic Calibration (Sensitivity)</h3>
-        <p>Configure ionic calibration to convert raw counts to mass:</p>
-        <ul>
-            <li>The isotopes selected in the main window will appear in the sensitivity calibration</li>
-            <li>You can set multiple calibration sets for different experimental conditions</li>
-            <li>Use "-1" in the table to remove samples from calibration sets if needed</li>
-            <li>The system tests three calibration methods: Simple Linear, Linear, and Weighted</li>
-            <li>IsotopeTrack automatically chooses the calibration with the best R² value</li>
-            <li>You can manually override the automatic selection if preferred</li>
-        </ul>
-        
-        <h3>4. Transport Rate Calibration</h3>
-        <p>Calibrate the transport efficiency using one of three methods:</p>
-        <ul>
-            <li>Mass-based method</li>
-            <li>Number-based method</li>
-            <li>Weighted liquid method</li>
-        </ul>
-        <p>Reference: Pace et al. (2011) "Determining transport efficiency for the purpose of counting and sizing nanoparticles via single particle inductively coupled plasma-mass spectrometry" Anal Chem 83:9361-9369</p>
-        <p>After calibration, you can either average multiple measurements or select the most reliable single calibrated rate.</p>
-        
-        <h3>5. Configure Mass Fraction and Density</h3>
-        <p>For each sample, specify:</p>
-        <ul>
-            <li>Mass fraction of the target element in the nanoparticles</li>
-            <li>Particle density using the built-in materials database</li>
-            <li>These parameters are essential for accurate size calculations</li>
-        </ul>
-        
-        <h3>6. Set Detection Parameters</h3>
-        <p>Configure detection parameters for each element individually or use batch parameters to apply settings to multiple elements:</p>
-        <ul>
-            <li>Detection method (Currie, Formula C, Compound Poisson LogNormal, Manual)</li>
-            <li>Confidence levels and threshold settings</li>
-            <li>minimum peak requirements</li>
-            <li>Use batch editing, change the parameters for each isotope</li>
-        </ul>
-        
-        <h3>7. Review Results in Canvas</h3>
-        <p>Use the results canvas to visualize and validate your analysis:</p>
-        <ul>
-            <li>Select specific samples and elements to display</li>
-            <li>Choose from various plot types and visualization options</li>
-            <li>Adjust parameters as needed based on visual inspection</li>
-        </ul>
-        
-        <h3>8. Export Data</h3>
-        <p>Export your results in two formats:</p>
-        <ul>
-            <li>Summary file: data for all samples and elements</li>
-            <li>Details file: Contains individual particle data for each sample</li>
-            <li>Both formats include all relevant calibration and parameter information</li>
-        </ul>
-        """
-        return self.create_formatted_text_widget(content)
-    
-    def create_data_loading_tab(self):
-        """
-        Create data loading tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Data loading tab widget
-        """
-        content = """
-        <h2>Data Loading</h2>
-        
-        <h3>Supported Data Formats</h3>
-        <ul>
-            <li>Folder with run.info: Raw data from TOF Vitesse</li>
-            <li>CSV Files: Time series data</li>
-        </ul>
-        
-        <h3>Loading Process</h3>
-        <ol>
-            <li>Click "Import Data" in the File menu or sidebar</li>
-            <li>Select either "Folder(s) with run.info" or "CSV File(s)"</li>
-            <li>Browse to your data location and select one or more folders/files</li>
-            <li>The app validates your data and shows progress</li>
-            <li>Successfully loaded samples appear in the Samples table in the sidebar</li>
-        </ol>
-        
-        <h3>CSV Format Requirements</h3>
-        <p>If using CSV files, they should follow this format:</p>
-        <ul>
-            <li>First column must be Time (labeled with units: ms, ns, or s)</li>
-            <li>Each element column should include mass number and element symbol (e.g., "107Ag")</li>
-            <li>Data should be in counts</li>
-        </ul>
-        
-        <h3>Sample Management</h3>
-        <p>Once loaded, you can:</p>
-        <ul>
-            <li>Click on any sample in the sidebar to switch between samples</li>
-            <li>Right-click on sample for additional information about the sample</li>
-            <li>Process all samples at once with the same parameters</li>
-        </ul>
-        """
-        return self.create_formatted_text_widget(content)
-    
-    def create_element_selection_tab(self):
-        """
-        Create element selection tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Element selection tab widget
-        """
-        content = """
-        <h2>Element Selection</h2>
-        
-        <h3>Using the Periodic Table</h3>
-        <p>The interactive periodic table allows you to select elements and specific isotopes for analysis:</p>
-        <ol>
-            <li>Left-click on an element to select the most abundant, less interference isotope</li>
-            <li>Right-click on an element to see all available isotopes and select specific ones</li>
-            <li>Right-click again on a selected element to deselect it</li>
-            <li>Click "Confirm" to finalize your selection</li>
-            <li>Gray elements: Not available in your loaded data</li>
-        </ol>
-        """
-        return self.create_formatted_text_widget(content)
-    
-    def create_calibration_tab(self):
-        """
-        Create calibration tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Calibration tab widget
-        """
-        content = """
-        <h2>Calibration Methods</h2>
-        
-        <h3>Ionic Calibration (Sensitivity)</h3>
-        <p>Establishes the relationship between element concentration and instrument response:</p>
-        
-        <h4>Process:</h4>
-        <ol>
-            <li>Selected isotopes from the main window appear automatically</li>
-            <li>Set up multiple calibration sets</li>
-            <li>Use "-1" in the table to exclude samples from specific calibration sets</li>
-            <li>System automatically tests three calibration methods:</li>
-            <ul>
-                <li>Simple Linear: Basic linear regression</li>
-                <li>Linear: Linear regression with intercept</li>
-                <li>Weighted: Weighted linear regression</li>
-            </ul>
-            <li>IsotopeTrack selects the method with the best R² value</li>
-            <li>You can manually override the automatic selection</li>
-        </ol>
-        
-        <h3>Transport Rate Calibration</h3>
-        <p>Determines the efficiency of sample transport to the plasma:</p>
-        
-        <h4>Three Available Methods:</h4>
-        <ul>
-            <li>Mass-based method</li>
-            <li>Number-based method</li>
-            <li>Weighted liquid method</li>
-        </ul>
-        
-        <p>Reference: Pace, H.E., et al. (2011) "Determining transport efficiency for the purpose of counting and sizing nanoparticles via single particle inductively coupled plasma-mass spectrometry" Analytical Chemistry 83:9361-9369</p>
-        
-        <h4>After Calibration:</h4>
-        <ul>
-            <li>Calculate the average of multiple transport rate measurements</li>
-            <li>Or select the most reliable single calibrated rate</li>
-            <li>The chosen value will be used for all subsequent mass and particle concentration calculations</li>
-        </ul>
-        
-        <h3>Mass Fraction and Density Configuration</h3>
-        <p>For accurate particle sizing, specify for each sample:</p>
-        <ul>
-            <li>Mass fraction of the target element in the particles</li>
-            <li>Particle density using materials database</li>
-        </ul>
-        """
-        return self.create_formatted_text_widget(content)
-    
-    def create_parameters_tab(self):
-        """
-        Create parameters tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Parameters tab widget
-        """
-        content = """
-        <h2>Detection Parameters</h2>
-        
-        <h3>Element Parameters Table</h3>
-        <p>Each element has customizable detection parameters:</p>
-        <ul>
-            <li>Include: Whether to include the element in analysis</li>
-            <li>Method: Detection algorithm (Currie, Formula C, Compound Poisson LogNormal, Manual)</li>
-            <li>Min Points: Minimum continuous points above threshold to consider a particle</li>
-            <li>Confidence Level: Statistical confidence for threshold determination (99.999% default)</li>
-            <li>Smoothing optional</li>
-            <li>Alpha error rate</li>
-            <li>Iterative threshold calculation</li>
-            <li>Window size for threshold calculation</li>
-        </ul>
-        
-        <h3>Detection Methods</h3>
-        <h4>Currie Method:</h4>
-        <p>Classical approach using Poisson statistics with critical value determination.</p>
-        <p>Currie, L.A. J Radioanal Nucl Chem 276, 285–297 (2008)</p>
-        
-        <h4>Formula C:</h4>
-        <p>MARLAP-based method with enhanced statistical balance between false positive and false negative.</p>
-        <p>MARLAP Manual Volume III: Chapter 20, Detection and Quantification Capabilities Overview : Formula C 20.52</p>
 
-        
-        <h4>Compound Poisson LogNormal:</h4>
-        <p>Advanced method accounting for signal distribution characteristics, includes sigma parameter for distribution shape.</p>
-        <p>Lockwood, T. E.; Schlatt, L.; Clases, D. SPCal – an open source, easy-to-use processing platform for ICP-TOFMS-based single event data. Journal of Analytical Atomic Spectrometry 2025.</p>
-        
-        
-        <h4>Manual:</h4>
-        <p>User-defined threshold.</p>
-        
-        <h3>Batch Parameter Editing</h3>
-        <p>To apply the same parameters to multiple elements:</p>
-        <ol>
-            <li>Click "Batch Edit Parameters"</li>
-            <li>Select elements to modify</li>
-            <li>Set parameters that should apply to all selected elements</li>
-            <li>Optionally select which samples should receive these parameters</li>
-            <li>This is particularly useful when analyzing the same elements across multiple samples</li>
-        </ol>
-        """
-        return self.create_formatted_text_widget(content)
-    
-    def create_results_tab(self):
-        """
-        Create results and export tab content.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Results tab widget
-        """
-        content = """
-        <h2>Results Canvas & Visualization</h2>
-        
-        <h3>Results Canvas</h3>
-        <p>The results canvas provides interactive visualization of your analysis:</p>
-        <ul>
-            <li>Select specific samples from the dropdown menu</li>
-            <li>Choose elements to display from available options</li>
-            <li>Select different figure types for various visualization needs</li>
-            <li>Updates are as you change selections</li>
-        </ul>
-        
-        <h3>Single Element Results</h3>
-        <p>The "Single Element Results" tab shows:</p>
-        <ul>
-            <li>Start and end times of each detected particle</li>
-            <li>Total counts for each particle</li>
-            <li>Peak height and signal-to-noise ratio</li>
-        </ul>
-        
-        <h3>Particle Results</h3>
-        <p>The "Particle Results" tab shows multi-element particles:</p>
-        <ul>
-            <li>Particle identification numbers</li>
-            <li>Temporal overlap information</li>
-            <li>Count data for each element in coincident particles</li>
-        </ul>
-        
-        <h3>Data Export Options</h3>
-        
-        <h4>Summary File Export:</h4>
-        <ul>
-            <li>data for all samples and elements</li>
-            <li>Statistical summaries (mean, median, standard deviation)</li>
-            <li>Particle concentrations</li>
-            <li>Calibration information and method parameters</li>
-            <li>Ideal for comparative analysis</li>
-        </ul>
-        
-        <h4>Details File Export:</h4>
-        <ul>
-            <li>Individual particle data for each sample</li>
-            <li>Complete particle-by-particle information</li>
-            <li>Peak characteristics and integration results</li>
-        </ul>
-        """
-        return self.create_formatted_text_widget(content)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("IsotopeTrack — User Guide")
+        self.resize(820, 740)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._tab_overview(),    "Overview")
+        tabs.addTab(self._tab_workflow(),    "Workflow")
+        tabs.addTab(self._tab_data(),        "Data Loading")
+        tabs.addTab(self._tab_calibration(), "Calibration")
+        tabs.addTab(self._tab_parameters(),  "Parameters")
+        tabs.addTab(self._tab_results(),     "Results & Export")
+
+        layout.addWidget(tabs)
+
+        btn = QPushButton("Close")
+        btn.setFixedWidth(90)
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn, alignment=Qt.AlignRight)
+
+    # ------------------------------------------------------------------ #
+    # Tab: Overview                                                         #
+    # ------------------------------------------------------------------ #
+    def _tab_overview(self):
+        return _scroll_tab(
+            _section("""
+            <h2>IsotopeTrack v1.0.1</h2>
+            <p>A comprehensive software application for analyzing single particle
+            ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
+
+            <h3>Key Features</h3>
+            <ul>
+              <li>Multi-isotope particle detection</li>
+              <li>Transport rate &amp; ionic calibration</li>
+              <li>Support for NU Instruments folders(<code>run.info</code>), TOFWERK files (.h5) and CSV formats</li>
+              <li>Interactive visualization and data exploration</li>
+              <li>Batch processing capabilities</li>
+              <li>Comprehensive export options</li>
+            </ul>
+
+            <h3>System Requirements</h3>
+            <table cellspacing="6">
+              <tr>
+                <td><b>macOS</b></td>
+                <td>macOS 11.0 (Big Sur) or later &nbsp;·&nbsp;
+                    Apple Silicon (M1/M2/M3) recommended &nbsp;·&nbsp;
+                    4 GB RAM (8 GB recommended) &nbsp;·&nbsp</td>
+              </tr>
+              <tr>
+                <td><b>Windows</b></td>
+                <td>Windows 10 (64-bit) or later &nbsp;·&nbsp;
+                    4 GB RAM (8 GB recommended) &nbsp;·&nbsp;</td>
+              </tr>
+            </table>
+
+            <h3>Citation</h3>
+            <p>When using IsotopeTrack in your work, please cite:</p>
+            <blockquote>
+              Ahabchane H, Goodman A, Hadioui M, Wilkinson K.
+              <i>IsotopeTrack: A fast and flexible application for the analysis of
+              SP-ICP-TOF-MS datasets.</i>
+              Environmental Chemistry 2026; EN25111.<br>
+              <a href="https://doi.org/10.1071/EN25111">https://doi.org/10.1071/EN25111</a>
+            </blockquote>
+            """),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Tab: Workflow                                                         #
+    # ------------------------------------------------------------------ #
+    def _tab_workflow(self):
+        return _scroll_tab(
+            _section("""
+            <h2>Recommended Workflow</h2>
+
+            <h3>1 · Load Sample Data</h3>
+            <p>Click <b>Import Data</b> in the <i>File</i> menu or sidebar.
+            Load all samples you plan to analyze in a single session to ensure
+            consistent processing parameters.</p>
+
+            <h3>2 · Choose Isotopes</h3>
+            <p>Use the periodic table interface to select the isotopes of interest.
+            Selected isotopes in the main window are carried automatically into
+            the calibration panels.</p>
+
+            <h3>3 · Ionic Calibration (Sensitivity)</h3>
+            <p>Configure ionic calibration to convert raw counts to mass.
+            Use <code>-1</code> to exclude samples from specific calibration sets.
+            IsotopeTrack tests three calibration models and selects the best R².</p>
+
+            <h3>4 · Transport Rate Calibration</h3>
+            <p>Calibrate aerosol transport efficiency using one of three methods:
+            mass-based, number-based, or weighted liquid.
+            Average multiple measurements or select the most reliable single value.</p>
+
+            <h3>5 · Mass Fraction &amp; Density</h3>
+            <p>For each sample, specify the mass fraction of the target element
+            and the particle density (from the built-in materials database).</p>
+
+            <h3>6 · Set Detection Parameters</h3>
+            <p>Configure detection method, confidence level, minimum peak points,
+            and optional smoothing for each element individually or via
+            <b>Batch Edit Parameters</b>.</p>
+
+            <h3>7 · Review Results in Canvas</h3>
+            <p>Use the results canvas to visualize and validate the analysis.
+            Adjust parameters as needed based on visual inspection.</p>
+
+            <h3>8 · Export Data</h3>
+            <p>Export a <b>summary file</b> (all samples and elements, statistics,
+            concentrations, calibration info) and/or a <b>details file</b>
+            (individual particle data per sample).</p>
+            """),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Tab: Data Loading                                                    #
+    # ------------------------------------------------------------------ #
+    def _tab_data(self):
+        return _scroll_tab(
+            _section("""
+            <h2>Data Loading</h2>
+
+            <h3>Supported Formats</h3>
+            <ul>
+              <li><b>Folder with <code>run.info</code></b> — Raw data from TOF Vitesse
+                  and multiple files from TOFWERK <code>.h5</code></li>
+              <li><b>CSV files</b> — Time-series data</li>
+            </ul>
+
+            <h3>Loading Process</h3>
+            <ol>
+              <li>Click <b>Import Data</b> in the <i>File</i> menu or sidebar</li>
+              <li>Select <i>Folder(s) with <code>run.info</code></i>,
+                  <i>CSV file(s)</i>, or <i>TOFWERK .h5</i></li>
+              <li>Browse to your data location and select one or more folders/files</li>
+              <li>The application validates the data and displays loading progress</li>
+              <li>Successfully loaded samples appear in the <b>Samples</b> table in the sidebar</li>
+            </ol>
+
+            <h3>CSV Format Requirements</h3>
+            <ul>
+              <li>First column must be <b>Time</b> (units: <code>ms</code>,
+                  <code>ns</code>, or <code>s</code>)</li>
+              <li>Each element column must include <b>mass number + element symbol</b>
+                  (e.g., <code>107Ag</code>)</li>
+              <li>Data must be provided in <b>counts</b></li>
+            </ul>
+
+            <h3>Sample Management</h3>
+            <ul>
+              <li>Click a sample in the sidebar to switch between samples</li>
+              <li>Right-click a sample to view additional metadata</li>
+              <li>Process all samples simultaneously using the same parameters</li>
+            </ul>
+
+            <h2>Element Selection</h2>
+
+            <h3>Using the Periodic Table</h3>
+            <p>The interactive periodic table allows selection of elements and
+            specific isotopes for analysis:</p>
+            <ol>
+              <li><b>Left-click</b> an element to select the most abundant isotope
+                  with minimal interferences</li>
+              <li><b>Right-click</b> an element to display all available isotopes
+                  and select specific ones</li>
+              <li><b>Right-click again</b> on a selected element to deselect it</li>
+              <li>Click <b>Confirm</b> to finalize the selection</li>
+              <li>Gray elements indicate elements not present in the loaded dataset</li>
+            </ol>
+            """
+            ),
+            _gif_widget("1.gif"),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Tab: Calibration                                                     #
+    # ------------------------------------------------------------------ #
+    def _tab_calibration(self):
+        return _scroll_tab(
+            _section("""
+            <h2>Calibration Methods</h2>
+
+            <h3>Ionic Calibration (Sensitivity)</h3>
+            <p>Establishes the relationship between elemental concentration and
+            instrument response.</p>
+
+            <h4>Process</h4>
+            <ol>
+              <li>Selected isotopes are automatically imported from the main window</li>
+              <li>Create one or more calibration sets</li>
+              <li>Enter <code>-1</code> to exclude samples from specific calibration sets</li>
+              <li>The system automatically evaluates three calibration models:
+                <ul>
+                  <li><b>Simple Linear</b> (no intercept)</li>
+                  <li><b>Linear</b> (with intercept)</li>
+                  <li><b>Weighted Linear</b></li>
+                </ul>
+              </li>
+              <li>The model with the highest R² is automatically selected</li>
+              <li>Manual override is available</li>
+            </ol>
+            """),
+            _hr(),
+            _section("""
+            <h3>Transport Rate Calibration</h3>
+            <p>Determines the efficiency of aerosol transport into the plasma.</p>
+
+            <h4>Available Methods</h4>
+            <ul>
+              <li>Mass-based method</li>
+              <li>Number-based method</li>
+              <li>Weighted liquid method</li>
+            </ul>
+
+            <p><b>Reference:</b><br>
+            Pace, H. E., et al. (2011).
+            <i>Determining transport efficiency for the purpose of counting and sizing
+            nanoparticles via single-particle ICP-MS.</i>
+            Analytical Chemistry, <b>83</b>, 9361–9369.<br>
+            <a href="https://doi.org/10.1021/ac201952t">https://doi.org/10.1021/ac201952t</a></p>
+
+            <h4>After Calibration</h4>
+            <ul>
+              <li>Average multiple transport efficiency measurements, <b>or</b></li>
+              <li>Select the most reliable single value</li>
+            </ul>
+            <p>The chosen transport rate is applied to all subsequent particle mass
+            and number concentration calculations.</p>
+
+            <h3>Mass Fraction &amp; Density Configuration</h3>
+            <p>For accurate particle sizing, specify for each sample:</p>
+            <ul>
+              <li>Mass fraction of the target element in the particles</li>
+              <li>Particle density selected from the materials database</li>
+            </ul>
+            """),
+            _gif_widget("4.gif"),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Tab: Parameters                                                      #
+    # ------------------------------------------------------------------ #
+    def _tab_parameters(self):
+        return _scroll_tab(
+            _section("""
+            <h2>Detection Parameters</h2>
+
+            <h3>Element Parameters Table</h3>
+            <p>Each element includes customizable detection parameters:</p>
+            <ul>
+              <li><b>Include</b> — Enable or disable the element in analysis</li>
+              <li><b>Method</b> — Detection algorithm (see below)</li>
+              <li><b>Min Points</b> — Minimum consecutive points above threshold
+                  to define a particle</li>
+              <li><b>Confidence Level</b> — Statistical confidence for threshold
+                  determination (default: 99.999&nbsp;%)</li>
+              <li>Optional smoothing</li>
+              <li>Alpha error rate</li>
+              <li>Iterative threshold calculation</li>
+              <li>Window size for threshold calculation</li>
+            </ul>
+
+            <h3>Detection Methods</h3>
+
+            <h4>Currie Method</h4>
+            <p>Classical detection approach based on Poisson statistics and critical
+            level determination.</p>
+            <p><b>Reference:</b> Currie, L. A. (2008).
+            <i>Detection and quantification limits: Origins and historical overview.</i>
+            J. Radioanal. Nucl. Chem., <b>276</b>, 285–297.<br>
+            <a href="https://doi.org/10.1007/s10967-007-0451-1">
+            https://doi.org/10.1007/s10967-007-0451-1</a></p>
+
+            <h4>Formula C</h4>
+            <p>MARLAP-based method offering a balanced trade-off between false positives
+            and false negatives.</p>
+            <p><b>Reference:</b> MARLAP Manual, Volume III – Chapter 20, Formula C
+            (Eq. 20.52). U.S. EPA.<br>
+            <a href="https://www.epa.gov/radiation/marlap-manual">
+            https://www.epa.gov/radiation/marlap-manual</a></p>
+
+            <h4>Compound Poisson Log-Normal</h4>
+            <p>Advanced method accounting for signal distribution characteristics;
+            includes a sigma parameter describing distribution shape.</p>
+            <p><b>Reference:</b> Lockwood, T. E., Schlatt, L., &amp; Clases, D. (2025).
+            <i>SPCal – an open-source processing platform for ICP-TOFMS-based
+            single-event data.</i>
+            J. Anal. At. Spectrom.<br>
+            <a href="https://pubs.rsc.org/en/journal/jaas">
+            https://pubs.rsc.org/en/journal/jaas</a></p>
+
+            <h4>Manual</h4>
+            <p>User-defined threshold value.</p>
+            """),
+            _gif_widget("2.gif"),
+            _hr(),
+            _section("""
+            <h3>Batch Parameter Editing</h3>
+            <p>To apply identical parameters to multiple elements:</p>
+            <ol>
+              <li>Click <b>Batch Edit Parameters</b></li>
+              <li>Select elements to modify</li>
+              <li>Define shared parameters</li>
+              <li>Optionally select target samples</li>
+              <li>Apply settings to all selected elements simultaneously</li>
+            </ol>
+            <p>Particularly useful when analyzing identical elements across
+            multiple samples.</p>
+            """),
+        )
+
+    # ------------------------------------------------------------------ #
+    # Tab: Results & Export                                                #
+    # ------------------------------------------------------------------ #
+    def _tab_results(self):
+        return _scroll_tab(
+            _section("""
+            <h2>Results Canvas &amp; Visualization</h2>
+
+            <p>The results canvas provides interactive visualization of your analysis:</p>
+            <ol>
+              <li>Select specific samples from the dropdown menu</li>
+              <li>Choose elements to display from available options</li>
+              <li>Select different figure types for various visualization needs</li>
+              <li>View updates in real time as you change selections</li>
+            </ol>
+            """),
+            _gif_widget("5.gif"),
+            _hr(),
+            _section("""
+            <h3>Single Element Results</h3>
+            <p>The <i>Single Element Results</i> tab displays:</p>
+            <ul>
+              <li>Start and end times of each detected particle</li>
+              <li>Total counts for each particle</li>
+              <li>Peak height and signal-to-noise ratio</li>
+            </ul>
+
+            <h3>Particle Results</h3>
+            <p>The <i>Particle Results</i> tab provides multi-element particle info:</p>
+            <ul>
+              <li>Particle identification numbers</li>
+              <li>Temporal overlap information</li>
+              <li>Count data for each element in coincident particles</li>
+            </ul>
+
+            <h3>Data Export Options</h3>
+
+            <h4>Summary File</h4>
+            <ul>
+              <li>Data for all samples and elements</li>
+              <li>Statistical summaries (mean, median, standard deviation)</li>
+              <li>Particle concentrations</li>
+              <li>Calibration information and method parameters</li>
+              <li>Ideal for comparative analysis across samples</li>
+            </ul>
+
+            <h4>Details File</h4>
+            <ul>
+              <li>Individual particle data for each sample</li>
+              <li>Complete particle-by-particle information</li>
+              <li>Peak characteristics and integration results</li>
+            </ul>
+            """),
+        )

@@ -1,11 +1,16 @@
+import sys
 import pickle
 import gzip
 import datetime
 import platform
+import os
 import subprocess
 from pathlib import Path
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QProgressDialog, QApplication
 from PySide6.QtCore import Qt, QPointF
+from save_export.fast_project_io import (
+    save_project_v2, load_project_auto, detect_format, estimate_project_size
+)
 
 
 class ProjectManager:
@@ -25,9 +30,16 @@ class ProjectManager:
             None
         """
         self.main_window = main_window
-        self.project_version = '1.0'
-        self.icon_path = '/Users/Houssame/Desktop/App_mac/images/save_icon.ico'
-    
+        self.project_version = '1.0.1'
+        
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        self.icon_path = os.path.join(base_path, 'images', 'save_icon.ico')
+        self.icon_path_mac = os.path.join(base_path, 'images', 'save_icon.icns')
+        
     def _set_file_icon_cross_platform(self, file_path):
         """
         Set custom icon for the saved project file on both Windows and macOS.
@@ -165,7 +177,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.0
+Version=1.0.1
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -192,77 +204,46 @@ Terminal=false
         Returns:
             bool: True if save was successful, False otherwise
         """
-        if not self.main_window.data_by_sample:
-            QMessageBox.warning(
-                self.main_window, 
-                "No Data", 
-                "No data to save. Please load data first."
-            )
-            return False
-            
-        default_filename = f"IsotopeTrack_Project_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.itproj"
-        file_path, _ = QFileDialog.getSaveFileName(
+        filepath, _ = QFileDialog.getSaveFileName(
             self.main_window,
             "Save Project",
-            default_filename,
-            "IsotopeTrack Project Files (*.itproj)"
+            "",
+            "IsotopeTrack Project (*.itproj)"
         )
-        
-        if not file_path:
+        if not filepath:
             return False
-            
-        progress_dialog = QProgressDialog("Saving project...", "Cancel", 0, 100, self.main_window)
-        progress_dialog.setWindowModality(Qt.WindowModal)
-        progress_dialog.show()
-        QApplication.processEvents()
-        
+
+        if not filepath.endswith('.itproj'):
+            filepath += '.itproj'
+
         try:
-            progress_dialog.setValue(10)
-            progress_dialog.setLabelText("Saving canvas workflow...")
-            QApplication.processEvents()
-            
-            canvas_state = self._serialize_canvas_state()
-            
-            progress_dialog.setValue(20)
-            progress_dialog.setLabelText("Collecting project data...")
-            QApplication.processEvents()
-            
-            project_data = self._collect_project_data(canvas_state)
-            
-            progress_dialog.setValue(60)
-            progress_dialog.setLabelText("Compressing and saving...")
-            QApplication.processEvents()
-            
-            with gzip.open(file_path, 'wb') as f:
-                pickle.dump(project_data, f)
-            
-            progress_dialog.setValue(85)
-            progress_dialog.setLabelText("Setting file icon...")
-            QApplication.processEvents()
-            
-            self._set_file_icon_cross_platform(file_path)
-                
-            progress_dialog.setValue(100)
-            self.main_window.status_label.setText(f"Project saved to {file_path}")
-            QMessageBox.information(
-                self.main_window, 
-                "Save Complete", 
-                f"Project saved successfully to:\n{file_path}"
-            )
-            
+            self.main_window.save_current_parameters()
+
+            self.main_window.progress_bar.setVisible(True)
+            self.main_window.progress_bar.setValue(0)
+
+            def progress_callback(pct, msg):
+                self.main_window.progress_bar.setValue(pct)
+                self.main_window.status_label.setText(msg)
+                QApplication.processEvents()
+
+            save_project_v2(filepath, self.main_window, progress_callback)
+
+            self._set_file_icon_cross_platform(filepath)
+
+            self.main_window.progress_bar.setVisible(False)
             self.main_window.unsaved_changes = False
+            self.main_window.status_label.setText(f"Project saved: {filepath}")
             return True
-            
+
         except Exception as e:
+            self.main_window.progress_bar.setVisible(False)
             QMessageBox.critical(
-                self.main_window, 
-                "Save Error", 
+                self.main_window, "Save Error",
                 f"Error saving project: {str(e)}"
             )
             return False
-        finally:
-            progress_dialog.close()
-    
+        
     def load_project(self):
         """
         Load a previously saved project.
@@ -273,76 +254,108 @@ Terminal=false
         Returns:
             bool: True if load was successful, False otherwise
         """
-        file_path, _ = QFileDialog.getOpenFileName(
+        filepath, _ = QFileDialog.getOpenFileName(
             self.main_window,
             "Load Project",
             "",
-            "IsotopeTrack Project Files (*.itproj)"
+            "IsotopeTrack Project (*.itproj)"
         )
-        
-        if not file_path:
+        if not filepath:
             return False
 
-        progress_dialog = QProgressDialog("Loading project...", "Cancel", 0, 100, self.main_window)
-        progress_dialog.setWindowModality(Qt.WindowModal)
-        progress_dialog.show()
-        QApplication.processEvents()
-        
         try:
-            progress_dialog.setValue(10)
-            progress_dialog.setLabelText("Reading project file...")
-            QApplication.processEvents()
-            
-            with gzip.open(file_path, 'rb') as f:
-                project_data = pickle.load(f)
-                
-            progress_dialog.setValue(30)
-            progress_dialog.setLabelText("Restoring project data...")
-            QApplication.processEvents()
-            
-            file_version = project_data.get('version', '1.0')
-            if not self._check_version_compatibility(file_version):
-                QMessageBox.warning(
-                    self.main_window,
-                    "Version Warning",
-                    f"This project was saved with version {file_version}. "
-                    f"Current version is {self.project_version}. "
-                    "Some features may not work correctly."
-                )
-            
-            self._reset_data_structures()
-            self._restore_project_data(project_data)
-            
-            progress_dialog.setValue(60)
-            progress_dialog.setLabelText("Updating user interface...")
-            QApplication.processEvents()
-            
-            self._update_ui_after_load()
-            
-            progress_dialog.setValue(80)
-            progress_dialog.setLabelText("Restoring canvas workflow...")
-            QApplication.processEvents()
-            
-            canvas_state = project_data.get('canvas_state')
-            if canvas_state:
-                self._deserialize_canvas_state(canvas_state)
-            
-            progress_dialog.setValue(100)
-            self.main_window.status_label.setText(f"Project loaded from {file_path}")
-            
+            self.main_window.reset_data_structures()
+
+            self.main_window.progress_bar.setVisible(True)
+            self.main_window.progress_bar.setValue(0)
+
+            def progress_callback(pct, msg):
+                self.main_window.progress_bar.setValue(pct)
+                self.main_window.status_label.setText(msg)
+                QApplication.processEvents()
+
+            # Auto-detect format and load
+            result = load_project_auto(filepath, self.main_window, progress_callback)
+
+            if isinstance(result, dict):
+                # V1 format returned raw dict -> use existing restore logic
+                self._restore_project_data(result)
+            # else: V2 format already restored data directly to main_window
+
+            # Post-load setup (same for both formats)
+            self._finalize_load()
+
+            self.main_window.progress_bar.setVisible(False)
             self.main_window.unsaved_changes = False
+            self.main_window.status_label.setText(f"Project loaded: {filepath}")
             return True
-            
+
         except Exception as e:
+            self.main_window.progress_bar.setVisible(False)
             QMessageBox.critical(
-                self.main_window, 
-                "Load Error", 
+                self.main_window, "Load Error",
                 f"Error loading project: {str(e)}"
             )
             return False
-        finally:
-            progress_dialog.close()
-    
+        
+    def _finalize_load(self):
+        """Common post-load setup for both v1 and v2 formats."""
+        mw = self.main_window
+
+        # Rebuild UI
+        mw.update_sample_table()
+
+        # Select first sample
+        if mw.current_sample and mw.current_sample in mw.data_by_sample:
+            mw.data = mw.data_by_sample[mw.current_sample].copy()
+            mw.time_array = mw.time_array_by_sample[mw.current_sample].copy()
+            if mw.current_sample in mw.sample_detected_peaks:
+                mw.detected_peaks = mw.sample_detected_peaks[mw.current_sample].copy()
+
+        # Restore periodic table
+        if mw.selected_isotopes:
+            all_masses = set()
+            for isotopes in mw.selected_isotopes.values():
+                all_masses.update(isotopes)
+            mw.all_masses = sorted(all_masses)
+
+            if not mw.periodic_table_widget:
+                from widget.periodic_table_widget import PeriodicTableWidget
+                mw.periodic_table_widget = PeriodicTableWidget()
+                mw.periodic_table_widget.selection_confirmed.connect(
+                    mw.handle_isotopes_selected
+                )
+            mw.periodic_table_widget.update_available_masses(mw.all_masses)
+            mw._update_periodic_table_selections()
+
+        # Update parameters table
+        mw.update_parameters_table()
+
+        # Restore sigma
+        if hasattr(mw, '_global_sigma') and hasattr(mw, 'sigma_spinbox'):
+            mw.sigma_spinbox.setValue(mw._global_sigma)
+
+        # Select current sample in table
+        if mw.current_sample:
+            for row in range(mw.sample_table.rowCount()):
+                item = mw.sample_table.item(row, 0)
+                if item and item.text() == mw.current_sample:
+                    mw.sample_table.selectRow(row)
+                    mw.on_sample_selected(item)
+                    break
+
+        # ---- FIX: Actually restore canvas workflow ----
+        canvas_state = getattr(mw, '_pending_canvas_workflow', None)
+        if canvas_state:
+            try:
+                self._deserialize_canvas_state(canvas_state)
+            except Exception as e:
+                print(f"Warning: Could not restore canvas workflow: {e}")
+            finally:
+                mw._pending_canvas_workflow = None
+
+        mw._build_element_lookup_cache()
+            
     def _collect_project_data(self, canvas_state):
         """
         Collect all project data for saving.
@@ -405,7 +418,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.0',
+            'application_version': '1.0.1',
         }
     
     def _restore_project_data(self, project_data):
@@ -483,6 +496,11 @@ Terminal=false
             self.main_window.data = {}
             self.main_window.time_array = None
             self.main_window.detected_peaks = {}
+        
+        # ---- FIX: Store canvas state for _finalize_load to restore ----
+        canvas_state = project_data.get('canvas_state', None)
+        if canvas_state:
+            self.main_window._pending_canvas_workflow = canvas_state
     
     def _serialize_canvas_state(self):
         """
@@ -558,6 +576,7 @@ Terminal=false
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
+            'sample_config',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels'
         ]
         
@@ -586,7 +605,8 @@ Terminal=false
                 CanvasResultsDialog, SampleSelectorNode, MultipleSampleSelectorNode,
                 HistogramPlotNode, ElementBarChartPlotNode, CorrelationPlotNode,
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
-                IsotopicRatioPlotNode, TrianglePlotNode,ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode
+                IsotopicRatioPlotNode, TrianglePlotNode,ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
+                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode
             )
         except ImportError as e:
             QMessageBox.warning(
@@ -635,7 +655,10 @@ Terminal=false
             "isotopic_ratio_plot": IsotopicRatioPlotNode,
             "triangle_plot": TrianglePlotNode,
             "clustering_plot": ClusteringPlotNode,
-            "ai_assistant": AIAssistantNode
+            "ai_assistant": AIAssistantNode,
+            "correlation_matrix": CorrelationMatrixNode,
+            "concentration_comparison": ConcentrationComparisonNode,    
+            "network_diagram": NetworkDiagramNode
         }
         
         for node_data in canvas_state.get('workflow_nodes', []):
@@ -678,9 +701,11 @@ Terminal=false
         Returns:
             None
         """
+        # ---- FIX: Added 'sample_config' (was missing, causing group names to be lost) ----
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
+            'sample_config',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels'
         ]
         

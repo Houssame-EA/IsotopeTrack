@@ -388,7 +388,8 @@ class PeakDetection:
     #----------------------------------------------------------------------------------------------------------    
     #------------------------------------numba optimized--------------------------------------------
     #---------------------------------------------------------------------------------------------------------- 
-    
+
+        
     @staticmethod
     @jit(nopython=True, nogil=True)
     def _find_particles_numba(raw_signal, threshold, lambda_bkgd, min_continuous_points):
@@ -414,10 +415,10 @@ class PeakDetection:
         while i < n:
             if raw_signal[i] > lambda_bkgd:
                 start_idx = i
-      
                 while i < n and raw_signal[i] > lambda_bkgd:
                     i += 1
                 end_idx = i - 1
+                
                 consecutive_count = 0
                 max_consecutive = 0
                 for j in range(start_idx, end_idx + 1):
@@ -431,11 +432,9 @@ class PeakDetection:
                 if max_consecutive >= min_continuous_points:
                     max_height = 0.0
                     total_counts = 0.0
-                    peak_idx = start_idx
                     for j in range(start_idx, end_idx + 1):
                         if raw_signal[j] > max_height:
                             max_height = raw_signal[j]
-                            peak_idx = j
                         total_counts += raw_signal[j] - lambda_bkgd
                     
                     if total_counts > 0:
@@ -445,7 +444,53 @@ class PeakDetection:
                         particles_counts.append(total_counts)
             else:
                 i += 1
+        return particles_start, particles_end, particles_height, particles_counts
+
+    @staticmethod
+    @jit(nopython=True, nogil=True)
+    def _find_particles_numba_dynamic(raw_signal, threshold_arr, lambda_bkgd_arr, min_continuous_points):
+        """
+        JIT-compiled particle detection for dynamic array thresholds (window).
+        """
+        n = len(raw_signal)
+        particles_start = []
+        particles_end = []
+        particles_height = []
+        particles_counts = []
         
+        i = 0
+        while i < n:
+            if raw_signal[i] > lambda_bkgd_arr[i]:
+                start_idx = i
+                while i < n and raw_signal[i] > lambda_bkgd_arr[i]:
+                    i += 1
+                end_idx = i - 1
+                
+                consecutive_count = 0
+                max_consecutive = 0
+                for j in range(start_idx, end_idx + 1):
+                    if raw_signal[j] > threshold_arr[j]:
+                        consecutive_count += 1
+                        if consecutive_count > max_consecutive:
+                            max_consecutive = consecutive_count
+                    else:
+                        consecutive_count = 0
+                
+                if max_consecutive >= min_continuous_points:
+                    max_height = 0.0
+                    total_counts = 0.0
+                    for j in range(start_idx, end_idx + 1):
+                        if raw_signal[j] > max_height:
+                            max_height = raw_signal[j]
+                        total_counts += raw_signal[j] - lambda_bkgd_arr[j]
+                    
+                    if total_counts > 0:
+                        particles_start.append(start_idx)
+                        particles_end.append(end_idx)
+                        particles_height.append(max_height)
+                        particles_counts.append(total_counts)
+            else:
+                i += 1
         return particles_start, particles_end, particles_height, particles_counts
 
     @staticmethod
@@ -582,83 +627,123 @@ class PeakDetection:
         Returns:
             dict: Threshold data including background and convergence info
         """
-        working_signal = self.apply_window_size(signal, use_window_size, window_size)
-        overall_mean_signal = np.mean(working_signal)
+        overall_mean_signal = np.mean(signal)
         
         if method == "Manual":
-            manual_thresh = manual_threshold
-            
-            below_threshold_data = working_signal[working_signal < manual_thresh]
-            if len(below_threshold_data) > 0:
-                lambda_bkgd = np.mean(below_threshold_data)
+            threshold = manual_threshold
+            if use_window_size:
+                lambda_bkgd = self._rolling_background(signal, threshold, window_size)
             else:
-                lambda_bkgd = overall_mean_signal
+                below = signal[signal < threshold]
+                lambda_bkgd = np.mean(below) if len(below) > 0 else overall_mean_signal
                 
             return {
-                'threshold': manual_thresh,
+                'threshold': threshold,
                 'background': lambda_bkgd,
-                'LOD_counts': manual_thresh,
-                'LOD_MDL': max(0, manual_thresh - lambda_bkgd),
+                'LOD_counts': threshold,
+                'LOD_MDL': np.maximum(0, threshold - np.mean(lambda_bkgd) if use_window_size else threshold - lambda_bkgd),
                 'iterations': 1,
-                'convergence': 'manual_threshold_with_background_correction',
+                'convergence': 'manual',
                 'method_used': 'Manual',
                 'window_applied': use_window_size,
-                'window_size_used': window_size if use_window_size else None,
-                'overall_mean': overall_mean_signal
+                'window_size_used': window_size if use_window_size else None
             }
 
-        if max_iters == 0:
-            threshold = self._calculate_single_threshold(overall_mean_signal, method, alpha, sigma)
-            iterations_performed = 0
-            convergence_status = 'no_iteration_for_threshold'
+        # Setup initial values
+        if use_window_size:
+            kernel = np.ones(window_size) / window_size
+            lambda_for_threshold = np.convolve(np.pad(signal, window_size//2, mode='reflect'), kernel, mode='valid')[:len(signal)]
+            threshold = np.full_like(signal, np.inf)
+            prev_threshold = np.full_like(signal, np.inf)
         else:
+            lambda_for_threshold = overall_mean_signal
             threshold = np.inf
             prev_threshold = np.inf
-            iters = 0
-            iter_eps = 1e-3
-            
-            while (np.abs(prev_threshold - threshold) > iter_eps and iters < max_iters) or iters == 0:
-                prev_threshold = threshold
-                
-                if threshold == np.inf:
-                    lambda_for_threshold = overall_mean_signal
-                else:
-                    below_threshold_data = working_signal[working_signal < threshold]
-                    if len(below_threshold_data) > 0:
-                        lambda_for_threshold = np.mean(below_threshold_data)
-                    else:
-                        lambda_for_threshold = overall_mean_signal
-                
-                threshold = self._calculate_single_threshold(lambda_for_threshold, method, alpha, sigma)
-                iters += 1
 
-                if threshold <= 0:
-                    threshold = lambda_for_threshold + 3.0 * np.sqrt(max(lambda_for_threshold, 1))
-                    break
-            
-            iterations_performed = iters
-            convergence_status = f'converged_after_{iters}_iterations' if iters < max_iters else f'max_iters_reached_{max_iters}'
-
-        below_threshold_data = working_signal[working_signal < threshold]
-        if len(below_threshold_data) > 0:
-            lambda_bkgd = np.mean(below_threshold_data)
-            background_status = 'background_calculated_excluding_peaks'
-        else:
-            lambda_bkgd = overall_mean_signal
-            background_status = 'background_fallback_to_mean'
+        iters = 0
+        iter_eps = 1e-3
         
+        while iters < max_iters or iters == 0:
+            if iters > 0:
+                prev_threshold = threshold
+                if use_window_size:
+                    lambda_for_threshold = self._rolling_background(signal, threshold, window_size)
+                else:
+                    below = signal[signal < threshold]
+                    lambda_for_threshold = np.mean(below) if len(below) > 0 else overall_mean_signal
+            
+            if use_window_size:
+                threshold = self._calculate_array_threshold(lambda_for_threshold, method, alpha, sigma)
+                max_diff = np.max(np.abs(prev_threshold - threshold)) if iters > 0 else np.inf
+            else:
+                threshold = self._calculate_single_threshold(lambda_for_threshold, method, alpha, sigma)
+                max_diff = np.abs(prev_threshold - threshold)
+                
+            iters += 1
+            if max_diff <= iter_eps:
+                break
+
+        lambda_bkgd = lambda_for_threshold
+        mean_bg = np.mean(lambda_bkgd) if use_window_size else lambda_bkgd
+        mean_thresh = np.mean(threshold) if use_window_size else threshold
+
         return {
             'threshold': threshold,
             'background': lambda_bkgd,
-            'LOD_counts': threshold,
-            'LOD_MDL': max(0, threshold - lambda_bkgd),
-            'iterations': iterations_performed,
-            'convergence': f'{convergence_status}_with_{background_status}',
+            'LOD_counts': mean_thresh,
+            'LOD_MDL': max(0, mean_thresh - mean_bg),
+            'iterations': iters,
+            'convergence': f'converged_after_{iters}',
             'method_used': method,
             'window_applied': use_window_size,
-            'window_size_used': window_size if use_window_size else None,
-            'overall_mean': overall_mean_signal
+            'window_size_used': window_size if use_window_size else None
         }
+        
+    def _rolling_background(self, signal, threshold, window_size):
+        """
+        Calculates a dynamic rolling background excluding peaks above the threshold.
+        """
+        if np.isscalar(threshold):
+            valid_mask = signal < threshold
+        else:
+            valid_mask = signal < threshold
+            
+        valid_signal = signal * valid_mask
+
+        pad_w = window_size // 2
+        padded_signal = np.pad(valid_signal, pad_w, mode='reflect')
+        padded_mask = np.pad(valid_mask.astype(float), pad_w, mode='reflect')
+
+        kernel = np.ones(window_size)
+        sum_signal = np.convolve(padded_signal, kernel, mode='valid')
+        count_valid = np.convolve(padded_mask, kernel, mode='valid')
+
+        count_valid = np.maximum(count_valid, 1)
+        
+        local_bg = sum_signal / count_valid
+        return local_bg[:len(signal)]
+
+    def _calculate_array_threshold(self, lambda_bkgd_array, method, alpha, sigma=0.47):
+        """
+        Fast threshold calculation for moving window arrays.
+        """
+        if method in ["Currie", "Formula_C", "Manual"]:
+            return self._calculate_single_threshold(lambda_bkgd_array, method, alpha, sigma)
+            
+        elif method == "Compound Poisson LogNormal":
+            min_bg = np.min(lambda_bkgd_array)
+            max_bg = np.max(lambda_bkgd_array)
+            
+            if min_bg == max_bg:
+                single_thresh = self.compound_poisson_lognormal.get_threshold(min_bg, alpha, sigma)
+                return np.full_like(lambda_bkgd_array, single_thresh)
+                
+            eval_bg = np.linspace(min_bg, max_bg, 100)
+            eval_thresh = [self.compound_poisson_lognormal.get_threshold(bg, alpha, sigma) for bg in eval_bg]
+            
+            return np.interp(lambda_bkgd_array, eval_bg, eval_thresh)
+        else:
+            return lambda_bkgd_array + 3.0 * np.sqrt(np.maximum(lambda_bkgd_array, 1))
         
     def _calculate_single_threshold(self, lambda_bkgd, method, alpha, sigma=0.47):
         """
@@ -880,12 +965,16 @@ class PeakDetection:
         smoothed_signal = self.optimize_data_types(smoothed_signal)
         
         if NUMBA_AVAILABLE and len(raw_signal) > 500:
-            
             raw_signal_f64 = raw_signal.astype(np.float64)
             
-            starts, ends, heights, counts = self._find_particles_numba(
-                raw_signal_f64, float(threshold), float(lambda_bkgd), min_continuous_points
-            )
+            if np.isscalar(threshold):
+                starts, ends, heights, counts = self._find_particles_numba(
+                    raw_signal_f64, float(threshold), float(lambda_bkgd), min_continuous_points
+                )
+            else:
+                starts, ends, heights, counts = self._find_particles_numba_dynamic(
+                    raw_signal_f64, threshold.astype(np.float64), lambda_bkgd.astype(np.float64), min_continuous_points
+                )
             
             particles = []
             for i in range(len(starts)):
@@ -896,7 +985,9 @@ class PeakDetection:
                 peak_local_idx = np.argmax(raw_signal[start_idx:end_idx+1])
                 peak_global_idx = start_idx + peak_local_idx
                 
-                snr = height / threshold if threshold > 0 else 0
+                local_thresh = threshold[peak_global_idx] if not np.isscalar(threshold) else threshold
+                snr = height / local_thresh if local_thresh > 0 else 0
+                
                 particles.append({
                     'peak_time': time[peak_global_idx],
                     'max_height': height,
@@ -955,34 +1046,32 @@ class PeakDetection:
         
         for start_idx, end_idx in zip(region_starts, region_ends):
             end_idx = min(end_idx, len(raw_signal) - 1)
-            
-            if end_idx <= start_idx:
-                continue
+            if end_idx <= start_idx: continue
                 
             raw_region = raw_signal[start_idx:end_idx + 1]
-            region_above_threshold = raw_region > threshold
+            local_threshold = threshold[start_idx:end_idx + 1] if not np.isscalar(threshold) else threshold
+            local_bkgd = lambda_bkgd[start_idx:end_idx + 1] if not np.isscalar(lambda_bkgd) else lambda_bkgd
+            
+            region_above_threshold = raw_region > local_threshold
             
             if min_continuous_points > 1:
                 consecutive_kernel = np.ones(min_continuous_points)
                 consecutive_check = np.convolve(region_above_threshold.astype(int), 
                                             consecutive_kernel, mode='valid')
                 max_consecutive = np.max(consecutive_check) if len(consecutive_check) > 0 else 0
-                
-                if max_consecutive < min_continuous_points:
-                    continue
+                if max_consecutive < min_continuous_points: continue
             elif not np.any(region_above_threshold):
                 continue
             
-            total_counts = np.sum(raw_region - lambda_bkgd)
-            
-            if total_counts <= 0:
-                continue
+            total_counts = np.sum(raw_region - local_bkgd)
+            if total_counts <= 0: continue
                 
             peak_local_idx = np.argmax(raw_region)
             peak_global_idx = start_idx + peak_local_idx
             max_height = raw_region[peak_local_idx]
             
-            snr = max_height / threshold if threshold > 0 else 0
+            peak_thresh = threshold[peak_global_idx] if not np.isscalar(threshold) else threshold
+            snr = max_height / peak_thresh if peak_thresh > 0 else 0
             
             particles.append({
                 'peak_time': time[peak_global_idx],
