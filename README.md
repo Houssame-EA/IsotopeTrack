@@ -1,270 +1,149 @@
-IsotopeTrack v1.0.0 - Initial Release
-First stable release!
+# IsotopeTrack v1.0.1
+
 A comprehensive software application for analyzing single particle ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.
-Download
-macOS (Apple Silicon - M1/M2/M3)
-[IsotopeTrack-v1.0.0-macOS-arm64.dmg]
-Windows
-[IsotopeTrack-v1.0.0-Windows-x64.exe]
 
-Installation
+---
 
-macOS
-1.	Download the DMG file
-2.	Open and drag to Applications
-3.	Right-click → Open (first time only)
+## Key Features
 
-Windows
-1.	Download the Windows exe
+- Multi-isotope particle detection
+- Transport rate & ionic calibration
+- Support for NU Instruments folders (`run.info`), TOFWERK files (`.h5`) and CSV formats
+- Interactive visualization and data exploration
+- Batch processing capabilities
+- Comprehensive export options
 
-What's New
-•	Multi-isotope particle detection
-•	Transport rate & ionic calibration
-•	Support for NU, CSV, and TOFWERK formats (futur version)
-•	Interactive visualization
-•	Comprehensive export options
+---
 
-System Requirements
-macOS
-•	macOS 11.0 (Big Sur) or later
-•	Apple Silicon (M1/M2/M3) recommended
-•	4 GB RAM (8 GB recommended)
-•	2 GB free disk space
-Windows
-•	Windows 10 (64-bit) or later
-•	4 GB RAM (8 GB recommended)
-•	2 GB free disk space
+## System Requirements & Downloads
 
-## For Citation 
+| Platform | Requirements | Download |
+|----------|-------------|----------|
+| **macOS — Apple Silicon (M1/M2/M3)** | macOS 11.0 (Big Sur) or later · 4 GB RAM (8 GB recommended) | `IsotopeTrack_M.dmg` |
+| **macOS — Intel** | macOS 10.15 (Catalina) or later · 4 GB RAM (8 GB recommended) | `IsotopeTrack_Intel.dmg` |
+| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | `IsotopeTrack_Windows.exe` |
 
-When employing this software in your work, please cite: 
+---
 
-Ahabchane H, Goodman A, Hadioui M, Wilkinson K. IsotopeTrack: A fast and flexible application for the analysis of SP-ICP-TOF-MS datasets. Environmental Chemistry 2026; EN25111
-https://doi.org/10.1071/EN25111
+## Recommended Workflow
 
-Thank you!
+### 1 · Load Sample Data
+Click **Import Data** in the *File* menu or sidebar. Load all samples you plan to analyze in a single session to ensure consistent processing parameters.
 
-## Documentation
+### 2 · Choose Isotopes
+Use the periodic table interface to select the isotopes of interest. Selected isotopes in the main window are carried automatically into the calibration panels.
+
+![Element Selection](images/1.gif)
+
+### 3 · Ionic Calibration (Sensitivity)
+Configure ionic calibration to convert raw counts to mass. Use `-1` to exclude samples from specific calibration sets. IsotopeTrack tests three calibration models and selects the best R².
+
+### 4 · Transport Rate Calibration
+Calibrate aerosol transport efficiency using one of three methods: mass-based, number-based, or weighted liquid. Average multiple measurements or select the most reliable single value.
+
+![Calibration](images/4.gif)
+
+### 5 · Mass Fraction & Density
+For each sample, specify the mass fraction of the target element and the particle density from the built-in materials database.
+
+### 6 · Set Detection Parameters
+Configure detection method, confidence level, minimum peak points, and optional smoothing for each element individually or via **Batch Edit Parameters**.
+
+![Detection Parameters](images/2.gif)
+
+### 7 · Review Results in Canvas
+Use the results canvas to visualize and validate the analysis. Adjust parameters as needed based on visual inspection.
+
+![Results Canvas](images/5.gif)
+
+### 8 · Export Data
+Export a **summary file** (all samples and elements, statistics, concentrations, calibration info) and/or a **details file** (individual particle data per sample).
+
+---
 
 ## Data Loading
 
-### Supported Data Formats
-- **Folder with `run.info`**: Raw data from TOF Vitesse and for multiple files from **TOFWERK .h5** type file
-- **CSV files**: Time-series data  
-
-### Loading Process
-1. Click **Import Data** in the *File* menu or sidebar  
-2. Select **Folder(s) with `run.info`** or **CSV file(s)** or **TOFWERK .h5** 
-3. Browse to your data location and select one or more folders/files  
-4. The application validates the data and displays loading progress  
-5. Successfully loaded samples appear in the **Samples** table in the sidebar  
+### Supported Formats
+- **Folder with `run.info`** — Raw data from TOF Vitesse and TOFWERK `.h5` files
+- **CSV files** — Time-series data
 
 ### CSV Format Requirements
-If using CSV files, they must follow this structure:
-
-- The first column must be **Time** (units: `ms`, `ns`, or `s`)  
-- Each element column must include **mass number + element symbol**  
-  - Example: `107Ag`  
-- Data must be provided in **counts**  
-
-### Sample Management
-Once data are loaded, you can:
-
-- Click a sample in the sidebar to switch between samples  
-- Right-click a sample to view additional metadata  
-- Process all samples simultaneously using the same parameters  
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/1.gif" width="700">
-</p>
-
-## Element Selection
-
-### Using the Periodic Table
-The interactive periodic table allows selection of elements and specific isotopes for analysis:
-
-1. Left-click an element to select the most abundant isotope with minimal interferences  
-2. Right-click an element to display all available isotopes and select specific ones  
-3. Right-click again on a selected element to deselect it  
-4. Click **Confirm** to finalize the selection  
-5. Gray elements indicate elements not present in the loaded dataset  
+- First column must be **Time** (units: `ms`, `ns`, or `s`)
+- Each element column must include mass number + element symbol (e.g., `107Ag`)
+- Data must be provided in counts
 
 ---
 
-## Calibration Methods
+## Calibration
 
-### Ionic Calibration (Sensitivity)
-Establishes the relationship between elemental concentration and instrument response.
-
-#### Process
-1. Selected isotopes are automatically imported from the main window  
-2. Create one or more calibration sets  
-3. Enter `-1` to exclude samples from specific calibration sets  
-4. The system automatically evaluates three calibration models:
-   - **Simple Linear** (no intercept)
-   - **Linear** (with intercept)
-   - **Weighted Linear**
-5. The model with the highest R² is automatically selected  
-6. Manual override is available  
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/3.gif" width="700">
-</p>
-
----
+### Ionic Calibration
+Establishes the relationship between elemental concentration and instrument response. The system evaluates three models (Simple Linear, Linear with intercept, Weighted Linear) and automatically selects the highest R². Manual override is available.
 
 ### Transport Rate Calibration
-Determines the efficiency of aerosol transport into the plasma.
+Determines the efficiency of aerosol transport into the plasma. Available methods: mass-based, number-based, and weighted liquid.
 
-#### Available Methods
-- Mass-based method  
-- Number-based method  
-- Weighted liquid method  
-
-**Reference:**  
-Pace, H. E., et al. (2011).  
-*Determining transport efficiency for the purpose of counting and sizing nanoparticles via single-particle ICP-MS*.  
-Analytical Chemistry, **83**, 9361–9369.  
-https://doi.org/10.1021/ac201952t
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/4.gif" width="700">
-</p>
-
-#### After Calibration
-- Average multiple transport efficiency measurements **or**  
-- Select the most reliable single value
-
-The chosen transport rate is applied to all subsequent particle mass and number concentration calculations.
+> **Reference:** Pace, H. E., et al. (2011). *Determining transport efficiency for the purpose of counting and sizing nanoparticles via single-particle ICP-MS.* Analytical Chemistry, **83**, 9361–9369. https://doi.org/10.1021/ac201952t
 
 ---
 
-### Mass Fraction and Density Configuration
-For accurate particle sizing, specify for each sample:
+## Detection Methods
 
-- Mass fraction of the target element in the particles  
-- Particle density selected from the materials database  
-
----
-
-**Single Element Results**
-
-The "Single Element Results" tab displays data for individual elements, including:
-
-Start and end times of each detected particle.
-
-Total counts for each particle.
-
-Peak height and signal-to-noise ratio.
-
-**Particle Results**
-
-The "Particle Results" tab provides information on multi-element particles, such as:
-
-Particle identification numbers.
-
-Temporal overlap information.
-
-Count data for each element in coincident particles.
-
-**Data Export Options**
-
-Summary File Export
-
-Ideal for comparative analysis, this export includes:
-
-Data for all samples and elements.
-
-Statistical summaries (mean, median, and standard deviation).
-
-Particle concentrations.
-
-Calibration information and method parameters.
-
----
-## Detection Parameters
-
-### Element Parameters Table
-Each element includes customizable detection parameters:
-
-- **Include**: Enable or disable the element in analysis  
-- **Method**: Detection algorithm  
-  - Currie  
-  - Formula C  
-  - Compound Poisson Log-Normal  
-  - Manual  
-- **Min Points**: Minimum consecutive points above threshold to define a particle  
-- **Confidence Level**: Statistical confidence for threshold determination (default: 99.999%)  
-- Optional smoothing  
-- Alpha error rate  
-- Iterative threshold calculation  
-- Window size for threshold calculation  
+| Method | Description |
+|--------|-------------|
+| **Currie Method** | Classical detection based on Poisson statistics and critical level determination |
+| **Formula C** | MARLAP-based method balancing false positives and negatives |
+| **Compound Poisson Log-Normal** | Advanced method accounting for signal distribution characteristics |
+| **Manual** | User-defined threshold value |
 
 ---
 
-### Detection Methods
+## Acknowledgements
 
-#### Currie Method
-Classical detection approach based on Poisson statistics and critical level determination.
+IsotopeTrack builds upon the work of the SP-ICP-MS community and would not have been possible without the contributions of researchers who have advanced the field of single particle analysis. We are deeply grateful to all scientists whose published methodologies, open-source tools, and foundational research form the scientific backbone of this software.
 
-**Reference:**  
-Currie, L. A. (2008). *Detection and quantification limits: Origins and historical overview*.  
-Journal of Radioanalytical and Nuclear Chemistry, **276**, 285–297.  
-https://doi.org/10.1007/s10967-007-0451-1
+### SPCal
 
----
+We would like to particularly acknowledge **SPCal**, developed by T. E. Lockwood, R. Gonzalez de Vega, L. Schlatt, and D. Clases. Certain algorithmic approaches and detection methods implemented in IsotopeTrack were informed by their work. We are grateful for their commitment to open science and reproducible research.
 
-#### Formula C
-MARLAP-based method offering a balanced trade-off between false positives and false negatives.
+> Lockwood, T. E., Gonzalez de Vega, R., & Clases, D. (2021). *An interactive Python-based data processing platform for single particle and single cell ICP-MS.* Journal of Analytical Atomic Spectrometry, **36**(11), 2536–2544.
+> https://doi.org/10.1039/D1JA00297J
 
-**Reference:**  
-MARLAP Manual, Volume III – Chapter 20: Detection and Quantification Capabilities (Formula C, Eq. 20.52).  
-U.S. EPA.  
-https://www.epa.gov/radiation/marlap-manual
+> Lockwood, T. E., Schlatt, L., & Clases, D. (2025). *SPCal – an open source, easy-to-use processing platform for ICP-TOFMS-based single event data.* Journal of Analytical Atomic Spectrometry.
+> https://doi.org/10.1039/d4ja00241e
 
----
+The following works provided the theoretical foundation for the compound Poisson signal distribution models
 
-#### Compound Poisson Log-Normal
-Advanced method accounting for signal distribution characteristics; includes a sigma parameter describing distribution shape.
+> Hendriks, L., Gundlach-Graham, A., & Günther, D. (2019). *Performance of sp-ICP-TOFMS with signal distributions fitted to a compound Poisson model.* Journal of Analytical Atomic Spectrometry.
+> https://doi.org/10.1039/c9ja00186g
 
-**Reference:**  
-Lockwood, T. E., Schlatt, L., & Clases, D. (2025).  
-*SPCal – an open-source processing platform for ICP-TOFMS-based single-event data*.  
-Journal of Analytical Atomic Spectrometry.  
-https://pubs.rsc.org/en/journal/jaas
+> Gundlach-Graham, A., et al. (2018). *Monte Carlo Simulation of Low-Count Signals in Time-of-Flight Mass Spectrometry and Its Application to Single-Particle Detection.* Analytical Chemistry, **90**(20), 11847–11855.
+> https://doi.org/10.1021/acs.analchem.8b01551
 
-**SIA**
+### SP-ICP-MS Research Community
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/2.gif" width="700">
-</p>
-
-### Batch Parameter Editing
-To apply identical parameters to multiple elements:
-
-1. Click **Batch Edit Parameters**  
-2. Select elements to modify  
-3. Define shared parameters  
-4. Optionally select target samples  
-5. Apply settings to all selected elements simultaneously  
-
-This approach is particularly useful when analyzing identical elements across multiple samples.
+We also acknowledge the broader SP-ICP-MS research community whose foundational and continued contributions have shaped the methods and tools available in this field
 
 ---
 
-#### Results Canvas & Visualization
-Results Canvas
+## Export Options
 
-The results canvas provides interactive visualization of your analysis. This tool allows you to:
+### Summary File
+Data for all samples and elements, statistical summaries (mean, median, standard deviation), particle concentrations, calibration information and method parameters.
 
-1. Select specific samples from the dropdown menu.
-2. Choose elements to display from available options.
-3. Select different figure types for various visualization needs.
-4. View updates in real-time as you change your selections.
+### Details File
+Individual particle data for each sample, complete particle-by-particle information, peak characteristics and integration results.
 
+---
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/Houssame-EA/IsotopeTrack/main/images/5.gif" width="700">
-</p>
+## Citation
 
+When using IsotopeTrack in your work, please cite:
 
+> Ahabchane H, Goodman A, Hadioui M, Wilkinson K. *IsotopeTrack: A fast and flexible application for the analysis of SP-ICP-TOF-MS datasets.* Environmental Chemistry 2026; EN25111.
+> https://doi.org/10.1071/EN25111
+
+---
+
+## License
+
+See the [LICENSE](LICENSE) file included with this distribution.
