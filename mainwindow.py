@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy, 
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,QRadioButton,
                             QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox)
-from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,  QEvent
+from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint, QEvent, QEventLoop
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
@@ -37,7 +37,6 @@ except ImportError:
     CSVStructureDialog = None
     CSVDataProcessThread = None
     show_csv_structure_dialog = None
-
 
 class NoWheelSpinBox(QDoubleSpinBox):
     """
@@ -1352,6 +1351,7 @@ class MainWindow(QMainWindow):
         """
         if not hasattr(self, 'info_tooltip'):
             self.info_tooltip = InfoTooltip(self)
+            self.info_tooltip.set_trigger_widget(self.info_button)
             
         if self.info_tooltip.isVisible():
             self.info_tooltip.hide()
@@ -1375,7 +1375,8 @@ class MainWindow(QMainWindow):
                 self.current_sample,
                 self.selected_isotopes,
                 getattr(self, 'detected_peaks', {}),
-                getattr(self, 'multi_element_particles', [])
+                getattr(self, 'multi_element_particles', []),
+                periodic_table_widget=self.periodic_table_widget
             )
 
             button_pos = self.info_button.mapToGlobal(self.info_button.rect().topLeft())
@@ -2165,8 +2166,8 @@ class MainWindow(QMainWindow):
                     }
 
             if sample_name == self.current_sample:
-                self.data = self.data_by_sample[sample_name].copy()
-                self.time_array = self.time_array_by_sample[sample_name].copy()
+                self.data = self.data_by_sample[sample_name]
+                self.time_array = self.time_array_by_sample[sample_name]
                 
                 self.update_parameters_table()
                 current_row = self.parameters_table.currentRow()
@@ -2228,8 +2229,8 @@ class MainWindow(QMainWindow):
             
             if self.current_sample is None and sample_name in self.data_by_sample:
                 self.current_sample = sample_name
-                self.data = self.data_by_sample[sample_name].copy()
-                self.time_array = self.time_array_by_sample[sample_name].copy()
+                self.data = self.data_by_sample[sample_name]
+                self.time_array = self.time_array_by_sample[sample_name]
                 
                 self.update_parameters_table()
                 if self.sample_table.rowCount() > 0:
@@ -2423,11 +2424,11 @@ class MainWindow(QMainWindow):
             self.sigma_spinbox.setValue(stored_sigma)
             
         if sample_name in self.data_by_sample:
-            self.data = self.data_by_sample[sample_name].copy()
-            self.time_array = self.time_array_by_sample[sample_name].copy()
+            self.data = self.data_by_sample[sample_name]
+            self.time_array = self.time_array_by_sample[sample_name]
             
             if sample_name in self.sample_detected_peaks:
-                self.detected_peaks = self.sample_detected_peaks[sample_name].copy()
+                self.detected_peaks = self.sample_detected_peaks[sample_name]
             else:
                 self.detected_peaks = {}
                 
@@ -2480,7 +2481,8 @@ class MainWindow(QMainWindow):
                     sample_name,
                     self.selected_isotopes,
                     self.detected_peaks,
-                    getattr(self, 'multi_element_particles', [])
+                    getattr(self, 'multi_element_particles', []),
+                    periodic_table_widget=self.periodic_table_widget
                 )
 
     def update_sample_table(self):
@@ -2938,10 +2940,12 @@ class MainWindow(QMainWindow):
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
-                            thread.start()
                             
-                            while thread.isRunning():
-                                QApplication.processEvents()
+                            loop = QEventLoop()
+                            thread.finished.connect(loop.quit)
+                            thread.error.connect(loop.quit)
+                            thread.start()
+                            loop.exec()
                                 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
@@ -2967,8 +2971,8 @@ class MainWindow(QMainWindow):
             if not self.current_sample and self.data_by_sample:
                 first_sample = next(iter(self.data_by_sample.keys()))
                 self.current_sample = first_sample
-                self.data = self.data_by_sample[first_sample].copy()
-                self.time_array = self.time_array_by_sample[first_sample].copy()
+                self.data = self.data_by_sample[first_sample]
+                self.time_array = self.time_array_by_sample[first_sample]
             
             if self.current_sample:
                 if self.sample_table.rowCount() > 0:
@@ -3143,10 +3147,12 @@ class MainWindow(QMainWindow):
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
-                            thread.start()
                             
-                            while thread.isRunning():
-                                QApplication.processEvents()
+                            loop = QEventLoop()
+                            thread.finished.connect(loop.quit)
+                            thread.error.connect(loop.quit)
+                            thread.start()
+                            loop.exec()
                                 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
@@ -3172,8 +3178,8 @@ class MainWindow(QMainWindow):
             if not self.current_sample and self.data_by_sample:
                 first_sample = next(iter(self.data_by_sample.keys()))
                 self.current_sample = first_sample
-                self.data = self.data_by_sample[first_sample].copy()
-                self.time_array = self.time_array_by_sample[first_sample].copy()
+                self.data = self.data_by_sample[first_sample]
+                self.time_array = self.time_array_by_sample[first_sample]
             
             if self.current_sample:
                 if self.sample_table.rowCount() > 0:
@@ -4639,8 +4645,12 @@ class MainWindow(QMainWindow):
         }
         
         time_array = self.time_array
-        background_line = np.full_like(time_array, lambda_bkgd)
-        threshold_line = np.full_like(time_array, threshold)
+        if isinstance(lambda_bkgd, np.ndarray):
+            background_line = lambda_bkgd
+            threshold_line = threshold
+        else:
+            background_line = np.full_like(time_array, lambda_bkgd)
+            threshold_line = np.full_like(time_array, threshold)
         
         smoothing_applied = not np.array_equal(signal, smoothed_signal)
         
@@ -4664,10 +4674,13 @@ class MainWindow(QMainWindow):
             for p in particles:
                 if p is not None:
                     peak_idx = np.argmax(signal[p['left_idx']:p['right_idx']+1])
-                    peak_times.append(time_array[p['left_idx'] + peak_idx])
+                    global_idx = p['left_idx'] + peak_idx
+                    
+                    peak_times.append(time_array[global_idx])
                     peak_height = p['max_height']
                     peak_heights.append(peak_height)
-                    peak_snr.append(peak_height / threshold if threshold > 0 else 0)
+                    local_thresh = threshold[global_idx] if isinstance(threshold, np.ndarray) else threshold
+                    peak_snr.append(peak_height / local_thresh if local_thresh > 0 else 0)
             
             scatter = pg.ScatterPlotItem(
                 x=peak_times,
@@ -6130,6 +6143,14 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         
+        # Stop all timers to prevent zombie processes on Windows
+        for timer in self.findChildren(QTimer):
+            timer.stop()
+
+        # Close canvas results dialog if open
+        if getattr(self, 'canvas_results_dialog', None):
+            self.canvas_results_dialog.close()
+
         app = QApplication.instance()
         if hasattr(app, 'main_windows'):
             try:
@@ -6137,7 +6158,11 @@ class MainWindow(QMainWindow):
             except ValueError:
                 pass
         
-        event.accept() 
+        # If no windows left, force quit — fixes Mac dock icon staying open
+        if not getattr(app, 'main_windows', []):
+            app.quit()
+
+        event.accept()
         
     #----------------------------------------------------------------------------------------------------------    
     #------------------------------------help and documentation--------------------------------------------

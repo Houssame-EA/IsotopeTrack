@@ -2005,7 +2005,6 @@ class MassMethodWidget(QMainWindow):
                 if not selected_paths:
                     return
                 
-                # Validate that folders contain run.info
                 valid_paths = []
                 for path in selected_paths:
                     run_info_path = Path(path) / "run.info"

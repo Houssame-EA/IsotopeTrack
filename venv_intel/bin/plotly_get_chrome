@@ -1,0 +1,6 @@
+#!/Users/Houssame/Desktop/App_mac/venv_intel/bin/python3.11
+import sys
+from plotly.io._kaleido import plotly_get_chrome
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(plotly_get_chrome())

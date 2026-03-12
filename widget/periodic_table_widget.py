@@ -808,10 +808,8 @@ class PeriodicTableWidget(QDialog):
         
     def _create_elements_data(self):
         return [
-            # Period 1
             {'symbol': 'H', 'name': 'Hydrogen', 'mass': 1.008, 'row': 0, 'col': 0, 'isotopes': [{'mass': 1.00783, 'abundance': 99.9844, 'label': '1H'}, {'mass': 2.0141, 'abundance': 0.01557, 'label': '2H'}, {'mass': 3.016049, 'abundance': 0, 'label': '3H'}], 'category': 'other', 'atomic_number': 1, 'density': 0.00008988, 'ionization_energy': 13.6},
             {'symbol': 'He', 'name': 'Helium', 'mass': 4.003, 'row': 0, 'col': 17, 'isotopes': [{'mass': 3.01603, 'abundance': 0.00013, 'label': '3He'}, {'mass': 4.0026, 'abundance': 99.9999, 'label': '4He'}], 'category': 'noble', 'atomic_number': 2, 'density': 0.0001785, 'ionization_energy': 24.6},
-            # Period 2
             {'symbol': 'Li', 'name': 'Lithium', 'mass': 6.941, 'row': 1, 'col': 0, 'isotopes': [{'mass': 6.01512, 'abundance': 7.589, 'label': '6Li'}, {'mass': 7.016, 'abundance': 92.411, 'label': '7Li'}], 'category': 'alkali', 'atomic_number': 3, 'density': 0.534, 'ionization_energy': 5.4},
             {'symbol': 'Be', 'name': 'Beryllium', 'mass': 9.012, 'row': 1, 'col': 1, 'isotopes': [{'mass': 9.01218, 'abundance': 100, 'label': '9Be'}], 'category': 'alkaline', 'atomic_number': 4, 'density': 1.85, 'ionization_energy': 9.3},
             {'symbol': 'B', 'name': 'Boron', 'mass': 10.811, 'row': 1, 'col': 12, 'isotopes': [{'mass': 10.01294, 'abundance': 19.82, 'label': '10B'}, {'mass': 11.00931, 'abundance': 80.18, 'label': '11B'}], 'category': 'metalloid', 'atomic_number': 5, 'density': 2.34, 'ionization_energy': 8.3},
@@ -820,7 +818,6 @@ class PeriodicTableWidget(QDialog):
             {'symbol': 'O', 'name': 'Oxygen', 'mass': 15.999, 'row': 1, 'col': 15, 'isotopes': [{'mass': 15.99491, 'abundance': 99.7628, 'label': '16O'}, {'mass': 16.99913, 'abundance': 0.0372, 'label': '17O'}, {'mass': 17.99916, 'abundance': 0.20004, 'label': '18O'}], 'category': 'other', 'atomic_number': 8, 'density': 0.001429, 'ionization_energy': 13.6},
             {'symbol': 'F', 'name': 'Fluorine', 'mass': 18.998, 'row': 1, 'col': 16, 'isotopes': [{'mass': 18.9984, 'abundance': 100, 'label': '19F'}], 'category': 'halogen', 'atomic_number': 9, 'density': 0.001696, 'ionization_energy': 17.4},
             {'symbol': 'Ne', 'name': 'Neon', 'mass': 20.180, 'row': 1, 'col': 17, 'isotopes': [{'mass': 19.99244, 'abundance': 90.4838, 'label': '20Ne'}, {'mass': 20.99385, 'abundance': 0.2696, 'label': '21Ne'}, {'mass': 21.99138, 'abundance': 9.2465, 'label': '22Ne'}], 'category': 'noble', 'atomic_number': 10, 'density': 0.0008999, 'ionization_energy': 21.6},
-            # Period 3
             {'symbol': 'Na', 'name': 'Sodium', 'mass': 22.990, 'row': 2, 'col': 0, 'isotopes': [{'mass': 22.98977, 'abundance': 100, 'label': '23Na'}], 'category': 'alkali', 'atomic_number': 11, 'density': 0.968, 'ionization_energy': 5.14},
             {'symbol': 'Mg', 'name': 'Magnesium', 'mass': 24.305, 'row': 2, 'col': 1, 'isotopes': [{'mass': 23.98505, 'abundance': 78.992, 'label': '24Mg'}, {'mass': 24.98584, 'abundance': 10.003, 'label': '25Mg'}, {'mass': 25.9826, 'abundance': 11.005, 'label': '26Mg'}], 'category': 'alkaline', 'atomic_number': 12, 'density': 1.738, 'ionization_energy': 7.65},
             {'symbol': 'Al', 'name': 'Aluminum', 'mass': 26.982, 'row': 2, 'col': 12, 'isotopes': [{'mass': 26.98154, 'abundance': 100, 'label': '27Al'}], 'category': 'post-transition', 'atomic_number': 13, 'density': 2.70, 'ionization_energy': 5.99},
@@ -829,7 +826,6 @@ class PeriodicTableWidget(QDialog):
             {'symbol': 'S', 'name': 'Sulfur', 'mass': 32.065, 'row': 2, 'col': 15, 'isotopes': [{'mass': 31.97207, 'abundance': 95.018, 'label': '32S'}, {'mass': 32.97146, 'abundance': 0.75, 'label': '33S'}, {'mass': 33.96787, 'abundance': 4.215, 'label': '34S'}, {'mass': 35.96708, 'abundance': 0.017, 'label': '36S'}], 'category': 'other', 'atomic_number': 16, 'density': 2.067, 'ionization_energy': 10.36},
             {'symbol': 'Cl', 'name': 'Chlorine', 'mass': 35.453, 'row': 2, 'col': 16, 'isotopes': [{'mass': 34.96885, 'abundance': 75.771, 'label': '35Cl'}, {'mass': 36.9659, 'abundance': 24.229, 'label': '37Cl'}], 'category': 'halogen', 'atomic_number': 17, 'density': 0.003214, 'ionization_energy': 12.97},
             {'symbol': 'Ar', 'name': 'Argon', 'mass': 39.948, 'row': 2, 'col': 17, 'isotopes': [{'mass': 35.96755, 'abundance': 0.3365, 'label': '36Ar'}, {'mass': 37.96273, 'abundance': 0.0632, 'label': '38Ar'}, {'mass': 39.96238, 'abundance': 99.6003, 'label': '40Ar'}], 'category': 'noble', 'atomic_number': 18, 'density': 0.001784, 'ionization_energy': 15.76},
-            # Period 4
             {'symbol': 'K', 'name': 'Potassium', 'mass': 39.098, 'row': 3, 'col': 0, 'isotopes': [{'mass': 38.96371, 'abundance': 93.2581, 'label': '39K'}, {'mass': 39.964, 'abundance': 0.01167, 'label': '40K'}, {'mass': 40.96183, 'abundance': 6.7302, 'label': '41K'}], 'category': 'alkali', 'atomic_number': 19, 'density': 0.856, 'ionization_energy': 4.34},
             {'symbol': 'Ca', 'name': 'Calcium', 'mass': 40.078, 'row': 3, 'col': 1, 'isotopes': [{'mass': 39.96259, 'abundance': 96.941, 'label': '40Ca'}, {'mass': 41.95862, 'abundance': 0.647, 'label': '42Ca'}, {'mass': 42.95877, 'abundance': 0.135, 'label': '43Ca'}, {'mass': 43.95549, 'abundance': 2.086, 'label': '44Ca'}, {'mass': 45.95369, 'abundance': 0.004, 'label': '46Ca'}, {'mass': 47.95253, 'abundance': 0.187, 'label': '48Ca'}], 'category': 'alkaline', 'atomic_number': 20, 'density': 1.55, 'ionization_energy': 6.11},
 
@@ -843,14 +839,12 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 49.94479, 'abundance': 5.185, 'label': '50Ti'}
             ], 'category': 'transition', 'atomic_number': 22, 'density': 4.507, 'ionization_energy': 6.83},
 
-            # For Vanadium:
             {'symbol': 'V', 'name': 'Vanadium', 'mass': 50.942, 'row': 3, 'col': 4, 'isotopes': [
                 {'mass': 49.94716, 'abundance': 0.2497, 'label': '50V'},
                 {'mass': 50.94396, 'abundance': 99.7503, 'label': '51V'}
             ], 'category': 'transition', 'atomic_number': 23, 'density': 6.11, 'ionization_energy': 6.75},
             
             
-           # Chromium
             {'symbol': 'Cr', 'name': 'Chromium', 'mass': 51.996, 'row': 3, 'col': 5, 'isotopes': [
                 {'mass': 49.94646, 'abundance': 4.3452, 'label': '50Cr'},
                 {'mass': 51.94051, 'abundance': 83.7895, 'label': '52Cr'},
@@ -858,12 +852,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 53.93888, 'abundance': 2.3647, 'label': '54Cr'}
             ], 'category': 'transition', 'atomic_number': 24, 'density': 7.14, 'ionization_energy': 6.77},
 
-            # Manganese
             {'symbol': 'Mn', 'name': 'Manganese', 'mass': 54.938, 'row': 3, 'col': 6, 'isotopes': [
                 {'mass': 54.93805, 'abundance': 100, 'label': '55Mn'}
             ], 'category': 'transition', 'atomic_number': 25, 'density': 7.47, 'ionization_energy': 7.43},
 
-            # Iron
             {'symbol': 'Fe', 'name': 'Iron', 'mass': 55.845, 'row': 3, 'col': 7, 'isotopes': [
                 {'mass': 53.93961, 'abundance': 5.845, 'label': '54Fe'},
                 {'mass': 55.93494, 'abundance': 91.754, 'label': '56Fe'},
@@ -871,12 +863,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 57.93328, 'abundance': 0.2819, 'label': '58Fe'}
             ], 'category': 'transition', 'atomic_number': 26, 'density': 7.874, 'ionization_energy': 7.90},
 
-            # Cobalt
             {'symbol': 'Co', 'name': 'Cobalt', 'mass': 58.933, 'row': 3, 'col': 8, 'isotopes': [
                 {'mass': 58.9332, 'abundance': 100, 'label': '59Co'}
             ], 'category': 'transition', 'atomic_number': 27, 'density': 8.9, 'ionization_energy': 7.88},
 
-            # Nickel
             {'symbol': 'Ni', 'name': 'Nickel', 'mass': 58.693, 'row': 3, 'col': 9, 'isotopes': [
                 {'mass': 57.93535, 'abundance': 68.0769, 'label': '58Ni'},
                 {'mass': 59.93079, 'abundance': 26.2231, 'label': '60Ni'},
@@ -885,13 +875,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 63.92797, 'abundance': 0.9256, 'label': '64Ni'}
             ], 'category': 'transition', 'atomic_number': 28, 'density': 8.908, 'ionization_energy': 7.64},
 
-            # Copper
             {'symbol': 'Cu', 'name': 'Copper', 'mass': 63.546, 'row': 3, 'col': 10, 'isotopes': [
                 {'mass': 62.9296, 'abundance': 69.174, 'label': '63Cu'},
                 {'mass': 64.92779, 'abundance': 30.826, 'label': '65Cu'}
             ], 'category': 'transition', 'atomic_number': 29, 'density': 8.96, 'ionization_energy': 7.73},
 
-            # Zinc
             {'symbol': 'Zn', 'name': 'Zinc', 'mass': 65.38, 'row': 3, 'col': 11, 'isotopes': [
                 {'mass': 63.92915, 'abundance': 48.63, 'label': '64Zn'},
                 {'mass': 65.92604, 'abundance': 27.9, 'label': '66Zn'},
@@ -899,13 +887,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 67.92485, 'abundance': 18.75, 'label': '68Zn'},
                 {'mass': 69.92532, 'abundance': 0.62, 'label': '70Zn'}
             ], 'category': 'transition', 'atomic_number': 30, 'density': 7.14, 'ionization_energy': 9.39},
-            # Gallium
             {'symbol': 'Ga', 'name': 'Gallium', 'mass': 69.723, 'row': 3, 'col': 12, 'isotopes': [
                 {'mass': 68.92558, 'abundance': 60.1079, 'label': '69Ga'},
                 {'mass': 70.9247, 'abundance': 39.8921, 'label': '71Ga'}
             ], 'category': 'post-transition', 'atomic_number': 31, 'density': 5.904, 'ionization_energy': 5.99},
 
-            # Germanium
             {'symbol': 'Ge', 'name': 'Germanium', 'mass': 72.63, 'row': 3, 'col': 13, 'isotopes': [
                 {'mass': 69.92425, 'abundance': 21.234, 'label': '70Ge'},
                 {'mass': 71.92208, 'abundance': 27.662, 'label': '72Ge'},
@@ -914,12 +900,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 75.9214, 'abundance': 7.444, 'label': '76Ge'}
             ], 'category': 'metalloid', 'atomic_number': 32, 'density': 5.323, 'ionization_energy': 7.90},
 
-            # Arsenic
             {'symbol': 'As', 'name': 'Arsenic', 'mass': 74.922, 'row': 3, 'col': 14, 'isotopes': [
                 {'mass': 74.9216, 'abundance': 100, 'label': '75As'}
             ], 'category': 'metalloid', 'atomic_number': 33, 'density': 5.727, 'ionization_energy': 9.79},
 
-            # Selenium
             {'symbol': 'Se', 'name': 'Selenium', 'mass': 78.971, 'row': 3, 'col': 15, 'isotopes': [
                 {'mass': 73.92248, 'abundance': 0.889, 'label': '74Se'},
                 {'mass': 75.91921, 'abundance': 9.366, 'label': '76Se'},
@@ -929,13 +913,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 81.91671, 'abundance': 8.731, 'label': '82Se'}
             ], 'category': 'other', 'atomic_number': 34, 'density': 4.819, 'ionization_energy': 9.75},
 
-            # Bromine
             {'symbol': 'Br', 'name': 'Bromine', 'mass': 79.904, 'row': 3, 'col': 16, 'isotopes': [
                 {'mass': 78.91834, 'abundance': 50.686, 'label': '79Br'},
                 {'mass': 80.91629, 'abundance': 49.314, 'label': '81Br'}
             ], 'category': 'halogen', 'atomic_number': 35, 'density': 3.12, 'ionization_energy': 11.81},
 
-            # Krypton
             {'symbol': 'Kr', 'name': 'Krypton', 'mass': 83.798, 'row': 3, 'col': 17, 'isotopes': [
                 {'mass': 77.9204, 'abundance': 0.35351, 'label': '78Kr'},
                 {'mass': 79.91638, 'abundance': 2.28086, 'label': '80Kr'},
@@ -945,13 +927,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 85.91061, 'abundance': 17.2984, 'label': '86Kr'}
             ], 'category': 'noble', 'atomic_number': 36, 'density': 0.003733, 'ionization_energy': 14.00},
 
-            # Rubidium
             {'symbol': 'Rb', 'name': 'Rubidium', 'mass': 85.468, 'row': 4, 'col': 0, 'isotopes': [
                 {'mass': 84.9118, 'abundance': 72.1654, 'label': '85Rb'},
                 {'mass': 86.90918, 'abundance': 27.8346, 'label': '87Rb'}
             ], 'category': 'alkali', 'atomic_number': 37, 'density': 1.532, 'ionization_energy': 4.18},
 
-            # Strontium
             {'symbol': 'Sr', 'name': 'Strontium', 'mass': 87.62, 'row': 4, 'col': 1, 'isotopes': [
                 {'mass': 83.91343, 'abundance': 0.5574, 'label': '84Sr'},
                 {'mass': 85.90927, 'abundance': 9.8566, 'label': '86Sr'},
@@ -959,11 +939,9 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 87.90562, 'abundance': 82.5845, 'label': '88Sr'}
             ], 'category': 'alkaline', 'atomic_number': 38, 'density': 2.64, 'ionization_energy': 5.69},
 
-            # Yttrium
             {'symbol': 'Y', 'name': 'Yttrium', 'mass': 88.906, 'row': 4, 'col': 2, 'isotopes': [
                 {'mass': 88.90586, 'abundance': 100, 'label': '89Y'}
             ], 'category': 'transition', 'atomic_number': 39, 'density': 4.47, 'ionization_energy': 6.22},
-            # Zirconium
             {'symbol': 'Zr', 'name': 'Zirconium', 'mass': 91.224, 'row': 4, 'col': 3, 'isotopes': [
                 {'mass': 89.90471, 'abundance': 51.452, 'label': '90Zr'},
                 {'mass': 90.90564, 'abundance': 11.223, 'label': '91Zr'},
@@ -972,12 +950,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 95.90827, 'abundance': 2.799, 'label': '96Zr'}
             ], 'category': 'transition', 'atomic_number': 40, 'density': 6.51, 'ionization_energy': 6.63},
 
-            # Niobium
             {'symbol': 'Nb', 'name': 'Niobium', 'mass': 92.906, 'row': 4, 'col': 4, 'isotopes': [
                 {'mass': 92.90638, 'abundance': 100, 'label': '93Nb'}
             ], 'category': 'transition', 'atomic_number': 41, 'density': 8.57, 'ionization_energy': 6.76},
 
-            # Molybdenum
             {'symbol': 'Mo', 'name': 'Molybdenum', 'mass': 95.95, 'row': 4, 'col': 5, 'isotopes': [
                 {'mass': 91.90681, 'abundance': 14.8362, 'label': '92Mo'},
                 {'mass': 93.90509, 'abundance': 9.2466, 'label': '94Mo'},
@@ -988,12 +964,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 99.90747, 'abundance': 9.6335, 'label': '100Mo'}
             ], 'category': 'transition', 'atomic_number': 42, 'density': 10.22, 'ionization_energy': 7.09},
 
-            # Technetium
             {'symbol': 'Tc', 'name': 'Technetium', 'mass': 98, 'row': 4, 'col': 6, 'isotopes': [
                 {'mass': 99, 'abundance': 100, 'label': '99Tc'}
             ], 'category': 'transition', 'atomic_number': 43, 'density': 11.5, 'ionization_energy': 7.28},
 
-            # Ruthenium
             {'symbol': 'Ru', 'name': 'Ruthenium', 'mass': 101.07, 'row': 4, 'col': 7, 'isotopes': [
                 {'mass': 95.9076, 'abundance': 5.542, 'label': '96Ru'},
                 {'mass': 97.90529, 'abundance': 1.8688, 'label': '98Ru'},
@@ -1004,12 +978,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 103.90542, 'abundance': 18.621, 'label': '104Ru'}
             ], 'category': 'transition', 'atomic_number': 44, 'density': 12.37, 'ionization_energy': 7.36},
 
-            # Rhodium
             {'symbol': 'Rh', 'name': 'Rhodium', 'mass': 102.906, 'row': 4, 'col': 8, 'isotopes': [
                 {'mass': 102.9055, 'abundance': 100, 'label': '103Rh'}
             ], 'category': 'transition', 'atomic_number': 45, 'density': 12.41, 'ionization_energy': 7.46},
 
-            # Palladium
             {'symbol': 'Pd', 'name': 'Palladium', 'mass': 106.42, 'row': 4, 'col': 9, 'isotopes': [
                 {'mass': 101.90561, 'abundance': 1.02, 'label': '102Pd'},
                 {'mass': 103.90403, 'abundance': 11.14, 'label': '104Pd'},
@@ -1019,7 +991,6 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 109.90517, 'abundance': 11.72, 'label': '110Pd'}
             ], 'category': 'transition', 'atomic_number': 46, 'density': 12.02, 'ionization_energy': 8.34},
 
-            # Silver
             {'symbol': 'Ag', 'name': 'Silver', 'mass': 107.868, 'row': 4, 'col': 10, 'isotopes': [
                 {'mass': 106.9051, 'abundance': 51.8392, 'label': '107Ag'},
                 {'mass': 108.90475, 'abundance': 48.1608, 'label': '109Ag'}
@@ -1038,13 +1009,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 115.90476, 'abundance': 7.49, 'label': '116Cd'}
             ], 'category': 'transition', 'atomic_number': 48, 'density': 8.65, 'ionization_energy': 8.99},
 
-            # Indium
             {'symbol': 'In', 'name': 'Indium', 'mass': 114.818, 'row': 4, 'col': 12, 'isotopes': [
                 {'mass': 112.90406, 'abundance': 4.288, 'label': '113In'},
                 {'mass': 114.90388, 'abundance': 95.712, 'label': '115In'}
             ], 'category': 'post-transition', 'atomic_number': 49, 'density': 7.31, 'ionization_energy': 5.79},
 
-            # Tin
             {'symbol': 'Sn', 'name': 'Tin', 'mass': 118.71, 'row': 4, 'col': 13, 'isotopes': [
                 {'mass': 111.90482, 'abundance': 0.973, 'label': '112Sn'},
                 {'mass': 113.90278, 'abundance': 0.659, 'label': '114Sn'},
@@ -1058,13 +1027,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 123.90527, 'abundance': 5.789, 'label': '124Sn'}
             ], 'category': 'post-transition', 'atomic_number': 50, 'density': 7.31, 'ionization_energy': 7.34},
 
-            # Antimony
             {'symbol': 'Sb', 'name': 'Antimony', 'mass': 121.76, 'row': 4, 'col': 14, 'isotopes': [
                 {'mass': 120.90382, 'abundance': 57.213, 'label': '121Sb'},
                 {'mass': 122.90422, 'abundance': 42.787, 'label': '123Sb'}
             ], 'category': 'metalloid', 'atomic_number': 51, 'density': 6.697, 'ionization_energy': 8.64},
 
-            # Tellurium
             {'symbol': 'Te', 'name': 'Tellurium', 'mass': 127.6, 'row': 4, 'col': 15, 'isotopes': [
                 {'mass': 119.90402, 'abundance': 0.096, 'label': '120Te'},
                 {'mass': 121.90306, 'abundance': 2.603, 'label': '122Te'},
@@ -1076,12 +1043,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 129.90623, 'abundance': 33.799, 'label': '130Te'}
             ], 'category': 'metalloid', 'atomic_number': 52, 'density': 6.24, 'ionization_energy': 9.01},
 
-            # Iodine
             {'symbol': 'I', 'name': 'Iodine', 'mass': 126.904, 'row': 4, 'col': 16, 'isotopes': [
                 {'mass': 126.90448, 'abundance': 100, 'label': '127I'}
             ], 'category': 'halogen', 'atomic_number': 53, 'density': 4.94, 'ionization_energy': 10.45},
 
-            # Xenon
             {'symbol': 'Xe', 'name': 'Xenon', 'mass': 131.293, 'row': 4, 'col': 17, 'isotopes': [
                 {'mass': 123.90612, 'abundance': 0.08913, 'label': '124Xe'},
                 {'mass': 125.90428, 'abundance': 0.0888, 'label': '126Xe'},
@@ -1094,14 +1059,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 135.90722, 'abundance': 8.8689, 'label': '136Xe'}
             ], 'category': 'noble', 'atomic_number': 54, 'density': 0.005887, 'ionization_energy': 12.13},
 
-
-
-            # Cesium
             {'symbol': 'Cs', 'name': 'Cesium', 'mass': 132.905, 'row': 5, 'col': 0, 'isotopes': [
                 {'mass': 132.90543, 'abundance': 100, 'label': '133Cs'}
             ], 'category': 'alkali', 'atomic_number': 55, 'density': 1.93, 'ionization_energy': 3.89},
 
-            # Barium
             {'symbol': 'Ba', 'name': 'Barium', 'mass': 137.327, 'row': 5, 'col': 1, 'isotopes': [
                 {'mass': 129.90628, 'abundance': 0.1058, 'label': '130Ba'},
                 {'mass': 131.90504, 'abundance': 0.1012, 'label': '132Ba'},
@@ -1112,13 +1073,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 137.90524, 'abundance': 71.699, 'label': '138Ba'}
             ], 'category': 'alkaline', 'atomic_number': 56, 'density': 3.51, 'ionization_energy': 5.21},
 
-            # Lanthanum
             {'symbol': 'La', 'name': 'Lanthanum', 'mass': 138.905, 'row': 5, 'col': 2, 'isotopes': [
                 {'mass': 137.90711, 'abundance': 0.09017, 'label': '138La'},
                 {'mass': 138.90636, 'abundance': 99.9098, 'label': '139La'}
             ], 'category': 'lanthanide', 'atomic_number': 57, 'density': 6.146, 'ionization_energy': 5.58},
 
-            # Cerium
             {'symbol': 'Ce', 'name': 'Cerium', 'mass': 140.116, 'row': 8, 'col': 3, 'isotopes': [
                 {'mass': 135.90714, 'abundance': 0.186, 'label': '136Ce'},
                 {'mass': 137.906, 'abundance': 0.251, 'label': '138Ce'},
@@ -1126,12 +1085,10 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 141.90925, 'abundance': 11.114, 'label': '142Ce'}
             ], 'category': 'lanthanide', 'atomic_number': 58, 'density': 6.689, 'ionization_energy': 5.54},
 
-            # Praseodymium
             {'symbol': 'Pr', 'name': 'Praseodymium', 'mass': 140.908, 'row': 8, 'col': 4, 'isotopes': [
                 {'mass': 140.90766, 'abundance': 100, 'label': '141Pr'}
             ], 'category': 'lanthanide', 'atomic_number': 59, 'density': 6.64, 'ionization_energy': 5.47},
 
-            # Neodymium
             {'symbol': 'Nd', 'name': 'Neodymium', 'mass': 144.242, 'row': 8, 'col': 5, 'isotopes': [
                 {'mass': 141.90773, 'abundance': 27.16, 'label': '142Nd'},
                 {'mass': 142.90982, 'abundance': 12.18, 'label': '143Nd'},
@@ -1143,11 +1100,10 @@ class PeriodicTableWidget(QDialog):
             ], 'category': 'lanthanide', 'atomic_number': 60, 'density': 7.01, 'ionization_energy': 5.53},
             
             {'symbol': 'Pm', 'name': 'Promethium', 'mass': 145, 'row': 8, 'col': 6, 'isotopes': [
-                {'mass': 144.913, 'abundance': 0, 'label': '145Pm'},  # Promethium has no stable isotopes
-                {'mass': 145.915, 'abundance': 0, 'label': '146Pm'}   # All isotopes are radioactive
+                {'mass': 144.913, 'abundance': 0, 'label': '145Pm'}, 
+                {'mass': 145.915, 'abundance': 0, 'label': '146Pm'}  
             ], 'category': 'lanthanide', 'atomic_number': 61, 'density': 7.26, 'ionization_energy': 5.58},
 
-            # Samarium
             {'symbol': 'Sm', 'name': 'Samarium', 'mass': 150.36, 'row': 8, 'col': 7, 'isotopes': [
                 {'mass': 143.91201, 'abundance': 3.0734, 'label': '144Sm'},
                 {'mass': 146.91491, 'abundance': 14.9934, 'label': '147Sm'},
@@ -1158,13 +1114,11 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 153.92222, 'abundance': 22.752, 'label': '154Sm'}
             ], 'category': 'lanthanide', 'atomic_number': 62, 'density': 7.52, 'ionization_energy': 5.64},
 
-            # Europium
             {'symbol': 'Eu', 'name': 'Europium', 'mass': 151.964, 'row': 8, 'col': 8, 'isotopes': [
                 {'mass': 150.91986, 'abundance': 47.81, 'label': '151Eu'},
                 {'mass': 152.92124, 'abundance': 52.19, 'label': '153Eu'}
             ], 'category': 'lanthanide', 'atomic_number': 63, 'density': 5.244, 'ionization_energy': 5.67},
 
-            # Gadolinium
             {'symbol': 'Gd', 'name': 'Gadolinium', 'mass': 157.25, 'row': 8, 'col': 9, 'isotopes': [
                 {'mass': 151.9198, 'abundance': 0.2029, 'label': '152Gd'},
                 {'mass': 153.92088, 'abundance': 2.1809, 'label': '154Gd'},
@@ -1180,7 +1134,6 @@ class PeriodicTableWidget(QDialog):
             {'mass': 158.92535, 'abundance': 100, 'label': '159Tb'}
             ], 'category': 'lanthanide', 'atomic_number': 65, 'density': 8.229, 'ionization_energy': 5.86},
 
-            # Dysprosium 
             {'symbol': 'Dy', 'name': 'Dysprosium', 'mass': 162.5, 'row': 8, 'col': 11, 'isotopes': [
             {'mass': 155.92429, 'abundance': 0.056, 'label': '156Dy'},
             {'mass': 157.92441, 'abundance': 0.096, 'label': '158Dy'},
@@ -1191,12 +1144,10 @@ class PeriodicTableWidget(QDialog):
             {'mass': 163.92918, 'abundance': 28.19, 'label': '164Dy'}
             ], 'category': 'lanthanide', 'atomic_number': 66, 'density': 8.55, 'ionization_energy': 5.94},
 
-            # Holmium
             {'symbol': 'Ho', 'name': 'Holmium', 'mass': 164.93, 'row': 8, 'col': 12, 'isotopes': [
             {'mass': 164.93033, 'abundance': 100, 'label': '165Ho'}
             ], 'category': 'lanthanide', 'atomic_number': 67, 'density': 8.795, 'ionization_energy': 6.02},
 
-            # Erbium
             {'symbol': 'Er', 'name': 'Erbium', 'mass': 167.259, 'row': 8, 'col': 13, 'isotopes': [
             {'mass': 161.92879, 'abundance': 0.137, 'label': '162Er'},
             {'mass': 163.92921, 'abundance': 1.609, 'label': '164Er'},
@@ -1206,12 +1157,10 @@ class PeriodicTableWidget(QDialog):
             {'mass': 169.93548, 'abundance': 14.93, 'label': '170Er'}
             ], 'category': 'lanthanide', 'atomic_number': 68, 'density': 9.066, 'ionization_energy': 6.11},
 
-            # Thulium
             {'symbol': 'Tm', 'name': 'Thulium', 'mass': 168.934, 'row': 8, 'col': 14, 'isotopes': [
             {'mass': 168.93426, 'abundance': 100, 'label': '169Tm'}
             ], 'category': 'lanthanide', 'atomic_number': 69, 'density': 9.321, 'ionization_energy': 6.18},
 
-            # Ytterbium
             {'symbol': 'Yb', 'name': 'Ytterbium', 'mass': 173.054, 'row': 8, 'col': 15, 'isotopes': [
             {'mass': 167.93391, 'abundance': 0.127, 'label': '168Yb'},
             {'mass': 169.93477, 'abundance': 3.04, 'label': '170Yb'},
@@ -1222,13 +1171,11 @@ class PeriodicTableWidget(QDialog):
             {'mass': 175.94258, 'abundance': 12.76, 'label': '176Yb'}
             ], 'category': 'lanthanide', 'atomic_number': 70, 'density': 6.965, 'ionization_energy': 6.25},
 
-            # Lutetium
             {'symbol': 'Lu', 'name': 'Lutetium', 'mass': 174.967, 'row': 8, 'col': 16, 'isotopes': [
             {'mass': 174.94079, 'abundance': 97.416, 'label': '175Lu'},
             {'mass': 175.94269, 'abundance': 2.584, 'label': '176Lu'}
             ], 'category': 'lanthanide', 'atomic_number': 71, 'density': 9.84, 'ionization_energy': 5.43},
 
-            # Hafnium
             {'symbol': 'Hf', 'name': 'Hafnium', 'mass': 178.49, 'row': 5, 'col': 3, 'isotopes': [
             {'mass': 173.94007, 'abundance': 0.162, 'label': '174Hf'},
             {'mass': 175.94142, 'abundance': 5.2604, 'label': '176Hf'},
@@ -1238,7 +1185,6 @@ class PeriodicTableWidget(QDialog):
             {'mass': 179.94656, 'abundance': 35.0802, 'label': '180Hf'}
             ], 'category': 'transition', 'atomic_number': 72, 'density': 13.31, 'ionization_energy': 6.83},
 
-            # Tantalum
             {'symbol': 'Ta', 'name': 'Tantalum', 'mass': 180.948, 'row': 5, 'col': 4, 'isotopes': [
             {'mass': 179.94749, 'abundance': 0.0123, 'label': '180Ta'},
             {'mass': 180.94801, 'abundance': 99.9877, 'label': '181Ta'}
@@ -1251,13 +1197,11 @@ class PeriodicTableWidget(QDialog):
             {'mass': 185.95438, 'abundance': 28.4259, 'label': '186W'}
             ], 'category': 'transition', 'atomic_number': 74, 'density': 19.3, 'ionization_energy': 7.86},
 
-            # Rhenium
             {'symbol': 'Re', 'name': 'Rhenium', 'mass': 186.207, 'row': 5, 'col': 6, 'isotopes': [
             {'mass': 184.95298, 'abundance': 37.398, 'label': '185Re'},
             {'mass': 186.95577, 'abundance': 62.602, 'label': '187Re'}
             ], 'category': 'transition', 'atomic_number': 75, 'density': 21.02, 'ionization_energy': 7.83},
 
-            # Osmium
             {'symbol': 'Os', 'name': 'Osmium', 'mass': 190.23, 'row': 5, 'col': 7, 'isotopes': [
             {'mass': 183.95251, 'abundance': 0.0197, 'label': '184Os'},
             {'mass': 185.95385, 'abundance': 1.5859, 'label': '186Os'},
@@ -1268,13 +1212,11 @@ class PeriodicTableWidget(QDialog):
             {'mass': 191.96149, 'abundance': 40.7815, 'label': '192Os'}
             ], 'category': 'transition', 'atomic_number': 76, 'density': 22.59, 'ionization_energy': 8.44},
 
-            # Iridium
             {'symbol': 'Ir', 'name': 'Iridium', 'mass': 192.217, 'row': 5, 'col': 8, 'isotopes': [
             {'mass': 190.9606, 'abundance': 37.272, 'label': '191Ir'},
             {'mass': 192.96294, 'abundance': 62.728, 'label': '193Ir'}
             ], 'category': 'transition', 'atomic_number': 77, 'density': 22.56, 'ionization_energy': 8.97},
 
-            # Platinum
             {'symbol': 'Pt', 'name': 'Platinum', 'mass': 195.084, 'row': 5, 'col': 9, 'isotopes': [
             {'mass': 189.95994, 'abundance': 0.01363, 'label': '190Pt'},
             {'mass': 191.96105, 'abundance': 0.78266, 'label': '192Pt'},
@@ -1284,12 +1226,10 @@ class PeriodicTableWidget(QDialog):
             {'mass': 197.96788, 'abundance': 7.16349, 'label': '198Pt'}
             ], 'category': 'transition', 'atomic_number': 78, 'density': 21.45, 'ionization_energy': 8.96},
 
-            # Gold
             {'symbol': 'Au', 'name': 'Gold', 'mass': 196.967, 'row': 5, 'col': 10, 'isotopes': [
             {'mass': 196.96656, 'abundance': 100, 'label': '197Au'}
             ], 'category': 'transition', 'atomic_number': 79, 'density': 19.3, 'ionization_energy': 9.23},
 
-            # Mercury
             {'symbol': 'Hg', 'name': 'Mercury', 'mass': 200.592, 'row': 5, 'col': 11, 'isotopes': [
             {'mass': 195.96581, 'abundance': 0.15344, 'label': '196Hg'},
             {'mass': 197.96676, 'abundance': 9.968, 'label': '198Hg'},
@@ -1300,7 +1240,6 @@ class PeriodicTableWidget(QDialog):
             {'mass': 203.97348, 'abundance': 6.865, 'label': '204Hg'}
             ], 'category': 'transition', 'atomic_number': 80, 'density': 13.534, 'ionization_energy': 10.44},
 
-            # Thallium
             {'symbol': 'Tl', 'name': 'Thallium', 'mass': 204.38, 'row': 5, 'col': 12, 'isotopes': [
             {'mass': 202.97234, 'abundance': 29.524, 'label': '203Tl'},
             {'mass': 204.97441, 'abundance': 70.476, 'label': '205Tl'}
@@ -1321,7 +1260,6 @@ class PeriodicTableWidget(QDialog):
             {'mass': 232.03805, 'abundance': 100, 'label': '232Th'}
             ], 'category': 'actinide', 'atomic_number': 90, 'density': 11.72, 'ionization_energy': 6.31},
 
-            # Uranium
             {'symbol': 'U', 'name': 'Uranium', 'mass': 238.029, 'row': 9, 'col': 5, 'isotopes': [
             {'mass': 233.0396, 'abundance': 0, 'label': '233U'},
             {'mass': 234.04095, 'abundance': 0.00548, 'label': '234U'},
@@ -1331,12 +1269,10 @@ class PeriodicTableWidget(QDialog):
             {'mass': 238.05079, 'abundance': 99.2745, 'label': '238U'}
             ], 'category': 'actinide', 'atomic_number': 92, 'density': 19.1, 'ionization_energy': 6.19},
 
-            # Neptunium
             {'symbol': 'Np', 'name': 'Neptunium', 'mass': 237, 'row': 9, 'col': 6, 'isotopes': [
             {'mass': 237.048004, 'abundance': 100, 'label': '237Np'}
             ], 'category': 'actinide', 'atomic_number': 93, 'density': 20.45, 'ionization_energy': 6.27},
 
-            # Plutonium
             {'symbol': 'Pu', 'name': 'Plutonium', 'mass': 244, 'row': 9, 'col': 7, 'isotopes': [
             {'mass': 239.0522, 'abundance': 100, 'label': '239Pu'}
             ], 'category': 'actinide', 'atomic_number': 94, 'density': 19.84, 'ionization_energy': 6.03},

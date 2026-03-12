@@ -1,1377 +1,986 @@
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
-                              QLabel, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-                              QDialogButtonBox, QGroupBox, QColorDialog, QPushButton,
-                              QLineEdit, QGraphicsProxyWidget, QFrame, QScrollArea, QWidget, 
-                              QListWidgetItem, QListWidget, QMessageBox, QSlider)
+"""
+Ternary Plot Node — full-figure view with right-click context menu.
+
+Features:
+- Three-element ternary composition diagram (mpltern)
+- Scatter and density (hexbin) plot types
+- Color-by-fourth-element option for scatter plots
+- Average point with optional 2σ confidence ellipse
+- Particle statistics bar (total, filtered, per-sample)
+- Multiple sample support (overlaid, subplots, side-by-side, combined)
+- Right-click context menu replaces sidebar for all settings
+- Shared font, color, and export utilities via shared_plot_utils
+"""
+
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
+    QDialogButtonBox, QMessageBox
+)
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QCursor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.patches import Ellipse
 import numpy as np
 import math
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import mpltern
-from widget.colors import default_colors, colorheatmap
+import mpltern  # noqa: F401  — registers 'ternary' projection
 
-class TernaryPlotHelper:
-    """
-    Helper class for ternary plotting using mpltern.
-    """
-    
-    @staticmethod
-    def create_ternary_axes(ax, element_labels=None, show_grid=True, font_props=None):
-        """
-        Create ternary plot axes and labels using mpltern with font settings.
-        
-        Args:
-            ax: Matplotlib axes object with ternary projection
-            element_labels (list): List of three element labels
-            show_grid (bool): Whether to show grid lines
-            font_props: Matplotlib font properties object
-        
-        Returns:
-            ax: Configured ternary axes object
-        """
-        if element_labels is None:
-            element_labels = ['Element A', 'Element B', 'Element C']
-        
-        if font_props:
-            ax.set_tlabel(element_labels[2], fontproperties=font_props)
-            ax.set_llabel(element_labels[0], fontproperties=font_props)
-            ax.set_rlabel(element_labels[1], fontproperties=font_props)
-        else:
-            ax.set_tlabel(element_labels[2])
-            ax.set_llabel(element_labels[0])
-            ax.set_rlabel(element_labels[1])
-        
-        if show_grid:
-            ax.grid(True, alpha=0.3)
-            ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-            ax.taxis.set_ticks(ticks)
-            ax.laxis.set_ticks(ticks)
-            ax.raxis.set_ticks(ticks)
-            
-            tick_labels = [f'{int(t*100)}%' for t in ticks]
-            ax.taxis.set_ticklabels(tick_labels)
-            ax.laxis.set_ticklabels(tick_labels)
-            ax.raxis.set_ticklabels(tick_labels)
-            
-            if font_props:
-                for tick_label in ax.taxis.get_ticklabels():
-                    tick_label.set_fontproperties(font_props)
-                for tick_label in ax.laxis.get_ticklabels():
-                    tick_label.set_fontproperties(font_props)
-                for tick_label in ax.raxis.get_ticklabels():
-                    tick_label.set_fontproperties(font_props)
-        else:
-            ax.grid(False)
-        
-        ax.set_title('')
-        
-        return ax
+from results.shared_plot_utils import (
+    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
+    TERNARY_DATA_TYPE_OPTIONS, TERNARY_DATA_KEY_MAPPING,
+    get_font_config, make_font_properties,
+    apply_font_to_ternary, apply_font_to_colorbar_standalone,
+    FontSettingsGroup,
+    get_sample_color, get_display_name,
+    download_matplotlib_figure,
+)
 
+
+# ═══════════════════════════════════════════════
+# Constants
+# ═══════════════════════════════════════════════
+
+DISPLAY_MODES = [
+    'Individual Subplots',
+    'Side by Side Subplots',
+    'Combined Plot',
+    'Overlaid Samples',
+]
+
+PLOT_TYPES = ['Scatter Plot', 'Density Plot (Hexbin)']
+
+COLORMAPS = [
+    'YlGn', 'viridis', 'plasma', 'inferno', 'magma', 'cividis',
+    'YlOrRd', 'BuPu', 'GnBu', 'PuBu', 'YlGnBu', 'PuBuGn',
+    'Blues', 'Greens', 'Oranges', 'Reds', 'Purples', 'Greys',
+    'coolwarm', 'RdYlBu', 'Spectral', 'turbo', 'jet',
+]
+
+
+# ═══════════════════════════════════════════════
+# Ternary axes configuration
+# ═══════════════════════════════════════════════
+
+def setup_ternary_axes(ax, element_labels, config):
+    """
+    Configure mpltern axes with labels, grid, and font settings.
+
+    Ternary coordinate mapping (mpltern convention):
+        L (left)   = element A = bottom-left vertex
+        R (right)  = element B = bottom-right vertex
+        T (top)    = element C = top vertex
+
+    Args:
+        ax:             mpltern axes (projection='ternary')
+        element_labels: [elem_a, elem_b, elem_c]
+        config:         node config dict
+    """
+    fp = make_font_properties(config)
+    fc = get_font_config(config)
+
+    ax.set_llabel(element_labels[0], fontproperties=fp, color=fc['color'])
+    ax.set_rlabel(element_labels[1], fontproperties=fp, color=fc['color'])
+    ax.set_tlabel(element_labels[2], fontproperties=fp, color=fc['color'])
+
+    if config.get('show_grid', True):
+        ax.grid(True, alpha=0.3)
+        ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        tick_labels = [f'{int(t * 100)}%' for t in ticks]
+        for axis in (ax.taxis, ax.laxis, ax.raxis):
+            axis.set_ticks(ticks)
+            axis.set_ticklabels(tick_labels)
+            for lbl in axis.get_ticklabels():
+                lbl.set_fontproperties(fp)
+                lbl.set_color(fc['color'])
+    else:
+        ax.grid(False)
+
+    ax.set_title('')
+
+
+# ═══════════════════════════════════════════════
+# Confidence ellipse (2σ)
+# ═══════════════════════════════════════════════
+
+def confidence_ellipse_params(data_x, data_y, n_std=2.0):
+    """
+    Compute 2D confidence ellipse parameters from data.
+
+    Performs eigendecomposition of the covariance matrix to get the orientation
+    and semi-axes of the n_std confidence region.
+
+    Args:
+        data_x:  array of x-coordinates (e.g. b_vals in ternary space)
+        data_y:  array of y-coordinates (e.g. c_vals in ternary space)
+        n_std:   number of standard deviations (2.0 ≈ 95% for bivariate normal)
+
+    Returns:
+        dict with cx, cy, width, height, angle_deg — or None if < 3 points.
+    """
+    if len(data_x) < 3:
+        return None
+    try:
+        cov = np.cov(data_x, data_y)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        order = eigvals.argsort()[::-1]
+        eigvals = eigvals[order]
+        eigvecs = eigvecs[:, order]
+        if eigvals[0] <= 0 or eigvals[1] <= 0:
+            return None
+        angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+        w = 2 * n_std * np.sqrt(eigvals[0])
+        h = 2 * n_std * np.sqrt(eigvals[1])
+        return {
+            'cx': np.mean(data_x), 'cy': np.mean(data_y),
+            'width': w, 'height': h, 'angle_deg': angle,
+        }
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════
+# Settings Dialog
+# ═══════════════════════════════════════════════
+
+class TernarySettingsDialog(QDialog):
+    """Full settings dialog opened from right-click → Configure."""
+
+    def __init__(self, config, available_elements, is_multi, sample_names, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ternary Plot Settings")
+        self.setMinimumWidth(500)
+        self._cfg = dict(config)
+        self._elems = available_elements
+        self._is_multi = is_multi
+        self._sample_names = sample_names
+        self._build_ui()
+
+    # ── UI construction ─────────────────────
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setSpacing(8)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+        # ── Multi-sample display mode ──
+        if self._is_multi:
+            g = QGroupBox("Multiple Sample Display")
+            fl = QFormLayout(g)
+            self.display_mode = QComboBox()
+            self.display_mode.addItems(DISPLAY_MODES)
+            self.display_mode.setCurrentText(self._cfg.get('display_mode', DISPLAY_MODES[0]))
+            fl.addRow("Display Mode:", self.display_mode)
+            layout.addWidget(g)
+
+        # ── Element selection ──
+        g = QGroupBox("Element Selection")
+        fl = QFormLayout(g)
+        placeholder = ['-- Select --']
+
+        self.elem_a = QComboBox()
+        self.elem_a.addItems(placeholder + self._elems)
+        ea = self._cfg.get('element_a', '')
+        if ea in self._elems:
+            self.elem_a.setCurrentText(ea)
+        fl.addRow("Element A (Bottom Left):", self.elem_a)
+
+        self.elem_b = QComboBox()
+        self.elem_b.addItems(placeholder + self._elems)
+        eb = self._cfg.get('element_b', '')
+        if eb in self._elems:
+            self.elem_b.setCurrentText(eb)
+        fl.addRow("Element B (Bottom Right):", self.elem_b)
+
+        self.elem_c = QComboBox()
+        self.elem_c.addItems(placeholder + self._elems)
+        ec = self._cfg.get('element_c', '')
+        if ec in self._elems:
+            self.elem_c.setCurrentText(ec)
+        fl.addRow("Element C (Top):", self.elem_c)
+
+        # Color-by fourth element
+        self.color_elem = QComboBox()
+        self.color_elem.addItems(['(None — use index)'] + self._elems)
+        ce = self._cfg.get('color_element', '')
+        if ce in self._elems:
+            self.color_elem.setCurrentText(ce)
+        fl.addRow("Color By Element:", self.color_elem)
+
+        layout.addWidget(g)
+
+        # ── Data type ──
+        g = QGroupBox("Data Type")
+        fl = QFormLayout(g)
+        self.data_type = QComboBox()
+        self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
+        self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
+        fl.addRow("Data:", self.data_type)
+        layout.addWidget(g)
+
+        # ── Plot style ──
+        g = QGroupBox("Plot Style")
+        fl = QFormLayout(g)
+
+        self.plot_type = QComboBox()
+        self.plot_type.addItems(PLOT_TYPES)
+        self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
+        self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
+        fl.addRow("Plot Type:", self.plot_type)
+
+        # Scatter controls
+        self._scatter_frame = QFrame()
+        sfl = QFormLayout(self._scatter_frame)
+        sfl.setContentsMargins(0, 0, 0, 0)
+
+        self.marker_size = QSpinBox()
+        self.marker_size.setRange(1, 100)
+        self.marker_size.setValue(self._cfg.get('marker_size', 20))
+        sfl.addRow("Marker Size:", self.marker_size)
+
+        self.marker_alpha = QSlider(Qt.Horizontal)
+        self.marker_alpha.setRange(10, 100)
+        self.marker_alpha.setValue(int(self._cfg.get('marker_alpha', 0.7) * 100))
+        sfl.addRow("Transparency:", self.marker_alpha)
+        fl.addRow(self._scatter_frame)
+
+        # Hexbin controls
+        self._hexbin_frame = QFrame()
+        hfl = QFormLayout(self._hexbin_frame)
+        hfl.setContentsMargins(0, 0, 0, 0)
+
+        self.hexbin_grid = QSpinBox()
+        self.hexbin_grid.setRange(10, 100)
+        self.hexbin_grid.setValue(self._cfg.get('hexbin_gridsize', 30))
+        hfl.addRow("Grid Size:", self.hexbin_grid)
+
+        self.hexbin_alpha = QSlider(Qt.Horizontal)
+        self.hexbin_alpha.setRange(10, 100)
+        self.hexbin_alpha.setValue(int(self._cfg.get('hexbin_alpha', 0.8) * 100))
+        hfl.addRow("Transparency:", self.hexbin_alpha)
+        fl.addRow(self._hexbin_frame)
+
+        self.show_grid = QCheckBox()
+        self.show_grid.setChecked(self._cfg.get('show_grid', True))
+        fl.addRow("Show Grid:", self.show_grid)
+
+        self.colormap = QComboBox()
+        self.colormap.addItems(COLORMAPS)
+        cm = self._cfg.get('colormap', 'YlGn')
+        if cm in COLORMAPS:
+            self.colormap.setCurrentText(cm)
+        fl.addRow("Color Map:", self.colormap)
+
+        self.show_colorbar = QCheckBox()
+        self.show_colorbar.setChecked(self._cfg.get('show_colorbar', True))
+        fl.addRow("Show Color Bar:", self.show_colorbar)
+
+        self.cbar_label = QLineEdit(self._cfg.get('colorbar_label', 'Density'))
+        fl.addRow("Color Bar Label:", self.cbar_label)
+
+        layout.addWidget(g)
+
+        self._on_plot_type_changed()  # set initial visibility
+
+        # ── Average point ──
+        g = QGroupBox("Average Point")
+        fl = QFormLayout(g)
+
+        self.show_avg = QCheckBox()
+        self.show_avg.setChecked(self._cfg.get('show_average_point', True))
+        fl.addRow("Show Average:", self.show_avg)
+
+        self.avg_only_all = QCheckBox()
+        self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
+        fl.addRow("Only Particles With All 3:", self.avg_only_all)
+
+        self.show_avg_text = QCheckBox()
+        self.show_avg_text.setChecked(self._cfg.get('show_average_text', True))
+        fl.addRow("Show Stats Text:", self.show_avg_text)
+
+        self.show_ellipse = QCheckBox()
+        self.show_ellipse.setChecked(self._cfg.get('show_confidence_ellipse', False))
+        fl.addRow("Show 2σ Confidence Ellipse:", self.show_ellipse)
+
+        self.avg_size = QSpinBox()
+        self.avg_size.setRange(20, 300)
+        self.avg_size.setValue(self._cfg.get('average_point_size', 100))
+        fl.addRow("Average Marker Size:", self.avg_size)
+
+        self._avg_color = QColor(self._cfg.get('average_point_color', '#FF0000'))
+        self.avg_color_btn = QPushButton()
+        self.avg_color_btn.setStyleSheet(
+            f"background-color: {self._avg_color.name()}; min-height: 25px; border: 1px solid black;")
+        self.avg_color_btn.clicked.connect(self._pick_avg_color)
+        fl.addRow("Average Color:", self.avg_color_btn)
+
+        layout.addWidget(g)
+
+        # ── Filtering ──
+        g = QGroupBox("Filtering")
+        fl = QFormLayout(g)
+
+        self.min_total = QDoubleSpinBox()
+        self.min_total.setRange(0.0, 1e9)
+        self.min_total.setDecimals(2)
+        self.min_total.setValue(self._cfg.get('min_total', 0.0))
+        fl.addRow("Min Total (A+B+C):", self.min_total)
+
+        self.max_particles = QSpinBox()
+        self.max_particles.setRange(1, 100_000_000)
+        self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
+        fl.addRow("Max Particles:", self.max_particles)
+
+        layout.addWidget(g)
+
+        # ── Sample colors (multi) ──
+        if self._is_multi:
+            g = QGroupBox("Sample Colors & Names")
+            vl = QVBoxLayout(g)
+            self._color_btns = {}
+            self._name_edits = {}
+            colors = self._cfg.get('sample_colors', {})
+            mappings = self._cfg.get('sample_name_mappings', {})
+            for i, sn in enumerate(self._sample_names):
+                row = QHBoxLayout()
+                ne = QLineEdit(mappings.get(sn, sn))
+                ne.setFixedWidth(180)
+                row.addWidget(ne)
+                self._name_edits[sn] = ne
+
+                cb = QPushButton()
+                cb.setFixedSize(30, 22)
+                c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                cb.setStyleSheet(f"background-color: {c}; border: 1px solid black;")
+                cb.clicked.connect(lambda _, s=sn, b=cb: self._pick_sample_color(s, b))
+                row.addWidget(cb)
+                self._color_btns[sn] = (cb, c)
+
+                # Reset name button
+                rst = QPushButton("↺")
+                rst.setFixedSize(22, 22)
+                rst.setToolTip(f"Reset to: {sn}")
+                rst.clicked.connect(lambda _, orig=sn: self._reset_name(orig))
+                row.addWidget(rst)
+
+                row.addStretch()
+                w = QWidget()
+                w.setLayout(row)
+                vl.addWidget(w)
+            layout.addWidget(g)
+
+        # ── Font settings ──
+        self._font_group = FontSettingsGroup(self._cfg)
+        layout.addWidget(self._font_group.build())
+
+        # ── OK / Cancel ──
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        outer.addWidget(btns)
+
+    # ── Slots ───────────────────────────────
+
+    def _on_plot_type_changed(self):
+        is_scatter = self.plot_type.currentText() == 'Scatter Plot'
+        self._scatter_frame.setVisible(is_scatter)
+        self._hexbin_frame.setVisible(not is_scatter)
+
+    def _pick_avg_color(self):
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(self._avg_color, self, "Average Point Color")
+        if c.isValid():
+            self._avg_color = c
+            self.avg_color_btn.setStyleSheet(
+                f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
+
+    def _pick_sample_color(self, name, btn):
+        from PySide6.QtWidgets import QColorDialog
+        cur = QColor(self._color_btns[name][1])
+        c = QColorDialog.getColor(cur, self, f"Color for {name}")
+        if c.isValid():
+            btn.setStyleSheet(f"background-color: {c.name()}; border: 1px solid black;")
+            self._color_btns[name] = (btn, c.name())
+
+    def _reset_name(self, original):
+        if original in self._name_edits:
+            self._name_edits[original].setText(original)
+
+    # ── Collect ─────────────────────────────
+
+    def collect(self) -> dict:
+        out = dict(self._cfg)
+        ea = self.elem_a.currentText()
+        out['element_a'] = '' if ea.startswith('--') else ea
+        eb = self.elem_b.currentText()
+        out['element_b'] = '' if eb.startswith('--') else eb
+        ec = self.elem_c.currentText()
+        out['element_c'] = '' if ec.startswith('--') else ec
+        ce = self.color_elem.currentText()
+        out['color_element'] = '' if ce.startswith('(') else ce
+
+        out['data_type_display'] = self.data_type.currentText()
+        out['plot_type'] = self.plot_type.currentText()
+        out['marker_size'] = self.marker_size.value()
+        out['marker_alpha'] = self.marker_alpha.value() / 100.0
+        out['hexbin_gridsize'] = self.hexbin_grid.value()
+        out['hexbin_alpha'] = self.hexbin_alpha.value() / 100.0
+        out['show_grid'] = self.show_grid.isChecked()
+        out['colormap'] = self.colormap.currentText()
+        out['show_colorbar'] = self.show_colorbar.isChecked()
+        out['colorbar_label'] = self.cbar_label.text()
+
+        out['show_average_point'] = self.show_avg.isChecked()
+        out['average_only_with_all_elements'] = self.avg_only_all.isChecked()
+        out['show_average_text'] = self.show_avg_text.isChecked()
+        out['show_confidence_ellipse'] = self.show_ellipse.isChecked()
+        out['average_point_size'] = self.avg_size.value()
+        out['average_point_color'] = self._avg_color.name()
+
+        out['min_total'] = self.min_total.value()
+        out['max_particles'] = self.max_particles.value()
+
+        if self._is_multi:
+            out['display_mode'] = self.display_mode.currentText()
+            out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
+            out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
+
+        out.update(self._font_group.collect())
+        return out
+
+
+# ═══════════════════════════════════════════════
+# Display Dialog (right-click context menu)
+# ═══════════════════════════════════════════════
 
 class TriangleDisplayDialog(QDialog):
-    """
-    Enhanced Dialog for triangle/ternary plot visualization with multiple sample support and font settings.
-    """
-    
+    """Full-figure dialog with right-click context menu for all settings."""
+
     def __init__(self, triangle_node, parent_window=None):
-        """
-        Initialize the triangle display dialog.
-        
-        Args:
-            triangle_node: Triangle plot node instance
-            parent_window: Parent window widget
-        """
         super().__init__(parent_window)
-        self.triangle_node = triangle_node
+        self.node = triangle_node
         self.parent_window = parent_window
-    
         self.setWindowTitle("Ternary Composition Analysis")
-        self.setMinimumSize(1600, 900)
-        
-        self.setup_ui()
-        self.update_display()
-        
-        self.triangle_node.configuration_changed.connect(self.update_display)
-    
-    def is_multiple_sample_data(self):
-        """
-        Check if we're dealing with multiple sample data.
-        
-        Returns:
-            bool: True if multiple sample data, False otherwise
-        """
-        return (hasattr(self.triangle_node, 'input_data') and 
-                self.triangle_node.input_data and 
-                self.triangle_node.input_data.get('type') == 'multiple_sample_data')
-    
-    def get_font_families(self):
-        """
-        Get list of available font families.
-        
-        Returns:
-            list: List of font family names
-        """
-        return [
-            "Times New Roman", "Arial", "Helvetica", "Calibri", "Verdana",
-            "Tahoma", "Georgia", "Trebuchet MS", "Comic Sans MS", "Impact",
-            "Lucida Console", "Courier New", "Palatino", "Garamond", "Book Antiqua"
-        ]
-    
-    def setup_ui(self):
-        """
-        Set up the user interface.
-        
-        Returns:
-            None
-        """
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        
-        config_panel = self.create_config_panel()
-        config_panel.setFixedWidth(500)
-        layout.addWidget(config_panel)
-        
-        plot_panel = self.create_plot_panel()
-        layout.addWidget(plot_panel, stretch=1)
-        
-    def create_config_panel(self):
-        """
-        Create the triangle plot configuration panel.
-        
-        Returns:
-            QScrollArea: Scrollable configuration panel widget
-        """
-        panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: #F8FAFC;
-                border: 1px solid #E2E8F0;
-                border-radius: 8px;
-            }
-        """)
-        
-        scroll = QScrollArea()
-        scroll.setWidget(panel)
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
-        
-        title = QLabel("Trenary Plot Settings")
-        title.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                font-weight: bold;
-                color: #1F2937;
-                margin-bottom: 10px;
-            }
-        """)
-        layout.addWidget(title)
-        
-        if self.is_multiple_sample_data():
-            multiple_group = QGroupBox("Multiple Sample Display")
-            multiple_layout = QFormLayout(multiple_group)
-            
-            self.display_mode_combo = QComboBox()
-            self.display_mode_combo.addItems([
-                'Individual Subplots', 
-                'Side by Side Subplots',
-                'Combined Plot',
-                'Overlaid Samples'
-            ])
-            self.display_mode_combo.setCurrentText(self.triangle_node.config.get('display_mode', 'Individual Subplots'))
-            self.display_mode_combo.currentTextChanged.connect(self.on_config_changed)
-            multiple_layout.addRow("Display Mode:", self.display_mode_combo)
-            
-            layout.addWidget(multiple_group)
-        
-        element_group = QGroupBox("Element Selection")
-        element_layout = QFormLayout(element_group)
-        
-        available_elements = self.get_available_elements()
-        
-        self.element_a_combo = QComboBox()
-        self.element_a_combo.addItems(['-- Select Element A --'] + available_elements)
-        self.element_a_combo.setCurrentText(self.triangle_node.config.get('element_a', '-- Select Element A --'))
-        self.element_a_combo.currentTextChanged.connect(self.on_config_changed)
-        element_layout.addRow("Element A (Bottom Left):", self.element_a_combo)
-        
-        self.element_b_combo = QComboBox()
-        self.element_b_combo.addItems(['-- Select Element B --'] + available_elements)
-        self.element_b_combo.setCurrentText(self.triangle_node.config.get('element_b', '-- Select Element B --'))
-        self.element_b_combo.currentTextChanged.connect(self.on_config_changed)
-        element_layout.addRow("Element B (Bottom Right):", self.element_b_combo)
-        
-        self.element_c_combo = QComboBox()
-        self.element_c_combo.addItems(['-- Select Element C --'] + available_elements)
-        self.element_c_combo.setCurrentText(self.triangle_node.config.get('element_c', '-- Select Element C --'))
-        self.element_c_combo.currentTextChanged.connect(self.on_config_changed)
-        element_layout.addRow("Element C (Top):", self.element_c_combo)
-        
-        layout.addWidget(element_group)
-        
-        data_group = QGroupBox("Data Type")
-        data_layout = QVBoxLayout(data_group)
-        
-        self.data_type_combo = QComboBox()
-        self.data_type_combo.addItems([
-            'Counts (%)',
-            'Element Mass (%)', 
-            'Particle Mass (%)',
-            'Element Moles (%)',
-            'Particle Moles (%)'
-        ])
-        self.data_type_combo.setCurrentText(self.triangle_node.config.get('data_type_display', 'Counts (%)'))
-        self.data_type_combo.currentTextChanged.connect(self.on_data_type_changed)
-        data_layout.addWidget(self.data_type_combo)
-        
-        layout.addWidget(data_group)
+        self.setMinimumSize(1000, 750)
 
-        font_group = QGroupBox("Font Settings")
-        font_layout = QFormLayout(font_group)
-        
-        self.font_family_combo = QComboBox()
-        self.font_family_combo.addItems(self.get_font_families())
-        self.font_family_combo.setCurrentText(self.triangle_node.config.get('font_family', 'Times New Roman'))
-        self.font_family_combo.currentTextChanged.connect(self.on_config_changed)
-        font_layout.addRow("Font Family:", self.font_family_combo)
-        
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(6, 72)
-        self.font_size_spin.setValue(self.triangle_node.config.get('font_size', 18))
-        self.font_size_spin.valueChanged.connect(self.on_config_changed)
-        font_layout.addRow("Font Size:", self.font_size_spin)
-        
-        font_style_layout = QHBoxLayout()
-        self.font_bold_checkbox = QCheckBox("Bold")
-        self.font_bold_checkbox.setChecked(self.triangle_node.config.get('font_bold', False))
-        self.font_bold_checkbox.stateChanged.connect(self.on_config_changed)
-        self.font_italic_checkbox = QCheckBox("Italic")
-        self.font_italic_checkbox.setChecked(self.triangle_node.config.get('font_italic', False))
-        self.font_italic_checkbox.stateChanged.connect(self.on_config_changed)
-        font_style_layout.addWidget(self.font_bold_checkbox)
-        font_style_layout.addWidget(self.font_italic_checkbox)
-        font_style_layout.addStretch()
-        font_layout.addRow("Font Style:", font_style_layout)
-        
-        self.font_color_button = QPushButton()
-        self.font_color = QColor(self.triangle_node.config.get('font_color', '#000000'))
-        self.font_color_button.setStyleSheet(f"background-color: {self.font_color.name()}; min-height: 30px;")
-        self.font_color_button.clicked.connect(lambda: self.choose_color('font'))
-        font_layout.addRow("Font Color:", self.font_color_button)
-        
-        layout.addWidget(font_group)
- 
-        style_group = QGroupBox("Plot Style")
-        style_layout = QFormLayout(style_group)
-        
-        self.plot_type_combo = QComboBox()
-        self.plot_type_combo.addItems(['Scatter Plot', 'Density Plot (Hexbin)'])
-        self.plot_type_combo.setCurrentText(self.triangle_node.config.get('plot_type', 'Scatter Plot'))
-        self.plot_type_combo.currentTextChanged.connect(self.on_plot_type_changed)
-        style_layout.addRow("Plot Type:", self.plot_type_combo)
-        
-        average_group = QGroupBox("Average Point Display")
-        average_layout = QFormLayout(average_group)
+        self._setup_ui()
+        self._refresh()
+        self.node.configuration_changed.connect(self._refresh)
 
-        self.show_average_checkbox = QCheckBox()
-        self.show_average_checkbox.setChecked(self.triangle_node.config.get('show_average_point', True))
-        self.show_average_checkbox.stateChanged.connect(self.on_config_changed)
-        average_layout.addRow("Show Average Point:", self.show_average_checkbox)
+    # ── Helpers ─────────────────────────────
 
-        self.average_color_button = QPushButton()
-        self.average_color = QColor(self.triangle_node.config.get('average_point_color', '#FF0000'))
-        self.average_color_button.setStyleSheet(f"background-color: {self.average_color.name()}; min-height: 30px;")
-        self.average_color_button.clicked.connect(lambda: self.choose_color('average'))
-        average_layout.addRow("Average Point Color:", self.average_color_button)
+    def _is_multi(self) -> bool:
+        return (self.node.input_data and
+                self.node.input_data.get('type') == 'multiple_sample_data')
 
-        self.average_size_spin = QSpinBox()
-        self.average_size_spin.setRange(20, 200)
-        self.average_size_spin.setValue(self.triangle_node.config.get('average_point_size', 100))
-        self.average_size_spin.valueChanged.connect(self.on_config_changed)
-        average_layout.addRow("Average Point Size:", self.average_size_spin)
-
-        self.show_average_text_checkbox = QCheckBox()
-        self.show_average_text_checkbox.setChecked(self.triangle_node.config.get('show_average_text', True))
-        self.show_average_text_checkbox.stateChanged.connect(self.on_config_changed)
-        average_layout.addRow("Show Average Text:", self.show_average_text_checkbox)
-
-        self.average_all_elements_checkbox = QCheckBox()
-        self.average_all_elements_checkbox.setChecked(self.triangle_node.config.get('average_only_with_all_elements', True))
-        self.average_all_elements_checkbox.stateChanged.connect(self.on_config_changed)
-        average_layout.addRow("Average Only With All 3 Elements:", self.average_all_elements_checkbox)
-
-        layout.addWidget(average_group)
-                        
-        self.scatter_controls_widget = QWidget()
-        scatter_controls_layout = QFormLayout(self.scatter_controls_widget)
-        scatter_controls_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.marker_size_spin = QSpinBox()
-        self.marker_size_spin.setRange(1, 100)
-        self.marker_size_spin.setValue(self.triangle_node.config.get('marker_size', 20))
-        self.marker_size_spin.valueChanged.connect(self.on_config_changed)
-        scatter_controls_layout.addRow("Marker Size:", self.marker_size_spin)
-        
-        self.marker_alpha_slider = QSlider(Qt.Horizontal)
-        self.marker_alpha_slider.setRange(1, 100)
-        self.marker_alpha_slider.setValue(int(self.triangle_node.config.get('marker_alpha', 0.7) * 100))
-        self.marker_alpha_slider.valueChanged.connect(self.on_config_changed)
-        scatter_controls_layout.addRow("Transparency:", self.marker_alpha_slider)
-        
-        style_layout.addRow(self.scatter_controls_widget)
-        
-        self.hexbin_controls_widget = QWidget()
-        hexbin_controls_layout = QFormLayout(self.hexbin_controls_widget)
-        hexbin_controls_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.hexbin_gridsize_spin = QSpinBox()
-        self.hexbin_gridsize_spin.setRange(10, 100)
-        self.hexbin_gridsize_spin.setValue(self.triangle_node.config.get('hexbin_gridsize', 30))
-        self.hexbin_gridsize_spin.valueChanged.connect(self.on_config_changed)
-        hexbin_controls_layout.addRow("Hexbin Grid Size:", self.hexbin_gridsize_spin)
-        
-        self.hexbin_alpha_slider = QSlider(Qt.Horizontal)
-        self.hexbin_alpha_slider.setRange(1, 100)
-        self.hexbin_alpha_slider.setValue(int(self.triangle_node.config.get('hexbin_alpha', 0.8) * 100))
-        self.hexbin_alpha_slider.valueChanged.connect(self.on_config_changed)
-        hexbin_controls_layout.addRow("Hexbin Transparency:", self.hexbin_alpha_slider)
-        
-        style_layout.addRow(self.hexbin_controls_widget)
-        
-        self.show_grid_checkbox = QCheckBox()
-        self.show_grid_checkbox.setChecked(self.triangle_node.config.get('show_grid', True))
-        self.show_grid_checkbox.stateChanged.connect(self.on_config_changed)
-        style_layout.addRow("Show Grid:", self.show_grid_checkbox)
-        
-        self.colormap_combo = QComboBox()
-        colormaps = colorheatmap
-        self.colormap_combo.addItems(colormaps)
-        self.colormap_combo.setCurrentText(self.triangle_node.config.get('colormap', 'YlGn'))
-        self.colormap_combo.currentTextChanged.connect(self.on_config_changed)
-        style_layout.addRow("Color Map:", self.colormap_combo)
-        
-        self.show_colorbar_checkbox = QCheckBox()
-        self.show_colorbar_checkbox.setChecked(self.triangle_node.config.get('show_colorbar', True))
-        self.show_colorbar_checkbox.stateChanged.connect(self.on_config_changed)
-        style_layout.addRow("Show Color Bar:", self.show_colorbar_checkbox)
-        
-        self.colorbar_label_edit = QLineEdit()
-        self.colorbar_label_edit.setText(self.triangle_node.config.get('colorbar_label', 'Density'))
-        self.colorbar_label_edit.textChanged.connect(self.on_config_changed)
-        style_layout.addRow("Color Bar Label:", self.colorbar_label_edit)
-        
-        layout.addWidget(style_group)
-        
-        self.update_plot_type_controls()
-        
-        if self.is_multiple_sample_data():
-            self.sample_colors_group = QGroupBox("Sample Colors & Names")
-            self.sample_colors_layout = QVBoxLayout(self.sample_colors_group)
-            self.update_sample_color_controls()
-            layout.addWidget(self.sample_colors_group)
-        
-        filter_group = QGroupBox("Filter Settings")
-        filter_layout = QFormLayout(filter_group)
-        
-        self.min_total_spin = QDoubleSpinBox()
-        self.min_total_spin.setRange(0.0, 1000.0)
-        self.min_total_spin.setDecimals(2)
-        self.min_total_spin.setValue(self.triangle_node.config.get('min_total', 0.0))
-        self.min_total_spin.valueChanged.connect(self.on_config_changed)
-        filter_layout.addRow("Min Total (sum of 3 elements):", self.min_total_spin)
-        
-        self.max_particles_spin = QSpinBox()
-        self.max_particles_spin.setRange(1, 10000000)
-        self.max_particles_spin.setValue(self.triangle_node.config.get('max_particles', 10000000))
-        self.max_particles_spin.valueChanged.connect(self.on_config_changed)
-        filter_layout.addRow("Max Particles to Plot:", self.max_particles_spin)
-        
-        layout.addWidget(filter_group)
-        
-        stats_group = QGroupBox("Data Statistics")
-        stats_layout = QVBoxLayout(stats_group)
-        
-        self.stats_label = QLabel("Connect data to see statistics")
-        self.stats_label.setStyleSheet("color: #6B7280; font-size: 11px;")
-        self.stats_label.setWordWrap(True)
-        stats_layout.addWidget(self.stats_label)
-        
-        layout.addWidget(stats_group)
-        
-        button_layout = QHBoxLayout()
-
-        download_button = QPushButton("Download Figure")
-        download_button.setStyleSheet("""
-            QPushButton {
-                background-color: #80D8C3;
-                color: white;
-                padding: 10px 20px;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #059669;
-            }
-            QPushButton:pressed {
-                background-color: #047857;
-            }
-        """)
-        download_button.clicked.connect(self.download_figure)
-        button_layout.addWidget(download_button)
-
-        layout.addLayout(button_layout)
-        layout.addStretch()
-        
-        return scroll
-    
-    def on_plot_type_changed(self):
-        """
-        Handle plot type change.
-        
-        Returns:
-            None
-        """
-        self.update_plot_type_controls()
-        self.on_config_changed()
-    
-    def update_plot_type_controls(self):
-        """
-        Show/hide controls based on plot type.
-        
-        Returns:
-            None
-        """
-        plot_type = self.plot_type_combo.currentText()
-        
-        if plot_type == 'Scatter Plot':
-            self.scatter_controls_widget.setVisible(True)
-            self.hexbin_controls_widget.setVisible(False)
-        else:
-            self.scatter_controls_widget.setVisible(False)
-            self.hexbin_controls_widget.setVisible(True)
-    
-    def choose_color(self, color_type):
-        """
-        Open color dialog for font color or average point color.
-        
-        Args:
-            color_type (str): Type of color to choose ('font' or 'average')
-        
-        Returns:
-            None
-        """
-        if color_type == 'font':
-            color = QColorDialog.getColor(self.font_color, self, "Select Font Color")
-            if color.isValid():
-                self.font_color = color
-                self.font_color_button.setStyleSheet(f"background-color: {color.name()}; min-height: 30px;")
-                self.on_config_changed()
-        elif color_type == 'average':
-            color = QColorDialog.getColor(self.average_color, self, "Select Average Point Color")
-            if color.isValid():
-                self.average_color = color
-                self.average_color_button.setStyleSheet(f"background-color: {color.name()}; min-height: 30px;")
-                self.on_config_changed()
-
-    def create_font_properties(self, config):
-        """
-        Create matplotlib font properties from config.
-        
-        Args:
-            config (dict): Configuration dictionary with font settings
-        
-        Returns:
-            fm.FontProperties: Matplotlib font properties object
-        """
-        font_family = config.get('font_family', 'Times New Roman')
-        font_size = config.get('font_size', 18)
-        is_bold = config.get('font_bold', False)
-        is_italic = config.get('font_italic', False)
-        
-        font_props = fm.FontProperties(
-            family=font_family,
-            size=font_size,
-            weight='bold' if is_bold else 'normal',
-            style='italic' if is_italic else 'normal'
-        )
-        
-        return font_props
-
-    def apply_font_to_axes(self, ax, config):
-        """
-        Apply font settings to matplotlib axes including legend.
-        
-        Args:
-            ax: Matplotlib axes object
-            config (dict): Configuration dictionary with font settings
-        
-        Returns:
-            None
-        """
-        try:
-            font_props = self.create_font_properties(config)
-            font_color = config.get('font_color', '#000000')
-            
-            for axis_name in ['taxis', 'laxis', 'raxis']:
-                if hasattr(ax, axis_name):
-                    axis = getattr(ax, axis_name)
-                    for tick_label in axis.get_ticklabels():
-                        tick_label.set_fontproperties(font_props)
-                        tick_label.set_color(font_color)
-            
-            legend = ax.get_legend()
-            if legend is not None:
-                for text in legend.get_texts():
-                    text.set_fontproperties(font_props)
-                    text.set_color(font_color)
-                
-                legend.get_frame().set_facecolor('white')
-                legend.get_frame().set_alpha(0.9)
-                legend.get_frame().set_edgecolor('gray')
-                legend.get_frame().set_linewidth(1)
-            
-            title = ax.get_title()
-            if title:
-                ax.set_title(title, fontproperties=font_props, color=font_color)
-                
-        except Exception as e:
-            print(f"Error applying font to axes: {e}")
-
-    def apply_font_to_colorbar(self, cbar, config):
-        """
-        Apply font settings to colorbar.
-        
-        Args:
-            cbar: Matplotlib colorbar object
-            config (dict): Configuration dictionary with font settings
-        
-        Returns:
-            None
-        """
-        try:
-            font_props = self.create_font_properties(config)
-            font_color = config.get('font_color', '#000000')
-            
-            cbar.set_label(cbar.get_label(), fontproperties=font_props, color=font_color)
-            
-            for tick_label in cbar.ax.get_yticklabels():
-                tick_label.set_fontproperties(font_props)
-                tick_label.set_color(font_color)
-                
-        except Exception as e:
-            print(f"Error applying font to colorbar: {e}")
-    
-    def get_available_elements(self):
-        """
-        Get available elements from input data.
-        
-        Returns:
-            list: Sorted list of available element names
-        """
-        if not self.triangle_node.input_data:
-            return []
-        
-        elements = set()
-        particles = self.triangle_node.input_data.get('particle_data', [])
-        
-        for particle in particles:
-            elements.update(particle.get('elements', {}).keys())
-        
-        return sorted(list(elements))
-    
-    def on_data_type_changed(self):
-        """
-        Handle data type selection change.
-        
-        Returns:
-            None
-        """
-        self.on_config_changed()
-    
-    def update_sample_color_controls(self):
-        """
-        Update color controls for multiple samples with editable names.
-        
-        Returns:
-            None
-        """
-        for i in reversed(range(self.sample_colors_layout.count())):
-            self.sample_colors_layout.itemAt(i).widget().deleteLater()
-        
-        sample_names = self.get_available_sample_names()
-        
-        if not sample_names:
-            no_data_label = QLabel("No samples available")
-            no_data_label.setAlignment(Qt.AlignCenter)
-            no_data_label.setStyleSheet("color: gray; font-style: italic;")
-            self.sample_colors_layout.addWidget(no_data_label)
-            return
-        
-        default_sample_colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', 
-                                '#06B6D4', '#F97316', '#84CC16', '#EC4899', '#6366F1']
-        
-        sample_colors = self.triangle_node.config.get('sample_colors', {})
-        
-        sample_name_mappings = self.triangle_node.config.get('sample_name_mappings', {})
-        
-        self.sample_name_edits = {}
-        
-        for i, original_sample_name in enumerate(sample_names):
-            sample_layout = QHBoxLayout()
-            
-            name_edit = QLineEdit()
-            name_edit.setFixedWidth(200)
-            
-            display_name = sample_name_mappings.get(original_sample_name, original_sample_name)
-            name_edit.setText(display_name)
-            
-            name_edit.setStyleSheet("""
-                QLineEdit {
-                    padding: 2px 5px;
-                    border: 1px solid #E2E8F0;
-                    border-radius: 4px;
-                    font-size: 11px;
-                }
-                QLineEdit:focus {
-                    border: 1px solid #3B82F6;
-                }
-            """)
-            
-            name_edit.textChanged.connect(
-                lambda text, orig=original_sample_name: self.on_sample_name_changed(orig, text)
-            )
-            
-            sample_layout.addWidget(name_edit)
-            self.sample_name_edits[original_sample_name] = name_edit
-            
-            color_button = QPushButton()
-            color_button.setFixedSize(30, 20)
-            
-            if original_sample_name in sample_colors:
-                color = sample_colors[original_sample_name]
-            else:
-                color = default_sample_colors[i % len(default_sample_colors)]
-                sample_colors[original_sample_name] = color
-            
-            color_button.setStyleSheet(f"background-color: {color}; border: 1px solid black;")
-            color_button.clicked.connect(
-                lambda checked, sample=original_sample_name, btn=color_button: self.select_sample_color(sample, btn)
-            )
-            
-            sample_layout.addWidget(color_button)
-            
-            reset_button = QPushButton("↺")
-            reset_button.setFixedSize(20, 20)
-            reset_button.setToolTip(f"Reset to original name: {original_sample_name}")
-            reset_button.setStyleSheet("""
-                QPushButton {
-                    font-size: 12px;
-                    padding: 0;
-                    border: 1px solid #E2E8F0;
-                    border-radius: 3px;
-                    background-color: #F3F4F6;
-                }
-                QPushButton:hover {
-                    background-color: #E5E7EB;
-                }
-            """)
-            reset_button.clicked.connect(
-                lambda checked, orig=original_sample_name: self.reset_sample_name(orig)
-            )
-            
-            sample_layout.addWidget(reset_button)
-            sample_layout.addStretch()
-            
-            container = QWidget()
-            container.setLayout(sample_layout)
-            self.sample_colors_layout.addWidget(container)
-        
-        self.triangle_node.config['sample_colors'] = sample_colors
-        self.triangle_node.config['sample_name_mappings'] = sample_name_mappings
-
-    def on_sample_name_changed(self, original_name, new_name):
-        """
-        Handle sample name change.
-        
-        Args:
-            original_name (str): Original sample name
-            new_name (str): New display name
-        
-        Returns:
-            None
-        """
-        if 'sample_name_mappings' not in self.triangle_node.config:
-            self.triangle_node.config['sample_name_mappings'] = {}
-        
-        self.triangle_node.config['sample_name_mappings'][original_name] = new_name
-        
-        self.on_config_changed()
-
-    def reset_sample_name(self, original_name):
-        """
-        Reset sample name to original.
-        
-        Args:
-            original_name (str): Original sample name to reset to
-        
-        Returns:
-            None
-        """
-        if original_name in self.sample_name_edits:
-            self.sample_name_edits[original_name].setText(original_name)
-        
-        if 'sample_name_mappings' in self.triangle_node.config:
-            self.triangle_node.config['sample_name_mappings'].pop(original_name, None)
-        
-        self.on_config_changed()
-
-    def get_display_name(self, original_name):
-        """
-        Get display name for a sample (either custom or original).
-        
-        Args:
-            original_name (str): Original sample name
-        
-        Returns:
-            str: Display name for the sample
-        """
-        mappings = self.triangle_node.config.get('sample_name_mappings', {})
-        return mappings.get(original_name, original_name)
-        
-    def get_available_sample_names(self):
-        """
-        Get available sample names from input data.
-        
-        Returns:
-            list: List of sample names
-        """
-        if self.is_multiple_sample_data():
-            return self.triangle_node.input_data.get('sample_names', [])
+    def _sample_names(self) -> list:
+        if self._is_multi():
+            return self.node.input_data.get('sample_names', [])
         return []
-    
-    def select_sample_color(self, sample_name, button):
-        """
-        Open color dialog for sample.
-        
-        Args:
-            sample_name (str): Name of the sample
-            button (QPushButton): Button widget to update with color
-        
-        Returns:
-            None
-        """
-        current_color = self.triangle_node.config.get('sample_colors', {}).get(sample_name, '#3B82F6')
-        display_name = self.get_display_name(sample_name)
-        color = QColorDialog.getColor(QColor(current_color), self, f"Select Color for {display_name}")
-        
-        if color.isValid():
-            color_hex = color.name()
-            button.setStyleSheet(f"background-color: {color_hex}; border: 1px solid black;")
-            
-            if 'sample_colors' not in self.triangle_node.config:
-                self.triangle_node.config['sample_colors'] = {}
-            self.triangle_node.config['sample_colors'][sample_name] = color_hex
-            
-            self.on_config_changed()
-    
-    def download_figure(self):
-        """
-        Download the current figure.
-        
-        Returns:
-            None
-        """
-        from PySide6.QtWidgets import QFileDialog, QMessageBox
-        
-        custom_title = self.triangle_node.config.get('custom_title', 'triangle_plot')
-        safe_filename = "".join(c for c in custom_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_filename = safe_filename.replace(' ', '_').lower()
-        
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Trernary Plot",
-            f"{safe_filename}.png",
-            "PNG Files (*.png);;PDF Files (*.pdf);;SVG Files (*.svg);;JPEG Files (*.jpg);;All Files (*)"
-        )
-        
-        if file_path:
-            try:
-                self.figure.savefig(file_path, dpi=300, bbox_inches='tight', 
-                                facecolor='white', edgecolor='none')
-                QMessageBox.information(self, "✅ Success", 
-                                    f"Trernary plot saved to:\n{file_path}")
-            except Exception as e:
-                QMessageBox.critical(self, "❌ Error", 
-                                f"Failed to save:\n{str(e)}")
-    
-    def create_plot_panel(self):
-        """
-        Create the expandable plot panel.
-        
-        Returns:
-            QFrame: Frame widget containing the plot canvas
-        """
-        panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border: 1px solid #E2E8F0;
-                border-radius: 8px;
-            }
-        """)
-        
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 10, 10, 10)
-        
-        self.figure = Figure(figsize=(16, 10), dpi=160, tight_layout=True)
-        self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
-        
-        return panel
 
-    def on_config_changed(self):
-        """
-        Handle configuration changes.
-        
-        Returns:
-            None
-        """
-        config_updates = {
-            'element_a': self.element_a_combo.currentText(),
-            'element_b': self.element_b_combo.currentText(),
-            'element_c': self.element_c_combo.currentText(),
-            'data_type_display': self.data_type_combo.currentText(),
-            'plot_type': self.plot_type_combo.currentText(),
-            'marker_size': self.marker_size_spin.value(),
-            'marker_alpha': self.marker_alpha_slider.value() / 100.0,
-            'hexbin_gridsize': self.hexbin_gridsize_spin.value(),
-            'hexbin_alpha': self.hexbin_alpha_slider.value() / 100.0,
-            'show_grid': self.show_grid_checkbox.isChecked(),
-            'colormap': self.colormap_combo.currentText(),
-            'show_colorbar': self.show_colorbar_checkbox.isChecked(),
-            'colorbar_label': self.colorbar_label_edit.text(),
-            'min_total': self.min_total_spin.value(),
-            'max_particles': self.max_particles_spin.value(),
-            'font_family': self.font_family_combo.currentText(),
-            'font_size': self.font_size_spin.value(),
-            'font_bold': self.font_bold_checkbox.isChecked(),
-            'font_italic': self.font_italic_checkbox.isChecked(),
-            'font_color': self.font_color.name(),
-            'show_average_point': self.show_average_checkbox.isChecked(),
-            'average_point_color': self.average_color.name(),
-            'average_point_size': self.average_size_spin.value(),
-            'show_average_text': self.show_average_text_checkbox.isChecked(),
-            'average_only_with_all_elements': self.average_all_elements_checkbox.isChecked()  
-
-        }
-        
-        if self.is_multiple_sample_data():
-            config_updates.update({
-                'display_mode': self.display_mode_combo.currentText()
-            })
-        
-        self.triangle_node.config.update(config_updates)
-        
-        self.update_display()
-        
-    def calculate_and_plot_average(self, ax, sample_data, config, sample_name=""):
-        """
-        Calculate and plot average point with statistics, optionally filtering for particles with all elements.
-        
-        Args:
-            ax: Matplotlib axes object
-            sample_data (list): List of sample data points
-            config (dict): Configuration dictionary
-            sample_name (str): Name of the sample
-        
-        Returns:
-            None
-        """
-        if not sample_data or not config.get('show_average_point', True):
-            return
-        
-        filtered_data = sample_data
-        if config.get('average_only_with_all_elements', True):
-            filtered_data = self.filter_particles_with_all_elements(sample_data, config)
-            
-            if not filtered_data:
-                return
-        
-        a_vals = [point['a'] for point in filtered_data]
-        b_vals = [point['b'] for point in filtered_data]
-        c_vals = [point['c'] for point in filtered_data]
-        
-        if not a_vals:
-            return
-        
-        mean_a = np.mean(a_vals)
-        mean_b = np.mean(b_vals)
-        mean_c = np.mean(c_vals)
-        
-        std_a = np.std(a_vals)
-        std_b = np.std(b_vals)
-        std_c = np.std(c_vals)
-        
-        mean_a_pct = mean_a * 100
-        mean_b_pct = mean_b * 100
-        mean_c_pct = mean_c * 100
-        std_a_pct = std_a * 100
-        std_b_pct = std_b * 100
-        std_c_pct = std_c * 100
-        
-        element_a = config.get('element_a', 'Element A')
-        element_b = config.get('element_b', 'Element B')
-        element_c = config.get('element_c', 'Element C')
-        
-        average_color = config.get('average_point_color', '#FF0000')
-        average_size = config.get('average_point_size', 100)
-        
-        filter_suffix = ""
-        if config.get('average_only_with_all_elements', True):
-            total_particles = len(sample_data)
-            filtered_particles = len(filtered_data)
-            if filtered_particles < total_particles:
-                filter_suffix = f" ({filtered_particles}/{total_particles} particles)"
-        
-        ax.scatter([mean_b], [mean_c], [mean_a],
-                s=average_size,
-                marker='*',
-                color=average_color,
-                edgecolors='black',
-                linewidth=2,
-                zorder=10,
-                label=f'Average{" (" + sample_name + ")" if sample_name else ""}{filter_suffix}')
-        
-        if config.get('show_average_text', True):
-            text_font = fm.FontProperties(
-                family='Times New Roman',
-                size=12,
-                weight='bold',
-                style='normal'
-            )
-            
-            text_x = mean_b + 0.2
-            text_y = mean_c + 0.01
-            text_z = 1 - text_x - text_y
-            
-            stats_text = f"{element_a}: {mean_a_pct:.1f}±{std_a_pct:.1f}%\n"
-            stats_text += f"{element_b}: {mean_b_pct:.1f}±{std_b_pct:.1f}%\n"
-            stats_text += f"{element_c}: {mean_c_pct:.1f}±{std_c_pct:.1f}%"
-            
-            ax.text(text_x, text_y, text_z, stats_text,
-                fontproperties=text_font,
-                color='black',
-                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8, edgecolor='gray'),
-                ha='left',
-                va='bottom',
-                zorder=11)
-                
-    def filter_particles_with_all_elements(self, sample_data, config):
-        """
-        Filter particles to only include those with all three selected elements detected.
-        
-        Args:
-            sample_data (list): List of sample data points
-            config (dict): Configuration dictionary
-        
-        Returns:
-            list: Filtered list of particles with all three elements
-        """
-        if not sample_data:
+    def _available_elements(self) -> list:
+        if not self.node.input_data:
             return []
-        
-        data_type_display = config.get('data_type_display', 'Counts (%)')
-        filtered_particles = []
-        
-        for point in sample_data:
-            
-            a_val = point.get('a', 0)
-            b_val = point.get('b', 0)
-            c_val = point.get('c', 0)
-            
-            if a_val > 0 and b_val > 0 and c_val > 0:
-                filtered_particles.append(point)
-        
-        return filtered_particles
-    
-    def get_particles_with_all_elements_from_raw_data(self, config):
-        """
-        Get count of particles that have all three elements from raw data.
-        
-        Args:
-            config (dict): Configuration dictionary
-        
-        Returns:
-            tuple: (particles_with_all_elements, total_particles)
-        """
-        if not self.input_data:
-            return 0, 0
-        
-        element_a = config.get('element_a', '-- Select Element A --')
-        element_b = config.get('element_b', '-- Select Element B --')
-        element_c = config.get('element_c', '-- Select Element C --')
-        
-        if (element_a.startswith('--') or element_b.startswith('--') or element_c.startswith('--')):
-            return 0, 0
-        
-        data_type_display = config.get('data_type_display', 'Counts (%)')
-        data_key_mapping = {
-            'Counts (%)': 'elements',
-            'Element Mass (%)': 'element_mass_fg',
-            'Particle Mass (%)': 'particle_mass_fg',
-            'Element Moles (%)': 'element_moles_fmol',
-            'Particle Moles (%)': 'particle_moles_fmol'
-        }
-        data_key = data_key_mapping.get(data_type_display, 'elements')
-        
-        particles = self.input_data.get('particle_data', [])
-        total_particles = 0
-        particles_with_all_elements = 0
-        
-        for particle in particles:
-            total_particles += 1
-            particle_data_dict = particle.get(data_key, {})
-            
-            val_a = particle_data_dict.get(element_a, 0)
-            val_b = particle_data_dict.get(element_b, 0)
-            val_c = particle_data_dict.get(element_c, 0)
-            
-            if data_key == 'elements':
-                if val_a > 0 and val_b > 0 and val_c > 0:
-                    particles_with_all_elements += 1
-            else:
-                if (not np.isnan(val_a) and not np.isnan(val_b) and not np.isnan(val_c) and
-                    val_a > 0 and val_b > 0 and val_c > 0):
-                    particles_with_all_elements += 1
-        
-        return particles_with_all_elements, total_particles
+        elems = set()
+        for p in self.node.input_data.get('particle_data', []):
+            elems.update(p.get('elements', {}).keys())
+        return sorted(elems)
 
-    def update_display(self):
-        """
-        Update the triangle plot display.
-        
-        Returns:
-            None
-        """
+    # ── UI ──────────────────────────────────
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(4)
+
+        self.figure = Figure(figsize=(14, 10), dpi=140, tight_layout=True)
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._show_context_menu)
+        main_layout.addWidget(self.canvas, stretch=1)
+
+        # Stats bar at bottom
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet(
+            "color: #6B7280; font-size: 11px; padding: 2px 8px; "
+            "background-color: #F8FAFC; border-top: 1px solid #E2E8F0;")
+        main_layout.addWidget(self.stats_label)
+
+    # ── Context menu ────────────────────────
+
+    def _show_context_menu(self, pos):
+        cfg = self.node.config
+        menu = QMenu(self)
+
+        # Quick toggles
+        toggle_menu = menu.addMenu("Quick Toggles")
+        self._add_toggle(toggle_menu, "Show Grid", 'show_grid')
+        self._add_toggle(toggle_menu, "Show Color Bar", 'show_colorbar')
+        self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
+        self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
+        self._add_toggle(toggle_menu, "Show 2σ Ellipse", 'show_confidence_ellipse')
+        self._add_toggle(toggle_menu, "Average: All 3 Required", 'average_only_with_all_elements')
+
+        # Element quick-switch
+        elems = self._available_elements()
+        if elems:
+            ea_menu = menu.addMenu("Element A (Left)")
+            for e in elems:
+                a = ea_menu.addAction(e)
+                a.setCheckable(True)
+                a.setChecked(e == cfg.get('element_a'))
+                a.triggered.connect(lambda _, el=e: self._set('element_a', el))
+
+            eb_menu = menu.addMenu("Element B (Right)")
+            for e in elems:
+                a = eb_menu.addAction(e)
+                a.setCheckable(True)
+                a.setChecked(e == cfg.get('element_b'))
+                a.triggered.connect(lambda _, el=e: self._set('element_b', el))
+
+            ec_menu = menu.addMenu("Element C (Top)")
+            for e in elems:
+                a = ec_menu.addAction(e)
+                a.setCheckable(True)
+                a.setChecked(e == cfg.get('element_c'))
+                a.triggered.connect(lambda _, el=e: self._set('element_c', el))
+
+            ce_menu = menu.addMenu("Color By Element")
+            a_none = ce_menu.addAction("(None — use index)")
+            a_none.setCheckable(True)
+            a_none.setChecked(not cfg.get('color_element'))
+            a_none.triggered.connect(lambda _: self._set('color_element', ''))
+            for e in elems:
+                a = ce_menu.addAction(e)
+                a.setCheckable(True)
+                a.setChecked(e == cfg.get('color_element'))
+                a.triggered.connect(lambda _, el=e: self._set('color_element', el))
+
+        # Data type
+        dt_menu = menu.addMenu("Data Type")
+        cur_dt = cfg.get('data_type_display', 'Counts (%)')
+        for dt in TERNARY_DATA_TYPE_OPTIONS:
+            a = dt_menu.addAction(dt)
+            a.setCheckable(True)
+            a.setChecked(dt == cur_dt)
+            a.triggered.connect(lambda _, d=dt: self._set('data_type_display', d))
+
+        # Plot type
+        pt_menu = menu.addMenu("Plot Type")
+        cur_pt = cfg.get('plot_type', 'Scatter Plot')
+        for pt in PLOT_TYPES:
+            a = pt_menu.addAction(pt)
+            a.setCheckable(True)
+            a.setChecked(pt == cur_pt)
+            a.triggered.connect(lambda _, p=pt: self._set('plot_type', p))
+
+        # Colormap
+        cm_menu = menu.addMenu("Color Map")
+        cur_cm = cfg.get('colormap', 'YlGn')
+        for cm in COLORMAPS:
+            a = cm_menu.addAction(cm)
+            a.setCheckable(True)
+            a.setChecked(cm == cur_cm)
+            a.triggered.connect(lambda _, c=cm: self._set('colormap', c))
+
+        # Display mode (multi)
+        if self._is_multi():
+            dm_menu = menu.addMenu("Display Mode")
+            cur = cfg.get('display_mode', DISPLAY_MODES[0])
+            for m in DISPLAY_MODES:
+                a = dm_menu.addAction(m)
+                a.setCheckable(True)
+                a.setChecked(m == cur)
+                a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
+
+        menu.addSeparator()
+
+        settings_action = menu.addAction("⚙  Configure…")
+        settings_action.triggered.connect(self._open_settings)
+
+        dl_action = menu.addAction("💾 Download Figure…")
+        dl_action.triggered.connect(
+            lambda: download_matplotlib_figure(self.figure, self, "ternary_plot.png"))
+
+        menu.exec(QCursor.pos())
+
+    def _add_toggle(self, menu, label, key):
+        a = menu.addAction(label)
+        a.setCheckable(True)
+        a.setChecked(self.node.config.get(key, False))
+        a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
+
+    def _toggle(self, key, value):
+        self.node.config[key] = value
+        self._refresh()
+
+    def _set(self, key, value):
+        self.node.config[key] = value
+        self._refresh()
+
+    def _open_settings(self):
+        dlg = TernarySettingsDialog(
+            self.node.config, self._available_elements(),
+            self._is_multi(), self._sample_names(), self)
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    # ── Refresh / draw ──────────────────────
+
+    def _refresh(self):
         try:
-            
             self.figure.clear()
-            
-            plot_data = self.triangle_node.extract_plot_data()
-            
+            plot_data = self.node.extract_plot_data()
+
             if not plot_data:
                 ax = self.figure.add_subplot(111)
-                ax.text(0.5, 0.5, 'No particle data available\nConnect to Sample Selector\nSelect 3 elements for triangle plot', 
+                ax.text(0.5, 0.5,
+                        'No particle data available\nConnect to Sample Selector\n'
+                        'Select 3 elements for ternary plot',
                         ha='center', va='center', transform=ax.transAxes,
                         fontsize=12, color='gray')
                 ax.set_xticks([])
                 ax.set_yticks([])
+                self.stats_label.setText("")
+                self.canvas.draw()
+                return
+
+            cfg = self.node.config
+
+            if self._is_multi():
+                mode = cfg.get('display_mode', DISPLAY_MODES[0])
+                if mode == 'Individual Subplots':
+                    self._draw_subplots(plot_data, cfg)
+                elif mode == 'Side by Side Subplots':
+                    self._draw_side_by_side(plot_data, cfg)
+                elif mode == 'Combined Plot':
+                    self._draw_combined(plot_data, cfg)
+                else:  # Overlaid
+                    self._draw_overlaid(plot_data, cfg)
             else:
-                config = self.triangle_node.config
-                
-                self.update_statistics(plot_data)
-                
-                if self.is_multiple_sample_data():
-                    self.create_multiple_sample_triangle_plots(plot_data, config)
-                else:
-                    self.create_triangle_plot(plot_data, config)
-            
+                ax = self.figure.add_subplot(111, projection='ternary')
+                self._draw_sample(ax, plot_data, cfg, "Ternary Plot")
+                apply_font_to_ternary(ax, cfg)
+
+            # Update stats bar
+            self._update_stats(plot_data)
+
             self.figure.tight_layout()
-            
             self.canvas.draw()
-            
+
         except Exception as e:
-            print(f"Error updating triangle display: {str(e)}")
+            print(f"Error updating ternary display: {e}")
             import traceback
             traceback.print_exc()
-    
-    def create_multiple_sample_triangle_plots(self, plot_data, config):
-        """
-        Create triangle plots for multiple samples.
-        
-        Args:
-            plot_data (dict): Dictionary of sample data by sample name
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        display_mode = config.get('display_mode', 'Individual Subplots')
-        sample_names = list(plot_data.keys())
-        
-        if display_mode == 'Individual Subplots':
-            self.create_subplot_triangle_plots(plot_data, config)
-        elif display_mode == 'Side by Side Subplots':
-            self.create_side_by_side_triangle_plots(plot_data, config)
-        elif display_mode == 'Combined Plot':
-            self.create_combined_triangle_plot(plot_data, config)
-        else:
-            self.create_overlaid_triangle_plots(plot_data, config)
-    
-    def create_subplot_triangle_plots(self, plot_data, config):
-        """
-        Create individual subplots for each sample.
-        
-        Args:
-            plot_data (dict): Dictionary of sample data by sample name
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        sample_names = list(plot_data.keys())
-        n_samples = len(sample_names)
-        
-        cols = min(2, n_samples)
-        rows = math.ceil(n_samples / cols)
-        
-        for i, sample_name in enumerate(sample_names):
-            ax = self.figure.add_subplot(rows, cols, i + 1, projection='ternary')
-            
-            sample_data = plot_data[sample_name]
-            if sample_data:
-                display_name = self.get_display_name(sample_name)
-                self.create_sample_triangle_plot(ax, sample_data, config, display_name)
-                self.apply_font_to_axes(ax, config)
-    
-    def create_side_by_side_triangle_plots(self, plot_data, config):
-        """
-        Create side-by-side triangle plots.
-        
-        Args:
-            plot_data (dict): Dictionary of sample data by sample name
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        sample_names = list(plot_data.keys())
-        n_samples = len(sample_names)
-        
-        for i, sample_name in enumerate(sample_names):
-            ax = self.figure.add_subplot(1, n_samples, i + 1, projection='ternary')
-            
-            sample_data = plot_data[sample_name]
-            if sample_data:
-                display_name = self.get_display_name(sample_name)
-                self.create_sample_triangle_plot(ax, sample_data, config, display_name)
-                self.apply_font_to_axes(ax, config)
-    
-    def create_combined_triangle_plot(self, plot_data, config):
-        """
-        Create a single triangle plot combining all samples.
-        
-        Args:
-            plot_data (dict): Dictionary of sample data by sample name
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        ax = self.figure.add_subplot(111, projection='ternary')
-        
-        combined_data = []
-        for sample_name, sample_data in plot_data.items():
-            combined_data.extend(sample_data)
-        
-        if combined_data:
-            self.create_sample_triangle_plot(ax, combined_data, config, f"Combined ({len(plot_data)} samples)")
-            self.apply_font_to_axes(ax, config)
-    
-    def create_overlaid_triangle_plots(self, plot_data, config):
-        """
-        Create overlaid triangle plots with different colors per sample.
-        
-        Args:
-            plot_data (dict): Dictionary of sample data by sample name
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        ax = self.figure.add_subplot(111, projection='ternary')
-        
-        element_a = config.get('element_a', 'Element A')
-        element_b = config.get('element_b', 'Element B')
-        element_c = config.get('element_c', 'Element C')
-        element_labels = [element_a, element_b, element_c]
-        
-        font_props = self.create_font_properties(config)
-        
-        TernaryPlotHelper.create_ternary_axes(ax, element_labels, config.get('show_grid', True), font_props)
-        
-        sample_colors = config.get('sample_colors', {})
-        default_colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
-        
-        for i, (sample_name, sample_data) in enumerate(plot_data.items()):
-            if sample_data:
-                color = sample_colors.get(sample_name, default_colors[i % len(default_colors)])
-                
-                display_name = self.get_display_name(sample_name)
-                self.calculate_and_plot_average(ax, sample_data, config, display_name)
 
-                b_vals = [point['b'] for point in sample_data]
-                c_vals = [point['c'] for point in sample_data]
-                a_vals = [point['a'] for point in sample_data]
-                
-                ax.scatter(b_vals, c_vals, a_vals,
-                          s=config.get('marker_size', 20),
-                          alpha=config.get('marker_alpha', 0.7),
-                          color=color,
-                          label=display_name,
-                          edgecolors='white',
-                          linewidth=0.5)
-        
-        legend = ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        
-        self.apply_font_to_axes(ax, config)
-    
-    def create_sample_triangle_plot(self, ax, sample_data, config, sample_name):
+    # ── Stats bar ───────────────────────────
+
+    def _update_stats(self, plot_data):
+        """Update the bottom statistics label."""
+        cfg = self.node.config
+
+        if self._is_multi():
+            total = sum(len(sd) for sd in plot_data.values())
+            n_samples = len(plot_data)
+            parts = [f"{n_samples} samples", f"{total:,} particles plotted"]
+
+            if cfg.get('average_only_with_all_elements', True):
+                n_all = 0
+                for sd in plot_data.values():
+                    n_all += sum(1 for p in sd if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
+                if n_all < total:
+                    parts.append(f"{n_all:,} with all 3 elements")
+
+            self.stats_label.setText("  ·  ".join(parts))
+        else:
+            total = len(plot_data)
+            parts = [f"{total:,} particles plotted"]
+
+            if cfg.get('average_only_with_all_elements', True):
+                n_all = sum(1 for p in plot_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
+                if n_all < total:
+                    parts.append(f"{n_all:,} with all 3 elements")
+
+            self.stats_label.setText("  ·  ".join(parts))
+
+    # ── Drawing a single sample onto an axes ─
+
+    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None):
         """
-        Create triangle plot for a single sample using mpltern with hexbin support.
-        
+        Draw a ternary scatter or hexbin for one sample.
+
         Args:
-            ax: Matplotlib axes object with ternary projection
-            sample_data (list): List of sample data points
-            config (dict): Configuration dictionary
-            sample_name (str): Name of the sample
-        
-        Returns:
-            None
+            ax:           mpltern axes
+            sample_data:  list of dicts with keys 'a', 'b', 'c' (and optionally 'color_val')
+            cfg:          config dict
+            title:        plot title string
+            sample_color: if provided, all markers use this color (for overlaid mode)
         """
         if not sample_data:
             return
-        
-        element_a = config.get('element_a', 'Element A')
-        element_b = config.get('element_b', 'Element B') 
-        element_c = config.get('element_c', 'Element C')
-        element_labels = [element_a, element_b, element_c]
-        
-        font_props = self.create_font_properties(config)
-        
-        TernaryPlotHelper.create_ternary_axes(ax, element_labels, config.get('show_grid', True), font_props)
-        
-        b_vals = [point['b'] for point in sample_data]
-        c_vals = [point['c'] for point in sample_data]
-        a_vals = [point['a'] for point in sample_data]
-        
-        if not b_vals:
-            return
-        
-        plot_type = config.get('plot_type', 'Scatter Plot')
-        show_colorbar = config.get('show_colorbar', True)
-        
-        if plot_type == 'Scatter Plot':
-            scatter = ax.scatter(b_vals, c_vals, a_vals,
-                            s=config.get('marker_size', 20),
-                            alpha=config.get('marker_alpha', 0.7),
-                            c=range(len(b_vals)),
-                            cmap=config.get('colormap', 'YlGn'),
-                            edgecolors='white',
-                            linewidth=0.5)
-            
-            if show_colorbar:
-                cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-                colorbar_label = config.get('colorbar_label', 'Point Index')
-                cbar.set_label(colorbar_label)
-                self.apply_font_to_colorbar(cbar, config)
-                
-        else:
-            hexbin = ax.hexbin(b_vals, c_vals, a_vals,
-                            gridsize=config.get('hexbin_gridsize', 30),
-                            cmap=config.get('colormap', 'YlGn'),
-                            alpha=config.get('hexbin_alpha', 0.8),
-                            mincnt=1)
-            
-            if show_colorbar:
-                cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
-                colorbar_label = config.get('colorbar_label', 'Density')
-                cbar.set_label(colorbar_label)
-                self.apply_font_to_colorbar(cbar, config)
-        
-        self.calculate_and_plot_average(ax, sample_data, config, sample_name)
-        
-    def update_statistics(self, plot_data):
-        """
-        Update the statistics display.
-        
-        Args:
-            plot_data: Plot data (dict for multiple samples, list for single sample)
-        
-        Returns:
-            None
-        """
-        if self.is_multiple_sample_data():
-            total_particles = 0
-            total_with_all_elements = 0
-            
-            for sample_data in plot_data.values():
-                total_particles += len(sample_data)
-                if self.triangle_node.config.get('average_only_with_all_elements', True):
-                    filtered_data = self.filter_particles_with_all_elements(sample_data, self.triangle_node.config)
-                    total_with_all_elements += len(filtered_data)
-            
-            sample_count = len(plot_data)
-            stats_text = f"{sample_count} samples\n"
-            stats_text += f"{total_particles} particles plotted"
-            
-            if self.triangle_node.config.get('average_only_with_all_elements', True) and total_with_all_elements < total_particles:
-                stats_text += f"\n{total_with_all_elements} particles with all 3 elements"
-                
-        else:
-            total_particles = len(plot_data)
-            stats_text = f"{total_particles} particles plotted"
-            
-            if self.triangle_node.config.get('average_only_with_all_elements', True):
-                filtered_data = self.filter_particles_with_all_elements(plot_data, self.triangle_node.config)
-                particles_with_all = len(filtered_data)
-                if particles_with_all < total_particles:
-                    stats_text += f"\n{particles_with_all} particles with all 3 elements"
-        
-        self.stats_label.setText(stats_text)
-        
-    def create_triangle_plot(self, plot_data, config):
-        """
-        Create the triangle visualization for single sample.
-        
-        Args:
-            plot_data (list): List of data points
-            config (dict): Configuration dictionary
-        
-        Returns:
-            None
-        """
-        ax = self.figure.add_subplot(111, projection='ternary')
-        self.create_sample_triangle_plot(ax, plot_data, config, "Trenary Plot")
-        self.apply_font_to_axes(ax, config)
 
+        ea = cfg.get('element_a', 'A')
+        eb = cfg.get('element_b', 'B')
+        ec = cfg.get('element_c', 'C')
+        setup_ternary_axes(ax, [ea, eb, ec], cfg)
+
+        # Extract ternary coordinates — mpltern scatter(R, T, L) = (b, c, a)
+        a_vals = np.array([p['a'] for p in sample_data])
+        b_vals = np.array([p['b'] for p in sample_data])
+        c_vals = np.array([p['c'] for p in sample_data])
+
+        plot_type = cfg.get('plot_type', 'Scatter Plot')
+        cmap = cfg.get('colormap', 'YlGn')
+        show_cbar = cfg.get('show_colorbar', True)
+
+        if plot_type == 'Scatter Plot':
+            size = cfg.get('marker_size', 20)
+            alpha = cfg.get('marker_alpha', 0.7)
+            color_elem = cfg.get('color_element', '')
+
+            # Determine coloring mode
+            if color_elem and not sample_color:
+                # Color by fourth element value
+                color_vals = np.array([p.get('color_val', 0) for p in sample_data])
+                scatter = ax.scatter(
+                    b_vals, c_vals, a_vals,
+                    s=size, alpha=alpha, c=color_vals, cmap=cmap,
+                    edgecolors='white', linewidth=0.5)
+                if show_cbar:
+                    cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
+                    apply_font_to_colorbar_standalone(
+                        cbar, cfg, cfg.get('colorbar_label', color_elem))
+            elif sample_color:
+                # Fixed color (overlaid mode)
+                scatter = ax.scatter(
+                    b_vals, c_vals, a_vals,
+                    s=size, alpha=alpha, color=sample_color,
+                    edgecolors='white', linewidth=0.5, label=title)
+            else:
+                # Color by index (default)
+                scatter = ax.scatter(
+                    b_vals, c_vals, a_vals,
+                    s=size, alpha=alpha, c=range(len(b_vals)), cmap=cmap,
+                    edgecolors='white', linewidth=0.5)
+                if show_cbar:
+                    cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
+                    apply_font_to_colorbar_standalone(
+                        cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
+        else:
+            # Hexbin density
+            gridsize = cfg.get('hexbin_gridsize', 30)
+            alpha = cfg.get('hexbin_alpha', 0.8)
+            hexbin = ax.hexbin(
+                b_vals, c_vals, a_vals,
+                gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+            if show_cbar:
+                cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
+                apply_font_to_colorbar_standalone(
+                    cbar, cfg, cfg.get('colorbar_label', 'Density'))
+
+        # Average point + ellipse
+        self._draw_average(ax, sample_data, cfg, title)
+
+    def _draw_average(self, ax, sample_data, cfg, sample_name):
+        """Draw average point with optional stats text and confidence ellipse."""
+        if not cfg.get('show_average_point', True) or not sample_data:
+            return
+
+        # Optionally filter to particles with all 3 elements > 0
+        if cfg.get('average_only_with_all_elements', True):
+            data = [p for p in sample_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
+        else:
+            data = sample_data
+
+        if not data:
+            return
+
+        a_vals = np.array([p['a'] for p in data])
+        b_vals = np.array([p['b'] for p in data])
+        c_vals = np.array([p['c'] for p in data])
+
+        ma, mb, mc = a_vals.mean(), b_vals.mean(), c_vals.mean()
+        sa, sb, sc = a_vals.std(), b_vals.std(), c_vals.std()
+
+        avg_color = cfg.get('average_point_color', '#FF0000')
+        avg_size = cfg.get('average_point_size', 100)
+
+        n_filt = len(data)
+        n_total = len(sample_data)
+        suffix = f" ({n_filt}/{n_total})" if n_filt < n_total else ""
+
+        ax.scatter(
+            [mb], [mc], [ma],
+            s=avg_size, marker='*', color=avg_color,
+            edgecolors='black', linewidth=1.5, zorder=10,
+            label=f'Average{" (" + sample_name + ")" if sample_name else ""}{suffix}')
+
+        # Stats text annotation
+        if cfg.get('show_average_text', True):
+            fp = make_font_properties(cfg)
+            ea = cfg.get('element_a', 'A')
+            eb = cfg.get('element_b', 'B')
+            ec = cfg.get('element_c', 'C')
+
+            text = (f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
+                    f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
+                    f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
+
+            # Place text offset from average point
+            tx = mb + 0.15
+            ty = mc + 0.01
+            tz = max(1.0 - tx - ty, 0.01)
+            ax.text(tx, ty, tz, text,
+                    fontproperties=fp, color='black',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                              alpha=0.85, edgecolor='gray'),
+                    ha='left', va='bottom', zorder=11)
+
+        # 2σ Confidence ellipse — drawn in (b, c) projection space
+        if cfg.get('show_confidence_ellipse', False) and len(data) >= 3:
+            params = confidence_ellipse_params(b_vals, c_vals, n_std=2.0)
+            if params:
+                ellipse = Ellipse(
+                    (params['cx'], params['cy']),
+                    params['width'], params['height'],
+                    angle=params['angle_deg'],
+                    fill=False, edgecolor=avg_color,
+                    linewidth=2, linestyle='--', zorder=9)
+                ax.add_patch(ellipse)
+
+    # ── Multi-sample layouts ────────────────
+
+    def _draw_subplots(self, plot_data, cfg):
+        samples = list(plot_data.keys())
+        n = len(samples)
+        cols = min(2, n)
+        rows = math.ceil(n / cols)
+
+        for idx, sn in enumerate(samples):
+            ax = self.figure.add_subplot(rows, cols, idx + 1, projection='ternary')
+            sd = plot_data[sn]
+            if sd:
+                dname = get_display_name(sn, cfg)
+                self._draw_sample(ax, sd, cfg, dname)
+                fc = get_font_config(cfg)
+                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
+                apply_font_to_ternary(ax, cfg)
+
+    def _draw_side_by_side(self, plot_data, cfg):
+        samples = list(plot_data.keys())
+        n = len(samples)
+
+        for idx, sn in enumerate(samples):
+            ax = self.figure.add_subplot(1, n, idx + 1, projection='ternary')
+            sd = plot_data[sn]
+            if sd:
+                dname = get_display_name(sn, cfg)
+                self._draw_sample(ax, sd, cfg, dname)
+                fc = get_font_config(cfg)
+                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
+                apply_font_to_ternary(ax, cfg)
+
+    def _draw_combined(self, plot_data, cfg):
+        ax = self.figure.add_subplot(111, projection='ternary')
+        combined = []
+        for sd in plot_data.values():
+            combined.extend(sd)
+        if combined:
+            self._draw_sample(ax, combined, cfg,
+                              f"Combined ({len(plot_data)} samples)")
+            apply_font_to_ternary(ax, cfg)
+
+    def _draw_overlaid(self, plot_data, cfg):
+        ax = self.figure.add_subplot(111, projection='ternary')
+
+        ea = cfg.get('element_a', 'A')
+        eb = cfg.get('element_b', 'B')
+        ec = cfg.get('element_c', 'C')
+        setup_ternary_axes(ax, [ea, eb, ec], cfg)
+
+        alpha = cfg.get('marker_alpha', 0.7)
+        size = cfg.get('marker_size', 20)
+
+        for idx, (sn, sd) in enumerate(plot_data.items()):
+            if not sd:
+                continue
+            color = get_sample_color(sn, idx, cfg)
+            dname = get_display_name(sn, cfg)
+
+            a_vals = np.array([p['a'] for p in sd])
+            b_vals = np.array([p['b'] for p in sd])
+            c_vals = np.array([p['c'] for p in sd])
+
+            ax.scatter(
+                b_vals, c_vals, a_vals,
+                s=size, alpha=alpha, color=color, label=dname,
+                edgecolors='white', linewidth=0.5)
+
+            self._draw_average(ax, sd, cfg, dname)
+
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        apply_font_to_ternary(ax, cfg)
+
+
+# ═══════════════════════════════════════════════
+# Node
+# ═══════════════════════════════════════════════
 
 class TrianglePlotNode(QObject):
     """
-    Enhanced Triangle plot node with multiple sample support and custom sample names.
+    Ternary plot node with right-click driven configuration.
     """
-    
+
     position_changed = Signal(object)
     configuration_changed = Signal()
-    
+
+    DEFAULT_CONFIG = {
+        'custom_title': 'Ternary Plot',
+        'element_a': '',
+        'element_b': '',
+        'element_c': '',
+        'color_element': '',
+        'data_type_display': 'Counts (%)',
+        'plot_type': 'Scatter Plot',
+        'marker_size': 20,
+        'marker_alpha': 0.7,
+        'hexbin_gridsize': 30,
+        'hexbin_alpha': 0.8,
+        'show_grid': True,
+        'colormap': 'YlGn',
+        'show_colorbar': True,
+        'colorbar_label': 'Density',
+        'min_total': 0.0,
+        'max_particles': 100_000_000,
+        # Average
+        'show_average_point': True,
+        'average_point_color': '#FF0000',
+        'average_point_size': 100,
+        'show_average_text': True,
+        'average_only_with_all_elements': True,
+        'show_confidence_ellipse': False,
+        # Multi-sample
+        'display_mode': 'Individual Subplots',
+        'sample_colors': {},
+        'sample_name_mappings': {},
+        # Font
+        'font_family': 'Times New Roman',
+        'font_size': 18,
+        'font_bold': False,
+        'font_italic': False,
+        'font_color': '#000000',
+    }
+
     def __init__(self, parent_window=None):
-        """
-        Initialize triangle plot node.
-        
-        Args:
-            parent_window: Parent window widget
-        """
         super().__init__()
-        self.title = "Trenary Plot"
+        self.title = "Ternary Plot"
         self.node_type = "triangle_plot"
         self.parent_window = parent_window
         self.position = None
@@ -1379,261 +988,159 @@ class TrianglePlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        
-        self.config = {
-            'custom_title': 'Trernary Plot',
-            'element_a': '-- Select Element A --',
-            'element_b': '-- Select Element B --',
-            'element_c': '-- Select Element C --',
-            'data_type_display': 'Counts (%)',
-            'plot_type': 'Scatter Plot',
-            'marker_size': 20,
-            'marker_alpha': 0.7,
-            'hexbin_gridsize': 30,
-            'hexbin_alpha': 0.8,
-            'show_grid': True,
-            'colormap': 'YlGn',
-            'show_colorbar': True,
-            'colorbar_label': 'Density',
-            'min_total': 0.0,
-            'max_particles': 100000000,
-            'display_mode': 'Individual Subplots',
-            'sample_colors': {},
-            'sample_name_mappings': {},  
-            'show_average_point': True,
-            'average_point_color': '#FF0000', 
-            'average_only_with_all_elements': True,
-            'average_point_size': 100,
-            'show_average_text': True,
-            'font_family': 'Times New Roman',
-            'font_size': 18,
-            'font_bold': False,
-            'font_italic': False,
-            'font_color': '#000000'
-        }
-        
+        self.config = dict(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
-        
+
     def set_position(self, pos):
-        """
-        Set position of the node.
-        
-        Args:
-            pos: Position coordinates
-        
-        Returns:
-            None
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
-        
+
     def configure(self, parent_window):
-        """
-        Show configuration dialog.
-        
-        Args:
-            parent_window: Parent window widget
-        
-        Returns:
-            bool: True if configuration was successful
-        """
-        dialog = TriangleDisplayDialog(self, parent_window)
-        dialog.exec()
+        dlg = TriangleDisplayDialog(self, parent_window)
+        dlg.exec()
         return True
-        
+
     def process_data(self, input_data):
-        """
-        Process input data and update triangle plot.
-        
-        Args:
-            input_data (dict): Input data dictionary
-        
-        Returns:
-            None
-        """
         if not input_data:
-            print("No input data received for triangle plot")
             return
-            
-        print(f"Triangle plot received data: {input_data.get('type', 'unknown')}")
         self.input_data = input_data
-        
+
+        # Auto-select first 3 elements if not configured
+        ea = self.config.get('element_a', '')
+        if not ea or ea.startswith('--'):
+            self._auto_configure_elements()
+
         self.configuration_changed.emit()
-        
+
+    def _auto_configure_elements(self):
+        """Pick first 3 elements from input data."""
+        if not self.input_data:
+            return
+        elems = set()
+        for p in self.input_data.get('particle_data', []):
+            elems.update(p.get('elements', {}).keys())
+        elems = sorted(elems)
+        if len(elems) >= 3:
+            self.config['element_a'] = elems[0]
+            self.config['element_b'] = elems[1]
+            self.config['element_c'] = elems[2]
+
+    # ── Data extraction ─────────────────────
 
     def extract_plot_data(self):
         """
-        Extract triangle plot data from input with percentage calculation.
-        
+        Extract ternary data — normalised fractions of the three selected elements.
+
         Returns:
-            dict or list or None: Extracted plot data
+            list (single sample) or dict (multi-sample) of point dicts,
+            each with keys 'a', 'b', 'c', 'total', and optionally 'color_val'.
+            Returns None if data is insufficient.
         """
         if not self.input_data:
             return None
-            
-        element_a = self.config.get('element_a', '-- Select Element A --')
-        element_b = self.config.get('element_b', '-- Select Element B --')
-        element_c = self.config.get('element_c', '-- Select Element C --')
-        
-        if (element_a.startswith('--') or element_b.startswith('--') or element_c.startswith('--')):
+
+        ea = self.config.get('element_a', '')
+        eb = self.config.get('element_b', '')
+        ec = self.config.get('element_c', '')
+
+        if not ea or not eb or not ec:
             return None
-        
-        data_type_display = self.config.get('data_type_display', 'Counts (%)')
-        input_type = self.input_data.get('type')
-        
-        data_key_mapping = {
-            'Counts (%)': 'elements',
-            'Element Mass (%)': 'element_mass_fg',
-            'Particle Mass (%)': 'particle_mass_fg',
-            'Element Moles (%)': 'element_moles_fmol',
-            'Particle Moles (%)': 'particle_moles_fmol'
-        }
-        
-        data_key = data_key_mapping.get(data_type_display, 'elements')
-        
-        if input_type == 'sample_data':
-            return self._extract_single_sample_triangle(data_key, element_a, element_b, element_c)
-        elif input_type == 'multiple_sample_data':
-            return self._extract_multiple_sample_triangle(data_key, element_a, element_b, element_c)
-            
-        return None
-    
-    def _extract_single_sample_triangle(self, data_key, element_a, element_b, element_c):
-        """
-        Extract triangle data for single sample with percentage calculation.
-        
-        Args:
-            data_key (str): Key for data type in particle dictionary
-            element_a (str): First element name
-            element_b (str): Second element name
-            element_c (str): Third element name
-        
-        Returns:
-            list or None: List of triangle data points
-        """
-        particles = self.input_data.get('particle_data')
-        
-        if not particles:
-            return None
-        
-        try:
-            triangle_data = []
-            min_total = self.config.get('min_total', 0.0)
-            max_particles = self.config.get('max_particles', 10000000)
-            
-            particle_count = 0
-            for particle in particles:
-                if particle_count >= max_particles:
-                    break
-                    
-                particle_data_dict = particle.get(data_key, {})
-                
-                val_a = particle_data_dict.get(element_a, 0)
-                val_b = particle_data_dict.get(element_b, 0)
-                val_c = particle_data_dict.get(element_c, 0)
-                
-                if data_key == 'elements':
-                    if val_a <= 0 or val_b <= 0 or val_c <= 0:
-                        continue
-                else:
-                    if (np.isnan(val_a) or np.isnan(val_b) or np.isnan(val_c) or
-                        val_a < 0 or val_b < 0 or val_c < 0):
-                        continue
-                
-                total = val_a + val_b + val_c
-                if total < min_total:
-                    continue
-                
-                if total > 0:
-                    triangle_data.append({
-                        'a': val_a / total,
-                        'b': val_b / total,
-                        'c': val_c / total,
-                        'total': total,
-                        'a_percent': (val_a / total) * 100,
-                        'b_percent': (val_b / total) * 100,
-                        'c_percent': (val_c / total) * 100
-                    })
-                    particle_count += 1
-            
-            return triangle_data
-            
-        except Exception as e:
-            print(f"Error in _extract_single_sample_triangle: {str(e)}")
+        if ea.startswith('--') or eb.startswith('--') or ec.startswith('--'):
             return None
 
-    def _extract_multiple_sample_triangle(self, data_key, element_a, element_b, element_c):
+        dk = TERNARY_DATA_KEY_MAPPING.get(
+            self.config.get('data_type_display', 'Counts (%)'), 'elements')
+        color_elem = self.config.get('color_element', '')
+        itype = self.input_data.get('type')
+
+        if itype == 'sample_data':
+            return self._extract_single(dk, ea, eb, ec, color_elem)
+        elif itype == 'multiple_sample_data':
+            return self._extract_multi(dk, ea, eb, ec, color_elem)
+        return None
+
+    def _extract_particles(self, particles, dk, ea, eb, ec, color_elem):
         """
-        Extract triangle data for multiple samples with percentage calculation.
-        
+        Extract ternary points from a list of particle dicts.
+
+        For each particle, reads the three element values from the chosen data key,
+        normalises them to fractions summing to 1.0, and optionally reads a fourth
+        element value for color mapping.
+
         Args:
-            data_key (str): Key for data type in particle dictionary
-            element_a (str): First element name
-            element_b (str): Second element name
-            element_c (str): Third element name
-        
+            particles:  list of particle dicts
+            dk:         data key ('elements', 'element_mass_fg', etc.)
+            ea, eb, ec: element label strings
+            color_elem: optional fourth element label for coloring (or '')
+
         Returns:
-            dict or None: Dictionary of triangle data by sample name
+            list of point dicts or None
         """
-        particles = self.input_data.get('particle_data', [])
-        sample_names = self.input_data.get('sample_names', [])
-        
+        min_total = self.config.get('min_total', 0.0)
+        max_pts = self.config.get('max_particles', 100_000_000)
+        result = []
+
+        for p in particles:
+            if len(result) >= max_pts:
+                break
+            d = p.get(dk, {})
+            va = d.get(ea, 0)
+            vb = d.get(eb, 0)
+            vc = d.get(ec, 0)
+
+            # Validate
+            if dk == 'elements':
+                if va <= 0 or vb <= 0 or vc <= 0:
+                    continue
+            else:
+                try:
+                    if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
+                            or va < 0 or vb < 0 or vc < 0):
+                        continue
+                except TypeError:
+                    continue
+
+            total = va + vb + vc
+            if total < min_total or total <= 0:
+                continue
+
+            point = {
+                'a': va / total,
+                'b': vb / total,
+                'c': vc / total,
+                'total': total,
+            }
+
+            if color_elem:
+                point['color_val'] = d.get(color_elem, 0)
+
+            result.append(point)
+
+        return result or None
+
+    def _extract_single(self, dk, ea, eb, ec, color_elem):
+        particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        
-        try:
-            sample_triangle_data = {}
-            min_total = self.config.get('min_total', 0.0)
-            max_particles = self.config.get('max_particles', 10000000)
-            
-            for sample_name in sample_names:
-                sample_triangle_data[sample_name] = []
-            
-            sample_particle_counts = {name: 0 for name in sample_names}
-            
-            for particle in particles:
-                source_sample = particle.get('source_sample')
-                if source_sample and source_sample in sample_triangle_data:
-                    
-                    if sample_particle_counts[source_sample] >= max_particles:
-                        continue
-                        
-                    particle_data_dict = particle.get(data_key, {})
-                    
-                    val_a = particle_data_dict.get(element_a, 0)
-                    val_b = particle_data_dict.get(element_b, 0)
-                    val_c = particle_data_dict.get(element_c, 0)
-                    
-                    if data_key == 'elements':
-                        if val_a <= 0 or val_b <= 0 or val_c <= 0:
-                            continue
-                    else:
-                        if (np.isnan(val_a) or np.isnan(val_b) or np.isnan(val_c) or
-                            val_a < 0 or val_b < 0 or val_c < 0):
-                            continue
-                    
-                    total = val_a + val_b + val_c
-                    if total < min_total:
-                        continue
-                    
-                    if total > 0:
-                        sample_triangle_data[source_sample].append({
-                            'a': val_a / total,
-                            'b': val_b / total,
-                            'c': val_c / total,
-                            'total': total,
-                            'a_percent': (val_a / total) * 100,
-                            'b_percent': (val_b / total) * 100,
-                            'c_percent': (val_c / total) * 100
-                        })
-                        sample_particle_counts[source_sample] += 1
-            
-            sample_triangle_data = {k: v for k, v in sample_triangle_data.items() if v}
-            
-            return sample_triangle_data
-            
-        except Exception as e:
-            print(f"Error in _extract_multiple_sample_triangle: {str(e)}")
+        return self._extract_particles(particles, dk, ea, eb, ec, color_elem)
+
+    def _extract_multi(self, dk, ea, eb, ec, color_elem):
+        particles = self.input_data.get('particle_data', [])
+        names = self.input_data.get('sample_names', [])
+        if not particles:
             return None
+
+        grouped = {n: [] for n in names}
+        for p in particles:
+            src = p.get('source_sample')
+            if src in grouped:
+                grouped[src].append(p)
+
+        result = {}
+        for sn, plist in grouped.items():
+            pts = self._extract_particles(plist, dk, ea, eb, ec, color_elem)
+            if pts:
+                result[sn] = pts
+        return result or None

@@ -125,7 +125,7 @@ class EnhancedCircularSplashScreen(QWidget):
     
     finished = Signal()
     
-    def __init__(self, logo_path=None, app_name="IsotopeTrack", version="Version 1.0.0:Beta"):
+    def __init__(self, logo_path=None, app_name="IsotopeTrack", version="Version 1.0.1:Beta"):
         """
         Initialize the splash screen.
         
@@ -532,7 +532,7 @@ class SplashCoordinator(QObject):
         self.splash = EnhancedCircularSplashScreen(
             logo_path=logo_path,
             app_name="IsotopeTrack",
-            version="Version 1.0.0:Beta"
+            version="Version 1.0.1:Beta"
         )
         
         self.main_window_class = main_window_class
