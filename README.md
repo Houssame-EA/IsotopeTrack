@@ -29,11 +29,11 @@ macOS
 •	macOS 11.0 (Big Sur) or later
 •	Apple Silicon (M1/M2/M3) recommended
 •	4 GB RAM (8 GB recommended)
-•	3 GB free disk space
+•	2 GB free disk space
 Windows
 •	Windows 10 (64-bit) or later
 •	4 GB RAM (8 GB recommended)
-•	3 GB free disk space
+•	2 GB free disk space
 
 ## For Citation 
 
