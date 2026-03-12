@@ -1,0 +1,6 @@
+#!/Users/Houssame/Desktop/App_mac/venv_intel/bin/python3.11
+import sys
+from PySide6.scripts.pyside_tool import linguist
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(linguist())

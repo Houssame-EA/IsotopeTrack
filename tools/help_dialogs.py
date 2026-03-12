@@ -1,1253 +1,1088 @@
-"""Help system and interactive educational dialogs for ICP-MS analysis methods."""
-from PySide6.QtWidgets import (QApplication, QDialog, QTabWidget, QTextEdit, QVBoxLayout, 
-                              QPushButton, QMainWindow, QLabel, QScrollArea, QWidget, QHBoxLayout,
-                              QSlider, QSpinBox, QComboBox, QFrame, QSplitter, 
-                              QGridLayout, QGroupBox, QCheckBox, QFileDialog, QDoubleSpinBox)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap, QFont
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QTabWidget, QVBoxLayout, QPushButton,
+    QMainWindow, QLabel, QScrollArea, QWidget, QHBoxLayout,
+    QSlider, QSpinBox, QComboBox, QGridLayout, QGroupBox,
+    QCheckBox, QDoubleSpinBox, QSizePolicy, QFrame,
+)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPixmap
 import sys
 import numpy as np
 import pyqtgraph as pg
-import csv
 from pathlib import Path
 from statistics import NormalDist
-from processing.peak_detection import CompoundPoissonLognormal
-import sys
+from scipy import stats as sp_stats
 
-from tools.tutorial import UserGuideDialog
 
 def get_resource_path(relative_path):
-    """    
-    Args:
-        relative_path (str): Relative path to resource
-        
-    Returns:
-        Path: Absolute path to resource
-    """
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
         base_path = Path(__file__).parent.parent
-    
     return base_path / relative_path
 
 
-class HelpManager:
+# ---------------------------------------------------------------------------
+#  Stub – replace with real import in production
+# ---------------------------------------------------------------------------
+class CompoundPoissonLognormal:
+    def get_threshold(self, background, alpha, sigma=0.47):
+        z = NormalDist().inv_cdf(1.0 - alpha)
+        return background + z * np.sqrt(max(background, 0.5)) * (1 + sigma)
+
+
+# ---------------------------------------------------------------------------
+#  SP-ICP-ToF-MS Signal Generator
+# ---------------------------------------------------------------------------
+class SPICPToFMSSimulator:
     """
-    Manager class for all help dialogs.
+    Physically realistic SP-ICP-ToF-MS signal generator.
+
+    Background
+    ----------
+    Each dwell-time bin: Poisson(lambda_bg).
+    At low lambda (< 3) most bins are zero -- matching real ToF data.
+
+    Particle peak width -- derived automatically from dwell time
+    -----------------------------------------------------------
+    Ion cloud transit duration ~ 400 us (fixed physical constant).
+
+        peak_bins = max(1, round(400 us / dwell_us))
+
+    At 25 us dwell  -> 16 bins per particle  (multi-point event)
+    At 75 us dwell  ->  5 bins per particle
+    At 500 us dwell ->  1 bin  per particle  (single-point event)
+
+    Total particle signal is CONSERVED regardless of dwell time.
     """
-    
+
+    ION_CLOUD_US = 400.0
+
+    def generate(
+        self,
+        acq_time_s=60.0,
+        dwell_us=76.71,
+        lambda_bg=1.1,
+        n_particles=300,
+        particle_mean_counts=150.0,
+        particle_sigma_log=0.5,
+        seed=None,
+    ):
+        """
+        Returns
+        -------
+        times            : np.ndarray  (seconds)
+        signal           : np.ndarray  (counts per dwell)
+        particle_centres : np.ndarray  (centre-bin index of each particle)
+        peak_width       : int         (bins per particle event)
+        particle_totals  : np.ndarray  (total counts per particle, for reference)
+        """
+        rng = np.random.default_rng(seed)
+
+        dwell_s  = dwell_us * 1e-6
+        n_points = max(100, round(acq_time_s / dwell_s))
+        times    = np.arange(n_points, dtype=np.float64) * dwell_s
+
+        signal = rng.poisson(lambda_bg, size=n_points).astype(np.float64)
+
+        peak_width = max(1, round(self.ION_CLOUD_US / dwell_us))
+
+        particle_centres = np.array([], dtype=int)
+        particle_totals  = np.array([], dtype=float)
+
+        if n_particles > 0 and n_points > 2 * peak_width + 2:
+            mu_log  = np.log(particle_mean_counts)
+            centres = rng.integers(peak_width, n_points - peak_width, size=n_particles)
+            totals  = rng.lognormal(mu_log, particle_sigma_log, size=n_particles)
+
+            if peak_width == 1:
+                for c, ts in zip(centres, totals):
+                    signal[c] += ts
+            else:
+                hw    = peak_width // 2
+                x     = np.arange(-hw, hw + 1, dtype=float)
+                gauss = np.exp(-0.5 * (x / max(1.0, peak_width / 4.0)) ** 2)
+                gauss /= gauss.sum()
+                for c, ts in zip(centres, totals):
+                    lo   = max(0, c - hw)
+                    hi   = min(n_points, c + hw + 1)
+                    g_lo = lo - (c - hw)
+                    g_hi = g_lo + (hi - lo)
+                    signal[lo:hi] += ts * gauss[g_lo:g_hi]
+
+            particle_centres = np.asarray(centres, dtype=int)
+            particle_totals  = totals
+
+        return times, signal, particle_centres, peak_width, particle_totals
+
+
+# ---------------------------------------------------------------------------
+#  Style helpers
+# ---------------------------------------------------------------------------
+def _styled_label(html, bg="#f0f4ff", border="#4a90d9"):
+    lbl = QLabel(html)
+    lbl.setWordWrap(True)
+    lbl.setTextFormat(Qt.RichText)
+    lbl.setStyleSheet(
+        f"QLabel {{ background:{bg}; border:2px solid {border}; "
+        "border-radius:8px; padding:8px 10px; font-size:12px; }}"
+    )
+    return lbl
+
+
+def _slider(lo, hi, val):
+    sl = QSlider(Qt.Horizontal)
+    sl.setRange(lo, hi)
+    sl.setValue(val)
+    return sl
+
+
+# ---------------------------------------------------------------------------
+#  Main interactive visualiser
+# ---------------------------------------------------------------------------
+class InteractiveEquationVisualizer(QWidget):
+    METHODS = ["Currie", "Formula_C", "Compound_Poisson", "Manual"]
+
     def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(920)
+
+        self._sim  = SPICPToFMSSimulator()
+        self._cpln = CompoundPoissonLognormal()
+
+        # cached results
+        self._times           = np.array([])
+        self._signal          = np.array([])
+        self._particle_idx    = np.array([], dtype=int)
+        self._particle_totals = np.array([])
+        self._threshold       = 0.0
+        self._lod             = 0.0
+        self._background      = 0.0
+        self._peak_width      = 1
+
+        self._build_ui()
+
+        # Debounce timer: fires _run_simulation after controls settle
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(180)
+        self._timer.timeout.connect(self._run_simulation)
+
+        self._run_simulation()
+
+    # ------------------------------------------------------------------ #
+    # UI construction                                                      #
+    # ------------------------------------------------------------------ #
+    def _build_ui(self):
+        root = QHBoxLayout(self)
+        root.setContentsMargins(2, 2, 2, 2)
+        root.setSpacing(6)
+
+        # ── Left: scrollable controls ──────────────────────────────────
+        left_scroll = QScrollArea()
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setFixedWidth(372)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        left_w   = QWidget()
+        left_lay = QVBoxLayout(left_w)
+        left_lay.setSpacing(8)
+        left_lay.addWidget(self._grp_acquisition())
+        left_lay.addWidget(self._grp_background())
+        left_lay.addWidget(self._grp_particles())
+        left_lay.addWidget(self._grp_detection())
+        left_lay.addWidget(self._stats_box())
+        left_lay.addStretch()
+        left_scroll.setWidget(left_w)
+        root.addWidget(left_scroll)
+
+        # ── Right: scrollable plot panel ───────────────────────────────
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        right_w   = QWidget()
+        right_lay = QVBoxLayout(right_w)
+        right_lay.setSpacing(8)
+        right_lay.setContentsMargins(4, 4, 4, 4)
+
+        # equation strip
+        self._eq_label = QLabel()
+        self._eq_label.setWordWrap(True)
+        self._eq_label.setTextFormat(Qt.RichText)
+        self._eq_label.setMinimumHeight(52)
+        self._eq_label.setMaximumHeight(72)
+        self._eq_label.setStyleSheet(
+            "QLabel { background:#f0f4ff; border:2px solid #4a90d9; "
+            "border-radius:8px; padding:6px 10px; "
+            "font-family:'Courier New',monospace; font-size:11px; }"
+        )
+        right_lay.addWidget(self._eq_label)
+
+        # --- time trace ---
+        trace_lbl = QLabel("<b>Signal trace</b>")
+        trace_lbl.setStyleSheet("font-size:12px; padding:2px;")
+        right_lay.addWidget(trace_lbl)
+
+        self._trace_plot = pg.PlotWidget()
+        self._trace_plot.setBackground("w")
+        self._trace_plot.setLabel("left", "Counts per dwell")
+        self._trace_plot.setLabel("bottom", "Time (s)")
+        self._trace_plot.setMinimumHeight(320)
+        right_lay.addWidget(self._trace_plot)
+
+        # --- intensity histogram ---
+        hist_lbl = QLabel("<b>Intensity histogram of detected events</b>")
+        hist_lbl.setStyleSheet("font-size:12px; padding:2px;")
+        right_lay.addWidget(hist_lbl)
+
+        self._hist_plot = pg.PlotWidget()
+        self._hist_plot.setBackground("w")
+        self._hist_plot.setLabel("bottom", "Intensity (counts per dwell)")
+        self._hist_plot.setLabel("left", "Number of detected events")
+        self._hist_plot.setMinimumHeight(320)
+        right_lay.addWidget(self._hist_plot)
+
+        # bottom padding so scroll always reveals the full histogram
+        right_lay.addSpacing(20)
+
+        right_scroll.setWidget(right_w)
+        root.addWidget(right_scroll, stretch=1)
+
+    # ── Control groups ─────────────────────────────────────────────────
+    def _grp_acquisition(self):
+        grp = QGroupBox("Acquisition Parameters")
+        grp.setStyleSheet("QGroupBox{font-weight:bold;}")
+        lay = QGridLayout(grp)
+        lay.setVerticalSpacing(5)
+
+        # acquisition time
+        lay.addWidget(QLabel("Acquisition time:"), 0, 0)
+        self._acq_spin = QDoubleSpinBox()
+        self._acq_spin.setRange(1.0, 180.0)
+        self._acq_spin.setDecimals(1)
+        self._acq_spin.setSingleStep(10.0)
+        self._acq_spin.setValue(60.0)
+        self._acq_spin.setSuffix(" s")
+        self._acq_spin.setToolTip(
+            "Total acquisition time (max 3 min = 180 s).\n"
+            "n_points = round(acq_time / dwell_time)."
+        )
+        self._acq_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._acq_spin, 0, 1)
+
+        self._acq_sl = _slider(10, 1800, 600)
+        self._acq_sl.setToolTip("Acquisition time × 10")
+        # KEY FIX: slider connects to a helper that BOTH syncs the spinbox AND schedules
+        self._acq_sl.valueChanged.connect(
+            lambda v: self._sl_to_spin(self._acq_spin, v / 10.0))
+        self._acq_spin.valueChanged.connect(
+            lambda v: self._spin_to_sl(self._acq_sl, int(v * 10)))
+        lay.addWidget(self._acq_sl, 1, 0, 1, 2)
+
+        # dwell time
+        lay.addWidget(QLabel("Dwell time:"), 2, 0)
+        self._dwell_spin = QDoubleSpinBox()
+        self._dwell_spin.setRange(1.0, 10000.0)
+        self._dwell_spin.setDecimals(2)
+        self._dwell_spin.setSingleStep(25.0)
+        self._dwell_spin.setValue(76.71)
+        self._dwell_spin.setSuffix(" us")
+        self._dwell_spin.setToolTip(
+            "Dwell time per acquisition bin.\n"
+            "E.g. 25 us spectra x 3 accumulations = 75 us.\n\n"
+            "Peak width is derived automatically:\n"
+            "  peak_bins = max(1, round(400 us / dwell_us))\n"
+            "Short dwell -> multi-bin particle events.\n"
+            "Long dwell  -> single-bin particle events."
+        )
+        self._dwell_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._dwell_spin, 2, 1)
+
+        self._dwell_sl = _slider(10, 10000, 767)
+        self._dwell_sl.valueChanged.connect(
+            lambda v: self._sl_to_spin(self._dwell_spin, v / 10.0))
+        self._dwell_spin.valueChanged.connect(
+            lambda v: self._spin_to_sl(self._dwell_sl, int(v * 10)))
+        lay.addWidget(self._dwell_sl, 3, 0, 1, 2)
+
+        # derived info labels
+        self._acq_info = QLabel()
+        self._acq_info.setStyleSheet("color:#555; font-size:10px;")
+        lay.addWidget(self._acq_info, 4, 0, 1, 2)
+
+        self._pw_label = QLabel()
+        self._pw_label.setStyleSheet("color:#2060a0; font-size:10px; font-weight:bold;")
+        lay.addWidget(self._pw_label, 5, 0, 1, 2)
+
+        # seed
+        lay.addWidget(QLabel("Random seed:"), 6, 0)
+        self._seed_spin = QSpinBox()
+        self._seed_spin.setRange(0, 9999)
+        self._seed_spin.setValue(42)
+        self._seed_spin.setSpecialValueText("random")
+        self._seed_spin.setToolTip("0 = different result each run.")
+        self._seed_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._seed_spin, 6, 1)
+
+        return grp
+
+    def _grp_background(self):
+        grp = QGroupBox("Background")
+        grp.setStyleSheet("QGroupBox{font-weight:bold;}")
+        lay = QGridLayout(grp)
+        lay.setVerticalSpacing(5)
+
+        lay.addWidget(QLabel("lambda_bg (counts/dwell):"), 0, 0)
+        self._bg_spin = QDoubleSpinBox()
+        self._bg_spin.setRange(0.01, 50.0)
+        self._bg_spin.setDecimals(3)
+        self._bg_spin.setSingleStep(0.1)
+        self._bg_spin.setValue(1.1)
+        self._bg_spin.setToolTip(
+            "Poisson mean background per dwell.\n"
+            "lambda < 3: sparse signal, many zero bins (typical ToF).\n"
+            "lambda > 10: dense dissolved-element background."
+        )
+        self._bg_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._bg_spin, 0, 1)
+
+        self._bg_sl = _slider(1, 500, 11)
+        self._bg_sl.valueChanged.connect(
+            lambda v: self._sl_to_spin(self._bg_spin, v / 10.0))
+        self._bg_spin.valueChanged.connect(
+            lambda v: self._spin_to_sl(self._bg_sl, int(v * 10)))
+        lay.addWidget(self._bg_sl, 1, 0, 1, 2)
+
+        return grp
+
+    def _grp_particles(self):
+        grp = QGroupBox("Particles")
+        grp.setStyleSheet("QGroupBox{font-weight:bold;}")
+        lay = QGridLayout(grp)
+        lay.setVerticalSpacing(5)
+
+        lay.addWidget(QLabel("Number of particles:"), 0, 0)
+        self._npart_spin = QSpinBox()
+        self._npart_spin.setRange(0, 30000)
+        self._npart_spin.setSingleStep(100)
+        self._npart_spin.setValue(300)
+        self._npart_spin.setToolTip("Up to 30 000 particle events.")
+        self._npart_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._npart_spin, 0, 1)
+
+        self._npart_sl = _slider(0, 30000, 300)
+        self._npart_sl.valueChanged.connect(
+            lambda v: self._sl_to_spin(self._npart_spin, v))
+        self._npart_spin.valueChanged.connect(
+            lambda v: self._spin_to_sl(self._npart_sl, v))
+        lay.addWidget(self._npart_sl, 1, 0, 1, 2)
+
+        lay.addWidget(QLabel("Size distribution sigma_log:"), 2, 0)
+        self._psig_spin = QDoubleSpinBox()
+        self._psig_spin.setRange(0.01, 3.0)
+        self._psig_spin.setDecimals(3)
+        self._psig_spin.setSingleStep(0.05)
+        self._psig_spin.setValue(0.5)
+        self._psig_spin.setToolTip(
+            "Log-normal sigma of the particle signal distribution.\n"
+            "Monodisperse ~ 0.1   Typical ~ 0.4-0.6   Very broad > 0.9"
+        )
+        self._psig_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._psig_spin, 2, 1)
+
+        self._psig_sl = _slider(1, 300, 50)
+        self._psig_sl.valueChanged.connect(
+            lambda v: self._sl_to_spin(self._psig_spin, v / 100.0))
+        self._psig_spin.valueChanged.connect(
+            lambda v: self._spin_to_sl(self._psig_sl, int(v * 100)))
+        lay.addWidget(self._psig_sl, 3, 0, 1, 2)
+
+        return grp
+
+    def _grp_detection(self):
+        grp = QGroupBox("Detection Method")
+        grp.setStyleSheet("QGroupBox{font-weight:bold;}")
+        lay = QGridLayout(grp)
+        lay.setVerticalSpacing(5)
+
+        lay.addWidget(QLabel("Method:"), 0, 0)
+        self._method_combo = QComboBox()
+        self._method_combo.addItems(self.METHODS)
+        self._method_combo.currentTextChanged.connect(self._schedule)
+        lay.addWidget(self._method_combo, 0, 1)
+
+        lay.addWidget(QLabel("Alpha:"), 1, 0)
+        self._alpha_spin = QDoubleSpinBox()
+        self._alpha_spin.setRange(1e-9, 0.5)
+        self._alpha_spin.setDecimals(9)
+        self._alpha_spin.setValue(1e-6)
+        self._alpha_spin.setToolTip(
+            "Type-I error rate (false-positive probability).\n"
+            "Smaller alpha -> stricter (higher) threshold."
+        )
+        self._alpha_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._alpha_spin, 1, 1)
+
+        self._alpha_sl = _slider(0, 90, 60)
+        self._alpha_sl.setToolTip("Left = smaller alpha (stricter)")
+        self._alpha_sl.valueChanged.connect(self._alpha_moved)
+        lay.addWidget(self._alpha_sl, 2, 0, 1, 2)
+
+        lay.addWidget(QLabel("CP-LN sigma:"), 3, 0)
+        self._cpsig_spin = QDoubleSpinBox()
+        self._cpsig_spin.setRange(0.01, 2.0)
+        self._cpsig_spin.setDecimals(3)
+        self._cpsig_spin.setValue(0.47)
+        self._cpsig_spin.setToolTip("Used only by Compound_Poisson method.")
+        self._cpsig_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._cpsig_spin, 3, 1)
+
+        lay.addWidget(QLabel("Manual threshold:"), 4, 0)
+        self._manual_spin = QDoubleSpinBox()
+        self._manual_spin.setRange(0.0, 1e6)
+        self._manual_spin.setDecimals(2)
+        self._manual_spin.setValue(5.0)
+        self._manual_spin.setToolTip("Used only when 'Manual' method is selected.")
+        self._manual_spin.valueChanged.connect(self._schedule)
+        lay.addWidget(self._manual_spin, 4, 1)
+
+        self._show_part_chk = QCheckBox("Show true particle positions on trace")
+        self._show_part_chk.setChecked(True)
+        self._show_part_chk.stateChanged.connect(self._update_plots)
+        lay.addWidget(self._show_part_chk, 5, 0, 1, 2)
+
+        self._log_chk = QCheckBox("Histogram: log Y-axis")
+        self._log_chk.setChecked(False)
+        self._log_chk.stateChanged.connect(self._update_plots)
+        lay.addWidget(self._log_chk, 6, 0, 1, 2)
+
+        self._show_lognorm_chk = QCheckBox("Show log-normal fit on histogram")
+        self._show_lognorm_chk.setChecked(True)
+        self._show_lognorm_chk.stateChanged.connect(self._update_plots)
+        lay.addWidget(self._show_lognorm_chk, 7, 0, 1, 2)
+
+        return grp
+
+    def _stats_box(self):
+        self._stats_label = QLabel("Run simulation to see statistics.")
+        self._stats_label.setWordWrap(True)
+        self._stats_label.setTextFormat(Qt.RichText)
+        self._stats_label.setStyleSheet(
+            "QLabel { background:#e8f5e8; border:2px solid #28a745; "
+            "border-radius:8px; padding:8px; font-size:11px; }"
+        )
+        return self._stats_label
+
+    # ------------------------------------------------------------------ #
+    # Slider <-> spinbox sync                                              #
+    # KEY: _sl_to_spin does NOT call _schedule (avoids double-trigger).   #
+    # The slider's lambda is the only caller, so schedule happens once.   #
+    # _spin_to_sl is called from spinbox.valueChanged which itself fires  #
+    # _schedule via its own connection.                                    #
+    # ------------------------------------------------------------------ #
+    def _sl_to_spin(self, spin, val):
+        """Slider moved -> update spinbox (silently) then schedule update."""
+        spin.blockSignals(True)
+        spin.setValue(val)
+        spin.blockSignals(False)
+        self._schedule()          # <-- THIS is what was missing before
+
+    @staticmethod
+    def _spin_to_sl(sl, val):
+        """Spinbox changed -> update slider (silently). Schedule already fired."""
+        sl.blockSignals(True)
+        sl.setValue(int(val))
+        sl.blockSignals(False)
+
+    def _alpha_moved(self, v):
+        alpha = 1.0 if v == 0 else 10 ** (-v / 10.0)
+        self._alpha_spin.blockSignals(True)
+        self._alpha_spin.setValue(alpha)
+        self._alpha_spin.blockSignals(False)
+        self._schedule()
+
+    def _schedule(self):
+        self._timer.start()
+
+    # ------------------------------------------------------------------ #
+    # Simulation                                                           #
+    # ------------------------------------------------------------------ #
+    def _run_simulation(self):
+        seed = self._seed_spin.value() if self._seed_spin.value() > 0 else None
+
+        (self._times, self._signal,
+         self._particle_idx, self._peak_width,
+         self._particle_totals) = self._sim.generate(
+            acq_time_s=self._acq_spin.value(),
+            dwell_us=self._dwell_spin.value(),
+            lambda_bg=self._bg_spin.value(),
+            n_particles=self._npart_spin.value(),
+            particle_mean_counts=150.0,
+            particle_sigma_log=self._psig_spin.value(),
+            seed=seed,
+        )
+
+        bg    = self._bg_spin.value()
+        self._background = bg
+        self._threshold, eq_html, ref_html = self._calc_threshold(
+            self._method_combo.currentText(), bg,
+            self._alpha_spin.value(),
+            self._manual_spin.value(),
+            self._cpsig_spin.value())
+        self._lod = bg + 3.0 * np.sqrt(max(bg, 0.5))
+
+        self._eq_label.setText(
+            f"<b>{self._method_combo.currentText()}:</b> {eq_html}"
+            + (f" <span style='color:#666;font-size:10px'>[{ref_html}]</span>"
+               if ref_html else "")
+        )
+
+        n_pts = len(self._times)
+        total = float(self._times[-1]) if n_pts else 0.0
+        dw    = self._dwell_spin.value()
+        pw    = self._peak_width
+        self._acq_info.setText(f"n_points = {n_pts:,}   |   total = {total:.2f} s")
+        self._pw_label.setText(
+            f"Peak width = {pw} bin(s)  "
+            f"[round(400 us / {dw:.1f} us)]"
+        )
+
+        self._update_plots()
+        self._update_stats()
+
+    # ------------------------------------------------------------------ #
+    # Plots                                                                #
+    # ------------------------------------------------------------------ #
+    def _update_plots(self):
+        if self._times.size == 0:
+            return
+        self._draw_trace()
+        self._draw_histogram()
+
+    def _draw_trace(self):
+        p = self._trace_plot
+        p.clear()
+        p.addLegend(offset=(10, 10))
+
+        t   = self._times
+        s   = self._signal
+        bg  = self._background
+        thr = self._threshold
+        lod = self._lod
+
+        p.plot(t, s,
+               pen=pg.mkPen("#2060c0", width=1), name="Signal")
+        p.plot(t, np.full_like(t, bg),
+               pen=pg.mkPen("#27ae60", width=1.5, style=Qt.DashLine),
+               name=f"Background  (lambda={bg:.2f})")
+        p.plot(t, np.full_like(t, lod),
+               pen=pg.mkPen("#e67e22", width=1.5, style=Qt.DotLine),
+               name=f"LOD = {lod:.2f}")
+        p.plot(t, np.full_like(t, thr),
+               pen=pg.mkPen("#e74c3c", width=2, style=Qt.DashLine),
+               name=f"Threshold = {thr:.2f}")
+
+        # detected events (above threshold)
+        det = s > thr
+        if np.any(det):
+            p.addItem(pg.ScatterPlotItem(
+                t[det], s[det],
+                symbol="o", size=5,
+                pen=pg.mkPen("#c0392b"),
+                brush=pg.mkBrush(231, 76, 60, 180),
+                name="Detected events",
+            ))
+
+        # true particle positions (optional)
+        if self._show_part_chk.isChecked() and self._particle_idx.size > 0:
+            pi = self._particle_idx
+            pi = pi[(pi >= 0) & (pi < len(s))]
+            p.addItem(pg.ScatterPlotItem(
+                t[pi], s[pi],
+                symbol="d", size=9,
+                pen=pg.mkPen("#f39c12", width=1),
+                brush=pg.mkBrush(243, 156, 18, 100),
+                name="True particle positions",
+            ))
+
+        p.setTitle(
+            f"SP-ICP-ToF-MS Trace  |  dwell={self._dwell_spin.value():.1f} us  |  "
+            f"peak width={self._peak_width} bin(s)  |  {len(t):,} points"
+        )
+
+    def _draw_histogram(self):
         """
-        Initialize the help manager.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
+        Histogram of DETECTED events only (signal > threshold).
+        X-axis: Intensity (counts per dwell)
+        Y-axis: Number of detected events
+        Overlaid: fitted log-normal PDF scaled to counts.
+        Vertical dashed lines: LOD and Threshold.
         """
-        self.parent = parent
-        self.user_guide_dialog = None
-        self.detection_dialog = None
+        p = self._hist_plot
+        p.clear()
+
+        s   = self._signal
+        thr = self._threshold
+        lod = self._lod
+
+        # ── Only detected events ──────────────────────────────────────
+        detected = s[s > thr]
+        n_det    = len(detected)
+
+        if n_det < 2:
+            p.setTitle("Histogram — no detected events above threshold")
+            return
+
+        # ── Histogram bins ────────────────────────────────────────────
+        max_val = float(np.percentile(detected, 99.5))
+        max_val = max(max_val, thr * 2.0, 10.0)
+        n_bins  = min(200, max(30, int(max_val / 2)))
+
+        counts, edges = np.histogram(detected, bins=n_bins, range=(thr, max_val))
+        centres = (edges[:-1] + edges[1:]) / 2.0
+        width   = edges[1] - edges[0]
+
+        # colour by rough signal magnitude
+        # light blue for low end, darker orange for high end
+        p.addItem(pg.BarGraphItem(
+            x=centres, height=counts,
+            width=width,
+            brush=pg.mkBrush(70, 130, 200, 180),
+            pen=pg.mkPen(None),
+        ))
+
+        # ── Log-normal fit ────────────────────────────────────────────
+        if self._show_lognorm_chk.isChecked() and n_det >= 5:
+            try:
+                ln_s, ln_loc, ln_scale = sp_stats.lognorm.fit(
+                    detected, floc=0)
+                x_fit = np.linspace(thr, max_val, 400)
+                pdf   = sp_stats.lognorm.pdf(x_fit, ln_s, ln_loc, ln_scale)
+                # scale PDF to match histogram counts
+                scale_factor = n_det * width
+                y_fit = pdf * scale_factor
+
+                p.plot(x_fit, y_fit,
+                       pen=pg.mkPen("#e74c3c", width=2.5),
+                       name=f"Log-normal fit  sigma={ln_s:.3f}")
+
+                # annotate fit parameters
+                mu_fit = np.log(ln_scale)     # mu in log-space
+                median_fit = np.exp(mu_fit)
+                p.addItem(pg.TextItem(
+                    f"Log-normal fit:\n"
+                    f"  median = {median_fit:.1f}\n"
+                    f"  sigma  = {ln_s:.3f}",
+                    color="#c0392b",
+                    anchor=(0, 0),
+                ))
+                # position the text near the peak of the fit
+                peak_x_idx = np.argmax(y_fit)
+                p.items[-1].setPos(x_fit[peak_x_idx] * 1.05,
+                                   float(np.max(y_fit)) * 0.9)
+            except Exception:
+                pass
+
+        p.addLegend(offset=(10, 10))
+
+        # ── LOD vertical line ────────────────────────────────────────
+        lod_line = pg.InfiniteLine(
+            pos=lod, angle=90,
+            pen=pg.mkPen("#e67e22", width=2, style=Qt.DashLine),
+            label=f"LOD = {lod:.1f}",
+            labelOpts={"color": "#e67e22", "position": 0.88,
+                       "anchors": [(0, 1), (0, 1)]},
+        )
+        p.addItem(lod_line)
+
+        # ── Threshold vertical line ──────────────────────────────────
+        thr_line = pg.InfiniteLine(
+            pos=thr, angle=90,
+            pen=pg.mkPen("#8e44ad", width=2, style=Qt.DashDotLine),
+            label=f"Threshold = {thr:.1f}",
+            labelOpts={"color": "#8e44ad", "position": 0.96,
+                       "anchors": [(0, 1), (0, 1)]},
+        )
+        p.addItem(thr_line)
+
+        p.setLogMode(y=self._log_chk.isChecked())
+
+        method = self._method_combo.currentText()
+        p.setTitle(
+            f"Intensity histogram of detected events  |  "
+            f"{method}  |  n={n_det:,}"
+        )
+        p.setLabel("bottom", "Intensity (counts per dwell)")
+        p.setLabel("left",
+                   "Number of detected events" +
+                   (" [log]" if self._log_chk.isChecked() else ""))
+
+    # ------------------------------------------------------------------ #
+    # Stats panel                                                          #
+    # ------------------------------------------------------------------ #
+    def _update_stats(self):
+        s      = self._signal
+        thr    = self._threshold
+        n_det  = int(np.sum(s > thr))
+        n_true = len(self._particle_idx)
+        total  = float(self._times[-1]) if len(self._times) else 0.0
+
+        tp = fn = 0
+        if n_true > 0:
+            valid = self._particle_idx[
+                (self._particle_idx >= 0) & (self._particle_idx < len(s))]
+            tp = int(np.sum(s[valid] > thr))
+            fn = n_true - tp
+        fp = max(0, n_det - tp)
+        dr = f"{100*tp/n_true:.1f}%" if n_true > 0 else "N/A"
+        er = f"{n_det/total:.1f}/s"  if total  > 0 else "N/A"
+
+        self._stats_label.setText(
+            f"<b>Simulation summary</b><br>"
+            f"Acq. time: <b>{total:.2f} s</b>  |  "
+            f"Points: <b>{len(s):,}</b>  |  "
+            f"Dwell: <b>{self._dwell_spin.value():.1f} us</b><br>"
+            f"Peak width: <b>{self._peak_width}</b> bin(s)  |  "
+            f"Background lambda: <b>{self._background:.3f}</b><br>"
+            f"Threshold: <b>{thr:.2f}</b>  |  "
+            f"LOD: <b>{self._lod:.2f}</b><br>"
+            f"True particles: <b>{n_true}</b>  |  "
+            f"Detected: <b>{n_det}</b><br>"
+            f"TP <b>{tp}</b>  FP <b>{fp}</b>  FN <b>{fn}</b>  |  "
+            f"DR: <b>{dr}</b>  |  Rate: <b>{er}</b>"
+        )
+
+    # ------------------------------------------------------------------ #
+    # Threshold calculation                                                #
+    # ------------------------------------------------------------------ #
+    def _calc_threshold(self, method, bg, alpha, manual, sigma):
+        if method == "Currie":
+            z   = NormalDist().inv_cdf(1.0 - alpha)
+            eps = 0.5 if bg < 10 else 0.0
+            thr = bg + z * np.sqrt((bg + eps) * 2.0)
+            eq  = ("Threshold = lambda + z_alpha * sqrt[(lambda+eps)*2]  "
+                   "(eps=continuity correction)")
+            ref = "Currie JRNC 276, 285 (2008)"
+
+        elif method == "Formula_C":
+            z   = NormalDist().inv_cdf(1.0 - alpha)
+            tr  = 1.0
+            thr = bg + (z**2 / 2.0 * tr
+                        + z * np.sqrt(z**2 / 4.0 * tr**2
+                                      + bg * tr * (1.0 + tr)))
+            eq  = "Threshold = lambda + z^2/2*tr + z*sqrt[z^2/4*tr^2 + lambda*tr*(1+tr)]"
+            ref = "MARLAP Vol III §20 Formula C"
+
+        elif method == "Compound_Poisson":
+            thr = self._cpln.get_threshold(bg, alpha, sigma=sigma)
+            eq  = f"Compound Poisson-LogNormal (Fenton-Wilkinson)  sigma={sigma:.3f}"
+            ref = "Lockwood et al. JAAS 2025"
+
+        elif method == "Manual":
+            thr = manual
+            eq  = "Threshold = User-defined value"
+            ref = ""
+        else:
+            thr = bg * 3
+            eq  = ref = ""
+
+        return float(thr), eq, ref
+
+
+# ---------------------------------------------------------------------------
+#  Peak integration visualiser
+# ---------------------------------------------------------------------------
+class PeakIntegrationVisualizer(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(420)
+        layout = QVBoxLayout(self)
+
+        self.plot = pg.PlotWidget()
+        self.plot.setBackground("w")
+        layout.addWidget(self.plot)
+
+        controls = QHBoxLayout()
+        bg_grp  = QGroupBox("Background level")
+        bg_lay  = QVBoxLayout(bg_grp)
+        self.bg_sl = _slider(5, 30, 10)
+        self.bg_sl.valueChanged.connect(self.update_visualization)
+        bg_lay.addWidget(self.bg_sl)
+        controls.addWidget(bg_grp)
+
+        thr_grp = QGroupBox("Threshold level")
+        thr_lay = QVBoxLayout(thr_grp)
+        self.thr_sl = _slider(20, 70, 40)
+        self.thr_sl.valueChanged.connect(self.update_visualization)
+        thr_lay.addWidget(self.thr_sl)
+        controls.addWidget(thr_grp)
+        layout.addLayout(controls)
+
+        self._gen_data()
+        self.update_visualization()
+
+    def _gen_data(self):
+        self.x   = np.linspace(0, 10, 500)
+        self.raw = 100 * np.exp(-(self.x - 5)**2 / 0.5) + 10
+        np.random.seed(42)
+        self.raw += np.random.normal(0, 2, len(self.x))
+
+    def update_visualization(self):
+        self.plot.clear()
+        bg  = self.bg_sl.value()
+        thr = self.thr_sl.value()
+        sig = self.raw - 10 + bg
+
+        self.plot.plot(self.x, sig, pen="b", name="Signal")
+        self.plot.plot(self.x, [bg]*len(self.x),
+                       pen=pg.mkPen("g", style=Qt.DashLine, width=2),
+                       name="Background")
+        self.plot.plot(self.x, [thr]*len(self.x),
+                       pen=pg.mkPen("r", style=Qt.DashLine, width=2),
+                       name="Threshold")
+
+        half = len(sig) // 2
+        li = ri = half
+        for i in range(half, 0, -1):
+            if sig[i] <= bg:
+                li = i
+                break
+        for i in range(half, len(sig)):
+            if sig[i] <= bg:
+                ri = i
+                break
+
+        self.plot.addItem(pg.FillBetweenItem(
+            pg.PlotDataItem(self.x[li:ri+1], sig[li:ri+1]),
+            pg.PlotDataItem(self.x[li:ri+1], [bg]*(ri-li+1)),
+            brush=pg.mkBrush(100, 100, 255, 100),
+        ))
+        area = np.sum(sig[li:ri+1] - bg)
+        ti   = pg.TextItem(
+            f"Integrated area: {area:.1f} counts\n"
+            f"Bounds: [{self.x[li]:.2f}, {self.x[ri]:.2f}] s",
+            color="k", anchor=(0, 0))
+        ti.setPos(self.x[li], sig[li] + 5)
+        self.plot.addItem(ti)
+        self.plot.setLabel("left", "Signal")
+        self.plot.setLabel("bottom", "Time (s)")
+        self.plot.setTitle("Background Integration Method (IsotopeTrack)")
+        self.plot.addLegend()
+
+
+# ---------------------------------------------------------------------------
+#  Help manager
+# ---------------------------------------------------------------------------
+class HelpManager:
+    def __init__(self, parent=None):
+        self.parent             = parent
+        self.user_guide_dialog  = None
+        self.detection_dialog   = None
         self.calibration_dialog = None
-        
+
     def show_user_guide(self):
-        """
-        Show the user guide dialog.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
+        """Show the user guide dialog."""
+        try:
+            from tools.tutorial import UserGuideDialog
+        except ImportError:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self.parent, "User Guide",
+                "User guide module is not available in this context.")
+            return
         if not self.user_guide_dialog:
             self.user_guide_dialog = UserGuideDialog(self.parent)
         self.user_guide_dialog.show()
         self.user_guide_dialog.raise_()
-        
+
     def show_detection_methods(self):
-        """
-        Show the detection methods dialog.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
         if not self.detection_dialog:
             self.detection_dialog = DetectionMethodsDialog(self.parent)
         self.detection_dialog.show()
         self.detection_dialog.raise_()
-        
+
     def show_calibration_methods(self):
-        """
-        Show the calibration methods dialog.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
         if not self.calibration_dialog:
             self.calibration_dialog = CalibrationMethodsDialog(self.parent)
         self.calibration_dialog.show()
         self.calibration_dialog.raise_()
 
 
-class InteractiveEquationVisualizer(QWidget):
-    """
-    Enhanced interactive visualization with automatic demo loading and signal processing.
-    """
-    
-    def __init__(self, parent=None):
-        """
-        Initialize the interactive equation visualizer.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
-        super().__init__(parent)
-        self.setMinimumHeight(800)
-        layout = QVBoxLayout(self)
-        
-        self.compound_poisson_lognormal = CompoundPoissonLognormal()
-        
-        self.original_time_data = []
-        self.original_signal_data = []
-        self.current_time_data = []
-        self.current_signal_data = []
-        self.original_dwell_time_us = 100.0
-        
-        controls_group = QGroupBox("SP-ICP-MS Detection Parameters with Signal Processing")
-        controls_layout = QVBoxLayout(controls_group)
-        
-        method_layout = QHBoxLayout()
-        method_layout.addWidget(QLabel("Detection Method:"))
-        self.method_combo = QComboBox()
-        self.method_combo.addItems([
-            "Currie", 
-            "Formula_C", 
-            "Compound_Poisson", 
-            "Manual"
-        ])
-        self.method_combo.currentTextChanged.connect(self.update_visualization)
-        method_layout.addWidget(self.method_combo)
-        method_layout.addStretch()
-        controls_layout.addLayout(method_layout)
-        
-        params_grid = QGridLayout()
-        
-        params_grid.addWidget(QLabel("Base Background (λ):"), 0, 0)
-        self.bg_slider = QSlider(Qt.Horizontal)
-        self.bg_slider.setRange(1, 1000)
-        self.bg_slider.setValue(100)
-        self.bg_slider.valueChanged.connect(self.fast_update)
-        self.bg_spinbox = QDoubleSpinBox()
-        self.bg_spinbox.setRange(0.01, 10.0)
-        self.bg_spinbox.setDecimals(3)
-        self.bg_spinbox.setValue(1.0)
-        params_grid.addWidget(self.bg_slider, 0, 1)
-        params_grid.addWidget(self.bg_spinbox, 0, 2)
-        
-        params_grid.addWidget(QLabel("Alpha (α):"), 0, 3)
-        self.alpha_slider = QSlider(Qt.Horizontal)
-        self.alpha_slider.setRange(0, 90)
-        self.alpha_slider.setValue(60)
-        self.alpha_slider.valueChanged.connect(self.fast_update)
-        self.alpha_spinbox = QDoubleSpinBox()
-        self.alpha_spinbox.setRange(1e-9, 1.0)
-        self.alpha_spinbox.setDecimals(9)
-        self.alpha_spinbox.setValue(1e-6)
-        params_grid.addWidget(self.alpha_slider, 0, 4)
-        params_grid.addWidget(self.alpha_spinbox, 0, 5)
-        
-        params_grid.addWidget(QLabel("Dwell Time (μs):"), 1, 0)
-        self.dwell_slider = QSlider(Qt.Horizontal)
-        self.dwell_slider.setRange(1, 10000)
-        self.dwell_slider.setValue(1000)
-        self.dwell_slider.valueChanged.connect(self.fast_update)
-        self.dwell_spinbox = QDoubleSpinBox()
-        self.dwell_spinbox.setRange(0.1, 10000.0)
-        self.dwell_spinbox.setDecimals(1)
-        self.dwell_spinbox.setValue(100.0)
-        self.dwell_spinbox.setSuffix(" μs")
-        params_grid.addWidget(self.dwell_slider, 1, 1)
-        params_grid.addWidget(self.dwell_spinbox, 1, 2)
-        
-        params_grid.addWidget(QLabel("Sigma (σ):"), 1, 3)
-        self.sigma_slider = QSlider(Qt.Horizontal)
-        self.sigma_slider.setRange(1, 200)
-        self.sigma_slider.setValue(47)
-        self.sigma_slider.valueChanged.connect(self.fast_update)
-        self.sigma_spinbox = QDoubleSpinBox()
-        self.sigma_spinbox.setRange(0.01, 2.0)
-        self.sigma_spinbox.setDecimals(3)
-        self.sigma_spinbox.setValue(0.47)
-        params_grid.addWidget(self.sigma_slider, 1, 4)
-        params_grid.addWidget(self.sigma_spinbox, 1, 5)
-        
-        params_grid.addWidget(QLabel("Number of Particles:"), 2, 0)
-        self.particles_slider = QSlider(Qt.Horizontal)
-        self.particles_slider.setRange(1, 30)
-        self.particles_slider.setValue(15)
-        self.particles_slider.valueChanged.connect(self.fast_update)
-        self.particles_spinbox = QSpinBox()
-        self.particles_spinbox.setRange(1, 30)
-        self.particles_spinbox.setValue(15)
-        params_grid.addWidget(self.particles_slider, 2, 1)
-        params_grid.addWidget(self.particles_spinbox, 2, 2)
-        
-        params_grid.addWidget(QLabel("Manual Threshold:"), 2, 3)
-        self.manual_slider = QSlider(Qt.Horizontal)
-        self.manual_slider.setRange(1, 200)
-        self.manual_slider.setValue(50)
-        self.manual_slider.valueChanged.connect(self.fast_update)
-        self.manual_spinbox = QDoubleSpinBox()
-        self.manual_spinbox.setRange(0.01, 1000.0)
-        self.manual_spinbox.setDecimals(3)
-        self.manual_spinbox.setValue(5.0)
-        params_grid.addWidget(self.manual_slider, 2, 4)
-        params_grid.addWidget(self.manual_spinbox, 2, 5)
-        
-        controls_layout.addLayout(params_grid)
-        layout.addWidget(controls_group)
-        
-        self.equation_label = QLabel()
-        self.equation_label.setStyleSheet("""
-            QLabel {
-                background-color: #f8f9fa;
-                border: 4px solid #007bff;
-                border-radius: 16px;
-                padding: 20px;
-                font-family: 'Courier New', monospace;
-                font-size: 16px;
-                max-height: 200px;
-            }
-        """)
-        self.equation_label.setWordWrap(True)
-        layout.addWidget(self.equation_label)
-        
-        self.results_label = QLabel()
-        self.results_label.setStyleSheet("""
-            QLabel {
-                background-color: #e8f5e8;
-                border: 2px solid #28a745;
-                border-radius: 8px;
-                padding: 8px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-        """)
-        layout.addWidget(self.results_label)
-        
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground('w')
-        self.plot.setLabel('left', 'Signal Intensity (counts)')
-        self.plot.setLabel('bottom', 'Time (seconds)')
-        self.plot.setTitle('SP-ICP-MS Simulation with Real Signal Processing')
-        layout.addWidget(self.plot)
-        
-        self.bg_spinbox.valueChanged.connect(self.update_bg_slider)
-        self.alpha_spinbox.valueChanged.connect(self.update_alpha_slider)
-        self.dwell_spinbox.valueChanged.connect(self.update_dwell_slider)
-        self.sigma_spinbox.valueChanged.connect(self.update_sigma_slider)
-        self.manual_spinbox.valueChanged.connect(self.update_manual_slider)
-        self.particles_spinbox.valueChanged.connect(self.update_particles_slider)
-        
-        self.last_params = {}
-        
-        self.load_demo_signal()
-    
-    def load_demo_signal(self):
-        """
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        try:
-            demo_file = get_resource_path("data/examplesignal.csv")
-            self.load_csv_file(str(demo_file))
-        except FileNotFoundError:
-            self.create_demo_signal()
-        
-    def load_csv_file(self, file_path):
-        """
-        Load and parse CSV file using dwell time processing method.
-        
-        Args:
-            file_path (str): Path to CSV file
-            
-        Returns:
-            None
-        """
-        try:
-            self.original_time_data = []
-            self.original_signal_data = []
-            
-            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                sample = csvfile.read(1024)
-                csvfile.seek(0)
-                sniffer = csv.Sniffer()
-                delimiter = sniffer.sniff(sample).delimiter
-                
-                reader = csv.reader(csvfile, delimiter=delimiter)
-                rows = list(reader)
-                
-                if len(rows) >= 3 and len(rows[2]) >= 1:
-                    try:
-                        dwell_time_seconds = float(rows[2][0])
-                        self.original_dwell_time_us = dwell_time_seconds * 1000000
-                        self.dwell_spinbox.setValue(self.original_dwell_time_us)
-                    except (ValueError, IndexError):
-                        self.original_dwell_time_us = 100.0
-                        self.dwell_spinbox.setValue(100.0)
-                else:
-                    self.original_dwell_time_us = 100.0
-                    self.dwell_spinbox.setValue(100.0)
-                
-                for row in rows:
-                    if len(row) >= 2:
-                        try:
-                            time_val = float(row[0])
-                            signal_val = float(row[1])
-                            self.original_time_data.append(time_val)
-                            self.original_signal_data.append(signal_val)
-                        except ValueError:
-                            continue
-            
-            if not self.original_time_data or not self.original_signal_data:
-                raise ValueError("No valid data found in the CSV file")
-            
-            self.current_time_data = self.original_time_data.copy()
-            self.current_signal_data = self.original_signal_data.copy()
-            
-            self.update_visualization()
-            
-        except Exception as e:
-            print(f"Error loading CSV: {e}")
-            self.create_demo_signal()
-    
-    def create_demo_signal(self):
-        """
-        Create a demo signal if CSV file is not available.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        time_points = np.arange(0, 10, 0.001)
-        signal = np.random.poisson(10, len(time_points)).astype(float)
-        
-        for peak_time in [2.0, 4.5, 7.2]:
-            peak_idx = int(peak_time / 0.001)
-            peak_width = 50
-            for i in range(max(0, peak_idx-peak_width//2), min(len(signal), peak_idx+peak_width//2)):
-                signal[i] += 100 * np.exp(-((i-peak_idx)/20)**2)
-        
-        self.original_time_data = time_points.tolist()
-        self.original_signal_data = signal.tolist()
-        self.current_time_data = self.original_time_data.copy()
-        self.current_signal_data = self.original_signal_data.copy()
-        self.original_dwell_time_us = 1000.0
-    
-    def apply_dwell_time_binning(self, new_dwell_time_us):
-        """
-        Apply dwell time binning using sum method.
-        
-        Args:
-            new_dwell_time_us (float): New dwell time in microseconds
-            
-        Returns:
-            None
-        """
-        if not self.original_signal_data:
-            return
-        
-        new_dwell_time_s = new_dwell_time_us / 1000000.0
-        original_dwell_time_s = self.original_dwell_time_us / 1000000.0
-        
-        bin_size = new_dwell_time_s / original_dwell_time_s
-        
-        if bin_size >= 1:
-            self.current_time_data = []
-            self.current_signal_data = []
-            
-            current_time = self.original_time_data[0]
-            i = 0
-            
-            while i < len(self.original_time_data) and current_time <= self.original_time_data[-1]:
-                bin_counts = []
-                bin_end_time = current_time + new_dwell_time_s
-                
-                while i < len(self.original_time_data) and self.original_time_data[i] < bin_end_time:
-                    bin_counts.append(self.original_signal_data[i])
-                    i += 1
-                
-                if bin_counts:
-                    binned_value = np.sum(bin_counts)
-                    self.current_time_data.append(current_time)
-                    self.current_signal_data.append(binned_value)
-                
-                current_time += new_dwell_time_s
-        else:
-            self.current_time_data = self.original_time_data.copy()
-            self.current_signal_data = self.original_signal_data.copy()
-    
-    def update_bg_slider(self, value):
-        """Update background slider from spinbox value."""
-        self.bg_slider.setValue(int(value * 100))
-    
-    def update_alpha_slider(self, value):
-        """Update alpha slider from spinbox value."""
-        if value >= 1.0:
-            self.alpha_slider.setValue(0)
-        else:
-            log_value = -np.log10(value)
-            self.alpha_slider.setValue(int(log_value * 10))
-    
-    def update_dwell_slider(self, value):
-        """Update dwell time slider from spinbox value."""
-        self.dwell_slider.setValue(int(value * 10))
-    
-    def update_sigma_slider(self, value):
-        """Update sigma slider from spinbox value."""
-        self.sigma_slider.setValue(int(value * 100))
-    
-    def update_manual_slider(self, value):
-        """Update manual threshold slider from spinbox value."""
-        self.manual_slider.setValue(int(value * 10))
-    
-    def update_particles_slider(self, value):
-        """Update particles slider from spinbox value."""
-        self.particles_slider.setValue(value)
-    
-    def fast_update(self):
-        """
-        Optimized update function for faster response.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        self.bg_spinbox.setValue(self.bg_slider.value() / 100.0)
-        
-        if self.alpha_slider.value() == 0:
-            alpha = 1.0
-        else:
-            alpha = 10**(-self.alpha_slider.value() / 10.0)
-        self.alpha_spinbox.setValue(alpha)
-        
-        self.dwell_spinbox.setValue(self.dwell_slider.value() / 10.0)
-        self.sigma_spinbox.setValue(self.sigma_slider.value() / 100.0)
-        self.manual_spinbox.setValue(self.manual_slider.value() / 10.0)
-        self.particles_spinbox.setValue(self.particles_slider.value())
-        
-        self.update_visualization()
-    
-    def update_visualization(self):
-        """
-        Update the visualization with current parameters.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        method = self.method_combo.currentText()
-        base_background = self.bg_spinbox.value()
-        alpha = self.alpha_spinbox.value()
-        dwell_time_us = self.dwell_spinbox.value()
-        sigma = self.sigma_spinbox.value()
-        manual_threshold = self.manual_spinbox.value()
-        num_particles = self.particles_spinbox.value()
-        
-        self.apply_dwell_time_binning(dwell_time_us)
-        
-        dwell_time_ms = dwell_time_us / 1000.0
-        actual_background = base_background * dwell_time_ms
-        
-        current_params = (method, base_background, alpha, dwell_time_us, sigma,
-                         manual_threshold, num_particles)
-        
-        if hasattr(self, 'last_params') and self.last_params == current_params:
-            return
-        self.last_params = current_params
-        
-        threshold, equation_text, reference_text = self.calculate_threshold(
-            method, actual_background, alpha, manual_threshold, sigma)
-        
-        self.equation_label.setText(f"""
-            <b>{method}:</b> {equation_text}<br>
-            <b>{reference_text}</b>
-        """)
-        
-        results_text = f"""
-            Background: <b>{actual_background:.1f}</b> | 
-            Threshold: <b>{threshold:.1f}</b> | 
-            Dwell: {dwell_time_us:.1f}μs | 
-            Sigma: {sigma:.3f} | 
-            Points: Original: {len(self.original_signal_data)} → Current: {len(self.current_signal_data)}
-        """
-        self.results_label.setText(results_text)
-        
-        self.update_signal_simulation(actual_background, threshold, num_particles)
-    
-    def update_signal_simulation(self, actual_background, threshold, num_particles):
-        """
-        Update simulation using real or demo signal.
-        
-        Args:
-            actual_background (float): Background level
-            threshold (float): Detection threshold
-            num_particles (int): Number of synthetic particles to add
-            
-        Returns:
-            None
-        """
-        self.plot.clear()
-        
-        if not self.current_signal_data:
-            return
-        
-        time_points = np.array(self.current_time_data)
-        signal = np.array(self.current_signal_data)
-        
-        if num_particles > 0:
-            for i in range(num_particles):
-                if i < len(time_points) // 3:
-                    peak_idx = int(i * len(time_points) / (num_particles * 3))
-                    if peak_idx < len(signal):
-                        signal[peak_idx] += np.random.uniform(threshold * 2, threshold * 5)
-        
-        self.plot.plot(time_points, signal, pen='b', name='Signal with Dwell Time Processing')
-        self.plot.plot(time_points, [actual_background] * len(time_points), 
-                     pen=pg.mkPen('g', style=Qt.DashLine, width=2), 
-                     name=f'Background ({actual_background:.1f})')
-        self.plot.plot(time_points, [threshold] * len(time_points), 
-                     pen=pg.mkPen('r', style=Qt.DashLine, width=2), 
-                     name=f'Threshold ({threshold:.1f})')
-        
-        above_threshold = signal > threshold
-        if np.any(above_threshold):
-            above_indices = np.where(above_threshold)[0]
-            scatter = pg.ScatterPlotItem(
-                time_points[above_indices], signal[above_indices],
-                symbol='o', size=8, brush='red', pen='darkred'
-            )
-            self.plot.addItem(scatter)
-        
-        self.plot.setLabel('left', 'Signal Intensity (counts)')
-        self.plot.setLabel('bottom', 'Time (seconds)')
-        self.plot.setTitle(f'Real Signal with SP-ICP-MS Detection - Dwell: {self.dwell_spinbox.value():.1f}μs')
-        
-        self.plot.addLegend()
-    
-    def calculate_threshold(self, method, background, alpha, manual_threshold, sigma):
-        """
-        Calculate threshold using all imported methods with sigma parameter.
-        
-        Args:
-            method (str): Detection method name
-            background (float): Background level
-            alpha (float): Significance level
-            manual_threshold (float): Manual threshold value
-            sigma (float): Sigma parameter for compound Poisson
-            
-        Returns:
-            tuple: (threshold, equation_text, reference_text)
-        """
-        if method == "Currie":
-            z_a = NormalDist().inv_cdf(1.0 - alpha)
-            epsilon = 0.5 if background < 10 else 0.0
-            eta = 2.0
-            threshold = background + z_a * np.sqrt((background + epsilon) * eta)
-            
-            equation_text = """Threshold = λ + z<sub>α</sub> × √[(λ + ε) × η]<br>
-            Where: λ=background, z<sub>α</sub>=critical value, ε=continuity correction, η=time ratio"""
-            
-            reference_text = """Currie, L.A. J Radioanal Nucl Chem 276, 285–297 (2008) """
-            
-        elif method == "Formula_C":
-            z_a = NormalDist().inv_cdf(1.0 - alpha)
-            tr = 1.0
-            threshold = background + (z_a**2 / 2.0 * tr + z_a * np.sqrt(
-                z_a**2 / 4.0 * tr * tr + background * tr * (1.0 + tr)))
-            
-            equation_text = """Threshold = λ + z<sub>α</sub>²/2×t<sub>r</sub> + z<sub>α</sub>×√[z<sub>α</sub>²/4×t<sub>r</sub>² + λ×t<sub>r</sub>×(1+t<sub>r</sub>)]<br>
-            Where: λ=background, z<sub>α</sub>=critical value, t<sub>r</sub>=time ratio"""
-            
-            reference_text = """MARLAP Manual Volume III: Chapter 20, Detection and Quantification Capabilities Overview : Formula C 20.52"""
-            
-        elif method == "Compound_Poisson":
-            threshold = self.compound_poisson_lognormal.get_threshold(background, alpha, sigma=sigma)
-            
-            equation_text = f"""Analytical Compound Poisson-LogNormal Approximation: Uses Fenton-Wilkinson method for sum of lognormal distributions<br>
-            Parameters: σ = {sigma:.3f} (log standard deviation)<br>
-            1. Generate zero-truncated Poisson quantile: q₀ = (q - e⁻λ)/(1 - e⁻λ)<br>
-            2. For each k ions, apply Fenton-Wilkinson: μ_sum, σ_sum = f(k, μ, σ)<br>
-            3. Weight by Poisson probabilities: P(k|λ)<br>
-            4. Solve: Σ P(k|λ) × LogNormal_CDF(x; μ_sum, σ_sum) = q₀<br>
-            Lockwood, T. E.; Schlatt, L.; Clases, D. SPCal – an open source, easy-to-use processing platform for ICP-TOFMS-based single event data. Journal of Analytical Atomic Spectrometry 2025.<br>
-            Fenton, L. The Sum of Log-Normal Probability Distributions in Scatter Transmission Systems. IRE Transactions on Communications Systems 1960.<br>
-            """
-            
-            reference_text = """"""
-            
-        elif method == "Manual":
-            threshold = manual_threshold
-            
-            equation_text = """Threshold = User-Defined Value<br>
-            No statistical calculation - direct threshold specification"""
-            
-            reference_text = """User-defined threshold"""
-        
-        return threshold, equation_text, reference_text
-
-
-class PeakIntegrationVisualizer(QWidget):
-    """
-    Interactive visualization of peak integration methods.
-    """
-    
-    def __init__(self, parent=None):
-        """
-        Initialize the peak integration visualizer.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
-        super().__init__(parent)
-        self.setMinimumHeight(400)
-        layout = QVBoxLayout(self)
-        
-        self.plot = pg.PlotWidget()
-        self.plot.setBackground('w')
-        layout.addWidget(self.plot)
-        
-        controls = QHBoxLayout()
-        
-        background_layout = QVBoxLayout()
-        background_layout.addWidget(QLabel("Background Level:"))
-        self.background_slider = QSlider(Qt.Horizontal)
-        self.background_slider.setRange(5, 30)
-        self.background_slider.setValue(10)
-        self.background_slider.valueChanged.connect(self.update_visualization)
-        background_layout.addWidget(self.background_slider)
-        
-        threshold_layout = QVBoxLayout()
-        threshold_layout.addWidget(QLabel("Threshold Level:"))
-        self.threshold_slider = QSlider(Qt.Horizontal)
-        self.threshold_slider.setRange(20, 70)
-        self.threshold_slider.setValue(40)
-        self.threshold_slider.valueChanged.connect(self.update_visualization)
-        threshold_layout.addWidget(self.threshold_slider)
-        
-        controls.addLayout(background_layout)
-        controls.addLayout(threshold_layout)
-        layout.addLayout(controls)
-        
-        self.generate_peak_data()
-        self.update_visualization()
-    
-    def generate_peak_data(self):
-        """
-        Generate a sample peak for integration demo.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        self.x = np.linspace(0, 10, 500)
-        
-        peak_position = 5
-        peak_height = 100
-        peak_width = 0.5
-        
-        self.peak = peak_height * np.exp(-(self.x - peak_position)**2 / peak_width)
-        
-        self.background_level = 10
-        self.background = np.full_like(self.x, self.background_level)
-        
-        np.random.seed(42)
-        noise = np.random.normal(0, 2, size=len(self.x))
-        
-        self.signal = self.peak + self.background + noise
-    
-    def update_visualization(self):
-        """
-        Update the visualization with current parameters.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        self.plot.clear()
-        
-        background_level = self.background_slider.value()
-        threshold_level = self.threshold_slider.value()
-        
-        signal = self.signal - self.background + background_level
-        
-        self.plot.plot(self.x, signal, pen='b', name='Signal')
-        
-        self.plot.plot(self.x, [background_level] * len(self.x), 
-                     pen=pg.mkPen('g', style=Qt.DashLine, width=2), name='Background')
-        self.plot.plot(self.x, [threshold_level] * len(self.x), 
-                     pen=pg.mkPen('r', style=Qt.DashLine, width=2), name='Threshold')
-        
-        boundary_level = background_level
-        
-        self.plot.plot(self.x, [boundary_level] * len(self.x), 
-                     pen=pg.mkPen('m', style=Qt.DashLine, width=2), name='Background Integration Boundary')
-        
-        left_idx = 0
-        right_idx = len(signal) - 1
-        
-        for i in range(len(signal)//2, 0, -1):
-            if signal[i] <= boundary_level:
-                left_idx = i
-                break
-        
-        for i in range(len(signal)//2, len(signal)):
-            if signal[i] <= boundary_level:
-                right_idx = i
-                break
-        
-        self.plot.plot([self.x[left_idx], self.x[left_idx]], [0, signal[left_idx]], 
-                     pen=pg.mkPen('y', width=2), name='Left Boundary')
-        self.plot.plot([self.x[right_idx], self.x[right_idx]], [0, signal[right_idx]], 
-                     pen=pg.mkPen('y', width=2), name='Right Boundary')
-        
-        fillcolor = pg.mkBrush(100, 100, 255, 100)
-        fillcurve = pg.FillBetweenItem(
-            pg.PlotDataItem(self.x[left_idx:right_idx+1], signal[left_idx:right_idx+1]), 
-            pg.PlotDataItem(self.x[left_idx:right_idx+1], [background_level] * (right_idx-left_idx+1)), 
-            brush=fillcolor
-        )
-        self.plot.addItem(fillcurve)
-        
-        area = np.sum(signal[left_idx:right_idx+1] - background_level)
-        info_text = f"Background Integration\nTotal counts: {area:.1f}\nLeft bound: {self.x[left_idx]:.2f}s\nRight bound: {self.x[right_idx]:.2f}s"
-        text_item = pg.TextItem(info_text, color='k', anchor=(0, 0))
-        text_item.setPos(self.x[left_idx], signal[left_idx] + 5)
-        self.plot.addItem(text_item)
-        
-        self.plot.setLabel('left', 'Signal')
-        self.plot.setLabel('bottom', 'Time (s)')
-        self.plot.setTitle('Background Integration Method (Used in IsotopeTrack)')
-        self.plot.addLegend()
-
-
+# ---------------------------------------------------------------------------
+#  Detection Methods Dialog
+# ---------------------------------------------------------------------------
 class DetectionMethodsDialog(QDialog):
-    """
-    Dialog explaining detection methods with interactive visualizations.
-    """
-    
     def __init__(self, parent=None):
-        """
-        Initialize the detection methods dialog.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
         super().__init__(parent)
-        self.setWindowTitle("Detection Methods Explained")
-        self.resize(1400, 1000)
-        
+        self.setWindowTitle("Detection Methods - IsotopeTrack")
+        self.resize(1600, 1000)
+
         layout = QVBoxLayout(self)
-        
+        layout.setContentsMargins(6, 6, 6, 6)
+
+        layout.addWidget(_styled_label(
+            "<h2 style='margin:0'>SP-ICP-ToF-MS Signal Simulator &amp; Detection Explorer</h2>"
+            "<p style='margin:4px 0 0 0'>"
+            "Physically realistic background (compound Poisson) and particle signals "
+            "(log-normal distribution, multi-bin at short dwell times). "
+            "Peak width is derived automatically from dwell time. "
+            "Scroll the right panel to see the full intensity histogram.</p>",
+            bg="#eef4ff", border="#4a90d9",
+        ))
+
         tabs = QTabWidget()
-        
-        tabs.addTab(self.create_detection_methods_tab(), "Detection Methods")
-        tabs.addTab(self.create_integration_tab(), "Peak Integration")
-        
+        tabs.addTab(self._tab_simulator(), "Signal Simulator")
+        tabs.addTab(self._tab_integration(), "Peak Integration")
         layout.addWidget(tabs)
-        
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignRight)
-    
-    def create_detection_methods_tab(self):
-        """
-        Create detection methods tab with enhanced interactive features.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Detection methods tab widget
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        
-        interactive_header = QLabel("""
-            <h2>Interactive Detection Explorer with Real Signal Processing</h2>
-            <p>Automatically loads demonstration data to show how detection methods work with real signals</p>
-            <p>Features: Dwell time binning (sum method), Sigma parameter for Compound Poisson, All detection methods (Currie, Formula C, Compound Poisson LogNormal, Manual)</p>
-        """)
-        interactive_header.setWordWrap(True)
-        interactive_header.setTextFormat(Qt.RichText)
-        content_layout.addWidget(interactive_header)
-        
-        visualizer = InteractiveEquationVisualizer()
-        visualizer.setMinimumHeight(700)
-        content_layout.addWidget(visualizer)
-        
-        scroll_area.setWidget(content_widget)
-        
-        return scroll_area
-    
-    def create_integration_tab(self):
-        """
-        Create integration tab with all content in one scrollable area.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Integration tab widget
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        
-        explanation = QLabel("""
-            <h2>Peak Integration - Background Method</h2>
-            <p>IsotopeTrack uses the Background Integration Method for all peak quantification.
-            This method provides the most complete capture of peak area by integrating from 
-            background level to background level.</p>
-            
-            <h3>Background Integration Process:</h3>
-            <ol>
-                <li>Peak Detection: Identify regions where signal exceeds threshold</li>
-                <li>Boundary Finding: Locate where signal returns to background level</li>
-                <li>Area Calculation: Sum all signal points within boundaries</li>
-                <li>Background Subtraction: Subtract background from each integrated point</li>
-            </ol>
-            
-            <h3>Mathematical Implementation:</h3>
-            <p>Total Counts = Σ(Signal[i] - Background) for i ∈ [left_boundary, right_boundary]</p>
-            <p>Where:</p>
-            <ul>
-                <li>left_boundary: First point where signal drops to background level (before peak)</li>
-                <li>right_boundary: Last point where signal drops to background level (after peak)</li>
-                <li>Background: Mean background level calculated from quiet regions</li>
-                <li>Signal[i]: Raw signal intensity at point i</li>
-            </ul>
-            
-            <h3>Why Background Integration?</h3>
-            <ul>
-                <li>Maximum Sensitivity: Captures entire peak including low-intensity tails</li>
-                <li>Physical Meaning: Represents total analyte signal above baseline</li>
-                <li>Robust Detection: Less sensitive to threshold selection variations</li>
-                <li>Complete Information: Uses all available signal information</li>
-                <li>Noise Tolerance: Averages out random fluctuations over peak width</li>
-            </ul>
-        """)
-        explanation.setWordWrap(True)
-        explanation.setTextFormat(Qt.RichText)
-        content_layout.addWidget(explanation)
-        
-        separator = QLabel("<hr>")
-        separator.setTextFormat(Qt.RichText)
-        content_layout.addWidget(separator)
-        
-        interactive_header = QLabel("""
-            <h2>Interactive Integration Demo</h2>
-            <p>Adjust the background and threshold levels to see how integration boundaries change.</p>
-        """)
-        interactive_header.setWordWrap(True)
-        interactive_header.setTextFormat(Qt.RichText)
-        content_layout.addWidget(interactive_header)
-        
-        integration_demo = PeakIntegrationVisualizer()
-        integration_demo.setMinimumHeight(500)
-        content_layout.addWidget(integration_demo)
-        
-        scroll_area.setWidget(content_widget)
-        return scroll_area
+
+        btn = QPushButton("Close")
+        btn.setFixedWidth(100)
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn, alignment=Qt.AlignRight)
+
+    def _tab_simulator(self):
+        w   = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 4, 0, 0)
+        lay.addWidget(InteractiveEquationVisualizer())
+        return w
+
+    def _tab_integration(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        cw = QWidget()
+        cl = QVBoxLayout(cw)
+        cl.addWidget(_styled_label(
+            "<h3 style='margin-top:0'>Peak Integration - Background Method</h3>"
+            "<p>IsotopeTrack integrates from where signal returns to background level on "
+            "each side of the peak, capturing the full ion cloud.</p>"
+            "<p><b>Formula:</b> Total counts = sum(Signal[i] - Background) "
+            "for i in [left_bound, right_bound]</p>",
+            bg="#fff8e1", border="#f39c12",
+        ))
+        cl.addWidget(PeakIntegrationVisualizer())
+        scroll.setWidget(cw)
+        return scroll
 
 
+# ---------------------------------------------------------------------------
+#  Calibration Methods Dialog
+# ---------------------------------------------------------------------------
 class CalibrationMethodsDialog(QDialog):
-    """
-    Dialog explaining calibration methods with visual examples.
-    """
-    
     def __init__(self, parent=None):
-        """
-        Initialize the calibration methods dialog.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
         super().__init__(parent)
-        self.setWindowTitle("Calibration Methods Explained")
+        self.setWindowTitle("Calibration Methods - IsotopeTrack")
         self.resize(900, 700)
-        
         layout = QVBoxLayout(self)
-        
-        tabs = QTabWidget()
-        
-        tabs.addTab(self.create_overview_tab(), "Overview")
-        tabs.addTab(self.create_ionic_tab(), "Ionic Calibration")
-        tabs.addTab(self.create_transport_tab(), "Transport Rate")
-        
+        tabs   = QTabWidget()
+        tabs.addTab(self._tab_overview(), "Overview")
+        tabs.addTab(self._tab_ionic(), "Ionic Calibration")
+        tabs.addTab(self._tab_transport(), "Transport Rate")
         layout.addWidget(tabs)
-        
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignRight)
-    
-    def load_image_safe(self, image_path):
-        """
-        Safely load an image and return a QLabel with proper scaling.
-        
-        Args:
-            image_path (str): Path to image file
-            
-        Returns:
-            QLabel: Label containing scaled image or error message
-        """
+        btn = QPushButton("Close")
+        btn.clicked.connect(self.accept)
+        layout.addWidget(btn, alignment=Qt.AlignRight)
+
+    def _img(self, path, w=600, h=400):
         try:
-            full_path = get_resource_path(image_path)
-            pixmap = QPixmap(str(full_path))
-            
-            if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(600, 400, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                image_label = QLabel()
-                image_label.setPixmap(scaled_pixmap)
-                image_label.setAlignment(Qt.AlignCenter)
-                return image_label
-            else:
-                error_label = QLabel(f"Could not load image: {image_path}")
-                error_label.setStyleSheet("color: red; font-style: italic;")
-                return error_label
-        except Exception as e:
-            error_label = QLabel(f"Error loading image {image_path}: {str(e)}")
-            error_label.setStyleSheet("color: red; font-style: italic;")
-            return error_label
-        
-    def create_overview_tab(self):
-        """
-        Create calibration overview tab.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Overview tab widget
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        
-        explanation = QLabel("""
-            <h2>Calibration Overview</h2>
-            <p>To convert instrument signals (counts) into meaningful physical quantities like 
-            particle mass and size, IsotopeTrack uses two types of calibration:</p>
-            
-            <ol>
-                <li>Ionic Calibration: Establishes the relationship between analyte concentration 
-                and signal intensity (counts per second)</li>
-                <li>Transport Rate Calibration: Determines the rate at which sample solution 
-                is introduced into the instrument (μL/s)</li>
-            </ol>
-            
-            <p>Together, these calibrations allow IsotopeTrack to calculate:</p>
-            <ul>
-                <li>Particle mass (femtograms)</li>
-                <li>Particle diameter (nanometers)</li>
-                <li>Particle number concentration (particles/mL)</li>
-                <li>Detection/quantification limits</li>
-            </ul>
-            
-            <h3>Calibration Workflow:</h3>
-            <ol>
-                <li>Load calibration standards and reference materials</li>
-                <li>Configure ionic calibration with multiple calibration sets</li>
-                <li>System tests three calibration methods and selects best R²</li>
-                <li>Perform transport rate calibration using reference nanoparticles</li>
-                <li>Validate calibration accuracy with known standards</li>
-                <li>Apply calibration to unknown samples</li>
-            </ol>
-        """)
-        explanation.setWordWrap(True)
-        explanation.setTextFormat(Qt.RichText)
-        layout.addWidget(explanation)
-        
-        layout.addWidget(QLabel("<h3>Calibration Methods Overview:</h3>"))
-        calibration_overview_image = self.load_image_safe("images/calibration_overview.png")
-        layout.addWidget(calibration_overview_image)
-        
-        scroll_area.setWidget(content_widget)
-        return scroll_area
-    
-    def create_ionic_tab(self):
-        """
-        Create ionic calibration tab.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Ionic calibration tab widget
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        
-        explanation = QLabel("""
-            <h2>Ionic Calibration</h2>
-            <p>Ionic calibration establishes the relationship between element concentration and 
-            instrument response by analyzing a series of standard solutions.</p>
-            
-            <h3>The Process:</h3>
-            <ol>
-                <li>Prepare standard solutions of known concentrations</li>
-                <li>Selected isotopes from main window appear automatically in calibration</li>
-                <li>Set up multiple calibration sets for different experimental conditions</li>
-                <li>Use "-1" in table to exclude samples from specific calibration sets</li>
-                <li>System automatically tests three calibration methods</li>
-                <li>IsotopeTrack selects the method with best R² value</li>
-                <li>Manual override available for user preference</li>
-            </ol>
-            
-            <h3>Three Calibration Methods:</h3>
-            <ul>
-                <li>Simple Linear: Basic linear regression through origin</li>
-                <li>Linear: Linear regression with intercept</li>
-                <li>Weighted: Weighted linear regression for improved accuracy at low concentrations</li>
-            </ul>
-            
-            <h3>Key Outputs:</h3>
-            <ul>
-                <li>Sensitivity (slope): The signal response per unit concentration (counts/ppb)</li>
-                <li>R²: A measure of calibration quality (should be >0.99)</li>
-                <li>BEC: Background Equivalent Concentration</li>
-                <li>LOD: Limit of Detection</li>
-                <li>LOQ: Limit of Quantification</li>
-            </ul>
-        """)
-        explanation.setWordWrap(True)
-        explanation.setTextFormat(Qt.RichText)
-        layout.addWidget(explanation)
-        
-        layout.addWidget(QLabel("<h3>Example Ionic Calibration Curve:</h3>"))
-        ionic_calibration_image = self.load_image_safe("images/ionic_calibration.png")
-        layout.addWidget(ionic_calibration_image)
-        
-        scroll_area.setWidget(content_widget)
-        return scroll_area
-    
-    def create_transport_tab(self):
-        """
-        Create transport rate calibration tab.
-        
-        Args:
-            None
-            
-        Returns:
-            QWidget: Transport rate tab widget
-        """
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        
-        content_widget = QWidget()
-        layout = QVBoxLayout(content_widget)
-        
-        explanation = QLabel("""
-            <h2>Transport Rate Calibration</h2>
-            <h3>Reference:</h3>
-            <p>Pace, H.E., et al. (2011) "Determining transport efficiency for the purpose of counting 
-            and sizing nanoparticles via single particle inductively coupled plasma-mass spectrometry" 
-            Analytical Chemistry 83:9361-9369</p>
-            
-            <h3>Impact of Transport Efficiency Errors:</h3>
-            <p>The following figure demonstrates how errors in transport efficiency (TE) measurement 
-            directly affect particle size and concentration calculations:</p>
-        """)
-        explanation.setWordWrap(True)
-        explanation.setTextFormat(Qt.RichText)
-        layout.addWidget(explanation)
-        
-        transport_error_image = self.load_image_safe("images/methods.png")
-        layout.addWidget(transport_error_image)
-        
-        citation1 = QLabel("""
-            <p><i>Source: "Determining transport efficiency for the purpose of counting and sizing nanoparticles 
-            via single particle inductively coupled plasma-mass spectrometry"</i></p>
-        """)
-        citation1.setTextFormat(Qt.RichText)
-        citation1.setStyleSheet("font-style: italic; color: #666666;")
-        layout.addWidget(citation1)
-        
-        layout.addWidget(QLabel("<hr>"))
-        
-        size_comparison_label = QLabel("""
-            <h3>Particle size distribution analysis and number of concentration:</h3>
-            <p>The following comparison shows particle size distributions and number of concentration obtained using different methods,
-            demonstrating the importance of accurate transport rate calibration for reliable sizing and particle number:</p>
-        """)
-        size_comparison_label.setWordWrap(True)
-        size_comparison_label.setTextFormat(Qt.RichText)
-        layout.addWidget(size_comparison_label)
-        
-        size_distribution_image = self.load_image_safe("images/transport_effect.png")
-        layout.addWidget(size_distribution_image)
-        
-        citation2 = QLabel("""
-            <p><i>Source: "Lowering the Size Detection Limits of Ag and TiO<sub>2</sub> Nanoparticles by Single Particle ICP-MS"</i></p>
-        """)
-        citation2.setTextFormat(Qt.RichText)
-        citation2.setStyleSheet("font-style: italic; color: #666666;")
-        layout.addWidget(citation2)
-        
-        post_calibration_label = QLabel("""
-            <h3>Post-Calibration Options:</h3>
-            <ul>
-                <li>Calculate average of multiple transport rate measurements</li>
-                <li>Select the most reliable single calibrated rate</li>
-                <li>Use different transport rates for different sample types</li>
-                <li>Validate transport efficiency with independent methods</li>
-            </ul>
-        """)
-        post_calibration_label.setWordWrap(True)
-        post_calibration_label.setTextFormat(Qt.RichText)
-        layout.addWidget(post_calibration_label)
-        
-        scroll_area.setWidget(content_widget)
-        return scroll_area
+            pm = QPixmap(str(get_resource_path(path)))
+            if not pm.isNull():
+                lbl = QLabel()
+                lbl.setPixmap(pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                lbl.setAlignment(Qt.AlignCenter)
+                return lbl
+        except Exception:
+            pass
+        return QLabel(f"<i style='color:red'>Image not found: {path}</i>")
+
+    def _scroll(self, *widgets):
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        cw = QWidget()
+        cl = QVBoxLayout(cw)
+        for w in widgets:
+            cl.addWidget(w)
+        cl.addStretch()
+        sc.setWidget(cw)
+        return sc
+
+    def _tab_overview(self):
+        return self._scroll(_styled_label(
+            "<h2>Calibration Overview</h2>"
+            "<p>Two calibrations convert raw counts to physical quantities:</p>"
+            "<ol><li><b>Ionic Calibration</b> - concentration to counts/s</li>"
+            "<li><b>Transport Rate</b> - sample volume entering plasma per second (uL/s)</li></ol>"
+            "<p>Outputs: particle mass (fg), diameter (nm), number concentration (particles/mL), LOD, LOQ.</p>",
+            bg="#eef4ff", border="#4a90d9"),
+            self._img("images/calibration_overview.png"))
+
+    def _tab_ionic(self):
+        return self._scroll(_styled_label(
+            "<h2>Ionic Calibration</h2>"
+            "<p>Three methods tested automatically; best R^2 selected:</p>"
+            "<ul><li><b>Simple Linear</b> - through origin</li>"
+            "<li><b>Linear</b> - with intercept</li>"
+            "<li><b>Weighted</b> - improved accuracy at low concentrations</li></ul>"
+            "<p>Key outputs: sensitivity (counts/ppb), R^2, BEC, LOD, LOQ.</p>",
+            bg="#eef4ff", border="#4a90d9"),
+            self._img("images/ionic_calibration.png"))
+
+    def _tab_transport(self):
+        return self._scroll(_styled_label(
+            "<h2>Transport Rate Calibration</h2>"
+            "<p>Errors in transport efficiency propagate directly into size and concentration errors.</p>"
+            "<p><i>Pace et al. Anal. Chem. 83, 9361 (2011).</i></p>\n Laurie et al. Anal. Chem. 91, 20, 13275-13284 (2019).",
+            bg="#eef4ff", border="#4a90d9"),
+            self._img("images/methods.png"),
+            self._img("images/transport_effect.png"))
 
 
+# ---------------------------------------------------------------------------
+#  About dialog
+# ---------------------------------------------------------------------------
 class AboutDialog(QDialog):
-    """
-    About dialog for IsotopeTrack application.
-    """
-    
     def __init__(self, parent=None):
-        """
-        Initialize the about dialog.
-        
-        Args:
-            parent (QWidget, optional): Parent widget
-            
-        Returns:
-            None
-        """
         super().__init__(parent)
         self.setWindowTitle("About IsotopeTrack")
-        self.setFixedSize(500, 400)
-        
-        layout = QVBoxLayout(self)
-        
+        self.setFixedSize(500, 380)
+        lay = QVBoxLayout(self)
+
         title = QLabel("<h1>IsotopeTrack</h1>")
         title.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title)
-        
-        logo_label = QLabel()
-        logo_label.setAlignment(Qt.AlignCenter)
-        
+        lay.addWidget(title)
+
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setStyleSheet("font-size:52px")
+        logo.setText("🔬")
         try:
-            logo_path = get_resource_path("images/isotrack_icon.png")
-            logo_pixmap = QPixmap(str(logo_path))
+            pm = QPixmap(str(get_resource_path("images/isotrack_icon.png")))
+            if not pm.isNull():
+                logo.setPixmap(pm.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                logo.setText("")
+        except Exception:
+            pass
+        lay.addWidget(logo)
 
-            if not logo_pixmap.isNull():
-                scaled_logo = logo_pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                logo_label.setPixmap(scaled_logo)
-        except Exception as e:
-            logo_label.setText("🔬")
-            logo_label.setStyleSheet("font-size: 48px;")
-        
-        layout.addWidget(logo_label)
-        
-        layout.addSpacing(10)
-        
-        version = QLabel("<h3>Version 1.0.0</h3>")
-        version.setAlignment(Qt.AlignCenter)
-        layout.addWidget(version)
-        
-        description = QLabel("""
-            <p align="center">
-            A software for analyzing single particle ICP-ToF-MS data.<br><br>
-            IsotopeTrack provides advanced tools for peak detection, calibration,<br>
-            and quantitative analysis of nanoparticles.
-            </p>
-        """)
-        description.setWordWrap(True)
-        layout.addWidget(description)
-        
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignCenter)
+        lay.addWidget(QLabel(
+            "<h3 align='center'>Version 1.0.1</h3>"
+            "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
+            "Peak detection - Calibration - Nanoparticle quantification.</p>"
+        ))
+        btn = QPushButton("Close")
+        btn.clicked.connect(self.accept)
+        lay.addWidget(btn, alignment=Qt.AlignCenter)
 
 
-class TabbedHelpWindow(QMainWindow):
-    """
-    Main help window with tabbed interface for all help content.
-    """
-    
-    def __init__(self):
-        """
-        Initialize the tabbed help window.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-        """
-        super().__init__()
-        self.setWindowTitle("IsotopeTrack Help")
-        self.resize(1000, 800)
-
-        self.tab_widget = QTabWidget()
-        self.setCentralWidget(self.tab_widget)
-
-        self.tab_widget.addTab(UserGuideDialog(self), "User Guide")
-        self.tab_widget.addTab(DetectionMethodsDialog(self), "Detection Methods")
-        self.tab_widget.addTab(CalibrationMethodsDialog(self), "Calibration Methods")
-
-
+# ---------------------------------------------------------------------------
+#  Standalone entry point
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    help_center = TabbedHelpWindow()
-    help_center.showMaximized()
+    app.setStyle("Fusion")
+    dlg = DetectionMethodsDialog()
+    dlg.showMaximized()
     sys.exit(app.exec())

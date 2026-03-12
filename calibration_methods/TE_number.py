@@ -633,7 +633,6 @@ class NumberMethodWidget(QMainWindow):
                     
                     sample_name = h5_file.stem
                     
-                    # Get masses only
                     try:
                         masses = DataProcessThread.get_masses_only(str(h5_path))
                         all_masses_from_files.extend(masses)
@@ -1347,7 +1346,6 @@ class NumberMethodWidget(QMainWindow):
                     except Exception as load_error:
                         raise ValueError(f"Error loading TOFWERK data: {str(load_error)}")
                 
-                # Handle NU folder data
                 else:
                     try:
                         masses, signals, run_info = data_loading.vitesse_loading.read_nu_directory(
