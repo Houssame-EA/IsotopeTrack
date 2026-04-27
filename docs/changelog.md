@@ -2,8 +2,6 @@
 
 ## v1.0.2 — Latest
 
-Changelog
-v1.0.2 — Latest
 Main Window
 
 Full light / dark theme toggle with live switching across all dialogs and widgets
