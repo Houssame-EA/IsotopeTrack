@@ -15,14 +15,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 #  Format version constants
 # ---------------------------------------------------------------------------
-FORMAT_V2_MAGIC = b"ITPROJ_V2\n"   # first 10 bytes of a v2 file
-FORMAT_V1_GZIP_MAGIC = b"\x1f\x8b"  # gzip magic bytes
+FORMAT_V2_MAGIC = b"ITPROJ_V2\n"
+FORMAT_V1_GZIP_MAGIC = b"\x1f\x8b"
 
 # ---------------------------------------------------------------------------
 #  Helpers: particle list <-> columnar numpy
 # ---------------------------------------------------------------------------
 
-# Keys that hold per-element dicts inside each particle
 _ELEMENT_DICT_KEYS = [
     'elements', 'element_mass_fg', 'element_moles_fmol',
     'particle_mass_fg', 'particle_moles_fmol',
@@ -31,7 +30,6 @@ _ELEMENT_DICT_KEYS = [
     'mass_fg', 'mass_percentages', 'mole_percentages',
 ]
 
-# Scalar keys stored per particle
 _SCALAR_KEYS = [
     'start_time', 'end_time', 'left_idx', 'right_idx',
     'max_height', 'total_counts', 'SNR', 'threshold',
@@ -64,7 +62,6 @@ def _particles_to_columnar(particles):
 
     n = len(particles)
 
-    # Collect all element display labels across all particles
     all_element_labels = set()
     for p in particles:
         if 'elements' in p:
@@ -73,17 +70,14 @@ def _particles_to_columnar(particles):
     label_to_idx = {lbl: i for i, lbl in enumerate(element_labels)}
     n_elements = len(element_labels)
 
-    # Build scalar arrays
     scalars = {}
     for key in _SCALAR_KEYS:
         arr = np.zeros(n, dtype=np.float64)
         for i, p in enumerate(particles):
             arr[i] = p.get(key, 0.0)
-        # Only store if any non-zero
         if np.any(arr != 0):
             scalars[key] = arr
 
-    # Build element-dict arrays (2D: n_particles x n_elements)
     element_arrays = {}
     for dict_key in _ELEMENT_DICT_KEYS:
         mat = np.zeros((n, n_elements), dtype=np.float64)
@@ -94,15 +88,13 @@ def _particles_to_columnar(particles):
                 for lbl, val in d.items():
                     if lbl in label_to_idx:
                         try:
-                            # Handle nested dicts (like densities_used) by skipping
                             mat[i, label_to_idx[lbl]] = float(val)
                             has_data = True
                         except (TypeError, ValueError):
-                            pass  # Skip non-numeric (nested dicts handled below)
+                            pass
         if has_data:
             element_arrays[dict_key] = mat
 
-    # Build totals arrays
     totals = {}
     totals_keys = set()
     for p in particles:
@@ -116,8 +108,6 @@ def _particles_to_columnar(particles):
             arr[i] = t.get(key, 0.0)
         totals[key] = arr
 
-    # Collect any complex/non-numeric fields that can't be columnarized
-    # (like densities_used which has nested dicts)
     extra_particles = []
     complex_keys = set()
     for p in particles:
@@ -125,16 +115,14 @@ def _particles_to_columnar(particles):
         for k, v in p.items():
             if k in _SCALAR_KEYS or k in _ELEMENT_DICT_KEYS or k == 'totals':
                 continue
-            if k.startswith('_'):  # skip internal keys
+            if k.startswith('_'):
                 continue
             extra[k] = v
             complex_keys.add(k)
-        # Also handle densities_used (nested dicts that can't be float-converted)
         if 'densities_used' in p and isinstance(p['densities_used'], dict):
             extra['densities_used'] = p['densities_used']
         extra_particles.append(extra)
 
-    # Only store extras if they contain data
     has_extras = any(bool(e) for e in extra_particles)
 
     result = {
@@ -174,16 +162,13 @@ def _columnar_to_particles(col_data):
     for i in range(n):
         p = {}
 
-        # Restore scalars
         for key, arr in scalars.items():
             val = float(arr[i])
-            # Convert indices back to int
             if key in ('left_idx', 'right_idx', 'element_count'):
                 p[key] = int(val)
             else:
                 p[key] = val
 
-        # Restore element dicts
         for dict_key, mat in element_arrays.items():
             d = {}
             for j, lbl in enumerate(element_labels):
@@ -195,18 +180,15 @@ def _columnar_to_particles(col_data):
             else:
                 p[dict_key] = {}
 
-        # Ensure 'elements' exists even if empty
         if 'elements' not in p:
             p['elements'] = {}
 
-        # Restore totals
         if totals_arrays:
             t = {}
             for key, arr in totals_arrays.items():
                 t[key] = float(arr[i])
             p['totals'] = t
 
-        # Merge extras (complex fields, densities_used, etc.)
         if i < len(extras) and extras[i]:
             p.update(extras[i])
 
@@ -238,12 +220,16 @@ def save_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
+        """
+        Args:
+            pct (Any): Progress percentage (0–100).
+            msg (Any): Message string.
+        """
         if progress_callback:
             progress_callback(pct, msg)
 
     _progress(0, "Preparing metadata...")
 
-    # ---- 1. Build lightweight metadata dict (everything EXCEPT large arrays) ----
     metadata = {
         'format_version': 2,
         'selected_isotopes': mw.selected_isotopes,
@@ -262,6 +248,8 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sample_to_folder_map': {k: str(v) for k, v in mw.sample_to_folder_map.items()},
         'overlap_threshold_percentage': mw.overlap_threshold_percentage,
         '_global_sigma': mw._global_sigma,
+        '_sigma_mode': getattr(mw, '_sigma_mode', 'global'),
+        '_exclusion_regions_by_sample': getattr(mw, '_exclusion_regions_by_sample', {}),
         'sample_run_info': getattr(mw, 'sample_run_info', {}),
         'sample_method_info': getattr(mw, 'sample_method_info', {}),
         'element_mass_fractions': getattr(mw, 'element_mass_fractions', {}),
@@ -272,7 +260,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sample_molecular_weights': getattr(mw, 'sample_molecular_weights', {}),
         'sample_status': getattr(mw, 'sample_status', {}),
         'detection_states': getattr(mw, 'detection_states', {}),
-        # ---- FIX: Attributes previously missing from v2 (parity with v1) ----
         'transport_rate_methods': getattr(mw, 'transport_rate_methods', ["Liquid weight", "Number based", "Mass based"]),
         'all_masses': getattr(mw, 'all_masses', None),
         'folder_paths': getattr(mw, 'folder_paths', []),
@@ -286,7 +273,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'pending_csv_processing': getattr(mw, 'pending_csv_processing', False),
     }
 
-    # Canvas/workflow state (if exists)
     if hasattr(mw, 'canvas_results_dialog') and mw.canvas_results_dialog is not None:
         try:
             canvas = mw.canvas_results_dialog
@@ -295,7 +281,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
                 if hasattr(scene, 'serialize_workflow'):
                     metadata['canvas_workflow'] = scene.serialize_workflow()
                 else:
-                    # Fall back to ProjectManager's serializer
                     from save_export.project_manager import ProjectManager
                     pm = ProjectManager(mw)
                     metadata['canvas_workflow'] = pm._serialize_canvas_state()
@@ -304,14 +289,12 @@ def save_project_v2(filepath, mw, progress_callback=None):
 
     _progress(10, "Compressing metadata...")
 
-    # ---- 2. Pickle + lz4 compress metadata ----
     try:
         import lz4.frame as lz4f
         meta_pkl = pickle.dumps(metadata, protocol=pickle.HIGHEST_PROTOCOL)
         meta_compressed = lz4f.compress(meta_pkl)
         compression_lib = 'lz4'
     except ImportError:
-        # Fallback to gzip if lz4 not installed
         logger.warning("lz4 not installed, falling back to gzip for metadata")
         meta_pkl = pickle.dumps(metadata, protocol=pickle.HIGHEST_PROTOCOL)
         buf = io.BytesIO()
@@ -320,19 +303,15 @@ def save_project_v2(filepath, mw, progress_callback=None):
         meta_compressed = buf.getvalue()
         compression_lib = 'gzip'
 
-    # ---- 3. Build ZIP archive ----
     sample_names = list(mw.data_by_sample.keys())
     total_samples = len(sample_names)
 
-    # Use a temp file then rename for atomic write
     tmp_path = filepath.with_suffix('.itproj.tmp')
 
     try:
         with zipfile.ZipFile(tmp_path, 'w', compression=zipfile.ZIP_STORED) as zf:
-            # Write magic header as a file entry for quick format detection
             zf.writestr('__format__', 'ITPROJ_V2')
             
-            # Write manifest
             manifest = {
                 'format_version': 2,
                 'compression': compression_lib,
@@ -341,10 +320,8 @@ def save_project_v2(filepath, mw, progress_callback=None):
             }
             zf.writestr('manifest.json', json.dumps(manifest, indent=2))
 
-            # Write compressed metadata
             zf.writestr('metadata.dat', meta_compressed)
 
-            # ---- 4. Write per-sample numpy arrays ----
             for idx, sample_name in enumerate(sample_names):
                 pct = 15 + int(35 * idx / max(total_samples, 1))
                 _progress(pct, f"Saving arrays: {sample_name}")
@@ -353,20 +330,17 @@ def save_project_v2(filepath, mw, progress_callback=None):
                 time_arr = mw.time_array_by_sample.get(sample_name)
 
                 if sample_data or time_arr is not None:
-                    # Collect all arrays for this sample into one npz
                     arrays_dict = {}
                     
                     if time_arr is not None:
                         arrays_dict['__time__'] = np.asarray(time_arr)
                     
-                    # Mass keys are floats -> convert to safe string keys
                     mass_keys = []
                     for mass_key, arr in sample_data.items():
                         safe_key = f"mass_{mass_key:.6f}"
                         arrays_dict[safe_key] = np.asarray(arr)
                         mass_keys.append((safe_key, float(mass_key)))
                     
-                    # Store mass key mapping
                     arrays_dict['__mass_keys__'] = np.array(
                         [mk for _, mk in mass_keys], dtype=np.float64
                     )
@@ -374,13 +348,11 @@ def save_project_v2(filepath, mw, progress_callback=None):
                         [sk for sk, _ in mass_keys], dtype='U50'
                     )
 
-                    # Save npz to buffer, then write to zip
                     buf = io.BytesIO()
                     np.savez_compressed(buf, **arrays_dict)
                     safe_name = sample_name.replace('/', '_').replace('\\', '_')
                     zf.writestr(f'arrays/{safe_name}.npz', buf.getvalue())
 
-            # ---- 5. Write per-sample particle data (columnar) ----
             for idx, sample_name in enumerate(sample_names):
                 pct = 50 + int(40 * idx / max(total_samples, 1))
                 _progress(pct, f"Saving particles: {sample_name}")
@@ -390,8 +362,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
                     col_data = _particles_to_columnar(particles)
                     
                     buf = io.BytesIO()
-                    # Use pickle for the columnar structure (numpy arrays inside)
-                    # but it's MUCH smaller than pickling the original list of dicts
                     pickle.dump(col_data, buf, protocol=pickle.HIGHEST_PROTOCOL)
                     
                     safe_name = sample_name.replace('/', '_').replace('\\', '_')
@@ -399,7 +369,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
 
         _progress(95, "Finalizing...")
 
-        # Atomic rename
         if filepath.exists():
             filepath.unlink()
         tmp_path.rename(filepath)
@@ -436,20 +405,23 @@ def load_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
+        """
+        Args:
+            pct (Any): Progress percentage (0–100).
+            msg (Any): Message string.
+        """
         if progress_callback:
             progress_callback(pct, msg)
 
     _progress(0, "Opening project file...")
 
     with zipfile.ZipFile(filepath, 'r') as zf:
-        # Read manifest
         manifest = json.loads(zf.read('manifest.json'))
         compression_lib = manifest.get('compression', 'lz4')
         sample_names = manifest.get('sample_names', [])
 
         _progress(5, "Loading metadata...")
 
-        # Read and decompress metadata
         meta_compressed = zf.read('metadata.dat')
         
         if compression_lib == 'lz4':
@@ -464,10 +436,8 @@ def load_project_v2(filepath, mw, progress_callback=None):
 
         _progress(10, "Restoring settings...")
 
-        # ---- Restore metadata to MainWindow ----
         _restore_metadata(mw, metadata)
 
-        # ---- Load per-sample arrays ----
         total_samples = len(sample_names)
         for idx, sample_name in enumerate(sample_names):
             pct = 15 + int(40 * idx / max(total_samples, 1))
@@ -480,11 +450,9 @@ def load_project_v2(filepath, mw, progress_callback=None):
                 buf = io.BytesIO(zf.read(arrays_path))
                 npz = np.load(buf, allow_pickle=False)
                 
-                # Restore time array
                 if '__time__' in npz:
                     mw.time_array_by_sample[sample_name] = npz['__time__']
                 
-                # Restore data arrays with original float mass keys
                 sample_data = {}
                 if '__mass_keys__' in npz and '__mass_safe_keys__' in npz:
                     mass_keys = npz['__mass_keys__']
@@ -494,7 +462,6 @@ def load_project_v2(filepath, mw, progress_callback=None):
                 
                 mw.data_by_sample[sample_name] = sample_data
 
-        # ---- Load per-sample particle data ----
         for idx, sample_name in enumerate(sample_names):
             pct = 55 + int(40 * idx / max(total_samples, 1))
             _progress(pct, f"Loading particles: {sample_name}")
@@ -523,19 +490,18 @@ def _restore_metadata(mw, metadata):
         mw: MainWindow instance
         metadata (dict): Metadata dictionary from save
     """
-    # Simple attribute restoration
     simple_attrs = [
         'selected_isotopes', 'sample_parameters', 'sample_detected_peaks',
         'sample_dwell_times', 'sample_results_data', 'isotope_method_preferences',
         'sample_analysis_dates', 'element_thresholds', 'element_limits',
         'calibration_results', 'average_transport_rate',
         'selected_transport_rate_methods', 'current_sample',
-        'overlap_threshold_percentage', '_global_sigma',
+        'overlap_threshold_percentage', '_global_sigma', '_sigma_mode',
+        '_exclusion_regions_by_sample',
         'sample_run_info', 'sample_method_info',
         'element_mass_fractions', 'element_densities', 'element_molecular_weights',
         'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
         'sample_status', 'detection_states',
-        # ---- FIX: Previously missing attributes ----
         'transport_rate_methods',
         'all_masses',
         'folder_paths',
@@ -550,22 +516,27 @@ def _restore_metadata(mw, metadata):
         if attr in metadata:
             setattr(mw, attr, metadata[attr])
 
-    # ---- FIX: Restore needs_initial_detection as a set (saved as list) ----
+    if not hasattr(mw, '_sigma_mode') or mw._sigma_mode is None:
+        mw._sigma_mode = 'global'
+    if not hasattr(mw, '_global_sigma') or mw._global_sigma is None:
+        mw._global_sigma = 0.55
+    if not hasattr(mw, '_exclusion_regions_by_sample'):
+        mw._exclusion_regions_by_sample = {}
+    if not hasattr(mw, 'sample_status'):
+        mw.sample_status = {}
+
     nid = metadata.get('needs_initial_detection', [])
     if isinstance(nid, list):
         mw.needs_initial_detection = set(nid)
     elif isinstance(nid, set):
         mw.needs_initial_detection = nid
 
-    # Restore sample_to_folder_map (was serialized as str values)
     folder_map = metadata.get('sample_to_folder_map', {})
     mw.sample_to_folder_map = {k: Path(v) if v else v for k, v in folder_map.items()}
 
-    # ---- FIX: Clear caches that need rebuilding ----
     mw._formatted_label_cache = {}
     mw._element_data_cache = {}
 
-    # Restore canvas workflow if present — store for _finalize_load
     if 'canvas_workflow' in metadata and metadata['canvas_workflow']:
         mw._pending_canvas_workflow = metadata['canvas_workflow']
 
@@ -620,9 +591,7 @@ def detect_format(filepath):
     with open(filepath, 'rb') as f:
         magic = f.read(4)
     
-    # ZIP files start with PK\x03\x04
     if magic[:4] == b'PK\x03\x04':
-        # Could be v2 - verify by checking for our manifest
         try:
             with zipfile.ZipFile(filepath, 'r') as zf:
                 if '__format__' in zf.namelist():
@@ -630,11 +599,9 @@ def detect_format(filepath):
         except zipfile.BadZipFile:
             pass
     
-    # gzip files start with \x1f\x8b
     if magic[:2] == FORMAT_V1_GZIP_MAGIC:
         return 1
     
-    # Try gzip anyway (some files may have different headers)
     try:
         with gzip.open(str(filepath), 'rb') as f:
             f.read(1)
@@ -665,7 +632,6 @@ def load_project_auto(filepath, mw, progress_callback=None):
     if version == 2:
         return load_project_v2(filepath, mw, progress_callback)
     else:
-        # Return the raw dict so existing ProjectManager code can restore it
         return load_project_v1(filepath, mw, progress_callback)
 
 

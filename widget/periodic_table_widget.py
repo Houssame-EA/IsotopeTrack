@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (QWidget, QGridLayout, QPushButton, QVBoxLayout,
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, Property, QPoint
 from PySide6.QtGui import QColor, QContextMenuEvent, QPainter, QLinearGradient
 
+from theme import theme
+
 
 PRESET_LISTS = {
     '71A': ['Ag', 'Al', 'As', 'B', 'Ba', 'Be', 'Ca', 'Cd', 'Ce', 'Co', 'Cr', 'Cs', 'Cu', 'Dy', 
@@ -228,7 +230,6 @@ class AnimatedButton(QPushButton):
         event.accept()
 
        
-
 class SelectableIsotopeLabel(QLabel):
     
     clicked = Signal(object, float)
@@ -540,7 +541,6 @@ class IsotopeDisplay(QFrame):
         self.adjustSize()
         
     
-
     def set_parent_button(self, button):
         """
         Set the parent button for this isotope display.
@@ -674,8 +674,6 @@ class IsotopeDisplay(QFrame):
         super().mousePressEvent(event)
         
     
-
-        
     def get_selected_isotopes(self):
         """
         Get list of selected isotopes.
@@ -801,12 +799,214 @@ class PeriodicTableWidget(QDialog):
             
         self.initUI()
         self.add_control_panel()
+        self.apply_theme()
+        theme.themeChanged.connect(self.apply_theme)
+        self.destroyed.connect(
+            lambda *_: theme.themeChanged.disconnect(self.apply_theme)
+        )
         
         max_width = min(1200, int(screen.width() * 0.95))
         max_height = min(800, int(screen.height() * 0.9))
         self.setMaximumSize(max_width, max_height)
-        
+
+    def apply_theme(self, *_):
+        """Re-apply the theme-driven chrome of the periodic table.
+
+        Updates the widget background, the preset combo, the four toolbar
+        buttons (Clear/Save/Load/Confirm), and the two big Save/Load
+        buttons in the save-dialog section.  Element-category colours are
+        left untouched — alkali stays orange, halogen stays blue — because
+        those are semantic chemistry colours, not UI chrome.
+
+        Also refreshes every element button so disabled ones pick up the
+        new palette's muted dark look (rather than staying in whatever
+        state the previous theme left them).
+        Args:
+            *_ (Any): Additional positional arguments.
+        """
+        p = theme.palette
+        self.setStyleSheet(f"background-color: {p.bg_primary};")
+
+        if hasattr(self, "_preset_label"):
+            self._preset_label.setStyleSheet(
+                f"color: {p.text_primary}; font-size: 12px;"
+            )
+
+        if hasattr(self, "preset_combo"):
+            self.preset_combo.setStyleSheet(f"""
+                QComboBox {{
+                    background-color: {p.bg_tertiary};
+                    color: {p.text_primary};
+                    border: 1px solid {p.border};
+                    padding: 3px;
+                    min-width: 150px;
+                    border-radius: 3px;
+                    font-size: 12px;
+                }}
+                QComboBox:hover {{
+                    border: 1px solid {p.accent};
+                }}
+                QComboBox::drop-down {{ border: none; }}
+                QComboBox QAbstractItemView {{
+                    background-color: {p.bg_secondary};
+                    color: {p.text_primary};
+                    selection-background-color: {p.accent_soft};
+                    selection-color: {p.text_primary};
+                    border: 1px solid {p.border};
+                    outline: 0;
+                }}
+            """)
+
+        toolbar_style = self._toolbar_btn_style(p)
+        for btn in getattr(self, "_toolbar_buttons", []):
+            btn.setStyleSheet(toolbar_style)
+
+        if hasattr(self, "_big_save_button"):
+            self._big_save_button.setStyleSheet(self._big_btn_style(p, "save"))
+        if hasattr(self, "_big_load_button"):
+            self._big_load_button.setStyleSheet(self._big_btn_style(p, "load"))
+
+        self._refresh_all_element_buttons()
+
+    def _refresh_all_element_buttons(self):
+        """Re-apply the correct style to every element button based on
+        whether it's currently enabled (category colour) or disabled
+        (themed dark/neutral).  Also refreshes the inner labels so their
+        contrast works on the current background.
+        """
+        for symbol, btn in getattr(self, "buttons", {}).items():
+            element = self._elements_by_symbol.get(symbol)
+            if element is None:
+                continue
+            if btn.isEnabled():
+                btn.setStyleSheet(self.get_element_style(element))
+                self._refresh_element_button_labels(btn, enabled=True)
+            else:
+                btn.setStyleSheet(self._disabled_element_style())
+                self._refresh_element_button_labels(btn, enabled=False)
+
+    def _refresh_element_button_labels(self, btn, enabled):
+        """Update the four internal labels (atomic number, symbol, name,
+        mass) on an element button so their text colour reads against the
+        current background.
+
+        Enabled buttons have a colored gradient, so the labels stay white
+        (original design).  Disabled buttons have a dark-or-light neutral
+        background from the theme, so labels use muted theme text.
+        Args:
+            btn (Any): The btn.
+            enabled (Any): Whether the widget/feature is enabled.
+        """
+        layout = btn.layout()
+        if layout is None:
+            return
+        p = theme.palette
+        if enabled:
+            label_styles = [
+                "color: rgba(255, 255, 255, 0.8); font-size: 8px; background-color: transparent;",
+                "color: #ffffff; font-size: 16px; font-weight: bold; background-color: transparent;",
+                "color: rgba(255, 255, 255, 0.8); font-size: 7px; background-color: transparent;",
+                "color: rgba(255, 255, 255, 0.7); font-size: 6px; background-color: transparent;",
+            ]
+        else:
+            label_styles = [
+                f"color: {p.text_muted}; font-size: 8px; background-color: transparent;",
+                f"color: {p.text_muted}; font-size: 16px; font-weight: bold; background-color: transparent;",
+                f"color: {p.text_muted}; font-size: 7px; background-color: transparent;",
+                f"color: {p.text_muted}; font-size: 6px; background-color: transparent;",
+            ]
+       
+        style_idx = 0
+        for i in range(layout.count()):
+            if style_idx >= len(label_styles):
+                break
+            item = layout.itemAt(i)
+            w = item.widget() if item else None
+            if w is None:
+                continue
+            w.setStyleSheet(label_styles[style_idx])
+            style_idx += 1
+
+    @staticmethod
+    def _toolbar_btn_style(p) -> str:
+        """Style for the small control-panel buttons (Clear/Save/Load/Confirm).
+        Args:
+            p (Any): The p.
+        Returns:
+            str: Result of the operation.
+        """
+        return f"""
+            QPushButton {{
+                background-color: {p.bg_tertiary};
+                color: {p.text_primary};
+                border: 1px solid {p.border};
+                padding: 6px 12px;
+                border-radius: 3px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {p.bg_hover};
+                border: 1px solid {p.accent};
+            }}
+            QPushButton:pressed {{
+                background-color: {p.accent_pressed};
+                color: {p.text_inverse};
+            }}
+        """
+
+    @staticmethod
+    def _big_btn_style(p, kind) -> str:
+        """Style for the big Save/Load Selections buttons.
+
+        kind: 'save' → success-green, 'load' → accent-blue.  Text is always
+        white so it reads on both light and dark variants (fixes the
+        original 'color: black on #4CAF50' contrast bug).
+        Args:
+            p (Any): The p.
+            kind (Any): The kind.
+        Returns:
+            str: Result of the operation.
+        """
+        bg = p.success if kind == "save" else p.accent
+        hover = p.accent_hover
+        return f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {p.text_inverse};
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {hover};
+            }}
+        """
+
+    def _disabled_element_style(self) -> str:
+        """Style for an element button whose isotopes aren't in the
+        currently-loaded mass range.  Uses palette darks so it fits both
+        light and dark themes instead of a hardcoded near-black.
+        Returns:
+            str: Result of the operation.
+        """
+        p = theme.palette
+        return f"""
+            QPushButton {{
+                background: {p.bg_tertiary};
+                border: 2px solid {p.border};
+                color: {p.text_muted};
+                border-radius: 6px;
+                padding: 2px;
+            }}
+        """
+
     def _create_elements_data(self):
+        """
+        Returns:
+            list: Result of the operation.
+        """
         return [
             {'symbol': 'H', 'name': 'Hydrogen', 'mass': 1.008, 'row': 0, 'col': 0, 'isotopes': [{'mass': 1.00783, 'abundance': 99.9844, 'label': '1H'}, {'mass': 2.0141, 'abundance': 0.01557, 'label': '2H'}, {'mass': 3.016049, 'abundance': 0, 'label': '3H'}], 'category': 'other', 'atomic_number': 1, 'density': 0.00008988, 'ionization_energy': 13.6},
             {'symbol': 'He', 'name': 'Helium', 'mass': 4.003, 'row': 0, 'col': 17, 'isotopes': [{'mass': 3.01603, 'abundance': 0.00013, 'label': '3He'}, {'mass': 4.0026, 'abundance': 99.9999, 'label': '4He'}], 'category': 'noble', 'atomic_number': 2, 'density': 0.0001785, 'ionization_energy': 24.6},
@@ -995,7 +1195,6 @@ class PeriodicTableWidget(QDialog):
                 {'mass': 106.9051, 'abundance': 51.8392, 'label': '107Ag'},
                 {'mass': 108.90475, 'abundance': 48.1608, 'label': '109Ag'}
             ], 'category': 'transition', 'atomic_number': 47, 'density': 10.5, 'ionization_energy': 7.58},
-
 
 
                         {'symbol': 'Cd', 'name': 'Cadmium', 'mass': 112.414, 'row': 4, 'col': 11, 'isotopes': [
@@ -1426,67 +1625,26 @@ class PeriodicTableWidget(QDialog):
         """
         control_layout = QHBoxLayout()
         
-        preset_label = QLabel()
-        preset_label.setStyleSheet("color: black; font-size: 12px;")
+        self._preset_label = QLabel()
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(['Preset list'] + list(PRESET_LISTS.keys()))
-        self.preset_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #d6d2d2;
-                color: black;
-                border: 1px solid #444;
-                padding: 3px;
-                min-width: 150px;
-                border-radius: 3px;
-                font-size: 12px;
-            }
-            QComboBox:hover {
-                border: 1px solid #666;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 4px solid black;
-                margin-right: 3px;
-            }
-        """)
         self.preset_combo.currentTextChanged.connect(self.on_preset_selected)
-        
-        button_style = """
-            QPushButton {
-                background-color: #626362;
-                color: black;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 3px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #e6e8e6;
-            }
-        """
         
         clear_button = QPushButton("Clear All")
         clear_button.clicked.connect(self.clear_all_selections)
-        clear_button.setStyleSheet(button_style)
         
         save_button = QPushButton("Save")
         save_button.clicked.connect(self.save_selections)
-        save_button.setStyleSheet(button_style)
         
         load_button = QPushButton("Load")
         load_button.clicked.connect(self.load_selections)
-        load_button.setStyleSheet(button_style)
         
         confirm_button = QPushButton("Confirm")
         confirm_button.clicked.connect(self.confirm_selections)
-        confirm_button.setStyleSheet(button_style)
+
+        self._toolbar_buttons = [clear_button, save_button, load_button, confirm_button]
         
-        control_layout.addWidget(preset_label)
+        control_layout.addWidget(self._preset_label)
         control_layout.addWidget(self.preset_combo)
         control_layout.addWidget(clear_button)
         control_layout.addWidget(save_button)
@@ -1537,40 +1695,14 @@ class PeriodicTableWidget(QDialog):
         """
         button_layout = QHBoxLayout()
         
-        save_button = QPushButton("Save Selections")
-        save_button.clicked.connect(self.save_selections)
-        save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: black;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        
-        load_button = QPushButton("Load Selections")
-        load_button.clicked.connect(self.load_selections)
-        load_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: black;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #1e88e5;
-            }
-        """)
-        
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(load_button)
+        self._big_save_button = QPushButton("Save Selections")
+        self._big_save_button.clicked.connect(self.save_selections)
+
+        self._big_load_button = QPushButton("Load Selections")
+        self._big_load_button.clicked.connect(self.load_selections)
+
+        button_layout.addWidget(self._big_save_button)
+        button_layout.addWidget(self._big_load_button)
         button_layout.addStretch()
         
         self.layout().addLayout(button_layout, 10, 0, 1, 18)
@@ -1712,7 +1844,6 @@ class PeriodicTableWidget(QDialog):
                 QMessageBox.critical(self, "Error", f"Failed to load selections: {str(e)}")
 
 
-        
     def initUI(self):
         """
         Initialize the user interface and periodic table grid.
@@ -1723,8 +1854,6 @@ class PeriodicTableWidget(QDialog):
         Returns:
             None
         """
-        self.setStyleSheet("background-color: #eeeeee;")
-        
         layout = QGridLayout()
         layout.setSpacing(2)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -1784,11 +1913,7 @@ class PeriodicTableWidget(QDialog):
         symbol = QLabel(element['symbol'])
         symbol.setAlignment(Qt.AlignCenter)
         symbol.setStyleSheet("color: #ffffff; font-size: 16px; font-weight: bold; background-color: transparent;")
-
-        name = QLabel(element['name'])
-        name.setAlignment(Qt.AlignCenter)
-        name.setStyleSheet("color: rgba(255, 255, 255, 0.8); font-size: 7px; background-color: transparent;")
-
+        
         mass = QLabel(f"{element['mass']:.1f}")
         mass.setAlignment(Qt.AlignCenter)
         mass.setStyleSheet("color: rgba(255, 255, 255, 0.7); font-size: 6px; background-color: transparent;")
@@ -1796,7 +1921,6 @@ class PeriodicTableWidget(QDialog):
         layout.addWidget(atomic_number)
         layout.addStretch()
         layout.addWidget(symbol)
-        layout.addWidget(name)
         layout.addWidget(mass)
 
         btn.setLayout(layout)
@@ -1923,10 +2047,6 @@ class PeriodicTableWidget(QDialog):
         self.preset_combo.setCurrentText('Preset list')
                     
                                         
-
-        
-                
-
     def on_element_button_clicked(self, element):
         """
         Handle element button click events.
@@ -1953,7 +2073,6 @@ class PeriodicTableWidget(QDialog):
         """
         self.isotope_selected.emit(element['symbol'], mass, abundance)
         
-
 
     def get_element_style(self, element, highlighted=False):
         """
@@ -2019,7 +2138,8 @@ class PeriodicTableWidget(QDialog):
                 is_low_count = symbol in low_count_elements
 
                 if not is_available:
-                    btn.setEnabled(False)
+                    btn.setStyleSheet(self._disabled_element_style())
+                    self._refresh_element_button_labels(btn, enabled=False)
                 elif is_low_count:
                     btn.setStyleSheet("""
                         QPushButton {
@@ -2034,10 +2154,13 @@ class PeriodicTableWidget(QDialog):
                                 stop:0 #887700, stop:1 #776600);
                         }
                     """)
+                    self._refresh_element_button_labels(btn, enabled=True)
+                else:
+                    btn.setStyleSheet(self.get_element_style(element))
+                    self._refresh_element_button_labels(btn, enabled=True)
                 btn.setEnabled(is_available)
                 
     
-
     def validate_selections_against_new_range(self):
         """
         Validate and clear selections that are no longer available in the new mass range.
@@ -2141,18 +2264,12 @@ class PeriodicTableWidget(QDialog):
             btn.setEnabled(is_available)
             
             if not is_available:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background: #2a2a2a;
-                        border: 2px solid #333333;
-                        color: #666666;
-                        border-radius: 6px;
-                        padding: 2px;
-                    }
-                """)
+                btn.setStyleSheet(self._disabled_element_style())
+                self._refresh_element_button_labels(btn, enabled=False)
             else:
                 element = self._elements_by_symbol[symbol]
                 btn.setStyleSheet(self.get_element_style(element))
+                self._refresh_element_button_labels(btn, enabled=True)
             
             element = self._elements_by_symbol[symbol]
             tooltip = (f"{element['name']}\n"
@@ -2189,7 +2306,6 @@ class PeriodicTableWidget(QDialog):
                     button.isotope_display.hide_with_animation()
                     
     
-
     def clear_all_highlights(self):
         """
         Clear all element highlights.
@@ -2282,7 +2398,6 @@ class PeriodicTableWidget(QDialog):
         return self._elements_list
                     
     
-        
 if __name__ == '__main__':
     app = QApplication([])
     

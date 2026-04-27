@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
     QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QTabWidget, QGraphicsWidget, QApplication
+    QHeaderView, QTabWidget, QGraphicsWidget, QApplication, QListWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QRectF
 from PySide6.QtGui import QColor, QCursor, QLinearGradient, QBrush
@@ -22,7 +22,24 @@ from results.shared_plot_utils import (
     apply_saturation_filter, build_element_matrix,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
+    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box, _add_hband,
+    _add_det_limit_h,
 )
+
+try:
+    from results.results_bar_charts import (
+        EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
+    )
+    try:
+        from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
+        _CUSTOM_PLOT_AVAILABLE = True
+    except Exception:
+        _PlotSettingsDialog = None
+        _CUSTOM_PLOT_AVAILABLE = False
+except Exception:
+    EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
+    _PlotWidgetAdapter = None
+    _CUSTOM_PLOT_AVAILABLE = False
 
 
 def _mass_of(label: str) -> float | None:
@@ -32,16 +49,14 @@ def _mass_of(label: str) -> float | None:
 
     Returns:
         Mass number as float, or None if not found.
+    Args:
+        label (str): Label text.
     """
     if not label:
         return None
     mass, _ = extract_mass_and_element(label)
     return float(mass) if mass != 999 else None
 
-
-# ═══════════════════════════════════════════════
-# Batch window helper — strip " [Wn]" suffix
-# ═══════════════════════════════════════════════
 
 _BATCH_SUFFIX_RE = re.compile(r'\s*\[W\d+\]\s*$')
 
@@ -57,13 +72,17 @@ def _strip_batch_suffix(sample_name: str) -> str:
     'NIST610'
     >>> _strip_batch_suffix("plain_sample")
     'plain_sample'
+    Args:
+        sample_name (str): The sample name.
+    Returns:
+        str: Result of the operation.
     """
     return _BATCH_SUFFIX_RE.sub('', sample_name)
 
 
 CORRECTION_METHODS = [
     'None',
-    'Exponential Law (Internal Standard)',
+    'Exponential Law (instrumental mass fractionation)',
 ]
 
 DISPLAY_MODES = [
@@ -73,7 +92,6 @@ DISPLAY_MODES = [
     'Combined with Legend',
 ]
 
-# Jet-like colormap matching reference figure style
 JET_POSITIONS = np.array([0.0, 0.11, 0.34, 0.65, 0.89, 1.0])
 JET_COLORS = np.array([
     [0, 0, 143, 255],
@@ -86,24 +104,33 @@ JET_COLORS = np.array([
 
 
 def make_jet_colormap():
-    """Create a jet-like PyQtGraph ColorMap for scatter color dimension."""
+    """Create a jet-like PyQtGraph ColorMap for scatter color dimension.
+    Returns:
+        object: Result of the operation.
+    """
     return pg.ColorMap(JET_POSITIONS, JET_COLORS)
 
-
-# ═══════════════════════════════════════════════
-# Custom Inset Legend For 3rd Element (Colorbar)
-# ═══════════════════════════════════════════════
 
 class InsetColorBarItem(pg.GraphicsWidget):
     """Draws an inset legend-style colorbar inside the plot."""
     def __init__(self, label_text, parent=None):
+        """
+        Args:
+            label_text (Any): The label text.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.label_text = label_text
         self.setMinimumSize(180, 50)
-        self.setZValue(100) # Ensure it stays above the scatter points
+        self.setZValue(100)
         
     def paint(self, p, opt, widget):
-        # Draw label text
+        """
+        Args:
+            p (Any): The p.
+            opt (Any): The opt.
+            widget (Any): Target widget.
+        """
         p.setPen(pg.mkPen('k'))
         font = p.font()
         font.setPointSize(12)
@@ -111,7 +138,6 @@ class InsetColorBarItem(pg.GraphicsWidget):
         p.setFont(font)
         p.drawText(QRectF(0, 0, 180, 25), Qt.AlignCenter, self.label_text)
         
-        # Draw horizontal color gradient
         grad = QLinearGradient(10, 25, 170, 25)
         for pos, color in zip(JET_POSITIONS, JET_COLORS):
             grad.setColorAt(pos, QColor(*color))
@@ -121,11 +147,14 @@ class InsetColorBarItem(pg.GraphicsWidget):
         p.drawRect(10, 28, 160, 14)
 
 
-# ═══════════════════════════════════════════════
-# Mean signal ratio from full time series
-# ═══════════════════════════════════════════════
-
 def get_overall_mean_signal(parent_window, formatted_label: str) -> float | None:
+    """
+    Args:
+        parent_window (Any): The parent window.
+        formatted_label (str): The formatted label.
+    Returns:
+        float | None: Result of the operation.
+    """
     if not parent_window or not hasattr(parent_window, 'data'):
         return None
     if not hasattr(parent_window, 'selected_isotopes'):
@@ -146,6 +175,14 @@ def get_overall_mean_signal(parent_window, formatted_label: str) -> float | None
 def compute_ratio_from_mean_signals(
     parent_window, num_label: str, den_label: str
 ) -> tuple:
+    """
+    Args:
+        parent_window (Any): The parent window.
+        num_label (str): The num label.
+        den_label (str): The den label.
+    Returns:
+        tuple: Result of the operation.
+    """
     mean_num = get_overall_mean_signal(parent_window, num_label)
     mean_den = get_overall_mean_signal(parent_window, den_label)
 
@@ -164,6 +201,12 @@ def compute_ratio_from_mean_signals(
 
 
 def get_all_isotope_labels(parent_window) -> list:
+    """
+    Args:
+        parent_window (Any): The parent window.
+    Returns:
+        list: Result of the operation.
+    """
     if not parent_window or not hasattr(parent_window, 'selected_isotopes'):
         return []
     labels = []
@@ -177,16 +220,24 @@ def get_all_isotope_labels(parent_window) -> list:
     return sorted(labels)
 
 
-# ═══════════════════════════════════════════════
-# Isotope correction math — Exponential Law only
-# ═══════════════════════════════════════════════
-
 def compute_exponential_correction(
     r_measured: np.ndarray,
     m_num: float, m_den: float,
     ref_certified: float, ref_measured: float,
     m_ref_num: float, m_ref_den: float,
 ) -> np.ndarray:
+    """
+    Args:
+        r_measured (np.ndarray): The r measured.
+        m_num (float): The m num.
+        m_den (float): The m den.
+        ref_certified (float): The ref certified.
+        ref_measured (float): The ref measured.
+        m_ref_num (float): The m ref num.
+        m_ref_den (float): The m ref den.
+    Returns:
+        np.ndarray: Result of the operation.
+    """
     if ref_measured <= 0 or ref_certified <= 0:
         return r_measured
     if m_ref_num <= 0 or m_ref_den <= 0 or m_num <= 0 or m_den <= 0:
@@ -201,12 +252,19 @@ def compute_exponential_correction(
 
 
 def apply_isotope_correction(r_measured: np.ndarray, config: dict) -> np.ndarray:
+    """
+    Args:
+        r_measured (np.ndarray): The r measured.
+        config (dict): Configuration dictionary.
+    Returns:
+        np.ndarray: Result of the operation.
+    """
     method = config.get('correction_method', 'None')
 
     if method == 'None':
         return r_measured
 
-    elif method == 'Exponential Law (Internal Standard)':
+    elif method == 'Exponential Law (instrumental mass fractionation)':
         elem1 = config.get('element1', '')
         elem2 = config.get('element2', '')
         m_num = _mass_of(elem1)
@@ -236,41 +294,41 @@ def _find_particles_for_sample(sample_name, dk, node=None, parent_window=None):
     FIX (batch windows): When sample_name contains a batch suffix like
     " [W1]", we also search all open windows using the *original* name
     so that particles from any batch source window can be found.
+    Args:
+        sample_name (Any): The sample name.
+        dk (Any): The dk.
+        node (Any): Tree or graph node.
+        parent_window (Any): The parent window.
+    Returns:
+        list: Result of the operation.
     """
     pw = parent_window
     original_name = _strip_batch_suffix(sample_name)
     is_batch_name = (original_name != sample_name)
 
-    # 1. Try parent window with exact name
     if pw and hasattr(pw, 'sample_particle_data'):
         particles = pw.sample_particle_data.get(sample_name, [])
         if particles:
             return particles
-        # Also try original name (batch mode: parent may have the un-suffixed name)
         if is_batch_name:
             particles = pw.sample_particle_data.get(original_name, [])
             if particles:
                 return particles
 
-    # 2. Search ALL open windows (handles batch mode where data is in
-    #    a different window than the parent)
     app = QApplication.instance()
     if app and hasattr(app, 'main_windows'):
         for w in app.main_windows:
             if w is pw:
                 continue
             if hasattr(w, 'sample_particle_data'):
-                # Try exact name
                 particles = w.sample_particle_data.get(sample_name, [])
                 if particles:
                     return particles
-                # Try stripped original name (for batch-renamed samples)
                 if is_batch_name:
                     particles = w.sample_particle_data.get(original_name, [])
                     if particles:
                         return particles
 
-    # 3. Fallback: node input data (contains all batch particles)
     if node and hasattr(node, 'input_data') and node.input_data:
         particles = node.input_data.get('particle_data', [])
         found = [p for p in particles
@@ -278,7 +336,6 @@ def _find_particles_for_sample(sample_name, dk, node=None, parent_window=None):
                  or p.get('source_sample', '') == sample_name]
         if found:
             return found
-        # Also try matching by original name for batch-renamed samples
         if is_batch_name:
             found = [p for p in particles
                      if p.get('original_sample', '') == original_name
@@ -290,9 +347,15 @@ def _find_particles_for_sample(sample_name, dk, node=None, parent_window=None):
 
 
 def get_correction_factor(config: dict) -> float:
+    """
+    Args:
+        config (dict): Configuration dictionary.
+    Returns:
+        float: Result of the operation.
+    """
     method = config.get('correction_method', 'None')
 
-    if method == 'Exponential Law (Internal Standard)':
+    if method == 'Exponential Law (instrumental mass fractionation)':
         elem1, elem2 = config.get('element1', ''), config.get('element2', '')
         m_num, m_den = _mass_of(elem1), _mass_of(elem2)
         ref_num = config.get('ref_isotope_num', '')
@@ -312,6 +375,13 @@ def get_correction_factor(config: dict) -> float:
 
 
 def build_equation_text(config: dict, sample_name: str = None) -> str:
+    """
+    Args:
+        config (dict): Configuration dictionary.
+        sample_name (str): The sample name.
+    Returns:
+        str: Result of the operation.
+    """
     method = config.get('correction_method', 'None')
 
     if method == 'None':
@@ -321,7 +391,7 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
     e2 = config.get('element2', '?')
     prefix = f"[{sample_name}] " if sample_name else ""
 
-    if method == 'Exponential Law (Internal Standard)':
+    if method == 'Exponential Law (instrumental mass fractionation)':
         ref_num = config.get('ref_isotope_num', '?')
         ref_den = config.get('ref_isotope_den', '?')
         R_T_std = config.get('ref_certified_ratio', 1.0)
@@ -347,7 +417,7 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
         lines = [
             f"{prefix}Exponential Law — Russell et al. (1978)\nRidley, W. I. (2005). Plumbo-isotopy: the measurement of lead isotopes by multi-collector inductively coupled mass spectrometry.",
             f"",
-            f"  Internal standard: {ref_num}/{ref_den}",
+            f"  Instrumental mass fractionation: {ref_num}/{ref_den}",
             f"  R_T_std (certified) = {R_T_std:.6f}",
             f"  R_M_std (measured)  = {R_M_std:.6f}",
             f"",
@@ -363,11 +433,11 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
     return ''
 
 
-# ═══════════════════════════════════════════════
-# Per-sample correction config helper
-# ═══════════════════════════════════════════════
-
 def _default_sample_correction() -> dict:
+    """
+    Returns:
+        dict: Result of the operation.
+    """
     return {
         'correction_method': 'None',
         'ref_isotope_num': '',
@@ -379,6 +449,13 @@ def _default_sample_correction() -> dict:
 
 
 def get_sample_correction_config(cfg: dict, sample_name: str = None) -> dict:
+    """
+    Args:
+        cfg (dict): The cfg.
+        sample_name (str): The sample name.
+    Returns:
+        dict: Result of the operation.
+    """
     if not cfg.get('per_sample_correction', False) or not sample_name:
         return cfg
 
@@ -396,30 +473,46 @@ def get_sample_correction_config(cfg: dict, sample_name: str = None) -> dict:
     return merged
 
 
-# ═══════════════════════════════════════════════
-# Poisson confidence intervals
-# ═══════════════════════════════════════════════
-
 def poisson_ratio_sigma(R: float, lambda_B: np.ndarray) -> np.ndarray:
+    """
+    Args:
+        R (float): The R.
+        lambda_B (np.ndarray): The lambda B.
+    Returns:
+        np.ndarray: Result of the operation.
+    """
     safe_lB = np.maximum(lambda_B, 1.0)
     return np.sqrt(R * (1.0 + R) / safe_lB)
 
 
 def poisson_ci_curves(R: float, x_range: np.ndarray, k: float = 2.0):
+    """
+    Args:
+        R (float): The R.
+        x_range (np.ndarray): The x range.
+        k (float): The k.
+    Returns:
+        tuple: Result of the operation.
+    """
     sigma = poisson_ratio_sigma(R, x_range)
     upper = R + k * sigma
     lower = np.maximum(R - k * sigma, 0.0)
     return upper, lower
 
 
-# ═══════════════════════════════════════════════
-# Per-Sample Correction Dialog
-# ═══════════════════════════════════════════════
-
 class SampleCorrectionDialog(QDialog):
     def __init__(self, sample_name: str, sample_cfg: dict,
                  available_elements: list, all_sample_names: list,
                  node=None, parent=None):
+        """
+        Args:
+            sample_name (str): The sample name.
+            sample_cfg (dict): The sample cfg.
+            available_elements (list): The available elements.
+            all_sample_names (list): The all sample names.
+            node (Any): Tree or graph node.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle(f"Correction Settings — {sample_name}")
         self.setMinimumWidth(480)
@@ -512,7 +605,7 @@ class SampleCorrectionDialog(QDialog):
 
     def _on_method_changed(self):
         method = self.correction_method.currentText()
-        self.exp_frame.setVisible(method == 'Exponential Law (Internal Standard)')
+        self.exp_frame.setVisible(method == 'Exponential Law (instrumental mass fractionation)')
 
     def _auto_compute_exp(self):
         num_label = self.ref_num.currentText().strip()
@@ -527,7 +620,6 @@ class SampleCorrectionDialog(QDialog):
             node.config.get('data_type_display', 'Counts') if node else 'Counts',
             'elements')
 
-        # Find which original replicates belong to this grouped sample
         original_names = []
         if node and hasattr(node, 'input_data') and node.input_data:
             seen = set()
@@ -541,12 +633,10 @@ class SampleCorrectionDialog(QDialog):
             original_names = [self._sample_name]
         original_names.sort()
 
-        # Compute ratio per replicate — same logic as _compute_replicate_ratios
         ratios = []
         rep_details = []
 
         for sn in original_names:
-            # 1. Try _find_particles_for_sample (searches all windows + node input)
             particles = _find_particles_for_sample(sn, dk, node=node, parent_window=pw)
             if particles:
                 num_vals = [p.get(dk, p.get('elements', {})).get(num_label, 0)
@@ -561,7 +651,6 @@ class SampleCorrectionDialog(QDialog):
                     rep_details.append(f"  {sn}: {r:.6f}")
                     continue
 
-            # 2. Fallback: time-series — search ALL windows, not just pw
             ratio_found = False
             original_name = _strip_batch_suffix(sn)
             windows_to_search = [pw] if pw else []
@@ -601,6 +690,10 @@ class SampleCorrectionDialog(QDialog):
             + "\n".join(rep_details))
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         return {
             'correction_method': self.correction_method.currentText(),
             'ref_isotope_num': self.ref_num.currentText(),
@@ -611,16 +704,23 @@ class SampleCorrectionDialog(QDialog):
         }
 
 
-# ═══════════════════════════════════════════════
-# Settings Dialog
-# ═══════════════════════════════════════════════
-
 class IsotopeSettingsDialog(QDialog):
     def __init__(self, config: dict, available_elements: list,
                  all_isotope_labels: list,
                  is_multi: bool, sample_names: list,
                  parent_window=None, parent=None,
                  node=None):
+        """
+        Args:
+            config (dict): Configuration dictionary.
+            available_elements (list): The available elements.
+            all_isotope_labels (list): The all isotope labels.
+            is_multi (bool): The is multi.
+            sample_names (list): The sample names.
+            parent_window (Any): The parent window.
+            parent (Any): Parent widget or object.
+            node (Any): Tree or graph node.
+        """
         super().__init__(parent)
         self.setWindowTitle("Isotopic Ratio Settings")
         self.setMinimumWidth(560)
@@ -639,6 +739,10 @@ class IsotopeSettingsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
+        """
+        Returns:
+            tuple: Result of the operation.
+        """
         outer = QVBoxLayout(self)
 
         tabs = QTabWidget()
@@ -726,6 +830,13 @@ class IsotopeSettingsDialog(QDialog):
         self.filter_zeros = QCheckBox()
         self.filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
         fl.addRow("Filter Zero Values:", self.filter_zeros)
+        self.filter_outliers_cb = QCheckBox()
+        self.filter_outliers_cb.setChecked(self._cfg.get('filter_outliers', False))
+        fl.addRow("Filter Outliers:", self.filter_outliers_cb)
+        self.outlier_pct = QDoubleSpinBox()
+        self.outlier_pct.setRange(90.0, 99.9); self.outlier_pct.setDecimals(1)
+        self.outlier_pct.setValue(self._cfg.get('outlier_percentile', 99.0))
+        fl.addRow("Keep Below Percentile:", self.outlier_pct)
         self.filter_sat = QCheckBox()
         self.filter_sat.setChecked(self._cfg.get('filter_saturated', False))
         fl.addRow("Filter Saturated:", self.filter_sat)
@@ -736,6 +847,42 @@ class IsotopeSettingsDialog(QDialog):
         fl.addRow("Saturation Threshold:", self.sat_thresh)
         layout.addWidget(g)
 
+        g = QGroupBox("Statistical Overlays")
+        fo = QFormLayout(g)
+        self.show_box_cb = QCheckBox()
+        self.show_box_cb.setChecked(self._cfg.get('show_box', True))
+        fo.addRow("Figure Box (frame):", self.show_box_cb)
+        self.shade_combo = QComboBox()
+        self.shade_combo.addItems(SHADE_TYPES)
+        self.shade_combo.setCurrentText(self._cfg.get('shade_type', 'None'))
+        fo.addRow("Horizontal Band:", self.shade_combo)
+        shade_row = QHBoxLayout()
+        self._shade_color = self._cfg.get('shade_color', '#534AB7')
+        self._shade_color_btn = QPushButton()
+        self._shade_color_btn.setFixedSize(26, 22)
+        self._shade_color_btn.setStyleSheet(f"background:{self._shade_color};")
+        from PySide6.QtWidgets import QColorDialog as _QCD
+        self._shade_color_btn.clicked.connect(
+            lambda: self._pick_color('_shade_color', self._shade_color_btn))
+        self._shade_alpha = QDoubleSpinBox()
+        self._shade_alpha.setRange(0.01, 1.0); self._shade_alpha.setDecimals(2)
+        self._shade_alpha.setValue(self._cfg.get('shade_alpha', 0.18))
+        shade_row.addWidget(self._shade_color_btn)
+        shade_row.addWidget(QLabel("alpha:")); shade_row.addWidget(self._shade_alpha)
+        shade_row.addStretch()
+        fo.addRow("Band Color / alpha:", shade_row)
+        self.show_det_cb = QCheckBox()
+        self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
+        fo.addRow("Detection Limit Line:", self.show_det_cb)
+        self.det_val = QDoubleSpinBox()
+        self.det_val.setRange(0.0, 999999999); self.det_val.setDecimals(4)
+        self.det_val.setValue(self._cfg.get('det_limit_value', 1.0))
+        fo.addRow("DL Value:", self.det_val)
+        self.det_label = QLineEdit(self._cfg.get('det_limit_label', ''))
+        self.det_label.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
+        fo.addRow("DL Label:", self.det_label)
+        layout.addWidget(g)
+
         g = QGroupBox("Axis Settings")
         fl = QFormLayout(g)
         self.log_x = QCheckBox()
@@ -744,11 +891,40 @@ class IsotopeSettingsDialog(QDialog):
         self.log_y = QCheckBox()
         self.log_y.setChecked(self._cfg.get('log_y', False))
         fl.addRow("Log Y-axis:", self.log_y)
-        self.x_max = QDoubleSpinBox()
-        self.x_max.setRange(1.0, 99999999.0)
-        self.x_max.setDecimals(0)
-        self.x_max.setValue(self._cfg.get('x_max', 99999999.0))
-        fl.addRow("X-axis Maximum:", self.x_max)
+
+        def _make_range_row(auto_key, min_key, max_key, min_def, max_def):
+            """
+            Args:
+                auto_key (Any): The auto key.
+                min_key (Any): The min key.
+                max_key (Any): The max key.
+                min_def (Any): The min def.
+                max_def (Any): The max def.
+            Returns:
+                tuple: Result of the operation.
+            """
+            rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
+            auto_cb = QCheckBox("Auto"); auto_cb.setChecked(self._cfg.get(auto_key, True))
+            mn = QDoubleSpinBox(); mn.setRange(-1e9, 1e9); mn.setDecimals(4)
+            mn.setValue(self._cfg.get(min_key, min_def))
+            mx = QDoubleSpinBox(); mx.setRange(-1e9, 1e9); mx.setDecimals(4)
+            mx.setValue(self._cfg.get(max_key, max_def))
+            mn.setEnabled(not auto_cb.isChecked())
+            mx.setEnabled(not auto_cb.isChecked())
+            auto_cb.stateChanged.connect(lambda s, a=mn, b=mx: (
+                a.setEnabled(not auto_cb.isChecked()),
+                b.setEnabled(not auto_cb.isChecked())))
+            rh.addWidget(auto_cb); rh.addWidget(mn)
+            rh.addWidget(QLabel("to")); rh.addWidget(mx)
+            rh.addStretch()
+            return rw, auto_cb, mn, mx
+
+        xr, self._x_auto, self._x_min, self._x_max_spin = _make_range_row(
+            'auto_x', 'x_min', 'x_max', 0.0, 99999999.0)
+        fl.addRow("X Range:", xr)
+        yr, self._y_auto, self._y_min, self._y_max_spin = _make_range_row(
+            'auto_y', 'y_min', 'y_max', 0.0, 100.0)
+        fl.addRow("Y Range:", yr)
         layout.addWidget(g)
 
         g = QGroupBox("Display Options")
@@ -763,45 +939,57 @@ class IsotopeSettingsDialog(QDialog):
         self.marker_alpha.setDecimals(1)
         self.marker_alpha.setValue(self._cfg.get('marker_alpha', 0.7))
         fl.addRow("Marker Transparency:", self.marker_alpha)
-
-        if not self._is_multi:
-            self._single_color_btn = QPushButton()
-            sc = self._cfg.get('single_sample_color', '#E74C3C')
-            self._single_color = QColor(sc)
-            self._single_color_btn.setStyleSheet(
-                f"background-color: {sc}; min-height: 25px; border: 1px solid black;")
-            self._single_color_btn.clicked.connect(self._pick_single_color)
-            fl.addRow("Marker Color:", self._single_color_btn)
         layout.addWidget(g)
 
         if self._is_multi:
-            g = QGroupBox("Sample Colors")
+            g = QGroupBox("Sample Names")
             vl = QVBoxLayout(g)
-            self._color_btns = {}
             self._name_edits = {}
-            colors = self._cfg.get('sample_colors', {})
             mappings = self._cfg.get('sample_name_mappings', {})
-            for i, sn in enumerate(self._sample_names):
+            for sn in self._sample_names:
                 row = QHBoxLayout()
+                row.addWidget(QLabel(sn[:20]))
                 ne = QLineEdit(mappings.get(sn, sn))
-                ne.setFixedWidth(180)
+                ne.setFixedWidth(200)
                 row.addWidget(ne)
                 self._name_edits[sn] = ne
-                cb = QPushButton()
-                cb.setFixedSize(30, 22)
-                c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                cb.setStyleSheet(f"background-color: {c}; border: 1px solid black;")
-                cb.clicked.connect(lambda _, s=sn, b=cb: self._pick_sample_color(s, b))
-                row.addWidget(cb)
-                self._color_btns[sn] = (cb, c)
+                rst = QPushButton("\u21ba")
+                rst.setFixedSize(22, 22)
+                rst.clicked.connect(
+                    lambda _, o=sn: self._name_edits[o].setText(o))
+                row.addWidget(rst)
                 row.addStretch()
-                w = QWidget()
-                w.setLayout(row)
-                vl.addWidget(w)
+                w = QWidget(); w.setLayout(row); vl.addWidget(w)
             layout.addWidget(g)
 
-        self._font_group = FontSettingsGroup(self._cfg)
-        layout.addWidget(self._font_group.build())
+            g2 = QGroupBox("Sample Display Order")
+            v2 = QVBoxLayout(g2)
+            hint = QLabel(
+                "Drag or use \u2191\u2193 to reorder \u2014 useful for time series.")
+            hint.setStyleSheet("color:#6B7280; font-size:10px;")
+            hint.setWordWrap(True)
+            v2.addWidget(hint)
+            from PySide6.QtWidgets import QAbstractItemView as _AIV
+            self._order_list = QListWidget()
+            self._order_list.setMaximumHeight(130)
+            self._order_list.setDragDropMode(_AIV.InternalMove)
+            cur_order = self._cfg.get('sample_order', [])
+            ordered = [s for s in cur_order if s in self._sample_names]
+            ordered += [s for s in self._sample_names if s not in ordered]
+            for s in ordered:
+                self._order_list.addItem(s)
+            v2.addWidget(self._order_list)
+            btn_row = QHBoxLayout()
+            up_btn = QPushButton("\u2191  Up")
+            up_btn.setFixedWidth(72)
+            up_btn.clicked.connect(self._move_order_up)
+            dn_btn = QPushButton("\u2193  Down")
+            dn_btn.setFixedWidth(72)
+            dn_btn.clicked.connect(self._move_order_down)
+            btn_row.addWidget(up_btn); btn_row.addWidget(dn_btn)
+            btn_row.addStretch()
+            v2.addLayout(btn_row)
+            layout.addWidget(g2)
 
         tabs.addTab(general_scroll, "General")
 
@@ -1005,10 +1193,16 @@ class IsotopeSettingsDialog(QDialog):
         outer.addWidget(btns)
 
     def _format_correction_details(self, scfg):
+        """
+        Args:
+            scfg (Any): The scfg.
+        Returns:
+            str: Result of the operation.
+        """
         method = scfg.get('correction_method', 'None')
         if method == 'None':
             return "No correction"
-        elif method == 'Exponential Law (Internal Standard)':
+        elif method == 'Exponential Law (instrumental mass fractionation)':
             rn = scfg.get('ref_isotope_num', '?')
             rd = scfg.get('ref_isotope_den', '?')
             rc = scfg.get('ref_certified_ratio', 1.0)
@@ -1017,14 +1211,23 @@ class IsotopeSettingsDialog(QDialog):
         return ""
 
     def _on_per_sample_toggled(self, enabled):
+        """
+        Args:
+            enabled (Any): Whether the widget/feature is enabled.
+        """
         self.global_corr_frame.setVisible(not enabled)
         self.per_sample_frame.setVisible(enabled)
 
     def _on_method_changed(self):
         method = self.correction_method.currentText()
-        self.exp_frame.setVisible(method == 'Exponential Law (Internal Standard)')
+        self.exp_frame.setVisible(method == 'Exponential Law (instrumental mass fractionation)')
 
     def _configure_sample_correction(self, sample_name, row):
+        """
+        Args:
+            sample_name (Any): The sample name.
+            row (Any): Row index.
+        """
         scfg = self._sample_corr_cfgs.get(sample_name, _default_sample_correction())
         scfg['element1'] = self.elem1.currentText()
         scfg['element2'] = self.elem2.currentText()
@@ -1070,6 +1273,8 @@ class IsotopeSettingsDialog(QDialog):
         FIX 2: Previously this used pw.sample_particle_data.keys() which
         returned ALL samples loaded in the main window, not just the ones
         feeding into this node.
+        Returns:
+            object: Result of the operation.
         """
         if not self._node:
             return []
@@ -1082,8 +1287,6 @@ class IsotopeSettingsDialog(QDialog):
         if not particles:
             return []
 
-        # Collect unique original sample names (individual replicates)
-        # preserving discovery order
         seen = set()
         names = []
         for p in particles:
@@ -1108,7 +1311,6 @@ class IsotopeSettingsDialog(QDialog):
         dk = DATA_KEY_MAPPING.get(
             self._cfg.get('data_type_display', 'Counts'), 'elements')
 
-        # Get samples from node input data, not parent window
         all_samples = self._get_input_sample_names()
 
         if not all_samples:
@@ -1122,7 +1324,6 @@ class IsotopeSettingsDialog(QDialog):
             self._rep_info.setText("No individual sample data found.")
             return
 
-        # Compute ratios using unified particle lookup
         ratios = []
         valid_names = []
         n_particles_list = []
@@ -1145,7 +1346,6 @@ class IsotopeSettingsDialog(QDialog):
                     n_particles_list.append(min(len(num_vals), len(den_vals)))
                     continue
 
-            # Last fallback: time-series data — search ALL windows, not just pw
             ratio_found = False
             windows_to_search = [pw] if pw else []
             app = QApplication.instance()
@@ -1158,7 +1358,6 @@ class IsotopeSettingsDialog(QDialog):
             for w in windows_to_search:
                 if not w or not hasattr(w, 'data_by_sample') or not hasattr(w, 'selected_isotopes'):
                     continue
-                # Try exact name first, then stripped name
                 for try_name in ([sn, original_name] if original_name != sn else [sn]):
                     sd = w.data_by_sample.get(try_name)
                     if sd:
@@ -1348,7 +1547,15 @@ class IsotopeSettingsDialog(QDialog):
 
     @staticmethod
     def _ratio_from_sample_ts(pw, sample_ts, ref_num_label, ref_den_label):
-        """Compute ref ratio from time-series data for a single sample."""
+        """Compute ref ratio from time-series data for a single sample.
+        Args:
+            pw (Any): The pw.
+            sample_ts (Any): The sample ts.
+            ref_num_label (Any): The ref num label.
+            ref_den_label (Any): The ref den label.
+        Returns:
+            None
+        """
         if not hasattr(pw, 'selected_isotopes'):
             return None
         num_key = den_key = None
@@ -1389,7 +1596,6 @@ class IsotopeSettingsDialog(QDialog):
 
         pw = self._parent_window
 
-        # 1. Try parent window time-series (original behavior)
         if pw:
             ratio, info = compute_ratio_from_mean_signals(pw, num_label, den_label)
             if ratio is not None:
@@ -1397,15 +1603,12 @@ class IsotopeSettingsDialog(QDialog):
                 self.ref_info_label.setText(f"{num_label}/{den_label} = {ratio:.6f}\n{info}")
                 return
 
-        # 2. Fallback: compute from node's input particle data
-        #    (works for batch mode since input_data has all particles)
         node = self._node
         if node and hasattr(node, 'input_data') and node.input_data:
             dk = DATA_KEY_MAPPING.get(
                 self._cfg.get('data_type_display', 'Counts'), 'elements')
             particles = node.input_data.get('particle_data', [])
 
-            # If a specific sample is selected in the dropdown, filter to it
             selected_sample = self.exp_ref_sample.currentText()
             if selected_sample and selected_sample != '(All samples merged)':
                 particles = [p for p in particles
@@ -1428,7 +1631,6 @@ class IsotopeSettingsDialog(QDialog):
                         f"Computed from {len(num_vals)} particles ({src})")
                     return
 
-        # 3. Fallback: search ALL open windows for time-series data
         app = QApplication.instance()
         if app and hasattr(app, 'main_windows'):
             for w in app.main_windows:
@@ -1445,23 +1647,38 @@ class IsotopeSettingsDialog(QDialog):
         self.ref_info_label.setText(
             "No data found in parent window, node input, or other open windows.")
 
-    def _pick_single_color(self):
-        from PySide6.QtWidgets import QColorDialog
-        color = QColorDialog.getColor(self._single_color, self, "Marker Color")
-        if color.isValid():
-            self._single_color = color
-            self._single_color_btn.setStyleSheet(
-                f"background-color: {color.name()}; min-height: 25px; border: 1px solid black;")
+    def _move_order_up(self):
+        row = self._order_list.currentRow()
+        if row > 0:
+            item = self._order_list.takeItem(row)
+            self._order_list.insertItem(row - 1, item)
+            self._order_list.setCurrentRow(row - 1)
 
-    def _pick_sample_color(self, name, btn):
+    def _move_order_down(self):
+        row = self._order_list.currentRow()
+        if row < self._order_list.count() - 1:
+            item = self._order_list.takeItem(row)
+            self._order_list.insertItem(row + 1, item)
+            self._order_list.setCurrentRow(row + 1)
+
+    def _pick_color(self, attr, btn):
+        """
+        Args:
+            attr (Any): The attr.
+            btn (Any): The btn.
+        """
         from PySide6.QtWidgets import QColorDialog
-        cur = QColor(self._color_btns[name][1])
-        c = QColorDialog.getColor(cur, self, f"Color for {name}")
+        from PySide6.QtGui import QColor
+        c = QColorDialog.getColor(QColor(getattr(self, attr)), self)
         if c.isValid():
-            btn.setStyleSheet(f"background-color: {c.name()}; border: 1px solid black;")
-            self._color_btns[name] = (btn, c.name())
+            setattr(self, attr, c.name())
+            btn.setStyleSheet(f"background:{c.name()};")
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         out = dict(self._cfg)
         out['data_type_display'] = self.data_type.currentText()
         out['element1'] = self.elem1.currentText()
@@ -1486,40 +1703,50 @@ class IsotopeSettingsDialog(QDialog):
         out['show_confidence_intervals'] = self.show_ci.isChecked()
 
         out['filter_zeros'] = self.filter_zeros.isChecked()
+        out['filter_outliers'] = self.filter_outliers_cb.isChecked()
+        out['outlier_percentile'] = self.outlier_pct.value()
         out['filter_saturated'] = self.filter_sat.isChecked()
         out['saturation_threshold'] = self.sat_thresh.value()
 
+        out['show_box'] = self.show_box_cb.isChecked()
+        out['shade_type'] = self.shade_combo.currentText()
+        out['shade_color'] = self._shade_color
+        out['shade_alpha'] = self._shade_alpha.value()
+        out['show_det_limit'] = self.show_det_cb.isChecked()
+        out['det_limit_value'] = self.det_val.value()
+        out['det_limit_label'] = self.det_label.text().strip()
+
         out['log_x'] = self.log_x.isChecked()
         out['log_y'] = self.log_y.isChecked()
-        out['x_max'] = self.x_max.value()
+        out['auto_x'] = self._x_auto.isChecked()
+        out['x_min'] = self._x_min.value()
+        out['x_max'] = self._x_max_spin.value()
+        out['auto_y'] = self._y_auto.isChecked()
+        out['y_min'] = self._y_min.value()
+        out['y_max'] = self._y_max_spin.value()
 
         out['marker_size'] = self.marker_size.value()
         out['marker_alpha'] = self.marker_alpha.value()
 
-        if not self._is_multi:
-            out['single_sample_color'] = self._single_color.name()
-
         if self._is_multi:
             out['display_mode'] = self.display_mode.currentText()
-            sc = {}
-            for sn, (btn, c) in self._color_btns.items():
-                sc[sn] = c
-            out['sample_colors'] = sc
-            nm = {}
-            for sn, ne in self._name_edits.items():
-                nm[sn] = ne.text()
-            out['sample_name_mappings'] = nm
-
-        out.update(self._font_group.collect())
+            if hasattr(self, '_name_edits'):
+                out['sample_name_mappings'] = {
+                    sn: ne.text() for sn, ne in self._name_edits.items()}
+            if hasattr(self, '_order_list'):
+                out['sample_order'] = [
+                    self._order_list.item(i).text()
+                    for i in range(self._order_list.count())]
         return out
 
 
-# ═══════════════════════════════════════════════
-# Display Dialog (right-click context menu)
-# ═══════════════════════════════════════════════
-
 class IsotopicRatioDisplayDialog(QDialog):
     def __init__(self, isotopic_ratio_node, parent_window=None):
+        """
+        Args:
+            isotopic_ratio_node (Any): The isotopic ratio node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = isotopic_ratio_node
         self.parent_window = parent_window
@@ -1538,28 +1765,44 @@ class IsotopicRatioDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _is_multi(self) -> bool:
+        """
+        Returns:
+            bool: Result of the operation.
+        """
         return (self.node.input_data and
                 self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
 
     def _available_elements(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if self._cached_elements:
             return self._cached_elements
         sel = (self.node.input_data or {}).get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
     def _all_isotope_labels(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         return get_all_isotope_labels(self.parent_window)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        self.plot_widget = pg.GraphicsLayoutWidget()
+        self.plot_widget = EnhancedGraphicsLayoutWidget()
         self.plot_widget.setBackground('w')
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
@@ -1592,6 +1835,10 @@ class IsotopicRatioDisplayDialog(QDialog):
             pass
 
     def _auto_calc_standard(self):
+        """
+        Returns:
+            None
+        """
         try:
             pw = self.parent_window
             if not pw or not hasattr(pw, 'calibration_results'):
@@ -1606,6 +1853,12 @@ class IsotopicRatioDisplayDialog(QDialog):
                 return
 
             def _find_key(label):
+                """
+                Args:
+                    label (Any): Label text.
+                Returns:
+                    None
+                """
                 if not hasattr(pw, 'selected_isotopes'):
                     return None
                 for el, isos in pw.selected_isotopes.items():
@@ -1616,6 +1869,13 @@ class IsotopicRatioDisplayDialog(QDialog):
                 return None
 
             def _get_slope(cal, key):
+                """
+                Args:
+                    cal (Any): The cal.
+                    key (Any): Dictionary or storage key.
+                Returns:
+                    None
+                """
                 prefs = getattr(pw, 'isotope_method_preferences', {})
                 pref = prefs.get(key, 'Force through zero')
                 mmap = {'Force through zero': 'zero', 'Simple linear': 'simple',
@@ -1640,25 +1900,52 @@ class IsotopicRatioDisplayDialog(QDialog):
             pass
 
     def _show_context_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
-        toggle_menu = menu.addMenu("Quick Toggles")
-        self._add_toggle(toggle_menu, "Log X-axis", 'log_x')
-        self._add_toggle(toggle_menu, "Log Y-axis", 'log_y')
-        self._add_toggle(toggle_menu, "Poisson 95% CI", 'show_confidence_intervals')
-        self._add_toggle(toggle_menu, "Natural Abundance Line", 'show_natural_line')
-        self._add_toggle(toggle_menu, "Standard Ratio Line", 'show_standard_line')
-        self._add_toggle(toggle_menu, "Mean Ratio Line", 'show_mean_line')
-        self._add_toggle(toggle_menu, "Filter Zeros", 'filter_zeros')
-        self._add_toggle(toggle_menu, "Filter Saturated", 'filter_saturated')
-        self._add_toggle(toggle_menu, "Per-Sample Correction", 'per_sample_correction')
+        tm = menu.addMenu("Quick Toggles")
+        for key, label, default in [
+            ('log_x',                  'Log X-axis',             False),
+            ('log_y',                  'Log Y-axis',             False),
+            ('show_confidence_intervals', 'Poisson 95% CI',      True),
+            ('filter_zeros',           'Filter Zeros',           True),
+            ('filter_outliers',        'Filter Outliers',        False),
+            ('filter_saturated',       'Filter Saturated',       False),
+            ('per_sample_correction',  'Per-Sample Correction',  False),
+            ('show_box',               'Figure Box (frame)',     True),
+        ]:
+            a = tm.addAction(label); a.setCheckable(True)
+            a.setChecked(cfg.get(key, default))
+            a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
+
+        tm.addSeparator()
+        sep = tm.addAction("-- Reference Lines --"); sep.setEnabled(False)
+        for key, label, default in [
+            ('show_natural_line',  'Natural Abundance Line',  False),
+            ('show_standard_line', 'Standard Ratio Line',     False),
+            ('show_mean_line',     'Mean Ratio Line',         True),
+            ('show_det_limit',     'Detection Limit Line',    False),
+        ]:
+            a = tm.addAction(label); a.setCheckable(True)
+            a.setChecked(cfg.get(key, default))
+            a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
+
+        tm.addSeparator()
+        sep2 = tm.addAction("-- Horizontal Band --"); sep2.setEnabled(False)
+        shm = tm.addMenu("Band Type")
+        for st in SHADE_TYPES:
+            a = shm.addAction(st); a.setCheckable(True)
+            a.setChecked(cfg.get('shade_type', 'None') == st)
+            a.triggered.connect(lambda _, v=st: self._set_cfg('shade_type', v))
 
         dt_menu = menu.addMenu("Data Type")
         current_dt = cfg.get('data_type_display', 'Counts')
         for dt in DATA_TYPE_OPTIONS:
-            a = dt_menu.addAction(dt)
-            a.setCheckable(True)
+            a = dt_menu.addAction(dt); a.setCheckable(True)
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda _, d=dt: self._set_data_type(d))
 
@@ -1666,34 +1953,29 @@ class IsotopicRatioDisplayDialog(QDialog):
         if elems:
             e1_menu = menu.addMenu("Numerator (A)")
             for e in elems:
-                a = e1_menu.addAction(e)
-                a.setCheckable(True)
+                a = e1_menu.addAction(e); a.setCheckable(True)
                 a.setChecked(e == cfg.get('element1'))
                 a.triggered.connect(lambda _, el=e: self._set_elem('element1', el))
 
             e2_menu = menu.addMenu("Denominator (B)")
             for e in elems:
-                a = e2_menu.addAction(e)
-                a.setCheckable(True)
+                a = e2_menu.addAction(e); a.setCheckable(True)
                 a.setChecked(e == cfg.get('element2'))
                 a.triggered.connect(lambda _, el=e: self._set_elem('element2', el))
 
             xa_menu = menu.addMenu("X-axis Element")
             for e in elems:
-                a = xa_menu.addAction(e)
-                a.setCheckable(True)
+                a = xa_menu.addAction(e); a.setCheckable(True)
                 a.setChecked(e == cfg.get('x_axis_element'))
                 a.triggered.connect(lambda _, el=e: self._set_elem('x_axis_element', el))
 
             ce_menu = menu.addMenu("Color Element (3rd)")
-            a_none = ce_menu.addAction("(None — solid color)")
-            a_none.setCheckable(True)
+            a_none = ce_menu.addAction("(None - solid color)"); a_none.setCheckable(True)
             a_none.setChecked(not cfg.get('color_element'))
             a_none.triggered.connect(lambda _: self._set_elem('color_element', ''))
             ce_menu.addSeparator()
             for e in elems:
-                a = ce_menu.addAction(e)
-                a.setCheckable(True)
+                a = ce_menu.addAction(e); a.setCheckable(True)
                 a.setChecked(e == cfg.get('color_element'))
                 a.triggered.connect(lambda _, el=e: self._set_elem('color_element', el))
 
@@ -1701,8 +1983,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             cm_menu = menu.addMenu("Isotope Correction (Global)")
             cur_method = cfg.get('correction_method', 'None')
             for m in CORRECTION_METHODS:
-                a = cm_menu.addAction(m)
-                a.setCheckable(True)
+                a = cm_menu.addAction(m); a.setCheckable(True)
                 a.setChecked(m == cur_method)
                 a.triggered.connect(lambda _, method=m: self._set_correction(method))
 
@@ -1710,18 +1991,15 @@ class IsotopicRatioDisplayDialog(QDialog):
             dm_menu = menu.addMenu("Display Mode")
             cur = cfg.get('display_mode', DISPLAY_MODES[0])
             for m in DISPLAY_MODES:
-                a = dm_menu.addAction(m)
-                a.setCheckable(True)
+                a = dm_menu.addAction(m); a.setCheckable(True)
                 a.setChecked(m == cur)
                 a.triggered.connect(lambda _, mode=m: self._set_display_mode(mode))
 
         menu.addSeparator()
-
-        settings_action = menu.addAction("⚙  Configure…")
-        settings_action.triggered.connect(self._open_settings)
-
-        dl_action = menu.addAction("💾 Download Figure…")
-        dl_action.triggered.connect(self._download_figure)
+        menu.addAction("Configure...").triggered.connect(self._open_settings)
+        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        if _CUSTOM_PLOT_AVAILABLE:
+            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
 
         menu.exec(QCursor.pos())
     
@@ -1732,28 +2010,65 @@ class IsotopicRatioDisplayDialog(QDialog):
             csv_data=csv_data)
 
     def _add_toggle(self, menu, label, key):
+        """
+        Args:
+            menu (Any): QMenu object.
+            label (Any): Label text.
+            key (Any): Dictionary or storage key.
+        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
+        self.node.config[key] = value
+        self._refresh()
+
+    def _set_cfg(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
     def _set_data_type(self, dt):
+        """
+        Args:
+            dt (Any): The dt.
+        """
         self.node.config['data_type_display'] = dt
         self._refresh()
 
     def _set_elem(self, key, elem):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            elem (Any): The elem.
+        """
         self.node.config[key] = elem
         self._refresh()
 
     def _set_correction(self, method):
+        """
+        Args:
+            method (Any): The method.
+        """
         self.node.config['correction_method'] = method
         self._refresh()
 
     def _set_display_mode(self, mode):
+        """
+        Args:
+            mode (Any): Operating mode string.
+        """
         self.node.config['display_mode'] = mode
         self._refresh()
 
@@ -1769,6 +2084,20 @@ class IsotopicRatioDisplayDialog(QDialog):
             self._auto_calc_natural()
             self._auto_calc_standard()
             self._refresh()
+
+    def _open_plot_settings(self):
+        """Open PlotSettingsDialog via the adapter bridge."""
+        if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None \
+                or _PlotWidgetAdapter is None:
+            return
+        pi = next(
+            (item for item in self.plot_widget.scene().items()
+             if isinstance(item, pg.PlotItem)),
+            None,
+        )
+        if pi is not None:
+            _PlotSettingsDialog(
+                _PlotWidgetAdapter(self.plot_widget, pi), self).exec()
 
     def _refresh(self):
         self.plot_widget.clear()
@@ -1817,6 +2146,14 @@ class IsotopicRatioDisplayDialog(QDialog):
             self._draw_single(pi, plot_data, cfg)
 
     def _prepare_sample(self, element_data, cfg, sample_name=None):
+        """
+        Args:
+            element_data (Any): The element data.
+            cfg (Any): The cfg.
+            sample_name (Any): The sample name.
+        Returns:
+            tuple: Result of the operation.
+        """
         eff_cfg = get_sample_correction_config(cfg, sample_name)
 
         e1 = cfg.get('element1', '')
@@ -1848,6 +2185,20 @@ class IsotopicRatioDisplayDialog(QDialog):
             return None
 
         ratios = (df[e1] / df[e2]).values
+
+        if cfg.get('filter_outliers', False):
+            ratios = apply_outlier_filter(ratios, cfg)
+            if len(ratios) == 0:
+                return None
+            pct = float(cfg.get('outlier_percentile', 99.0))
+            lo, hi = np.percentile((df[e1] / df[e2]).values,
+                                   [100.0 - pct, pct])
+            ratio_raw = (df[e1] / df[e2]).values
+            keep = (ratio_raw >= lo) & (ratio_raw <= hi)
+            df = df[keep]
+            if len(df) == 0:
+                return None
+            ratios = (df[e1] / df[e2]).values
 
         method = eff_cfg.get('correction_method', 'None')
         corr_col = '_original_sample' if '_original_sample' in df.columns else '_source_sample'
@@ -1898,7 +2249,10 @@ class IsotopicRatioDisplayDialog(QDialog):
         return x, ratios, len(element_data), color_values, corrected_linear, mean_raw
     
     def _build_csv_data(self) -> pd.DataFrame | None:
-        """Build a DataFrame of per-particle isotopic ratio data for CSV export."""
+        """Build a DataFrame of per-particle isotopic ratio data for CSV export.
+        Returns:
+            pd.DataFrame | None: Result of the operation.
+        """
         
         
         plot_data = self.node.extract_plot_data()
@@ -1923,7 +2277,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                     continue
                 x, ratios, n_total, color_values, corrected_linear, mean_raw = result
                 
-                # Get raw element data for additional columns
                 edf = sd['element_data']
                 meta_cols = [c for c in edf.columns if c.startswith('_')]
                 numeric_cols = [c for c in edf.columns if not c.startswith('_')]
@@ -1934,7 +2287,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                         f'{e1}/{e2} (corrected)': corrected_linear[i],
                         f'{x_elem} ({dt})': x[i] if not cfg.get('log_x') else 10**x[i],
                     }
-                    # Add all raw element columns
                     if i < len(edf):
                         for col in numeric_cols:
                             row[f'{col} ({dt})'] = edf.iloc[i][col]
@@ -1971,6 +2323,15 @@ class IsotopicRatioDisplayDialog(QDialog):
         up the parent window (which may not have per-replicate data keyed
         by the correct sample name, causing all replicates to get the same
         fallback ratio).
+        Args:
+            df (Any): Pandas DataFrame.
+            ratios (Any): The ratios.
+            eff_cfg (Any): The eff cfg.
+            e1 (Any): The e1.
+            e2 (Any): The e2.
+            sources (Any): The sources.
+        Returns:
+            object: Result of the operation.
         """
         ref_num_label = eff_cfg.get('ref_isotope_num', '')
         ref_den_label = eff_cfg.get('ref_isotope_den', '')
@@ -1993,7 +2354,6 @@ class IsotopicRatioDisplayDialog(QDialog):
 
             R_M_std = None
 
-            # ── FIX 1: Compute ref ratio directly from df particles ──
             if ref_num_label in df.columns and ref_den_label in df.columns:
                 src_df = df[mask]
                 num_vals = src_df[ref_num_label].values.astype(float)
@@ -2002,12 +2362,10 @@ class IsotopicRatioDisplayDialog(QDialog):
                 if np.any(valid):
                     R_M_std = float(np.mean(num_vals[valid])) / float(np.mean(den_vals[valid]))
 
-            # Fallback: try parent window lookup AND all other windows
             if R_M_std is None or R_M_std <= 0:
                 R_M_std = self._compute_replicate_ref_ratio(
                     src, ref_num_label, ref_den_label)
 
-            # Last resort: use global measured ratio from config
             if R_M_std is None or R_M_std <= 0:
                 R_M_std = eff_cfg.get('ref_measured_ratio', 1.0)
                 if R_M_std <= 0:
@@ -2028,13 +2386,18 @@ class IsotopicRatioDisplayDialog(QDialog):
         FIX (batch windows): Now searches ALL open windows — not just
         self.parent_window — using both the exact sample name and the
         stripped batch name (e.g., 'SampleA' from 'SampleA [W1]').
+        Args:
+            sample_name (Any): The sample name.
+            ref_num_label (Any): The ref num label.
+            ref_den_label (Any): The ref den label.
+        Returns:
+            None
         """
         original_name = _strip_batch_suffix(sample_name)
         names_to_try = [sample_name]
         if original_name != sample_name:
             names_to_try.append(original_name)
 
-        # Build list of all windows to search
         windows_to_search = []
         if self.parent_window:
             windows_to_search.append(self.parent_window)
@@ -2044,7 +2407,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                 if w not in windows_to_search:
                     windows_to_search.append(w)
 
-        # Try particle data across all windows
         dk = DATA_KEY_MAPPING.get(
             self.node.config.get('data_type_display', 'Counts'), 'elements')
 
@@ -2063,11 +2425,9 @@ class IsotopicRatioDisplayDialog(QDialog):
                     if num_vals and den_vals:
                         return float(np.mean(num_vals)) / float(np.mean(den_vals))
 
-        # Try time-series data across all windows
         for w in windows_to_search:
             if not hasattr(w, 'data_by_sample') or not hasattr(w, 'selected_isotopes'):
                 continue
-            # Also try sample_data dict
             for data_attr in ('data_by_sample', 'sample_data'):
                 data_dict = getattr(w, data_attr, None)
                 if not isinstance(data_dict, dict):
@@ -2083,6 +2443,15 @@ class IsotopicRatioDisplayDialog(QDialog):
         return None
 
     def _ratio_from_time_series(self, pw, sample_ts, ref_num_label, ref_den_label):
+        """
+        Args:
+            pw (Any): The pw.
+            sample_ts (Any): The sample ts.
+            ref_num_label (Any): The ref num label.
+            ref_den_label (Any): The ref den label.
+        Returns:
+            None
+        """
         if not hasattr(pw, 'selected_isotopes'):
             return None
         num_key = den_key = None
@@ -2105,6 +2474,13 @@ class IsotopicRatioDisplayDialog(QDialog):
         return None
 
     def _build_labels(self, cfg, sample_name=None):
+        """
+        Args:
+            cfg (Any): The cfg.
+            sample_name (Any): The sample name.
+        Returns:
+            tuple: Result of the operation.
+        """
         e1 = cfg.get('element1', '')
         e2 = cfg.get('element2', '')
         x_elem = cfg.get('x_axis_element', e2)
@@ -2123,6 +2499,17 @@ class IsotopicRatioDisplayDialog(QDialog):
         return x_label, y_label
 
     def _add_scatter(self, pi, x, y, cfg, color, color_values=None):
+        """
+        Args:
+            pi (Any): The pi.
+            x (Any): Input array or value.
+            y (Any): Input array or value.
+            cfg (Any): The cfg.
+            color (Any): Colour value.
+            color_values (Any): The color values.
+        Returns:
+            tuple: Result of the operation.
+        """
         size = cfg.get('marker_size', 8)
         alpha = int(cfg.get('marker_alpha', 0.7) * 255)
         pen = pg.mkPen(color='black', width=0.5)
@@ -2174,16 +2561,21 @@ class IsotopicRatioDisplayDialog(QDialog):
             return scatter, None, None
 
     def _add_inset_colorbar(self, pi, cfg, vmin, vmax):
+        """
+        Args:
+            pi (Any): The pi.
+            cfg (Any): The cfg.
+            vmin (Any): The vmin.
+            vmax (Any): The vmax.
+        """
         color_elem = cfg.get('color_element', '')
         dt = cfg.get('data_type_display', 'Counts')
         
-        # Label specifies log10 transformation
         label_text = f"log10 {color_elem} ({dt})"
         
         cbar = InsetColorBarItem(label_text)
         cbar.setParentItem(pi.vb)
         
-        # Keep legend anchored right
         def update_pos():
             rect = pi.vb.boundingRect()
             cbar.setPos(rect.width() - 190, 15)
@@ -2192,6 +2584,15 @@ class IsotopicRatioDisplayDialog(QDialog):
         update_pos()
 
     def _add_poisson_ci(self, pi, cfg, mean_ratio, color, x_data=None, sample_name=None):
+        """
+        Args:
+            pi (Any): The pi.
+            cfg (Any): The cfg.
+            mean_ratio (Any): The mean ratio.
+            color (Any): Colour value.
+            x_data (Any): The x data.
+            sample_name (Any): The sample name.
+        """
         if not cfg.get('show_confidence_intervals', True):
             return
 
@@ -2247,12 +2648,28 @@ class IsotopicRatioDisplayDialog(QDialog):
                                    pen=pg.mkPen(color=pen_rgba, width=1.5)))
 
     def _make_legend_proxy(self, color, style='solid', width=2):
+        """
+        Args:
+            color (Any): Colour value.
+            style (Any): Stylesheet string.
+            width (Any): Width in pixels.
+        Returns:
+            object: Result of the operation.
+        """
         pen_style = Qt.SolidLine if style == 'solid' else Qt.DashLine
         return pg.PlotDataItem(
             x=[0, 1], y=[0, 0],
             pen=pg.mkPen(color=color, style=pen_style, width=width))
 
     def _add_reference_lines(self, pi, cfg, ratios_linear, legend_items, sample_name=None):
+        """
+        Args:
+            pi (Any): The pi.
+            cfg (Any): The cfg.
+            ratios_linear (Any): The ratios linear.
+            legend_items (Any): The legend items.
+            sample_name (Any): The sample name.
+        """
         log_y = cfg.get('log_y', False)
         eff_cfg = get_sample_correction_config(cfg, sample_name)
         method = eff_cfg.get('correction_method', 'None')
@@ -2288,7 +2705,44 @@ class IsotopicRatioDisplayDialog(QDialog):
             legend_items.append(
                 (self._make_legend_proxy('red', 'solid'), f"Mean: {mean_r:.4f}"))
 
+        shade_type = cfg.get('shade_type', 'None')
+        if shade_type != 'None' and len(ratios_linear) > 2:
+            arr = np.array(ratios_linear)
+            arr = arr[arr > 0] if log_y else arr
+            if len(arr) > 2:
+                if log_y:
+                    arr = np.log10(arr)
+                lo = hi = None
+                if shade_type == 'Mean +/- 1 SD':
+                    mu, sd = float(np.mean(arr)), float(np.std(arr))
+                    lo, hi = mu - sd, mu + sd
+                elif shade_type == 'Mean +/- 2 SD':
+                    mu, sd = float(np.mean(arr)), float(np.std(arr))
+                    lo, hi = mu - 2*sd, mu + 2*sd
+                elif shade_type == 'Median +/- IQR  (Q1-Q3)':
+                    lo, hi = float(np.percentile(arr, 25)), float(np.percentile(arr, 75))
+                elif shade_type == 'P5 - P95':
+                    lo, hi = float(np.percentile(arr, 5)), float(np.percentile(arr, 95))
+                elif shade_type == 'P1 - P99':
+                    lo, hi = float(np.percentile(arr, 1)), float(np.percentile(arr, 99))
+                if lo is not None and np.isfinite(lo) and np.isfinite(hi):
+                    _add_hband(pi, lo, hi,
+                               color=cfg.get('shade_color', '#534AB7'),
+                               alpha=cfg.get('shade_alpha', 0.18))
+
+        _add_det_limit_h(pi, cfg)
+
+        _apply_box(pi, cfg)
+
     def _apply_labels_and_font(self, pi, cfg, x_label=None, y_label=None, sample_name=None):
+        """
+        Args:
+            pi (Any): The pi.
+            cfg (Any): The cfg.
+            x_label (Any): The x label.
+            y_label (Any): The y label.
+            sample_name (Any): The sample name.
+        """
         if x_label is None or y_label is None:
             x_label, y_label = self._build_labels(cfg, sample_name)
         set_axis_labels(pi, x_label, y_label, cfg)
@@ -2299,7 +2753,18 @@ class IsotopicRatioDisplayDialog(QDialog):
         if cfg.get('log_y'):
             pi.getAxis('left').setLogMode(True)
 
+        if not cfg.get('auto_x', True):
+            pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 99999999), padding=0)
+        if not cfg.get('auto_y', True):
+            pi.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
+
     def _draw_single(self, pi, plot_data, cfg):
+        """
+        Args:
+            pi (Any): The pi.
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         edf = plot_data.get('element_data')
         if edf is None:
             return
@@ -2330,11 +2795,16 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         self._apply_labels_and_font(pi, cfg, sample_name=sample_key)
 
-        # Draw inset element legend colorbar if color element used
         if vmin is not None and vmax is not None:
             self._add_inset_colorbar(pi, cfg, vmin, vmax)
 
     def _draw_combined(self, pi, plot_data, cfg):
+        """
+        Args:
+            pi (Any): The pi.
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         legend_items = []
         all_corrected = []
         global_vmin, global_vmax = float('inf'), float('-inf')
@@ -2375,6 +2845,11 @@ class IsotopicRatioDisplayDialog(QDialog):
             self._add_inset_colorbar(pi, cfg, global_vmin, global_vmax)
 
     def _draw_subplots(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(3, n)
@@ -2393,26 +2868,40 @@ class IsotopicRatioDisplayDialog(QDialog):
             pi.setTitle(get_display_name(sn, cfg))
 
     def _draw_side_by_side(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         first_pi = None
-        col_idx = 0  
+        col_idx = 0
         for sn, sd in plot_data.items():
             if not sd or 'element_data' not in sd:
                 continue
 
             pi = self.plot_widget.addPlot(row=0, col=col_idx)
             color = get_sample_color(sn, col_idx, cfg)
-            
+
             self._draw_single_on_plot(pi, sd['element_data'], cfg, color, sn)
             pi.setTitle(get_display_name(sn, cfg))
             if first_pi is None:
                 first_pi = pi
             else:
                 pi.setYLink(first_pi)
-                pi.getAxis('left').setLabel('') 
-                
+                pi.getAxis('left').setLabel('')
+                pi.getAxis('left').setStyle(showValues=False)
+
             col_idx += 1
 
     def _draw_single_on_plot(self, pi, edf, cfg, color, sample_name):
+        """
+        Args:
+            pi (Any): The pi.
+            edf (Any): The edf.
+            cfg (Any): The cfg.
+            color (Any): Colour value.
+            sample_name (Any): The sample name.
+        """
         result = self._prepare_sample(edf, cfg, sample_name=sample_name)
         if result is None:
             return
@@ -2434,10 +2923,6 @@ class IsotopicRatioDisplayDialog(QDialog):
         if vmin is not None and vmax is not None:
             self._add_inset_colorbar(pi, cfg, vmin, vmax)
 
-
-# ═══════════════════════════════════════════════
-# Node
-# ═══════════════════════════════════════════════
 
 class IsotopicRatioPlotNode(QObject):
 
@@ -2465,16 +2950,29 @@ class IsotopicRatioPlotNode(QObject):
         'show_standard_line': False,
         'show_mean_line': True,
         'filter_zeros': True,
+        'filter_outliers': False,
+        'outlier_percentile': 99.0,
         'filter_saturated': False,
         'saturation_threshold': 9999999.0,
         'log_x': False,
         'log_y': False,
-        'x_max': 99999999.0,
+        'auto_x': True, 'x_min': 0.0, 'x_max': 99999999.0,
+        'auto_y': True, 'y_min': 0.0, 'y_max': 100.0,
         'show_confidence_intervals': True,
         'marker_size': 8,
         'marker_alpha': 0.7,
         'single_sample_color': '#E74C3C',
         'display_mode': 'Overlaid (Different Colors)',
+        'show_box': True,
+        'shade_type': 'None',
+        'shade_color': '#534AB7',
+        'shade_alpha': 0.18,
+        'show_det_limit': False,
+        'det_limit_value': 1.0,
+        'det_limit_color': '#DC2626',
+        'det_limit_style': 'dash',
+        'det_limit_width': 2,
+        'det_limit_label': '',
         'sample_colors': {},
         'sample_name_mappings': {},
         'font_family': 'Times New Roman',
@@ -2485,6 +2983,10 @@ class IsotopicRatioPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
         self.title = "Isotopic"
         self.node_type = "isotopic_ratio_plot"
@@ -2498,16 +3000,30 @@ class IsotopicRatioPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = IsotopicRatioDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
@@ -2523,12 +3039,20 @@ class IsotopicRatioPlotNode(QObject):
             self.config['x_axis_element'] = elems[1]
 
     def _get_elements(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if not self.input_data:
             return []
         sel = self.input_data.get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
     def extract_plot_data(self):
+        """
+        Returns:
+            None
+        """
         if not self.input_data:
             return None
         dk = DATA_KEY_MAPPING.get(

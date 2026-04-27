@@ -1,10 +1,25 @@
 from PySide6.QtWidgets import (QWidget, QGridLayout, QPushButton, QVBoxLayout, 
                              QLabel, QSizePolicy, QHBoxLayout, QDialog, QApplication,
-                             QFrame)
+                             QFrame, QScrollArea, QLineEdit)
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, Property, QPoint
 from PySide6.QtGui import QColor, QPainter, QLinearGradient
 import json
 import math
+
+from theme import theme as _app_theme
+
+ELEMENT_CATEGORY_COLORS = {
+    'alkali':          '#FF7043',
+    'alkaline':        '#BA68C8',
+    'transition':      '#5C6BC0',
+    'post-transition': '#66BB6A',
+    'metalloid':       '#FFA726',
+    'other':           '#757575',
+    'halogen':         '#42A5F5',
+    'noble':           '#8D6E63',
+    'lanthanide':      '#26C6DA',
+    'actinide':        '#79055c',
+}
 
 
 class CompactAnimatedButton(QPushButton):
@@ -197,28 +212,25 @@ class CompactSelectableIsotopeLabel(QLabel):
         self.updateStyle()
         
     def updateStyle(self):
-        """
-        Update visual styling based on selection and availability state.
-        
-        Selected: Cyan background
-        Available: Green background
-        Unavailable: Gray background
-        
-        Args:
-            None
-        
-        Returns:
-            None
-        """
-        base_style = "padding: 1px; border-radius: 1px; margin: 1px; color: white;"
-        
+        p = _app_theme.palette
+        base_style = "padding: 1px; border-radius: 3px; margin: 1px;"
+
         if self.is_selected:
-            self.setStyleSheet(base_style + "background: rgba(0, 188, 212, 180); border: 2px solid rgba(0, 188, 212, 220);")
+            self.setStyleSheet(
+                base_style + f"background: {p.accent}; color: {p.text_inverse};"
+                f" border: 2px solid {p.accent_hover}; font-weight: 600;"
+            )
         else:
             if self.is_available:
-                self.setStyleSheet(base_style + "background: rgba(76, 175, 80, 180); border: 2px solid rgba(76, 175, 80, 220);")
+                self.setStyleSheet(
+                    base_style + f"background: {p.bg_tertiary}; color: {p.text_primary};"
+                    f" border: 2px solid {p.border_strong};"
+                )
             else:
-                self.setStyleSheet(base_style + "background: rgba(61, 61, 61, 180); border: 2px solid rgba(61, 61, 61, 220);")
+                self.setStyleSheet(
+                    base_style + f"background: {p.bg_tertiary}; color: {p.text_muted};"
+                    f" border: 2px solid {p.border_subtle};"
+                )
             
     def mousePressEvent(self, event):
         """
@@ -236,17 +248,16 @@ class CompactSelectableIsotopeLabel(QLabel):
         
     def enterEvent(self, event):
         """
-        Handle mouse enter event for hover effect.
-        
         Args:
-            event (QEnterEvent): Enter event object
-        
-        Returns:
-            None
+            event (Any): Qt event object.
         """
         if not self.is_selected and self.is_available:
-            hover_style = "padding: 1px; border-radius: 1px; margin: 1px; color: white; background: rgba(76, 175, 80, 220); border: 1px solid rgba(76, 175, 80, 240);"
-            self.setStyleSheet(hover_style)
+            p = _app_theme.palette
+            self.setStyleSheet(
+                f"padding: 1px; border-radius: 3px; margin: 1px;"
+                f" background: {p.accent_soft}; color: {p.text_primary};"
+                f" border: 2px solid {p.accent};"
+            )
         super().enterEvent(event)
         
     def leaveEvent(self, event):
@@ -285,8 +296,11 @@ class CompactIsotopeDisplay(QFrame):
             None
         """
         super().__init__(parent)
-        self.setStyleSheet("QFrame { background-color: rgba(45, 45, 45, 220); border: 1px solid #444; border-radius: 2px; padding: 2px; }")
-        
+        self._apply_theme_style()
+        self._theme_handler = lambda _: self._safe_apply_theme()
+        _app_theme.themeChanged.connect(self._theme_handler)
+        self.destroyed.connect(self._disconnect_theme)
+
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(1, 1, 1, 1)
         self.layout.setSpacing(1)
@@ -298,6 +312,25 @@ class CompactIsotopeDisplay(QFrame):
         self.is_visible = False
         self.element_symbol = None
         self.parent_button = None
+
+    def _disconnect_theme(self):
+        try:
+            _app_theme.themeChanged.disconnect(self._theme_handler)
+        except Exception:
+            pass
+
+    def _safe_apply_theme(self):
+        try:
+            self._apply_theme_style()
+        except RuntimeError:
+            pass
+
+    def _apply_theme_style(self):
+        p = _app_theme.palette
+        self.setStyleSheet(
+            f"QFrame {{ background-color: {p.bg_secondary}; border: 1px solid {p.border};"
+            f" border-radius: 4px; padding: 2px; }}"
+        )
     
     def get_selected_isotopes_data(self):
         """
@@ -313,17 +346,27 @@ class CompactIsotopeDisplay(QFrame):
         
     def load_selected_isotopes(self, isotopes_data):
         """
-        Load and display previously selected isotopes.
-        
         Args:
-            isotopes_data (list): List of (symbol, mass) tuples to select
-        
-        Returns:
-            None
+            isotopes_data (Any): The isotopes data.
         """
         self.selected_isotopes = set((symbol, mass) for symbol, mass in isotopes_data)
+        if self.parent_button:
+            self.parent_button.clear_highlights()
         for mass, label in self.mass_labels.items():
-            label.setSelected((self.element_symbol, mass) in self.selected_isotopes)
+            is_sel = (self.element_symbol, mass) in self.selected_isotopes
+            label.setSelected(is_sel)
+            if is_sel and self.parent_button:
+                parent_widget = self.parent()
+                if parent_widget and hasattr(parent_widget, 'get_elements'):
+                    el_data = next(
+                        (e for e in parent_widget.get_elements()
+                         if e['symbol'] == self.element_symbol), None)
+                    if el_data:
+                        iso_data = next(
+                            (i for i in el_data['isotopes']
+                             if isinstance(i, dict) and abs(i['mass'] - mass) < 0.001), None)
+                        abundance = iso_data['abundance'] if iso_data else 0
+                        self.parent_button.set_highlight(abundance, accumulate=True)
 
     def set_isotopes(self, element, available_element_masses=None):
         """
@@ -752,20 +795,11 @@ class CompactPeriodicTableWidget(QWidget):
         self.initUI()
         
     def initUI(self):
-        """
-        Initialize the user interface and create element buttons.
-        
-        Creates the grid layout and populates it with element buttons positioned
-        according to standard periodic table layout.
-        
-        Args:
-            None
-        
-        Returns:
-            None
-        """
-        self.setStyleSheet("background-color: #eeeeee;")
-        
+        self._apply_theme_bg()
+        self._pt_theme_handler = lambda _: self._safe_apply_theme_bg()
+        _app_theme.themeChanged.connect(self._pt_theme_handler)
+        self.destroyed.connect(self._pt_disconnect_theme)
+
         layout = QGridLayout()
         layout.setSpacing(1)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -773,13 +807,13 @@ class CompactPeriodicTableWidget(QWidget):
 
         for element in self.get_elements():
             btn = self.create_element_button(element)
-            
+
             col = element['col']
             row = element['row']
-            
+
             if col > 1:
                 col += 10
-                
+
             if element['category'] in ['lanthanide', 'actinide']:
                 if element['category'] == 'lanthanide':
                     row = 8
@@ -788,9 +822,25 @@ class CompactPeriodicTableWidget(QWidget):
             else:
                 if col > 12:
                     col += 1
-                    
+
             layout.addWidget(btn, row, col)
             self.buttons[element['symbol']] = btn
+
+    def _pt_disconnect_theme(self):
+        try:
+            _app_theme.themeChanged.disconnect(self._pt_theme_handler)
+        except Exception:
+            pass
+
+    def _safe_apply_theme_bg(self):
+        try:
+            self._apply_theme_bg()
+        except RuntimeError:
+            pass
+
+    def _apply_theme_bg(self):
+        p = _app_theme.palette
+        self.setStyleSheet(f"background-color: {p.bg_primary};")
 
     def create_element_button(self, element):
         """
@@ -1148,7 +1198,6 @@ class CompactPeriodicTableWidget(QWidget):
             {'symbol': 'S', 'name': 'Sulfur', 'mass': 32.065, 'row': 2, 'col': 15, 'isotopes': [{'mass': 31.97207, 'abundance': 95.018, 'label': '32S'}, {'mass': 32.97146, 'abundance': 0.75, 'label': '33S'}, {'mass': 33.96787, 'abundance': 4.215, 'label': '34S'}, {'mass': 35.96708, 'abundance': 0.017, 'label': '36S'}], 'category': 'other', 'atomic_number': 16, 'density': 2.067, 'ionization_energy': 10.36},
             {'symbol': 'Cl', 'name': 'Chlorine', 'mass': 35.453, 'row': 2, 'col': 16, 'isotopes': [{'mass': 34.96885, 'abundance': 75.771, 'label': '35Cl'}, {'mass': 36.9659, 'abundance': 24.229, 'label': '37Cl'}], 'category': 'halogen', 'atomic_number': 17, 'density': 0.003214, 'ionization_energy': 12.97},
             {'symbol': 'Ar', 'name': 'Argon', 'mass': 39.948, 'row': 2, 'col': 17, 'isotopes': [{'mass': 35.96755, 'abundance': 0.3365, 'label': '36Ar'}, {'mass': 37.96273, 'abundance': 0.0632, 'label': '38Ar'}, {'mass': 39.96238, 'abundance': 99.6003, 'label': '40Ar'}], 'category': 'noble', 'atomic_number': 18, 'density': 0.001784, 'ionization_energy': 15.76},
-            # Period 4
             {'symbol': 'K', 'name': 'Potassium', 'mass': 39.098, 'row': 3, 'col': 0, 'isotopes': [{'mass': 38.96371, 'abundance': 93.2581, 'label': '39K'}, {'mass': 39.964, 'abundance': 0.01167, 'label': '40K'}, {'mass': 40.96183, 'abundance': 6.7302, 'label': '41K'}], 'category': 'alkali', 'atomic_number': 19, 'density': 0.856, 'ionization_energy': 4.34},
             {'symbol': 'Ca', 'name': 'Calcium', 'mass': 40.078, 'row': 3, 'col': 1, 'isotopes': [{'mass': 39.96259, 'abundance': 96.941, 'label': '40Ca'}, {'mass': 41.95862, 'abundance': 0.647, 'label': '42Ca'}, {'mass': 42.95877, 'abundance': 0.135, 'label': '43Ca'}, {'mass': 43.95549, 'abundance': 2.086, 'label': '44Ca'}, {'mass': 45.95369, 'abundance': 0.004, 'label': '46Ca'}, {'mass': 47.95253, 'abundance': 0.187, 'label': '48Ca'}], 'category': 'alkaline', 'atomic_number': 20, 'density': 1.55, 'ionization_energy': 6.11},
 
@@ -1316,7 +1365,6 @@ class CompactPeriodicTableWidget(QWidget):
                 {'mass': 106.9051, 'abundance': 51.8392, 'label': '107Ag'},
                 {'mass': 108.90475, 'abundance': 48.1608, 'label': '109Ag'}
             ], 'category': 'transition', 'atomic_number': 47, 'density': 10.5, 'ionization_energy': 7.58},
-
 
 
             {'symbol': 'Cd', 'name': 'Cadmium', 'mass': 112.414, 'row': 4, 'col': 11, 'isotopes': [
@@ -1734,6 +1782,267 @@ class CompactPeriodicTableWidget(QWidget):
                 {'mass': 294, 'abundance': 0, 'label': '294Og'}
             ], 'category': 'noble', 'atomic_number': 118, 'density': 5.0, 'ionization_energy': 8.9}
         ]
+
+
+class IsotopeChipSelector(QWidget):
+    """
+    Compact chip-based isotope selector.
+    Shows available isotopes grouped by element as clickable toggle chips.
+    Much simpler UX than the full periodic table for quick sample configuration.
+    """
+    selection_changed = Signal()
+
+    def __init__(self, parent=None):
+        """
+        Args:
+            parent (Any): Parent widget or object.
+        """
+        super().__init__(parent)
+        self._available = []
+        self._selected = set()
+        self._chips = {}
+        self._setup()
+        self._chip_theme_handler = lambda _: self._safe_restyle()
+        _app_theme.themeChanged.connect(self._chip_theme_handler)
+        self.destroyed.connect(self._chip_disconnect_theme)
+
+    def _chip_disconnect_theme(self):
+        try:
+            _app_theme.themeChanged.disconnect(self._chip_theme_handler)
+        except Exception:
+            pass
+
+    def _safe_restyle(self):
+        try:
+            self._restyle_all()
+        except RuntimeError:
+            pass
+
+    # ── build ──────────────────────────────────────────────────────────────
+    def _setup(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        hdr = QHBoxLayout()
+        self._title_lbl = QLabel("Available Isotopes")
+        self._title_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
+        hdr.addWidget(self._title_lbl)
+        hdr.addStretch()
+
+        self._btn_all = QPushButton("Select All")
+        self._btn_all.setFixedHeight(26)
+        self._btn_all.setCursor(Qt.PointingHandCursor)
+        self._btn_all.clicked.connect(self.select_all)
+
+        self._btn_clear = QPushButton("Clear")
+        self._btn_clear.setFixedHeight(26)
+        self._btn_clear.setCursor(Qt.PointingHandCursor)
+        self._btn_clear.clicked.connect(self.clear_selection)
+
+        hdr.addWidget(self._btn_all)
+        hdr.addWidget(self._btn_clear)
+        root.addLayout(hdr)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+
+        self._content = QWidget()
+        self._flow = QVBoxLayout(self._content)
+        self._flow.setContentsMargins(6, 6, 6, 6)
+        self._flow.setSpacing(5)
+        self._scroll.setWidget(self._content)
+        root.addWidget(self._scroll)
+
+        self._restyle_all()
+
+    # ── theme ──────────────────────────────────────────────────────────────
+    def _restyle_all(self):
+        p = _app_theme.palette
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ background:{p.bg_secondary}; border:1px solid {p.border};
+                           border-radius:6px; }}
+            QScrollBar:vertical {{ background:{p.bg_primary}; width:8px; border:none; }}
+            QScrollBar::handle:vertical {{ background:{p.border}; border-radius:4px;
+                                           min-height:20px; }}
+            QScrollBar::handle:vertical:hover {{ background:{p.text_muted}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height:0; }}
+        """)
+        self._content.setStyleSheet(f"background:{p.bg_secondary};")
+        self._title_lbl.setStyleSheet(
+            f"font-weight:600; font-size:12px; color:{p.text_primary};")
+        _btn_style = (
+            f"QPushButton {{ background:{p.bg_tertiary}; color:{p.text_primary};"
+            f" border:1px solid {p.border}; border-radius:4px;"
+            f" padding:3px 10px; font-size:11px; }}"
+            f"QPushButton:hover {{ border-color:{p.accent}; color:{p.accent}; }}"
+        )
+        self._btn_all.setStyleSheet(_btn_style)
+        self._btn_clear.setStyleSheet(_btn_style)
+        for (sym, mass) in self._chips:
+            self._style_chip(sym, mass)
+
+    def _style_chip(self, sym, mass):
+        """
+        Args:
+            sym (Any): The sym.
+            mass (Any): Mass value in amu.
+        """
+        chip = self._chips.get((sym, mass))
+        if not chip:
+            return
+        p = _app_theme.palette
+        selected = (sym, mass) in self._selected
+        cat_color = '#5C6BC0'
+        for info in self._available:
+            if info[0] == sym and abs(info[1] - mass) < 0.001:
+                cat_color = ELEMENT_CATEGORY_COLORS.get(info[4], '#5C6BC0')
+                break
+        if selected:
+            chip.setStyleSheet(
+                f"QPushButton {{ background:{cat_color}; color:white;"
+                f" border:2px solid {QColor(cat_color).darker(130).name()};"
+                f" border-radius:10px; padding:2px 10px;"
+                f" font-size:11px; font-weight:600; }}"
+                f"QPushButton:hover {{ background:{QColor(cat_color).lighter(115).name()}; }}"
+            )
+        else:
+            chip.setStyleSheet(
+                f"QPushButton {{ background:transparent; color:{p.text_secondary};"
+                f" border:2px solid {cat_color}; border-radius:10px;"
+                f" padding:2px 10px; font-size:11px; }}"
+                f"QPushButton:hover {{ background:{cat_color}22; color:{p.text_primary}; }}"
+            )
+
+    # ── data ───────────────────────────────────────────────────────────────
+    def set_available_isotopes(self, element_data_list, isotope_pairs):
+        """
+        isotope_pairs: list of (symbol, mass) tuples
+        element_data_list: list of element dicts from get_elements()
+        Args:
+            element_data_list (Any): The element data list.
+            isotope_pairs (Any): The isotope pairs.
+        """
+        self._available = []
+        elem_lookup = {e['symbol']: e for e in element_data_list}
+        seen = set()
+        for sym, mass in sorted(isotope_pairs, key=lambda x: (x[0], x[1])):
+            if (sym, mass) in seen:
+                continue
+            seen.add((sym, mass))
+            elem = elem_lookup.get(sym, {})
+            cat = elem.get('category', 'other')
+            lbl = f"{sym}-{round(mass)}"
+            abund = 0
+            for iso in elem.get('isotopes', []):
+                if isinstance(iso, dict) and abs(iso['mass'] - mass) < 0.001:
+                    lbl = iso.get('label', lbl)
+                    abund = iso.get('abundance', 0)
+                    break
+            self._available.append((sym, mass, lbl, abund, cat))
+        self._rebuild_chips()
+
+    def _rebuild_chips(self):
+        p = _app_theme.palette
+        while self._flow.count():
+            child = self._flow.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        self._chips.clear()
+
+        groups = {}
+        for sym, mass, lbl, abund, cat in self._available:
+            if sym not in groups:
+                groups[sym] = {'cat': cat, 'isotopes': []}
+            groups[sym]['isotopes'].append((mass, lbl, abund))
+
+        if not groups:
+            ph = QLabel("No isotopes available")
+            ph.setAlignment(Qt.AlignCenter)
+            ph.setStyleSheet(
+                f"color:{p.text_muted}; font-style:italic; padding:20px;")
+            self._flow.addWidget(ph)
+            self._flow.addStretch()
+            return
+
+        for sym in sorted(groups.keys(),
+                          key=lambda s: min(m for m, _, _ in groups[s]['isotopes'])):
+            info = groups[sym]
+            cat = info['cat']
+            cat_color = ELEMENT_CATEGORY_COLORS.get(cat, '#5C6BC0')
+
+            row_w = QWidget()
+            row_w.setStyleSheet("background:transparent;")
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+
+            el_lbl = QLabel(sym)
+            el_lbl.setFixedWidth(38)
+            el_lbl.setAlignment(Qt.AlignCenter)
+            el_lbl.setStyleSheet(
+                f"QLabel {{ background:{cat_color}; color:white;"
+                f" border-radius:4px; padding:2px 4px;"
+                f" font-size:11px; font-weight:bold; }}"
+            )
+            row.addWidget(el_lbl)
+
+            for mass, lbl, _ in info['isotopes']:
+                chip = QPushButton(lbl)
+                chip.setFixedHeight(24)
+                chip.setCursor(Qt.PointingHandCursor)
+                self._chips[(sym, mass)] = chip
+                self._style_chip(sym, mass)
+                chip.clicked.connect(
+                    lambda _=False, s=sym, m=mass: self._toggle(s, m))
+                row.addWidget(chip)
+
+            row.addStretch()
+            self._flow.addWidget(row_w)
+
+        self._flow.addStretch()
+
+    def _toggle(self, sym, mass):
+        """
+        Args:
+            sym (Any): The sym.
+            mass (Any): Mass value in amu.
+        """
+        key = (sym, mass)
+        if key in self._selected:
+            self._selected.remove(key)
+        else:
+            self._selected.add(key)
+        self._style_chip(sym, mass)
+        self.selection_changed.emit()
+
+    def set_selected(self, isotope_list):
+        """isotope_list: list of {'symbol':..., 'mass':...} dicts
+        Args:
+            isotope_list (Any): The isotope list.
+        """
+        self._selected = {(it['symbol'], it['mass']) for it in isotope_list}
+        for (sym, mass) in self._chips:
+            self._style_chip(sym, mass)
+
+    def get_selected(self):
+        """Returns list of (symbol, mass) tuples"""
+        return list(self._selected)
+
+    def select_all(self):
+        for sym, mass, *_ in self._available:
+            self._selected.add((sym, mass))
+        for (sym, mass) in self._chips:
+            self._style_chip(sym, mass)
+        self.selection_changed.emit()
+
+    def clear_selection(self):
+        self._selected.clear()
+        for (sym, mass) in self._chips:
+            self._style_chip(sym, mass)
+        self.selection_changed.emit()
 
 
 if __name__ == '__main__':

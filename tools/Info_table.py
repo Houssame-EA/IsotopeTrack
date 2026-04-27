@@ -77,8 +77,7 @@ def detect_isotope_anomalies(element_symbol, isotope_counts, element_data,
     if not abundance_map:
         return []
 
-    # Match each selected isotope mass to its abundance
-    isotope_info = []  # (mass, count, fractional_abundance)
+    isotope_info = []
     for iso_mass, count in isotope_counts.items():
         nominal = round(iso_mass)
         abund = abundance_map.get(nominal)
@@ -94,19 +93,17 @@ def detect_isotope_anomalies(element_symbol, isotope_counts, element_data,
 
     anomalies = []
 
-    # Sort by abundance descending (index 0 is most abundant)
     isotope_info.sort(key=lambda x: x[2], reverse=True)
 
-    el = element_symbol  # shorthand for messages
+    el = element_symbol
 
     for i in range(len(isotope_info)):
         for j in range(i + 1, len(isotope_info)):
-            mass_a, count_a, abund_a = isotope_info[i]   # more abundant
-            mass_b, count_b, abund_b = isotope_info[j]    # less abundant
+            mass_a, count_a, abund_a = isotope_info[i]
+            mass_b, count_b, abund_b = isotope_info[j]
             nom_a = round(mass_a)
             nom_b = round(mass_b)
 
-            # --- Case 1: major isotope has 0, minor has detections ---
             if count_a == 0 and count_b > 0 and abund_a > 0.10:
                 anomalies.append({
                     'type': 'missing_major',
@@ -118,7 +115,6 @@ def detect_isotope_anomalies(element_symbol, isotope_counts, element_data,
                 })
                 continue
 
-            # --- Case 2: minor isotope has 0, check if expected ---
             if count_b == 0 and count_a > 0 and abund_a > 0:
                 expected_b = count_a * (abund_b / abund_a)
                 p_zero = float(np.exp(-expected_b)) if expected_b < 700 else 0.0
@@ -146,7 +142,6 @@ def detect_isotope_anomalies(element_symbol, isotope_counts, element_data,
                     })
                 continue
 
-            # --- Case 3: both detected — chi-squared goodness of fit ---
             if count_a > 0 and count_b > 0:
                 total_pair = count_a + count_b
                 total_abund = abund_a + abund_b
@@ -225,8 +220,11 @@ class InfoTooltip(QWidget):
     """
 
     def __init__(self, parent=None):
+        """
+        Args:
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
-        # Ensure it acts as an interactive panel, not a ghost tooltip
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
@@ -234,10 +232,13 @@ class InfoTooltip(QWidget):
         self.cached_stats = {}
         self.cached_isotopes = {}
         self._click_filter_installed = False
-        self._trigger_widget = None      # the button that opens us
+        self._trigger_widget = None
 
     def set_trigger_widget(self, widget):
-        """Set the widget (e.g. info button) whose clicks should NOT auto-close us."""
+        """Set the widget (e.g. info button) whose clicks should NOT auto-close us.
+        Args:
+            widget (Any): Target widget.
+        """
         self._trigger_widget = widget
 
     # --- Click-outside-to-dismiss -------------------------------------------
@@ -259,13 +260,17 @@ class InfoTooltip(QWidget):
         super().hide()
 
     def eventFilter(self, obj, event):
-        """Hide on any mouse click that lands outside the tooltip."""
+        """Hide on any mouse click that lands outside the tooltip.
+        Args:
+            obj (Any): The obj.
+            event (Any): Qt event object.
+        Returns:
+            object: Result of the operation.
+        """
         if event.type() == QEvent.MouseButtonPress:
             click_pos = QCursor.pos()
-            # Ignore clicks inside the tooltip itself
             if self.geometry().contains(click_pos):
                 return super().eventFilter(obj, event)
-            # Ignore clicks on the trigger button (toggle_info handles those)
             if self._trigger_widget is not None:
                 from PySide6.QtCore import QRect, QPoint
                 btn_global_tl = self._trigger_widget.mapToGlobal(QPoint(0, 0))
@@ -273,7 +278,7 @@ class InfoTooltip(QWidget):
                 if btn_screen_rect.contains(click_pos):
                     return super().eventFilter(obj, event)
             self.hide()
-            return False          # let the click propagate normally
+            return False
         return super().eventFilter(obj, event)
 
     def setup_ui(self):
@@ -282,7 +287,6 @@ class InfoTooltip(QWidget):
         self.main_layout.setContentsMargins(25, 25, 25, 25)
         self.main_layout.setSpacing(20)
 
-        # --- Date / time section ---
         self.datetime_widget = QWidget()
         self.datetime_layout = QVBoxLayout(self.datetime_widget)
         self.datetime_layout.setSpacing(5)
@@ -304,7 +308,6 @@ class InfoTooltip(QWidget):
         self.main_layout.addWidget(self.datetime_widget)
         self.datetime_widget.setVisible(False)
 
-        # --- Stat boxes ---
         self.stats_widget = QWidget()
         self.stats_layout = QHBoxLayout(self.stats_widget)
         self.stats_layout.setSpacing(20)
@@ -318,7 +321,6 @@ class InfoTooltip(QWidget):
 
         self.main_layout.addWidget(self.stats_widget)
 
-        # --- Scrollable content ---
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -363,6 +365,10 @@ class InfoTooltip(QWidget):
     # ----- helpers --------------------------------------------------------
 
     def _create_stat_box(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         stat_box = QWidget()
         stat_layout = QVBoxLayout(stat_box)
         value_label = QLabel()
@@ -466,7 +472,6 @@ class InfoTooltip(QWidget):
 
         self.cached_isotopes = new_isotopes
 
-        # Clear previous content
         for i in reversed(range(self.sample_layout.count())):
             self.sample_layout.itemAt(i).widget().setParent(None)
 
@@ -486,8 +491,7 @@ class InfoTooltip(QWidget):
             element_count = 0
             valid_elements = 0
 
-            # Collect detection counts per element for anomaly detection
-            element_detection_counts = {}  # {element: {isotope_mass: count}}
+            element_detection_counts = {}
 
             for element, isotopes in selected_isotopes.items():
                 if element not in element_detection_counts:
@@ -556,7 +560,6 @@ class InfoTooltip(QWidget):
 
                     sample_layout.addWidget(isotope_widget)
 
-            # --- Overall statistics ---
             if valid_elements > 0:
                 overall_widget = QWidget()
                 overall_layout = QVBoxLayout(overall_widget)
@@ -604,7 +607,6 @@ class InfoTooltip(QWidget):
                 """)
                 sample_layout.addWidget(overall_widget)
 
-            # ---- Isotope Anomaly Detection Section ----
             if periodic_table_widget is not None:
                 all_anomalies = []
                 for element, iso_counts in element_detection_counts.items():
@@ -687,7 +689,6 @@ class InfoTooltip(QWidget):
         """)
         self.sample_layout.addWidget(sample_box)
 
-        # --- Multi-element particles ---
         if multi_element_particles is not None:
             multi_box = QWidget()
             multi_layout = QVBoxLayout(multi_box)

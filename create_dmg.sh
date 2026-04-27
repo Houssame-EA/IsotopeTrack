@@ -8,5 +8,5 @@ create-dmg \
   --hide-extension "IsotopeTrack.app" \
   --app-drop-link 485 185 \
   --background "images/dmg_background.png" \
-  "IsotopeTrack_intel.dmg" \
+  "IsotopeTrack_M.dmg" \
   "dist/"

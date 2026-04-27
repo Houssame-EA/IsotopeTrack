@@ -1,0 +1,12 @@
+venv_m1/
+venv_intel/
+venv_x86/
+build/
+dist/
+dist_linux/
+__pycache__/
+*.pyc
+*.pyo
+*.dmg
+.git/
+.DS_Store

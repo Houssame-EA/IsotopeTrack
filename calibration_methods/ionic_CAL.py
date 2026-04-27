@@ -2,43 +2,409 @@ import sys
 import json
 import numpy as np
 from pathlib import Path
-from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, 
+from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
                                QFileDialog, QMessageBox, QDialog, QListWidget, QListWidgetItem,
                                QListView, QAbstractItemView, QTreeView, QComboBox, QLabel,
                                QScrollArea, QSplitter, QGroupBox, QMenu, QTabWidget,
                                QToolBar, QStatusBar, QMainWindow, QFrame, QToolButton, QRadioButton, QDoubleSpinBox,
-                               QStyledItemDelegate, QLineEdit, QCheckBox)
+                               QLineEdit, QCheckBox, QProgressDialog)
 from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEvent
 from PySide6.QtGui import QIcon, QKeySequence, QFont, QColor, QBrush, QPalette, QDoubleValidator, QAction, QShortcut
-import data_loading.vitesse_loading
+import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import BasicPlotWidget, CalibrationPlotWidget
+from widget.custom_plot_widget import BasicPlotWidget, CalibrationPlotWidget, EnhancedPlotWidget
 import os
-from PySide6.QtWidgets import QProgressDialog
 import pandas as pd
 import qtawesome as qta
-import data_loading.tofwerk_loading
+import loading.tofwerk_loading
+
+from calibration_methods.te_common import (
+    BASE_STYLESHEET, NumericDelegate, RETURN_BUTTON_STYLE,
+    base_stylesheet, return_button_style,
+)
 
 
-class NumericDelegate(QStyledItemDelegate):
-    """Custom delegate for numeric input in table cells"""
-    
-    def createEditor(self, parent, option, index):
-        """
-        Create a line edit widget with numeric validation for table cell editing.
-        
-        Args:
-            parent: Parent widget for the editor
-            option: Style option for the item
-            index: Model index of the item being edited
-            
-        Returns:
-            QLineEdit: Line edit widget configured with double validator
-        """
-        editor = QLineEdit(parent)
-        editor.setValidator(QDoubleValidator())
-        return editor
+from theme import theme
+
+# ── user-action logging ──────────────────────────────────────────────────────
+def _ual():
+    """Return the UserActionLogger, or None if logging isn't ready.
+    Returns:
+        object: Result of the operation.
+    """
+    try:
+        from tools.logging_utils import logging_manager
+        return logging_manager.get_user_action_logger()
+    except Exception:
+        return None
+
+
+def _build_ionic_qss(p) -> str:
+    """Full stylesheet for the Ionic Calibration window, built from a
+    theme Palette.  Covers main window, toolbar, tabs, tables, buttons,
+    inputs, group boxes, scroll areas, and the status bar.
+    Args:
+        p (Any): The p.
+    Returns:
+        str: Result of the operation.
+    """
+    return f"""
+        /* Base window + widgets ---------------------------------------- */
+        QMainWindow, QWidget {{
+            background-color: {p.bg_primary};
+            color: {p.text_primary};
+        }}
+
+        /* Toolbar ------------------------------------------------------ */
+        QToolBar {{
+            background-color: {p.bg_secondary};
+            border: none;
+            border-bottom: 1px solid {p.border};
+            padding: 4px;
+            spacing: 4px;
+        }}
+        QToolButton {{
+            background-color: transparent;
+            color: {p.text_primary};
+            border: 1px solid transparent;
+            border-radius: 4px;
+            padding: 5px 8px;
+        }}
+        QToolButton:hover {{
+            background-color: {p.bg_hover};
+            border: 1px solid {p.border};
+        }}
+        QToolButton:pressed,
+        QToolButton:checked {{
+            background-color: {p.accent_soft};
+            border: 1px solid {p.accent};
+            color: {p.text_primary};
+        }}
+
+        /* Tabs --------------------------------------------------------- */
+        QTabWidget::pane {{
+            border: 1px solid {p.border};
+            background-color: {p.bg_secondary};
+            border-radius: 4px;
+            top: -1px;
+        }}
+        /* The QTabBar itself — the strip the tabs sit on.  Without this
+           the area to the right of the last tab shows the OS default
+           (white on macOS). */
+        QTabBar {{
+            background-color: {p.bg_primary};
+            qproperty-drawBase: 0;
+        }}
+        QTabWidget::tab-bar {{
+            alignment: left;
+        }}
+        QTabBar::tab {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_secondary};
+            padding: 8px 16px;
+            border: 1px solid {p.border};
+            border-bottom: none;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            margin-right: 2px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+            border-bottom: 1px solid {p.bg_secondary};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background-color: {p.bg_hover};
+            color: {p.text_primary};
+        }}
+
+        /* Tables ------------------------------------------------------- */
+        QTableWidget {{
+            background-color: {p.bg_secondary};
+            alternate-background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            gridline-color: {p.border};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            selection-background-color: {p.accent_soft};
+            selection-color: {p.text_primary};
+        }}
+        QTableWidget::item {{
+            padding: 4px 6px;
+        }}
+        QTableWidget::item:selected {{
+            background-color: {p.accent_soft};
+            color: {p.text_primary};
+        }}
+        QHeaderView::section {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            padding: 6px;
+            border: none;
+            border-right: 1px solid {p.border};
+            border-bottom: 1px solid {p.border};
+            font-weight: bold;
+        }}
+        QTableCornerButton::section {{
+            background-color: {p.bg_tertiary};
+            border: none;
+            border-right: 1px solid {p.border};
+            border-bottom: 1px solid {p.border};
+        }}
+
+        /* Buttons (non-special — special ones use object names) ------- */
+        QPushButton {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 6px 14px;
+        }}
+        QPushButton:hover {{
+            background-color: {p.bg_hover};
+            border: 1px solid {p.accent};
+        }}
+        QPushButton:pressed {{
+            background-color: {p.accent_pressed};
+            color: {p.text_inverse};
+            border-color: {p.accent_pressed};
+        }}
+        QPushButton:disabled {{
+            background-color: {p.bg_secondary};
+            color: {p.text_muted};
+            border: 1px solid {p.border_subtle};
+        }}
+
+        /* Inputs ------------------------------------------------------- */
+        QLineEdit,
+        QComboBox,
+        QDoubleSpinBox,
+        QSpinBox {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 4px 8px;
+            selection-background-color: {p.accent};
+            selection-color: {p.text_inverse};
+        }}
+        QLineEdit:focus,
+        QComboBox:focus,
+        QDoubleSpinBox:focus,
+        QSpinBox:focus {{
+            border: 1px solid {p.accent};
+        }}
+        QComboBox::drop-down {{ border: none; width: 20px; }}
+        QComboBox QAbstractItemView {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+            selection-background-color: {p.accent_soft};
+            selection-color: {p.text_primary};
+            border: 1px solid {p.border};
+            outline: 0;
+        }}
+
+        /* Check + radio indicators ------------------------------------ */
+        QCheckBox, QRadioButton {{
+            color: {p.text_primary};
+            background-color: transparent;
+            spacing: 6px;
+        }}
+        QCheckBox::indicator,
+        QRadioButton::indicator {{
+            width: 16px;
+            height: 16px;
+        }}
+        QCheckBox::indicator:unchecked {{
+            border: 1px solid {p.border};
+            background-color: {p.bg_tertiary};
+            border-radius: 3px;
+        }}
+        QCheckBox::indicator:checked {{
+            border: 1px solid {p.accent};
+            background-color: {p.accent};
+            border-radius: 3px;
+        }}
+        QRadioButton::indicator:unchecked {{
+            border: 2px solid {p.border};
+            background-color: {p.bg_tertiary};
+            border-radius: 9px;
+        }}
+        QRadioButton::indicator:checked {{
+            border: 2px solid {p.accent};
+            background-color: {p.accent};
+            border-radius: 9px;
+        }}
+
+        /* Group boxes ------------------------------------------------- */
+        QGroupBox {{
+            color: {p.text_primary};
+            background-color: {p.bg_secondary};
+            border: 1px solid {p.border};
+            border-radius: 6px;
+            margin-top: 1em;
+            padding-top: 10px;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            padding: 0 8px;
+        }}
+
+        /* Scroll areas + scrollbars ----------------------------------- */
+        QScrollArea {{
+            background-color: transparent;
+            border: none;
+        }}
+        QScrollBar:vertical {{
+            background: {p.bg_primary};
+            width: 10px;
+            border: none;
+            margin: 0;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {p.border};
+            border-radius: 5px;
+            min-height: 20px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
+        QScrollBar::add-line:vertical,
+        QScrollBar::sub-line:vertical {{ height: 0; }}
+        QScrollBar:horizontal {{
+            background: {p.bg_primary};
+            height: 10px;
+            border: none;
+            margin: 0;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {p.border};
+            border-radius: 5px;
+            min-width: 20px;
+        }}
+        QScrollBar::handle:horizontal:hover {{ background: {p.text_muted}; }}
+        QScrollBar::add-line:horizontal,
+        QScrollBar::sub-line:horizontal {{ width: 0; }}
+
+        /* Menus, tooltips, splitters, status bar ---------------------- */
+        QMenu {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            padding: 4px;
+        }}
+        QMenu::item {{ padding: 5px 20px; }}
+        QMenu::item:selected {{
+            background-color: {p.accent_soft};
+            color: {p.text_primary};
+        }}
+        QToolTip {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            padding: 4px;
+        }}
+        QSplitter::handle {{ background-color: {p.border}; }}
+        QStatusBar {{
+            background-color: {p.bg_secondary};
+            color: {p.text_secondary};
+            border-top: 1px solid {p.border};
+        }}
+
+        /* Named widgets (object-name-targeted) ------------------------ */
+        QLabel#helpInfo {{
+            background-color: {p.accent_soft};
+            color: {p.text_primary};
+            padding: 10px;
+            border-radius: 4px;
+        }}
+        QLabel#helpWarning {{
+            background-color: {p.warning_bg};
+            color: {p.text_primary};
+            border: 1px solid {p.warning_border};
+            padding: 10px;
+            border-radius: 4px;
+        }}
+        QLabel#helpMuted {{
+            color: {p.text_muted};
+            margin-left: 20px;
+            font-size: 11px;
+        }}
+        QLabel#dialogInstruction {{
+            color: {p.text_primary};
+            font-size: 14px;
+            font-weight: bold;
+            margin: 10px;
+        }}
+        QLabel#titleLabel {{
+            color: {p.text_primary};
+            font-size: 20px;
+            font-weight: bold;
+        }}
+        QFrame#tableFrame {{
+            background-color: {p.bg_secondary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+        }}
+        QPushButton#primaryBtn {{
+            background-color: {p.success};
+            color: {p.text_inverse};
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-weight: bold;
+            min-width: 80px;
+        }}
+        QPushButton#primaryBtn:hover {{
+            background-color: {p.accent_hover};
+        }}
+        QPushButton#secondaryBtn {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-weight: bold;
+            min-width: 80px;
+        }}
+        QPushButton#secondaryBtn:hover {{
+            background-color: {p.bg_hover};
+            border-color: {p.accent};
+        }}
+    """
+
+
+def _build_ionic_status_colors(p) -> dict:
+    """Row-highlight colors used to indicate calibration method status in
+    the results table.  Keeps the orange/green/blue semantics across light
+    and dark themes — in dark mode they're muted so they don't blind the
+    user while still being distinguishable at a glance.
+
+    Keys:
+        manual    — manual override (was #ffe6cc orange)
+        auto      — auto-selected / best R² (was #e8f5e8 green)
+        selected  — manually selected by user (was #e6f3ff blue)
+        base      — neutral background for unhighlighted cells
+        text      — foreground color that reads on all three backgrounds
+    Args:
+        p (Any): The p.
+    Returns:
+        dict: Result of the operation.
+    """
+    if p.name == "dark":
+        return {
+            "manual":   QColor("#5a3a2a"),
+            "auto":     QColor("#2a4a2a"),
+            "selected": QColor("#1f3a52"),
+            "base":     QColor(p.bg_tertiary),
+            "text":     QColor(p.text_primary),
+        }
+    return {
+        "manual":   QColor("#ffe6cc"),
+        "auto":     QColor("#e8f5e8"),
+        "selected": QColor("#e6f3ff"),
+        "base":     QColor("#f8f9fa"),
+        "text":     QColor(p.text_primary),
+    }
 
 
 class IonicCalibrationWindow(QMainWindow):
@@ -78,9 +444,22 @@ class IonicCalibrationWindow(QMainWindow):
         self.current_unit = 'ppb'
         self.last_selected_row = None
         self.last_selected_col = None
+
+
+        self.excluded_points = {}
+
+        self._outlier_indices_by_isotope = {}
+        self._time_exclusions_element = {}
+        self._time_exclusions_sample  = {}
         
         self.initUI()
-        
+
+        ual = _ual()
+        if ual:
+            ual.log_action('DIALOG_OPEN', 'Opened Ionic Calibration window',
+                           {'has_parent': parent is not None,
+                            'isotope_count': sum(len(v) for v in self.selected_isotopes.values())})
+
         if self.selected_isotopes:
             self.update_table_columns()
             self.update_element_isotope_combo()
@@ -92,93 +471,10 @@ class IonicCalibrationWindow(QMainWindow):
         Sets up stylesheets, creates tab widget with three tabs (Data Management,
         Manual Sensitivity, Calibration Results), toolbar, and status bar.
         """
-        self.setStyleSheet("""
-        QMainWindow, QTabWidget, QScrollArea, QWidget {
-            background-color: #f8f9fa;
-            color: #212529;
-        }
-        QTabWidget::pane {
-            border: 1px solid #dee2e6;
-            border-radius: 4px;
-            padding: 5px;
-        }
-        QTabBar::tab {
-            border: 1px solid #dee2e6;
-            border-bottom-color: none;
-            border-top-left-radius: 4px;
-            border-top-right-radius: 4px;
-            min-width: 100px;
-            padding: 8px 16px;
-            margin-right: 2px;
-        }
-        QTabBar::tab:selected {
-            background-color: #ffffff;
-            border-bottom-color: #ffffff;
-        }
-        QTabBar::tab:hover:!selected {
-            background-color: #f1f3f5;
-        }
 
-        QToolButton {
-            background-color: transparent;
-            border: none;
-            padding: 6px;
-            border-radius: 4px;
-        }
-        QToolButton:hover {
-            background-color: #e9ecef;
-        }
-        QComboBox, QTableWidget, QLineEdit {
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-            padding: 6px;
-            background-color: white;
-        }
-        QTableWidget::item:selected {
-            background-color: #cfe2ff;
-            color: #0a58ca;
-        }
-        QHeaderView::section {
-            background-color: #e9ecef;
-            padding: 6px;
-            border: 1px solid #dee2e6;
-            font-weight: bold;
-        }
-        QGroupBox {
-            border: 1px solid #dee2e6;
-            border-radius: 6px;
-            margin-top: 12px;
-            padding: 10px;
-            background-color: white;
-        }
-        QGroupBox::title {
-            subcontrol-origin: margin;
-            left: 10px;
-            padding: 0 5px 0 5px;
-            color: #495057;
-        }
-        QSplitter::handle {
-            background-color: #dee2e6;
-            height: 2px;
-        }
-        QStatusBar {
-            background-color: #e9ecef;
-            color: #495057;
-            border-top: 1px solid #dee2e6;
-        }
-        QToolBar {
-            background-color: #f8f9fa;
-            border-bottom: 1px solid #dee2e6;
-            spacing: 8px;
-        }
-        QToolBar QToolButton {
-            border-radius: 4px;
-            padding: 4px;
-        }
-        QToolBar QToolButton:hover {
-            background-color: #e9ecef;
-        }
-        """)
+        self.apply_theme()
+        self._theme_cleanup = theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_cleanup())
 
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
@@ -189,40 +485,22 @@ class IonicCalibrationWindow(QMainWindow):
         header_layout = QHBoxLayout()
 
         title_label = QLabel("Ionic Calibration Analysis")
-        title_label.setStyleSheet("font-size: 20px; font-weight: bold;")
+        title_label.setObjectName("titleLabel")
         header_layout.addWidget(title_label)
 
         header_layout.addStretch()
 
-        return_button = QPushButton("Back to Main")
-        return_button.setIcon(qta.icon('fa6s.house', color="#B81414"))
-        return_button.setFixedSize(150, 45)
-        return_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #FF6B6B, stop:0.5 #FF8E53, stop:1 #FF6B9D);
-                color: white;
-                border: 3px solid #FF4081;
-                padding: 8px 16px;
-                text-align: center;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 22px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #FF5252, stop:0.5 #FF7043, stop:1 #FF4081);
-                border: 3px solid #E91E63;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #E53935, stop:0.5 #FF5722, stop:1 #E91E63);
-                border: 3px solid #AD1457;
-                padding: 9px 15px 7px 17px;
-            }
-        """)
-        return_button.clicked.connect(self.hide)
-        header_layout.addWidget(return_button)
+        self.return_button = QPushButton("Back to Main")
+        self.return_button.setObjectName("returnButton")
+        self.return_button.setFixedSize(150, 45)
+        self._refresh_return_button()
+        def _back_to_main():
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Ionic Calibration — Back to Main')
+            self.hide()
+        self.return_button.clicked.connect(_back_to_main)
+        header_layout.addWidget(self.return_button)
         
         main_layout.addLayout(header_layout)
                 
@@ -250,11 +528,73 @@ class IonicCalibrationWindow(QMainWindow):
         self.statusBar.showMessage("Ready")
         
         main_layout.addWidget(self.tab_widget)
-        
+        self.tab_widget.currentChanged.connect(self._log_tab_switch)
+
         self.resize(1280, 900)
-        
+
         self.create_shortcuts()
-            
+
+    def apply_theme(self, *_):
+        """Re-apply the full ionic-calibration stylesheet from the current
+        theme palette.  Called on init and whenever the user toggles light/
+        dark — any widgets that show dynamic colors (e.g. the results table
+        status cells) are refreshed via refresh_status_colors().
+        Args:
+            *_ (Any): Additional positional arguments.
+        """
+        p = theme.palette
+        self.setStyleSheet(_build_ionic_qss(p))
+        self._status_colors = _build_ionic_status_colors(p)
+        self._refresh_plot_label_colors()
+        self._refresh_results_table_colors()
+        self._refresh_return_button()
+
+    def _refresh_return_button(self):
+        """Apply the current theme's return-button style + a readable icon
+        color.  The button widget may not exist yet on the first call from
+        initUI — check before touching it.
+        """
+        btn = getattr(self, "return_button", None)
+        if btn is None:
+            return
+        p = theme.palette
+        btn.setStyleSheet(return_button_style(p))
+
+        icon_color = "#ffffff" if p.name == "dark" else "#B81414"
+        btn.setIcon(qta.icon('fa6s.house', color=icon_color))
+
+    def _refresh_plot_label_colors(self):
+        """Swap the pyqtgraph axis label color to the current theme's
+        plot_fg.  No-op if the plot widget hasn't been created yet.
+        """
+        widget = getattr(self, "count_vs_time_widget", None)
+        if widget is None:
+            return
+        try:
+            fg = theme.palette.plot_fg
+            for axis in ("bottom", "left"):
+                try:
+                    label = widget.getAxis(axis).label.toPlainText()
+                except Exception:
+                    label = ""
+                widget.setLabel(axis, label, color=fg)
+        except Exception:
+            pass
+
+    def _refresh_results_table_colors(self):
+        """When the theme changes, any existing background QBrush() values
+        on results-table items are stale.  Re-run display_results() to
+        re-paint them with the new palette, if the data is available.
+        """
+        if not hasattr(self, "results_table"):
+            return
+
+        try:
+            if getattr(self, "calibration_results", None):
+                self.display_results()
+        except Exception:
+            pass
+
     def setup_toolbar(self):
         """
         Create and configure the main toolbar.
@@ -320,9 +660,7 @@ class IonicCalibrationWindow(QMainWindow):
             "Select elements from the periodic table to add columns. Use right-click for additional options."
         )
         help_label.setWordWrap(True)
-        help_label.setStyleSheet(
-            "background-color: #e7f5ff; color: #0c63e4; padding: 10px; border-radius: 4px;"
-        )
+        help_label.setObjectName("helpInfo")
         layout.addWidget(help_label)
         
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -336,10 +674,6 @@ class IonicCalibrationWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(["Sample"])
         
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet(
-            "QTableWidget { gridline-color: #dee2e6; }"
-            "QTableWidget::item:alternate { background-color: #f8f9fa; }"
-        )
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setDefaultSectionSize(50)    
@@ -359,7 +693,7 @@ class IonicCalibrationWindow(QMainWindow):
         
         table_frame = QFrame()
         table_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        table_frame.setStyleSheet("QFrame { border: 1px solid #dee2e6; border-radius: 4px; }")
+        table_frame.setObjectName("tableFrame")
         table_frame_layout = QVBoxLayout(table_frame)
         table_frame_layout.setContentsMargins(1, 1, 1, 1)
         table_frame_layout.addWidget(self.table)
@@ -401,8 +735,10 @@ class IonicCalibrationWindow(QMainWindow):
         plot_controls.addStretch()
         count_time_layout.addLayout(plot_controls)
         
-        self.count_vs_time_widget = BasicPlotWidget()
+        self.count_vs_time_widget = EnhancedPlotWidget()
         self.count_vs_time_widget.setMinimumHeight(250)
+        self.count_vs_time_widget.exclusionRegionsChanged.connect(
+            self._on_time_exclusion_changed)
         count_time_layout.addWidget(self.count_vs_time_widget)
         
         splitter.addWidget(count_time_group)
@@ -428,9 +764,7 @@ class IonicCalibrationWindow(QMainWindow):
             "This allows you to selectively override individual elements."
         )
         help_label.setWordWrap(True)
-        help_label.setStyleSheet(
-            "background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 4px;"
-        )
+        help_label.setObjectName("helpWarning")
         layout.addWidget(help_label)
         
         global_controls_group = QGroupBox("Global Controls")
@@ -503,47 +837,112 @@ class IonicCalibrationWindow(QMainWindow):
         calibration_layout = QVBoxLayout(calibration_group)
         calibration_layout.setContentsMargins(10, 15, 10, 10)
         
+        # ── Single unified control bar ──────────────────────────────────
         calib_controls = QHBoxLayout()
-        
-        calib_controls.addWidget(QLabel("Element & Isotope:"))
+        calib_controls.setSpacing(6)
+
+        calib_controls.addWidget(QLabel("Isotope:"))
+
+        self.prev_isotope_btn = QPushButton("◀")
+        self.prev_isotope_btn.setFixedSize(26, 26)
+        self.prev_isotope_btn.setToolTip("Previous isotope")
+        self.prev_isotope_btn.clicked.connect(self._go_prev_isotope)
+        calib_controls.addWidget(self.prev_isotope_btn)
+
         self.element_isotope_combo = QComboBox()
+        self.element_isotope_combo.setMinimumWidth(90)
+        self.element_isotope_combo.setMaximumWidth(120)
         self.element_isotope_combo.currentTextChanged.connect(self.display_selected_calibration)
         calib_controls.addWidget(self.element_isotope_combo)
 
-        calib_controls.addWidget(QLabel("Calibration Method:"))
+        self.next_isotope_btn = QPushButton("▶")
+        self.next_isotope_btn.setFixedSize(26, 26)
+        self.next_isotope_btn.setToolTip("Next isotope")
+        self.next_isotope_btn.clicked.connect(self._go_next_isotope)
+        calib_controls.addWidget(self.next_isotope_btn)
+
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.VLine)
+        sep1.setFrameShadow(QFrame.Shadow.Sunken)
+        calib_controls.addWidget(sep1)
+
+        calib_controls.addWidget(QLabel("Method:"))
         self.calibration_method_combo = QComboBox()
         self.calibration_method_combo.addItems(['Force through zero', 'Simple linear', 'Weighted', 'Manual'])
+        self.calibration_method_combo.setMinimumWidth(130)
         self.calibration_method_combo.currentTextChanged.connect(self.update_calibration_display)
         calib_controls.addWidget(self.calibration_method_combo)
-        
-        calib_controls.addStretch()
-        calibration_layout.addLayout(calib_controls)
-        
-        global_controls = QHBoxLayout()
-        global_controls.addWidget(QLabel("Apply to All Isotopes:"))
-        
+
+        self.manual_slope_label = QLabel("Slope:")
+        calib_controls.addWidget(self.manual_slope_label)
+
+        self.manual_slope_input = QDoubleSpinBox()
+        self.manual_slope_input.setRange(0.0, 1e15)
+        self.manual_slope_input.setDecimals(4)
+        self.manual_slope_input.setValue(10.0)
+        self.manual_slope_input.setSuffix(" cps/ppb")
+        self.manual_slope_input.setGroupSeparatorShown(True)
+        self.manual_slope_input.setMinimumWidth(160)
+        self.manual_slope_input.setToolTip(
+            "Manual calibration slope for the current isotope.\n"
+            "Changes are applied live.")
+        self.manual_slope_input.editingFinished.connect(self.on_manual_slope_changed)
+        calib_controls.addWidget(self.manual_slope_input)
+
+        self.manual_match_btn = QPushButton("Match fit")
+        self.manual_match_btn.setMaximumWidth(80)
+        self.manual_match_btn.setToolTip("Copy the Simple linear slope into the manual input.")
+        self.manual_match_btn.clicked.connect(self.on_manual_match_fit)
+        calib_controls.addWidget(self.manual_match_btn)
+
+        self._set_manual_slope_controls_visible(False)
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.VLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        calib_controls.addWidget(sep2)
+
+        calib_controls.addWidget(QLabel("Apply to All:"))
         self.global_method_combo = QComboBox()
         self.global_method_combo.addItems([
-            'Auto (Best R²)', 
-            'Force through zero', 
-            'Simple linear', 
+            'Auto (Best R²)',
+            'Force through zero',
+            'Simple linear',
             'Weighted',
             'Manual'
         ])
+        self.global_method_combo.setMinimumWidth(120)
         self.global_method_combo.setToolTip("Set calibration method for all isotopes at once")
-        global_controls.addWidget(self.global_method_combo)
-        
+        calib_controls.addWidget(self.global_method_combo)
+
         apply_global_btn = QPushButton("Apply")
-        apply_global_btn.setMaximumWidth(80)
+        apply_global_btn.setMaximumWidth(70)
         apply_global_btn.clicked.connect(self.apply_global_method)
         apply_global_btn.setToolTip("Apply selected method to all isotopes")
-        global_controls.addWidget(apply_global_btn)
-        
-        global_controls.addStretch()
-        calibration_layout.addLayout(global_controls)
-        
+        calib_controls.addWidget(apply_global_btn)
+
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.VLine)
+        sep3.setFrameShadow(QFrame.Shadow.Sunken)
+        calib_controls.addWidget(sep3)
+
+        self.include_all_btn = QPushButton("Include all")
+        self.include_all_btn.setToolTip("Clear all exclusions for the current isotope.")
+        self.include_all_btn.clicked.connect(self.reset_current_isotope_exclusions)
+        calib_controls.addWidget(self.include_all_btn)
+
+        self.exclusion_status_label = QLabel("")
+        self.exclusion_status_label.setStyleSheet("color: #888;")
+        calib_controls.addWidget(self.exclusion_status_label)
+
+        calib_controls.addStretch()
+        calibration_layout.addLayout(calib_controls)
+
         self.calibration_widget = CalibrationPlotWidget()
-        self.calibration_widget.setMinimumHeight(350)
+        self.calibration_widget.setMinimumHeight(280)
+
+        self.calibration_widget.point_exclusion_toggled.connect(
+            self.on_calibration_point_exclusion_toggled)
         calibration_layout.addWidget(self.calibration_widget)
         
         splitter.addWidget(calibration_group)
@@ -587,6 +986,18 @@ class IonicCalibrationWindow(QMainWindow):
         
         splitter.setSizes([500, 300])
         
+    def _log_tab_switch(self, index):
+        """Log which tab the user switches to.
+        Args:
+            index (Any): Row or item index.
+        """
+        tab_names = ["Data Management", "Manual Sensitivity", "Calibration Results"]
+        name = tab_names[index] if index < len(tab_names) else str(index)
+        ual = _ual()
+        if ual:
+            ual.log_action('CLICK', f'Ionic Calibration tab: {name}',
+                           {'tab': name, 'index': index})
+
     def create_shortcuts(self):
         """
         Create keyboard shortcuts for common actions.
@@ -614,6 +1025,18 @@ class IonicCalibrationWindow(QMainWindow):
         
         prev_tab_shortcut = QShortcut(QKeySequence("Ctrl+Shift+Tab"), self)
         prev_tab_shortcut.activated.connect(self.prev_tab)
+
+        prev_iso_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
+        prev_iso_shortcut.activated.connect(self.prev_isotope)
+
+        next_iso_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
+        next_iso_shortcut.activated.connect(self.next_isotope)
+
+        left_arrow_shortcut = QShortcut(QKeySequence("Left"), self)
+        left_arrow_shortcut.activated.connect(self.prev_isotope)
+
+        right_arrow_shortcut = QShortcut(QKeySequence("Right"), self)
+        right_arrow_shortcut.activated.connect(self.next_isotope)
     
     def next_tab(self):
         """Switch to the next tab in the tab widget."""
@@ -751,6 +1174,12 @@ class IonicCalibrationWindow(QMainWindow):
                                     slope_spinbox.setEnabled(False)
                                 break
         
+        _state_str = 'enabled' if state == Qt.Checked else 'disabled'
+        ual = _ual()
+        if ual:
+            ual.log_action('PARAMETER_CHANGE',
+                           f'Manual override {_state_str}: {element_key}',
+                           {'element': element_key, 'override': _state_str})
         self.update_calibration_with_overrides()
         self.data_modified = True
 
@@ -935,6 +1364,11 @@ class IonicCalibrationWindow(QMainWindow):
         
         self.method_preference_changed.emit(self.isotope_method_preferences)
         
+        ual = _ual()
+        if ual:
+            ual.log_action('ANALYSIS', f'Applied global method: {global_method}',
+                           {'method': global_method,
+                            'isotope_count': len(self.calibration_results)})
         self.statusBar.showMessage(f"Applied {global_method} to all isotopes", 3000)
 
     def apply_manual_to_all_isotopes(self):
@@ -1050,6 +1484,11 @@ class IonicCalibrationWindow(QMainWindow):
                 self.data_modified = True
                 self.save_action.setEnabled(True)
         
+        ual = _ual()
+        if ual:
+            ual.log_action('DATA_OP',
+                           f'Auto-fill concentrations: {filled_count} cells filled',
+                           {'filled': filled_count})
         if filled_count > 0:
             self.statusBar.showMessage(f"Auto-filled {filled_count} concentration values", 5000)
         else:
@@ -1160,24 +1599,28 @@ class IonicCalibrationWindow(QMainWindow):
             self.results_table.setItem(row, 7, lod_item)
             self.results_table.setItem(row, 8, loq_item)
             
+            status = getattr(self, "_status_colors", None) or _build_ionic_status_colors(theme.palette)
+
             if best_method == 'manual':
-                background_color = QColor("#ffe6cc")
+                background_color = status["manual"]
                 tooltip_text = f"Manual override (slope = {method_data.get('slope', 0):.2e})"
             elif isotope_key in auto_selected_isotopes:
-                background_color = QColor("#e8f5e8")
+                background_color = status["auto"]
                 tooltip_text = f"Auto-selected based on highest R² ({method_data.get('r_squared', 0):.4f})"
             else:
-                background_color = QColor("#e6f3ff")
+                background_color = status["selected"]
                 tooltip_text = f"Manually selected (R² = {method_data.get('r_squared', 0):.4f})"
             
             method_item.setBackground(QBrush(background_color))
+            method_item.setForeground(QBrush(status["text"]))
             method_item.setToolTip(tooltip_text)
             
-            base_color = QColor("#f8f9fa")
+            base_color = status["base"]
             for col in range(9):
                 item = self.results_table.item(row, col)
                 if item and col != 1:
                     item.setBackground(QBrush(base_color))
+                    item.setForeground(QBrush(status["text"]))
                     
             row += 1
         
@@ -1288,8 +1731,13 @@ class IonicCalibrationWindow(QMainWindow):
                             ]
                             f.write(','.join(row) + '\n')
                         
+            ual = _ual()
+            if ual:
+                ual.log_file_operation('EXPORT', file_path,
+                                       {'isotopes': list(self.calibration_results.keys()),
+                                        'unit': self.unit_combo.currentText()})
             QMessageBox.information(self, "Success", f"Results exported to {file_path}")
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export results: {str(e)}")
 
@@ -1345,6 +1793,72 @@ class IonicCalibrationWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to export sensitivity settings: {str(e)}")
         
+    # ------------------------------------------------------------------ #
+    # Time-domain exclusion helpers for count_vs_time_widget
+    # ------------------------------------------------------------------ #
+
+    def _current_time_plot_context(self):
+        """Return (folder, isotope_key) describing what is currently shown
+        in count_vs_time_widget.  Returns (None, None) when the context
+        cannot be determined."""
+        if (self.last_selected_row is not None
+                and self.last_selected_col is not None):
+            try:
+                folder = self.folder_paths[self.last_selected_row]
+                header_item = self.table.horizontalHeaderItem(
+                    self.last_selected_col)
+                isotope_key = (header_item.data(Qt.ItemDataRole.UserRole)
+                               if header_item else None)
+                if folder and isotope_key:
+                    return folder, isotope_key
+            except (IndexError, AttributeError):
+                pass
+        s_idx = self.sample_combo.currentIndex()
+        i_idx = self.plot_isotope_combo.currentIndex()
+        if s_idx >= 0 and i_idx >= 0 and s_idx < len(self.folder_paths):
+            folder = self.folder_paths[s_idx]
+            isotope_key = self.plot_isotope_combo.itemData(i_idx)
+            if folder and isotope_key:
+                return folder, isotope_key
+        return None, None
+
+    def _on_time_exclusion_changed(self):
+        """Persist the current widget regions into the keyed storage dicts
+        whenever regions are added, moved, or removed."""
+        folder, isotope_key = self._current_time_plot_context()
+        if not folder or not isotope_key:
+            return
+        regions = self.count_vs_time_widget.get_exclusion_regions()
+        elem_regions   = [(lo, hi) for lo, hi, sc in regions
+                          if sc == 'element']
+        sample_regions = [(lo, hi) for lo, hi, sc in regions
+                          if sc == 'sample']
+
+        key = (folder, isotope_key)
+        if elem_regions:
+            self._time_exclusions_element[key] = elem_regions
+        else:
+            self._time_exclusions_element.pop(key, None)
+
+        if sample_regions:
+            self._time_exclusions_sample[folder] = sample_regions
+        else:
+            self._time_exclusions_sample.pop(folder, None)
+
+    def _restore_time_exclusions(self, folder, isotope_key):
+        """Load the stored regions for (folder, isotope_key) into the
+        count_vs_time_widget, replacing whatever was there before.
+        Args:
+            folder (Any): The folder.
+            isotope_key (Any): The isotope key.
+        """
+        key = (folder, isotope_key)
+        elem_regions   = self._time_exclusions_element.get(key, [])
+        sample_regions = self._time_exclusions_sample.get(folder, [])
+        combined = ([(lo, hi, 'element') for lo, hi in elem_regions] +
+                    [(lo, hi, 'sample')  for lo, hi in sample_regions])
+        self.count_vs_time_widget.set_exclusion_regions(combined)
+
     def update_time_plot(self):
         """
         Update the time plot based on selected sample and isotope.
@@ -1399,9 +1913,10 @@ class IonicCalibrationWindow(QMainWindow):
             
             self.count_vs_time_widget.clear_plot()
             self.count_vs_time_widget.update_plot(time_array, {isotope_label: y_data})
-            self.count_vs_time_widget.setLabel('bottom', "Time [s]", color="#000000", font=font)
-            self.count_vs_time_widget.setLabel('left', y_label, color="#000000", font=font)
+            self.count_vs_time_widget.setLabel('bottom', "Time [s]", color=theme.palette.plot_fg, font=font)
+            self.count_vs_time_widget.setLabel('left', y_label, color=theme.palette.plot_fg, font=font)
             self.count_vs_time_widget.setTitle(f"{isotope_label} - {sample_name}")
+            self._restore_time_exclusions(folder, isotope_key)
             
         except Exception as e:
             print(f"Error updating time plot: {str(e)}")
@@ -1414,6 +1929,10 @@ class IonicCalibrationWindow(QMainWindow):
         Creates a new dialog instance with periodic table widget, connects signals,
         and restores previous selections if they exist.
         """
+        ual = _ual()
+        if ual:
+            ual.log_action('DIALOG_OPEN', 'Ionic Calibration — Select Elements',
+                           {'current_isotopes': sum(len(v) for v in self.selected_isotopes.values())})
         self._periodic_table_dialog = QDialog(self)
         self._periodic_table_dialog.setWindowTitle("Select Elements")
         self._periodic_table_dialog.setMinimumSize(800, 600)
@@ -1469,6 +1988,11 @@ class IonicCalibrationWindow(QMainWindow):
         Args:
             selected_data: Dictionary mapping element symbols to lists of isotope masses
         """
+        ual = _ual()
+        if ual:
+            ual.log_action('SAMPLE_SELECT', 'Ionic Calibration — isotopes confirmed',
+                           {'elements': list(selected_data.keys()),
+                            'total_isotopes': sum(len(v) for v in selected_data.values())})
         self.selected_isotopes = selected_data
         self.update_table_columns()
         self.update_element_isotope_combo()
@@ -1569,6 +2093,11 @@ class IonicCalibrationWindow(QMainWindow):
             
             progress.setValue(100)
             
+            ual = _ual()
+            if ual:
+                ual.log_file_operation('SAVE', file_path,
+                                       {'isotopes': list(self.selected_isotopes.keys()),
+                                        'results_count': len(self.calibration_results)})
             self.statusBar.showMessage(f"Session saved to {file_path}", 3000)
             self.data_modified = False
             self.save_action.setEnabled(False)
@@ -1612,6 +2141,13 @@ class IonicCalibrationWindow(QMainWindow):
             self.calibration_results = session_data["calibration_results"]
             self.sensitivity_overrides = session_data.get("sensitivity_overrides", {})
             self.isotope_method_preferences = session_data.get("isotope_method_preferences", {})
+
+            self.excluded_points = {}
+            for k, rec in (self.calibration_results or {}).items():
+                if isinstance(rec, dict):
+                    excluded = rec.get('excluded_folders', [])
+                    if excluded:
+                        self.excluded_points[k] = set(excluded)
         
             self.set_table_data(session_data["table_data"])
             
@@ -1636,6 +2172,11 @@ class IonicCalibrationWindow(QMainWindow):
                 })
                 
             progress.setValue(100)
+            ual = _ual()
+            if ual:
+                ual.log_file_operation('OPEN', file_path,
+                                       {'isotopes': list(self.selected_isotopes.keys()),
+                                        'results_count': len(self.calibration_results)})
             self.statusBar.showMessage(f"Session loaded from {file_path}", 3000)
             self.data_modified = False
             self.save_action.setEnabled(False)
@@ -1643,6 +2184,18 @@ class IonicCalibrationWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load session: {str(e)}")
                 
+    def _go_prev_isotope(self):
+        """Navigate to the previous isotope in the combo box."""
+        idx = self.element_isotope_combo.currentIndex()
+        if idx > 0:
+            self.element_isotope_combo.setCurrentIndex(idx - 1)
+
+    def _go_next_isotope(self):
+        """Navigate to the next isotope in the combo box."""
+        idx = self.element_isotope_combo.currentIndex()
+        if idx < self.element_isotope_combo.count() - 1:
+            self.element_isotope_combo.setCurrentIndex(idx + 1)
+
     def update_element_isotope_combo(self):
         """
         Update element-isotope combo with sorted isotopes.
@@ -2046,6 +2599,8 @@ class IonicCalibrationWindow(QMainWindow):
                     self.count_vs_time_widget.setLabel('bottom', "Time [s]")
                     self.count_vs_time_widget.setLabel('left', y_label)
                     self.count_vs_time_widget.setTitle(f"{isotope_label} - {sample_name}")
+                    isotope_key_ctx = f"{element}-{mass:.4f}"
+                    self._restore_time_exclusions(folder, isotope_key_ctx)
                     
                     for i in range(self.sample_combo.count()):
                         if self.sample_combo.itemData(i) == folder:
@@ -2092,6 +2647,21 @@ class IonicCalibrationWindow(QMainWindow):
         """
         if not self.selected_isotopes or not self.data:
             return
+
+        ual = _ual()
+        if ual:
+            ual.log_action('ANALYSIS', 'Ionic calibration calculation started',
+                           {'isotope_count': sum(len(v) for v in self.selected_isotopes.values()),
+                            'sample_count': len(self.folder_paths),
+                            'unit': self.unit_combo.currentText()})
+
+        current_folders = set(self.folder_paths)
+        pruned = {}
+        for k, excl in self.excluded_points.items():
+            kept = {f for f in excl if f in current_folders}
+            if kept:
+                pruned[k] = kept
+        self.excluded_points = pruned
 
         progress = QProgressDialog("Calculating calibration...", None, 0, 100, self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -2141,7 +2711,61 @@ class IonicCalibrationWindow(QMainWindow):
         
         progress.setValue(30)
         QApplication.processEvents()
-        
+
+        # ── Single-point calibration check ────────────────────────────────────
+        single_point_labels = []
+        for element, isotopes in self.selected_isotopes.items():
+            for isotope in isotopes:
+                isotope_key = f"{element}-{isotope:.4f}"
+                n_valid = sum(
+                    1 for folder in self.folder_paths
+                    if isotope_key in concentrations.get(folder, {})
+                )
+                if n_valid == 1:
+                    single_point_labels.append(
+                        self.get_isotope_label(element, isotope)
+                    )
+
+        if single_point_labels:
+            progress.close()
+            n = len(single_point_labels)
+            noun = "isotope has" if n == 1 else "isotopes have"
+            inline_list = ",&nbsp; ".join(single_point_labels)
+
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Single-Point Calibration Detected")
+            dlg.setIcon(QMessageBox.Icon.Information)
+            dlg.setText(
+                f"<b>{n} {noun} only 1 calibration point:</b><br>"
+                f"<span style='font-family:monospace;'>{inline_list}</span>"
+            )
+            dlg.setInformativeText(
+                "With a single standard, only <b>Force Through Zero</b> is "
+                "mathematically possible (slope = signal ÷ concentration, "
+                "intercept = 0). Simple linear and Weighted fits will mirror "
+                "the Force Through Zero result for these isotopes.<br><br>"
+                "You can go back and add another calibration standard, "
+                "or continue with the single-point Force Through Zero calibration."
+            )
+            btn_add = dlg.addButton(
+                "Add More Points", QMessageBox.ButtonRole.RejectRole
+            )
+            btn_ftz = dlg.addButton(
+                "Continue with Force Through Zero",
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            dlg.setDefaultButton(btn_add)
+            dlg.exec()
+
+            if dlg.clickedButton() is btn_add:
+                return
+
+            progress = QProgressDialog("Calculating calibration...", None, 0, 100, self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.setMinimumDuration(0)
+            progress.setValue(30)
+            QApplication.processEvents()
+
         try:
             self.calibration_results = self.perform_calibration(concentrations, progress)
         except Exception as e:
@@ -2195,7 +2819,13 @@ class IonicCalibrationWindow(QMainWindow):
             "results": self.calibration_results,
             "method_preferences": self.isotope_method_preferences
         })
-        
+
+        ual = _ual()
+        if ual:
+            ual.log_action('ANALYSIS', 'Ionic calibration completed',
+                           {'isotopes_computed': len(self.calibration_results),
+                            'method': self.calibration_method_combo.currentText()})
+
         progress.setValue(100)
         self.statusBar.showMessage("Calibration complete", 3000)
         
@@ -2308,28 +2938,67 @@ class IonicCalibrationWindow(QMainWindow):
             if internal_key:
                 selected_method = self.calibration_method_combo.currentText()
                 self.isotope_method_preferences[internal_key] = selected_method
-                
-                if selected_method == 'Manual':
-                    if internal_key not in self.sensitivity_overrides:
-                        element = internal_key.split('-')[0]
-                        element_data = next((e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
-                        density = element_data['density'] if element_data else 'N/A'
-                        
-                        self.sensitivity_overrides[internal_key] = {
-                            'slope': self.global_manual_slope_input.value(),
-                            'intercept': 0.0,
-                            'r_squared': 1.0,
-                            'lod': 0.0,
-                            'loq': 0.0,
-                            'bec': 0.0,
-                            'density': density
-                        }
-                        
-                        self.update_calibration_with_overrides()
-                        self.update_sensitivity_table()
-                
+
+                if (selected_method == 'Manual'
+                        and internal_key not in self.sensitivity_overrides
+                        and internal_key in self.calibration_results):
+                    import numpy as np
+                    data = self.calibration_results[internal_key]
+                    seed_slope = float(
+                        data.get('simple', {}).get('slope', 10.0))
+                    if seed_slope <= 0:
+                        seed_slope = 10.0
+
+                    element_sym = internal_key.split('-')[0]
+                    element_data = next(
+                        (e for e in self.periodic_table.get_elements()
+                         if e['symbol'] == element_sym),
+                        None
+                    )
+                    density = (element_data['density']
+                               if element_data
+                               else data.get('density', 'N/A'))
+
+                    x = np.asarray(data.get('x', []), dtype=float)
+                    y_std = np.asarray(data.get('y_std', []), dtype=float)
+                    y_fit_list = (seed_slope * x).tolist() if len(x) else []
+
+                    if len(x) and len(y_std) == len(x):
+                        excluded = self.excluded_points.get(
+                            internal_key, set())
+                        folders = data.get('folders', [])
+                        included = [i for i, f in enumerate(folders)
+                                    if f not in excluded]
+                        if included:
+                            inc_x = x[included]
+                            inc_std = y_std[included]
+                            sigma_blank = float(
+                                inc_std[int(np.argmin(inc_x))])
+                        else:
+                            sigma_blank = float(
+                                y_std[int(np.argmin(x))])
+                    else:
+                        sigma_blank = 0.0
+
+                    fom = self._compute_figures_of_merit(
+                        seed_slope, 0.0, sigma_blank)
+
+                    manual_record = {
+                        'slope':     seed_slope,
+                        'intercept': 0.0,
+                        'r_squared': 1.0,
+                        'y_fit':     y_fit_list,
+                        'density':   density,
+                        **fom,
+                    }
+                    self.sensitivity_overrides[internal_key] = \
+                        manual_record.copy()
+                    self.calibration_results[internal_key]['manual'] = \
+                        manual_record
+                    self.update_sensitivity_table()
+
                 self.method_preference_changed.emit(self.isotope_method_preferences)
-                
+
                 element, mass = internal_key.split('-')
                 self.display_calibration(element, float(mass))
 
@@ -2365,20 +3034,57 @@ class IonicCalibrationWindow(QMainWindow):
             x_values = [self.convert_concentration(x, self.base_unit, current_unit) for x in data.get('x', [])]
             
             isotope_label = self.get_isotope_label(element, isotope)
-            
+
+            folders_for_isotope = data.get('folders', [])
+            excluded_folders = self.excluded_points.get(isotope_key, set())
+            excluded_indices = {
+                i for i, f in enumerate(folders_for_isotope)
+                if f in excluded_folders
+            }
+
+            folder_names = [
+                Path(f).name for f in folders_for_isotope
+            ] if folders_for_isotope else []
+
+            fit_stats = {
+                'slope': method_data.get('slope', 0.0),
+                'intercept': method_data.get('intercept', 0.0),
+                'r_squared': method_data.get('r_squared', 0.0),
+            }
+
+            included_mask = [
+                f not in excluded_folders for f in folders_for_isotope
+            ] if folders_for_isotope else [True] * len(data.get('y', []))
+            outlier_indices = self._compute_outlier_indices(
+                data.get('y', []),
+                method_data.get('y_fit', []),
+                included_mask,
+            )
+            self._outlier_indices_by_isotope[isotope_key] = outlier_indices
+
             self.calibration_widget.update_plot(
                 x_data=x_values,
                 y_data=data.get('y', []),
                 y_std=data.get('y_std', []),
                 method=selected_method,
                 y_fit=method_data.get('y_fit', []),
-                key=isotope_label
+                key=isotope_label,
+                excluded_indices=excluded_indices,
+                folder_names=folder_names,
+                fit_stats=fit_stats,
+                outlier_indices=outlier_indices,
+                unit_label=current_unit,
             )
 
             self.calibration_widget.setLabel('bottom', f"Concentration [{current_unit}]")
             self.calibration_widget.setLabel('left', "Signal [cps]")
             title = f"Calibration Results for {isotope_label} ({self.calibration_method_combo.currentText()})"
             self.calibration_widget.setTitle(title)
+
+            self._update_exclusion_status_label(isotope_key,
+                                                len(folders_for_isotope))
+
+            self._sync_manual_slope_input(isotope_key, data, current_unit)
 
             self.update_results_table_with_method(isotope_key, data, current_unit)
                     
@@ -2413,6 +3119,10 @@ class IonicCalibrationWindow(QMainWindow):
 
         old_unit = self.current_unit
         self.current_unit = new_unit
+        ual = _ual()
+        if ual:
+            ual.log_action('PARAMETER_CHANGE', f'Concentration unit: {old_unit} → {new_unit}',
+                           {'old_unit': old_unit, 'new_unit': new_unit})
 
         self.ignore_item_changed = True
         try:
@@ -2484,15 +3194,17 @@ class IonicCalibrationWindow(QMainWindow):
                     if isotope_key in self.isotope_method_preferences:
                         preferred_method = self.isotope_method_preferences[isotope_key]
                         if method_name == preferred_method:
+                            status = getattr(self, "_status_colors", None) or _build_ionic_status_colors(theme.palette)
                             if method_name == 'Manual':
-                                color = QColor("#ffe6cc")
+                                color = status["manual"]
                             else:
-                                color = QColor("#e6f3ff")
+                                color = status["selected"]
                             
                             for col in range(9):
                                 item = self.results_table.item(row, col)
                                 if item:
                                     item.setBackground(QBrush(color))
+                                    item.setForeground(QBrush(status["text"]))
                     
                     row += 1
         
@@ -2562,160 +3274,761 @@ class IonicCalibrationWindow(QMainWindow):
         """
         pass
 
+    def _fit_zero(self, x, y):
+        """
+        Force-through-zero (FTZ) linear regression.
+    
+        Finds the slope that minimises Σ(y - slope·x)² with intercept = 0.
+    
+        Equation
+        --------
+        slope = Σ(x·y) / Σ(x²)               [ordinary least squares, no intercept]
+        R²    = 1 − Σ(y − ŷ)² / Σ(y²)        [denominator uses Σy² not Σ(y−ȳ)²
+                                                because the model passes through 0]
+    
+        Args:
+            x (np.ndarray): Concentration values (base unit, e.g. ppb).
+            y (np.ndarray): Mean signal values (cps).
+    
+        Returns:
+            dict with keys: slope, intercept (always 0), r_squared, y_fit.
+        """
+        import numpy as np
+    
+        slope = np.sum(x * y) / np.sum(x * x)
+        y_fit = slope * x
+        ss_res = np.sum((y - y_fit) ** 2)
+        ss_tot = np.sum(y ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+    
+        return {
+            "slope": slope,
+            "intercept": 0.0,
+            "r_squared": r_squared,
+            "y_fit": y_fit,
+        }
+    
+    
+    def _fit_simple(self, x, y):
+        """
+        Ordinary least squares (OLS) linear regression.
+    
+        Finds slope and intercept that minimise Σ(y − slope·x − intercept)².
+    
+        Equation
+        --------
+        [slope, intercept] = (XᵀX)⁻¹ Xᵀy   via np.linalg.lstsq
+        R²  = 1 − Σ(y − ŷ)² / Σ(y − ȳ)²
+    
+        Args:
+            x (np.ndarray): Concentration values.
+            y (np.ndarray): Mean signal values (cps).
+    
+        Returns:
+            dict with keys: slope, intercept, r_squared, y_fit.
+        """
+        import numpy as np
+    
+        A = np.vstack([x, np.ones(len(x))]).T
+        slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+        y_fit = slope * x + intercept
+        ss_res = np.sum((y - y_fit) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+    
+        return {
+            "slope": slope,
+            "intercept": intercept,
+            "r_squared": r_squared,
+            "y_fit": y_fit,
+        }
+    
+    
+    def _fit_weighted(self, x, y, y_std):
+        """
+        Weighted least squares (WLS) linear regression.
+    
+        Points with lower variance receive higher weight, giving more influence
+        to the most precise measurements.
+    
+        Equation
+        --------
+        wᵢ      = 1 / σᵢ²
+        slope   = (Σw · Σwxy − Σwx · Σwy) / (Σw · Σwx² − (Σwx)²)
+        intercept = (Σwx² · Σwy − Σwx · Σwxy) / (Σw · Σwx² − (Σwx)²)
+        R²_w    = 1 − Σwᵢ(yᵢ − ŷᵢ)² / Σwᵢ(yᵢ − ȳ)²
+    
+        Falls back to OLS when the denominator is numerically zero (i.e. all
+        points have equal / zero variance).
+    
+        Args:
+            x (np.ndarray): Concentration values.
+            y (np.ndarray): Mean signal values (cps).
+            y_std (np.ndarray): Standard deviations of the signal.
+    
+        Returns:
+            dict with keys: slope, intercept, r_squared, y_fit.
+        """
+        import numpy as np
+    
+        weights = 1.0 / (y_std ** 2)
+        w_sum   = np.sum(weights)
+        wx_sum  = np.sum(weights * x)
+        wy_sum  = np.sum(weights * y)
+        wxx_sum = np.sum(weights * x * x)
+        wxy_sum = np.sum(weights * x * y)
+    
+        denominator = w_sum * wxx_sum - wx_sum * wx_sum
+    
+        if abs(denominator) > 1e-17:
+            slope     = (w_sum * wxy_sum - wx_sum * wy_sum) / denominator
+            intercept = (wxx_sum * wy_sum - wx_sum * wxy_sum) / denominator
+            y_fit     = slope * x + intercept
+            ss_res    = np.sum(weights * (y - y_fit) ** 2)
+            ss_tot    = np.sum(weights * (y - np.mean(y)) ** 2)
+            r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+        else:
+            ols = self._fit_simple(x, y)
+            slope, intercept, y_fit = ols["slope"], ols["intercept"], ols["y_fit"]
+            r_squared = ols["r_squared"]
+    
+        return {
+            "slope": slope,
+            "intercept": intercept,
+            "r_squared": r_squared,
+            "y_fit": y_fit,
+        }
+    
+    
+    def _compute_figures_of_merit(self, slope, intercept, sigma_blank):
+        """
+        Compute analytical figures of merit from regression results.
+    
+        Equations (IUPAC / Miller & Miller convention)
+        -----------------------------------------------
+        LOD = 3 · σ_blank / slope      [3-sigma limit of detection]
+        LOQ = 10 · σ_blank / slope     [10-sigma limit of quantification]
+        BEC = intercept / slope         [blank-equivalent concentration]
+                (= LOD for FTZ, where intercept ≡ 0)
+    
+        All values are in the *base unit* (ppb by default) and are converted
+        to the display unit separately before being shown in the UI.
+    
+        Args:
+            slope (float): Calibration slope (cps / base_unit).
+            intercept (float): Calibration intercept (cps).
+            sigma_blank (float): Standard deviation of signal at lowest
+                concentration standard (used as proxy for blank noise).
+    
+        Returns:
+            dict with keys: lod, loq, bec.
+                Values are np.nan when slope == 0.
+        """
+        import numpy as np
+    
+        if slope == 0:
+            return {"lod": np.nan, "loq": np.nan, "bec": np.nan}
+    
+        lod = (3.0  * sigma_blank) / slope
+        loq = (10.0 * sigma_blank) / slope
+        bec = intercept / slope
+    
+        return {"lod": lod, "loq": loq, "bec": bec}
+    
+
+    def _run_all_fits_on_subset(self, x, y, y_std, included_mask, density):
+        """
+        Run the three calibration fits on the subset of points selected by
+        ``included_mask`` and return the full result record for one isotope.
+
+        Fits use only the included points, but ``y_fit`` is evaluated at
+        every original x so the residuals subplot can show the distance
+        between every point (included or not) and the fit line.
+
+        Args:
+            x, y, y_std: parallel 1-D numpy arrays (all points).
+            included_mask: bool array same shape as x. True = use in fit.
+            density: element density for the results record.
+
+        Returns:
+            dict or None. ``None`` when fewer than 2 included points remain.
+        """
+        import numpy as np
+
+        if int(np.sum(included_mask)) < 2:
+            return None
+
+        xi = x[included_mask]
+        yi = y[included_mask]
+        si = y_std[included_mask]
+
+        sigma_blank = float(si[int(np.argmin(xi))])
+
+        fit_zero     = self._fit_zero(xi, yi)
+        fit_simple   = self._fit_simple(xi, yi)
+        fit_weighted = self._fit_weighted(xi, yi, si)
+        
+        def eval_line(slope, intercept):
+            """
+            Args:
+                slope (Any): The slope.
+                intercept (Any): The intercept.
+            Returns:
+                object: Result of the operation.
+            """
+            return (slope * x + intercept).tolist()
+
+        y_fit_zero     = eval_line(fit_zero["slope"],     0.0)
+        y_fit_simple   = eval_line(fit_simple["slope"],   fit_simple["intercept"])
+        y_fit_weighted = eval_line(fit_weighted["slope"], fit_weighted["intercept"])
+
+        fom_zero     = self._compute_figures_of_merit(
+            fit_zero["slope"],     0.0,                    sigma_blank)
+        fom_simple   = self._compute_figures_of_merit(
+            fit_simple["slope"],   fit_simple["intercept"],   sigma_blank)
+        fom_weighted = self._compute_figures_of_merit(
+            fit_weighted["slope"], fit_weighted["intercept"], sigma_blank)
+
+        return {
+            'zero': {
+                'slope':     fit_zero["slope"],
+                'intercept': 0.0,
+                'r_squared': fit_zero["r_squared"],
+                'y_fit':     y_fit_zero,
+                **fom_zero,
+            },
+            'simple': {
+                'slope':     fit_simple["slope"],
+                'intercept': fit_simple["intercept"],
+                'r_squared': fit_simple["r_squared"],
+                'y_fit':     y_fit_simple,
+                **fom_simple,
+            },
+            'weighted': {
+                'slope':     fit_weighted["slope"],
+                'intercept': fit_weighted["intercept"],
+                'r_squared': fit_weighted["r_squared"],
+                'y_fit':     y_fit_weighted,
+                **fom_weighted,
+            },
+            'x':       x.tolist(),
+            'y':       y.tolist(),
+            'y_std':   y_std.tolist(),
+            'density': density,
+        }
+
+    def _compute_outlier_indices(self, y, y_fit, included_mask,
+                                 z_threshold=2.5):
+        """
+        Flag included points whose standardized residual exceeds ``z_threshold``.
+
+        Standardization uses the sample standard deviation of the *included*
+        residuals (ddof=1). With too few points the flag is disabled.
+
+        Returns:
+            set[int]: indices into the full ``y`` array.
+        Args:
+            y (Any): Input array or value.
+            y_fit (Any): The y fit.
+            included_mask (Any): The included mask.
+            z_threshold (Any): The z threshold.
+        """
+        import numpy as np
+        y = np.asarray(y, dtype=float)
+        y_fit = np.asarray(y_fit, dtype=float)
+        if y.shape != y_fit.shape or len(y) == 0:
+            return set()
+
+        included_idx = [i for i, m in enumerate(included_mask) if m]
+        if len(included_idx) < 4:
+            return set()
+
+        residuals = y - y_fit
+        s = float(np.std(residuals[included_idx], ddof=1))
+        if not np.isfinite(s) or s <= 0:
+            return set()
+
+        return {
+            i for i in included_idx
+            if abs(residuals[i] / s) > z_threshold
+        }
+
+    def refit_isotope(self, isotope_key):
+        """
+        Re-run the three fits for a single isotope using the current
+        exclusion set. Called after every exclusion toggle.
+
+        Returns True on success, False if the fit couldn't be performed
+        (e.g. fewer than 2 points would remain included).
+        Args:
+            isotope_key (Any): The isotope key.
+        """
+        import numpy as np
+        data = self.calibration_results.get(isotope_key)
+        if not data:
+            return False
+
+        x     = np.asarray(data.get('x', []),     dtype=float)
+        y     = np.asarray(data.get('y', []),     dtype=float)
+        y_std = np.asarray(data.get('y_std', []), dtype=float)
+        folders = data.get('folders', [])
+
+        if len(x) == 0 or not folders:
+            return False
+
+        excluded_folders = self.excluded_points.get(isotope_key, set())
+        included_mask = np.array(
+            [f not in excluded_folders for f in folders])
+
+        density = data.get('density', 'N/A')
+
+        new_result = self._run_all_fits_on_subset(
+            x, y, y_std, included_mask, density)
+        if new_result is None:
+            return False
+
+        new_result['folders'] = list(folders)
+        new_result['excluded_folders'] = sorted(excluded_folders)
+        self.calibration_results[isotope_key] = new_result
+        self.data_modified = True
+        if hasattr(self, 'save_action'):
+            self.save_action.setEnabled(True)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Slots wired to the CalibrationPlotWidget signals
+    # ------------------------------------------------------------------ #
+    def on_calibration_point_exclusion_toggled(self, index):
+        """Toggle exclusion of the clicked point for the current isotope,
+        refit, and redraw.
+        Args:
+            index (Any): Row or item index.
+        """
+        current_index = self.element_isotope_combo.currentIndex()
+        if current_index < 0:
+            return
+        isotope_key = self.element_isotope_combo.itemData(current_index)
+        if not isotope_key or isotope_key not in self.calibration_results:
+            return
+
+        data = self.calibration_results[isotope_key]
+        folders = data.get('folders', [])
+        if index < 0 or index >= len(folders):
+            return
+
+        folder_path = folders[index]
+        excluded = self.excluded_points.setdefault(isotope_key, set())
+
+        if folder_path in excluded:
+            excluded.discard(folder_path)
+        else:
+            remaining = sum(
+                1 for f in folders
+                if f not in excluded and f != folder_path
+            )
+            if remaining < 2:
+                self.statusBar.showMessage(
+                    "Cannot exclude: a fit needs at least 2 included points.",
+                    4000)
+                return
+            excluded.add(folder_path)
+
+        if not self.refit_isotope(isotope_key):
+            if folder_path in excluded:
+                excluded.discard(folder_path)
+            else:
+                excluded.add(folder_path)
+            self.statusBar.showMessage("Refit failed; exclusion not applied.",
+                                       4000)
+            return
+
+        element, mass = isotope_key.split('-')
+        self.display_calibration(element, float(mass))
+        self.update_results_table()
+
+    # ------------------------------------------------------------------ #
+    # Toolbar handlers — reset exclusions
+    # ------------------------------------------------------------------ #
+    def reset_current_isotope_exclusions(self):
+        """Clear all exclusions for the currently-displayed isotope and refit."""
+        current_index = self.element_isotope_combo.currentIndex()
+        if current_index < 0:
+            return
+        isotope_key = self.element_isotope_combo.itemData(current_index)
+        if not isotope_key:
+            return
+        if not self.excluded_points.get(isotope_key):
+            self.statusBar.showMessage("No exclusions to reset.", 2000)
+            return
+
+        self.excluded_points[isotope_key] = set()
+        if self.refit_isotope(isotope_key):
+            element, mass = isotope_key.split('-')
+            self.display_calibration(element, float(mass))
+            self.update_results_table()
+            self.statusBar.showMessage(
+                f"Reset exclusions for {self.get_isotope_label(element, float(mass))}",
+                3000)
+
+    def _update_exclusion_status_label(self, isotope_key, total_points):
+        """Refresh the small status label next to the plot controls.
+        Args:
+            isotope_key (Any): The isotope key.
+            total_points (Any): The total points.
+        """
+        if not hasattr(self, 'exclusion_status_label'):
+            return
+        excluded = self.excluded_points.get(isotope_key, set())
+        n = len(excluded)
+        if n == 0:
+            self.exclusion_status_label.setText(
+                f"{total_points} points  (click a point to exclude it)"
+                if total_points else ""
+            )
+        else:
+            self.exclusion_status_label.setText(
+                f"{n}/{total_points} excluded  (click to toggle)"
+            )
+
+    def _set_manual_slope_controls_visible(self, visible: bool):
+        """Show or hide the inline manual-slope input + Match-fit button.
+        Args:
+            visible (bool): Whether the item is visible.
+        """
+        for w in ('manual_slope_label', 'manual_slope_input',
+                  'manual_match_btn'):
+            widget = getattr(self, w, None)
+            if widget is not None:
+                widget.setVisible(visible)
+
+    def _sync_manual_slope_input(self, isotope_key, data, current_unit):
+        """Populate the inline slope input for the currently-displayed
+        isotope. Called from display_calibration at every refresh.
+
+        The input is shown only when the active method is Manual. Its
+        value is read from self.sensitivity_overrides when available,
+        otherwise seeded from the Simple-linear fit.
+        Args:
+            isotope_key (Any): The isotope key.
+            data (Any): Input data.
+            current_unit (Any): The current unit.
+        """
+        is_manual = (self.calibration_method_combo.currentText() == 'Manual')
+        self._set_manual_slope_controls_visible(is_manual)
+        if not is_manual:
+            return
+
+        if isotope_key in self.sensitivity_overrides:
+            slope = float(self.sensitivity_overrides[isotope_key].get(
+                'slope', 10.0))
+        else:
+            simple = data.get('simple', {}) if data else {}
+            slope = float(simple.get('slope', 10.0))
+            if slope <= 0:
+                slope = 10.0
+
+        self.manual_slope_input.setSuffix(f" cps/{current_unit}")
+
+        self.manual_slope_input.blockSignals(True)
+        self.manual_slope_input.setValue(slope)
+        self.manual_slope_input.blockSignals(False)
+
+    def on_manual_match_fit(self):
+        """Copy the Simple-linear slope into the manual input for the
+        current isotope, then apply it as the manual value.
+        """
+        current_index = self.element_isotope_combo.currentIndex()
+        if current_index < 0:
+            return
+        isotope_key = self.element_isotope_combo.itemData(current_index)
+        if not isotope_key or isotope_key not in self.calibration_results:
+            return
+        simple_slope = float(
+            self.calibration_results[isotope_key]
+            .get('simple', {}).get('slope', 0.0)
+        )
+        if simple_slope <= 0:
+            self.statusBar.showMessage(
+                "No Simple-linear slope available to copy.", 3000)
+            return
+        self.manual_slope_input.blockSignals(True)
+        self.manual_slope_input.setValue(simple_slope)
+        self.manual_slope_input.blockSignals(False)
+        self.on_manual_slope_changed()
+
+    def on_manual_slope_changed(self):
+        """Apply the inline manual slope to the current isotope.
+
+        Computes y_fit = slope · x (intercept ≡ 0 for a manual slope),
+        re-derives LOD / LOQ / BEC from the stored y_std, stores the
+        result in both calibration_results[key]['manual'] and
+        sensitivity_overrides[key], and redraws the plot + results table.
+        """
+        if not hasattr(self, 'calibration_method_combo'):
+            return
+        if self.calibration_method_combo.currentText() != 'Manual':
+            return
+
+        current_index = self.element_isotope_combo.currentIndex()
+        if current_index < 0:
+            return
+        isotope_key = self.element_isotope_combo.itemData(current_index)
+        if not isotope_key or isotope_key not in self.calibration_results:
+            return
+
+        slope = float(self.manual_slope_input.value())
+        if slope <= 0:
+            self.statusBar.showMessage(
+                "Manual slope must be positive.", 3000)
+            return
+
+        import numpy as np
+        data = self.calibration_results[isotope_key]
+        x = np.asarray(data.get('x', []), dtype=float)
+        y_std = np.asarray(data.get('y_std', []), dtype=float)
+        folders = data.get('folders', [])
+
+        if len(x) == 0:
+            return
+
+        y_fit = (slope * x).tolist()
+
+        excluded = self.excluded_points.get(isotope_key, set())
+        included = [i for i, f in enumerate(folders) if f not in excluded]
+        if included and len(y_std) == len(x):
+            inc_x = x[included]
+            inc_std = y_std[included]
+            sigma_blank = float(inc_std[int(np.argmin(inc_x))])
+        elif len(y_std) > 0:
+            sigma_blank = float(np.min(y_std))
+        else:
+            sigma_blank = 0.0
+
+        fom = self._compute_figures_of_merit(slope, 0.0, sigma_blank)
+
+        element = isotope_key.split('-')[0]
+        element_data = next(
+            (e for e in self.periodic_table.get_elements()
+             if e['symbol'] == element),
+            None
+        )
+        density = (element_data['density']
+                   if element_data else data.get('density', 'N/A'))
+
+        manual_record = {
+            'slope':     slope,
+            'intercept': 0.0,
+            'r_squared': 1.0,
+            'y_fit':     y_fit,
+            'density':   density,
+            **fom,
+        }
+
+        self.calibration_results[isotope_key]['manual'] = manual_record
+        self.sensitivity_overrides[isotope_key] = manual_record.copy()
+        self.isotope_method_preferences[isotope_key] = 'Manual'
+        self.data_modified = True
+        if hasattr(self, 'save_action'):
+            self.save_action.setEnabled(True)
+
+
+        if hasattr(self, 'sensitivity_table'):
+            try:
+                self.update_sensitivity_table()
+            except Exception:
+                pass
+
+        element, mass = isotope_key.split('-')
+        self.display_calibration(element, float(mass))
+        self.update_results_table()
+
+    # ------------------------------------------------------------------ #
+    # Isotope navigation (Ctrl+Left / Ctrl+Right)
+    # ------------------------------------------------------------------ #
+    def next_isotope(self):
+        count = self.element_isotope_combo.count()
+        if count == 0:
+            return
+
+        if self.tab_widget.currentWidget() is not self.calibration_tab:
+            return
+        idx = (self.element_isotope_combo.currentIndex() + 1) % count
+        self.element_isotope_combo.setCurrentIndex(idx)
+
+    def prev_isotope(self):
+        count = self.element_isotope_combo.count()
+        if count == 0:
+            return
+        if self.tab_widget.currentWidget() is not self.calibration_tab:
+            return
+        idx = (self.element_isotope_combo.currentIndex() - 1) % count
+        self.element_isotope_combo.setCurrentIndex(idx)
+
+
     def perform_calibration(self, concentrations, progress=None):
         """
-        Perform calibration calculations with progress updates.
-        
+        Orchestrate calibration calculations for all selected isotopes.
+    
+        For each isotope, assembles (x, y, y_std) arrays from the loaded
+        folders, then delegates regression and figure-of-merit calculations
+        to the private helpers:
+    
+            _fit_zero()                 → Force-through-zero
+            _fit_simple()               → OLS linear
+            _fit_weighted()             → WLS linear
+            _compute_figures_of_merit() → LOD, LOQ, BEC
+    
         Args:
-            concentrations: Dictionary mapping folders to isotope concentrations
-            progress: Optional QProgressDialog for progress updates
-            
+            concentrations (dict): {folder: {isotope_key: concentration_ppb}}
+            progress (QProgressDialog | None): Optional progress dialog.
+    
         Returns:
-            Dictionary of calibration results for all isotopes and methods
+            dict: {isotope_key: {
+                    'zero':     {slope, intercept, r_squared, y_fit, lod, loq, bec},
+                    'simple':   {…},
+                    'weighted': {…},
+                    'x':        list[float],
+                    'y':        list[float],
+                    'y_std':    list[float],
+                    'density':  float | str,
+                }}
         """
+        import numpy as np
+        from PySide6.QtWidgets import QApplication
+    
         results = {}
-        
+    
+        first_folder_data = next(iter(self.data.values()))
+        reference_masses  = first_folder_data['masses']
+    
         isotope_indices = {}
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
-                first_folder = next(iter(self.data.values()))
-                masses = first_folder['masses']
-                isotope_indices[f"{element}-{isotope:.4f}"] = np.argmin(np.abs(masses - isotope))
-        
-        total_isotopes = sum(len(isotopes) for element, isotopes in self.selected_isotopes.items())
-        isotope_count = 0
-        
+                key = f"{element}-{isotope:.4f}"
+                isotope_indices[key] = int(np.argmin(np.abs(reference_masses - isotope)))
+    
+        total_isotopes  = sum(len(v) for v in self.selected_isotopes.values())
+        isotope_count   = 0
+    
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
-                x = []
-                y = []
-                y_std = []
                 isotope_key = f"{element}-{isotope:.4f}"
-                mass_index = isotope_indices[isotope_key]
-                
+                mass_index  = isotope_indices[isotope_key]
+    
+                # ── Progress update ───────────────────────────────────────────
                 if progress:
                     isotope_count += 1
-                    progress_value = 30 + int(60 * isotope_count / total_isotopes)
-                    progress.setValue(progress_value)
-                    progress.setLabelText(f"Calculating: {self.get_isotope_label(element, isotope)}")
+                    progress.setValue(30 + int(60 * isotope_count / total_isotopes))
+                    progress.setLabelText(
+                        f"Calculating: {self.get_isotope_label(element, isotope)}"
+                    )
                     QApplication.processEvents()
-
+    
+                x_list, y_list, y_std_list = [], [], []
+                folders_list = []
+    
                 for folder, folder_data in self.data.items():
-                    if isotope_key in concentrations[folder]:
-                        conc = concentrations[folder][isotope_key]
-                        if conc == -1:
-                            continue
+                    if isotope_key not in concentrations.get(folder, {}):
+                        continue
+    
+                    conc = concentrations[folder][isotope_key]
+                    if conc == -1:
+                        continue
+    
+                    run_info      = folder_data['run_info']
+                    acq_ns        = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"]
+                    dwell_time    = (acq_ns * 1e-9
+                                    * run_info["NumAccumulations1"]
+                                    * run_info["NumAccumulations2"])
+    
+                    local_masses = folder_data['masses']
+                    local_idx    = int(np.argmin(np.abs(local_masses - isotope)))
+    
+                    counts = folder_data['signals'][:, local_idx]
+                    cps    = counts / dwell_time
 
-                        run_info = folder_data['run_info']
-                        acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
-                        accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
-                        dwell_time = acqtime * accumulations
-                        
-                        counts = folder_data['signals'][:, mass_index]
-                        cps = counts / dwell_time
-                        avg_count_per_second = np.mean(cps)
-                        std_count_per_second = np.std(cps)
-                        
-                        x.append(conc)
-                        y.append(avg_count_per_second)
-                        y_std.append(std_count_per_second)
-                
-                if len(x) < 2:
+         
+                    time_values = np.arange(len(cps)) * dwell_time
+                    time_mask   = np.ones(len(cps), dtype=bool)
+                    for lo, hi in self._time_exclusions_element.get(
+                            (folder, isotope_key), []):
+                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                    for lo, hi in self._time_exclusions_sample.get(folder, []):
+                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+
+              
+                    if not time_mask.any():
+                        continue
+
+                    cps_for_stats = cps[time_mask]
+
+                    x_list.append(conc)
+                    y_list.append(float(np.mean(cps_for_stats)))
+                    y_std_list.append(float(np.std(cps_for_stats)))
+                    folders_list.append(folder)
+    
+                if len(x_list) == 0:
                     continue
 
-                x = np.array(x)
-                y = np.array(y)
-                y_std = np.array(y_std)
-
-                smallest_conc_idx = np.argmin(x)
-                sigma_smallest = y_std[smallest_conc_idx]
-
-                slope_zero = np.sum(x * y) / np.sum(x * x)
-                y_fit_zero = slope_zero * x
-                ss_res_zero = np.sum((y - y_fit_zero)**2)
-                ss_tot_zero = np.sum(y**2)
-                r_squared_zero = 1 - (ss_res_zero / ss_tot_zero) if ss_tot_zero != 0 else 0
-                lod_zero = (3 * sigma_smallest) / slope_zero if slope_zero != 0 else np.nan
-                loq_zero = (10 * sigma_smallest) / slope_zero if slope_zero != 0 else np.nan
-                bec_zero = (3 * sigma_smallest) / slope_zero if slope_zero != 0 else np.nan
-
-                A = np.vstack([x, np.ones(len(x))]).T
-                slope_simple, intercept_simple = np.linalg.lstsq(A, y, rcond=None)[0]
-                y_fit_simple = slope_simple * x + intercept_simple
-                ss_res_simple = np.sum((y - y_fit_simple)**2)
-                ss_tot_simple = np.sum((y - np.mean(y))**2)
-                r_squared_simple = 1 - (ss_res_simple / ss_tot_simple) if ss_tot_simple != 0 else 0
-                lod_simple = (3 * sigma_smallest) / slope_simple if slope_simple != 0 else np.nan
-                loq_simple = (10 * sigma_smallest) / slope_simple if slope_simple != 0 else np.nan
-                bec_simple = intercept_simple / slope_simple if slope_simple != 0 else np.nan
-
-                weights = 1 / (y_std ** 2)
-                wx = x * weights
-                wy = y * weights
-                w_sum = np.sum(weights)
-                wx_sum = np.sum(wx)
-                wy_sum = np.sum(wy)
-                wxx_sum = np.sum(wx * x)
-                wxy_sum = np.sum(wx * y)
-
-                denominator = w_sum * wxx_sum - wx_sum * wx_sum
-                if abs(denominator) > 1e-17: 
-                    slope_weighted = (w_sum * wxy_sum - wx_sum * wy_sum) / denominator
-                    intercept_weighted = (wxx_sum * wy_sum - wx_sum * wxy_sum) / denominator
-                    y_fit_weighted = slope_weighted * x + intercept_weighted
-
-                    ss_res_weighted = np.sum(weights * (y - y_fit_weighted)**2)
-                    ss_tot_weighted = np.sum(weights * (y - np.mean(y))**2)
-                    r_squared_weighted = 1 - (ss_res_weighted / ss_tot_weighted) if ss_tot_weighted != 0 else 0
-                    lod_weighted = (3 * sigma_smallest) / slope_weighted if slope_weighted != 0 else np.nan
-                    loq_weighted = (10 * sigma_smallest) / slope_weighted if slope_weighted != 0 else np.nan
-                    bec_weighted = intercept_weighted / slope_weighted if slope_weighted != 0 else np.nan
-                else:
-                    slope_weighted = slope_simple
-                    intercept_weighted = intercept_simple
-                    y_fit_weighted = y_fit_simple
-                    r_squared_weighted = r_squared_simple
-                    lod_weighted = lod_simple
-                    loq_weighted = loq_simple
-                    bec_weighted = bec_simple
-
-                element_data = next((e for e in self.periodic_table.get_elements() if e['symbol'] == element), None)
+                # ── Element density from periodic table ───────────────────────
+                element_data = next(
+                    (e for e in self.periodic_table.get_elements()
+                    if e['symbol'] == element),
+                    None
+                )
                 density = element_data['density'] if element_data else 'N/A'
-    
-                results[isotope_key] = {
-                    'zero': {
-                        'slope': slope_zero,
-                        'intercept': 0,
-                        'r_squared': r_squared_zero,
-                        'y_fit': y_fit_zero.tolist(),
-                        'lod': lod_zero,
-                        'loq': loq_zero,
-                        'bec': bec_zero
-                    },
-                    'simple': {
-                        'slope': slope_simple,
-                        'intercept': intercept_simple,
-                        'r_squared': r_squared_simple,
-                        'y_fit': y_fit_simple.tolist(),
-                        'lod': lod_simple,
-                        'loq': loq_simple,
-                        'bec': bec_simple
-                    },
-                    'weighted': {
-                        'slope': slope_weighted,
-                        'intercept': intercept_weighted,
-                        'r_squared': r_squared_weighted,
-                        'y_fit': y_fit_weighted.tolist(),
-                        'lod': lod_weighted,
-                        'loq': loq_weighted,
-                        'bec': bec_weighted
-                    },
-                    'x': x.tolist(),
-                    'y': y.tolist(),
-                    'y_std': y_std.tolist(),
-                    'density': density
-                }
-                
+
+                if len(x_list) == 1:
+           
+                    x1 = np.array(x_list)
+                    y1 = np.array(y_list)
+                    s1 = np.array(y_std_list)
+                    fit_zero = self._fit_zero(x1, y1)
+                    fom = self._compute_figures_of_merit(
+                        fit_zero["slope"], 0.0, float(s1[0])
+                    )
+                    y_fit = (fit_zero["slope"] * x1).tolist()
+   
+                    shared = {
+                        'slope':     fit_zero["slope"],
+                        'intercept': 0.0,
+                        'r_squared': 1.0,
+                        'y_fit':     y_fit,
+                        **fom,
+                    }
+                    results[isotope_key] = {
+                        'zero':             shared.copy(),
+                        'simple':           shared.copy(),
+                        'weighted':         shared.copy(),
+                        'x':                x1.tolist(),
+                        'y':                y1.tolist(),
+                        'y_std':            s1.tolist(),
+                        'density':          density,
+                        'folders':          list(folders_list),
+                        'excluded_folders': [],
+                        'single_point':     True,
+                    }
+                    continue
+
+                x     = np.array(x_list)
+                y     = np.array(y_list)
+                y_std = np.array(y_std_list)
+
+
+                excluded_folders = self.excluded_points.get(isotope_key, set())
+                included_mask = np.array(
+                    [f not in excluded_folders for f in folders_list])
+
+                isotope_result = self._run_all_fits_on_subset(
+                    x, y, y_std, included_mask, density)
+                if isotope_result is None:
+        
+                    continue
+                isotope_result['folders'] = list(folders_list)
+           
+                isotope_result['excluded_folders'] = sorted(excluded_folders)
+                results[isotope_key] = isotope_result
+
         return results
 
     def load_folders(self):
@@ -2732,10 +4045,12 @@ class IonicCalibrationWindow(QMainWindow):
         dialog.setWindowTitle("Select Data Source")
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
+
+        dialog.setStyleSheet(_build_ionic_qss(theme.palette))
         layout = QVBoxLayout(dialog)
         
         instruction = QLabel("Choose your data source type:")
-        instruction.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
+        instruction.setObjectName("dialogInstruction")
         layout.addWidget(instruction)
 
         folder_radio = QRadioButton("NU Folders (with run.info files)", dialog)
@@ -2750,13 +4065,13 @@ class IonicCalibrationWindow(QMainWindow):
         layout.addLayout(radio_layout)
 
         folder_desc = QLabel("• Select folders containing NU instrument data with run.info files\n• Supports multiple folders for batch processing\n• ⚠️ Mass ranges must match main analysis")
-        folder_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        folder_desc.setObjectName("helpMuted")
         
         csv_desc = QLabel("• Select Data Files with mass spectrometry data\n• Configure column mappings and time settings\n• ✅ No mass range validation required")
-        csv_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        csv_desc.setObjectName("helpMuted")
         
         tofwerk_desc = QLabel("• Select TOFWERK .h5 files from TofDAQ acquisitions\n• Supports multiple files for batch processing\n• ✅ No mass range validation required")
-        tofwerk_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
+        tofwerk_desc.setObjectName("helpMuted")
         
         layout.addWidget(folder_desc)
         layout.addWidget(csv_desc)
@@ -2765,39 +4080,10 @@ class IonicCalibrationWindow(QMainWindow):
 
         button_box = QHBoxLayout()
         ok_button = QPushButton("Continue", dialog)
+        ok_button.setObjectName("primaryBtn")
         cancel_button = QPushButton("Cancel", dialog)
-        
-        for btn in [ok_button, cancel_button]:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                    min-width: 80px;
-                }
-                QPushButton:hover {
-                    background-color: #545b62;
-                }
-            """)
-        
-        ok_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
-        
+        cancel_button.setObjectName("secondaryBtn")
+
         button_box.addStretch()
         button_box.addWidget(ok_button)
         button_box.addWidget(cancel_button)
@@ -2808,10 +4094,19 @@ class IonicCalibrationWindow(QMainWindow):
 
         if dialog.exec() == QDialog.Accepted:
             if folder_radio.isChecked():
-                self.select_nu_folders() 
+                ual = _ual()
+                if ual:
+                    ual.log_action('FILE_OP', 'Load Folders — NU folders selected')
+                self.select_nu_folders()
             elif csv_radio.isChecked():
+                ual = _ual()
+                if ual:
+                    ual.log_action('FILE_OP', 'Load Folders — CSV/data files selected')
                 self.select_data_files()
-            else: 
+            else:
+                ual = _ual()
+                if ual:
+                    ual.log_action('FILE_OP', 'Load Folders — TOFWERK .h5 files selected')
                 self.select_tofwerk_files()
                 
     def select_tofwerk_files(self):
@@ -2830,6 +4125,11 @@ class IonicCalibrationWindow(QMainWindow):
             )
             
             if h5_files:
+                ual = _ual()
+                if ual:
+                    ual.log_file_operation(
+                        'OPEN', f'{len(h5_files)} TOFWERK .h5 file(s)',
+                        {'source': 'TOFWERK', 'files': [str(p) for p in h5_files[:5]]})
                 self.handle_tofwerk_import(h5_files)
                     
         except Exception as e:
@@ -2870,7 +4170,7 @@ class IonicCalibrationWindow(QMainWindow):
                 try:
                     sample_name = h5_file.stem
                     
-                    data, info, dwell_time = data_loading.tofwerk_loading.read_tofwerk_file(h5_path)
+                    data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_path)
                     if 'mass' in info.dtype.names:
                         masses = info['mass']
                     else:
@@ -2954,10 +4254,16 @@ class IonicCalibrationWindow(QMainWindow):
             
             if file_dialog.exec() == QDialog.Accepted:
                 selected_paths = file_dialog.selectedFiles()
-                
+
                 if not selected_paths:
                     return
-                    
+
+                ual = _ual()
+                if ual:
+                    ual.log_file_operation(
+                        'OPEN',
+                        ', '.join(selected_paths[:3]) + ('…' if len(selected_paths) > 3 else ''),
+                        {'source': 'NU folders', 'count': len(selected_paths)})
                 self.handle_folder_import(selected_paths)
                     
         except Exception as e:
@@ -2972,7 +4278,7 @@ class IonicCalibrationWindow(QMainWindow):
         """
         try:
             try:
-                from data_loading.import_csv_dialogs import show_csv_structure_dialog
+                from loading.import_csv_dialogs import show_csv_structure_dialog
             except ImportError:
                 QMessageBox.critical(self, "Import Error", 
                     "Data file import functionality is not available. Please ensure the import_csv_dialogs.py file is present.")
@@ -2986,6 +4292,11 @@ class IonicCalibrationWindow(QMainWindow):
             )
             
             if file_paths:
+                ual = _ual()
+                if ual:
+                    ual.log_file_operation(
+                        'OPEN', f'{len(file_paths)} CSV/data file(s)',
+                        {'source': 'CSV', 'files': [str(p) for p in file_paths[:5]]})
                 self.handle_csv_import(file_paths)
                     
         except Exception as e:
@@ -3002,7 +4313,7 @@ class IonicCalibrationWindow(QMainWindow):
         CSV structure dialog configuration.
         """
         try:
-            from data_loading.import_csv_dialogs import show_csv_structure_dialog
+            from loading.import_csv_dialogs import show_csv_structure_dialog
             
             config = show_csv_structure_dialog(selected_paths, self)
             if not config:
@@ -3018,7 +4329,7 @@ class IonicCalibrationWindow(QMainWindow):
             self.folder_paths = []
             self.all_masses = set()
             
-            from data_loading.import_csv_dialogs import DataProcessThread
+            from loading.import_csv_dialogs import DataProcessThread
             
             process_thread = DataProcessThread(config)
             
@@ -3111,47 +4422,81 @@ class IonicCalibrationWindow(QMainWindow):
             QApplication.processEvents()
             
             try:
-                masses, _, _ = data_loading.vitesse_loading.read_nu_directory(folder)
-                
+                masses, _, _ = loading.vitesse_loading.read_nu_directory(folder)
+
+                mismatch_msg = None
+
                 if self.parent_window and hasattr(self.parent_window, 'all_masses'):
                     parent_masses = self.parent_window.all_masses
                     if len(masses) != len(parent_masses):
-                        raise ValueError(
-                            f"Mass count mismatch with main analysis: folder has {len(masses)} masses, "
-                            f"but main analysis has {len(parent_masses)} masses"
+                        mismatch_msg = (
+                            f"Mass count mismatch with main analysis:\n"
+                            f"  • This folder: {len(masses)} masses\n"
+                            f"  • Main analysis: {len(parent_masses)} masses"
                         )
-                    
-                    mass_differences = np.abs(masses - parent_masses)
-                    if np.any(mass_differences > mass_tolerance):
-                        different_masses = [
-                            f"{m1:.4f} vs {m2:.4f}"
-                            for m1, m2, diff in zip(masses, parent_masses, mass_differences)
-                            if diff > mass_tolerance
-                        ]
-                        raise ValueError(
-                            f"Mass mismatch with main analysis:\n"
-                            f"Different masses detected: {', '.join(different_masses)}"
+                    else:
+                        mass_differences = np.abs(masses - parent_masses)
+                        if np.any(mass_differences > mass_tolerance):
+                            different_masses = [
+                                f"{m1:.4f} vs {m2:.4f}"
+                                for m1, m2, diff in zip(masses, parent_masses, mass_differences)
+                                if diff > mass_tolerance
+                            ]
+                            mismatch_msg = (
+                                f"Mass value mismatch with main analysis:\n"
+                                f"  • Different masses: {', '.join(different_masses)}"
+                            )
+
+                if mismatch_msg is None and reference_masses is not None:
+                    if len(masses) != len(reference_masses):
+                        mismatch_msg = (
+                            f"Mass count mismatch between calibration folders:\n"
+                            f"  • This folder: {len(masses)} masses\n"
+                            f"  • First folder: {len(reference_masses)} masses"
                         )
-                
+                    else:
+                        mass_differences = np.abs(masses - reference_masses)
+                        if np.any(mass_differences > mass_tolerance):
+                            mismatch_msg = (
+                                f"Mass value mismatch between calibration folders.\n"
+                                f"  • Folders do not share identical mass ranges."
+                            )
+
+                if mismatch_msg is not None:
+                    # ── informational mismatch dialog ──────────────────────
+                    progress.close()
+                    dlg = QMessageBox(self)
+                    dlg.setWindowTitle("Mass Mismatch Detected")
+                    dlg.setIcon(QMessageBox.Icon.Information)
+                    dlg.setText(
+                        f"<b>A mass mismatch was detected for:</b><br>"
+                        f"<code>{Path(folder).name}</code>"
+                    )
+                    dlg.setInformativeText(
+                        mismatch_msg.replace("\n", "<br>") +
+                        "<br><br>You can ignore this warning and add the folder anyway, "
+                        "or skip it."
+                    )
+                    btn_ignore = dlg.addButton("Ignore & Add Anyway", QMessageBox.ButtonRole.AcceptRole)
+                    btn_skip   = dlg.addButton("Skip Folder",         QMessageBox.ButtonRole.RejectRole)
+                    dlg.setDefaultButton(btn_skip)
+                    dlg.exec()
+
+                    progress = QProgressDialog("Processing selected folders...", "Cancel", 0, 100, self)
+                    progress.setWindowModality(Qt.WindowModality.WindowModal)
+                    progress.show()
+
+                    if dlg.clickedButton() is btn_ignore:
+                        if reference_masses is None:
+                            reference_masses = masses
+                        valid_folders.append(folder)
+                    continue
+
+                # ── no mismatch ────────────────────────────────────────────
                 if reference_masses is None:
                     reference_masses = masses
-                else:
-                    if len(masses) != len(reference_masses):
-                        raise ValueError(
-                            f"Mass count mismatch between calibration folders: "
-                            f"folder has {len(masses)} masses, but first folder has "
-                            f"{len(reference_masses)} masses"
-                        )
-                    
-                    mass_differences = np.abs(masses - reference_masses)
-                    if np.any(mass_differences > mass_tolerance):
-                        raise ValueError(
-                            f"Mass mismatch between calibration folders. "
-                            f"All folders must have identical mass ranges."
-                        )
-                
                 valid_folders.append(folder)
-                
+
             except Exception as e:
                 progress.close()
                 QMessageBox.warning(
@@ -3211,9 +4556,9 @@ class IonicCalibrationWindow(QMainWindow):
 
                 if path.is_file() and path.suffix.lower() == '.h5':
                     try:
-                        if data_loading.tofwerk_loading.is_tofwerk_file(path):
+                        if loading.tofwerk_loading.is_tofwerk_file(path):
 
-                            data, info, dwell_time = data_loading.tofwerk_loading.read_tofwerk_file(path)
+                            data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(path)
                 
                             if 'mass' in info.dtype.names:
                                 masses = info['mass']
@@ -3249,7 +4594,7 @@ class IonicCalibrationWindow(QMainWindow):
                         QMessageBox.warning(self, "Error", f"Failed to load TOFWERK file {path.name}: {str(e)}")
                         continue
                 
-                masses, signals, run_info = data_loading.vitesse_loading.read_nu_directory(folder_path)
+                masses, signals, run_info = loading.vitesse_loading.read_nu_directory(folder_path)
                 self.data[folder_path] = {'masses': masses, 'signals': signals, 'run_info': run_info}
                 self.all_masses.update(masses)
                 

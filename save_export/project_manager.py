@@ -30,7 +30,7 @@ class ProjectManager:
             None
         """
         self.main_window = main_window
-        self.project_version = '1.0.1'
+        self.project_version = '1.0.2'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -177,7 +177,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.0.1
+Version=1.0.2
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -223,6 +223,11 @@ Terminal=false
             self.main_window.progress_bar.setValue(0)
 
             def progress_callback(pct, msg):
+                """
+                Args:
+                    pct (Any): Progress percentage (0–100).
+                    msg (Any): Message string.
+                """
                 self.main_window.progress_bar.setValue(pct)
                 self.main_window.status_label.setText(msg)
                 QApplication.processEvents()
@@ -270,19 +275,20 @@ Terminal=false
             self.main_window.progress_bar.setValue(0)
 
             def progress_callback(pct, msg):
+                """
+                Args:
+                    pct (Any): Progress percentage (0–100).
+                    msg (Any): Message string.
+                """
                 self.main_window.progress_bar.setValue(pct)
                 self.main_window.status_label.setText(msg)
                 QApplication.processEvents()
 
-            # Auto-detect format and load
             result = load_project_auto(filepath, self.main_window, progress_callback)
 
             if isinstance(result, dict):
-                # V1 format returned raw dict -> use existing restore logic
                 self._restore_project_data(result)
-            # else: V2 format already restored data directly to main_window
 
-            # Post-load setup (same for both formats)
             self._finalize_load()
 
             self.main_window.progress_bar.setVisible(False)
@@ -302,17 +308,14 @@ Terminal=false
         """Common post-load setup for both v1 and v2 formats."""
         mw = self.main_window
 
-        # Rebuild UI
         mw.update_sample_table()
 
-        # Select first sample
         if mw.current_sample and mw.current_sample in mw.data_by_sample:
             mw.data = mw.data_by_sample[mw.current_sample].copy()
             mw.time_array = mw.time_array_by_sample[mw.current_sample].copy()
             if mw.current_sample in mw.sample_detected_peaks:
                 mw.detected_peaks = mw.sample_detected_peaks[mw.current_sample].copy()
 
-        # Restore periodic table
         if mw.selected_isotopes:
             all_masses = set()
             for isotopes in mw.selected_isotopes.values():
@@ -328,14 +331,19 @@ Terminal=false
             mw.periodic_table_widget.update_available_masses(mw.all_masses)
             mw._update_periodic_table_selections()
 
-        # Update parameters table
         mw.update_parameters_table()
 
-        # Restore sigma
         if hasattr(mw, '_global_sigma') and hasattr(mw, 'sigma_spinbox'):
             mw.sigma_spinbox.setValue(mw._global_sigma)
+        sigma_mode = getattr(mw, '_sigma_mode', 'global')
+        if hasattr(mw, 'sigma_global_radio') and hasattr(mw, 'sigma_per_isotope_radio'):
+            if sigma_mode == 'per_isotope':
+                mw.sigma_per_isotope_radio.setChecked(True)
+            else:
+                mw.sigma_global_radio.setChecked(True)
 
-        # Select current sample in table
+        self._migrate_sample_parameters()
+
         if mw.current_sample:
             for row in range(mw.sample_table.rowCount()):
                 item = mw.sample_table.item(row, 0)
@@ -344,7 +352,6 @@ Terminal=false
                     mw.on_sample_selected(item)
                     break
 
-        # ---- FIX: Actually restore canvas workflow ----
         canvas_state = getattr(mw, '_pending_canvas_workflow', None)
         if canvas_state:
             try:
@@ -356,6 +363,37 @@ Terminal=false
 
         mw._build_element_lookup_cache()
             
+    def _migrate_sample_parameters(self):
+        """
+        Ensure all per-element parameter dicts contain every field that the
+        current version of the app expects.  Fields that are absent (because
+        the project was saved by an older version) are filled in with safe
+        defaults so the UI and detection code never encounter KeyError /
+        unexpected None values.
+
+        New fields and their defaults
+        ──────────────────────────────
+        sigma            → current _global_sigma   (per-isotope CPLN sigma)
+        split_method     → "1D Watershed"           (particle-splitting mode)
+        valley_ratio     → 0.50                     (watershed valley depth)
+        use_window_size  → False                    (custom background window)
+        window_size      → 5000                     (background window length)
+        integration_method → "Background"           (peak-area integration)
+        iterative        → True                     (iterative background est.)
+        """
+        global_sigma = getattr(self.main_window, '_global_sigma', 0.55)
+        for sample_params in self.main_window.sample_parameters.values():
+            for elem_params in sample_params.values():
+                if not isinstance(elem_params, dict):
+                    continue
+                elem_params.setdefault('sigma', global_sigma)
+                elem_params.setdefault('split_method', '1D Watershed')
+                elem_params.setdefault('valley_ratio', 0.50)
+                elem_params.setdefault('use_window_size', False)
+                elem_params.setdefault('window_size', 5000)
+                elem_params.setdefault('integration_method', 'Background')
+                elem_params.setdefault('iterative', True)
+
     def _collect_project_data(self, canvas_state):
         """
         Collect all project data for saving.
@@ -396,7 +434,9 @@ Terminal=false
             'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}), 
             
             'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 50.0),
-            '_global_sigma': getattr(self.main_window, '_global_sigma', 0.47),
+            '_global_sigma': getattr(self.main_window, '_global_sigma', 0.55),
+            '_sigma_mode': getattr(self.main_window, '_sigma_mode', 'global'),
+            '_exclusion_regions_by_sample': getattr(self.main_window, '_exclusion_regions_by_sample', {}),
             'multi_element_particles': getattr(self.main_window, 'multi_element_particles', []),
             'detection_states': getattr(self.main_window, 'detection_states', {}),
             'needs_initial_detection': list(getattr(self.main_window, 'needs_initial_detection', set())),
@@ -418,7 +458,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.0.1',
+            'application_version': '1.0.2',
         }
     
     def _restore_project_data(self, project_data):
@@ -460,7 +500,10 @@ Terminal=false
         self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})  
         
         self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 50.0)
-        self.main_window._global_sigma = project_data.get('_global_sigma', 0.47)
+        self.main_window._global_sigma = project_data.get('_global_sigma', 0.55)
+        self.main_window._sigma_mode = project_data.get('_sigma_mode', 'global')
+        self.main_window._exclusion_regions_by_sample = project_data.get('_exclusion_regions_by_sample', {})
+        self.main_window.sample_status = project_data.get('sample_status', {})
         self.main_window.multi_element_particles = project_data.get('multi_element_particles', [])
         self.main_window.detection_states = project_data.get('detection_states', {})
         
@@ -497,7 +540,6 @@ Terminal=false
             self.main_window.time_array = None
             self.main_window.detected_peaks = {}
         
-        # ---- FIX: Store canvas state for _finalize_load to restore ----
         canvas_state = project_data.get('canvas_state', None)
         if canvas_state:
             self.main_window._pending_canvas_workflow = canvas_state
@@ -515,13 +557,21 @@ Terminal=false
         if not hasattr(self.main_window, 'canvas_results_dialog') or not self.main_window.canvas_results_dialog:
             return None
         
-        scene = self.main_window.canvas_results_dialog.canvas.scene
+        canvas_dialog = self.main_window.canvas_results_dialog
+        scene = canvas_dialog.canvas.scene
         if not scene:
             return None
+
+        try:
+            from widget.canvas_widgets import StickyNoteItem
+        except ImportError:
+            StickyNoteItem = None
         
         canvas_state = {
             'workflow_nodes': [],
             'workflow_links': [],
+            'sticky_notes': [],
+            'zoom': getattr(canvas_dialog.canvas, '_zoom', 1.0),
             'scene_rect': {
                 'x': scene.sceneRect().x(),
                 'y': scene.sceneRect().y(),
@@ -559,6 +609,23 @@ Terminal=false
                     'enabled': link.enabled
                 }
                 canvas_state['workflow_links'].append(link_data)
+
+        if StickyNoteItem is not None:
+            for item in scene.items():
+                if isinstance(item, StickyNoteItem):
+                    note_data = {
+                        'text': item._text,
+                        'color_index': item._color_index,
+                        'font_size': item._font_size,
+                        'transparent': item._transparent,
+                        'position': {
+                            'x': item.pos().x(),
+                            'y': item.pos().y()
+                        },
+                        'width': item.size().width(),
+                        'height': item.size().height(),
+                    }
+                    canvas_state['sticky_notes'].append(note_data)
         
         return canvas_state
     
@@ -605,8 +672,9 @@ Terminal=false
                 CanvasResultsDialog, SampleSelectorNode, MultipleSampleSelectorNode,
                 HistogramPlotNode, ElementBarChartPlotNode, CorrelationPlotNode,
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
-                IsotopicRatioPlotNode, TrianglePlotNode,ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
-                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode
+                IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
+                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
+                StickyNoteItem,
             )
         except ImportError as e:
             QMessageBox.warning(
@@ -658,7 +726,9 @@ Terminal=false
             "ai_assistant": AIAssistantNode,
             "correlation_matrix": CorrelationMatrixNode,
             "concentration_comparison": ConcentrationComparisonNode,    
-            "network_diagram": NetworkDiagramNode
+            "network_diagram": NetworkDiagramNode,
+            "dashboard": DashboardNode,
+            
         }
         
         for node_data in canvas_state.get('workflow_nodes', []):
@@ -689,6 +759,29 @@ Terminal=false
                 link = scene.add_link(source_node, source_channel, sink_node, sink_channel)
                 if link and 'enabled' in link_data:
                     link.enabled = link_data['enabled']
+
+        for note_data in canvas_state.get('sticky_notes', []):
+            try:
+                note = StickyNoteItem(text=note_data.get('text', 'Double-click to edit…'))
+                note._color_index = note_data.get('color_index', 0)
+                note._font_size = note_data.get('font_size', 9)
+                note._transparent = note_data.get('transparent', False)
+                pos = note_data.get('position', {'x': 0, 'y': 0})
+                note.setPos(QPointF(pos['x'], pos['y']))
+                w = note_data.get('width', StickyNoteItem.MIN_W)
+                h = note_data.get('height', StickyNoteItem.MIN_H)
+                note.resize(w, h)
+                scene.addItem(note)
+            except Exception as e:
+                print(f"Warning: Could not restore sticky note: {e}")
+
+        saved_zoom = canvas_state.get('zoom', None)
+        if saved_zoom is not None:
+            try:
+                canvas_view = self.main_window.canvas_results_dialog.canvas
+                canvas_view.set_zoom(saved_zoom)
+            except Exception as e:
+                print(f"Warning: Could not restore canvas zoom: {e}")
     
     def _deserialize_node_config(self, workflow_node, node_data):
         """
@@ -701,7 +794,6 @@ Terminal=false
         Returns:
             None
         """
-        # ---- FIX: Added 'sample_config' (was missing, causing group names to be lost) ----
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
@@ -755,7 +847,10 @@ Terminal=false
         self.main_window.all_masses = None
         
         self.main_window.overlap_threshold_percentage = 50.0
-        self.main_window._global_sigma = 0.47
+        self.main_window._global_sigma = 0.55
+        self.main_window._sigma_mode = 'global'
+        self.main_window._exclusion_regions_by_sample = {}
+        self.main_window.sample_status = {}
         self.main_window.sidebar_width = 200
         self.main_window.sidebar_visible = True
         self.main_window.csv_config = None

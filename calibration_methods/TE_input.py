@@ -1,415 +1,345 @@
 import sys
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QLineEdit, QComboBox, QMessageBox,
-                             QFormLayout, QApplication, QGroupBox, QMainWindow,
-                             QScrollArea, QFrame)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
+    QComboBox, QMessageBox, QFormLayout, QApplication, QGroupBox,
+    QMainWindow, QFrame
+)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 
+from calibration_methods.te_common import (
+    BASE_STYLESHEET, PREVIEW_STYLES, create_scrollable_container,
+    weight_method_transport_rate,
+    base_stylesheet, preview_styles,
+)
+from theme import theme
+
+
 class InputMethodCalibration(QMainWindow):
+    """Weight-method calibration widget with live preview and direct-rate entry."""
+
     calibration_completed = Signal(str, float)
 
     def __init__(self, parent=None):
         """
-        Initialize the Weight Method Calibration window.
-        
+        Initialise the Weight Method Calibration window.
+
         Args:
-            parent: Parent widget for this window
+            parent (QWidget | None): Parent widget for this window.
         """
         super().__init__(parent)
-        self.initUI()
+        self._init_ui()
+        self.apply_theme()
+        self._theme_cleanup = theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_cleanup())            
 
-    def initUI(self):
+    # ── Theme ────────────────────────────────────────────────────────────
+
+    def apply_theme(self, *_):
+        """Re-apply styling from the current theme palette.  Covers the
+        window QSS, the preview label (which is driven by palette-aware
+        preview_styles), and the calculate button.
+        Args:
+            *_ (Any): Additional positional arguments.
         """
-        Initialize and configure the user interface.
-        
-        Sets up stylesheets, layouts, and connects all signals for the calibration window.
+        p = theme.palette
+        self.setStyleSheet(base_stylesheet(p))
+        self._preview_styles = preview_styles(p)
+        if hasattr(self, "result_preview") and hasattr(self, "_preview_key"):
+            self.result_preview.setStyleSheet(
+                self._preview_styles.get(self._preview_key,
+                                         self._preview_styles["default"])
+            )
+        if hasattr(self, "calc_btn"):
+            self.calc_btn.setStyleSheet(
+                "QPushButton { font-size: 16px; font-weight: bold; }"
+            )
+
+    # ── UI construction ──────────────────────────────────────────────────
+
+    def _init_ui(self):
         """
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #f8f9fa;
-                color: #212529;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                margin-top: 12px;
-                padding-top: 10px;
-                background-color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QPushButton {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-            QLineEdit, QComboBox {
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                padding: 6px;
-                background-color: white;
-            }
-            QLabel {
-                color: #495057;
-            }
-        """)
-        
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        main_layout = QVBoxLayout(central_widget)
+        Build and wire all UI elements.
+
+        Returns:
+            None
+        """
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        self.create_intro_section(scroll_layout)
-        self.create_measurement_section(scroll_layout)
-        self.create_calculation_section(scroll_layout)
-        
-        main_layout.addWidget(scroll)
-        
+
+        _scroll, scroll_layout = create_scrollable_container(main_layout)
+
+        self._create_intro_section(scroll_layout)
+        self._create_measurement_section(scroll_layout)
+        self._create_calculation_section(scroll_layout)
+
         self.setWindowTitle("Weight Method Calibration")
         self.setMinimumSize(800, 600)
-        
-        self.initial_weight.textChanged.connect(self.update_preview)
-        self.final_weight.textChanged.connect(self.update_preview)
-        self.waste_weight.textChanged.connect(self.update_preview)
-        self.analysis_time.textChanged.connect(self.update_preview)
-        self.weight_unit.currentIndexChanged.connect(self.update_preview)
-        self.time_unit.currentIndexChanged.connect(self.update_preview)
 
-    def create_intro_section(self, parent_layout):
+        for widget in (self.initial_weight, self.final_weight,
+                       self.waste_weight, self.analysis_time):
+            widget.textChanged.connect(self._update_preview)
+        self.weight_unit.currentIndexChanged.connect(self._update_preview)
+        self.time_unit.currentIndexChanged.connect(self._update_preview)
+
+    def _create_intro_section(self, parent_layout):
         """
-        Create and add the introduction section to the layout.
-        
+        Add the introductory description group box.
+
         Args:
-            parent_layout: The parent layout to add the introduction section to
+            parent_layout (QVBoxLayout): Layout to append the section to.
+
+        Returns:
+            None
         """
-        intro_group = QGroupBox("1. Weight Method Calibration")
-        intro_layout = QVBoxLayout(intro_group)
-        
-        description = QLabel(
-            "The weight method determines transport rate by measuring weight changes in the "
-            "sample vial and waste collection container during analysis. This provides a direct "
-            "physical measurement of the actual sample volume transported to the plasma."
+        group = QGroupBox("1. Weight Method Calibration")
+        layout = QVBoxLayout(group)
+        desc = QLabel(
+            "The weight method determines transport rate by measuring weight "
+            "changes in the sample vial and waste collection container during "
+            "analysis. This provides a direct physical measurement of the "
+            "actual sample volume transported to the plasma."
         )
-        description.setWordWrap(True)
-        intro_layout.addWidget(description)
-        
-        parent_layout.addWidget(intro_group)
-    
-    def create_measurement_section(self, parent_layout):
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        parent_layout.addWidget(group)
+
+    def _create_measurement_section(self, parent_layout):
         """
-        Create and add the measurement inputs section to the layout.
-        
+        Add the measurement-input group box (units + four fields).
+
         Args:
-            parent_layout: The parent layout to add the measurement section to
+            parent_layout (QVBoxLayout): Layout to append the section to.
+
+        Returns:
+            None
         """
-        measurement_group = QGroupBox("2. Enter Measurements")
-        measurement_layout = QVBoxLayout(measurement_group)
-        
-        units_layout = QHBoxLayout()
-        units_layout.setSpacing(20)
-        
+        group = QGroupBox("2. Enter Measurements")
+        group_layout = QVBoxLayout(group)
+
+        units_row = QHBoxLayout()
+        units_row.setSpacing(20)
         self.weight_unit = QComboBox()
         self.weight_unit.addItems(["mg", "g"])
-        
         self.time_unit = QComboBox()
         self.time_unit.addItems(["seconds", "minutes"])
-        
-        units_layout.addWidget(QLabel("Mass unit:"))
-        units_layout.addWidget(self.weight_unit)
-        units_layout.addSpacing(40)
-        units_layout.addWidget(QLabel("Time unit:"))
-        units_layout.addWidget(self.time_unit)
-        units_layout.addStretch()
-        
-        measurement_layout.addLayout(units_layout)
-        
-        form_layout = QFormLayout()
-        form_layout.setSpacing(15)
-        
-        self.initial_weight = QLineEdit()
-        self.initial_weight.setPlaceholderText("Initial mass...")
-        self.initial_weight.setValidator(QDoubleValidator(0.0, 100000.0, 5))
-        
-        self.final_weight = QLineEdit()
-        self.final_weight.setPlaceholderText("Final mass...")
-        self.final_weight.setValidator(QDoubleValidator(0.0, 100000.0, 5))
-        
-        self.waste_weight = QLineEdit()
-        self.waste_weight.setPlaceholderText("Waste mass...")
-        self.waste_weight.setValidator(QDoubleValidator(0.0, 100000.0, 5))
-        
-        self.analysis_time = QLineEdit()
-        self.analysis_time.setPlaceholderText("Analysis time...")
-        self.analysis_time.setValidator(QDoubleValidator(0.0, 10000.0, 2))
-        
-        form_layout.addRow("Initial sample mass:", self.initial_weight)
-        form_layout.addRow("Final sample mass:", self.final_weight)
-        form_layout.addRow("Waste container mass:", self.waste_weight)
-        form_layout.addRow("Analysis time:", self.analysis_time)
-        
-        measurement_layout.addLayout(form_layout)
-        
-        parent_layout.addWidget(measurement_group)
-    
-    def create_calculation_section(self, parent_layout):
+        for label, combo in [("Mass unit:", self.weight_unit),
+                             ("Time unit:", self.time_unit)]:
+            units_row.addWidget(QLabel(label))
+            units_row.addWidget(combo)
+            units_row.addSpacing(40)
+        units_row.addStretch()
+        group_layout.addLayout(units_row)
+
+        form = QFormLayout()
+        form.setSpacing(15)
+        validator = QDoubleValidator(0.0, 100_000.0, 5)
+
+        self.initial_weight = self._make_line_edit("Initial mass...", validator)
+        self.final_weight = self._make_line_edit("Final mass...", validator)
+        self.waste_weight = self._make_line_edit("Waste mass...", validator)
+        self.analysis_time = self._make_line_edit(
+            "Analysis time...", QDoubleValidator(0.0, 10_000.0, 2)
+        )
+
+        form.addRow("Initial sample mass:", self.initial_weight)
+        form.addRow("Final sample mass:", self.final_weight)
+        form.addRow("Waste container mass:", self.waste_weight)
+        form.addRow("Analysis time:", self.analysis_time)
+        group_layout.addLayout(form)
+
+        parent_layout.addWidget(group)
+
+    def _create_calculation_section(self, parent_layout):
         """
-        Create and add the calculation section to the layout.
-        
+        Add the calculation group box (preview, calculate, direct entry).
+
         Args:
-            parent_layout: The parent layout to add the calculation section to
+            parent_layout (QVBoxLayout): Layout to append the section to.
+
+        Returns:
+            None
         """
-        calculation_group = QGroupBox("3. Calculate Transport Rate")
-        calculation_layout = QVBoxLayout(calculation_group)
-        
-        self.result_preview = QLabel("Enter measurements to see calculation preview")
-        self.result_preview.setStyleSheet("""
-            background-color: #f0f0f0; 
-            padding: 15px; 
-            border-radius: 5px;
-            font-size: 14px;
-            font-weight: bold;
-        """)
+        group = QGroupBox("3. Calculate Transport Rate")
+        group_layout = QVBoxLayout(group)
+
+        self.result_preview = QLabel(
+            "Enter measurements to see calculation preview"
+        )
         self.result_preview.setWordWrap(True)
         self.result_preview.setAlignment(Qt.AlignCenter)
         self.result_preview.setMinimumHeight(60)
-        calculation_layout.addWidget(self.result_preview)
-        
-        calc_button = QPushButton("Calculate Transport Rate")
-        calc_button.setMinimumHeight(40)
-        calc_button.setStyleSheet("""
-            QPushButton {
-                background-color: #007bff;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-            }
-        """)
-        calc_button.clicked.connect(self.calculate)
-        calculation_layout.addWidget(calc_button)
-        
-        direct_layout = QHBoxLayout()
-        
-        direct_info = QLabel("Or enter known rate:")
-        
+        self._preview_key = "default"
+        group_layout.addWidget(self.result_preview)
+
+        self.calc_btn = QPushButton("Calculate Transport Rate")
+        self.calc_btn.setMinimumHeight(40)
+        self.calc_btn.clicked.connect(self._calculate)
+        group_layout.addWidget(self.calc_btn)
+
+        direct_row = QHBoxLayout()
         self.direct_rate = QLineEdit()
         self.direct_rate.setPlaceholderText("Enter known rate...")
         self.direct_rate.setValidator(QDoubleValidator(0.0, 1000.0, 5))
         self.direct_rate.setMaximumWidth(150)
-        
-        direct_button = QPushButton("Submit Direct")
-        direct_button.clicked.connect(self.submit_direct)
-        direct_button.setMaximumWidth(120)
-        
-        direct_layout.addWidget(direct_info)
-        direct_layout.addWidget(self.direct_rate)
-        direct_layout.addWidget(QLabel("μL/s"))
-        direct_layout.addWidget(direct_button)
-        direct_layout.addStretch()
-        
-        calculation_layout.addLayout(direct_layout)
-        
-        parent_layout.addWidget(calculation_group)
-    
-    def update_preview(self):
-        """
-        Update the result preview label with real-time calculation.
-        
-        Validates user inputs and displays calculated transport rate or appropriate
-        error messages in the preview label.
-        """
-        try:
-            if not all([self.initial_weight.text(), self.final_weight.text(), 
-                       self.waste_weight.text(), self.analysis_time.text()]):
-                self.result_preview.setText("Enter all measurements to see calculation preview")
-                self.result_preview.setStyleSheet("""
-                    background-color: #f0f0f0; 
-                    padding: 15px; 
-                    border-radius: 5px;
-                    font-size: 14px;
-                    color: #6c757d;
-                """)
-                return
-                
-            w_initial = float(self.initial_weight.text())
-            w_final = float(self.final_weight.text())
-            w_waste = float(self.waste_weight.text())
-            time = float(self.analysis_time.text())
-            
-            if time <= 0:
-                self.result_preview.setText("⚠️ Analysis time must be greater than zero")
-                self.result_preview.setStyleSheet("""
-                    background-color: #f8d7da; 
-                    padding: 15px; 
-                    border-radius: 5px;
-                    font-size: 14px;
-                    color: #721c24;
-                """)
-                return
-                
-            if self.weight_unit.currentText() == "mg":
-                w_initial /= 1000
-                w_final /= 1000
-                w_waste /= 1000
-            if self.time_unit.currentText() == "minutes":
-                time *= 60
 
-            sample_consumed = w_initial - w_final
-            if sample_consumed <= 0:
-                self.result_preview.setText("⚠️ Initial mass must be greater than final mass")
-                self.result_preview.setStyleSheet("""
-                    background-color: #f8d7da; 
-                    padding: 15px; 
-                    border-radius: 5px;
-                    font-size: 14px;
-                    color: #721c24;
-                """)
-                return
-                
-            volume_to_plasma = sample_consumed - w_waste
-            if volume_to_plasma <= 0:
-                self.result_preview.setText("⚠️ Sample consumed must be greater than waste mass")
-                self.result_preview.setStyleSheet("""
-                    background-color: #f8d7da; 
-                    padding: 15px; 
-                    border-radius: 5px;
-                    font-size: 14px;
-                    color: #721c24;
-                """)
-                return
-                
-            transport_rate = (volume_to_plasma * 1000) / time
-            
-            self.result_preview.setText(f"Calculated transport rate: {transport_rate:.6f} μL/s")
-            self.result_preview.setStyleSheet("""
-                background-color: #d4edda; 
-                padding: 15px; 
-                border-radius: 5px;
-                font-size: 14px;
-                font-weight: bold;
-                color: #155724;
-            """)
-            
-        except ValueError:
-            self.result_preview.setText("Enter valid numbers in all fields")
-            self.result_preview.setStyleSheet("""
-                background-color: #fff3cd; 
-                padding: 15px; 
-                border-radius: 5px;
-                font-size: 14px;
-                color: #856404;
-            """)
+        direct_btn = QPushButton("Submit Direct")
+        direct_btn.clicked.connect(self._submit_direct)
+        direct_btn.setMaximumWidth(120)
 
-    def calculate(self):
+        direct_row.addWidget(QLabel("Or enter known rate:"))
+        direct_row.addWidget(self.direct_rate)
+        direct_row.addWidget(QLabel("μL/s"))
+        direct_row.addWidget(direct_btn)
+        direct_row.addStretch()
+        group_layout.addLayout(direct_row)
+
+        parent_layout.addWidget(group)
+
+    # ── Helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_line_edit(placeholder, validator):
         """
-        Calculate transport rate from user measurements and emit result.
-        
-        Validates all inputs, performs unit conversions, calculates the transport rate,
-        and displays detailed results in a message box. Emits calibration_completed signal
-        with the calculated rate.
+        Create a QLineEdit with placeholder text and a validator.
+
+        Args:
+            placeholder (str): Placeholder text shown when the field is empty.
+            validator (QValidator): Input validator to apply.
+
+        Returns:
+            QLineEdit: Configured line-edit widget.
+        """
+        le = QLineEdit()
+        le.setPlaceholderText(placeholder)
+        le.setValidator(validator)
+        return le
+
+    def _read_inputs(self):
+        """
+        Parse and unit-convert all measurement fields.
+
+        Returns:
+            tuple[float, float, float, float]: (w_initial_g, w_final_g,
+            w_waste_g, time_s) all in grams and seconds.
+
+        Raises:
+            ValueError: If any field is empty or non-numeric.
+        """
+        texts = [
+            self.initial_weight.text(), self.final_weight.text(),
+            self.waste_weight.text(), self.analysis_time.text(),
+        ]
+        if not all(texts):
+            raise ValueError("Please fill in all measurement fields.")
+
+        w_i, w_f, w_w, t = (float(t) for t in texts)
+
+        if self.weight_unit.currentText() == "mg":
+            w_i /= 1000.0
+            w_f /= 1000.0
+            w_w /= 1000.0
+        if self.time_unit.currentText() == "minutes":
+            t *= 60.0
+
+        return w_i, w_f, w_w, t
+
+    def _set_preview(self, text, style_key="default"):
+        """
+        Update the preview label's text and style.
+
+        Args:
+            text (str): Message to display.
+            style_key (str): One of the keys in preview_styles()
+                ('default', 'error', 'warning', 'success').
+
+        Returns:
+            None
+        """
+        self.result_preview.setText(text)
+        self._preview_key = style_key
+        styles = getattr(self, "_preview_styles", None) or preview_styles(theme.palette)
+        self.result_preview.setStyleSheet(
+            styles.get(style_key, styles["default"])
+        )
+
+    # ── Slots ─────────────────────────────────────────────────────────────
+
+    def _update_preview(self):
+        """
+        Recalculate and display the transport rate in the preview label.
+
+        Connected to every input widget's change signal for real-time feedback.
+
+        Returns:
+            None
         """
         try:
-            if not all([self.initial_weight.text(), self.final_weight.text(), 
-                       self.waste_weight.text(), self.analysis_time.text()]):
-                QMessageBox.warning(self, "Input Error", "Please fill in all measurement fields.")
-                return
-                
-            w_initial = float(self.initial_weight.text())
-            w_final = float(self.final_weight.text())
-            w_waste = float(self.waste_weight.text())
-            time = float(self.analysis_time.text())
-            
-            if time <= 0:
-                QMessageBox.warning(self, "Input Error", "Analysis time must be greater than zero.")
-                return
-
-            if self.weight_unit.currentText() == "mg":
-                w_initial /= 1000
-                w_final /= 1000
-                w_waste /= 1000
-            if self.time_unit.currentText() == "minutes":
-                time *= 60
-
-            sample_consumed = w_initial - w_final
-            if sample_consumed <= 0:
-                QMessageBox.warning(self, "Input Error", "Initial mass must be greater than final mass.")
-                return
-                
-            volume_to_plasma = sample_consumed - w_waste
-            if volume_to_plasma <= 0:
-                QMessageBox.warning(self, "Input Error", 
-                    "Sample consumed must be greater than waste collected. Please check your measurements.")
-                return
-                
-            transport_rate = (volume_to_plasma * 1000) / time
-            
-            result_message = (
-                f"Transport Rate: {transport_rate:.6f} μL/s\n\n"
-                f"Calculation Details:\n"
-                f"• Sample consumed: {sample_consumed:.5f} g\n"
-                f"• Volume to plasma: {volume_to_plasma:.5f} g\n"
-                f"• Analysis time: {time:.1f} seconds"
+            w_i, w_f, w_w, t = self._read_inputs()
+            result = weight_method_transport_rate(w_i, w_f, w_w, t)
+            rate = result["transport_rate_ul_s"]
+            self._set_preview(
+                f"Calculated transport rate: {rate:.6f} μL/s", "success"
             )
-            
-            self.calibration_completed.emit("Weight Method", transport_rate)
-            
-            QMessageBox.information(self, "Calculation Results", result_message)
-            
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please enter valid numbers in all fields.")
+        except ValueError as exc:
+            msg = str(exc)
+            if "fill in" in msg.lower():
+                self._set_preview(
+                    "Enter all measurements to see calculation preview", "default"
+                )
+            else:
+                self._set_preview(f"{msg}", "error")
 
-    def submit_direct(self):
+    def _calculate(self):
         """
-        Submit a directly entered transport rate value.
-        
-        Validates the direct rate input and emits the calibration_completed signal
-        with the user-provided rate value.
+        Compute the transport rate, emit the result, and show a detail dialog.
+
+        Returns:
+            None
+        """
+        try:
+            w_i, w_f, w_w, t = self._read_inputs()
+            result = weight_method_transport_rate(w_i, w_f, w_w, t)
+            rate = result["transport_rate_ul_s"]
+
+            self.calibration_completed.emit("Weight Method", rate)
+
+            detail = (
+                f"Transport Rate: {rate:.6f} μL/s\n\n"
+                f"Calculation Details:\n"
+                f"• Sample consumed: {result['sample_consumed_g']:.5f} g\n"
+                f"• Volume to plasma: {result['volume_to_plasma_g']:.5f} g\n"
+                f"• Analysis time: {t:.1f} seconds"
+            )
+            QMessageBox.information(self, "Calculation Results", detail)
+
+        except ValueError as exc:
+            QMessageBox.warning(self, "Input Error", str(exc))
+
+    def _submit_direct(self):
+        """
+        Validate and emit a user-supplied transport rate.
+
+        Returns:
+            None
         """
         try:
             rate = float(self.direct_rate.text())
             if rate <= 0:
-                QMessageBox.warning(self, "Input Error", "Transport rate must be greater than zero.")
-                return
-                
+                raise ValueError("Transport rate must be greater than zero.")
             self.calibration_completed.emit("Weight Method", rate)
             QMessageBox.information(
-                self, 
-                "Success", 
+                self, "Success",
                 f"Transport rate of {rate:.6f} μL/s submitted successfully."
             )
-            
-        except ValueError:
-            QMessageBox.warning(self, "Input Error", "Please enter a valid number.")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Input Error", str(exc))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = InputMethodCalibration()
     window.show()

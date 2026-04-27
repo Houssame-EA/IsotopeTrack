@@ -19,15 +19,20 @@ from results.shared_plot_utils import (
     FontSettingsGroup,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
+    format_element_label, LABEL_MODES,
+    SHADE_TYPES, _QT_LINE, _apply_box,
+    _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
 )
+try:
+    from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
+    _CUSTOM_PLOT_AVAILABLE = True
+except Exception:
+    _PlotSettingsDialog = None
+    _CUSTOM_PLOT_AVAILABLE = False
 from results.utils_sort import (
     sort_elements_by_mass, sort_element_dict_by_mass,
 )
 
-
-# ═══════════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════════
 
 HIST_DATA_TYPES = [
     'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
@@ -35,7 +40,6 @@ HIST_DATA_TYPES = [
     'Element Diameter (nm)', 'Particle Diameter (nm)',
 ]
 
-# Data types where per-particle element summation makes physical sense
 SUMMABLE_DATA_TYPES = [
     'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
     'Element Moles (fmol)', 'Particle Moles (fmol)',
@@ -70,6 +74,7 @@ HIST_DISPLAY_MODES = [
 
 BAR_DISPLAY_MODES = [
     'Grouped Bars (Side by Side)',
+    'By Sample (Element Colors)',
     'Individual Subplots',
     'Side by Side Subplots',
     'Stacked Bars',
@@ -91,12 +96,396 @@ DEFAULT_ELEMENT_COLORS = [
 ]
 
 
-# ═══════════════════════════════════════════════
-# Shared helpers
-# ═══════════════════════════════════════════════
+def _fmt_elem(elem: str, cfg: dict) -> str:
+    """Format an element key using the configured label_mode.
+
+    'Symbol'        → strip leading mass number  (e.g. '107Ag' → 'Ag')
+    'Mass + Symbol' → keep as-is                 (e.g. '107Ag')
+    Args:
+        elem (str): The elem.
+        cfg (dict): The cfg.
+    Returns:
+        str: Result of the operation.
+    """
+    return format_element_label(elem, cfg.get('label_mode', 'Symbol'))
+
+
+class _PlotWidgetAdapter:
+    """Wraps a (GraphicsLayoutWidget, PlotItem) pair so that all editor
+    dialogs from custom_plot_widget.py treat it like a pg.PlotWidget.
+
+    ``custom_axis_labels`` and ``persistent_dialog_settings`` are stored
+    directly on the PlotItem (prefixed with '_') so they survive across
+    multiple double-click events even though the adapter is re-created
+    each time.
+    """
+
+    def __init__(self, glw, plot_item):
+        """
+        Args:
+            glw (Any): The glw.
+            plot_item (Any): The plot item.
+        """
+        self._glw = glw
+        self._pi = plot_item
+        self.legend = getattr(plot_item, 'legend', None)
+
+    # ── State that must survive re-creation ──────────────────────────
+
+    @property
+    def custom_axis_labels(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        if not hasattr(self._pi, '_custom_axis_labels'):
+            self._pi._custom_axis_labels = {}
+        return self._pi._custom_axis_labels
+
+    @custom_axis_labels.setter
+    def custom_axis_labels(self, val):
+        """
+        Args:
+            val (Any): The val.
+        """
+        self._pi._custom_axis_labels = val
+
+    @property
+    def persistent_dialog_settings(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        if not hasattr(self._pi, '_persistent_dialog_settings'):
+            self._pi._persistent_dialog_settings = {}
+        return self._pi._persistent_dialog_settings
+
+    @persistent_dialog_settings.setter
+    def persistent_dialog_settings(self, val):
+        """
+        Args:
+            val (Any): The val.
+        """
+        self._pi._persistent_dialog_settings = val
+
+    # ── PlotWidget interface ─────────────────────────────────────────
+
+    def getPlotItem(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        return self._pi
+
+    def backgroundBrush(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        return self._glw.backgroundBrush()
+
+    def setBackground(self, color):
+        """
+        Args:
+            color (Any): Colour value.
+        """
+        try:
+            self._glw.setBackground(color)
+        except Exception:
+            pass
+
+    def repaint(self):
+        try:
+            self._glw.repaint()
+        except Exception:
+            pass
+
+    def parent(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        try:
+            return self._glw.parent()
+        except Exception:
+            return None
+
+
+class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
+    """GraphicsLayoutWidget with double-click inline editing.
+
+    Double-clicking on any subplot opens the same editor dialogs that
+    EnhancedPlotWidget uses in the main signal window:
+      • Title label      → TitleEditorDialog
+      • Left axis        → AxisLabelEditorDialog('left')
+      • Bottom axis      → AxisLabelEditorDialog('bottom')
+      • Legend           → LegendEditorDialog
+      • Background area  → BackgroundEditorDialog
+
+    Works correctly across all multi-subplot display modes.
+    """
+
+    def __init__(self, parent=None):
+        """
+        Args:
+            parent (Any): Parent widget or object.
+        """
+        super().__init__(parent=parent)
+
+    # ── Helpers ──────────────────────────────────────────────────────
+
+    def _plot_item_at(self, scene_pos):
+        """Return the PlotItem whose bounding rect contains scene_pos.
+        Args:
+            scene_pos (Any): The scene pos.
+        Returns:
+            None
+        """
+        for item in self.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    rect = item.mapRectToScene(item.boundingRect())
+                    if rect.contains(scene_pos):
+                        return item
+                except Exception:
+                    pass
+        return None
+
+    def _adapter_for(self, plot_item):
+        """Build an adapter for plot_item, syncing legend from it.
+        Args:
+            plot_item (Any): The plot item.
+        Returns:
+            object: Result of the operation.
+        """
+        adapter = _PlotWidgetAdapter(self, plot_item)
+        adapter.legend = getattr(plot_item, 'legend', None)
+        return adapter
+
+    def _closest_scatter(self, pi, scene_pos, threshold_px=20):
+        """
+        Args:
+            pi (Any): The pi.
+            scene_pos (Any): The scene pos.
+            threshold_px (Any): The threshold px.
+        Returns:
+            object: Result of the operation.
+        """
+        try:
+            vb = pi.getViewBox()
+            dp = vb.mapSceneToView(scene_pos)
+            mx, my = dp.x(), dp.y()
+            vr = vb.viewRange()
+            xr = vr[0][1] - vr[0][0]
+            yr = vr[1][1] - vr[1][0]
+            if xr == 0 or yr == 0:
+                return None
+            best, best_d = None, float('inf')
+            for item in pi.items:
+                if not isinstance(item, pg.ScatterPlotItem):
+                    continue
+                pts = item.data
+                if pts is None or len(pts) == 0:
+                    continue
+                try:
+                    xd = np.array([p[0] for p in pts])
+                    yd = np.array([p[1] for p in pts])
+                except (IndexError, TypeError):
+                    try:
+                        xd = pts['x']; yd = pts['y']
+                    except Exception:
+                        continue
+                dx = (xd - mx) / xr; dy = (yd - my) / yr
+                dists = np.sqrt(dx**2 + dy**2)
+                md = dists[np.argmin(dists)]
+                if md * self.width() < threshold_px and md < best_d:
+                    best_d = md; best = item
+            return best
+        except Exception:
+            return None
+
+    def _closest_curve(self, pi, scene_pos, threshold_px=15):
+        """
+        Args:
+            pi (Any): The pi.
+            scene_pos (Any): The scene pos.
+            threshold_px (Any): The threshold px.
+        Returns:
+            object: Result of the operation.
+        """
+        try:
+            vb = pi.getViewBox()
+            dp = vb.mapSceneToView(scene_pos)
+            mx, my = dp.x(), dp.y()
+            vr = vb.viewRange()
+            xr = vr[0][1] - vr[0][0]
+            yr = vr[1][1] - vr[1][0]
+            if xr == 0 or yr == 0:
+                return None
+            best, best_d = None, float('inf')
+            for item in pi.listDataItems():
+                if isinstance(item, pg.ScatterPlotItem):
+                    continue
+                if not isinstance(item, (pg.PlotCurveItem, pg.PlotDataItem)):
+                    continue
+                xd = item.getData()[0] if isinstance(item, pg.PlotDataItem) \
+                    else item.xData
+                yd = item.getData()[1] if isinstance(item, pg.PlotDataItem) \
+                    else item.yData
+                if xd is None or yd is None or len(xd) == 0:
+                    continue
+                dx = (xd - mx) / xr; dy = (yd - my) / yr
+                dists = np.sqrt(dx**2 + dy**2)
+                md = dists[np.argmin(dists)]
+                if md * self.width() < threshold_px and md < best_d:
+                    best_d = md; best = item
+            return best
+        except Exception:
+            return None
+
+    def _bar_at(self, pi, scene_pos):
+        """Return the BarGraphItem the cursor is inside (data-space test).
+        Skips legend swatches (width == 0).
+        Args:
+            pi (Any): The pi.
+            scene_pos (Any): The scene pos.
+        Returns:
+            None
+        """
+        try:
+            vb = pi.getViewBox()
+            dp = vb.mapSceneToView(scene_pos)
+            cx, cy = dp.x(), dp.y()
+            for item in pi.items:
+                if not isinstance(item, pg.BarGraphItem):
+                    continue
+                w = item.opts.get('width', 0)
+                if (not hasattr(w, '__len__') and w == 0):
+                    continue
+                x_arr = item.opts.get('x', [])
+                h_arr = item.opts.get('height', [])
+                if not hasattr(x_arr, '__len__'):
+                    x_arr = [x_arr]
+                if not hasattr(h_arr, '__len__'):
+                    h_arr = [h_arr]
+                half_w = (w / 2) if not hasattr(w, '__len__') else \
+                         (w[0] / 2 if len(w) else 0.35)
+                for xi, hi in zip(x_arr, h_arr):
+                    y_lo, y_hi = min(0.0, float(hi)), max(0.0, float(hi))
+                    if (float(xi) - half_w <= cx <= float(xi) + half_w
+                            and y_lo <= cy <= y_hi):
+                        return item
+        except Exception:
+            pass
+        return None
+
+    # ── Double-click ─────────────────────────────────────────────────
+
+    def mouseDoubleClickEvent(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        if not _CUSTOM_PLOT_AVAILABLE:
+            super().mouseDoubleClickEvent(event)
+            return
+        try:
+            from widget.custom_plot_widget import (
+                TitleEditorDialog, AxisLabelEditorDialog,
+                LegendEditorDialog, BackgroundEditorDialog,
+                ScatterEditorDialog, TraceEditorDialog,
+            )
+
+            pos = (event.position() if hasattr(event, 'position')
+                   else event.pos())
+            scene_pos = self.mapToScene(pos.toPoint())
+
+            pi = self._plot_item_at(scene_pos)
+            if pi is None:
+                event.accept()
+                return
+
+            adapter = self._adapter_for(pi)
+            dlg_parent = self.parent()
+
+            tl = pi.titleLabel
+            if tl and tl.isVisible():
+                if tl.mapRectToScene(
+                        tl.boundingRect()).contains(scene_pos):
+                    TitleEditorDialog(adapter, dlg_parent).exec()
+                    event.accept(); return
+
+            la = pi.getAxis('left')
+            if la.mapRectToScene(
+                    la.boundingRect()).contains(scene_pos):
+                AxisLabelEditorDialog(
+                    adapter, 'left', dlg_parent).exec()
+                event.accept(); return
+
+            ba = pi.getAxis('bottom')
+            if ba.mapRectToScene(
+                    ba.boundingRect()).contains(scene_pos):
+                AxisLabelEditorDialog(
+                    adapter, 'bottom', dlg_parent).exec()
+                event.accept(); return
+
+            legend = getattr(pi, 'legend', None)
+            if legend and legend.isVisible():
+                try:
+                    if legend.mapRectToScene(
+                            legend.boundingRect()).contains(scene_pos):
+                        adapter.legend = legend
+                        LegendEditorDialog(adapter, dlg_parent).exec()
+                        event.accept(); return
+                except Exception:
+                    pass
+
+            scat = self._closest_scatter(pi, scene_pos)
+            if scat is not None:
+                ScatterEditorDialog(scat, adapter, dlg_parent).exec()
+                event.accept(); return
+
+            curve = self._closest_curve(pi, scene_pos)
+            if curve is not None:
+                TraceEditorDialog(curve, adapter, dlg_parent).exec()
+                event.accept(); return
+
+            bar_item = self._bar_at(pi, scene_pos)
+            if bar_item is not None:
+                from PySide6.QtWidgets import QColorDialog
+                try:
+                    cur = pg.mkBrush(
+                        bar_item.opts.get('brush', 'b')).color()
+                except Exception:
+                    cur = QColor(100, 120, 220)
+                new_c = QColorDialog.getColor(cur, self, "Bar Color")
+                if new_c.isValid():
+                    alpha = new_c.alpha() if new_c.alpha() < 255 else 215
+                    bar_item.setOpts(
+                        brush=pg.mkBrush(
+                            new_c.red(), new_c.green(),
+                            new_c.blue(), alpha),
+                        pen=pg.mkPen('w', width=0.5))
+                event.accept(); return
+
+            BackgroundEditorDialog(adapter, dlg_parent).exec()
+            event.accept()
+
+        except Exception as e:
+            print(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
+            import traceback; traceback.print_exc()
+            super().mouseDoubleClickEvent(event)
+
 
 def _get_element_color(element, index, cfg):
-    """Get color for an element from config or defaults."""
+    """Get color for an element from config or defaults.
+    Args:
+        element (Any): The element.
+        index (Any): Row or item index.
+        cfg (Any): The cfg.
+    Returns:
+        object: Result of the operation.
+    """
     colors = cfg.get('element_colors', {})
     if element in colors:
         return colors[element]
@@ -104,13 +493,24 @@ def _get_element_color(element, index, cfg):
 
 
 def _get_element_display_name(element, cfg):
-    """Get display name for an element (renamed or original)."""
+    """Get display name for an element (renamed or original).
+    Args:
+        element (Any): The element.
+        cfg (Any): The cfg.
+    Returns:
+        object: Result of the operation.
+    """
     mappings = cfg.get('element_name_mappings', {})
     return mappings.get(element, element)
 
 
 def _get_xy_labels(cfg):
-    """Build x/y label strings."""
+    """Build x/y label strings.
+    Args:
+        cfg (Any): The cfg.
+    Returns:
+        tuple: Result of the operation.
+    """
     dt = cfg.get('data_type_display', 'Counts')
     x_base = HIST_LABEL_MAP.get(dt, 'Value')
     y_base = 'Number of Particles'
@@ -118,17 +518,34 @@ def _get_xy_labels(cfg):
 
 
 def _is_multi(input_data):
+    """
+    Args:
+        input_data (Any): The input data.
+    Returns:
+        object: Result of the operation.
+    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _sample_names(input_data):
+    """
+    Args:
+        input_data (Any): The input data.
+    Returns:
+        list: Result of the operation.
+    """
     if input_data and input_data.get('type') == 'multiple_sample_data':
         return input_data.get('sample_names', [])
     return []
 
 
 def _can_sum(cfg):
-    """Check if current data type supports per-particle summation."""
+    """Check if current data type supports per-particle summation.
+    Args:
+        cfg (Any): The cfg.
+    Returns:
+        object: Result of the operation.
+    """
     return cfg.get('data_type_display', 'Counts') in SUMMABLE_DATA_TYPES
 
 
@@ -147,7 +564,6 @@ def _apply_element_groups(particles, dk, groups):
     if not particles:
         return {}
 
-    # element -> group_name
     elem_to_group = {}
     for grp in groups:
         for el in grp.get('elements', []):
@@ -184,6 +600,11 @@ def _apply_element_groups_multi(particles, sample_names, dk, groups):
 
     Returns:
         dict {sample_name: {display_label: [values]}}
+    Args:
+        particles (Any): The particles.
+        sample_names (Any): The sample names.
+        dk (Any): The dk.
+        groups (Any): The groups.
     """
     if not particles:
         return {}
@@ -223,14 +644,16 @@ def _apply_element_groups_multi(particles, sample_names, dk, groups):
     return {k: v for k, v in result.items() if v}
 
 
-# ═══════════════════════════════════════════════
-# Element Group Editor Widget
-# ═══════════════════════════════════════════════
-
 class ElementGroupEditor(QGroupBox):
     """Widget for defining element groups (sum per particle)."""
 
     def __init__(self, groups, available_elements, parent=None):
+        """
+        Args:
+            groups (Any): The groups.
+            available_elements (Any): The available elements.
+            parent (Any): Parent widget or object.
+        """
         super().__init__("Element Groups (Sum per Particle)", parent)
         self._groups = [dict(g) for g in groups]
         self._available = available_elements or []
@@ -248,13 +671,11 @@ class ElementGroupEditor(QGroupBox):
         info.setWordWrap(True)
         layout.addWidget(info)
 
-        # Group list
         self._group_list = QListWidget()
         self._group_list.setMaximumHeight(120)
         self._group_list.currentRowChanged.connect(self._on_group_selected)
         layout.addWidget(self._group_list)
 
-        # Buttons
         btn_row = QHBoxLayout()
         self._add_btn = QPushButton("+ Add Group")
         self._add_btn.clicked.connect(self._add_group)
@@ -266,7 +687,6 @@ class ElementGroupEditor(QGroupBox):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # Detail panel
         self._detail_frame = QFrame()
         self._detail_frame.setFrameShape(QFrame.StyledPanel)
         dl = QVBoxLayout(self._detail_frame)
@@ -305,6 +725,10 @@ class ElementGroupEditor(QGroupBox):
             self._group_list.addItem(f"{name}  [{elems}]")
 
     def _on_group_selected(self, row):
+        """
+        Args:
+            row (Any): Row index.
+        """
         has = 0 <= row < len(self._groups)
         self._remove_btn.setEnabled(has)
         self._detail_frame.setVisible(has)
@@ -320,12 +744,10 @@ class ElementGroupEditor(QGroupBox):
             self._color_btn.setStyleSheet(
                 f"background-color: {c}; border: 1px solid black;")
 
-            # Populate element list
             self._elem_list.blockSignals(True)
             self._elem_list.clear()
             selected_elems = set(g.get('elements', []))
 
-            # Elements already in OTHER groups
             used_elsewhere = set()
             for i, og in enumerate(self._groups):
                 if i != row:
@@ -362,6 +784,10 @@ class ElementGroupEditor(QGroupBox):
                     min(row, len(self._groups) - 1))
 
     def _on_name_changed(self, text):
+        """
+        Args:
+            text (Any): Text string.
+        """
         row = self._group_list.currentRow()
         if 0 <= row < len(self._groups):
             self._groups[row]['name'] = text.strip() or f'Group {row + 1}'
@@ -393,20 +819,27 @@ class ElementGroupEditor(QGroupBox):
                     f"border: 1px solid black;")
 
     def collect(self):
-        """Return list of valid groups (with ≥1 element and a name)."""
+        """Return list of valid groups (with ≥1 element and a name).
+        Returns:
+            list: Result of the operation.
+        """
         return [g for g in self._groups
                 if g.get('elements') and g.get('name')]
 
-
-# ═══════════════════════════════════════════════
-# Histogram Settings Dialog
-# ═══════════════════════════════════════════════
 
 class HistogramSettingsDialog(QDialog):
     """Full settings dialog for histogram node."""
 
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None):
+        """
+        Args:
+            config (Any): Configuration dictionary.
+            is_multi (Any): The is multi.
+            sample_names (Any): The sample names.
+            parent (Any): Parent widget or object.
+            available_elements (Any): The available elements.
+        """
         super().__init__(parent)
         self.setWindowTitle("Histogram Settings")
         self.setMinimumWidth(520)
@@ -417,6 +850,10 @@ class HistogramSettingsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
+        """
+        Returns:
+            tuple: Result of the operation.
+        """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -426,7 +863,6 @@ class HistogramSettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        # ── Multi-sample display ──
         if self._multi:
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
@@ -435,13 +871,8 @@ class HistogramSettingsDialog(QDialog):
             self.display_mode.setCurrentText(
                 self._cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
             fl.addRow("Display Mode:", self.display_mode)
-            self.normalize = QCheckBox("Normalize by sample size")
-            self.normalize.setChecked(
-                self._cfg.get('normalize_samples', False))
-            fl.addRow(self.normalize)
             layout.addWidget(g)
 
-        # ── Data type ──
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
         self.data_type = QComboBox()
@@ -451,49 +882,31 @@ class HistogramSettingsDialog(QDialog):
         fl.addRow("Data:", self.data_type)
         layout.addWidget(g)
 
-        # ── Element Groups ──
         self._group_editor = ElementGroupEditor(
             self._cfg.get('element_groups', []),
             self._available_elements)
         layout.addWidget(self._group_editor)
 
-        # ── Element Display Names ──
         g = QGroupBox("Element Display Names")
         el_vl = QVBoxLayout(g)
         el_vl.addWidget(QLabel(
             "Rename individual elements in legend and stats:"))
         self._elem_name_edits = {}
-        self._elem_color_btns = {}
 
-        existing_colors = self._cfg.get('element_colors', {})
         existing_names = self._cfg.get('element_name_mappings', {})
+        all_elements = list(self._available_elements)
 
-        all_elements = list(existing_colors.keys())
-        for el in self._available_elements:
-            if el not in all_elements:
-                all_elements.append(el)
-
-        for i, el in enumerate(all_elements):
+        for el in all_elements:
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
             lbl = QLabel(el)
             lbl.setFixedWidth(80)
             row.addWidget(lbl)
             ne = QLineEdit(existing_names.get(el, el))
-            ne.setFixedWidth(140)
+            ne.setFixedWidth(180)
             ne.setPlaceholderText(el)
             row.addWidget(ne)
             self._elem_name_edits[el] = ne
-            hex_c = existing_colors.get(
-                el, DEFAULT_ELEMENT_COLORS[i % len(DEFAULT_ELEMENT_COLORS)])
-            btn = QPushButton()
-            btn.setFixedSize(30, 22)
-            btn.setStyleSheet(
-                f"background-color: {hex_c}; border: 1px solid black;")
-            btn.clicked.connect(
-                lambda _, e=el, b=btn: self._pick_elem_color(e, b))
-            row.addWidget(btn)
-            self._elem_color_btns[el] = (btn, hex_c)
             rst = QPushButton("\u21ba")
             rst.setFixedSize(22, 22)
             rst.setToolTip(f"Reset to: {el}")
@@ -509,7 +922,6 @@ class HistogramSettingsDialog(QDialog):
             el_vl.addWidget(QLabel("(No elements detected yet)"))
         layout.addWidget(g)
 
-        # ── Curve & Median ──
         g = QGroupBox("Curve && Median")
         fl = QFormLayout(g)
         self.show_curve = QCheckBox()
@@ -522,7 +934,7 @@ class HistogramSettingsDialog(QDialog):
         fl.addRow("Curve Type:", self.curve_type)
         self.show_median = QCheckBox()
         self.show_median.setChecked(self._cfg.get('show_median', True))
-        fl.addRow("Show Median Line:", self.show_median)
+        fl.addRow("Show Median Line (legacy):", self.show_median)
         self._curve_color = QColor(self._cfg.get('curve_color', '#2C3E50'))
         self.curve_color_btn = QPushButton()
         self.curve_color_btn.setFixedSize(60, 25)
@@ -533,7 +945,94 @@ class HistogramSettingsDialog(QDialog):
         fl.addRow("Curve Color:", self.curve_color_btn)
         layout.addWidget(g)
 
-        # ── Plot options ──
+        g = QGroupBox("Statistical Overlays")
+        fl = QFormLayout(g)
+
+        def _color_row(cfg_key, label, default_color):
+            """Return (row_widget, color_holder, style_combo, width_spin).
+            Args:
+                cfg_key (Any): The cfg key.
+                label (Any): Label text.
+                default_color (Any): The default color.
+            Returns:
+                tuple: Result of the operation.
+            """
+            rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
+            holder = [self._cfg.get(cfg_key, default_color)]
+            btn = QPushButton(); btn.setFixedSize(26, 22)
+            btn.setStyleSheet(f"background:{holder[0]};")
+            def _pick(h=holder, b=btn):
+                """
+                Args:
+                    h (Any): The h.
+                    b (Any): The b.
+                """
+                from PySide6.QtWidgets import QColorDialog as _CD
+                c = _CD.getColor(QColor(h[0]), self)
+                if c.isValid():
+                    h[0] = c.name(); b.setStyleSheet(f"background:{h[0]};")
+            btn.clicked.connect(_pick)
+            rh.addWidget(btn); rh.addStretch()
+            return rw, holder
+
+        self.show_median_line = QCheckBox()
+        self.show_median_line.setChecked(self._cfg.get('show_median_line', False))
+        med_w, self._med_color = _color_row('median_line_color', 'med', '#0F6E56')
+        med_row = QHBoxLayout()
+        med_row.addWidget(self.show_median_line); med_row.addWidget(med_w)
+        med_container = QWidget(); med_container.setLayout(med_row)
+        fl.addRow("Median Line:", med_container)
+
+        self.show_mean_line = QCheckBox()
+        self.show_mean_line.setChecked(self._cfg.get('show_mean_line', False))
+        mean_w, self._mean_color = _color_row('mean_line_color', 'mean', '#B45309')
+        mean_row = QHBoxLayout()
+        mean_row.addWidget(self.show_mean_line); mean_row.addWidget(mean_w)
+        mean_container = QWidget(); mean_container.setLayout(mean_row)
+        fl.addRow("Mean Line:", mean_container)
+
+        self.show_mode_marker = QCheckBox()
+        self.show_mode_marker.setChecked(self._cfg.get('show_mode_marker', False))
+        mode_w, self._mode_color = _color_row('mode_line_color', 'mode', '#7C3AED')
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.show_mode_marker); mode_row.addWidget(mode_w)
+        mode_container = QWidget(); mode_container.setLayout(mode_row)
+        fl.addRow("Mode Marker:", mode_container)
+
+        self.shade_combo = QComboBox()
+        self.shade_combo.addItems(SHADE_TYPES)
+        self.shade_combo.setCurrentText(self._cfg.get('shade_type', 'None'))
+        fl.addRow("Shaded Region:", self.shade_combo)
+
+        shade_row_w = QWidget(); shade_rh = QHBoxLayout(shade_row_w)
+        shade_rh.setContentsMargins(0,0,0,0)
+        self._shade_color_val = self._cfg.get('shade_color', '#534AB7')
+        self._shade_clr_btn = QPushButton(); self._shade_clr_btn.setFixedSize(26, 22)
+        self._shade_clr_btn.setStyleSheet(f"background:{self._shade_color_val};")
+        self._shade_clr_btn.clicked.connect(self._pick_shade_color_hist)
+        self._shade_alpha_spin = QDoubleSpinBox()
+        self._shade_alpha_spin.setRange(0.01, 1.0); self._shade_alpha_spin.setDecimals(2)
+        self._shade_alpha_spin.setValue(self._cfg.get('shade_alpha', 0.18))
+        shade_rh.addWidget(self._shade_clr_btn)
+        shade_rh.addWidget(QLabel("alpha:")); shade_rh.addWidget(self._shade_alpha_spin)
+        shade_rh.addStretch()
+        fl.addRow("Shade Color / alpha:", shade_row_w)
+
+        self.show_det_cb = QCheckBox()
+        self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
+        fl.addRow("Detection Limit Line:", self.show_det_cb)
+        self.det_val_spin = QDoubleSpinBox()
+        self.det_val_spin.setRange(0.0, 999999999); self.det_val_spin.setDecimals(4)
+        self.det_val_spin.setValue(self._cfg.get('det_limit_value', 1.0))
+        fl.addRow("DL Value:", self.det_val_spin)
+        self.det_label_edit = QLineEdit(self._cfg.get('det_limit_label', ''))
+        self.det_label_edit.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
+        fl.addRow("DL Label:", self.det_label_edit)
+        self.show_box_cb = QCheckBox()
+        self.show_box_cb.setChecked(self._cfg.get('show_box', True))
+        fl.addRow("Figure Box (frame):", self.show_box_cb)
+        layout.addWidget(g)
+
         g = QGroupBox("Plot Options")
         fl = QFormLayout(g)
         self.bins = QSpinBox()
@@ -553,9 +1052,12 @@ class HistogramSettingsDialog(QDialog):
         self.show_stats = QCheckBox()
         self.show_stats.setChecked(self._cfg.get('show_stats', True))
         fl.addRow("Show Statistics:", self.show_stats)
+        self.label_mode = QComboBox()
+        self.label_mode.addItems(LABEL_MODES)
+        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Element Label:", self.label_mode)
         layout.addWidget(g)
 
-        # ── Axis limits ──
         g = QGroupBox("Axis Limits")
         fl = QFormLayout(g)
         self.auto_x = QCheckBox("Auto X")
@@ -592,34 +1094,20 @@ class HistogramSettingsDialog(QDialog):
         fl.addRow("Y Range:", w2)
         layout.addWidget(g)
 
-        # ── Sample colors (multi) ──
         if self._multi:
-            g = QGroupBox("Sample Colors && Names")
+            g = QGroupBox("Sample Names")
             vl = QVBoxLayout(g)
-            self._color_btns = {}
             self._name_edits = {}
-            colors = self._cfg.get('sample_colors', {})
             mappings = self._cfg.get('sample_name_mappings', {})
-            for i, sn in enumerate(self._samples):
+            for sn in self._samples:
                 row = QHBoxLayout()
                 ne = QLineEdit(mappings.get(sn, sn))
-                ne.setFixedWidth(180)
+                ne.setFixedWidth(220)
+                row.addWidget(QLabel(sn[:20]))
                 row.addWidget(ne)
                 self._name_edits[sn] = ne
-                cb = QPushButton()
-                cb.setFixedSize(30, 22)
-                c = colors.get(
-                    sn,
-                    DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                cb.setStyleSheet(
-                    f"background-color: {c}; border: 1px solid black;")
-                cb.clicked.connect(
-                    lambda _, s=sn, b=cb: self._pick_sample_color(s, b))
-                row.addWidget(cb)
-                self._color_btns[sn] = (cb, c)
                 rst = QPushButton("\u21ba")
                 rst.setFixedSize(22, 22)
-                rst.setToolTip(f"Reset to: {sn}")
                 rst.clicked.connect(
                     lambda _, o=sn: self._name_edits[o].setText(o))
                 row.addWidget(rst)
@@ -628,10 +1116,6 @@ class HistogramSettingsDialog(QDialog):
                 w3.setLayout(row)
                 vl.addWidget(w3)
             layout.addWidget(g)
-
-        # ── Font ──
-        self._font_grp = FontSettingsGroup(self._cfg)
-        layout.addWidget(self._font_grp.build())
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -646,25 +1130,19 @@ class HistogramSettingsDialog(QDialog):
             self.curve_color_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid black;")
 
-    def _pick_elem_color(self, elem, btn):
+    def _pick_shade_color_hist(self):
         from PySide6.QtWidgets import QColorDialog
-        cur = QColor(self._elem_color_btns[elem][1])
-        c = QColorDialog.getColor(cur, self, f"Color for {elem}")
+        from PySide6.QtGui import QColor
+        c = QColorDialog.getColor(QColor(self._shade_color_val), self)
         if c.isValid():
-            btn.setStyleSheet(
-                f"background-color: {c.name()}; border: 1px solid black;")
-            self._elem_color_btns[elem] = (btn, c.name())
-
-    def _pick_sample_color(self, name, btn):
-        from PySide6.QtWidgets import QColorDialog
-        cur = QColor(self._color_btns[name][1])
-        c = QColorDialog.getColor(cur, self, f"Color for {name}")
-        if c.isValid():
-            btn.setStyleSheet(
-                f"background-color: {c.name()}; border: 1px solid black;")
-            self._color_btns[name] = (btn, c.name())
+            self._shade_color_val = c.name()
+            self._shade_clr_btn.setStyleSheet(f"background:{self._shade_color_val};")
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         out = dict(self._cfg)
         out['data_type_display'] = self.data_type.currentText()
         out['element_groups'] = self._group_editor.collect()
@@ -672,6 +1150,19 @@ class HistogramSettingsDialog(QDialog):
         out['curve_type'] = self.curve_type.currentText()
         out['show_median'] = self.show_median.isChecked()
         out['curve_color'] = self._curve_color.name()
+        out['show_median_line'] = self.show_median_line.isChecked()
+        out['median_line_color'] = self._med_color[0]
+        out['show_mean_line'] = self.show_mean_line.isChecked()
+        out['mean_line_color'] = self._mean_color[0]
+        out['show_mode_marker'] = self.show_mode_marker.isChecked()
+        out['mode_line_color'] = self._mode_color[0]
+        out['shade_type'] = self.shade_combo.currentText()
+        out['shade_color'] = self._shade_color_val
+        out['shade_alpha'] = self._shade_alpha_spin.value()
+        out['show_det_limit'] = self.show_det_cb.isChecked()
+        out['det_limit_value'] = self.det_val_spin.value()
+        out['det_limit_label'] = self.det_label_edit.text().strip()
+        out['show_box'] = self.show_box_cb.isChecked()
         out['bins'] = self.bins.value()
         out['alpha'] = self.alpha.value() / 100.0
         out['log_x'] = self.log_x.isChecked()
@@ -683,28 +1174,26 @@ class HistogramSettingsDialog(QDialog):
         out['auto_y'] = self.auto_y.isChecked()
         out['y_min'] = self.y_min.value()
         out['y_max'] = self.y_max.value()
-        out['element_colors'] = {
-            e: c for e, (_, c) in self._elem_color_btns.items()}
         out['element_name_mappings'] = {
             e: ne.text().strip() or e
             for e, ne in self._elem_name_edits.items()}
         if self._multi:
             out['display_mode'] = self.display_mode.currentText()
-            out['normalize_samples'] = self.normalize.isChecked()
-            out['sample_colors'] = {
-                sn: c for sn, (_, c) in self._color_btns.items()}
             out['sample_name_mappings'] = {
                 sn: ne.text() for sn, ne in self._name_edits.items()}
-        out.update(self._font_grp.collect())
+        out['label_mode'] = self.label_mode.currentText()
         return out
 
 
-# ═══════════════════════════════════════════════
-# PyQtGraph histogram drawing helpers
-# ═══════════════════════════════════════════════
-
 def _get_label_color(label, idx, cfg):
-    """Get color for a label: check element_colors → group color → default."""
+    """Get color for a label: check element_colors → group color → default.
+    Args:
+        label (Any): Label text.
+        idx (Any): The idx.
+        cfg (Any): The cfg.
+    Returns:
+        object: Result of the operation.
+    """
     ec = cfg.get('element_colors', {})
     if label in ec:
         return ec[label]
@@ -715,14 +1204,16 @@ def _get_label_color(label, idx, cfg):
                              i % len(DEFAULT_ELEMENT_COLORS)])
     return DEFAULT_ELEMENT_COLORS[idx % len(DEFAULT_ELEMENT_COLORS)]
 
-# ═══════════════════════════════════════════════
-# Histogram Display Dialog (PyQtGraph)
-# ═══════════════════════════════════════════════
 
 class HistogramDisplayDialog(QDialog):
     """Full-figure histogram dialog with PyQtGraph and right-click menu."""
 
     def __init__(self, histogram_node, parent_window=None):
+        """
+        Args:
+            histogram_node (Any): The histogram node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = histogram_node
         self.parent_window = parent_window
@@ -742,7 +1233,7 @@ class HistogramDisplayDialog(QDialog):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        self.pw = pg.GraphicsLayoutWidget()
+        self.pw = EnhancedGraphicsLayoutWidget()
         self.pw.setBackground('w')
         self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
         self.pw.customContextMenuRequested.connect(self._ctx_menu)
@@ -754,41 +1245,60 @@ class HistogramDisplayDialog(QDialog):
             "background: #F8FAFC; border-top: 1px solid #E2E8F0;")
         layout.addWidget(self.stats_label)
 
-    # ── Context menu ──
 
     def _ctx_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
-            ('show_curve', 'Show Density Curve', True),
-            ('show_median', 'Show Median Line', True),
-            ('show_stats', 'Show Statistics', True),
-            ('log_x', 'Log X-axis', False),
-            ('log_y', 'Log Y-axis', False),
-            ('auto_x', 'Auto X Range', True),
-            ('auto_y', 'Auto Y Range', True),
+            ('show_curve',  'Density Curve',       True),
+            ('show_stats',  'Statistics',          True),
+            ('log_x',       'Log X-axis',          False),
+            ('log_y',       'Log Y-axis',          False),
+            ('auto_x',      'Auto X Range',        True),
+            ('auto_y',      'Auto Y Range',        True),
+            ('show_box',    'Figure Box (frame)',   True),
         ]:
-            a = tg.addAction(label)
-            a.setCheckable(True)
+            a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+
+        tg.addSeparator()
+        sep1 = tg.addAction("-- Stat Lines --"); sep1.setEnabled(False)
+        for key, label in [
+            ('show_median_line',  'Median Line'),
+            ('show_mean_line',    'Mean Line'),
+            ('show_mode_marker',  'Mode Marker'),
+            ('show_det_limit',    'Detection Limit'),
+        ]:
+            a = tg.addAction(label); a.setCheckable(True)
+            a.setChecked(cfg.get(key, False))
+            a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+
+        tg.addSeparator()
+        sep2 = tg.addAction("-- Shaded Region --"); sep2.setEnabled(False)
+        shm = tg.addMenu("Shade Type")
+        for st in SHADE_TYPES:
+            a = shm.addAction(st); a.setCheckable(True)
+            a.setChecked(cfg.get('shade_type', 'None') == st)
+            a.triggered.connect(lambda _, v=st: self._set('shade_type', v))
 
         dt_menu = menu.addMenu("Data Type")
         cur_dt = cfg.get('data_type_display', 'Counts')
         for dt in HIST_DATA_TYPES:
-            a = dt_menu.addAction(dt)
-            a.setCheckable(True)
+            a = dt_menu.addAction(dt); a.setCheckable(True)
             a.setChecked(dt == cur_dt)
-            a.triggered.connect(
-                lambda _, d=dt: self._set('data_type_display', d))
+            a.triggered.connect(lambda _, d=dt: self._set('data_type_display', d))
 
         ct_menu = menu.addMenu("Curve Type")
         cur_ct = cfg.get('curve_type', 'Kernel Density')
         for ct in CURVE_TYPES:
-            a = ct_menu.addAction(ct)
-            a.setCheckable(True)
+            a = ct_menu.addAction(ct); a.setCheckable(True)
             a.setChecked(ct == cur_ct)
             a.triggered.connect(lambda _, c=ct: self._set('curve_type', c))
 
@@ -796,13 +1306,10 @@ class HistogramDisplayDialog(QDialog):
             dm_menu = menu.addMenu("Display Mode")
             cur = cfg.get('display_mode', HIST_DISPLAY_MODES[0])
             for m in HIST_DISPLAY_MODES:
-                a = dm_menu.addAction(m)
-                a.setCheckable(True)
+                a = dm_menu.addAction(m); a.setCheckable(True)
                 a.setChecked(m == cur)
-                a.triggered.connect(
-                    lambda _, mode=m: self._set('display_mode', mode))
+                a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
 
-        # Show active groups
         groups = cfg.get('element_groups', [])
         if groups:
             menu.addSeparator()
@@ -814,23 +1321,34 @@ class HistogramDisplayDialog(QDialog):
                 a.setEnabled(False)
 
         menu.addSeparator()
-        menu.addAction(
-            "\u2699  Configure\u2026").triggered.connect(self._open_settings)
-        menu.addAction(
-            "\U0001f4be Download Figure\u2026").triggered.connect(
-            self._download_figure)
+        menu.addAction("Configure...").triggered.connect(self._open_settings)
+        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        if _CUSTOM_PLOT_AVAILABLE:
+            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _toggle_key(self, key):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
     def _get_available_elements(self):
-        """Get raw element names from input (before grouping)."""
+        """Get raw element names from input (before grouping).
+        Returns:
+            object: Result of the operation.
+        """
         try:
             data = self.node.input_data
             if not data:
@@ -852,6 +1370,19 @@ class HistogramDisplayDialog(QDialog):
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+
+    def _open_plot_settings(self):
+        """Open the full PlotSettingsDialog (font, grid, traces) on the
+        first available PlotItem inside the GraphicsLayoutWidget."""
+        if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None:
+            return
+        pi = next(
+            (item for item in self.pw.scene().items()
+             if isinstance(item, pg.PlotItem)),
+            None,
+        )
+        if pi is not None:
+            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
 
     def _download_figure(self):
         import pandas as pd
@@ -889,7 +1420,6 @@ class HistogramDisplayDialog(QDialog):
         download_pyqtgraph_figure(
             self.pw, self, default_name='histogram', csv_data=csv_df)
 
-    # ── Refresh ──
 
     def _refresh(self):
         try:
@@ -897,7 +1427,7 @@ class HistogramDisplayDialog(QDialog):
             idx = parent_layout.indexOf(self.pw)
             parent_layout.removeWidget(self.pw)
             self.pw.deleteLater()
-            self.pw = pg.GraphicsLayoutWidget()
+            self.pw = EnhancedGraphicsLayoutWidget()
             self.pw.setBackground('w')
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)
@@ -944,6 +1474,11 @@ class HistogramDisplayDialog(QDialog):
             traceback.print_exc()
 
     def _draw_subplots(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         cols = min(2, len(samples))
         for idx, sn in enumerate(samples):
@@ -956,13 +1491,41 @@ class HistogramDisplayDialog(QDialog):
                 _draw_single_histogram(pi, sd, cfg, single_color=color)
 
     def _draw_side_by_side(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
+        first_pi = None
+        xl, yl = _get_xy_labels(cfg)
         for idx, (sn, sd) in enumerate(plot_data.items()):
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg))
+            pi = self.pw.addPlot(row=0, col=idx, title=get_display_name(sn, cfg))
             if sd:
                 color = get_sample_color(sn, idx, cfg)
                 _draw_single_histogram(pi, sd, cfg, single_color=color)
+            if first_pi is None:
+                first_pi = pi
+            else:
+                pi.setYLink(first_pi)
+                pi.getAxis('left').setLabel('')
+                pi.getAxis('left').setStyle(showValues=False)
+            if cfg.get('log_x', False):
+                pi.getAxis('bottom').setLogMode(True)
+            if cfg.get('log_y', False):
+                pi.getAxis('left').setLogMode(True)
+            if not cfg.get('auto_x', True):
+                xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+                if cfg.get('log_x', False) and xn > 0 and xx > 0:
+                    xn, xx = float(np.log10(xn)), float(np.log10(xx))
+                pi.setXRange(xn, xx, padding=0)
+            apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         pi = self.pw.addPlot()
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
@@ -970,6 +1533,7 @@ class HistogramDisplayDialog(QDialog):
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
+        pi.legend = legend
 
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
@@ -995,12 +1559,28 @@ class HistogramDisplayDialog(QDialog):
             pi.getAxis('bottom').setLogMode(True)
         if cfg.get('log_y', False):
             pi.getAxis('left').setLogMode(True)
+        if not cfg.get('auto_x', True):
+            xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+            if cfg.get('log_x', False) and xn > 0 and xx > 0:
+                xn, xx = float(np.log10(xn)), float(np.log10(xx))
+            pi.setXRange(xn, xx, padding=0)
+        if not cfg.get('auto_y', True):
+            pi.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
         apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_combined(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         self._draw_overlaid(plot_data, cfg)
 
     def _update_stats(self, plot_data):
+        """
+        Args:
+            plot_data (Any): The plot data.
+        """
         cfg = self.node.config
         groups = cfg.get('element_groups', [])
         group_info = ""
@@ -1023,10 +1603,6 @@ class HistogramDisplayDialog(QDialog):
                 f"{total:,} values{group_info}")
 
 
-# ═══════════════════════════════════════════════
-# Histogram Plot Node
-# ═══════════════════════════════════════════════
-
 class HistogramPlotNode(QObject):
     """Histogram visualization node with element grouping support.
 
@@ -1039,22 +1615,43 @@ class HistogramPlotNode(QObject):
 
     DEFAULT_CONFIG = {
         'data_type_display': 'Counts',
-        'element_groups': [],         # [{"name","elements","color"}, ...]
-        'element_name_mappings': {},  # {element: display_name}
+        'element_groups': [],
+        'element_name_mappings': {},
         'show_curve': True,
         'curve_type': 'Kernel Density',
         'show_median': True,
+        'show_median_line': False,
+        'show_mean_line': False,
+        'show_mode_marker': False,
+        'median_line_color': '#0F6E56',
+        'median_line_style': 'dash',
+        'median_line_width': 2,
+        'mean_line_color': '#B45309',
+        'mean_line_style': 'solid',
+        'mean_line_width': 2,
+        'mode_line_color': '#7C3AED',
+        'mode_line_style': 'dot',
+        'mode_line_width': 2,
         'curve_color': '#2C3E50',
         'bins': 20,
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
         'show_stats': True,
+        'shade_type': 'None',
+        'shade_color': '#534AB7',
+        'shade_alpha': 0.18,
+        'show_det_limit': False,
+        'det_limit_value': 1.0,
+        'det_limit_color': '#DC2626',
+        'det_limit_style': 'dash',
+        'det_limit_width': 2,
+        'det_limit_label': '',
+        'show_box': True,
         'x_min': 0, 'x_max': 1000, 'auto_x': True,
         'y_min': 0, 'y_max': 100, 'auto_y': True,
         'element_colors': {},
         'display_mode': 'Overlaid (Different Colors)',
-        'normalize_samples': False,
         'sample_colors': {},
         'sample_name_mappings': {},
         'font_family': 'Times New Roman',
@@ -1062,9 +1659,14 @@ class HistogramPlotNode(QObject):
         'font_bold': False,
         'font_italic': False,
         'font_color': '#000000',
+        'label_mode': 'Symbol',
     }
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
         self.title = "Histogram"
         self.node_type = "histogram_plot"
@@ -1079,16 +1681,30 @@ class HistogramPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = HistogramDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
@@ -1101,6 +1717,8 @@ class HistogramPlotNode(QObject):
         particle has Fe=10fg, Si=5fg, Ti=3fg and group "FeSiTi"
         includes [Fe, Si, Ti], that particle contributes 18fg to
         the "FeSiTi" histogram. Ungrouped elements stay separate.
+        Returns:
+            None
         """
         if not self.input_data:
             return None
@@ -1131,6 +1749,12 @@ class HistogramPlotNode(QObject):
         return None
 
     def _extract_single(self, dk):
+        """
+        Args:
+            dk (Any): The dk.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -1147,6 +1771,12 @@ class HistogramPlotNode(QObject):
         return out or None
 
     def _extract_multi(self, dk):
+        """
+        Args:
+            dk (Any): The dk.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -1165,14 +1795,18 @@ class HistogramPlotNode(QObject):
                     if val > 0 and not np.isnan(val):
                         result[src].setdefault(el, []).append(val)
         return {k: v for k, v in result.items() if v} or None
-# ═══════════════════════════════════════════════
-# Bar Chart Settings Dialog
-# ═══════════════════════════════════════════════
 
 class BarChartSettingsDialog(QDialog):
     """Full settings dialog for element bar chart node."""
 
     def __init__(self, config, is_multi, sample_names, parent=None):
+        """
+        Args:
+            config (Any): Configuration dictionary.
+            is_multi (Any): The is multi.
+            sample_names (Any): The sample names.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("Element Bar Chart Settings")
         self.setMinimumWidth(460)
@@ -1199,9 +1833,6 @@ class BarChartSettingsDialog(QDialog):
             self.display_mode.setCurrentText(
                 self._cfg.get('display_mode', BAR_DISPLAY_MODES[0]))
             fl.addRow("Display Mode:", self.display_mode)
-            self.normalize = QCheckBox("Normalize by sample size")
-            self.normalize.setChecked(self._cfg.get('normalize_samples', False))
-            fl.addRow(self.normalize)
             layout.addWidget(g)
 
         g = QGroupBox("Plot Options")
@@ -1216,28 +1847,32 @@ class BarChartSettingsDialog(QDialog):
         self.log_y = QCheckBox()
         self.log_y.setChecked(self._cfg.get('log_y', False))
         fl.addRow("Log Y-axis:", self.log_y)
+        self.label_mode = QComboBox()
+        self.label_mode.addItems(LABEL_MODES)
+        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Element Label:", self.label_mode)
+        self.min_count = QSpinBox()
+        self.min_count.setRange(0, 100000)
+        self.min_count.setValue(self._cfg.get('min_particle_count', 10))
+        self.min_count.setSuffix(" particles")
+        self.min_count.setToolTip(
+            "Hide elements with fewer particles than this threshold.\n"
+            "Set to 0 to show all elements.")
+        fl.addRow("Min Particle Count:", self.min_count)
         layout.addWidget(g)
 
         if self._multi:
-            g = QGroupBox("Sample Colors & Names")
+            g = QGroupBox("Sample Names")
             vl = QVBoxLayout(g)
-            self._color_btns = {}
             self._name_edits = {}
-            colors = self._cfg.get('sample_colors', {})
             mappings = self._cfg.get('sample_name_mappings', {})
-            for i, sn in enumerate(self._samples):
+            for sn in self._samples:
                 row = QHBoxLayout()
                 ne = QLineEdit(mappings.get(sn, sn))
-                ne.setFixedWidth(180)
+                ne.setFixedWidth(220)
+                row.addWidget(QLabel(sn[:20]))
                 row.addWidget(ne)
                 self._name_edits[sn] = ne
-                cb = QPushButton()
-                cb.setFixedSize(30, 22)
-                c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                cb.setStyleSheet(f"background-color: {c}; border: 1px solid black;")
-                cb.clicked.connect(lambda _, s=sn, b=cb: self._pick_color(s, b))
-                row.addWidget(cb)
-                self._color_btns[sn] = (cb, c)
                 rst = QPushButton("\u21ba")
                 rst.setFixedSize(22, 22)
                 rst.clicked.connect(lambda _, o=sn: self._name_edits[o].setText(o))
@@ -1248,42 +1883,85 @@ class BarChartSettingsDialog(QDialog):
                 vl.addWidget(w)
             layout.addWidget(g)
 
-        self._font_grp = FontSettingsGroup(self._cfg)
-        layout.addWidget(self._font_grp.build())
+            g2 = QGroupBox("Sample Display Order")
+            vl2 = QVBoxLayout(g2)
+            hint = QLabel(
+                "Drag or use ↑↓ to set the order — useful for time series.")
+            hint.setStyleSheet("color: #6B7280; font-size: 10px;")
+            hint.setWordWrap(True)
+            vl2.addWidget(hint)
+            from PySide6.QtWidgets import QAbstractItemView as _AIV
+            self._order_list = QListWidget()
+            self._order_list.setMaximumHeight(130)
+            self._order_list.setDragDropMode(_AIV.InternalMove)
+            cur_order = self._cfg.get('sample_order', [])
+            ordered = [s for s in cur_order if s in self._samples]
+            ordered += [s for s in self._samples if s not in ordered]
+            for s in ordered:
+                self._order_list.addItem(s)
+            vl2.addWidget(self._order_list)
+            btn_row = QHBoxLayout()
+            up_btn = QPushButton("↑  Up")
+            up_btn.setFixedWidth(72)
+            up_btn.clicked.connect(self._move_up)
+            dn_btn = QPushButton("↓  Down")
+            dn_btn.setFixedWidth(72)
+            dn_btn.clicked.connect(self._move_down)
+            btn_row.addWidget(up_btn)
+            btn_row.addWidget(dn_btn)
+            btn_row.addStretch()
+            vl2.addLayout(btn_row)
+            layout.addWidget(g2)
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
-    def _pick_color(self, name, btn):
-        from PySide6.QtWidgets import QColorDialog
-        cur = QColor(self._color_btns[name][1])
-        c = QColorDialog.getColor(cur, self, f"Color for {name}")
-        if c.isValid():
-            btn.setStyleSheet(f"background-color: {c.name()}; border: 1px solid black;")
-            self._color_btns[name] = (btn, c.name())
+    def _move_up(self):
+        row = self._order_list.currentRow()
+        if row > 0:
+            item = self._order_list.takeItem(row)
+            self._order_list.insertItem(row - 1, item)
+            self._order_list.setCurrentRow(row - 1)
+
+    def _move_down(self):
+        row = self._order_list.currentRow()
+        if row < self._order_list.count() - 1:
+            item = self._order_list.takeItem(row)
+            self._order_list.insertItem(row + 1, item)
+            self._order_list.setCurrentRow(row + 1)
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         out = dict(self._cfg)
         out['show_values'] = self.show_values.isChecked()
         out['sort_bars'] = self.sort_bars.currentText()
         out['log_y'] = self.log_y.isChecked()
+        out['label_mode'] = self.label_mode.currentText()
+        out['min_particle_count'] = self.min_count.value()
         if self._multi:
             out['display_mode'] = self.display_mode.currentText()
-            out['normalize_samples'] = self.normalize.isChecked()
-            out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
-            out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
-        out.update(self._font_grp.collect())
+            out['sample_name_mappings'] = {
+                sn: ne.text() for sn, ne in self._name_edits.items()}
+            out['sample_order'] = [
+                self._order_list.item(i).text()
+                for i in range(self._order_list.count())]
         return out
 
 
-# ═══════════════════════════════════════════════
-# PyQtGraph histogram drawing helpers
-# ═══════════════════════════════════════════════
-
 def _prepare_values(values, data_type, log_x):
-    """Filter and optionally log-transform histogram values."""
+    """Filter and optionally log-transform histogram values.
+    Args:
+        values (Any): Array or sequence of values.
+        data_type (Any): The data type.
+        log_x (Any): The log x.
+    Returns:
+        object: Result of the operation.
+    """
     if not values:
         return None
     v = np.array(values, dtype=float)
@@ -1299,10 +1977,18 @@ def _prepare_values(values, data_type, log_x):
     return v
 
 
-def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None):
+def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
+                         name=''):
     """Draw histogram bars using PyQtGraph BarGraphItem.
 
     Returns: (processed_values, bin_edges, counts)
+    Args:
+        plot_item (Any): The plot item.
+        values (Any): Array or sequence of values.
+        cfg (Any): The cfg.
+        color_hex (Any): The color hex.
+        bins_n (Any): The bins n.
+        name (Any): Name string.
     """
     if bins_n is None:
         bins_n = cfg.get('bins', 20)
@@ -1320,13 +2006,22 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None):
         x=centres, height=y_plot, width=bw * 0.95,
         brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
         pen=pg.mkPen(color='w', width=0.5))
+    if name:
+        bar.opts['_trace_name'] = name
     plot_item.addItem(bar)
 
     return values, bin_edges, counts
 
 
 def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
-    """Add density curve overlay scaled to match count histogram."""
+    """Add density curve overlay scaled to match count histogram.
+    Args:
+        plot_item (Any): The plot item.
+        values (Any): Array or sequence of values.
+        cfg (Any): The cfg.
+        bin_edges (Any): The bin edges.
+        total_count (Any): The total count.
+    """
     curve_type = cfg.get('curve_type', 'Kernel Density')
     curve_color = cfg.get('curve_color', '#2C3E50')
     log_y = cfg.get('log_y', False)
@@ -1360,7 +2055,12 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
 
 
 def _add_median_line(plot_item, values, cfg):
-    """Add median vertical line with annotation."""
+    """Add median vertical line with annotation.
+    Args:
+        plot_item (Any): The plot item.
+        values (Any): Array or sequence of values.
+        cfg (Any): The cfg.
+    """
     fc = get_font_config(cfg)
     median = np.median(values)
 
@@ -1383,7 +2083,12 @@ def _add_median_line(plot_item, values, cfg):
 
 
 def _add_stats_text(plot_item, plot_data, cfg):
-    """Add statistics text box to histogram plot."""
+    """Add statistics text box to histogram plot.
+    Args:
+        plot_item (Any): The plot item.
+        plot_data (Any): The plot data.
+        cfg (Any): The cfg.
+    """
     fc = get_font_config(cfg)
     dt = cfg.get('data_type_display', 'Counts')
     sorted_data = sort_element_dict_by_mass(plot_data)
@@ -1430,15 +2135,13 @@ def _add_stats_text(plot_item, plot_data, cfg):
 
 def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
     """Draw histogram for one set of element data onto a PyQtGraph PlotItem.
-
     Args:
-        plot_item:     pg.PlotItem
-        element_data:  dict {element_label: [values]}
-        cfg:           config dict
-        single_color:  if set, use this color for all elements (multi-sample mode)
-
+        plot_item (Any): The plot item.
+        element_data (Any): The element data.
+        cfg (Any): The cfg.
+        single_color (Any): The single color.
     Returns:
-        sorted_data dict
+        object: Result of the operation.
     """
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
@@ -1447,13 +2150,16 @@ def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
     sorted_data = sort_element_dict_by_mass(element_data)
     is_single = len(sorted_data) == 1
 
+    all_vals = []
     for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
         vals = _prepare_values(raw_vals, dt, log_x)
         if vals is None:
             continue
 
         color = single_color or _get_element_color(elem, idx, cfg)
-        _draw_histogram_bars(plot_item, vals, cfg, color, bins_n)
+        _draw_histogram_bars(plot_item, vals, cfg, color, bins_n,
+                             name=_fmt_elem(elem, cfg))
+        all_vals.append(vals)
 
         if is_single:
             _, bin_edges = np.histogram(vals, bins=bins_n)
@@ -1462,35 +2168,53 @@ def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
             if cfg.get('show_median', True):
                 _add_median_line(plot_item, vals, cfg)
 
-    # Axis labels
+    if all_vals:
+        pooled = np.concatenate(all_vals) if len(all_vals) > 1 else all_vals[0]
+        _add_shaded_region_hist(plot_item, pooled, cfg)
+        _add_stat_lines_hist(plot_item, pooled, cfg)
+        _add_det_limit_v(plot_item, cfg)
+    _apply_box(plot_item, cfg)
+
     xl, yl = _get_xy_labels(cfg)
     set_axis_labels(plot_item, xl, yl, cfg)
-    
+
     if cfg.get('log_x', False):
         plot_item.getAxis('bottom').setLogMode(True)
     if cfg.get('log_y', False):
-        plot_item.getAxis('left').setLogMode(True)    
-    apply_font_to_pyqtgraph(plot_item, cfg)
+        plot_item.getAxis('left').setLogMode(True)
+
+    if not cfg.get('auto_x', True):
+        xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+        if cfg.get('log_x', False) and xn > 0 and xx > 0:
+            xn, xx = float(np.log10(xn)), float(np.log10(xx))
+        plot_item.setXRange(xn, xx, padding=0)
+    if not cfg.get('auto_y', True):
+        plot_item.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
 
     if not is_single and len(sorted_data) > 1:
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(plot_item.graphicsItem())
+        plot_item.legend = legend
         for idx, elem in enumerate(sorted_data.keys()):
             color = single_color or _get_element_color(elem, idx, cfg)
             co = QColor(color)
             swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                      brush=pg.mkBrush(co.red(), co.green(), co.blue(), 180))
-            legend.addItem(swatch, elem)
+                                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 180))
+            legend.addItem(swatch, _fmt_elem(elem, cfg))
 
+    apply_font_to_pyqtgraph(plot_item, cfg)
     return sorted_data
 
 
-# ═══════════════════════════════════════════════
-# PyQtGraph bar chart drawing helpers
-# ═══════════════════════════════════════════════
-
 def _sort_elements_for_display(elements, counts, sort_option):
-    """Sort elements by user preference."""
+    """Sort elements by user preference.
+    Args:
+        elements (Any): The elements.
+        counts (Any): The counts.
+        sort_option (Any): The sort option.
+    Returns:
+        tuple: Result of the operation.
+    """
     mass_sorted = sort_elements_by_mass(elements)
     if sort_option == 'No Sorting':
         ec = dict(zip(elements, counts))
@@ -1510,11 +2234,23 @@ def _sort_elements_for_display(elements, counts, sort_option):
 
 def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
                             show_y_label=True):
-    """Draw bar chart for one set of element counts onto a PyQtGraph PlotItem."""
+    """Draw bar chart for one set of element counts onto a PyQtGraph PlotItem.
+    Args:
+        plot_item (Any): The plot item.
+        element_counts (Any): The element counts.
+        cfg (Any): The cfg.
+        single_color (Any): The single color.
+        show_y_label (Any): The show y label.
+    """
     log_y = cfg.get('log_y', False)
     sort_opt = cfg.get('sort_bars', 'No Sorting')
     show_vals = cfg.get('show_values', True)
     fc = get_font_config(cfg)
+    min_count = cfg.get('min_particle_count', 0)
+
+    if min_count > 0:
+        element_counts = {e: c for e, c in element_counts.items()
+                          if c >= min_count}
 
     elems = list(element_counts.keys())
     counts = [element_counts[e] for e in elems]
@@ -1533,9 +2269,9 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
             x=[xi], height=[c], width=0.7,
             brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
             pen=pg.mkPen(color='w', width=0.5))
+        bar.opts['_trace_name'] = _fmt_elem(elem, cfg)
         plot_item.addItem(bar)
 
-    # Value annotations
     if show_vals:
         max_c = max(counts) if counts else 1
         for i, (xi, c, oc) in enumerate(zip(x, counts, original_counts)):
@@ -1546,29 +2282,30 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
                 plot_item.addItem(ti)
                 ti.setPos(xi, c + max_c * 0.02)
 
-    # X-axis tick labels (element names)
     ax_bottom = plot_item.getAxis('bottom')
-    ticks = [(float(i), e) for i, e in enumerate(elems)]
+    ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(elems)]
     ax_bottom.setTicks([ticks])
 
-    # Axis labels
     yl = 'Particle Count' 
     xl = 'Isotope Elements'
     set_axis_labels(plot_item, xl, yl if show_y_label else '', cfg)
     
     if log_y:
-        plot_item.getAxis('left').setLogMode(True)    
+        plot_item.getAxis('left').setLogMode(True)
+    _add_det_limit_h(plot_item, cfg)
+    _apply_box(plot_item, cfg)
     apply_font_to_pyqtgraph(plot_item, cfg)
 
-
-# ═══════════════════════════════════════════════
-# Element Bar Chart Display Dialog (PyQtGraph)
-# ═══════════════════════════════════════════════
 
 class ElementBarChartDisplayDialog(QDialog):
     """Full-figure bar chart dialog with PyQtGraph and right-click context menu."""
 
     def __init__(self, bar_node, parent_window=None):
+        """
+        Args:
+            bar_node (Any): The bar node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = bar_node
         self.parent_window = parent_window
@@ -1588,7 +2325,7 @@ class ElementBarChartDisplayDialog(QDialog):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        self.pw = pg.GraphicsLayoutWidget()
+        self.pw = EnhancedGraphicsLayoutWidget()
         self.pw.setBackground('w')
         self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
         self.pw.customContextMenuRequested.connect(self._ctx_menu)
@@ -1603,24 +2340,33 @@ class ElementBarChartDisplayDialog(QDialog):
     # ── Context menu ────────────────────────
 
     def _ctx_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
             ('show_values', 'Show Values on Bars', True),
-            ('log_y', 'Log Y-axis', False),
+            ('log_y',       'Log Y-axis',          False),
+            ('show_box',    'Figure Box (frame)',   True),
         ]:
-            a = tg.addAction(label)
-            a.setCheckable(True)
+            a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+
+        tg.addSeparator()
+        sep = tg.addAction("-- Reference Lines --"); sep.setEnabled(False)
+        det_a = tg.addAction("Detection Limit Line"); det_a.setCheckable(True)
+        det_a.setChecked(cfg.get('show_det_limit', False))
+        det_a.triggered.connect(lambda _: self._toggle_key('show_det_limit'))
 
         sort_menu = menu.addMenu("Sort Bars")
         cur_sort = cfg.get('sort_bars', 'No Sorting')
         for s in SORT_OPTIONS:
-            a = sort_menu.addAction(s)
-            a.setCheckable(True)
+            a = sort_menu.addAction(s); a.setCheckable(True)
             a.setChecked(s == cur_sort)
             a.triggered.connect(lambda _, v=s: self._set('sort_bars', v))
 
@@ -1628,22 +2374,31 @@ class ElementBarChartDisplayDialog(QDialog):
             dm = menu.addMenu("Display Mode")
             cur = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
             for m in BAR_DISPLAY_MODES:
-                a = dm.addAction(m)
-                a.setCheckable(True)
+                a = dm.addAction(m); a.setCheckable(True)
                 a.setChecked(m == cur)
                 a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
 
         menu.addSeparator()
-        menu.addAction("\u2699  Configure\u2026").triggered.connect(self._open_settings)
-        menu.addAction("\U0001f4be Download Figure\u2026").triggered.connect(
-            self._download_figure)
+        menu.addAction("Configure...").triggered.connect(self._open_settings)
+        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        if _CUSTOM_PLOT_AVAILABLE:
+            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _toggle_key(self, key):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
@@ -1654,6 +2409,19 @@ class ElementBarChartDisplayDialog(QDialog):
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+
+    def _open_plot_settings(self):
+        """Open the full PlotSettingsDialog (font, grid, traces) on the
+        first available PlotItem inside the GraphicsLayoutWidget."""
+        if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None:
+            return
+        pi = next(
+            (item for item in self.pw.scene().items()
+             if isinstance(item, pg.PlotItem)),
+            None,
+        )
+        if pi is not None:
+            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
             
     def _download_figure(self):
         """Export bar chart as image or CSV."""
@@ -1688,12 +2456,11 @@ class ElementBarChartDisplayDialog(QDialog):
 
     def _refresh(self):
         try:
-            # Recreate PyQtGraph widget to avoid stale state
             parent_layout = self.pw.parent().layout()
             idx = parent_layout.indexOf(self.pw)
             parent_layout.removeWidget(self.pw)
             self.pw.deleteLater()
-            self.pw = pg.GraphicsLayoutWidget()
+            self.pw = EnhancedGraphicsLayoutWidget()
             self.pw.setBackground('w')
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)
@@ -1723,7 +2490,9 @@ class ElementBarChartDisplayDialog(QDialog):
                     self._draw_side_by_side(plot_data, cfg)
                 elif mode == 'Stacked Bars':
                     self._draw_stacked(plot_data, cfg)
-                else:  # Grouped
+                elif mode == 'By Sample (Element Colors)':
+                    self._draw_by_sample(plot_data, cfg)
+                else:
                     self._draw_grouped(plot_data, cfg)
             else:
                 pi = self.pw.addPlot()
@@ -1737,6 +2506,11 @@ class ElementBarChartDisplayDialog(QDialog):
             traceback.print_exc()
 
     def _draw_subplots(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(2, n)
@@ -1750,6 +2524,11 @@ class ElementBarChartDisplayDialog(QDialog):
                 _draw_single_bar_chart(pi, sd, cfg, single_color=color)
 
     def _draw_side_by_side(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         for idx, sn in enumerate(samples):
             pi = self.pw.addPlot(title=get_display_name(sn, cfg))
@@ -1760,6 +2539,11 @@ class ElementBarChartDisplayDialog(QDialog):
                                         show_y_label=(idx == 0))
 
     def _draw_grouped(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         pi = self.pw.addPlot()
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
@@ -1770,8 +2554,12 @@ class ElementBarChartDisplayDialog(QDialog):
         for sd in plot_data.values():
             all_elems.update(sd.keys())
         all_elems = sort_elements_by_mass(list(all_elems))
+        
+        min_count = cfg.get('min_particle_count', 0)
+        if min_count > 0:
+            all_elems = [e for e in all_elems
+                        if sum(sd.get(e, 0) for sd in plot_data.values()) >= min_count]
 
-        # Apply sorting
         if sort_opt != 'No Sorting':
             totals = [(e, sum(plot_data[s].get(e, 0) for s in plot_data))
                       for e in all_elems]
@@ -1789,6 +2577,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
+        pi.legend = legend
 
         global_max = 0
         for i, (sn, sd) in enumerate(plot_data.items()):
@@ -1808,9 +2597,9 @@ class ElementBarChartDisplayDialog(QDialog):
                 x=offsets, height=heights, width=bar_w,
                 brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
                 pen=pg.mkPen(color='w', width=0.5))
+            bar.opts['_trace_name'] = dname
             pi.addItem(bar)
 
-            # Legend swatch
             swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
                                       brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
             legend.addItem(swatch, dname)
@@ -1824,9 +2613,8 @@ class ElementBarChartDisplayDialog(QDialog):
                         pi.addItem(ti)
                         ti.setPos(xp, h + global_max * 0.02)
 
-        # Axis ticks
         ax_bottom = pi.getAxis('bottom')
-        ticks = [(float(i), e) for i, e in enumerate(all_elems)]
+        ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(all_elems)]
         ax_bottom.setTicks([ticks])
 
         yl = 'Particle Count' 
@@ -1837,6 +2625,11 @@ class ElementBarChartDisplayDialog(QDialog):
         apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_stacked(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         pi = self.pw.addPlot()
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
@@ -1846,6 +2639,11 @@ class ElementBarChartDisplayDialog(QDialog):
         for sd in plot_data.values():
             all_elems.update(sd.keys())
         all_elems = sort_elements_by_mass(list(all_elems))
+        
+        min_count = cfg.get('min_particle_count', 0)
+        if min_count > 0:
+            all_elems = [e for e in all_elems
+                        if sum(sd.get(e, 0) for sd in plot_data.values()) >= min_count]
 
         if sort_opt != 'No Sorting':
             totals = [(e, sum(plot_data[s].get(e, 0) for s in plot_data))
@@ -1863,6 +2661,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
+        pi.legend = legend
 
         for i, (sn, sd) in enumerate(plot_data.items()):
             color = get_sample_color(sn, i, cfg)
@@ -1878,12 +2677,12 @@ class ElementBarChartDisplayDialog(QDialog):
                 b_plot = bottom
 
             co = QColor(color)
-            # Draw each bar individually for stacking
             for j in range(len(x)):
                 bar = pg.BarGraphItem(
                     x=[x[j]], height=[h_plot[j]], width=0.7,
                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
                     pen=pg.mkPen(color='w', width=0.5))
+                bar.opts['_trace_name'] = dname
                 bar.setPos(0, b_plot[j])
                 pi.addItem(bar)
 
@@ -1893,7 +2692,7 @@ class ElementBarChartDisplayDialog(QDialog):
             bottom += heights
 
         ax_bottom = pi.getAxis('bottom')
-        ticks = [(float(i), e) for i, e in enumerate(all_elems)]
+        ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(all_elems)]
         ax_bottom.setTicks([ticks])
 
         yl = 'Particle Count' 
@@ -1903,7 +2702,105 @@ class ElementBarChartDisplayDialog(QDialog):
             pi.getAxis('left').setLogMode(True)        
         apply_font_to_pyqtgraph(pi, cfg)
 
+    def _draw_by_sample(self, plot_data, cfg):
+        """X-axis = samples, one bar per element per sample, colors = elements.
+        Respects sample_order for time-series use.
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
+        pi = self.pw.addPlot()
+        fc = get_font_config(cfg)
+        log_y = cfg.get('log_y', False)
+        show_vals = cfg.get('show_values', True)
+        sort_opt = cfg.get('sort_bars', 'No Sorting')
+        min_count = cfg.get('min_particle_count', 0)
+
+        sample_order = cfg.get('sample_order', [])
+        if sample_order:
+            samples = [s for s in sample_order if s in plot_data]
+            samples += [s for s in plot_data if s not in samples]
+        else:
+            samples = list(plot_data.keys())
+
+        all_elems_set = set()
+        for sd in plot_data.values():
+            all_elems_set.update(sd.keys())
+        if min_count > 0:
+            all_elems_set = {
+                e for e in all_elems_set
+                if sum(plot_data[s].get(e, 0) for s in samples) >= min_count}
+        all_elems = sort_elements_by_mass(list(all_elems_set))
+
+        if sort_opt != 'No Sorting' and samples:
+            totals = [(e, sum(plot_data[s].get(e, 0) for s in samples))
+                      for e in all_elems]
+            if sort_opt == 'Ascending':
+                totals.sort(key=lambda x: x[1])
+            elif sort_opt == 'Descending':
+                totals.sort(key=lambda x: x[1], reverse=True)
+            elif sort_opt == 'Alphabetical':
+                totals.sort(key=lambda x: x[0])
+            all_elems = [e for e, _ in totals]
+
+        x = np.arange(len(samples), dtype=float)
+        n_elems = max(len(all_elems), 1)
+        bar_w = 0.8 / n_elems
+
+        legend = pg.LegendItem(offset=(60, 10))
+        legend.setParentItem(pi.graphicsItem())
+        pi.legend = legend
+
+        global_max = 0.0
+        for j, elem in enumerate(all_elems):
+            color = _get_element_color(elem, j, cfg)
+            label = _fmt_elem(elem, cfg)
+            heights = [plot_data[s].get(elem, 0) for s in samples]
+            orig = list(heights)
+            if log_y:
+                heights = [np.log10(h + 1) for h in heights]
+            cur_max = max(heights) if heights else 0.0
+            if cur_max > global_max:
+                global_max = cur_max
+
+            offsets = x + (j - n_elems / 2 + 0.5) * bar_w
+            co = QColor(color)
+            bar = pg.BarGraphItem(
+                x=offsets, height=heights, width=bar_w,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
+                pen=pg.mkPen(color='w', width=0.5))
+            bar.opts['_trace_name'] = label
+            pi.addItem(bar)
+
+            swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
+                                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
+            legend.addItem(swatch, label)
+
+            if show_vals:
+                for xp, h, o in zip(offsets, heights, orig):
+                    if o > 0:
+                        ti = pg.TextItem(str(int(o)), anchor=(0.5, 1),
+                                         color='#374151')
+                        ti.setFont(QFont(fc.get('family', 'Times New Roman'),
+                                         max(fc.get('size', 18) - 5, 6)))
+                        pi.addItem(ti)
+                        ti.setPos(xp, h + global_max * 0.02)
+
+        ax_bottom = pi.getAxis('bottom')
+        ticks = [(float(i), get_display_name(s, cfg))
+                 for i, s in enumerate(samples)]
+        ax_bottom.setTicks([ticks])
+
+        set_axis_labels(pi, 'Sample', 'Particle Count', cfg)
+        if log_y:
+            pi.getAxis('left').setLogMode(True)
+        apply_font_to_pyqtgraph(pi, cfg)
+
     def _update_stats(self, plot_data):
+        """
+        Args:
+            plot_data (Any): The plot data.
+        """
         if _is_multi(self.node.input_data):
             total = sum(sum(v for v in sd.values()) for sd in plot_data.values())
             self.stats_label.setText(
@@ -1913,10 +2810,6 @@ class ElementBarChartDisplayDialog(QDialog):
             self.stats_label.setText(
                 f"{len(plot_data)} elements  \u00b7  {total:,} total particles")
 
-
-# ═══════════════════════════════════════════════
-# Element Bar Chart Plot Node
-# ═══════════════════════════════════════════════
 
 class ElementBarChartPlotNode(QObject):
     """Element particle-count bar chart node with right-click context menu."""
@@ -1929,19 +2822,32 @@ class ElementBarChartPlotNode(QObject):
         'sort_bars': 'No Sorting',
         'log_x': False,
         'log_y': False,
+        'show_box': True,
+        'show_det_limit': False,
+        'det_limit_value': 1.0,
+        'det_limit_color': '#DC2626',
+        'det_limit_style': 'dash',
+        'det_limit_width': 2,
+        'det_limit_label': '',
         'element_colors': {},
         'display_mode': 'Grouped Bars (Side by Side)',
-        'normalize_samples': False,
         'sample_colors': {},
         'sample_name_mappings': {},
+        'sample_order': [],
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,
         'font_italic': False,
         'font_color': '#000000',
+        'label_mode': 'Symbol',
+        'min_particle_count': 10,
     }
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
         self.title = "Element Bar Chart"
         self.node_type = "element_bar_chart_plot"
@@ -1956,23 +2862,40 @@ class ElementBarChartPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = ElementBarChartDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
-        """Extract element particle counts from input."""
+        """Extract element particle counts from input.
+        Returns:
+            None
+        """
         if not self.input_data:
             return None
 

@@ -2,36 +2,34 @@
 Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
 
 Single sample  → one matrix.
-Multi-sample   → side-by-side matrices (like Male / Female comparison).
+Multi-sample   → side-by-side or individual subplot matrices.
 
-Uses PyQtGraph ImageItem for the colour-mapped grid and shared_plot_utils
-for fonts / download.
+Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
+    QDoubleSpinBox, QCheckBox, QGroupBox,
     QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea,
-    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsSimpleTextItem,
-    QGraphicsLineItem, QSizePolicy,
+    QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QRectF, QPointF
-from PySide6.QtGui import (
-    QColor, QPen, QBrush, QFont, QPainter, QLinearGradient,
-    QPixmap, QImage,
-)
-import pyqtgraph as pg
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QCursor
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 import numpy as np
 import math
 from scipy.stats import pearsonr
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    FontSettingsGroup, get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
+    get_font_config, apply_font_to_matplotlib,
+    apply_font_to_colorbar_standalone,
+    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
+    LABEL_MODES, format_element_label,
+    get_display_name, download_matplotlib_figure,
 )
-from results.utils_sort import sort_elements_by_mass, sort_element_dict_by_mass
+from results.utils_sort import sort_elements_by_mass
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -56,13 +54,9 @@ MATRIX_DATA_KEY_MAP = {
     'Particle Diameter (nm)': 'particle_diameter_nm',
 }
 
-MATRIX_COLOR_MAPS = [
-    'RdBu_r (Red–Blue)',
-    'coolwarm',
-    'seismic',
-    'BrBG',
-    'PiYG',
-    'PRGn',
+MATRIX_COLORMAPS = [
+    'RdBu_r', 'coolwarm', 'seismic', 'BrBG', 'PiYG', 'PRGn',
+    'RdYlBu', 'Spectral', 'bwr',
 ]
 
 MATRIX_DISPLAY_MODES = [
@@ -72,47 +66,55 @@ MATRIX_DISPLAY_MODES = [
 ]
 
 DEFAULT_CONFIG = {
-    'data_type_display': 'Counts',
-    'min_particles': 5,
-    'r_threshold': 0.0,
-    'show_values': False,
-    'show_diagonal': True,
-    'colormap': 'RdBu_r (Red–Blue)',
-    'display_mode': 'Side by Side',
-    'cell_size': 18,
-    'font_family': 'Times New Roman',
-    'font_size': 18,
-    'font_bold': False,
-    'font_italic': False,
-    'font_color': '#000000',
-    'dark_theme': True,
-    'sample_colors': {},
+    'data_type_display':  'Counts',
+    'min_particles':      5,
+    'r_threshold':        0.0,
+    'show_values':        True,
+    'show_diagonal':      True,
+    'colormap':           'RdBu_r',
+    'display_mode':       'Side by Side',
+    'font_family':        'Times New Roman',
+    'font_size':          10,
+    'font_bold':          False,
+    'font_italic':        False,
+    'font_color':         '#000000',
+    'sample_colors':      {},
     'sample_name_mappings': {},
+    'label_mode':         'Symbol',
+    'x_rotation':         0,
+    'bg_color':           '#FFFFFF',
+    'export_format':      'svg',
+    'export_dpi':         300,
+    'use_custom_figsize': False,
+    'figsize_w':          14.0,
+    'figsize_h':          8.0,
 }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
+    """
+    Args:
+        input_data (Any): The input data.
+    Returns:
+        object: Result of the operation.
+    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
-def _available_elements(input_data):
-    if not input_data:
-        return []
-    sel = input_data.get('selected_isotopes', [])
-    if sel:
-        return sort_elements_by_mass([i['label'] for i in sel])
-    return []
-
-
 def _compute_correlation_matrix(particles, elements, data_key):
-    """Build NxN Pearson-r matrix from particle data."""
+    """Build NxN Pearson-r matrix from particle data.
+    Args:
+        particles (Any): The particles.
+        elements (Any): The elements.
+        data_key (Any): The data key.
+    Returns:
+        tuple: Result of the operation.
+    """
     n = len(elements)
     if n < 2:
         return None, None
-
-    # Build value vectors per element
     vectors = {el: [] for el in elements}
     for p in particles:
         d = p.get(data_key, {})
@@ -132,7 +134,6 @@ def _compute_correlation_matrix(particles, elements, data_key):
         for j in range(n):
             vi = np.array(vectors[elements[i]], dtype=float)
             vj = np.array(vectors[elements[j]], dtype=float)
-            # Only use particles where both are > 0
             mask = (vi > 0) & (vj > 0)
             if mask.sum() >= 5:
                 try:
@@ -144,124 +145,85 @@ def _compute_correlation_matrix(particles, elements, data_key):
     return mat, p_mat
 
 
-def _r_to_color(r, dark=True):
-    """Map correlation r ∈ [-1,1] to QColor (red=positive, blue=negative)."""
-    if np.isnan(r):
-        return QColor(40, 40, 50) if dark else QColor(220, 220, 220)
-    r = max(-1, min(1, r))
-    if r >= 0:
-        # White → Red
-        t = r
-        if dark:
-            return QColor(
-                int(60 + 195 * t),    # R
-                int(60 - 20 * t),     # G
-                int(70 - 40 * t),     # B
-            )
-        else:
-            return QColor(
-                255,
-                int(255 * (1 - t)),
-                int(255 * (1 - t)),
-            )
-    else:
-        t = -r
-        if dark:
-            return QColor(
-                int(60 - 20 * t),     # R
-                int(60 + 50 * t),     # G
-                int(70 + 185 * t),    # B
-            )
-        else:
-            return QColor(
-                int(255 * (1 - t)),
-                int(255 * (1 - t)),
-                255,
-            )
-
-
 def _matrix_stats(mat):
-    """Return summary statistics string."""
-    valid = mat[~np.isnan(mat)]
-    # Exclude diagonal (r=1)
+    """
+    Args:
+        mat (Any): The mat.
+    Returns:
+        object: Result of the operation.
+    """
     n = mat.shape[0]
-    off_diag = []
-    for i in range(n):
-        for j in range(n):
-            if i != j and not np.isnan(mat[i, j]):
-                off_diag.append(mat[i, j])
+    off_diag = [mat[i, j] for i in range(n) for j in range(n)
+                if i != j and not np.isnan(mat[i, j])]
     if not off_diag:
         return "No valid correlations"
     arr = np.array(off_diag)
-    mean_abs = np.mean(np.abs(arr))
-    pct_high = np.mean(np.abs(arr) > 0.7) * 100
-    return f"mean|r|={mean_abs:.3f} · {pct_high:.0f}% pairs >0.7"
+    return f"mean|r|={np.mean(np.abs(arr)):.3f}  ·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
 
 
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class MatrixSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None):
+        """
+        Args:
+            cfg (Any): The cfg.
+            input_data (Any): The input data.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("Correlation Matrix Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        inner = QWidget()
-        lay = QVBoxLayout(inner)
-        scroll.setWidget(inner)
-        root.addWidget(scroll)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        inner = QWidget(); lay = QVBoxLayout(inner)
+        scroll.setWidget(inner); root.addWidget(scroll)
 
-        # Data type
         g1 = QGroupBox("Data")
         f1 = QFormLayout(g1)
         self.dtype_combo = QComboBox()
         self.dtype_combo.addItems(MATRIX_DATA_TYPES)
         self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         f1.addRow("Data Type:", self.dtype_combo)
-
         self.min_part = QDoubleSpinBox()
-        self.min_part.setRange(2, 1000)
-        self.min_part.setDecimals(0)
+        self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
         self.min_part.setValue(self._cfg.get('min_particles', 5))
         f1.addRow("Min Particles:", self.min_part)
+        self.thresh_spin = QDoubleSpinBox()
+        self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
+        self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.0))
+        f1.addRow("|r| Threshold:", self.thresh_spin)
         lay.addWidget(g1)
 
-        # Display
         g2 = QGroupBox("Display")
         f2 = QFormLayout(g2)
         self.show_vals = QCheckBox()
-        self.show_vals.setChecked(self._cfg.get('show_values', False))
+        self.show_vals.setChecked(self._cfg.get('show_values', True))
         f2.addRow("Show r Values:", self.show_vals)
-
         self.show_diag = QCheckBox()
         self.show_diag.setChecked(self._cfg.get('show_diagonal', True))
         f2.addRow("Show Diagonal:", self.show_diag)
-
-        self.dark_cb = QCheckBox()
-        self.dark_cb.setChecked(self._cfg.get('dark_theme', True))
-        f2.addRow("Dark Theme:", self.dark_cb)
-
-        self.cell_spin = QDoubleSpinBox()
-        self.cell_spin.setRange(8, 50)
-        self.cell_spin.setDecimals(0)
-        self.cell_spin.setValue(self._cfg.get('cell_size', 18))
-        f2.addRow("Cell Size:", self.cell_spin)
-
-        self.thresh_spin = QDoubleSpinBox()
-        self.thresh_spin.setRange(0.0, 0.99)
-        self.thresh_spin.setDecimals(2)
-        self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.0))
-        f2.addRow("|r| Threshold:", self.thresh_spin)
+        self.cmap_combo = QComboBox()
+        self.cmap_combo.addItems(MATRIX_COLORMAPS)
+        raw_cmap = self._cfg.get('colormap', 'RdBu_r').split()[0]
+        self.cmap_combo.setCurrentText(raw_cmap if raw_cmap in MATRIX_COLORMAPS else 'RdBu_r')
+        f2.addRow("Colormap:", self.cmap_combo)
+        self.label_mode_combo = QComboBox()
+        self.label_mode_combo.addItems(LABEL_MODES)
+        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        f2.addRow("Label Mode:", self.label_mode_combo)
+        from PySide6.QtWidgets import QSpinBox as _QSpin
+        self.x_rotation_spin = _QSpin()
+        self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
+        self.x_rotation_spin.setValue(self._cfg.get('x_rotation', 0))
+        f2.addRow("X Label Rotation:", self.x_rotation_spin)
         lay.addWidget(g2)
 
-        # Multi-sample mode
         if _is_multi(self._input_data):
             g3 = QGroupBox("Multi-Sample Display")
             f3 = QFormLayout(g3)
@@ -272,268 +234,157 @@ class MatrixSettingsDialog(QDialog):
             f3.addRow("Display Mode:", self.mode_combo)
             lay.addWidget(g3)
 
-        # Font
         self._font_grp = FontSettingsGroup(self._cfg)
         lay.addWidget(self._font_grp.build())
 
+        self._export_grp = ExportSettingsGroup(self._cfg)
+        lay.addWidget(self._export_grp.build())
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def collect(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         d = {
             'data_type_display': self.dtype_combo.currentText(),
-            'min_particles': int(self.min_part.value()),
-            'show_values': self.show_vals.isChecked(),
-            'show_diagonal': self.show_diag.isChecked(),
-            'dark_theme': self.dark_cb.isChecked(),
-            'cell_size': int(self.cell_spin.value()),
-            'r_threshold': self.thresh_spin.value(),
+            'min_particles':     int(self.min_part.value()),
+            'r_threshold':       self.thresh_spin.value(),
+            'show_values':       self.show_vals.isChecked(),
+            'show_diagonal':     self.show_diag.isChecked(),
+            'colormap':          self.cmap_combo.currentText(),
+            'label_mode':        self.label_mode_combo.currentText(),
+            'x_rotation':        self.x_rotation_spin.value(),
         }
         d.update(self._font_grp.collect())
+        d.update(self._export_grp.collect())
         if hasattr(self, 'mode_combo'):
             d['display_mode'] = self.mode_combo.currentText()
         return d
 
 
-# ── Custom Matrix Widget (QPainter-based for pixel control) ───────────
-
-class MatrixWidget(QWidget):
-    """Draws a single correlation matrix as a color-coded grid."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.mat = None
-        self.elements = []
-        self.cfg = {}
-        self.title = ""
-        self.stats_text = ""
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-    def set_data(self, mat, elements, cfg, title="", stats=""):
-        self.mat = mat
-        self.elements = elements
-        self.cfg = cfg
-        self.title = title
-        self.stats_text = stats
-        self.update()
-
-    def paintEvent(self, event):
-        if self.mat is None or len(self.elements) == 0:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        dark = self.cfg.get('dark_theme', True)
-        bg = QColor(30, 37, 55) if dark else QColor(255, 255, 255)
-        painter.fillRect(self.rect(), bg)
-
-        n = len(self.elements)
-        cs = self.cfg.get('cell_size', 18)
-        threshold = self.cfg.get('r_threshold', 0.0)
-        show_vals = self.cfg.get('show_values', False)
-        show_diag = self.cfg.get('show_diagonal', True)
-
-        # Compute layout
-        label_w = 30
-        top_label_h = 40
-        title_h = 50 if self.title else 0
-        stats_h = 25 if self.stats_text else 0
-
-        grid_w = n * cs
-        grid_h = n * cs
-        total_w = label_w + grid_w + 10
-        total_h = title_h + stats_h + top_label_h + grid_h + 10
-
-        # Center in widget
-        ox = max(0, (self.width() - total_w) // 2)
-        oy = max(0, (self.height() - total_h) // 2)
-
-        # Title
-        if self.title:
-            title_color = QColor('#60A5FA') if dark else QColor('#2563EB')
-            painter.setPen(title_color)
-            painter.setFont(QFont(self.cfg.get('font_family', 'Segoe UI'), 14, QFont.Bold))
-            painter.drawText(
-                QRectF(ox, oy, total_w, title_h),
-                Qt.AlignHCenter | Qt.AlignVCenter, self.title)
-            oy += title_h
-
-        # Stats
-        if self.stats_text:
-            stats_color = QColor('#94A3B8') if dark else QColor('#6B7280')
-            painter.setPen(stats_color)
-            painter.setFont(QFont(self.cfg.get('font_family', 'Segoe UI'), 9))
-            painter.drawText(
-                QRectF(ox, oy, total_w, stats_h),
-                Qt.AlignHCenter | Qt.AlignVCenter, self.stats_text)
-            oy += stats_h
-
-        gx = ox + label_w
-        gy = oy + top_label_h
-
-        # Column labels (top, rotated)
-        txt_color = QColor('#CBD5E1') if dark else QColor('#1F2937')
-        painter.setPen(txt_color)
-        label_font = QFont(self.cfg.get('font_family', 'Segoe UI'), 7)
-        painter.setFont(label_font)
-        for j, el in enumerate(self.elements):
-            cx = gx + j * cs + cs / 2
-            painter.save()
-            painter.translate(cx, gy - 4)
-            painter.rotate(-45)
-            painter.drawText(0, 0, el)
-            painter.restore()
-
-        # Row labels (left)
-        for i, el in enumerate(self.elements):
-            cy = gy + i * cs + cs / 2
-            painter.drawText(
-                QRectF(ox, cy - cs / 2, label_w - 4, cs),
-                Qt.AlignRight | Qt.AlignVCenter, el)
-
-        # Cells
-        val_font = QFont(self.cfg.get('font_family', 'Segoe UI'), max(5, cs // 3))
-        for i in range(n):
-            for j in range(n):
-                x = gx + j * cs
-                y = gy + i * cs
-                r = self.mat[i, j]
-
-                if i == j and not show_diag:
-                    c = QColor(50, 55, 70) if dark else QColor(230, 230, 230)
-                    painter.fillRect(QRectF(x, y, cs, cs), c)
-                    continue
-
-                if np.isnan(r):
-                    c = QColor(40, 40, 50) if dark else QColor(230, 230, 230)
-                elif abs(r) < threshold and i != j:
-                    c = QColor(40, 45, 55) if dark else QColor(240, 240, 240)
-                else:
-                    c = _r_to_color(r, dark)
-
-                painter.fillRect(QRectF(x, y, cs, cs), c)
-
-                # Grid lines
-                grid_color = QColor(25, 30, 42) if dark else QColor(200, 200, 200)
-                painter.setPen(QPen(grid_color, 0.5))
-                painter.drawRect(QRectF(x, y, cs, cs))
-
-                # Value text
-                if show_vals and not np.isnan(r) and cs >= 14:
-                    painter.setPen(QColor(255, 255, 255) if dark else QColor(0, 0, 0))
-                    painter.setFont(val_font)
-                    painter.drawText(
-                        QRectF(x, y, cs, cs),
-                        Qt.AlignCenter, f"{r:.1f}")
-
-        # Color bar
-        bar_x = gx + grid_w + 15
-        bar_w = 12
-        bar_h = grid_h
-        bar_y = gy
-        for py in range(int(bar_h)):
-            t = 1.0 - py / bar_h  # top=+1, bottom=-1
-            r_val = t * 2 - 1
-            c = _r_to_color(r_val, dark)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(c)
-            painter.drawRect(QRectF(bar_x, bar_y + py, bar_w, 1))
-
-        painter.setPen(txt_color)
-        painter.setFont(QFont(self.cfg.get('font_family', 'Segoe UI'), 7))
-        painter.drawText(QRectF(bar_x + bar_w + 2, bar_y - 4, 30, 12),
-                         Qt.AlignLeft, "+1")
-        painter.drawText(QRectF(bar_x + bar_w + 2, bar_y + bar_h - 8, 30, 12),
-                         Qt.AlignLeft, "-1")
-        painter.drawText(QRectF(bar_x + bar_w + 2, bar_y + bar_h / 2 - 6, 30, 12),
-                         Qt.AlignLeft, " 0")
-
-        painter.end()
-
-
 # ── Display Dialog ─────────────────────────────────────────────────────
 
 class CorrelationMatrixDisplayDialog(QDialog):
-    """Main dialog – one or more MatrixWidgets laid out."""
+    """Matplotlib-based correlation matrix dialog with drag support."""
 
     def __init__(self, node, parent_window=None):
+        """
+        Args:
+            node (Any): Tree or graph node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Correlation Matrix Analysis")
-        self.setMinimumSize(1200, 800)
-
+        self.setMinimumSize(1100, 750)
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
-        self._root = QVBoxLayout(self)
-        self._root.setContentsMargins(6, 6, 6, 6)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
 
-        # Title / stats bar
         self._header = QLabel("")
-        self._header.setStyleSheet(
-            "color: #94A3B8; font-size: 12px; padding: 4px 8px;")
-        self._root.addWidget(self._header)
+        self._header.setStyleSheet("color:#94A3B8; font-size:12px; padding:4px 8px;")
+        lay.addWidget(self._header)
 
-        # Scroll area for matrices
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._scroll.customContextMenuRequested.connect(self._ctx_menu)
-        self._root.addWidget(self._scroll, stretch=1)
+        self.figure = Figure(figsize=(14, 8), dpi=120, tight_layout=True)
+        self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._ctx_menu)
+        lay.addWidget(self.canvas, stretch=1)
 
-        self._container = QWidget()
-        self._container_lay = QHBoxLayout(self._container)
-        self._container_lay.setContentsMargins(8, 8, 8, 8)
-        self._scroll.setWidget(self._container)
+        tb = QHBoxLayout(); tb.setContentsMargins(0, 2, 0, 0)
+        btn_s = QPushButton("⚙  Settings"); btn_s.clicked.connect(self._open_settings)
+        btn_r = QPushButton("↺  Reset Layout")
+        btn_r.setToolTip("Reset subplot positions (or middle-click)")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("⬆  Export…"); btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
+        lay.addLayout(tb)
 
-        self._matrix_widgets = []
+    # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
         dm = menu.addMenu("Data Type")
         for dt in MATRIX_DATA_TYPES:
-            a = dm.addAction(dt)
-            a.setCheckable(True)
+            a = dm.addAction(dt); a.setCheckable(True)
             a.setChecked(cfg.get('data_type_display') == dt)
             a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
+        cm = menu.addMenu("Colormap")
+        for c in MATRIX_COLORMAPS:
+            a = cm.addAction(c); a.setCheckable(True)
+            a.setChecked(cfg.get('colormap') == c)
+            a.triggered.connect(lambda _, v=c: self._set('colormap', v))
+
         tm = menu.addMenu("Quick Toggles")
-        for key, label in [
-            ('show_values', 'Show r Values'),
-            ('show_diagonal', 'Show Diagonal'),
-            ('dark_theme', 'Dark Theme'),
-        ]:
-            a = tm.addAction(label)
-            a.setCheckable(True)
+        for key, label in [('show_values', 'Show r Values'),
+                            ('show_diagonal', 'Show Diagonal')]:
+            a = tm.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
+
+        lm = menu.addMenu("Label Mode")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode); a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
+        rot_menu = menu.addMenu("X Label Rotation")
+        cur_rot = cfg.get('x_rotation', 0)
+        for rot in [0, 30, 45, 60, 90]:
+            a = rot_menu.addAction(f"{rot}°"); a.setCheckable(True)
+            a.setChecked(cur_rot == rot)
+            a.triggered.connect(lambda _, r=rot: self._set('x_rotation', r))
 
         if _is_multi(self.node.input_data):
             mm = menu.addMenu("Display Mode")
             for m in MATRIX_DISPLAY_MODES:
-                a = mm.addAction(m)
-                a.setCheckable(True)
+                a = mm.addAction(m); a.setCheckable(True)
                 a.setChecked(cfg.get('display_mode') == m)
                 a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
 
         menu.addSeparator()
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure…").triggered.connect(self._download)
-        menu.exec(self._scroll.mapToGlobal(pos))
+        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
+        menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
+        menu.addAction("💾 Download Figure…").triggered.connect(self._export_figure)
+        menu.exec(QCursor.pos())
 
     def _toggle(self, key):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
+
+    def _reset_layout(self):
+        self.canvas.reset_layout()
+
+    def _export_figure(self):
+        download_matplotlib_figure(self.figure, self, "correlation_matrix")
 
     def _open_settings(self):
         dlg = MatrixSettingsDialog(self.node.config, self.node.input_data, self)
@@ -541,41 +392,29 @@ class CorrelationMatrixDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    def _download(self):
-        from PySide6.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Correlation Matrix", "correlation_matrix.png",
-            "PNG (*.png);;JPEG (*.jpg);;SVG (*.svg)")
-        if path:
-            pixmap = self._container.grab()
-            pixmap.save(path)
+    # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
         try:
-            # Clear old widgets
-            for w in self._matrix_widgets:
-                self._container_lay.removeWidget(w)
-                w.deleteLater()
-            self._matrix_widgets.clear()
+            cfg = self.node.config
+            if cfg.get('use_custom_figsize', False):
+                self.figure.set_size_inches(cfg.get('figsize_w', 14.0),
+                                            cfg.get('figsize_h', 8.0))
+            self.figure.clear()
+            self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
             data = self.node.extract_matrix_data()
             if not data:
-                lbl = QLabel("No data available.\nConnect to a Sample Selector node.")
-                lbl.setAlignment(Qt.AlignCenter)
-                lbl.setStyleSheet("color: gray; font-size: 14px;")
-                self._container_lay.addWidget(lbl)
-                self._matrix_widgets.append(lbl)
+                ax = self.figure.add_subplot(111)
+                ax.text(0.5, 0.5, 'No data available\nConnect to a Sample Selector node.',
+                        ha='center', va='center', transform=ax.transAxes,
+                        fontsize=12, color='gray')
+                ax.axis('off')
                 self._header.setText("")
+                self.canvas.draw()
                 return
 
-            cfg = self.node.config
-            dark = cfg.get('dark_theme', True)
-            bg_style = "background: #1E293B;" if dark else "background: white;"
-            self._container.setStyleSheet(bg_style)
-            self._scroll.setStyleSheet(bg_style)
-
             multi = _is_multi(self.node.input_data)
-
             if multi:
                 mode = cfg.get('display_mode', 'Side by Side')
                 if mode == 'Difference Matrix' and len(data) == 2:
@@ -585,72 +424,61 @@ class CorrelationMatrixDisplayDialog(QDialog):
             else:
                 self._draw_single(data, cfg)
 
+            self.figure.tight_layout()
+            self.canvas.draw()
+            self.canvas.snapshot_positions()
+
         except Exception as e:
             print(f"Error refreshing correlation matrix: {e}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
 
     def _draw_single(self, data, cfg):
-        # data = {'elements': [...], 'matrix': np.array, 'n_particles': int}
-        info = data
-        if isinstance(data, dict) and 'matrix' in data:
-            mat = data['matrix']
-            elems = data['elements']
-            n = data.get('n_particles', 0)
-            stats = f"n={n} · " + _matrix_stats(mat)
-            self._header.setText(
-                f"SEX COMPARISON" if False else f"Correlation Matrix · {len(elems)} elements · {n} particles")
-
-            w = MatrixWidget()
-            w.set_data(mat, elems, cfg, title="", stats=stats)
-            w.setMinimumSize(
-                len(elems) * cfg.get('cell_size', 18) + 120,
-                len(elems) * cfg.get('cell_size', 18) + 140)
-            self._container_lay.addWidget(w)
-            self._matrix_widgets.append(w)
+        """
+        Args:
+            data (Any): Input data.
+            cfg (Any): The cfg.
+        """
+        mat = data['matrix']
+        elems = data['elements']
+        n = data.get('n_particles', 0)
+        self._header.setText(
+            f"Correlation Matrix · {len(elems)} elements · {n} particles · {_matrix_stats(mat)}")
+        ax = self.figure.add_subplot(111)
+        self._draw_matrix_ax(ax, mat, elems, cfg, title="")
+        apply_font_to_matplotlib(ax, cfg)
 
     def _draw_multi(self, data, cfg):
-        """Side-by-side matrices per sample."""
-        # data = {sample_name: {'elements': [...], 'matrix': ..., 'n_particles': int}}
+        """
+        Args:
+            data (Any): Input data.
+            cfg (Any): The cfg.
+        """
         names = list(data.keys())
-        self._header.setText(f"SEX COMPARISON" if False else
-                             f"Correlation Matrices · {len(names)} groups")
-
-        for sn in names:
+        n = len(names)
+        cols = min(n, 3)
+        rows = math.ceil(n / cols)
+        self._header.setText(f"Correlation Matrices · {n} groups")
+        for idx, sn in enumerate(names):
             info = data[sn]
-            mat = info['matrix']
-            elems = info['elements']
-            n = info.get('n_particles', 0)
-            stats = f"n={n} · " + _matrix_stats(mat)
+            ax = self.figure.add_subplot(rows, cols, idx + 1)
             dn = get_display_name(sn, cfg)
-
-            w = MatrixWidget()
-            w.set_data(mat, elems, cfg, title=dn, stats=stats)
-            w.setMinimumSize(
-                len(elems) * cfg.get('cell_size', 18) + 120,
-                len(elems) * cfg.get('cell_size', 18) + 180)
-            self._container_lay.addWidget(w)
-            self._matrix_widgets.append(w)
+            self._draw_matrix_ax(ax, info['matrix'], info['elements'], cfg,
+                                 title=f"{dn}  (n={info.get('n_particles',0)})")
+            apply_font_to_matplotlib(ax, cfg)
 
     def _draw_difference(self, data, cfg):
-        """Difference matrix between first two samples."""
+        """
+        Args:
+            data (Any): Input data.
+            cfg (Any): The cfg.
+        """
         names = list(data.keys())
-        if len(names) < 2:
-            self._draw_multi(data, cfg)
-            return
-
-        info1 = data[names[0]]
-        info2 = data[names[1]]
-
-        # Common elements
+        info1, info2 = data[names[0]], data[names[1]]
         common = [e for e in info1['elements'] if e in info2['elements']]
         if not common:
-            self._draw_multi(data, cfg)
-            return
-
+            self._draw_multi(data, cfg); return
         idx1 = {e: i for i, e in enumerate(info1['elements'])}
         idx2 = {e: i for i, e in enumerate(info2['elements'])}
-
         n = len(common)
         diff = np.full((n, n), np.nan)
         for i, ei in enumerate(common):
@@ -659,60 +487,135 @@ class CorrelationMatrixDisplayDialog(QDialog):
                 r2 = info2['matrix'][idx2[ei], idx2[ej]]
                 if not np.isnan(r1) and not np.isnan(r2):
                     diff[i, j] = r1 - r2
+        self._header.setText(f"Δr = {names[0]} − {names[1]} · {_matrix_stats(diff)}")
+        ax = self.figure.add_subplot(111)
+        self._draw_matrix_ax(ax, diff, common, cfg,
+                             title=f"Difference: {names[0]} − {names[1]}")
+        apply_font_to_matplotlib(ax, cfg)
 
-        stats = f"Δr = {names[0]} − {names[1]} · " + _matrix_stats(diff)
-        w = MatrixWidget()
-        w.set_data(diff, common, cfg, title=f"Difference: {names[0]} − {names[1]}", stats=stats)
-        w.setMinimumSize(
-            n * cfg.get('cell_size', 18) + 120,
-            n * cfg.get('cell_size', 18) + 180)
-        self._container_lay.addWidget(w)
-        self._matrix_widgets.append(w)
+    def _draw_matrix_ax(self, ax, mat, elems, cfg, title=""):
+        """Draw one correlation matrix onto ax using imshow.
+        Args:
+            ax (Any): The ax.
+            mat (Any): The mat.
+            elems (Any): The elems.
+            cfg (Any): The cfg.
+            title (Any): Window or dialog title.
+        """
+        n = len(elems)
+        threshold = cfg.get('r_threshold', 0.0)
+        show_diag = cfg.get('show_diagonal', True)
+        show_vals = cfg.get('show_values', True)
+        cmap      = cfg.get('colormap', 'RdBu_r').split()[0]
+        label_mode = cfg.get('label_mode', 'Symbol')
+        x_rotation = cfg.get('x_rotation', 0)
+        fc        = get_font_config(cfg)
+
+        plot_mat = mat.copy()
+        for i in range(n):
+            for j in range(n):
+                if i != j and not np.isnan(plot_mat[i, j]):
+                    if abs(plot_mat[i, j]) < threshold:
+                        plot_mat[i, j] = np.nan
+            if not show_diag:
+                plot_mat[i, i] = np.nan
+
+        im = ax.imshow(plot_mat, cmap=cmap, vmin=-1, vmax=1,
+                       aspect='equal', interpolation='nearest')
+
+        fmt_elems = [format_element_label(e, label_mode) for e in elems]
+
+        ax.set_xticks(range(n))
+        ax.set_xticklabels(fmt_elems, rotation=x_rotation,
+                           ha='right' if x_rotation > 0 else 'center',
+                           fontsize=fc['size'], color=fc['color'])
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(fmt_elems, fontsize=fc['size'], color=fc['color'])
+
+        if title:
+            ax.set_title(title, fontsize=fc['size'] + 2,
+                         fontweight='bold' if fc['bold'] else 'normal',
+                         color=fc['color'], pad=10)
+
+        if show_vals:
+            for i in range(n):
+                for j in range(n):
+                    v = mat[i, j]
+                    if not np.isnan(v):
+                        tc = 'white' if abs(v) > 0.6 else 'black'
+                        ax.text(j, i, f"{v:.2f}", ha='center', va='center',
+                                fontsize=max(6, fc['size'] - 2), color=tc,
+                                fontweight='bold' if fc['bold'] else 'normal')
+
+        cbar = self.figure.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
+        apply_font_to_colorbar_standalone(cbar, cfg, "Pearson r")
+
+        ax.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
 
 # ── Node ───────────────────────────────────────────────────────────────
 
 class CorrelationMatrixNode(QObject):
-    position_changed = Signal(object)
+    position_changed      = Signal(object)
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
-        self.title = "Corr. Matrix"
-        self.node_type = "correlation_matrix"
-        self.parent_window = parent_window
-        self.position = None
-        self._has_input = True
-        self._has_output = False
-        self.input_channels = ["input"]
+        self.title           = "Corr. Matrix"
+        self.node_type       = "correlation_matrix"
+        self.parent_window   = parent_window
+        self.position        = None
+        self._has_input      = True
+        self._has_output     = False
+        self.input_channels  = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
-        self.input_data = None
+        self.config          = dict(DEFAULT_CONFIG)
+        self.input_data      = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = CorrelationMatrixDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_matrix_data(self):
+        """
+        Returns:
+            None
+        """
         if not self.input_data:
             return None
-
         data_key = MATRIX_DATA_KEY_MAP.get(
             self.config.get('data_type_display', 'Counts'), 'elements')
         itype = self.input_data.get('type')
-
         if itype == 'sample_data':
             return self._extract_single(data_key)
         elif itype == 'multiple_sample_data':
@@ -720,10 +623,13 @@ class CorrelationMatrixNode(QObject):
         return None
 
     def _get_elements(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
-        # Fallback: gather from particles
         particles = self.input_data.get('particle_data', [])
         all_elems = set()
         for p in particles:
@@ -731,6 +637,12 @@ class CorrelationMatrixNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def _extract_single(self, data_key):
+        """
+        Args:
+            data_key (Any): The data key.
+        Returns:
+            dict: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         if not particles:
             return None
@@ -740,23 +652,23 @@ class CorrelationMatrixNode(QObject):
         mat, p_mat = _compute_correlation_matrix(particles, elements, data_key)
         if mat is None:
             return None
-        return {
-            'elements': elements,
-            'matrix': mat,
-            'p_matrix': p_mat,
-            'n_particles': len(particles),
-        }
+        return {'elements': elements, 'matrix': mat,
+                'p_matrix': p_mat, 'n_particles': len(particles)}
 
     def _extract_multi(self, data_key):
+        """
+        Args:
+            data_key (Any): The data key.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles or not names:
             return None
-
         elements = self._get_elements()
         if len(elements) < 2:
             return None
-
         result = {}
         for sn in names:
             sp = [p for p in particles if p.get('source_sample') == sn]
@@ -764,10 +676,6 @@ class CorrelationMatrixNode(QObject):
                 continue
             mat, p_mat = _compute_correlation_matrix(sp, elements, data_key)
             if mat is not None:
-                result[sn] = {
-                    'elements': elements,
-                    'matrix': mat,
-                    'p_matrix': p_mat,
-                    'n_particles': len(sp),
-                }
+                result[sn] = {'elements': elements, 'matrix': mat,
+                              'p_matrix': p_mat, 'n_particles': len(sp)}
         return result if result else None

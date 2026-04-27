@@ -16,31 +16,28 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QMessageBox
+    QDialogButtonBox, QMessageBox, QColorDialog, QTableWidget,
+    QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
 import numpy as np
 import math
-import mpltern  # noqa: F401  — registers 'ternary' projection
+import mpltern
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     TERNARY_DATA_TYPE_OPTIONS, TERNARY_DATA_KEY_MAPPING,
     get_font_config, make_font_properties,
     apply_font_to_ternary, apply_font_to_colorbar_standalone,
-    FontSettingsGroup,
+    FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
+    LABEL_MODES, format_element_label,
     get_sample_color, get_display_name,
     download_matplotlib_figure,
 )
 
-
-# ═══════════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════════
 
 DISPLAY_MODES = [
     'Individual Subplots',
@@ -59,10 +56,6 @@ COLORMAPS = [
 ]
 
 
-# ═══════════════════════════════════════════════
-# Ternary axes configuration
-# ═══════════════════════════════════════════════
-
 def setup_ternary_axes(ax, element_labels, config):
     """
     Configure mpltern axes with labels, grid, and font settings.
@@ -77,12 +70,14 @@ def setup_ternary_axes(ax, element_labels, config):
         element_labels: [elem_a, elem_b, elem_c]
         config:         node config dict
     """
-    fp = make_font_properties(config)
-    fc = get_font_config(config)
+    fp   = make_font_properties(config)
+    fc   = get_font_config(config)
+    mode = config.get('label_mode', 'Symbol')
+    fmt  = [format_element_label(e, mode) for e in element_labels]
 
-    ax.set_llabel(element_labels[0], fontproperties=fp, color=fc['color'])
-    ax.set_rlabel(element_labels[1], fontproperties=fp, color=fc['color'])
-    ax.set_tlabel(element_labels[2], fontproperties=fp, color=fc['color'])
+    ax.set_llabel(fmt[0], fontproperties=fp, color=fc['color'])
+    ax.set_rlabel(fmt[1], fontproperties=fp, color=fc['color'])
+    ax.set_tlabel(fmt[2], fontproperties=fp, color=fc['color'])
 
     if config.get('show_grid', True):
         ax.grid(True, alpha=0.3)
@@ -99,10 +94,6 @@ def setup_ternary_axes(ax, element_labels, config):
 
     ax.set_title('')
 
-
-# ═══════════════════════════════════════════════
-# Confidence ellipse (2σ)
-# ═══════════════════════════════════════════════
 
 def confidence_ellipse_params(data_x, data_y, n_std=2.0):
     """
@@ -140,14 +131,18 @@ def confidence_ellipse_params(data_x, data_y, n_std=2.0):
         return None
 
 
-# ═══════════════════════════════════════════════
-# Settings Dialog
-# ═══════════════════════════════════════════════
-
 class TernarySettingsDialog(QDialog):
     """Full settings dialog opened from right-click → Configure."""
 
     def __init__(self, config, available_elements, is_multi, sample_names, parent=None):
+        """
+        Args:
+            config (Any): Configuration dictionary.
+            available_elements (Any): The available elements.
+            is_multi (Any): The is multi.
+            sample_names (Any): The sample names.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("Ternary Plot Settings")
         self.setMinimumWidth(500)
@@ -169,7 +164,6 @@ class TernarySettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        # ── Multi-sample display mode ──
         if self._is_multi:
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
@@ -179,7 +173,6 @@ class TernarySettingsDialog(QDialog):
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
-        # ── Element selection ──
         g = QGroupBox("Element Selection")
         fl = QFormLayout(g)
         placeholder = ['-- Select --']
@@ -205,7 +198,6 @@ class TernarySettingsDialog(QDialog):
             self.elem_c.setCurrentText(ec)
         fl.addRow("Element C (Top):", self.elem_c)
 
-        # Color-by fourth element
         self.color_elem = QComboBox()
         self.color_elem.addItems(['(None — use index)'] + self._elems)
         ce = self._cfg.get('color_element', '')
@@ -215,16 +207,18 @@ class TernarySettingsDialog(QDialog):
 
         layout.addWidget(g)
 
-        # ── Data type ──
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
         self.data_type = QComboBox()
         self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
         fl.addRow("Data:", self.data_type)
+        self.label_mode_combo = QComboBox()
+        self.label_mode_combo.addItems(LABEL_MODES)
+        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Label Mode:", self.label_mode_combo)
         layout.addWidget(g)
 
-        # ── Plot style ──
         g = QGroupBox("Plot Style")
         fl = QFormLayout(g)
 
@@ -234,7 +228,6 @@ class TernarySettingsDialog(QDialog):
         self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
         fl.addRow("Plot Type:", self.plot_type)
 
-        # Scatter controls
         self._scatter_frame = QFrame()
         sfl = QFormLayout(self._scatter_frame)
         sfl.setContentsMargins(0, 0, 0, 0)
@@ -250,7 +243,6 @@ class TernarySettingsDialog(QDialog):
         sfl.addRow("Transparency:", self.marker_alpha)
         fl.addRow(self._scatter_frame)
 
-        # Hexbin controls
         self._hexbin_frame = QFrame()
         hfl = QFormLayout(self._hexbin_frame)
         hfl.setContentsMargins(0, 0, 0, 0)
@@ -286,9 +278,8 @@ class TernarySettingsDialog(QDialog):
 
         layout.addWidget(g)
 
-        self._on_plot_type_changed()  # set initial visibility
+        self._on_plot_type_changed()
 
-        # ── Average point ──
         g = QGroupBox("Average Point")
         fl = QFormLayout(g)
 
@@ -322,7 +313,6 @@ class TernarySettingsDialog(QDialog):
 
         layout.addWidget(g)
 
-        # ── Filtering ──
         g = QGroupBox("Filtering")
         fl = QFormLayout(g)
 
@@ -339,7 +329,6 @@ class TernarySettingsDialog(QDialog):
 
         layout.addWidget(g)
 
-        # ── Sample colors (multi) ──
         if self._is_multi:
             g = QGroupBox("Sample Colors & Names")
             vl = QVBoxLayout(g)
@@ -362,7 +351,6 @@ class TernarySettingsDialog(QDialog):
                 row.addWidget(cb)
                 self._color_btns[sn] = (cb, c)
 
-                # Reset name button
                 rst = QPushButton("↺")
                 rst.setFixedSize(22, 22)
                 rst.setToolTip(f"Reset to: {sn}")
@@ -375,11 +363,15 @@ class TernarySettingsDialog(QDialog):
                 vl.addWidget(w)
             layout.addWidget(g)
 
-        # ── Font settings ──
         self._font_group = FontSettingsGroup(self._cfg)
         layout.addWidget(self._font_group.build())
 
-        # ── OK / Cancel ──
+        self._legend_grp = LegendGroup(self._cfg)
+        layout.addWidget(self._legend_grp.build())
+
+        self._export_grp = ExportSettingsGroup(self._cfg)
+        layout.addWidget(self._export_grp.build())
+
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -401,6 +393,11 @@ class TernarySettingsDialog(QDialog):
                 f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
 
     def _pick_sample_color(self, name, btn):
+        """
+        Args:
+            name (Any): Name string.
+            btn (Any): The btn.
+        """
         from PySide6.QtWidgets import QColorDialog
         cur = QColor(self._color_btns[name][1])
         c = QColorDialog.getColor(cur, self, f"Color for {name}")
@@ -409,12 +406,20 @@ class TernarySettingsDialog(QDialog):
             self._color_btns[name] = (btn, c.name())
 
     def _reset_name(self, original):
+        """
+        Args:
+            original (Any): The original.
+        """
         if original in self._name_edits:
             self._name_edits[original].setText(original)
 
     # ── Collect ─────────────────────────────
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         out = dict(self._cfg)
         ea = self.elem_a.currentText()
         out['element_a'] = '' if ea.startswith('--') else ea
@@ -426,6 +431,7 @@ class TernarySettingsDialog(QDialog):
         out['color_element'] = '' if ce.startswith('(') else ce
 
         out['data_type_display'] = self.data_type.currentText()
+        out['label_mode']        = self.label_mode_combo.currentText()
         out['plot_type'] = self.plot_type.currentText()
         out['marker_size'] = self.marker_size.value()
         out['marker_alpha'] = self.marker_alpha.value() / 100.0
@@ -452,17 +458,469 @@ class TernarySettingsDialog(QDialog):
             out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
 
         out.update(self._font_group.collect())
+        out.update(self._legend_grp.collect())
+        out.update(self._export_grp.collect())
         return out
 
 
-# ═══════════════════════════════════════════════
-# Display Dialog (right-click context menu)
-# ═══════════════════════════════════════════════
+ANNOTATION_MARKERS = [
+    ('● Circle',       'o'),
+    ('■ Square',       's'),
+    ('▲ Triangle ▲',   '^'),
+    ('▼ Triangle ▼',   'v'),
+    ('◆ Diamond',      'D'),
+    ('◇ Thin Diamond', 'd'),
+    ('★ Star',         '*'),
+    ('✚ Plus',         '+'),
+    ('✖ Cross',        'x'),
+    ('⬠ Pentagon',     'p'),
+    ('⬡ Hexagon',      'H'),
+    ('⯄ Octagon',      '8'),
+    ('◀ Tri Left',     '<'),
+    ('▶ Tri Right',    '>'),
+    ('• Point',        '.'),
+]
+_MARKER_NAMES  = [m[0] for m in ANNOTATION_MARKERS]
+_MARKER_CODES  = [m[1] for m in ANNOTATION_MARKERS]
+
+ANN_TYPES = ['Text', 'Marker', 'Marker + Text']
+
+_ANN_DEFAULTS = {
+    'type':              'Text',
+    'x_frac':            0.50,
+    'y_frac':            0.50,
+    't':                 0.33,
+    'l':                 0.33,
+    'r':                 0.34,
+    'text':              'Annotation',
+    'color':             '#222222',
+    'fontsize':          11,
+    'bold':              False,
+    'italic':            False,
+    'show_box':          True,
+    'box_color':         '#FFFFFF',
+    'box_alpha':         0.75,
+    'marker':            'o',
+    'marker_size':       80,
+    'marker_color':      '#3B82F6',
+    'marker_edge_color': '#1D4ED8',
+    'marker_edge_width': 1.5,
+    'marker_alpha':      0.85,
+}
+
+
+class _ColorSwatch(QPushButton):
+    """Compact colour-picker button."""
+    def __init__(self, color='#FFFFFF', parent=None):
+        """
+        Args:
+            color (Any): Colour value.
+            parent (Any): Parent widget or object.
+        """
+        super().__init__(parent)
+        self.setFixedSize(36, 24)
+        self._color = color
+        self._update()
+
+    def _update(self):
+        self.setStyleSheet(
+            f'background-color:{self._color};'
+            f'border:1px solid #888;border-radius:3px;')
+
+    def color(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        return self._color
+
+    def set_color(self, c):
+        """
+        Args:
+            c (Any): The c.
+        """
+        self._color = c
+        self._update()
+
+    def mousePressEvent(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        if event.button() == Qt.LeftButton:
+            c = QColorDialog.getColor(QColor(self._color), self)
+            if c.isValid():
+                self.set_color(c.name())
+        super().mousePressEvent(event)
+
+
+class AnnotationDialog(QDialog):
+    """Add or edit a single ternary-plot annotation (Text / Marker / Marker+Text)."""
+
+    def __init__(self, ann: dict | None = None, parent=None):
+        """
+        Args:
+            ann (dict | None): The ann.
+            parent (Any): Parent widget or object.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Add Annotation" if ann is None else "Edit Annotation")
+        self.setMinimumWidth(460)
+        self._ann = dict(_ANN_DEFAULTS)
+        if ann:
+            self._ann.update(ann)
+        self._build()
+
+    # ── UI ────────────────────────────────────
+
+    def _build(self):
+        root = QVBoxLayout(self)
+
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        inner = QWidget(); lay = QVBoxLayout(inner)
+        lay.setSpacing(8)
+        scroll.setWidget(inner); root.addWidget(scroll)
+
+        # ── Type selector ────────────────────
+        g0 = QGroupBox("Annotation Type")
+        f0 = QFormLayout(g0)
+        self._type_combo = QComboBox()
+        self._type_combo.addItems(ANN_TYPES)
+        self._type_combo.setCurrentText(self._ann.get('type', 'Text'))
+        self._type_combo.currentTextChanged.connect(self._on_type_changed)
+        f0.addRow("Type:", self._type_combo)
+        lay.addWidget(g0)
+
+        self._text_pos_grp = QGroupBox("Text Position  (0 = left/bottom  →  1 = right/top)")
+        fp = QFormLayout(self._text_pos_grp)
+        self._xfrac = QDoubleSpinBox()
+        self._xfrac.setRange(0.0, 1.0); self._xfrac.setDecimals(3); self._xfrac.setSingleStep(0.02)
+        self._xfrac.setValue(self._ann.get('x_frac', 0.50))
+        fp.addRow("X (horizontal):", self._xfrac)
+        self._yfrac = QDoubleSpinBox()
+        self._yfrac.setRange(0.0, 1.0); self._yfrac.setDecimals(3); self._yfrac.setSingleStep(0.02)
+        self._yfrac.setValue(self._ann.get('y_frac', 0.50))
+        fp.addRow("Y (vertical):", self._yfrac)
+        lay.addWidget(self._text_pos_grp)
+
+        self._tern_pos_grp = QGroupBox("Marker Position  (ternary coordinates, T + L + R = 1)")
+        ft = QFormLayout(self._tern_pos_grp)
+
+        self._sum_lbl = QLabel()
+        self._sum_lbl.setStyleSheet("color:#6B7280; font-size:10px;")
+        ft.addRow("", self._sum_lbl)
+
+        coord_row = QHBoxLayout()
+        self._t = QDoubleSpinBox(); self._t.setRange(0, 1); self._t.setDecimals(3)
+        self._t.setSingleStep(0.01); self._t.setValue(self._ann.get('t', 0.33))
+        self._l = QDoubleSpinBox(); self._l.setRange(0, 1); self._l.setDecimals(3)
+        self._l.setSingleStep(0.01); self._l.setValue(self._ann.get('l', 0.33))
+        self._r = QDoubleSpinBox(); self._r.setRange(0, 1); self._r.setDecimals(3)
+        self._r.setSingleStep(0.01); self._r.setValue(self._ann.get('r', 0.34))
+        for lbl_txt, sp in [("T (top):", self._t), ("L (left):", self._l), ("R (right):", self._r)]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(lbl_txt, minimumWidth=60)); row.addWidget(sp)
+            ft.addRow(row)
+            sp.valueChanged.connect(self._update_sum)
+
+        norm_btn = QPushButton("⟳  Normalize  (force T+L+R = 1)")
+        norm_btn.clicked.connect(self._normalize)
+        ft.addRow("", norm_btn)
+        lay.addWidget(self._tern_pos_grp)
+        self._update_sum()
+
+        # ── Text style ───────────────────────
+        self._text_style_grp = QGroupBox("Text Style")
+        fts = QFormLayout(self._text_style_grp)
+
+        self._text_edit = QLineEdit(self._ann.get('text', 'Annotation'))
+        fts.addRow("Text:", self._text_edit)
+
+        self._fs = QSpinBox(); self._fs.setRange(6, 48)
+        self._fs.setValue(self._ann.get('fontsize', 11))
+        fts.addRow("Font Size:", self._fs)
+
+        style_h = QHBoxLayout()
+        self._bold   = QCheckBox("Bold");   self._bold.setChecked(self._ann.get('bold', False))
+        self._italic = QCheckBox("Italic"); self._italic.setChecked(self._ann.get('italic', False))
+        style_h.addWidget(self._bold); style_h.addWidget(self._italic); style_h.addStretch()
+        fts.addRow("Style:", _hbox_widget(style_h))
+
+        self._text_col = _ColorSwatch(self._ann.get('color', '#222222'))
+        fts.addRow("Text Color:", self._text_col)
+
+        box_h = QHBoxLayout()
+        self._show_box = QCheckBox("Background box")
+        self._show_box.setChecked(self._ann.get('show_box', True))
+        self._box_col   = _ColorSwatch(self._ann.get('box_color', '#FFFFFF'))
+        self._box_alpha = QDoubleSpinBox()
+        self._box_alpha.setRange(0.0, 1.0); self._box_alpha.setDecimals(2); self._box_alpha.setSingleStep(0.05)
+        self._box_alpha.setValue(self._ann.get('box_alpha', 0.75))
+        box_h.addWidget(self._show_box)
+        box_h.addWidget(QLabel("Color:")); box_h.addWidget(self._box_col)
+        box_h.addWidget(QLabel("Alpha:")); box_h.addWidget(self._box_alpha)
+        box_h.addStretch()
+        fts.addRow("Box:", _hbox_widget(box_h))
+        lay.addWidget(self._text_style_grp)
+
+        # ── Marker style ─────────────────────
+        self._marker_style_grp = QGroupBox("Marker Style")
+        fms = QFormLayout(self._marker_style_grp)
+
+        self._marker_combo = QComboBox()
+        self._marker_combo.addItems(_MARKER_NAMES)
+        cur_code = self._ann.get('marker', 'o')
+        self._marker_combo.setCurrentIndex(
+            _MARKER_CODES.index(cur_code) if cur_code in _MARKER_CODES else 0)
+        fms.addRow("Symbol:", self._marker_combo)
+
+        self._marker_size = QSpinBox(); self._marker_size.setRange(10, 500)
+        self._marker_size.setSuffix(" pt²")
+        self._marker_size.setValue(self._ann.get('marker_size', 80))
+        fms.addRow("Size:", self._marker_size)
+
+        self._marker_alpha = QDoubleSpinBox()
+        self._marker_alpha.setRange(0.0, 1.0); self._marker_alpha.setDecimals(2); self._marker_alpha.setSingleStep(0.05)
+        self._marker_alpha.setValue(self._ann.get('marker_alpha', 0.85))
+        fms.addRow("Alpha:", self._marker_alpha)
+
+        self._marker_col  = _ColorSwatch(self._ann.get('marker_color', '#3B82F6'))
+        fms.addRow("Fill Color:", self._marker_col)
+
+        edge_h = QHBoxLayout()
+        self._edge_col = _ColorSwatch(self._ann.get('marker_edge_color', '#1D4ED8'))
+        self._edge_w   = QDoubleSpinBox()
+        self._edge_w.setRange(0.0, 6.0); self._edge_w.setDecimals(1); self._edge_w.setSingleStep(0.5)
+        self._edge_w.setValue(self._ann.get('marker_edge_width', 1.5))
+        edge_h.addWidget(self._edge_col)
+        edge_h.addWidget(QLabel("Width:")); edge_h.addWidget(self._edge_w)
+        edge_h.addStretch()
+        fms.addRow("Edge:", _hbox_widget(edge_h))
+        lay.addWidget(self._marker_style_grp)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+        self._on_type_changed(self._type_combo.currentText())
+
+    # ── Helpers ───────────────────────────────
+
+    def _on_type_changed(self, t):
+        """
+        Args:
+            t (Any): The t.
+        """
+        is_text   = t in ('Text',)
+        is_marker = t in ('Marker', 'Marker + Text')
+        is_text_c = t in ('Text', 'Marker + Text')
+        self._text_pos_grp.setVisible(is_text)
+        self._tern_pos_grp.setVisible(is_marker)
+        self._text_style_grp.setVisible(is_text_c)
+        self._marker_style_grp.setVisible(is_marker)
+
+    def _update_sum(self):
+        s = self._t.value() + self._l.value() + self._r.value()
+        ok = abs(s - 1.0) < 0.001
+        color = '#16A34A' if ok else '#DC2626'
+        self._sum_lbl.setText(f"T + L + R = {s:.3f}")
+        self._sum_lbl.setStyleSheet(f"color:{color}; font-size:10px; font-weight:bold;")
+
+    def _normalize(self):
+        t, l, r = self._t.value(), self._l.value(), self._r.value()
+        s = t + l + r
+        if s > 0:
+            for sp, v in [(self._t, t/s), (self._l, l/s), (self._r, r/s)]:
+                sp.blockSignals(True); sp.setValue(round(v, 3)); sp.blockSignals(False)
+        self._update_sum()
+
+    def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
+        ann_type = self._type_combo.currentText()
+        return {
+            'type':              ann_type,
+            'x_frac':            self._xfrac.value(),
+            'y_frac':            self._yfrac.value(),
+            't':                 self._t.value(),
+            'l':                 self._l.value(),
+            'r':                 self._r.value(),
+            'text':              self._text_edit.text().strip() or 'Annotation',
+            'color':             self._text_col.color(),
+            'fontsize':          self._fs.value(),
+            'bold':              self._bold.isChecked(),
+            'italic':            self._italic.isChecked(),
+            'show_box':          self._show_box.isChecked(),
+            'box_color':         self._box_col.color(),
+            'box_alpha':         self._box_alpha.value(),
+            'marker':            _MARKER_CODES[self._marker_combo.currentIndex()],
+            'marker_size':       self._marker_size.value(),
+            'marker_alpha':      self._marker_alpha.value(),
+            'marker_color':      self._marker_col.color(),
+            'marker_edge_color': self._edge_col.color(),
+            'marker_edge_width': self._edge_w.value(),
+        }
+
+
+def _hbox_widget(hbox: QHBoxLayout) -> QWidget:
+    """
+    Args:
+        hbox (QHBoxLayout): The hbox.
+    Returns:
+        QWidget: Result of the operation.
+    """
+    w = QWidget(); w.setLayout(hbox); return w
+
+
+class ManageAnnotationsDialog(QDialog):
+    """View, edit, reorder and delete existing annotations."""
+
+    _TYPE_ICONS = {'Text': '', 'Marker': '●', 'Marker + Text': '●'}
+
+    def __init__(self, annotations: list, parent=None):
+        """
+        Args:
+            annotations (list): The annotations.
+            parent (Any): Parent widget or object.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Manage Annotations")
+        self.setMinimumSize(640, 400)
+        self._anns = [dict(a) for a in annotations]
+        self._build()
+
+    def _build(self):
+        lay = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(["", "Type", "Text / Symbol", "T", "L", "R"])
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self._table.setColumnWidth(0, 30)
+        self._table.setColumnWidth(1, 90)
+        self._table.setColumnWidth(3, 55)
+        self._table.setColumnWidth(4, 55)
+        self._table.setColumnWidth(5, 55)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.doubleClicked.connect(self._edit)
+        lay.addWidget(self._table)
+
+        btns = QHBoxLayout()
+        for label, slot in [
+            ("Add",   self._add),
+            ("Edit",  self._edit),
+            ("Delete",self._delete),
+            ("▲ Up",    self._move_up),
+            ("▼ Down",  self._move_down),
+        ]:
+            b = QPushButton(label); b.clicked.connect(slot); btns.addWidget(b)
+        btns.addStretch()
+        lay.addLayout(btns)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+        self._reload()
+
+    def _reload(self):
+        self._table.setRowCount(0)
+        for a in self._anns:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+
+            ann_type = a.get('type', 'Text')
+            icon = self._TYPE_ICONS.get(ann_type, '?')
+
+            swatch = QTableWidgetItem()
+            col = a.get('marker_color' if 'Marker' in ann_type else 'color', '#3B82F6')
+            swatch.setBackground(QColor(col))
+            self._table.setItem(r, 0, swatch)
+
+            self._table.setItem(r, 1, QTableWidgetItem(f"{icon} {ann_type}"))
+
+            if ann_type == 'Text':
+                preview = a.get('text', '')
+            elif ann_type == 'Marker':
+                mc = a.get('marker', 'o')
+                preview = _MARKER_NAMES[_MARKER_CODES.index(mc)] if mc in _MARKER_CODES else mc
+            else:
+                mc = a.get('marker', 'o')
+                sym = _MARKER_NAMES[_MARKER_CODES.index(mc)] if mc in _MARKER_CODES else mc
+                preview = f'{sym}  \u201c{a.get("text", "")}\u201d'
+            self._table.setItem(r, 2, QTableWidgetItem(preview))
+
+            t_val = a.get('t', 0.33)
+            l_val = a.get('l', 0.33)
+            r_val = a.get('r', 0.34)
+            if ann_type == 'Text':
+                self._table.setItem(r, 3, QTableWidgetItem(f"x={a.get('x_frac', 0.5):.2f}"))
+                self._table.setItem(r, 4, QTableWidgetItem(f"y={a.get('y_frac', 0.5):.2f}"))
+                self._table.setItem(r, 5, QTableWidgetItem("—"))
+            else:
+                self._table.setItem(r, 3, QTableWidgetItem(f"{t_val:.2f}"))
+                self._table.setItem(r, 4, QTableWidgetItem(f"{l_val:.2f}"))
+                self._table.setItem(r, 5, QTableWidgetItem(f"{r_val:.2f}"))
+
+    def _selected_row(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
+        rows = self._table.selectionModel().selectedRows()
+        return rows[0].row() if rows else -1
+
+    def _add(self):
+        dlg = AnnotationDialog(parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self._anns.append(dlg.collect())
+            self._reload()
+
+    def _edit(self):
+        idx = self._selected_row()
+        if idx < 0:
+            return
+        dlg = AnnotationDialog(ann=self._anns[idx], parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self._anns[idx] = dlg.collect()
+            self._reload(); self._table.selectRow(idx)
+
+    def _delete(self):
+        idx = self._selected_row()
+        if idx >= 0:
+            self._anns.pop(idx); self._reload()
+
+    def _move_up(self):
+        idx = self._selected_row()
+        if idx > 0:
+            self._anns[idx - 1], self._anns[idx] = self._anns[idx], self._anns[idx - 1]
+            self._reload(); self._table.selectRow(idx - 1)
+
+    def _move_down(self):
+        idx = self._selected_row()
+        if 0 <= idx < len(self._anns) - 1:
+            self._anns[idx], self._anns[idx + 1] = self._anns[idx + 1], self._anns[idx]
+            self._reload(); self._table.selectRow(idx + 1)
+
+    def collect(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
+        return [dict(a) for a in self._anns]
+
 
 class TriangleDisplayDialog(QDialog):
     """Full-figure dialog with right-click context menu for all settings."""
 
     def __init__(self, triangle_node, parent_window=None):
+        """
+        Args:
+            triangle_node (Any): The triangle node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = triangle_node
         self.parent_window = parent_window
@@ -476,15 +934,27 @@ class TriangleDisplayDialog(QDialog):
     # ── Helpers ─────────────────────────────
 
     def _is_multi(self) -> bool:
+        """
+        Returns:
+            bool: Result of the operation.
+        """
         return (self.node.input_data and
                 self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
 
     def _available_elements(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if not self.node.input_data:
             return []
         elems = set()
@@ -500,12 +970,27 @@ class TriangleDisplayDialog(QDialog):
         main_layout.setSpacing(4)
 
         self.figure = Figure(figsize=(14, 10), dpi=140, tight_layout=True)
-        self.canvas = FigureCanvas(self.figure)
+        self.canvas = MplDraggableCanvas(self.figure)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._show_context_menu)
         main_layout.addWidget(self.canvas, stretch=1)
 
-        # Stats bar at bottom
+        self.canvas.mpl_connect('button_release_event', self._save_ann_positions)
+
+        # ── Bottom toolbar ────────────────────────────────────────────
+        tb = QHBoxLayout()
+        tb.setContentsMargins(0, 2, 0, 0)
+        btn_s = QPushButton("Settings")
+        btn_s.clicked.connect(self._open_settings)
+        btn_r = QPushButton("Reset Layout")
+        btn_r.setToolTip("Reset all subplot positions\n(or middle-click on the figure)")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("Export…")
+        btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_s); tb.addWidget(btn_r)
+        tb.addStretch(); tb.addWidget(btn_e)
+        main_layout.addLayout(tb)
+
         self.stats_label = QLabel("")
         self.stats_label.setStyleSheet(
             "color: #6B7280; font-size: 11px; padding: 2px 8px; "
@@ -515,10 +1000,13 @@ class TriangleDisplayDialog(QDialog):
     # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
-        # Quick toggles
         toggle_menu = menu.addMenu("Quick Toggles")
         self._add_toggle(toggle_menu, "Show Grid", 'show_grid')
         self._add_toggle(toggle_menu, "Show Color Bar", 'show_colorbar')
@@ -527,7 +1015,6 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show 2σ Ellipse", 'show_confidence_ellipse')
         self._add_toggle(toggle_menu, "Average: All 3 Required", 'average_only_with_all_elements')
 
-        # Element quick-switch
         elems = self._available_elements()
         if elems:
             ea_menu = menu.addMenu("Element A (Left)")
@@ -562,7 +1049,6 @@ class TriangleDisplayDialog(QDialog):
                 a.setChecked(e == cfg.get('color_element'))
                 a.triggered.connect(lambda _, el=e: self._set('color_element', el))
 
-        # Data type
         dt_menu = menu.addMenu("Data Type")
         cur_dt = cfg.get('data_type_display', 'Counts (%)')
         for dt in TERNARY_DATA_TYPE_OPTIONS:
@@ -571,7 +1057,6 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(dt == cur_dt)
             a.triggered.connect(lambda _, d=dt: self._set('data_type_display', d))
 
-        # Plot type
         pt_menu = menu.addMenu("Plot Type")
         cur_pt = cfg.get('plot_type', 'Scatter Plot')
         for pt in PLOT_TYPES:
@@ -580,7 +1065,6 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(pt == cur_pt)
             a.triggered.connect(lambda _, p=pt: self._set('plot_type', p))
 
-        # Colormap
         cm_menu = menu.addMenu("Color Map")
         cur_cm = cfg.get('colormap', 'YlGn')
         for cm in COLORMAPS:
@@ -589,7 +1073,6 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(cm == cur_cm)
             a.triggered.connect(lambda _, c=cm: self._set('colormap', c))
 
-        # Display mode (multi)
         if self._is_multi():
             dm_menu = menu.addMenu("Display Mode")
             cur = cfg.get('display_mode', DISPLAY_MODES[0])
@@ -600,29 +1083,71 @@ class TriangleDisplayDialog(QDialog):
                 a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
 
         menu.addSeparator()
+        menu.addAction("Reset Layout").triggered.connect(self._reset_layout)
 
+        lm = menu.addMenu("Label Mode")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode); a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
+        menu.addSeparator()
+        menu.addAction("Add Annotation…").triggered.connect(self._add_annotation)
+        menu.addAction("Manage Annotations…").triggered.connect(self._manage_annotations)
+
+        menu.addSeparator()
         settings_action = menu.addAction("⚙  Configure…")
         settings_action.triggered.connect(self._open_settings)
 
-        dl_action = menu.addAction("💾 Download Figure…")
-        dl_action.triggered.connect(
-            lambda: download_matplotlib_figure(self.figure, self, "ternary_plot.png"))
+        dl_action = menu.addAction("Download Figure…")
+        dl_action.triggered.connect(self._export_figure)
 
         menu.exec(QCursor.pos())
 
     def _add_toggle(self, menu, label, key):
+        """
+        Args:
+            menu (Any): QMenu object.
+            label (Any): Label text.
+            key (Any): Dictionary or storage key.
+        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
     def _set(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
+
+    def _add_annotation(self):
+        dlg = AnnotationDialog(parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            anns = list(self.node.config.get('annotations', []))
+            anns.append(dlg.collect())
+            self.node.config['annotations'] = anns
+            self._refresh()
+
+    def _manage_annotations(self):
+        anns = list(self.node.config.get('annotations', []))
+        dlg = ManageAnnotationsDialog(anns, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config['annotations'] = dlg.collect()
+            self._refresh()
 
     def _open_settings(self):
         dlg = TernarySettingsDialog(
@@ -632,11 +1157,24 @@ class TriangleDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
+    def _reset_layout(self):
+        self.canvas.reset_layout()
+
+    def _export_figure(self):
+        download_matplotlib_figure(self.figure, self, "ternary_plot")
+
     # ── Refresh / draw ──────────────────────
 
     def _refresh(self):
         try:
+            cfg = self.node.config
+
+            if cfg.get('use_custom_figsize', False):
+                self.figure.set_size_inches(cfg.get('figsize_w', 14.0),
+                                            cfg.get('figsize_h', 10.0))
             self.figure.clear()
+            self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
+
             plot_data = self.node.extract_plot_data()
 
             if not plot_data:
@@ -662,28 +1200,139 @@ class TriangleDisplayDialog(QDialog):
                     self._draw_side_by_side(plot_data, cfg)
                 elif mode == 'Combined Plot':
                     self._draw_combined(plot_data, cfg)
-                else:  # Overlaid
+                else:
                     self._draw_overlaid(plot_data, cfg)
+                for ax in self.figure.get_axes():
+                    self._draw_annotations(ax, cfg)
             else:
                 ax = self.figure.add_subplot(111, projection='ternary')
                 self._draw_sample(ax, plot_data, cfg, "Ternary Plot")
                 apply_font_to_ternary(ax, cfg)
+                self._draw_annotations(ax, cfg)
 
-            # Update stats bar
             self._update_stats(plot_data)
 
             self.figure.tight_layout()
             self.canvas.draw()
+            self.canvas.snapshot_positions()
 
         except Exception as e:
             print(f"Error updating ternary display: {e}")
             import traceback
             traceback.print_exc()
 
-    # ── Stats bar ───────────────────────────
+    # ── Annotation rendering ─────────────────
+
+    def _draw_annotations(self, ax, cfg):
+        """Render all custom annotations onto a ternary axes.
+
+        Text annotations are placed in axes-fraction space (draggable).
+        Marker annotations are placed at ternary data coordinates.
+        Position changes from dragging are saved back to config on mouse release.
+        Args:
+            ax (Any): The ax.
+            cfg (Any): The cfg.
+        """
+        anns = cfg.get('annotations', [])
+        if not anns:
+            return
+
+        fc_cfg = get_font_config(cfg)
+
+        for idx, ann in enumerate(anns):
+            ann_type = ann.get('type', 'Text')
+
+            # ── Common text style ───────────────────────────────────────
+            txt    = ann.get('text', '')
+            col    = ann.get('color', '#222222')
+            fs     = ann.get('fontsize', 11)
+            fw     = 'bold'   if ann.get('bold',   False) else 'normal'
+            fi     = 'italic' if ann.get('italic', False) else 'normal'
+            bbox_kw = None
+            if ann.get('show_box', True):
+                bbox_kw = dict(
+                    boxstyle='round,pad=0.3',
+                    fc=ann.get('box_color', '#FFFFFF'),
+                    alpha=ann.get('box_alpha', 0.75),
+                    ec='#AAAAAA', linewidth=0.5,
+                )
+
+            # ── Marker (scatter at ternary position) ────────────────────
+            if ann_type in ('Marker', 'Marker + Text'):
+                t = ann.get('t', 0.33)
+                l = ann.get('l', 0.33)
+                r = ann.get('r', 0.34)
+                s = t + l + r
+                if s > 0:
+                    t, l, r = t/s, l/s, r/s
+                try:
+                    ax.scatter([t], [l], [r],
+                               marker=ann.get('marker', 'o'),
+                               s=ann.get('marker_size', 80),
+                               c=[ann.get('marker_color', '#3B82F6')],
+                               alpha=ann.get('marker_alpha', 0.85),
+                               edgecolors=ann.get('marker_edge_color', '#1D4ED8'),
+                               linewidths=ann.get('marker_edge_width', 1.5),
+                               zorder=18)
+                except Exception:
+                    pass
+
+            # ── Text (axes-fraction position, draggable) ────────────────
+            if ann_type in ('Text', 'Marker + Text') and txt:
+                x_frac = ann.get('x_frac', 0.5)
+                y_frac = ann.get('y_frac', 0.5)
+
+                try:
+                    text_art = ax.text(
+                        x_frac, y_frac, txt,
+                        transform=ax.transAxes,
+                        fontsize=fs, color=col,
+                        fontweight=fw, fontstyle=fi,
+                        bbox=bbox_kw,
+                        ha='center', va='center',
+                        zorder=20,
+                        picker=True,
+                    )
+                    text_art._ann_idx = idx
+                    text_art.draggable(True, use_blit=True)
+                except Exception:
+                    pass
+
+    def _save_ann_positions(self, event=None):
+        """Called on mouse button release — persist dragged text positions back to config.
+        Args:
+            event (Any): Qt event object.
+        """
+        try:
+            anns = self.node.config.get('annotations', [])
+            changed = False
+            for ax in self.figure.get_axes():
+                for artist in ax.get_children():
+                    idx = getattr(artist, '_ann_idx', None)
+                    if idx is None or idx >= len(anns):
+                        continue
+                    ann = anns[idx]
+                    if ann.get('type', 'Text') not in ('Text', 'Marker + Text'):
+                        continue
+                    try:
+                        x, y = artist.get_position()
+                        if (abs(x - ann.get('x_frac', 0.5)) > 0.001 or
+                                abs(y - ann.get('y_frac', 0.5)) > 0.001):
+                            ann['x_frac'] = round(float(x), 4)
+                            ann['y_frac'] = round(float(y), 4)
+                            changed = True
+                    except Exception:
+                        pass
+            if changed:
+                self.node.config['annotations'] = anns
+        except Exception:
+            pass
 
     def _update_stats(self, plot_data):
-        """Update the bottom statistics label."""
+        """Update the bottom statistics label.
+        Args:
+            plot_data (Any): The plot data.
+        """
         cfg = self.node.config
 
         if self._is_multi():
@@ -710,7 +1359,6 @@ class TriangleDisplayDialog(QDialog):
 
             self.stats_label.setText("  ·  ".join(parts))
 
-    # ── Drawing a single sample onto an axes ─
 
     def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None):
         """
@@ -731,7 +1379,6 @@ class TriangleDisplayDialog(QDialog):
         ec = cfg.get('element_c', 'C')
         setup_ternary_axes(ax, [ea, eb, ec], cfg)
 
-        # Extract ternary coordinates — mpltern scatter(R, T, L) = (b, c, a)
         a_vals = np.array([p['a'] for p in sample_data])
         b_vals = np.array([p['b'] for p in sample_data])
         c_vals = np.array([p['c'] for p in sample_data])
@@ -745,9 +1392,7 @@ class TriangleDisplayDialog(QDialog):
             alpha = cfg.get('marker_alpha', 0.7)
             color_elem = cfg.get('color_element', '')
 
-            # Determine coloring mode
             if color_elem and not sample_color:
-                # Color by fourth element value
                 color_vals = np.array([p.get('color_val', 0) for p in sample_data])
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
@@ -758,13 +1403,11 @@ class TriangleDisplayDialog(QDialog):
                     apply_font_to_colorbar_standalone(
                         cbar, cfg, cfg.get('colorbar_label', color_elem))
             elif sample_color:
-                # Fixed color (overlaid mode)
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, color=sample_color,
                     edgecolors='white', linewidth=0.5, label=title)
             else:
-                # Color by index (default)
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, c=range(len(b_vals)), cmap=cmap,
@@ -774,7 +1417,6 @@ class TriangleDisplayDialog(QDialog):
                     apply_font_to_colorbar_standalone(
                         cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
         else:
-            # Hexbin density
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
             hexbin = ax.hexbin(
@@ -785,15 +1427,19 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, cfg.get('colorbar_label', 'Density'))
 
-        # Average point + ellipse
         self._draw_average(ax, sample_data, cfg, title)
 
     def _draw_average(self, ax, sample_data, cfg, sample_name):
-        """Draw average point with optional stats text and confidence ellipse."""
+        """Draw average point with optional stats text and confidence ellipse.
+        Args:
+            ax (Any): The ax.
+            sample_data (Any): The sample data.
+            cfg (Any): The cfg.
+            sample_name (Any): The sample name.
+        """
         if not cfg.get('show_average_point', True) or not sample_data:
             return
 
-        # Optionally filter to particles with all 3 elements > 0
         if cfg.get('average_only_with_all_elements', True):
             data = [p for p in sample_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
         else:
@@ -822,7 +1468,6 @@ class TriangleDisplayDialog(QDialog):
             edgecolors='black', linewidth=1.5, zorder=10,
             label=f'Average{" (" + sample_name + ")" if sample_name else ""}{suffix}')
 
-        # Stats text annotation
         if cfg.get('show_average_text', True):
             fp = make_font_properties(cfg)
             ea = cfg.get('element_a', 'A')
@@ -833,7 +1478,6 @@ class TriangleDisplayDialog(QDialog):
                     f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
                     f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
 
-            # Place text offset from average point
             tx = mb + 0.15
             ty = mc + 0.01
             tz = max(1.0 - tx - ty, 0.01)
@@ -843,7 +1487,6 @@ class TriangleDisplayDialog(QDialog):
                               alpha=0.85, edgecolor='gray'),
                     ha='left', va='bottom', zorder=11)
 
-        # 2σ Confidence ellipse — drawn in (b, c) projection space
         if cfg.get('show_confidence_ellipse', False) and len(data) >= 3:
             params = confidence_ellipse_params(b_vals, c_vals, n_std=2.0)
             if params:
@@ -858,6 +1501,11 @@ class TriangleDisplayDialog(QDialog):
     # ── Multi-sample layouts ────────────────
 
     def _draw_subplots(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(2, n)
@@ -874,6 +1522,11 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_ternary(ax, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         samples = list(plot_data.keys())
         n = len(samples)
 
@@ -888,6 +1541,11 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_ternary(ax, cfg)
 
     def _draw_combined(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         ax = self.figure.add_subplot(111, projection='ternary')
         combined = []
         for sd in plot_data.values():
@@ -898,6 +1556,11 @@ class TriangleDisplayDialog(QDialog):
             apply_font_to_ternary(ax, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
+        """
+        Args:
+            plot_data (Any): The plot data.
+            cfg (Any): The cfg.
+        """
         ax = self.figure.add_subplot(111, projection='ternary')
 
         ea = cfg.get('element_a', 'A')
@@ -929,10 +1592,6 @@ class TriangleDisplayDialog(QDialog):
         apply_font_to_ternary(ax, cfg)
 
 
-# ═══════════════════════════════════════════════
-# Node
-# ═══════════════════════════════════════════════
-
 class TrianglePlotNode(QObject):
     """
     Ternary plot node with right-click driven configuration.
@@ -959,26 +1618,38 @@ class TrianglePlotNode(QObject):
         'colorbar_label': 'Density',
         'min_total': 0.0,
         'max_particles': 100_000_000,
-        # Average
         'show_average_point': True,
         'average_point_color': '#FF0000',
         'average_point_size': 100,
         'show_average_text': True,
         'average_only_with_all_elements': True,
         'show_confidence_ellipse': False,
-        # Multi-sample
         'display_mode': 'Individual Subplots',
         'sample_colors': {},
         'sample_name_mappings': {},
-        # Font
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,
         'font_italic': False,
         'font_color': '#000000',
+        'label_mode':  'Symbol',
+        'annotations': [],
+        'legend_show':     False,
+        'legend_position': 'best',
+        'legend_outside':  False,
+        'bg_color':          '#FFFFFF',
+        'export_format':     'svg',
+        'export_dpi':        300,
+        'use_custom_figsize': False,
+        'figsize_w':         14.0,
+        'figsize_h':         10.0,
     }
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
         self.title = "Ternary Plot"
         self.node_type = "triangle_plot"
@@ -993,21 +1664,34 @@ class TrianglePlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = TriangleDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
 
-        # Auto-select first 3 elements if not configured
         ea = self.config.get('element_a', '')
         if not ea or ea.startswith('--'):
             self._auto_configure_elements()
@@ -1090,7 +1774,6 @@ class TrianglePlotNode(QObject):
             vb = d.get(eb, 0)
             vc = d.get(ec, 0)
 
-            # Validate
             if dk == 'elements':
                 if va <= 0 or vb <= 0 or vc <= 0:
                     continue
@@ -1121,12 +1804,32 @@ class TrianglePlotNode(QObject):
         return result or None
 
     def _extract_single(self, dk, ea, eb, ec, color_elem):
+        """
+        Args:
+            dk (Any): The dk.
+            ea (Any): The ea.
+            eb (Any): The eb.
+            ec (Any): The ec.
+            color_elem (Any): The color elem.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
         return self._extract_particles(particles, dk, ea, eb, ec, color_elem)
 
     def _extract_multi(self, dk, ea, eb, ec, color_elem):
+        """
+        Args:
+            dk (Any): The dk.
+            ea (Any): The ea.
+            eb (Any): The eb.
+            ec (Any): The ec.
+            color_elem (Any): The color elem.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:

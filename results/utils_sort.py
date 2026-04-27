@@ -33,6 +33,12 @@ def sort_elements_by_mass(elements):
         list: Sorted list of element name strings ordered by mass number (ascending)
     """
     def get_sort_key(element):
+        """
+        Args:
+            element (Any): The element.
+        Returns:
+            object: Result of the operation.
+        """
         mass, _ = extract_mass_and_element(element)
         return mass
              

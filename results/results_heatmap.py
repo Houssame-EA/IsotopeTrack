@@ -5,14 +5,14 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import numpy as np
 import math
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_KEY_MAPPING,
-    FontSettingsGroup, get_font_config, apply_font_to_matplotlib,
+    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
+    get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
     download_matplotlib_figure,
 )
@@ -23,7 +23,6 @@ from results.utils_sort import (
 from widget.colors import colorheatmap
 
 
-# Data type options for heatmaps (includes percentages)
 HEATMAP_DATA_TYPES = [
     'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
     'Element Moles (fmol)', 'Particle Moles (fmol)',
@@ -31,15 +30,18 @@ HEATMAP_DATA_TYPES = [
 ]
 
 
-# ═══════════════════════════════════════════════
-# Settings Dialog
-# ═══════════════════════════════════════════════
-
 class HeatmapSettingsDialog(QDialog):
     """Full settings dialog opened from right-click → Configure…"""
 
     def __init__(self, config: dict, is_multi: bool,
                  sample_names: list, parent=None):
+        """
+        Args:
+            config (dict): Configuration dictionary.
+            is_multi (bool): The is multi.
+            sample_names (list): The sample names.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("Heatmap Settings")
         self.setMinimumWidth(480)
@@ -58,7 +60,6 @@ class HeatmapSettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        # Multi-sample display
         if self._is_multi:
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
@@ -72,7 +73,6 @@ class HeatmapSettingsDialog(QDialog):
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
-        # Data type
         g = QGroupBox("Data Type")
         vl = QVBoxLayout(g)
         self.data_type = QComboBox()
@@ -82,7 +82,6 @@ class HeatmapSettingsDialog(QDialog):
         vl.addWidget(self.data_type)
         layout.addWidget(g)
 
-        # Search & filter
         g = QGroupBox("Element Search & Filter")
         sl = QVBoxLayout(g)
         row = QHBoxLayout()
@@ -99,7 +98,6 @@ class HeatmapSettingsDialog(QDialog):
         sl.addWidget(self.filter_only_cb)
         layout.addWidget(g)
 
-        # Range
         g = QGroupBox("Combination Range")
         fl = QFormLayout(g)
         self.start_spin = QSpinBox()
@@ -112,7 +110,6 @@ class HeatmapSettingsDialog(QDialog):
         fl.addRow("End:", self.end_spin)
         layout.addWidget(g)
 
-        # Filters
         g = QGroupBox("Filters")
         fl = QFormLayout(g)
         self.filter_zeros = QCheckBox()
@@ -124,7 +121,6 @@ class HeatmapSettingsDialog(QDialog):
         fl.addRow("Min particles:", self.min_particles)
         layout.addWidget(g)
 
-        # Labels
         g = QGroupBox("Labels")
         fl = QFormLayout(g)
         self.mass_numbers_cb = QCheckBox()
@@ -132,7 +128,6 @@ class HeatmapSettingsDialog(QDialog):
         fl.addRow("Show mass numbers:", self.mass_numbers_cb)
         layout.addWidget(g)
 
-        # Display
         g = QGroupBox("Display")
         fl = QFormLayout(g)
         self.show_numbers_cb = QCheckBox()
@@ -143,7 +138,6 @@ class HeatmapSettingsDialog(QDialog):
         fl.addRow("Show colorbar:", self.show_colorbar_cb)
         layout.addWidget(g)
 
-        # Colorscale
         g = QGroupBox("Color Scale")
         vl = QVBoxLayout(g)
         self.colorscale = QComboBox()
@@ -152,11 +146,49 @@ class HeatmapSettingsDialog(QDialog):
         vl.addWidget(self.colorscale)
         layout.addWidget(g)
 
-        # Font
+        from PySide6.QtWidgets import QDoubleSpinBox as _QDbl
+        g = QGroupBox("Color Range")
+        fl = QFormLayout(g)
+        self.log_scale_cb = QCheckBox()
+        self.log_scale_cb.setChecked(self._config.get('log_scale', False))
+        fl.addRow("Log scale:", self.log_scale_cb)
+        self.custom_range_cb = QCheckBox()
+        self.custom_range_cb.setChecked(self._config.get('use_custom_range', False))
+        fl.addRow("Custom range:", self.custom_range_cb)
+        self.vmin_spin = _QDbl()
+        self.vmin_spin.setRange(-1e9, 1e9); self.vmin_spin.setDecimals(3)
+        self.vmin_spin.setValue(self._config.get('vmin', 0.0))
+        fl.addRow("vmin:", self.vmin_spin)
+        self.vmax_spin = _QDbl()
+        self.vmax_spin.setRange(-1e9, 1e9); self.vmax_spin.setDecimals(3)
+        self.vmax_spin.setValue(self._config.get('vmax', 100.0))
+        fl.addRow("vmax:", self.vmax_spin)
+        layout.addWidget(g)
+
+        g = QGroupBox("Cell Appearance")
+        fl = QFormLayout(g)
+        self.x_rotation_spin = QSpinBox()
+        self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
+        self.x_rotation_spin.setValue(self._config.get('x_rotation', 0))
+        fl.addRow("X label rotation:", self.x_rotation_spin)
+        self.ann_fontsize_spin = QSpinBox()
+        self.ann_fontsize_spin.setRange(0, 24)
+        self.ann_fontsize_spin.setSpecialValueText("Auto")
+        self.ann_fontsize_spin.setValue(self._config.get('annotation_fontsize', 0))
+        fl.addRow("Annotation font size:", self.ann_fontsize_spin)
+        self.cell_lw_spin = _QDbl()
+        self.cell_lw_spin.setRange(0.0, 5.0); self.cell_lw_spin.setSingleStep(0.25)
+        self.cell_lw_spin.setDecimals(2); self.cell_lw_spin.setSpecialValueText("Off")
+        self.cell_lw_spin.setValue(self._config.get('cell_linewidth', 0.5))
+        fl.addRow("Cell border width:", self.cell_lw_spin)
+        layout.addWidget(g)
+
         self._font_group = FontSettingsGroup(self._config)
         layout.addWidget(self._font_group.build())
 
-        # Sample colors
+        self._export_grp = ExportSettingsGroup(self._config)
+        layout.addWidget(self._export_grp.build())
+
         if self._is_multi:
             g = QGroupBox("Sample Colors")
             sl_layout = QVBoxLayout(g)
@@ -187,6 +219,11 @@ class HeatmapSettingsDialog(QDialog):
         outer.addWidget(btns)
 
     def _pick_color(self, name, btn):
+        """
+        Args:
+            name (Any): Name string.
+            btn (Any): The btn.
+        """
         c = QColorDialog.getColor(QColor(self._sample_btns[name][1]), self)
         if c.isValid():
             btn.setStyleSheet(f"background-color:{c.name()}; border:1px solid black;")
@@ -194,6 +231,10 @@ class HeatmapSettingsDialog(QDialog):
             self._sample_btns[name] = (b, c.name())
 
     def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         cfg = dict(self._config)
         cfg['data_type_display'] = self.data_type.currentText()
         cfg['search_element'] = self.search_edit.text().strip()
@@ -207,7 +248,15 @@ class HeatmapSettingsDialog(QDialog):
         cfg['show_numbers'] = self.show_numbers_cb.isChecked()
         cfg['show_colorbar'] = self.show_colorbar_cb.isChecked()
         cfg['colorscale'] = self.colorscale.currentText()
+        cfg['log_scale']         = self.log_scale_cb.isChecked()
+        cfg['use_custom_range']  = self.custom_range_cb.isChecked()
+        cfg['vmin']              = self.vmin_spin.value()
+        cfg['vmax']              = self.vmax_spin.value()
+        cfg['x_rotation']          = self.x_rotation_spin.value()
+        cfg['annotation_fontsize'] = self.ann_fontsize_spin.value()
+        cfg['cell_linewidth']      = self.cell_lw_spin.value()
         cfg.update(self._font_group.collect())
+        cfg.update(self._export_grp.collect())
 
         if self._is_multi:
             cfg['display_mode'] = self.display_mode.currentText()
@@ -218,16 +267,17 @@ class HeatmapSettingsDialog(QDialog):
         return cfg
 
 
-# ═══════════════════════════════════════════════
-# Display Dialog (figure-only with right-click)
-# ═══════════════════════════════════════════════
-
 class HeatmapDisplayDialog(QDialog):
     """
     Full-figure heatmap dialog with right-click context menu.
     """
 
     def __init__(self, heatmap_node, parent_window=None):
+        """
+        Args:
+            heatmap_node (Any): The heatmap node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = heatmap_node
         self.parent_window = parent_window
@@ -238,10 +288,18 @@ class HeatmapDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _is_multi(self) -> bool:
+        """
+        Returns:
+            bool: Result of the operation.
+        """
         return (self.node.input_data and
                 self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
+        """
+        Returns:
+            list: Result of the operation.
+        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
@@ -253,18 +311,37 @@ class HeatmapDisplayDialog(QDialog):
         layout.setContentsMargins(4, 4, 4, 4)
 
         self.figure = Figure(figsize=(16, 10), dpi=140, tight_layout=True)
-        self.canvas = FigureCanvas(self.figure)
+        self.canvas = MplDraggableCanvas(self.figure)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.canvas)
 
+        # ── Bottom toolbar ────────────────────────────────────────────
+        bb = QHBoxLayout()
+        bb.setContentsMargins(0, 4, 0, 0)
+        btn_s = QPushButton("⚙  Settings")
+        btn_s.clicked.connect(self._open_settings)
+        btn_r = QPushButton("↺  Reset Layout")
+        btn_r.setToolTip("Reset all subplot positions to auto layout\n(or middle-click on the figure)")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("⬆  Export…")
+        btn_e.clicked.connect(self._export_figure)
+        bb.addWidget(btn_s)
+        bb.addWidget(btn_r)
+        bb.addStretch()
+        bb.addWidget(btn_e)
+        layout.addLayout(bb)
+
     # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
-        # Quick toggles
         toggle_menu = menu.addMenu("Quick Toggles")
         self._add_toggle(toggle_menu, "Show Numbers", 'show_numbers')
         self._add_toggle(toggle_menu, "Show Colorbar", 'show_colorbar')
@@ -272,8 +349,9 @@ class HeatmapDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Filter Zeros", 'filter_zeros')
         self._add_toggle(toggle_menu, "Highlight Matches", 'highlight_matches')
         self._add_toggle(toggle_menu, "Filter to Matches Only", 'filter_combinations')
+        self._add_toggle(toggle_menu, "Log Scale", 'log_scale')
+        self._add_toggle(toggle_menu, "Custom Color Range", 'use_custom_range')
 
-        # Data type
         dt_menu = menu.addMenu("Data Type")
         current_dt = cfg.get('data_type_display', 'Counts')
         for dt in HEATMAP_DATA_TYPES:
@@ -282,7 +360,6 @@ class HeatmapDisplayDialog(QDialog):
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda _, d=dt: self._set_and_refresh('data_type_display', d))
 
-        # Colorscale
         cs_menu = menu.addMenu("Color Scale")
         current_cs = cfg.get('colorscale', 'YlGnBu')
         for cs in colorheatmap:
@@ -291,15 +368,20 @@ class HeatmapDisplayDialog(QDialog):
             a.setChecked(cs == current_cs)
             a.triggered.connect(lambda _, c=cs: self._set_and_refresh('colorscale', c))
 
-        # Search
+        rot_menu = menu.addMenu("X Label Rotation")
+        cur_rot = cfg.get('x_rotation', 0)
+        for rot in [0, 30, 45, 60, 90]:
+            a = rot_menu.addAction(f"{rot}°")
+            a.setCheckable(True)
+            a.setChecked(cur_rot == rot)
+            a.triggered.connect(lambda _, r=rot: self._set_and_refresh('x_rotation', r))
+
         search_action = menu.addAction("🔍 Search Elements…")
         search_action.triggered.connect(self._search_dialog)
 
-        # Range
         range_action = menu.addAction("📊 Set Range…")
         range_action.triggered.connect(self._range_dialog)
 
-        # Display mode (multi)
         if self._is_multi():
             dm_menu = menu.addMenu("Display Mode")
             modes = ['Individual Subplots', 'Side by Side Subplots',
@@ -312,26 +394,42 @@ class HeatmapDisplayDialog(QDialog):
                 a.triggered.connect(lambda _, mode=m: self._set_and_refresh('display_mode', mode))
 
         menu.addSeparator()
+        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
         settings_action = menu.addAction("⚙  Configure…")
         settings_action.triggered.connect(self._open_settings)
 
         dl_action = menu.addAction("💾 Download Figure…")
-        dl_action.triggered.connect(
-            lambda: download_matplotlib_figure(self.figure, self, "heatmap.png"))
+        dl_action.triggered.connect(self._export_figure)
 
         menu.exec(QCursor.pos())
 
     def _add_toggle(self, menu, label, key):
+        """
+        Args:
+            menu (Any): QMenu object.
+            label (Any): Label text.
+            key (Any): Dictionary or storage key.
+        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
     def _set_and_refresh(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
 
@@ -366,10 +464,24 @@ class HeatmapDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
+    def _reset_layout(self):
+        self.canvas.reset_layout()
+
+    def _export_figure(self):
+        download_matplotlib_figure(self.figure, self, "heatmap")
 
     def _refresh(self):
         try:
+            cfg = self.node.config
+
+            if cfg.get('use_custom_figsize', False):
+                self.figure.set_size_inches(cfg.get('figsize_w', 16.0),
+                                            cfg.get('figsize_h', 10.0))
+
             self.figure.clear()
+            bg = cfg.get('bg_color', '#FFFFFF')
+            self.figure.patch.set_facecolor(bg)
+
             data = self.node.extract_combinations_data()
 
             if not data:
@@ -391,6 +503,7 @@ class HeatmapDisplayDialog(QDialog):
 
             self.figure.tight_layout()
             self.canvas.draw()
+            self.canvas.snapshot_positions()
         except Exception as e:
             print(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
@@ -398,6 +511,12 @@ class HeatmapDisplayDialog(QDialog):
     # ── Multi-sample dispatch ───────────────
 
     def _draw_multi(self, data, cfg, display_mode):
+        """
+        Args:
+            data (Any): Input data.
+            cfg (Any): The cfg.
+            display_mode (Any): The display mode.
+        """
         names = list(data.keys())
         n = len(names)
 
@@ -422,7 +541,7 @@ class HeatmapDisplayDialog(QDialog):
                                f"Combined ({len(data)} samples)")
             apply_font_to_matplotlib(ax, cfg)
 
-        else:  # Comparative
+        else:
             for i, sn in enumerate(names[:2]):
                 ax = self.figure.add_subplot(1, 2, i + 1)
                 self._draw_heatmap(ax, data[sn], cfg, sn)
@@ -430,6 +549,12 @@ class HeatmapDisplayDialog(QDialog):
 
     @staticmethod
     def _combine_data(data):
+        """
+        Args:
+            data (Any): Input data.
+        Returns:
+            object: Result of the operation.
+        """
         combined = {}
         for sample_data in data.values():
             for combo, d in sample_data.items():
@@ -445,6 +570,13 @@ class HeatmapDisplayDialog(QDialog):
     # ── Core heatmap drawing ────────────────
 
     def _draw_heatmap(self, ax, sample_data, cfg, title):
+        """
+        Args:
+            ax (Any): The ax.
+            sample_data (Any): The sample data.
+            cfg (Any): The cfg.
+            title (Any): Window or dialog title.
+        """
         if not sample_data:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center',
                     transform=ax.transAxes, color='gray')
@@ -461,27 +593,29 @@ class HeatmapDisplayDialog(QDialog):
         cscale = cfg.get('colorscale', 'YlGnBu')
         show_nums = cfg.get('show_numbers', True)
         show_cbar = cfg.get('show_colorbar', True)
+        log_scale = cfg.get('log_scale', False)
+        use_custom_range = cfg.get('use_custom_range', False)
+        vmin_cfg = cfg.get('vmin', None) if use_custom_range else None
+        vmax_cfg = cfg.get('vmax', None) if use_custom_range else None
+        x_rotation = cfg.get('x_rotation', 0)
+        ann_fs = cfg.get('annotation_fontsize', 0) or None
+        cell_lw = cfg.get('cell_linewidth', 0.5)
         fc = get_font_config(cfg)
 
-        # Parse search elements
         search_elems = []
         if search_text:
             search_elems = [e.strip() for e in search_text.replace(',', ' ').split() if e.strip()]
 
-        # Sort by particle count
         sorted_combos = sorted(sample_data.items(),
                                 key=lambda x: x[1]['particle_count'], reverse=True)
 
-        # Filter by search
         if search_elems and filter_combos:
             sorted_combos = [(c, d) for c, d in sorted_combos
                              if _combo_matches(c, search_elems)]
 
-        # Filter by min particles
         sorted_combos = [(c, d) for c, d in sorted_combos
                          if d['particle_count'] >= min_p]
 
-        # Apply range
         end = min(end, len(sorted_combos))
         start = max(1, min(start, end))
         selected = sorted_combos[start - 1:end]
@@ -491,7 +625,6 @@ class HeatmapDisplayDialog(QDialog):
                     ha='center', va='center', transform=ax.transAxes, color='gray')
             return
 
-        # Collect elements and build matrix
         all_elems = set()
         for _, d in selected:
             all_elems.update(d['total_values'].keys())
@@ -507,7 +640,6 @@ class HeatmapDisplayDialog(QDialog):
             labels.append(f"{fmt} ({count})")
             hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
 
-            # Compute percentage totals if needed
             is_pct = dt.endswith('%')
             total_sum = 0
             if is_pct:
@@ -528,18 +660,31 @@ class HeatmapDisplayDialog(QDialog):
 
         matrix = np.nan_to_num(np.array(matrix), nan=0.0)
 
-        # Draw
-        im = ax.imshow(matrix, cmap=cscale, aspect='auto', interpolation='nearest')
+        plot_matrix = matrix.copy()
+        if log_scale:
+            plot_matrix = np.log10(np.where(plot_matrix > 0, plot_matrix, np.nan))
+
+        imshow_kw = dict(cmap=cscale, aspect='auto', interpolation='nearest')
+        if use_custom_range:
+            imshow_kw['vmin'] = vmin_cfg
+            imshow_kw['vmax'] = vmax_cfg
+        im = ax.imshow(plot_matrix, **imshow_kw)
+
+        if cell_lw > 0:
+            ax.set_xticks(np.arange(len(all_elems) + 1) - 0.5, minor=True)
+            ax.set_yticks(np.arange(len(labels) + 1) - 0.5, minor=True)
+            ax.grid(which='minor', color='white', linewidth=cell_lw)
+            ax.tick_params(which='minor', length=0)
 
         x_labels = [format_element_label(e, show_mass) for e in all_elems]
         ax.set_xticks(range(len(x_labels)))
-        ax.set_xticklabels(x_labels, rotation=0, ha='right',
+        ax.set_xticklabels(x_labels, rotation=x_rotation,
+                           ha='right' if x_rotation > 0 else 'center',
                            fontsize=fc['size'], fontweight='bold' if fc['bold'] else 'normal')
         ax.set_yticks(range(len(labels)))
         ax.set_yticklabels(labels, fontsize=fc['size'],
                            fontweight='bold' if fc['bold'] else 'normal')
 
-        # Highlight search matches
         if search_elems and highlight:
             for i, hl in enumerate(hl_rows):
                 if hl:
@@ -550,35 +695,45 @@ class HeatmapDisplayDialog(QDialog):
         if self._is_multi():
             ax.set_title(title, fontsize=fc['size'] + 2, fontweight='bold', pad=20)
 
-        # Colorbar
         if show_cbar:
             cbar = self.figure.colorbar(im, ax=ax, shrink=0.8)
-            apply_font_to_colorbar_standalone(cbar, cfg, dt)
+            cbar_label = dt
+            if log_scale:
+                cbar_label = f"log₁₀({dt})"
+            apply_font_to_colorbar_standalone(cbar, cfg, cbar_label)
 
-        # Cell numbers
-        if show_nums and matrix.size < 1000:
+        eff_fs = ann_fs if ann_fs else fc['size']
+        if show_nums and plot_matrix.size < 1000:
             is_pct = dt.endswith('%')
             weight = 'bold' if fc['bold'] else 'normal'
+            mx = np.nanmax(plot_matrix) if not np.all(np.isnan(plot_matrix)) else 1
             for i in range(len(labels)):
                 for j in range(len(all_elems)):
-                    v = matrix[i, j]
-                    if v > 0:
-                        tc = 'white' if v > np.max(matrix) * 0.5 else 'black'
+                    v = plot_matrix[i, j]
+                    v_orig = matrix[i, j]
+                    if not np.isnan(v) and v_orig > 0:
+                        tc = 'white' if v > mx * 0.5 else 'black'
                         if is_pct:
-                            txt = f'{v:.1f}%'
-                        elif v >= 1000:
-                            txt = f'{v:.0f}'
-                        elif v >= 1:
-                            txt = f'{v:.1f}'
+                            txt = f'{v_orig:.1f}%'
+                        elif v_orig >= 1000:
+                            txt = f'{v_orig:.0f}'
+                        elif v_orig >= 1:
+                            txt = f'{v_orig:.1f}'
                         else:
-                            txt = f'{v:.2f}'
+                            txt = f'{v_orig:.2f}'
                         ax.text(j, i, txt, ha='center', va='center',
-                                color=tc, fontsize=fc['size'],
+                                color=tc, fontsize=eff_fs,
                                 fontfamily=fc['family'], weight=weight)
 
 
 def _combo_matches(combination: str, search_elements: list) -> bool:
-    """Check if a combination string contains all search elements (order-independent)."""
+    """Check if a combination string contains all search elements (order-independent).
+    Args:
+        combination (str): The combination.
+        search_elements (list): The search elements.
+    Returns:
+        bool: Result of the operation.
+    """
     combo_parts = [p.strip() for p in combination.split(',')]
     for se in search_elements:
         found = False
@@ -592,10 +747,6 @@ def _combo_matches(combination: str, search_elements: list) -> bool:
             return False
     return True
 
-
-# ═══════════════════════════════════════════════
-# Node
-# ═══════════════════════════════════════════════
 
 class HeatmapPlotNode(QObject):
     """Heatmap plot node with multiple sample support."""
@@ -615,9 +766,29 @@ class HeatmapPlotNode(QObject):
         'sample_colors': {},
         'font_family': 'Times New Roman', 'font_size': 12,
         'font_bold': False, 'font_italic': False, 'font_color': '#000000',
+        # ── Color range ──────────────────────────────────────────────────
+        'use_custom_range':  False,
+        'vmin':              0.0,
+        'vmax':              100.0,
+        'log_scale':         False,
+        # ── Cell appearance ──────────────────────────────────────────────
+        'x_rotation':        0,
+        'annotation_fontsize': 0,
+        'cell_linewidth':    0.5,
+        # ── Export / appearance ──────────────────────────────────────────
+        'bg_color':          '#FFFFFF',
+        'export_format':     'svg',
+        'export_dpi':        300,
+        'use_custom_figsize': False,
+        'figsize_w':         16.0,
+        'figsize_h':         10.0,
     }
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
         self.title = "Element Heatmap"
         self.node_type = "heatmap_plot"
@@ -631,22 +802,40 @@ class HeatmapPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = HeatmapDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_combinations_data(self):
+        """
+        Returns:
+            None
+        """
         if not self.input_data:
             return None
         dt = self.config.get('data_type_display', 'Counts')
@@ -660,12 +849,24 @@ class HeatmapPlotNode(QObject):
         return None
 
     def _extract_single(self, data_key):
+        """
+        Args:
+            data_key (Any): The data key.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
         return _build_combinations(particles, data_key)
 
     def _extract_multi(self, data_key):
+        """
+        Args:
+            data_key (Any): The data key.
+        Returns:
+            object: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -686,7 +887,13 @@ class HeatmapPlotNode(QObject):
 
 
 def _build_combinations(particles, data_key):
-    """Build combination dict from a list of particle dicts."""
+    """Build combination dict from a list of particle dicts.
+    Args:
+        particles (Any): The particles.
+        data_key (Any): The data key.
+    Returns:
+        object: Result of the operation.
+    """
     try:
         combos = {}
         for particle in particles:
