@@ -4,13 +4,14 @@
 
 **A fast, free, and open-source desktop application for single-particle ICP-ToF-MS data analysis**
 
+[![Docs](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://isotopetrack.readthedocs.io/en/latest/)
 [![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![DOI](https://img.shields.io/badge/DOI-10.1071%2FEN25111-green.svg)](https://doi.org/10.1071/EN25111)
-
 </div>
+
 
 ---
 
