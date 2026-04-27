@@ -1,208 +1,238 @@
 import sys
-from PySide6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QHBoxLayout, 
-                               QPushButton, QComboBox, QLabel, QMessageBox, 
-                               QWidget, QToolButton, QScrollArea, QFrame)
-from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+    QComboBox, QLabel, QWidget, QScrollArea
+)
 from PySide6.QtCore import Qt, Signal
+import qtawesome as qta
 
 from calibration_methods.TE_input import InputMethodCalibration
 from calibration_methods.TE_number import NumberMethodWidget
 from calibration_methods.TE_mass import MassMethodWidget
-import qtawesome as qta
+from calibration_methods.te_common import (
+    RETURN_BUTTON_STYLE,
+    base_stylesheet, return_button_style,
+)
+from theme import theme
 
-class ModernWidget(QWidget):
-    def __init__(self, parent=None):
-        """
-        Initialize a modern styled widget.
-        
-        Args:
-            parent: Parent widget for this widget
-        """
-        super().__init__(parent)
+# ── user-action logging ──────────────────────────────────────────────────────
+def _ual():
+    """Return the UserActionLogger, or None if logging isn't ready.
+    Returns:
+        object: Result of the operation.
+    """
+    try:
+        from tools.logging_utils import logging_manager
+        return logging_manager.get_user_action_logger()
+    except Exception:
+        return None
+
+_METHOD_SIGNAL_MAP = {
+    "Liquid weight": "Weight Method",
+    "Number based": "Particle Method",
+    "Mass based": "Mass Method",
+}
+
 
 class TransportRateCalibrationWindow(QDialog):
+    """Top-level dialog housing the three calibration method widgets."""
+
     calibration_completed = Signal(str, float)
 
     def __init__(self, selected_methods, parent=None):
         """
-        Initialize the Transport Rate Calibration Window.
-        
+        Initialise the Transport Rate Calibration dialog.
+
         Args:
-            selected_methods: List of calibration method names to display
-            parent: Parent widget for this dialog
+            selected_methods (list[str]): Method labels to expose
+                (e.g. ``['Liquid weight', 'Number based', 'Mass based']``).
+            parent (QWidget | None): Parent widget.
         """
         super().__init__(parent)
         self.setWindowTitle("Transport Rate Calibration")
         self.setAttribute(Qt.WA_DeleteOnClose, False)
-        
-        self.closeEvent = self.handle_close
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-            }
-            QToolButton {
-                border: none;
-                padding: 5px;
-            }
-            QToolButton:hover {
-                background-color: #f0f0f0;
-                border-radius: 3px;
-            }
-        """)
         self.selected_methods = selected_methods
-        self.initUI()
+        self._build_ui()
+        self.apply_theme()
+        self._theme_cleanup = theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_cleanup())
         self.showMaximized()
-        
-    def handle_close(self, event):
+        ual = _ual()
+        if ual:
+            ual.log_action('DIALOG_OPEN', 'Opened Transport Rate Calibration',
+                           {'methods': self.selected_methods})
+
+    # ── Event overrides ──────────────────────────────────────────────────
+
+    def closeEvent(self, event):
         """
-        Handle the window close event by hiding instead of closing.
-        
+        Hide the window instead of destroying it on close.
+
         Args:
-            event: The close event object
+            event (QCloseEvent): The close event to intercept.
+
+        Returns:
+            None
         """
         event.ignore()
         self.hide()
 
-    def initUI(self):
+    # ── Theme ────────────────────────────────────────────────────────────
+
+    def apply_theme(self, *_):
+        """Re-apply all stylesheets from the current theme palette.
+        Runs on init and whenever theme.themeChanged fires.
+        Args:
+            *_ (Any): Additional positional arguments.
         """
-        Initialize and configure the user interface.
-        
-        Sets up the main layout, header section with return button, method selection
-        dropdown, content area for calibration widgets, and connects all signals.
+        p = theme.palette
+        self.setStyleSheet(
+            base_stylesheet(p)
+            + f"""
+                QDialog {{ background-color: {p.bg_primary}; }}
+                QScrollArea {{ border: none; background-color: transparent; }}
+                QToolButton {{ border: none; padding: 5px; }}
+                QToolButton:hover {{
+                    background-color: {p.bg_hover};
+                    border-radius: 3px;
+                }}
+            """
+        )
+        if hasattr(self, "return_btn"):
+            self.return_btn.setStyleSheet(return_button_style(p))
+            icon_color = "#ffffff" if p.name == "dark" else "#B81414"
+            self.return_btn.setIcon(qta.icon("fa6s.house", color=icon_color))
+
+    # ── UI construction ──────────────────────────────────────────────────
+
+    def _build_ui(self):
         """
-        main_widget = ModernWidget()
+        Construct the header, method selector, content area, and scroll wrapper.
+
+        Returns:
+            None
+        """
+        main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
 
-        header_layout = QHBoxLayout()
-        
+        header = QHBoxLayout()
         title = QLabel("Transport Rate Calibration")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 10px;")
-        header_layout.addWidget(title)
-        
-        header_layout.addStretch()
-        
-        return_button = QPushButton("Back to Main")
-        return_button.setIcon(qta.icon('fa6s.house', color="#B81414"))
-        return_button.setFixedSize(150, 45)
-        return_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #FF6B6B, stop:0.5 #FF8E53, stop:1 #FF6B9D);
-                color: white;
-                border: 3px solid #FF4081;
-                padding: 8px 16px;
-                text-align: center;
-                font-size: 14px;
-                font-weight: bold;
-                border-radius: 22px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #FF5252, stop:0.5 #FF7043, stop:1 #FF4081);
-                border: 3px solid #E91E63;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #E53935, stop:0.5 #FF5722, stop:1 #E91E63);
-                border: 3px solid #AD1457;
-                padding: 9px 15px 7px 17px;
-            }
-        """)
-        return_button.clicked.connect(self.hide)
-        header_layout.addWidget(return_button)
+        title.setObjectName("dialogTitle")
+        header.addWidget(title)
+        header.addStretch()
 
-        main_layout.addLayout(header_layout)
+        self.return_btn = QPushButton("Back to Main")
+        self.return_btn.setObjectName("returnButton")
+        self.return_btn.setFixedSize(150, 45)
+        def _back_and_log():
+            ual = _ual()
+            if ual:
+                ual.log_action('CLICK', 'Transport Rate Calibration — Back to Main')
+            self.hide()
+        self.return_btn.clicked.connect(_back_and_log)
+        header.addWidget(self.return_btn)
+        main_layout.addLayout(header)
 
-        method_layout = QHBoxLayout()
-        method_label = QLabel("Select Method:")
+        selector_row = QHBoxLayout()
         self.method_combo = QComboBox()
         self.method_combo.addItems(self.selected_methods)
-        
-        method_layout.addWidget(method_label)
-        method_layout.addWidget(self.method_combo)
-        method_layout.addStretch()
-        
-        main_layout.addLayout(method_layout)
+        selector_row.addWidget(QLabel("Select Method:"))
+        selector_row.addWidget(self.method_combo)
+        selector_row.addStretch()
+        main_layout.addLayout(selector_row)
 
-        self.method_content = QWidget()
-        self.method_content_layout = QVBoxLayout(self.method_content)
-        
-        self.method_widgets = {
+        self._content_widget = QWidget()
+        self._content_layout = QVBoxLayout(self._content_widget)
+
+        self._method_widgets = {
             "Liquid weight": InputMethodCalibration(),
             "Number based": NumberMethodWidget(),
-            "Mass based": MassMethodWidget()
+            "Mass based": MassMethodWidget(),
         }
-        
-        for widget in self.method_widgets.values():
-            widget.calibration_completed.connect(self.on_calibration_completed)
-        
+        for w in self._method_widgets.values():
+            w.calibration_completed.connect(self._on_calibration_completed)
+
         if self.selected_methods:
-            self.method_content_layout.addWidget(self.method_widgets[self.selected_methods[0]])
-        
-        main_layout.addWidget(self.method_content)
+            self._content_layout.addWidget(
+                self._method_widgets[self.selected_methods[0]]
+            )
+
+        main_layout.addWidget(self._content_widget)
 
         scroll = QScrollArea()
         scroll.setWidget(main_widget)
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; }")
 
         dialog_layout = QVBoxLayout(self)
         dialog_layout.setContentsMargins(0, 0, 0, 0)
         dialog_layout.addWidget(scroll)
 
-        self.method_combo.currentIndexChanged.connect(self.show_selected_method)
-        
+        self.method_combo.currentIndexChanged.connect(self._show_selected_method)
         self.setMinimumSize(800, 600)
 
-    def show_selected_method(self, index):
-        """
-        Display the calibration widget for the selected method.
-        
-        Args:
-            index: Index of the selected method in the combo box
-        """
-        for i in reversed(range(self.method_content_layout.count())):
-            self.method_content_layout.itemAt(i).widget().setParent(None)
-        
-        if index >= 0 and index < len(self.selected_methods):
-            selected_method = self.selected_methods[index]
-        else:
-            selected_method = self.method_combo.currentText()
-            if not selected_method or selected_method not in self.method_widgets:
-                print(f"Warning: Invalid method selection: '{selected_method}'")
-                if self.selected_methods:
-                    selected_method = self.selected_methods[0]
-                else:
-                    return
-        
-        if selected_method in self.method_widgets:
-            self.method_content_layout.addWidget(self.method_widgets[selected_method])
-        else:
-            print(f"Error: Method widget not found for: '{selected_method}'")
-            print(f"Available methods: {list(self.method_widgets.keys())}")
-            print(f"Selected methods: {self.selected_methods}")
+    # ── Slots ─────────────────────────────────────────────────────────────
 
-    def on_calibration_completed(self, method, transport_rate):
+    def _show_selected_method(self, index):
         """
-        Handle calibration completion from any calibration method widget.
-        
+        Swap the visible calibration widget to match the combo-box selection.
+
         Args:
-            method: Name of the calibration method that was completed
-            transport_rate: Calculated transport rate value in μL/s
+            index (int): Combo-box index of the newly selected method.
+
+        Returns:
+            None
         """
-        method_map = {
-            "Liquid weight": "Weight Method",
-            "Number based": "Particle Method",
-            "Mass based": "Mass Method"
-        }
-        standardized_method = method_map.get(method, method)
-        self.calibration_completed.emit(standardized_method, transport_rate)
+        if 0 <= index < len(self.selected_methods):
+            _method_key = self.selected_methods[index]
+        else:
+            _method_key = self.method_combo.currentText()
+        ual = _ual()
+        if ual:
+            ual.log_action('CLICK', f'Transport Rate method switched: {_method_key}',
+                           {'method': _method_key, 'index': index})
+        for i in reversed(range(self._content_layout.count())):
+            item = self._content_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().setParent(None)
+
+        if 0 <= index < len(self.selected_methods):
+            key = self.selected_methods[index]
+        else:
+            key = self.method_combo.currentText()
+
+        widget = self._method_widgets.get(key)
+        if widget:
+            self._content_layout.addWidget(widget)
+        else:
+            print(f"Warning: no widget for method '{key}'")
+
+    def _on_calibration_completed(self, method, transport_rate):
+        """
+        Re-emit the calibration result with a standardised method name.
+
+        Args:
+            method (str): Method name as emitted by the child widget.
+            transport_rate (float): Calculated transport rate in µL/s.
+
+        Returns:
+            None
+        """
+        standardised = _METHOD_SIGNAL_MAP.get(method, method)
+        ual = _ual()
+        if ual:
+            ual.log_action('ANALYSIS',
+                           f'Transport Rate calibration completed: {standardised}',
+                           {'method': standardised,
+                            'transport_rate_uL_s': round(transport_rate, 6)})
+        self.calibration_completed.emit(standardised, transport_rate)
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = TransportRateCalibrationWindow(["Liquid weight", "Number based", "Mass based"])
+    window = TransportRateCalibrationWindow(
+        ["Liquid weight", "Number based", "Mass based"]
+    )
     window.showMaximized()
     sys.exit(app.exec())

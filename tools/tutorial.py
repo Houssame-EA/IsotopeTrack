@@ -1,4 +1,3 @@
-"""User guide dialog for IsotopeTrack — content mirrors the README."""
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QVBoxLayout, QPushButton,
     QLabel, QScrollArea, QWidget, QHBoxLayout, QSizePolicy,
@@ -8,8 +7,16 @@ from PySide6.QtGui import QMovie, QPixmap
 from pathlib import Path
 import sys
 
+from theme import theme
+
 
 def get_resource_path(relative_path):
+    """
+    Args:
+        relative_path (Any): The relative path.
+    Returns:
+        object: Result of the operation.
+    """
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
@@ -21,13 +28,18 @@ def get_resource_path(relative_path):
 #  Helpers
 # ---------------------------------------------------------------------------
 def _section(html: str) -> QLabel:
-    """Rich-text section label with consistent styling."""
+    """Rich-text section label with consistent styling.
+    Args:
+        html (str): The html.
+    Returns:
+        QLabel: Result of the operation.
+    """
     lbl = QLabel(html)
     lbl.setWordWrap(True)
     lbl.setOpenExternalLinks(True)
     lbl.setTextFormat(Qt.RichText)
     lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-    lbl.setStyleSheet("font-size:13px; line-height:1.5;")
+    lbl.setStyleSheet(f"font-size:13px; line-height:1.5; color:{theme.palette.text_primary};")
     return lbl
 
 
@@ -35,6 +47,11 @@ def _gif_widget(filename: str, width: int = 680) -> QWidget:
     """
     Return a widget displaying an animated GIF from the images/ folder.
     Falls back to a styled placeholder if the file is not found.
+    Args:
+        filename (str): The filename.
+        width (int): Width in pixels.
+    Returns:
+        QWidget: Result of the operation.
     """
     path = get_resource_path(f"images/{filename}")
 
@@ -47,18 +64,18 @@ def _gif_widget(filename: str, width: int = 680) -> QWidget:
         movie_label = QLabel()
         movie_label.setAlignment(Qt.AlignCenter)
         movie = QMovie(str(path))
-        # Scale to desired width while keeping aspect ratio
         movie.setScaledSize(QSize(width, width * 9 // 16))
         movie_label.setMovie(movie)
         movie.start()
         lay.addWidget(movie_label)
     else:
+        p = theme.palette
         placeholder = QLabel(f"[ Animation: {filename} ]")
         placeholder.setAlignment(Qt.AlignCenter)
         placeholder.setStyleSheet(
-            "background:#f0f4ff; border:2px dashed #4a90d9; "
-            "border-radius:8px; padding:24px; color:#4a90d9; "
-            "font-size:12px; font-style:italic;"
+            f"background:{p.accent_soft}; border:2px dashed {p.accent}; "
+            f"border-radius:8px; padding:24px; color:{p.accent}; "
+            f"font-size:12px; font-style:italic;"
         )
         placeholder.setMinimumHeight(80)
         lay.addWidget(placeholder)
@@ -67,11 +84,21 @@ def _gif_widget(filename: str, width: int = 680) -> QWidget:
 
 
 def _scroll_tab(*widgets) -> QScrollArea:
-    """Wrap a list of widgets in a scrollable tab."""
+    """Wrap a list of widgets in a scrollable tab.
+    Args:
+        *widgets (Any): Additional positional arguments.
+    Returns:
+        QScrollArea: Result of the operation.
+    """
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QScrollArea.NoFrame)
+
+    scroll.viewport().setAutoFillBackground(False)
 
     content = QWidget()
+    content.setObjectName("tutorialContent")
+    content.setAutoFillBackground(True)
     lay = QVBoxLayout(content)
     lay.setContentsMargins(20, 16, 20, 24)
     lay.setSpacing(10)
@@ -85,6 +112,10 @@ def _scroll_tab(*widgets) -> QScrollArea:
 
 
 def _hr() -> QLabel:
+    """
+    Returns:
+        QLabel: Result of the operation.
+    """
     lbl = QLabel("<hr>")
     lbl.setTextFormat(Qt.RichText)
     return lbl
@@ -99,6 +130,10 @@ class UserGuideDialog(QDialog):
     """
 
     def __init__(self, parent=None):
+        """
+        Args:
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("IsotopeTrack — User Guide")
         self.resize(820, 740)
@@ -121,13 +156,127 @@ class UserGuideDialog(QDialog):
         btn.clicked.connect(self.accept)
         layout.addWidget(btn, alignment=Qt.AlignRight)
 
+        theme.themeChanged.connect(self.apply_theme)
+        self.apply_theme()
+
+    def apply_theme(self):
+        """Apply the currently active theme palette."""
+        p = theme.palette
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {p.bg_primary};
+                color: {p.text_primary};
+            }}
+            QWidget {{
+                color: {p.text_primary};
+            }}
+            QLabel {{
+                color: {p.text_primary};
+                background-color: transparent;
+            }}
+            /* The inner widget inside each tab's QScrollArea — without
+               this, macOS paints it with its default white surface and
+               the tab body stays bright even in dark mode. */
+            QWidget#tutorialContent {{
+                background-color: {p.bg_secondary};
+                color: {p.text_primary};
+            }}
+            /* The scroll area's viewport is the widget between the scroll
+               area and the content — on macOS this one paints white by
+               default and hides whatever the content widget is doing. */
+            QScrollArea > QWidget > QWidget {{
+                background-color: {p.bg_secondary};
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {p.border};
+                background-color: {p.bg_secondary};
+                border-radius: 6px;
+            }}
+            QTabBar::tab {{
+                background-color: {p.bg_tertiary};
+                color: {p.text_secondary};
+                border: 1px solid {p.border};
+                padding: 8px 14px;
+                margin-right: 2px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {p.bg_secondary};
+                color: {p.accent};
+                font-weight: 600;
+                border-bottom: 1px solid {p.bg_secondary};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {p.bg_hover};
+            }}
+            QScrollArea {{
+                border: none;
+                background-color: {p.bg_secondary};
+            }}
+            QScrollBar:vertical {{
+                background: {p.bg_secondary};
+                width: 10px;
+                border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {p.border};
+                border-radius: 5px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {p.text_muted};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0;
+            }}
+            QPushButton {{
+                background-color: {p.accent};
+                color: {p.text_inverse};
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {p.accent_hover};
+            }}
+        """)
+        self._refresh_section_styles()
+
+    def _refresh_section_styles(self):
+        """Restyle all _section() labels to use the current palette."""
+        for lbl in self.findChildren(QLabel):
+            if lbl.textFormat() == Qt.RichText:
+                p = theme.palette
+                lbl.setStyleSheet(
+                    f"font-size:13px; line-height:1.5; "
+                    f"color:{p.text_primary}; background:transparent;"
+                )
+
+    def closeEvent(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        try:
+            theme.themeChanged.disconnect(self.apply_theme)
+        except (TypeError, RuntimeError):
+            pass
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------ #
-    # Tab: Overview                                                         #
+    # Tab: Overview
     # ------------------------------------------------------------------ #
     def _tab_overview(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.0.1</h2>
+            <h2>IsotopeTrack v1.0.2</h2>
             <p>A comprehensive software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 
@@ -172,6 +321,10 @@ class UserGuideDialog(QDialog):
     # Tab: Workflow                                                         #
     # ------------------------------------------------------------------ #
     def _tab_workflow(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
             <h2>Recommended Workflow</h2>
@@ -220,6 +373,10 @@ class UserGuideDialog(QDialog):
     # Tab: Data Loading                                                    #
     # ------------------------------------------------------------------ #
     def _tab_data(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
             <h2>Data Loading</h2>
@@ -280,6 +437,10 @@ class UserGuideDialog(QDialog):
     # Tab: Calibration                                                     #
     # ------------------------------------------------------------------ #
     def _tab_calibration(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
             <h2>Calibration Methods</h2>
@@ -345,6 +506,10 @@ class UserGuideDialog(QDialog):
     # Tab: Parameters                                                      #
     # ------------------------------------------------------------------ #
     def _tab_parameters(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
             <h2>Detection Parameters</h2>
@@ -365,23 +530,6 @@ class UserGuideDialog(QDialog):
             </ul>
 
             <h3>Detection Methods</h3>
-
-            <h4>Currie Method</h4>
-            <p>Classical detection approach based on Poisson statistics and critical
-            level determination.</p>
-            <p><b>Reference:</b> Currie, L. A. (2008).
-            <i>Detection and quantification limits: Origins and historical overview.</i>
-            J. Radioanal. Nucl. Chem., <b>276</b>, 285–297.<br>
-            <a href="https://doi.org/10.1007/s10967-007-0451-1">
-            https://doi.org/10.1007/s10967-007-0451-1</a></p>
-
-            <h4>Formula C</h4>
-            <p>MARLAP-based method offering a balanced trade-off between false positives
-            and false negatives.</p>
-            <p><b>Reference:</b> MARLAP Manual, Volume III – Chapter 20, Formula C
-            (Eq. 20.52). U.S. EPA.<br>
-            <a href="https://www.epa.gov/radiation/marlap-manual">
-            https://www.epa.gov/radiation/marlap-manual</a></p>
 
             <h4>Compound Poisson Log-Normal</h4>
             <p>Advanced method accounting for signal distribution characteristics;
@@ -413,10 +561,12 @@ class UserGuideDialog(QDialog):
             """),
         )
 
-    # ------------------------------------------------------------------ #
-    # Tab: Results & Export                                                #
-    # ------------------------------------------------------------------ #
+
     def _tab_results(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         return _scroll_tab(
             _section("""
             <h2>Results Canvas &amp; Visualization</h2>

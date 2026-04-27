@@ -1,12 +1,16 @@
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QGroupBox, 
-                              QCheckBox, QRadioButton, QScrollArea, QWidget, 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QGroupBox,
+                              QCheckBox, QRadioButton, QScrollArea, QWidget,
                               QDialogButtonBox, QFileDialog, QMessageBox,
-                              QHBoxLayout, QLabel, QDoubleSpinBox)
+                              QHBoxLayout, QLabel, QDoubleSpinBox, QFrame,
+                              QPushButton, QButtonGroup, QSizePolicy)
 from PySide6.QtCore import Qt
 import time
 import numpy as np
 import math
 import time
+
+from theme import theme, dialog_qss
+from tools.unit import ExportUnits, load_units, show_advanced_dialog
 
 def is_pure_element(mass_fraction):
     """
@@ -59,111 +63,281 @@ def export_data(main_window):
     
     export_dialog = QDialog(main_window)
     export_dialog.setWindowTitle("Export Options")
-    export_dialog.resize(500, 700)
-    
+    export_dialog.setObjectName("exportOptionsDialog")
+    export_dialog.setMinimumSize(500, 560)
+    export_dialog.resize(540, 640)
+
+    # -- Theme application + live updates ---------------------------------
+    def _build_dialog_qss(palette):
+        """Dialog-wide QSS: the generic dialog styling plus the extras we
+        need for the segmented Data Type toggle and the count/link row.
+        Args:
+            palette (Any): Colour palette object.
+        Returns:
+            object: Result of the operation.
+        """
+        extras = f"""
+            QPushButton#segLeft, QPushButton#segRight {{
+                background-color: {palette.bg_tertiary};
+                color: {palette.text_secondary};
+                border: 1px solid {palette.border};
+                padding: 6px 14px;
+                min-width: 0;
+            }}
+            QPushButton#segLeft  {{ border-top-right-radius: 0; border-bottom-right-radius: 0; }}
+            QPushButton#segRight {{ border-top-left-radius: 0;  border-bottom-left-radius: 0;  border-left: none; }}
+            QPushButton#segLeft:checked, QPushButton#segRight:checked {{
+                background-color: {palette.accent};
+                color: {palette.text_inverse};
+                border-color: {palette.accent};
+            }}
+            QPushButton#segLeft:hover:!checked, QPushButton#segRight:hover:!checked {{
+                background-color: {palette.bg_hover};
+                color: {palette.text_primary};
+            }}
+            QPushButton#linkButton {{
+                background: transparent;
+                border: none;
+                color: {palette.accent};
+                padding: 2px 4px;
+                min-width: 0;
+                text-align: left;
+            }}
+            QPushButton#linkButton:hover {{
+                color: {palette.accent_hover};
+                text-decoration: underline;
+            }}
+            QLabel#countLabel {{ color: {palette.text_secondary}; }}
+            QLabel#dotLabel   {{ color: {palette.text_muted}; }}
+            QFrame#divider    {{ background-color: {palette.border_subtle}; border: none; }}
+        """
+        return dialog_qss(palette) + extras
+
+    def _apply_dialog_theme(*_):
+        """
+        Args:
+            *_ (Any): Additional positional arguments.
+        """
+        export_dialog.setStyleSheet(_build_dialog_qss(theme.palette))
+
+    _apply_dialog_theme()
+    theme.themeChanged.connect(_apply_dialog_theme)
+    export_dialog.destroyed.connect(
+        lambda *_: theme.themeChanged.disconnect(_apply_dialog_theme)
+    )
+
     layout = QVBoxLayout(export_dialog)
-    
-    data_type_group = QGroupBox("Data Type Selection")
-    data_type_layout = QVBoxLayout()
-    
-    element_type_rb = QRadioButton("Element Type Data")
-    particle_type_rb = QRadioButton("Particle Type Data")
-    element_type_rb.setChecked(True)
-    
-    data_type_layout.addWidget(element_type_rb)
-    data_type_layout.addWidget(particle_type_rb)
-    data_type_group.setLayout(data_type_layout)
-    layout.addWidget(data_type_group)
-    
-    sample_group = QGroupBox("Select Samples to Export & Set Dilution Factors")
-    sample_layout = QVBoxLayout()
-    
-    select_all_cb = QCheckBox("Select All")
-    select_all_cb.setChecked(True)
-    sample_layout.addWidget(select_all_cb)
-    
+    layout.setContentsMargins(16, 16, 16, 16)
+    layout.setSpacing(14)
+
+    # ---- 1. Data Type: segmented toggle ---------------------------------
+    data_type_row = QHBoxLayout()
+    data_type_row.setSpacing(0)
+    data_type_row.setContentsMargins(0, 0, 0, 0)
+
+    data_type_label = QLabel("Data Type")
+    data_type_label.setStyleSheet("font-weight: 600;")
+
+    element_type_btn = QPushButton("Element")
+    element_type_btn.setObjectName("segLeft")
+    element_type_btn.setCheckable(True)
+    element_type_btn.setChecked(True)
+
+    particle_type_btn = QPushButton("Particle")
+    particle_type_btn.setObjectName("segRight")
+    particle_type_btn.setCheckable(True)
+
+    for b in (element_type_btn, particle_type_btn):
+        b.setCursor(Qt.PointingHandCursor)
+        b.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    data_type_group = QButtonGroup(export_dialog)
+    data_type_group.setExclusive(True)
+    data_type_group.addButton(element_type_btn)
+    data_type_group.addButton(particle_type_btn)
+
+    data_type_row.addWidget(data_type_label)
+    data_type_row.addSpacing(16)
+    data_type_row.addWidget(element_type_btn)
+    data_type_row.addWidget(particle_type_btn)
+    data_type_row.addStretch()
+    layout.addLayout(data_type_row)
+
+    # ---- 2. Samples section ---------------------------------------------
+    samples_group = QGroupBox("Samples")
+    samples_layout = QVBoxLayout()
+    samples_layout.setContentsMargins(12, 10, 12, 12)
+    samples_layout.setSpacing(8)
+
+    header_row = QHBoxLayout()
+    header_row.setSpacing(8)
+    count_label = QLabel()
+    count_label.setObjectName("countLabel")
+    select_all_btn = QPushButton("Select all")
+    select_all_btn.setObjectName("linkButton")
+    select_all_btn.setCursor(Qt.PointingHandCursor)
+    select_all_btn.setFlat(True)
+    sep_label = QLabel("·")
+    sep_label.setObjectName("dotLabel")
+    clear_btn = QPushButton("Clear")
+    clear_btn.setObjectName("linkButton")
+    clear_btn.setCursor(Qt.PointingHandCursor)
+    clear_btn.setFlat(True)
+
+    header_row.addWidget(count_label)
+    header_row.addStretch()
+    header_row.addWidget(select_all_btn)
+    header_row.addWidget(sep_label)
+    header_row.addWidget(clear_btn)
+    samples_layout.addLayout(header_row)
+
+    divider = QFrame()
+    divider.setObjectName("divider")
+    divider.setFrameShape(QFrame.NoFrame)
+    divider.setFixedHeight(1)
+    samples_layout.addWidget(divider)
+
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setObjectName("sampleScrollArea")
     scroll_content = QWidget()
+    scroll_content.setObjectName("sampleScrollContent")
     scroll_layout = QVBoxLayout(scroll_content)
-    
+    scroll_layout.setContentsMargins(2, 2, 2, 2)
+    scroll_layout.setSpacing(2)
+
     sample_checkboxes = {}
     dilution_spinboxes = {}
-    
+
     for sample_name in main_window.sample_to_folder_map.keys():
-        sample_row = QHBoxLayout()
-        
+        row_widget = QWidget()
+        row_widget.setObjectName("sampleRow")
+        row = QHBoxLayout(row_widget)
+        row.setContentsMargins(6, 2, 6, 2)
+        row.setSpacing(8)
+
         cb = QCheckBox(sample_name)
         cb.setChecked(True)
-        sample_row.addWidget(cb)
+        cb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        row.addWidget(cb, 1)
         sample_checkboxes[sample_name] = cb
-        
-        sample_row.addStretch()
-        
-        dilution_label = QLabel("Dilution Factor:")
-        sample_row.addWidget(dilution_label)
-        
+
         dilution_spinbox = QDoubleSpinBox()
         dilution_spinbox.setRange(1.0, 1000000.0)
         dilution_spinbox.setValue(1.0)
         dilution_spinbox.setDecimals(3)
         dilution_spinbox.setSuffix("x")
-        sample_row.addWidget(dilution_spinbox)
+        dilution_spinbox.setFixedWidth(100)
+        dilution_spinbox.setToolTip("Dilution factor for this sample")
+        row.addWidget(dilution_spinbox)
         dilution_spinboxes[sample_name] = dilution_spinbox
-        
-        row_widget = QWidget()
-        row_widget.setLayout(sample_row)
+
         scroll_layout.addWidget(row_widget)
-    
-    scroll_content.setLayout(scroll_layout)
+
+    scroll_layout.addStretch()
     scroll.setWidget(scroll_content)
-    sample_layout.addWidget(scroll)
-    sample_group.setLayout(sample_layout)
-    layout.addWidget(sample_group)
-    
-    type_group = QGroupBox("Export Type")
-    type_layout = QVBoxLayout()
-    
-    export_all_rb = QRadioButton("Export all (sample files and summary)")
-    export_samples_rb = QRadioButton("Export sample files only")
-    export_summary_rb = QRadioButton("Export summary file only")
-    export_all_rb.setChecked(True)
-    
-    type_layout.addWidget(export_all_rb)
-    type_layout.addWidget(export_samples_rb)
-    type_layout.addWidget(export_summary_rb)
-    type_group.setLayout(type_layout)
-    layout.addWidget(type_group)
-    
+    samples_layout.addWidget(scroll, 1)
+    samples_group.setLayout(samples_layout)
+    layout.addWidget(samples_group, 1)
+
+    # ---- 3. Export contents: two checkboxes -----------------------------
+    export_group = QGroupBox("Export")
+    export_layout = QHBoxLayout()
+    export_layout.setContentsMargins(12, 8, 12, 10)
+    export_layout.setSpacing(20)
+
+    export_samples_cb = QCheckBox("Sample files")
+    export_samples_cb.setChecked(True)
+    export_summary_cb = QCheckBox("Summary file")
+    export_summary_cb.setChecked(True)
+
+    export_layout.addWidget(export_samples_cb)
+    export_layout.addWidget(export_summary_cb)
+    export_layout.addStretch()
+    export_group.setLayout(export_layout)
+    layout.addWidget(export_group)
+
+    # ---- Buttons --------------------------------------------------------
+    export_units_state = {"units": load_units()}
+
+    button_row = QHBoxLayout()
+    button_row.setContentsMargins(0, 0, 0, 0)
+    button_row.setSpacing(8)
+
+    advanced_btn = QPushButton("Advanced…")
+    advanced_btn.setToolTip("Change units (mass, moles, diameter) and number format")
+
+    def _open_advanced():
+        new_units = show_advanced_dialog(export_dialog, export_units_state["units"])
+        if new_units is not None:
+            export_units_state["units"] = new_units
+    advanced_btn.clicked.connect(_open_advanced)
+
     buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    ok_btn = buttons.button(QDialogButtonBox.Ok)
+    ok_btn.setText("Export")
+    ok_btn.setDefault(True)
     buttons.accepted.connect(export_dialog.accept)
     buttons.rejected.connect(export_dialog.reject)
-    layout.addWidget(buttons)
-    
-    def toggle_all_samples(state):
+
+    button_row.addWidget(advanced_btn)
+    button_row.addStretch()
+    button_row.addWidget(buttons)
+    layout.addLayout(button_row)
+
+    # ---- Behaviour ------------------------------------------------------
+    total_samples = len(sample_checkboxes)
+
+    def update_count_label():
+        n_checked = sum(1 for cb in sample_checkboxes.values() if cb.isChecked())
+        count_label.setText(f"{n_checked} of {total_samples} selected")
+        ok_btn.setEnabled(
+            n_checked > 0
+            and (export_samples_cb.isChecked() or export_summary_cb.isChecked())
+        )
+
+    def select_all():
         for cb in sample_checkboxes.values():
-            cb.setChecked(state == Qt.Checked)
-    
-    select_all_cb.stateChanged.connect(toggle_all_samples)
-    
+            cb.setChecked(True)
+
+    def clear_all():
+        for cb in sample_checkboxes.values():
+            cb.setChecked(False)
+
+    select_all_btn.clicked.connect(select_all)
+    clear_btn.clicked.connect(clear_all)
+    for cb in sample_checkboxes.values():
+        cb.stateChanged.connect(lambda *_: update_count_label())
+    export_samples_cb.stateChanged.connect(lambda *_: update_count_label())
+    export_summary_cb.stateChanged.connect(lambda *_: update_count_label())
+    update_count_label()
+
     if export_dialog.exec() != QDialog.Accepted:
         return False
-    
-    selected_samples = [sample for sample, cb in sample_checkboxes.items() if cb.isChecked()]
-    sample_dilutions = {sample: dilution_spinboxes[sample].value() 
-                       for sample in selected_samples}
-    
-    data_type = "particle" if particle_type_rb.isChecked() else "element"
-    
+
+    # -- function expects (keeps downstream code unchanged) --------------
+    selected_samples = [s for s, cb in sample_checkboxes.items() if cb.isChecked()]
+    sample_dilutions = {s: dilution_spinboxes[s].value() for s in selected_samples}
+
+    data_type = "particle" if particle_type_btn.isChecked() else "element"
+    export_units = export_units_state["units"]
+
     if not selected_samples:
         QMessageBox.warning(main_window, "Warning", "No samples selected for export.")
         return False
-    
-    export_type = "all"
-    if export_samples_rb.isChecked():
+
+    want_samples = export_samples_cb.isChecked()
+    want_summary = export_summary_cb.isChecked()
+    if want_samples and want_summary:
+        export_type = "all"
+    elif want_samples:
         export_type = "samples"
-    elif export_summary_rb.isChecked():
+    elif want_summary:
         export_type = "summary"
+    else:
+        QMessageBox.warning(main_window, "Warning", "Select at least one of Sample files or Summary file.")
+        return False
         
     original_sample = main_window.current_sample
     try:
@@ -201,7 +375,8 @@ def export_data(main_window):
             try:
                 with open(summary_file_path, 'w') as summary_file:
                     export_summary_file_with_mass_fractions(
-                        main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions, data_type
+                        main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions, data_type,
+                        units=export_units,
                     )
                 
                 successful_exports += 1
@@ -221,7 +396,8 @@ def export_data(main_window):
                     dilution_factor = sample_dilutions[sample_name]
                     
                     export_sample_file_with_mass_fractions(
-                        main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type
+                        main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type,
+                        units=export_units,
                     )
                     
                     successful_exports += 1
@@ -308,7 +484,7 @@ def export_mass_fraction_info(main_window, file_handle, selected_samples, data_t
     
     file_handle.write("\n")
 
-def export_summary_file_with_mass_fractions(main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions, data_type):
+def export_summary_file_with_mass_fractions(main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions, data_type, units=None):
     """
     Export summary file with mixed element/particle calculations based on mass fractions and molecular weights.
     
@@ -320,10 +496,13 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
         element_labels (list): List of formatted element labels
         sample_dilutions (dict): Dictionary of sample dilution factors
         data_type (str): Data type ('element' or 'particle')
-        
+        units (ExportUnits | None): Unit preferences. If None, uses defaults (fg/fmol/nm).
+
     Returns:
         None
     """
+    if units is None:
+        units = ExportUnits()
     summary_file.write("IsotopeTrack Summary Results\n")
     summary_file.write(f"Date: {time.strftime('%Y-%m-%d')}\n")
     summary_file.write(f"Time: {time.strftime('%H:%M:%S')}\n")
@@ -480,10 +659,10 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
                             std_mass = np.std(masses) if len(masses) > 1 else 0
                             total_mass = np.sum(masses)
                             
-                            mean_mass_row.append(f"{mean_mass:.2f}")
-                            median_mass_row.append(f"{median_mass:.2f}")
-                            std_mass_row.append(f"{std_mass:.2f}")
-                            total_mass_row.append(f"{total_mass:.2f}")
+                            mean_mass_row.append(units.fmt_mass(mean_mass))
+                            median_mass_row.append(units.fmt_mass(median_mass))
+                            std_mass_row.append(units.fmt_mass(std_mass))
+                            total_mass_row.append(units.fmt_mass(total_mass))
                         else:
                             mean_mass_row.append("0")
                             median_mass_row.append("0")
@@ -496,10 +675,10 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
                             std_moles = np.std(moles) if len(moles) > 1 else 0
                             total_moles = np.sum(moles)
                             
-                            mean_moles_row.append(f"{mean_moles:.6f}")
-                            median_moles_row.append(f"{median_moles:.6f}")
-                            std_moles_row.append(f"{std_moles:.6f}")
-                            total_moles_row.append(f"{total_moles:.6f}")
+                            mean_moles_row.append(units.fmt_moles(mean_moles))
+                            median_moles_row.append(units.fmt_moles(median_moles))
+                            std_moles_row.append(units.fmt_moles(std_moles))
+                            total_moles_row.append(units.fmt_moles(total_moles))
                         else:
                             mean_moles_row.append("0")
                             median_moles_row.append("0")
@@ -508,7 +687,7 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
                         
                         if diameters:
                             mean_diameter = np.mean(diameters)
-                            mean_diameter_row.append(f"{mean_diameter:.1f}")
+                            mean_diameter_row.append(units.fmt_diameter(mean_diameter))
                         else:
                             mean_diameter_row.append("0")
                     else:
@@ -539,19 +718,22 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
                 
                 if element_key in main_window.sample_parameters.get(sample_name, {}):
                     params = main_window.sample_parameters[sample_name][element_key]
+                    use_window = params.get('use_window_size', False)
                     param_row = [
                         sample_name,
                         display_label,
                         str(params.get('include', True)),
-                        params.get('method', "Compound Poisson LogNormal"),  
-                        str(params.get('manual_threshold', 10.0)),  
-                        str(params.get('apply_smoothing', False)),  
-                        str(params.get('smooth_window', 3)),
-                        str(params.get('iterations', 1)),
-                        str(params.get('min_continuous', 1)),  
-                        str(params.get('alpha', 0.000001)), 
+                        params.get('method', 'Compound Poisson LogNormal'),
+                        str(params.get('sigma', getattr(main_window, '_global_sigma', 0.55))),
+                        str(params.get('manual_threshold', 10.0)),
+                        str(params.get('min_continuous', 1)),
+                        str(params.get('alpha', 0.000001)),
                         params.get('integration_method', "Background"),
-                        str(params.get('iterative', True)), 
+                        str(params.get('iterative', True)),
+                        str(use_window),
+                        str(params.get('window_size', 5000)) if use_window else "N/A",
+                        params.get('split_method', "1D Watershed"),
+                        str(params.get('valley_ratio', 0.50)),
                     ]
                     detection_params_data.append(param_row)
 
@@ -604,55 +786,55 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Mean Mass (fg)\n")
+    summary_file.write(f"Mean Mass ({units.mass_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in mean_mass_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Median Mass (fg)\n")
+    summary_file.write(f"Median Mass ({units.mass_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in median_mass_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Standard Deviation of Mass (fg)\n")
+    summary_file.write(f"Standard Deviation of Mass ({units.mass_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in std_mass_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Total Mass (fg) per Element\n")
+    summary_file.write(f"Total Mass ({units.mass_label}) per Element\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in total_mass_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Mean Moles (fmol)\n")
+    summary_file.write(f"Mean Moles ({units.moles_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in mean_moles_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Median Moles (fmol)\n")
+    summary_file.write(f"Median Moles ({units.moles_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in median_moles_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Standard Deviation of Moles (fmol)\n")
+    summary_file.write(f"Standard Deviation of Moles ({units.moles_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in std_moles_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Total Moles (fmol) per Element\n")
+    summary_file.write(f"Total Moles ({units.moles_label}) per Element\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in total_moles_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
     
-    summary_file.write("Mean Diameter (nm)\n")
+    summary_file.write(f"Mean Diameter ({units.diameter_label})\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in mean_diameter_data:
         summary_file.write(",".join(row) + "\n")
@@ -670,12 +852,16 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
 
-    summary_file.write("Detection Parameters\n\n")
-    summary_file.write("Sample,Element,Include,Method,Manual Threshold,Apply Smoothing,Window Length,Iterations,Min Points,Alpha (Error Rate),Integration Method,Iterative\n")
+    summary_file.write("Detection Parameters\n")
+    sigma_mode = getattr(main_window, '_sigma_mode', 'global')
+    global_sigma = getattr(main_window, '_global_sigma', 0.55)
+    summary_file.write(f"Sigma Mode: {sigma_mode}\n")
+    summary_file.write(f"Global Sigma: {global_sigma:.3f}\n\n")
+    summary_file.write("Sample,Element,Include,Method,Sigma,Manual Threshold,Min Points,Alpha (Error Rate),Integration Method,Iterative,Window Size Enabled,Window Size,Split Method,Valley Ratio\n")
     for row in detection_params_data:
         summary_file.write(",".join(row) + "\n")
 
-def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type):
+def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type, units=None):
     """
     Export individual sample file with mixed element/particle calculations based on mass fractions and molecular weights.
     
@@ -688,10 +874,13 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
         threshold_data (dict): Threshold data
         dilution_factor (float): Dilution factor
         data_type (str): Data type ('element' or 'particle')
+        units (ExportUnits | None): Unit preferences. If None, uses defaults (fg/fmol/nm).
         
     Returns:
         None
     """
+    if units is None:
+        units = ExportUnits()
     with open(file_path, 'w') as f:
         f.write(f"Sample: {sample_name}\n")
         f.write(f"Data Type: {data_type.capitalize()} Type\n")
@@ -767,7 +956,7 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
         headers = [
             "Element", "Slope (cps/ppb)", "R²", "BEC (ppb)", "LOD (ppb)", 
             "LOQ (ppb)", "Threshold (counts)", "LOD_MDL (counts)", "Background (ppt)", "Background SD (ppt)", 
-            "MDL (fg)", "MQL (fg)", "SDL (nm)", "SQL (nm)", "Mass Fraction Used", "Molecular Weight (g/mol)", "Density Used (g/cm³)"
+            f"MDL ({units.mass_label})", f"MQL ({units.mass_label})", f"SDL ({units.diameter_label})", f"SQL ({units.diameter_label})", "Mass Fraction Used", "Molecular Weight (g/mol)", "Density Used (g/cm³)"
         ]
         
         f.write(",".join(headers) + "\n")
@@ -839,10 +1028,10 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             mw_display = f"{molecular_weight:.6f}" if molecular_weight else f"{atomic_mass:.6f}"
             
             row_data.extend([
-                f"{mdl:.2e}" if mdl > 0 else "N/A",
-                f"{mql:.2e}" if mql > 0 else "N/A",
-                f"{sdl:.1f}" if sdl > 0 and not np.isnan(sdl) else "N/A",
-                f"{sql:.1f}" if sql > 0 and not np.isnan(sql) else "N/A",
+                units.fmt_mass(mdl) if mdl > 0 else "N/A",
+                units.fmt_mass(mql) if mql > 0 else "N/A",
+                units.fmt_diameter(sdl) if sdl > 0 and not np.isnan(sdl) else "N/A",
+                units.fmt_diameter(sql) if sql > 0 and not np.isnan(sql) else "N/A",
                 f"{mass_fraction:.6f}",
                 mw_display,
                 density_label
@@ -850,6 +1039,40 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             
             f.write(",".join(row_data) + "\n")
             
+        f.write("\n")
+
+        f.write("Detection Parameters:\n")
+        sigma_mode = getattr(main_window, '_sigma_mode', 'global')
+        global_sigma = getattr(main_window, '_global_sigma', 0.55)
+        f.write(f"Sigma Mode: {sigma_mode}\n")
+        f.write(f"Global Sigma: {global_sigma:.3f}\n")
+        det_headers = [
+            "Element", "Include", "Method", "Sigma", "Manual Threshold",
+            "Min Points", "Alpha (Error Rate)", "Integration Method",
+            "Iterative", "Window Size Enabled", "Window Size",
+            "Split Method", "Valley Ratio"
+        ]
+        f.write(",".join(det_headers) + "\n")
+        sample_params = main_window.sample_parameters.get(sample_name, {})
+        for element_key, display_label, element, isotope, atomic_mass in all_elements:
+            params = sample_params.get(element_key, {})
+            use_window = params.get('use_window_size', False)
+            det_row = [
+                display_label,
+                str(params.get('include', True)),
+                params.get('method', 'Compound Poisson LogNormal'),
+                str(params.get('sigma', global_sigma)),
+                str(params.get('manual_threshold', 10.0)),
+                str(params.get('min_continuous', 1)),
+                str(params.get('alpha', 0.000001)),
+                params.get('integration_method', 'Background'),
+                str(params.get('iterative', True)),
+                str(use_window),
+                str(params.get('window_size', 5000)) if use_window else "N/A",
+                params.get('split_method', '1D Watershed'),
+                str(params.get('valley_ratio', 0.50)),
+            ]
+            f.write(",".join(det_row) + "\n")
         f.write("\n")
 
         f.write("Particle Statistics:\n")
@@ -896,13 +1119,13 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             for _, display_label, _, _, _ in all_elements:
                 total_headers.extend([
                     f"{display_label} (counts)",
-                    f"{display_label} (fg)",
-                    f"{display_label} (fmol)",
+                    f"{display_label} ({units.mass_label})",
+                    f"{display_label} ({units.moles_label})",
                     f"{display_label} Mass %",
                     f"{display_label} Mole %"
                 ])
             
-            total_headers.extend(["Total (fg)", "Total (fmol)"])
+            total_headers.extend([f"Total ({units.mass_label})", f"Total ({units.moles_label})"])
             
             f.write(",".join(total_headers) + "\n")
             
@@ -964,15 +1187,15 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
                 
                 total_row.extend([
                     "0",
-                    f"{mass:.4f}",
-                    f"{moles:.6f}",
+                    units.fmt_mass(mass),
+                    units.fmt_moles(moles),
                     f"{mass_percent:.2f}",
                     f"{mole_percent:.2f}"
                 ])
             
             total_row.extend([
-                f"{grand_total_mass:.4f}", 
-                f"{grand_total_moles:.6f}"
+                units.fmt_mass(grand_total_mass), 
+                units.fmt_moles(grand_total_moles)
             ])
             
             f.write(",".join(total_row) + "\n")
@@ -985,12 +1208,12 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             for _, display_label, _, _, _ in all_elements:
                 headers.extend([
                     f"{display_label} (counts)",
-                    f"{display_label} (fg)",
-                    f"{display_label} (fmol)",
-                    f"{display_label} (nm)"
+                    f"{display_label} ({units.mass_label})",
+                    f"{display_label} ({units.moles_label})",
+                    f"{display_label} ({units.diameter_label})"
                 ])
             
-            headers.extend(["Total (fg)", "Total (fmol)"])
+            headers.extend([f"Total ({units.mass_label})", f"Total ({units.moles_label})"])
             
             f.write(",".join(headers) + "\n")
 
@@ -1055,14 +1278,14 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
                     
                     row_data.extend([
                         f"{counts:.4f}",
-                        f"{mass_fg:.8f}" if mass_fg > 0 else "0",
-                        f"{moles:.10f}" if moles > 0 else "0",
-                        f"{diameter_nm:.2f}" if diameter_nm > 0 and not np.isnan(diameter_nm) else "0"
+                        units.fmt_mass_or_zero(mass_fg),
+                        units.fmt_moles_or_zero(moles),
+                        units.fmt_diameter_or_zero(diameter_nm),
                     ])
                 
                 row_data.extend([
-                    f"{total_mass:.8f}", 
-                    f"{total_moles:.10f}"
+                    units.fmt_mass(total_mass),
+                    units.fmt_moles(total_moles),
                 ])
                 
                 f.write(",".join(row_data) + "\n")

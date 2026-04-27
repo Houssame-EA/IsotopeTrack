@@ -1,5 +1,4 @@
 import json
-import csv
 from pathlib import Path
 import numpy as np
 from scipy import stats
@@ -9,35 +8,106 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
                                QDoubleSpinBox, QGroupBox, QFormLayout, QDialog, QMenu,
                                QListView, QAbstractItemView, QTreeView, QSpinBox, QApplication, QScrollArea, QListWidget,QRadioButton,
-                               QMainWindow, QFrame, QProgressBar, QSplitter, QProgressDialog, QStyledItemDelegate, QLineEdit)
+                               QMainWindow, QFrame, QProgressBar, QSplitter, QProgressDialog, QLineEdit)
 from PySide6.QtGui import QFont, QColor, QIcon, QDoubleValidator
 from PySide6.QtCore import Qt, Signal
-import data_loading.vitesse_loading
+import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.numeric_table import NumericTableWidgetItem
 from widget.custom_plot_widget import EnhancedPlotWidget
 from processing.peak_detection import PeakDetection
-import data_loading.tofwerk_loading
 
 
-class NumericDelegate(QStyledItemDelegate):
-    """Custom delegate for numeric input in table cells"""
-    
-    def createEditor(self, parent, option, index):
+from calibration_methods.te_common import (
+    BASE_STYLESHEET, PLOT_STYLES, HISTOGRAM_COLORS,
+    NumericDelegate,
+    create_scrollable_container, export_table_to_csv,
+    populate_detection_row, read_detection_row, apply_global_method,
+    plot_detection_results, highlight_particle, snr_to_color,
+    particle_mass_from_diameter,
+    base_stylesheet, show_data_source_dialog,
+)
+from theme import theme
+
+class NoWheelDoubleSpinBox(QDoubleSpinBox):
+    """QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes."""
+    def wheelEvent(self, event): event.ignore()
+
+class NoWheelIntSpinBox(QSpinBox):
+    """QSpinBox that ignores mouse-wheel to prevent accidental changes."""
+    def wheelEvent(self, event): event.ignore()
+
+class NoWheelComboBox(QComboBox):
+    """QComboBox that ignores mouse-wheel to prevent accidental changes."""
+    def wheelEvent(self, event): event.ignore()
+
+
+class CollapsibleSection(QWidget):
+    """Themed collapsible panel. Click header to expand/collapse."""
+
+    def __init__(self, title: str, parent=None):
         """
-        Create a line edit widget with numeric validation for table cell editing.
-        
         Args:
-            parent: Parent widget for the editor
-            option: Style option for the item
-            index: Model index of the item being edited
-            
-        Returns:
-            QLineEdit: Line edit widget configured with double validator
+            title (str): Window or dialog title.
+            parent (Any): Parent widget or object.
         """
-        editor = QLineEdit(parent)
-        editor.setValidator(QDoubleValidator())
-        return editor
+        super().__init__(parent)
+        self._expanded = True
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 4)
+        outer.setSpacing(0)
+
+        self._header = QWidget()
+        self._header.setObjectName("collapsibleHeader")
+        self._header.setCursor(Qt.PointingHandCursor)
+        self._header.mousePressEvent = lambda _e: self.toggle()
+        hrow = QHBoxLayout(self._header)
+        hrow.setContentsMargins(12, 8, 12, 8)
+        hrow.setSpacing(8)
+        self._arrow = QLabel("▼")
+        self._arrow.setObjectName("collapsibleArrow")
+        self._arrow.setFixedWidth(14)
+        self._title_lbl = QLabel(title)
+        self._title_lbl.setObjectName("collapsibleTitle")
+        self._status_lbl = QLabel("")
+        self._status_lbl.setObjectName("collapsibleStatus")
+        hrow.addWidget(self._arrow)
+        hrow.addWidget(self._title_lbl)
+        hrow.addSpacing(16)
+        hrow.addWidget(self._status_lbl, 1)
+        outer.addWidget(self._header)
+
+        self.content_widget = QWidget()
+        self.content_widget.setObjectName("collapsibleContent")
+        outer.addWidget(self.content_widget)
+
+    def toggle(self):
+        self._expanded = not self._expanded
+        self.content_widget.setVisible(self._expanded)
+        self._arrow.setText("▼" if self._expanded else "▶")
+
+    def collapse(self, status: str = ""):
+        """
+        Args:
+            status (str): Status message string.
+        """
+        if status: self._status_lbl.setText(status)
+        if self._expanded:
+            self._expanded = False
+            self.content_widget.setVisible(False)
+            self._arrow.setText("▶")
+
+    def expand(self):
+        if not self._expanded:
+            self._expanded = True
+            self.content_widget.setVisible(True)
+            self._arrow.setText("▼")
+
+    def set_status(self, text: str): self._status_lbl.setText(text)
+
+    @property
+    def is_expanded(self): return self._expanded
+
 
 class PeriodicTableDialog(QDialog):
     element_selected = Signal(dict)
@@ -52,57 +122,15 @@ class PeriodicTableDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Select Element")
         self.setModal(True)
-        
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f8f9fa;
-            }
-            QLabel {
-                color: #495057;
-                font-weight: bold;
-            }
-            QPushButton {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-            }
-        """)
+ 
+        self.setStyleSheet(base_stylesheet(theme.palette))
         
         layout = QVBoxLayout(self)
-        
-        self.status_label = QLabel("Loading data...")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
         
         self.periodic_table = PeriodicTableWidget()
         self.periodic_table.selection_confirmed.connect(self.on_selection_confirmed)
         self.periodic_table.isotope_selected.connect(self.on_isotope_selected)
         layout.addWidget(self.periodic_table)
-        
-        instruction_frame = QFrame()
-        instruction_frame.setFrameShape(QFrame.StyledPanel)
-        instruction_frame.setStyleSheet("background-color: #e9ecef; border-radius: 4px; padding: 10px;")
-        instruction_layout = QVBoxLayout(instruction_frame)
-        
-        instruction_title = QLabel("Instructions")
-        instruction_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        instruction_layout.addWidget(instruction_title)
-        
-        instruction_text = QLabel(
-            "• Click an element to select it\n"
-            "• Right-click for isotope selection\n"
-            "• Available masses are highlighted\n"
-            "• Click 'Confirm Selection' when ready"
-        )
-        instruction_layout.addWidget(instruction_text)
-        
-        layout.addWidget(instruction_frame)
         
         self.resize(800, 600)
         
@@ -147,7 +175,6 @@ class PeriodicTableDialog(QDialog):
         """
         self.periodic_table.update_available_masses(masses)
         self.periodic_table.setEnabled(True)
-        self.status_label.setText("Ready - Select an element")
 
 class MassMethodWidget(QMainWindow):
     calibration_completed = Signal(str, float)
@@ -184,324 +211,311 @@ class MassMethodWidget(QMainWindow):
         self.all_masses = None
         
         self.current_highlighted_particle = None
-        
+
+        # ── Exclusion regions — particle detection plot ──────────────────
+        self._exclusion_regions_by_sample = {}
+
+        # ── Exclusion regions — ionic calibration plot ───────────────────
+        self._ionic_cal_exclusions_element = {}
+        self._ionic_cal_exclusions_sample  = {}
+        self._current_ionic_cal_folder      = None
+        self._current_ionic_cal_isotope_key = None
+
         self.default_button_style = ""
-        self.modified_button_style = """
-            QPushButton {
-                background-color: #ffc107;
-                color: #212529;
-            }
-            QPushButton:hover {
-                background-color: #e0a800;
-            }
-        """
+        self.modified_button_style = ""
         
         self.initUI()
+        self.apply_theme()
+        self._theme_cleanup = theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_cleanup())
     
-    def initUI(self):
+    def apply_theme(self, *_):
+        """Re-apply themed stylesheet; refresh plots and dynamic labels.
+        Args:
+            *_ (Any): Additional positional arguments.
         """
-        Initialize and configure the user interface.
-        
-        Sets up stylesheets, creates tab widget with five tabs for data selection,
-        detection, calibration, analysis, and results.
-        """
-        self.setStyleSheet("""
-            QMainWindow, QWidget {
-                background-color: #f8f9fa;
-                color: #212529;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #dee2e6;
+        p = theme.palette
+        section_qss = f"""
+            QWidget#collapsibleHeader {{
+                background-color: {p.accent}18;
                 border-radius: 6px;
-                margin-top: 12px;
-                padding-top: 10px;
-                background-color: white;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QPushButton {
-                background-color: #007bff;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0069d9;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {
-                border: 1px solid #ced4da;
-                border-radius: 4px;
-                padding: 6px;
-                background-color: white;
-            }
-            QTableWidget {
-                border: 1px solid #dee2e6;
-                background-color: white;
-                alternate-background-color: #f8f9fa;
-            }
-            QHeaderView::section {
-                background-color: #e9ecef;
-                padding: 6px;
-                border: none;
-                border-right: 1px solid #dee2e6;
-                border-bottom: 1px solid #dee2e6;
-            }
-            QLabel {
-                color: #495057;
-            }
-            QTabWidget::pane {
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                background-color: white;
-            }
-            QTabBar::tab {
-                border: 1px solid #dee2e6;
-                border-bottom: none;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-                padding: 8px 16px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: white;
-                border-bottom: 1px solid white;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #ced4da;
-            }
-            QListWidget {
-                border: 1px solid #dee2e6;
-                border-radius: 4px;
-                background-color: white;
-                alternate-background-color: #f8f9fa;
-            }
-        """)
-        
+                border-left: 3px solid {p.accent};
+            }}
+            QWidget#collapsibleHeader:hover {{ background-color: {p.accent}28; }}
+            QLabel#collapsibleArrow {{ color: {p.accent}; font-size: 10px; font-weight: bold; }}
+            QLabel#collapsibleTitle {{ color: {p.text_primary}; font-weight: 700; font-size: 13px; }}
+            QLabel#collapsibleStatus {{ color: {p.accent}; font-size: 11px; }}
+            QLabel#panelHeader {{
+                color: {p.text_primary}; font-weight: 700; font-size: 12px;
+                padding-bottom: 4px; border-bottom: 1px solid {p.accent}40;
+            }}
+        """
+        self.setStyleSheet(base_stylesheet(p) + section_qss)
+        for attr in (
+            "plot_widget", "regression_plot", "calibration_raw_plot",
+            "diameter_distribution_plot",
+        ):
+            w = getattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.setBackground(p.plot_bg)
+                except Exception:
+                    pass
+        for attr in ("folder_status_label", "element_selection_label"):
+            lbl = getattr(self, attr, None)
+            if lbl is None:
+                continue
+            if lbl.property("statusOk"):
+                lbl.setObjectName("statusOk")
+            else:
+                lbl.setObjectName("statusMuted")
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
+
+    def _mark_button_modified(self, button, modified=True):
+        """Toggle the 'warning' look on a button to indicate unsaved /
+        modified state.  Uses the themed #warningBtn object name so the
+        color follows light/dark themes.
+        Args:
+            button (Any): The button.
+            modified (Any): The modified.
+        """
+        if button is None:
+            return
+        if modified:
+            button.setObjectName("warningBtn")
+        else:
+            button.setObjectName("")
+        button.style().unpolish(button)
+        button.style().polish(button)
+
+    def initUI(self):
+        """Single-page collapsible layout replacing the 5-tab structure."""
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(10)
-        
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setDocumentMode(True)
-        
-        self.create_data_tab()
-        self.create_detection_tab()
-        self.create_calibration_tab()
-        self.create_analysis_tab()
-        self.create_results_tab()
-        
-        main_layout.addWidget(self.tab_widget)
-        
-        self.setWindowTitle("Mass Method Calibration")
-        self.setMinimumSize(1100, 800)
-        
-    def create_data_tab(self):
-        """
-        Create the Data Selection tab.
-        
-        Sets up folder selection controls, folder list display, element selection button,
-        and periodic table dialog within a scrollable area.
-        """
-        data_tab = QWidget()
-        layout = QVBoxLayout(data_tab)
-        layout.setSpacing(15)
-        
+        root = QVBoxLayout(central_widget)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(16, 12, 16, 16)
+        page_layout.setSpacing(6)
+
+        self.samples_section = CollapsibleSection("1 ·  Sample Data")
+        self._build_samples_content()
+        page_layout.addWidget(self.samples_section)
+
+        self.element_section = CollapsibleSection("2 ·  Element Selection")
+        self._build_element_content()
+        page_layout.addWidget(self.element_section)
+
+        self.detection_section = CollapsibleSection("3 ·  Detection Parameters")
+        self._build_detection_content()
+        page_layout.addWidget(self.detection_section)
+
+        self._build_plot(page_layout)
+
+        self.results_section = CollapsibleSection("4 ·  Detection Results")
+        self._build_detection_results_content()
+        page_layout.addWidget(self.results_section)
+
+        self.calibration_section = CollapsibleSection("5 ·  Ionic Calibration")
+        self._build_ionic_calibration_content()
+        page_layout.addWidget(self.calibration_section)
+
+        self.analysis_section = CollapsibleSection("6 ·  Mass Analysis & Transport Rate")
+        self._build_analysis_results_content()
+        page_layout.addWidget(self.analysis_section)
+
+        page_layout.addStretch()
+        scroll.setWidget(page)
+        root.addWidget(scroll)
+
+        self.setWindowTitle("Mass Method Calibration")
+        self.setMinimumSize(1200, 900)
+
+        self.periodic_table_dialog = PeriodicTableDialog(self)
+        self.periodic_table_dialog.element_selected.connect(self.on_element_selected)
+        self.calibration_folder_paths = []
+        self.calibration_results = {}
+        self.ignore_concentration_item_changed = False
         
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        folder_group = QGroupBox("1. Particle Data Folders")
-        folder_layout = QVBoxLayout(folder_group)
-        
-        instruction_label = QLabel(
-            "Select multiple folders containing particle analysis data. Each folder represents one sample."
-        )
-        instruction_label.setWordWrap(True)
-        instruction_label.setStyleSheet("color: #6c757d; font-style: italic;")
-        folder_layout.addWidget(instruction_label)
-        
+    def _build_samples_content(self):
+        """Section 1 — sample folder selection."""
+        w = self.samples_section.content_widget
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(8)
+
+        hint = QLabel("Select multiple folders containing particle analysis data. Each folder represents one sample.")
+        hint.setWordWrap(True)
+        hint.setObjectName("hintLabel")
+        layout.addWidget(hint)
+
+        btn_row = QHBoxLayout()
         folder_button = QPushButton("Select Particle Folders")
-        folder_button.setIcon(QIcon.fromTheme("folder-open"))
         folder_button.clicked.connect(self.select_particle_folders)
-        folder_button.setMaximumWidth(200)
-        folder_layout.addWidget(folder_button)
-        
+        folder_button.setMaximumWidth(210)
+        btn_row.addWidget(folder_button)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
         self.folder_list = QListWidget()
         self.folder_list.setAlternatingRowColors(True)
         self.folder_list.itemClicked.connect(self.on_folder_selected)
-        self.folder_list.setMinimumHeight(150)
-        folder_layout.addWidget(QLabel("Selected Folders:"))
-        folder_layout.addWidget(self.folder_list)
-        
+        self.folder_list.setMinimumHeight(120)
+        self.folder_list.setMaximumHeight(180)
+        layout.addWidget(self.folder_list)
+
         self.folder_status_label = QLabel("No folders selected")
-        self.folder_status_label.setStyleSheet("font-weight: bold; color: #6c757d;")
-        folder_layout.addWidget(self.folder_status_label)
-        
-        scroll_layout.addWidget(folder_group)
-        
-        element_group = QGroupBox("2. Element Selection")
-        element_layout = QVBoxLayout(element_group)
-        
+        self.folder_status_label.setObjectName("statusMuted")
+        self.folder_status_label.setProperty("statusOk", False)
+        layout.addWidget(self.folder_status_label)
+
+    def _build_element_content(self):
+        """Section 2 — element / isotope selection."""
+        w = self.element_section.content_widget
+        layout = QHBoxLayout(w)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
         self.element_selection_label = QLabel("Selected Element: None")
-        self.element_selection_label.setStyleSheet("font-weight: bold; color: #6c757d;")
-        element_layout.addWidget(self.element_selection_label)
-        
+        self.element_selection_label.setObjectName("statusMuted")
+        self.element_selection_label.setProperty("statusOk", False)
+
         self.element_button = QPushButton("Open Periodic Table")
         self.element_button.clicked.connect(self.show_periodic_table)
         self.element_button.setMaximumWidth(200)
         self.element_button.setEnabled(False)
-        element_layout.addWidget(self.element_button)
-        
-        help_label = QLabel(
-            "Select an element from the periodic table to analyze. "
-            "Right-click on an element to select specific isotopes."
-        )
-        help_label.setStyleSheet("color: #6c757d; font-style: italic;")
-        help_label.setWordWrap(True)
-        element_layout.addWidget(help_label)
-        
-        scroll_layout.addWidget(element_group)
-        
-        scroll_layout.addStretch()
-        
-        layout.addWidget(scroll)
-        
-        self.tab_widget.addTab(data_tab, "Data Selection")
-        
-        self.periodic_table_dialog = PeriodicTableDialog(self)
-        self.periodic_table_dialog.element_selected.connect(self.on_element_selected)
+
+        hint = QLabel("Right-click an element to select specific isotopes.")
+        hint.setObjectName("hintLabel")
+
+        layout.addWidget(QLabel("Element:"))
+        layout.addWidget(self.element_button)
+        layout.addWidget(self.element_selection_label)
+        layout.addSpacing(16)
+        layout.addWidget(hint)
+        layout.addStretch()
     
-    def create_detection_tab(self):
-        """
-        Create enhanced detection tab with individual sample parameters.
-        
-        Sets up detection configuration table, sample visualization plot, results table,
-        and file information display within a scrollable layout.
-        """
-        detection_tab = QWidget()
-        layout = QVBoxLayout(detection_tab)
-        layout.setSpacing(15)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        detection_group = QGroupBox("Detection Configuration")
-        detection_layout = QVBoxLayout(detection_group)
-        detection_layout.setSpacing(10)
-        
-        instruction_label = QLabel(
-            "Configure detection parameters for each sample. Click anywhere on a sample row to preview its signal. "
-            "Parameters can be set individually or applied to all samples at once."
+    def _build_detection_content(self):
+        """Section 3 — 12-column detection parameters + detect button."""
+        w = self.detection_section.content_widget
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(8)
+
+        hint = QLabel(
+            "Configure detection parameters per sample. "
+            "Click a row to preview its signal in the plot below."
         )
-        instruction_label.setWordWrap(True)
-        instruction_label.setStyleSheet("color: #6c757d; font-style: italic;")
-        detection_layout.addWidget(instruction_label)
-        
-        global_controls_layout = QHBoxLayout()
-        
-        global_method_combo = QComboBox()
-        global_method_combo.addItems(["Currie", "Formula_C", "Manual","Compound Poisson LogNormal"])
+        hint.setWordWrap(True)
+        hint.setObjectName("hintLabel")
+        layout.addWidget(hint)
+
+        global_row = QHBoxLayout()
+        global_method_combo = NoWheelComboBox()
+        global_method_combo.addItems(["Manual", "Compound Poisson LogNormal"])
         global_method_combo.setCurrentText("Compound Poisson LogNormal")
-        
         apply_global_button = QPushButton("Apply to All Samples")
-        apply_global_button.clicked.connect(lambda: self.apply_global_detection_params(global_method_combo.currentText()))
-        
-        global_controls_layout.addWidget(QLabel("Global Method:"))
-        global_controls_layout.addWidget(global_method_combo)
-        global_controls_layout.addWidget(apply_global_button)
-        global_controls_layout.addStretch()
-        
-        detection_layout.addLayout(global_controls_layout)
-        
+        apply_global_button.clicked.connect(
+            lambda: self.apply_global_detection_params(global_method_combo.currentText())
+        )
+        global_row.addWidget(QLabel("Global Method:"))
+        global_row.addWidget(global_method_combo)
+        global_row.addWidget(apply_global_button)
+        global_row.addStretch()
+        layout.addLayout(global_row)
+
         self.detection_params_table = QTableWidget()
-        self.detection_params_table.setColumnCount(11)
-        headers = ['Sample Name', 'Element', 'Detection Method', 'Manual Threshold', 'Apply Smoothing', 
-                  'Window Length', 'Smoothing Iterations', 'Min Points', 'Alpha', "iteration", "Window size"]
-        self.detection_params_table.setHorizontalHeaderLabels(headers)
-        
-        column_widths = [150, 120, 130, 120, 100, 100, 120, 100, 120]
-        for i, width in enumerate(column_widths):
-            self.detection_params_table.setColumnWidth(i, width)
-        
+        self.detection_params_table.setColumnCount(12)
+        self.detection_params_table.setHorizontalHeaderLabels([
+            'Sample Name', 'Element', 'Detection Method', 'Manual Threshold',
+            'Min Points', 'Alpha', 'Sigma', 'Iterative',
+            'Window Size', 'Integration Method', 'Split Method', 'Valley Ratio',
+        ])
+        for col, tip in {
+            6:  "Sigma for Compound Poisson LogNormal",
+            7:  "Enable iterative background estimation (recommended)",
+            8:  "Enable / set rolling-window size for background",
+            9:  "Integration baseline: Background / Threshold / Midpoint",
+            10: "Peak-splitting algorithm for overlapping particles",
+            11: "Valley-to-peak ratio for 1D Watershed (lower = fewer splits)",
+        }.items():
+            item = self.detection_params_table.horizontalHeaderItem(col)
+            if item: item.setToolTip(tip)
+
+        for i, w_col in enumerate([150, 120, 130, 120, 100, 100, 75, 75, 175, 140, 130, 105]):
+            self.detection_params_table.setColumnWidth(i, w_col)
         self.detection_params_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.detection_params_table.setAlternatingRowColors(True)
         self.detection_params_table.setMinimumHeight(150)
-        
         self.detection_params_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.detection_params_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.detection_params_table.itemSelectionChanged.connect(self.on_detection_params_selection_changed)
-        
-        detection_layout.addWidget(self.detection_params_table)
-        
+        layout.addWidget(self.detection_params_table)
+
         self.detect_button = QPushButton("Detect Particles for All Samples")
         self.detect_button.clicked.connect(self.detect_particles_all_samples)
         self.detect_button.setMinimumHeight(40)
         self.detect_button.setEnabled(False)
-        
-        detection_layout.addWidget(self.detect_button)
-        
-        scroll_layout.addWidget(detection_group)
-        
-        sample_selection_group = QGroupBox("Sample Visualization")
-        sample_selection_layout = QVBoxLayout(sample_selection_group)
-        
-        sample_controls_layout = QHBoxLayout()
-        
-        self.sample_combo = QComboBox()
+        layout.addWidget(self.detect_button)
+
+    def _build_plot(self, parent_layout):
+        """Always-visible signal visualization plot.
+        Args:
+            parent_layout (Any): Layout to which widgets are added.
+        """
+        plot_group = QGroupBox("Signal Visualization")
+        plot_layout = QVBoxLayout(plot_group)
+        plot_layout.setSpacing(6)
+
+        controls_row = QHBoxLayout()
+        self.sample_combo = NoWheelComboBox()
         self.sample_combo.currentTextChanged.connect(self.update_sample_visualization)
-        
-        self.visualization_status_label = QLabel("Click on any sample row above to preview its signal")
-        self.visualization_status_label.setStyleSheet("color: #6c757d; font-style: italic;")
-        
-        sample_controls_layout.addWidget(QLabel("Current Sample:"))
-        sample_controls_layout.addWidget(self.sample_combo)
-        sample_controls_layout.addWidget(self.visualization_status_label)
-        sample_controls_layout.addStretch()
-        
-        sample_selection_layout.addLayout(sample_controls_layout)
-        
+        self.visualization_status_label = QLabel("Click a sample row above to preview its signal")
+        self.visualization_status_label.setObjectName("hintLabel")
+        controls_row.addWidget(QLabel("Sample:"))
+        controls_row.addWidget(self.sample_combo)
+        controls_row.addWidget(self.visualization_status_label)
+        controls_row.addStretch()
+        plot_layout.addLayout(controls_row)
+
         self.plot_widget = EnhancedPlotWidget()
-        self.plot_widget.setBackground('w')
-        self.plot_widget.setMinimumHeight(300)
-        sample_selection_layout.addWidget(self.plot_widget)
-        
-        scroll_layout.addWidget(sample_selection_group)
-        
-        results_group = QGroupBox("Detection Results Summary")
-        results_layout = QVBoxLayout(results_group)
-        results_layout.setSpacing(10)
-        
-        results_instruction = QLabel(
-            "Click on a particle row to zoom in on that specific particle in the plot above."
-        )
-        results_instruction.setWordWrap(True)
-        results_instruction.setStyleSheet("color: #6c757d; font-style: italic;")
-        results_layout.addWidget(results_instruction)
-        
+        self.plot_widget.setBackground(theme.palette.plot_bg)
+        self.plot_widget.setMinimumHeight(280)
+        plot_layout.addWidget(self.plot_widget)
+
+        try:
+            self.plot_widget.exclusionRegionsChanged.connect(
+                self._on_exclusion_regions_changed)
+        except Exception as e:
+            print(f"Could not connect plot exclusionRegionsChanged: {e}")
+        parent_layout.addWidget(plot_group)
+
+    def _build_detection_results_content(self):
+        """Section 4 — results table (left) | file info table (right)."""
+        w = self.results_section.content_widget
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(8)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 8, 0)
+        ll.setSpacing(6)
+        left_hdr = QLabel("Detection Results")
+        left_hdr.setObjectName("panelHeader")
+        ll.addWidget(left_hdr)
+        ll.addWidget(self._hint("Click a particle row to zoom in on it in the plot above."))
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(5)
         self.results_table.setHorizontalHeaderLabels([
@@ -512,19 +526,18 @@ class MassMethodWidget(QMainWindow):
         self.results_table.setSortingEnabled(True)
         self.results_table.itemSelectionChanged.connect(self.highlight_selected_particle)
         self.results_table.setMinimumHeight(200)
-        
-        results_layout.addWidget(self.results_table)
-        
-        export_button = QPushButton("Export Data to CSV")
-        export_button.clicked.connect(self.export_to_csv)
-        export_button.setMaximumWidth(200)
-        results_layout.addWidget(export_button, alignment=Qt.AlignRight)
-        
-        scroll_layout.addWidget(results_group)
-        
-        info_group = QGroupBox("File Information")
-        info_layout = QVBoxLayout(info_group)
-        
+        ll.addWidget(self.results_table)
+        export_btn = QPushButton("Export Data to CSV")
+        export_btn.clicked.connect(self.export_to_csv)
+        ll.addWidget(export_btn, alignment=Qt.AlignRight)
+
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(8, 0, 0, 0)
+        rl.setSpacing(6)
+        right_hdr = QLabel("File Information")
+        right_hdr.setObjectName("panelHeader")
+        rl.addWidget(right_hdr)
         self.file_info_table = QTableWidget()
         self.file_info_table.setColumnCount(4)
         self.file_info_table.setHorizontalHeaderLabels([
@@ -532,247 +545,179 @@ class MassMethodWidget(QMainWindow):
         ])
         self.file_info_table.horizontalHeader().setStretchLastSection(True)
         self.file_info_table.setAlternatingRowColors(True)
-        self.file_info_table.setMinimumHeight(150)
-        info_layout.addWidget(self.file_info_table)
-        
-        scroll_layout.addWidget(info_group)
-        
-        scroll_layout.addStretch()
-        
-        layout.addWidget(scroll)
-        
-        self.tab_widget.addTab(detection_tab, "Particle Detection")
+        self.file_info_table.setMinimumHeight(200)
+        rl.addWidget(self.file_info_table)
+
+        splitter.addWidget(left)
+        splitter.addWidget(right)
+        splitter.setSizes([600, 400])
+        layout.addWidget(splitter)
+
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        """Convenience: create a styled hint label.
+        Args:
+            text (str): Text string.
+        Returns:
+            QLabel: Result of the operation.
+        """
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setObjectName("hintLabel")
+        return lbl
     
-    def create_analysis_tab(self):
-        """
-        Create the Mass Analysis tab.
-        
-        Sets up regression plot widget and calculation button for particle mass analysis
-        within a scrollable layout.
-        """
-        analysis_tab = QWidget()
-        layout = QVBoxLayout(analysis_tab)
-        layout.setSpacing(15)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        regression_group = QGroupBox("1. Particle Mass Analysis")
-        regression_layout = QVBoxLayout(regression_group)
-        
+    def _build_analysis_results_content(self):
+        """Section 6 — Mass Analysis regression + Transport Rate + Diameter Distribution."""
+        w = self.analysis_section.content_widget
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(10)
+
+        # ── Regression plot ────────────────────────────────────────────
+        reg_hdr = QLabel("Particle Mass Analysis")
+        reg_hdr.setObjectName("panelHeader")
+        layout.addWidget(reg_hdr)
+
         self.regression_plot = pg.PlotWidget()
-        self.regression_plot.setBackground('w')
+        self.regression_plot.setBackground(theme.palette.plot_bg)
         self.regression_plot.setLabel('left', 'Average Counts')
         self.regression_plot.setLabel('bottom', 'Particle Mass (fg)')
         self.regression_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.regression_plot.setMinimumHeight(300)
-        regression_layout.addWidget(self.regression_plot)
-        
+        self.regression_plot.setMinimumHeight(280)
+        layout.addWidget(self.regression_plot)
+
         self.calculate_button = QPushButton("Calculate Mass and Regression")
         self.calculate_button.clicked.connect(self.calculate_mass_and_regression)
         self.calculate_button.setMinimumHeight(40)
-        regression_layout.addWidget(self.calculate_button)
-        
-        scroll_layout.addWidget(regression_group)
-        
-        scroll_layout.addStretch()
-        
-        layout.addWidget(scroll)
-        
-        self.tab_widget.addTab(analysis_tab, "Mass Analysis")
+        layout.addWidget(self.calculate_button)
+
+        # ── Transport rate ─────────────────────────────────────────────
+        tr_hdr = QLabel("Calibrated Transport Rate")
+        tr_hdr.setObjectName("panelHeader")
+        layout.addWidget(tr_hdr)
+
+        self.transport_rate_table = QTableWidget()
+        self.transport_rate_table.setColumnCount(4)
+        self.transport_rate_table.setHorizontalHeaderLabels([
+            "Particle Calibration Slope", "Ionic Calibration Slope",
+            "Calibrated Transport Rate (μL/s)", "R² (Ionic Calibration)",
+        ])
+        self.transport_rate_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.transport_rate_table.setAlternatingRowColors(True)
+        layout.addWidget(self.transport_rate_table)
+
+        calc_tr_btn = QPushButton("Calculate Transport Rate")
+        calc_tr_btn.clicked.connect(self.calculate_transport_rate)
+        calc_tr_btn.setMinimumHeight(40)
+        layout.addWidget(calc_tr_btn)
+
+        # ── Diameter distribution ──────────────────────────────────────
+        diam_hdr = QLabel("Particle Size Distribution")
+        diam_hdr.setObjectName("panelHeader")
+        layout.addWidget(diam_hdr)
+
+        self.diameter_distribution_plot = pg.PlotWidget()
+        self.diameter_distribution_plot.setBackground(theme.palette.plot_bg)
+        self.diameter_distribution_plot.setLabel('left', 'Frequency')
+        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
+        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
+        self.diameter_distribution_plot.setMinimumHeight(280)
+        layout.addWidget(self.diameter_distribution_plot)
     
-    def create_calibration_tab(self):
-        """
-        Create the enhanced Ionic Calibration tab with auto-fill and method selection.
-        
-        Sets up calibration folder selection, concentration table with auto-fill functionality,
-        calibration method selection, and dual-view visualization (raw data and calibration plot).
-        """
-        calibration_tab = QWidget()
-        layout = QVBoxLayout(calibration_tab)
-        layout.setSpacing(15)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        ionic_group = QGroupBox("1. Ionic Calibration Setup")
-        ionic_layout = QVBoxLayout(ionic_group)
-        
-        folder_controls_layout = QHBoxLayout()
+    def _build_ionic_calibration_content(self):
+        """Section 5 — Ionic calibration setup + visualization."""
+        w = self.calibration_section.content_widget
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(12, 8, 12, 10)
+        layout.setSpacing(8)
+
+        # ── Setup controls ─────────────────────────────────────────────
+        setup_hdr = QLabel("Ionic Calibration Setup")
+        setup_hdr.setObjectName("panelHeader")
+        layout.addWidget(setup_hdr)
+
+        folder_controls = QHBoxLayout()
         folder_button = QPushButton("Select Calibration Folders")
         folder_button.clicked.connect(self.select_calibration_folders)
         folder_button.setMaximumWidth(250)
-        folder_controls_layout.addWidget(folder_button)
-        
+        folder_controls.addWidget(folder_button)
         auto_fill_btn = QPushButton("Auto-Fill Concentrations")
         auto_fill_btn.clicked.connect(self.auto_fill_concentrations)
-        auto_fill_btn.setToolTip("Attempt to auto-detect concentrations from sample names")
-        auto_fill_btn.setMaximumWidth(200)
-        folder_controls_layout.addWidget(auto_fill_btn)
-        
-        fill_minus_one_btn = QPushButton("Fill Selected with -1")
-        fill_minus_one_btn.clicked.connect(self.set_selected_cells_to_minus_one)
-        fill_minus_one_btn.setToolTip("Fill selected cells with -1 (exclude from calibration)")
-        fill_minus_one_btn.setMaximumWidth(180)
-        folder_controls_layout.addWidget(fill_minus_one_btn)
-        
-        folder_controls_layout.addStretch()
-        ionic_layout.addLayout(folder_controls_layout)
-        
-        instructions = QLabel(
-            "Select folders containing ionic standard solutions of different concentrations. "
-            "Enter concentrations or use auto-fill. Set to -1 to exclude from calibration."
-        )
-        instructions.setStyleSheet("color: #6c757d; font-style: italic;")
-        instructions.setWordWrap(True)
-        ionic_layout.addWidget(instructions)
-        
+        auto_fill_btn.setToolTip("Auto-detect concentrations from sample names")
+        folder_controls.addWidget(auto_fill_btn)
+        fill_m1_btn = QPushButton("Fill Selected with -1")
+        fill_m1_btn.clicked.connect(self.set_selected_cells_to_minus_one)
+        fill_m1_btn.setToolTip("Fill selected cells with -1 to exclude from calibration")
+        folder_controls.addWidget(fill_m1_btn)
+        folder_controls.addStretch()
+        layout.addLayout(folder_controls)
+
+        layout.addWidget(self._hint(
+            "Select folders containing ionic standard solutions. "
+            "Enter concentrations or use auto-fill. Set to -1 to exclude."
+        ))
+
         self.concentration_table = QTableWidget()
         self.concentration_table.setColumnCount(3)
         self.concentration_table.setHorizontalHeaderLabels(["Sample", "Concentration [ppb]", "Unit"])
-        self.concentration_table.setMinimumHeight(250)
+        self.concentration_table.setMinimumHeight(200)
         self.concentration_table.setAlternatingRowColors(True)
-        
         self.concentration_table.setColumnWidth(0, 200)
         self.concentration_table.setColumnWidth(1, 150)
         self.concentration_table.setColumnWidth(2, 100)
         self.concentration_table.horizontalHeader().setStretchLastSection(True)
-        
         self.concentration_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.concentration_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.concentration_table.customContextMenuRequested.connect(self.show_concentration_context_menu)
-        
         self.concentration_table.cellClicked.connect(self.on_concentration_table_clicked)
-        
-        ionic_layout.addWidget(self.concentration_table)
-        
-        method_layout = QHBoxLayout()
-        method_layout.addWidget(QLabel("Calibration Method:"))
+        layout.addWidget(self.concentration_table)
+
+        method_row = QHBoxLayout()
+        method_row.addWidget(QLabel("Calibration Method:"))
         self.calibration_method_combo = QComboBox()
         self.calibration_method_combo.addItems(['Force through zero', 'Simple linear', 'Weighted'])
         self.calibration_method_combo.setCurrentText('Force through zero')
-        method_layout.addWidget(self.calibration_method_combo)
-        method_layout.addStretch()
-        ionic_layout.addLayout(method_layout)
-        
-        calibrate_button = QPushButton("Calculate Calibration")
-        calibrate_button.clicked.connect(self.calculate_calibration)
-        calibrate_button.setMinimumHeight(40)
-        ionic_layout.addWidget(calibrate_button)
-        
-        scroll_layout.addWidget(ionic_group)
-        
-        visualization_group = QGroupBox("2. Sample Data Visualization")
-        visualization_layout = QVBoxLayout(visualization_group)
+        method_row.addWidget(self.calibration_method_combo)
+        method_row.addStretch()
+        layout.addLayout(method_row)
 
-        sample_controls_layout = QHBoxLayout()
-        sample_controls_layout.addWidget(QLabel("Selected Sample:"))
-        self.calibration_sample_label = QLabel("Click on any sample row above to view its data")
-        self.calibration_sample_label.setStyleSheet("color: #6c757d; font-style: italic;")
-        sample_controls_layout.addWidget(self.calibration_sample_label)
+        calibrate_btn = QPushButton("Calculate Calibration")
+        calibrate_btn.clicked.connect(self.calculate_calibration)
+        calibrate_btn.setMinimumHeight(40)
+        layout.addWidget(calibrate_btn)
 
-        sample_controls_layout.addStretch()
+        # ── Visualization ──────────────────────────────────────────────
+        vis_hdr = QLabel("Sample Data Visualization")
+        vis_hdr.setObjectName("panelHeader")
+        layout.addWidget(vis_hdr)
 
+        vis_controls = QHBoxLayout()
+        vis_controls.addWidget(QLabel("Selected Sample:"))
+        self.calibration_sample_label = QLabel("Click a sample row above to view its data")
+        self.calibration_sample_label.setObjectName("hintLabel")
+        vis_controls.addWidget(self.calibration_sample_label)
+        vis_controls.addStretch()
         self.view_toggle_button = QPushButton("📈 Show Calibration")
         self.view_toggle_button.clicked.connect(self.toggle_calibration_view)
         self.view_toggle_button.setMaximumWidth(150)
         self.view_toggle_button.setEnabled(False)
-        sample_controls_layout.addWidget(self.view_toggle_button)
+        vis_controls.addWidget(self.view_toggle_button)
+        layout.addLayout(vis_controls)
 
-        visualization_layout.addLayout(sample_controls_layout)
-
-        self.calibration_raw_plot = pg.PlotWidget()
-        self.calibration_raw_plot.setBackground('w')
+        self.calibration_raw_plot = EnhancedPlotWidget()
+        self.calibration_raw_plot.setBackground(theme.palette.plot_bg)
         self.calibration_raw_plot.setLabel('left', 'Counts')
         self.calibration_raw_plot.setLabel('bottom', 'Time (s)')
         self.calibration_raw_plot.showGrid(x=True, y=True, alpha=0.3)
         self.calibration_raw_plot.setMinimumHeight(250)
-        visualization_layout.addWidget(self.calibration_raw_plot)
+        layout.addWidget(self.calibration_raw_plot)
 
-        scroll_layout.addWidget(visualization_group)
-                        
-        scroll_layout.addStretch()
+        try:
+            self.calibration_raw_plot.exclusionRegionsChanged.connect(
+                self._on_ionic_calibration_exclusion_changed)
+        except Exception as e:
+            print(f"Could not connect calibration_raw_plot exclusionRegionsChanged: {e}")
         
-        layout.addWidget(scroll)
-        
-        self.tab_widget.addTab(calibration_tab, "Ionic Calibration")
-        
-        self.calibration_folder_paths = []
-        self.calibration_results = {}
-        self.ignore_concentration_item_changed = False
-        
-    def create_results_tab(self):
-        """
-        Create the Transport Rate Results tab.
-        
-        Sets up transport rate calculation table, diameter distribution plot,
-        and related controls within a scrollable layout.
-        """
-        results_tab = QWidget()
-        layout = QVBoxLayout(results_tab)
-        layout.setSpacing(15)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        
-        container = QWidget()
-        scroll_layout = QVBoxLayout(container)
-        scroll_layout.setSpacing(15)
-        scroll.setWidget(container)
-        
-        transport_rate_group = QGroupBox("1. Calibrated Transport Rate")
-        transport_rate_layout = QVBoxLayout(transport_rate_group)
-        
-        self.transport_rate_table = QTableWidget()
-        self.transport_rate_table.setColumnCount(4)
-        self.transport_rate_table.setHorizontalHeaderLabels([
-            "Particle Calibration Slope",
-            "Ionic Calibration Slope",
-            "Calibrated Transport Rate (μL/s)",
-            "R² (Ionic Calibration)"
-        ])
-        self.transport_rate_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.transport_rate_table.setAlternatingRowColors(True)
-        transport_rate_layout.addWidget(self.transport_rate_table)
-        
-        calculate_transport_button = QPushButton("Calculate Transport Rate")
-        calculate_transport_button.clicked.connect(self.calculate_transport_rate)
-        calculate_transport_button.setMinimumHeight(40)
-        transport_rate_layout.addWidget(calculate_transport_button)
-        
-        scroll_layout.addWidget(transport_rate_group)
-        
-        diameter_group = QGroupBox("2. Particle Size Distribution")
-        diameter_layout = QVBoxLayout(diameter_group)
-        
-        self.diameter_distribution_plot = pg.PlotWidget()
-        self.diameter_distribution_plot.setBackground('w')
-        self.diameter_distribution_plot.setLabel('left', 'Frequency')
-        self.diameter_distribution_plot.setLabel('bottom', 'Diameter (nm)')
-        self.diameter_distribution_plot.showGrid(x=True, y=True, alpha=0.3)
-        self.diameter_distribution_plot.setMinimumHeight(300)
-        diameter_layout.addWidget(self.diameter_distribution_plot)
-        
-        scroll_layout.addWidget(diameter_group)
-        
-        scroll_layout.addStretch()
-        
-        layout.addWidget(scroll)
-        
-        self.tab_widget.addTab(results_tab, "Results")
 
     def show_periodic_table(self):
         """
@@ -837,7 +782,21 @@ class MassMethodWidget(QMainWindow):
             status_text += f" ({', '.join(status_parts)})"
         
         self.folder_status_label.setText(status_text)
-        self.folder_status_label.setStyleSheet("font-weight: bold; color: #28a745;")
+        self.folder_status_label.setObjectName("statusOk")
+        self.folder_status_label.setProperty("statusOk", True)
+        self.folder_status_label.style().unpolish(self.folder_status_label)
+        self.folder_status_label.style().polish(self.folder_status_label)
+
+        if valid_count > 0 and hasattr(self, 'samples_section'):
+            names = [
+                self.folder_data[f].get('sample_name', Path(f).name)
+                for f in self.particle_folder_paths
+                if self.folder_data[f].get('status') == 'Loaded'
+            ]
+            preview = ', '.join(names[:3])
+            if len(names) > 3:
+                preview += f'  +{len(names) - 3} more'
+            self.samples_section.collapse(f"{valid_count} samples  —  {preview}")
 
     def enable_ui_elements(self):
         """
@@ -878,10 +837,22 @@ class MassMethodWidget(QMainWindow):
             self.element_selection_label.setText(
                 f"Selected Element: {element['symbol']} - {int(round(selected_mass))}{element['symbol']} ({abundance:.1f}%)"
             )
-            self.element_selection_label.setStyleSheet("font-weight: bold; color: #28a745;")
+            self.element_selection_label.setObjectName("statusOk")
+            self.element_selection_label.setProperty("statusOk", True)
+            self.element_selection_label.style().unpolish(self.element_selection_label)
+            self.element_selection_label.style().polish(self.element_selection_label)
             
             self.load_element_data_for_all_samples()
             self.update_detection_parameters_table()
+
+            if hasattr(self, 'element_section'):
+                sym  = element['symbol']
+                mass = int(round(element.get('selected_isotope', 0)))
+                abun = abundance if 'abundance' in dir() else 0
+                self.element_section.collapse(
+                    f"{sym}  —  {mass}{sym}"
+                    + (f"  ({abun:.1f}%)" if abun else "")
+                )
         else:
             if element['isotopes']:
                 if isinstance(element['isotopes'][0], dict):
@@ -924,7 +895,7 @@ class MassMethodWidget(QMainWindow):
                     try:
                         h5_path = Path(folder_path)
                         
-                        data, info, dwell_time = data_loading.tofwerk_loading.read_tofwerk_file(h5_path)
+                        data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_path)
                         
                         if 'mass' in info.dtype.names:
                             masses = info['mass']
@@ -958,7 +929,7 @@ class MassMethodWidget(QMainWindow):
                         raise ValueError(f"Error loading TOFWERK data: {str(load_error)}")
                 
                 else:
-                    masses, signals, run_info = data_loading.vitesse_loading.read_nu_directory(
+                    masses, signals, run_info = loading.vitesse_loading.read_nu_directory(
                         path=folder_path,
                         autoblank=True,
                         raw=False
@@ -990,13 +961,15 @@ class MassMethodWidget(QMainWindow):
         progress.setValue(len(self.particle_folder_paths))
         
     
-
     def update_detection_parameters_table(self):
         """
         Update detection parameters table with all samples.
         
         Populates table with default detection parameters for each valid sample including
-        method selection, thresholds, smoothing options, and statistical parameters.
+        method selection, thresholds and statistical parameters.
+
+        Returns:
+            None
         """
         if not self.selected_element:
             return
@@ -1010,58 +983,54 @@ class MassMethodWidget(QMainWindow):
         
         for i, folder_path in enumerate(valid_samples):
             sample_name = self.folder_data[folder_path].get('sample_name', Path(folder_path).name)
-            
-            sample_item = QTableWidgetItem(sample_name)
-            sample_item.setFlags(sample_item.flags() & ~Qt.ItemIsEditable)
-            self.detection_params_table.setItem(i, 0, sample_item)
-            
-            element_item = QTableWidgetItem(display_label)
-            element_item.setFlags(element_item.flags() & ~Qt.ItemIsEditable)
-            self.detection_params_table.setItem(i, 1, element_item)
-            
-            method_combo = QComboBox()
-            method_combo.addItems(["Currie", "Formula_C", "Compound Poisson LogNormal", "Manual"])
-            method_combo.setCurrentText("Compound Poisson LogNormal")
-            self.detection_params_table.setCellWidget(i, 2, method_combo)
-            
-            manual_threshold = QDoubleSpinBox()
-            manual_threshold.setRange(0.0, 999999.0)
-            manual_threshold.setDecimals(2)
-            manual_threshold.setValue(10.0)
-            manual_threshold.setEnabled(False)
-            self.detection_params_table.setCellWidget(i, 3, manual_threshold)
-            
-            smoothing_checkbox = QCheckBox()
-            smoothing_checkbox.setChecked(False)
-            self.detection_params_table.setCellWidget(i, 4, smoothing_checkbox)
-            
-            window_spin = QSpinBox()
-            window_spin.setRange(3, 51)
-            window_spin.setValue(3)
-            window_spin.setSingleStep(2)
-            self.detection_params_table.setCellWidget(i, 5, window_spin)
-            
-            iterations_spin = QSpinBox()
-            iterations_spin.setRange(1, 10)
-            iterations_spin.setValue(1)
-            self.detection_params_table.setCellWidget(i, 6, iterations_spin)
-            
-            min_points_spin = QSpinBox()
-            min_points_spin.setRange(1, 50)
-            min_points_spin.setValue(1)
-            self.detection_params_table.setCellWidget(i, 7, min_points_spin)
-            
-            alpha_spin = QDoubleSpinBox()
-            alpha_spin.setRange(0.00000001, 0.1)
-            alpha_spin.setDecimals(8)
-            alpha_spin.setValue(0.000001)
-            alpha_spin.setSingleStep(0.000001)
-            self.detection_params_table.setCellWidget(i, 8, alpha_spin)
-            
-            method_combo.currentTextChanged.connect(
-                lambda text, row=i: self.detection_params_table.cellWidget(row, 3).setEnabled(text == "Manual"))
-            smoothing_checkbox.stateChanged.connect(
-                lambda state, row=i: self.toggle_smoothing_parameters(row, state))
+            populate_detection_row(self.detection_params_table, i, sample_name, display_label)
+
+            # ── Col 6: Sigma ───────────────────────────────────────────
+            sigma_spin = NoWheelDoubleSpinBox()
+            sigma_spin.setRange(0.01, 2.0); sigma_spin.setDecimals(3)
+            sigma_spin.setSingleStep(0.01); sigma_spin.setValue(0.55)
+            sigma_spin.setToolTip("Sigma for Compound Poisson LogNormal threshold")
+            self.detection_params_table.setCellWidget(i, 6, sigma_spin)
+
+            # ── Col 7: Iterative ───────────────────────────────────────
+            iter_cb = QCheckBox(); iter_cb.setChecked(True)
+            iter_cb.setToolTip("Enable iterative background estimation (recommended)")
+            self.detection_params_table.setCellWidget(i, 7, iter_cb)
+
+            # ── Col 8: Window Size ─────────────────────────────────────
+            ws_container = QWidget()
+            ws_layout = QHBoxLayout(ws_container)
+            ws_layout.setContentsMargins(2, 2, 2, 2); ws_layout.setSpacing(3)
+            ws_cb = QCheckBox(); ws_cb.setChecked(False)
+            ws_cb.setToolTip("Enable custom rolling-window for background")
+            ws_sb = NoWheelIntSpinBox()
+            ws_sb.setRange(500, 100_000); ws_sb.setValue(5000)
+            ws_sb.setSingleStep(100); ws_sb.setEnabled(False)
+            ws_cb.stateChanged.connect(ws_sb.setEnabled)
+            ws_layout.addWidget(ws_cb); ws_layout.addWidget(ws_sb)
+            self.detection_params_table.setCellWidget(i, 8, ws_container)
+
+            # ── Col 9: Integration Method ──────────────────────────────
+            int_combo = NoWheelComboBox()
+            int_combo.addItems(["Background", "Threshold", "Midpoint"])
+            self.detection_params_table.setCellWidget(i, 9, int_combo)
+
+            # ── Col 10: Split Method ───────────────────────────────────
+            split_combo = NoWheelComboBox()
+            split_combo.addItems(["No Splitting", "1D Watershed"])
+            split_combo.setCurrentText("1D Watershed")
+            self.detection_params_table.setCellWidget(i, 10, split_combo)
+
+            # ── Col 11: Valley Ratio ───────────────────────────────────
+            valley_spin = NoWheelDoubleSpinBox()
+            valley_spin.setRange(0.01, 0.99); valley_spin.setDecimals(2)
+            valley_spin.setSingleStep(0.05); valley_spin.setValue(0.50)
+            valley_spin.setToolTip("Valley-to-peak ratio for 1D Watershed splitting")
+            valley_spin.setEnabled(split_combo.currentText() == "1D Watershed")
+            split_combo.currentTextChanged.connect(
+                lambda text, vs=valley_spin: vs.setEnabled(text == "1D Watershed")
+            )
+            self.detection_params_table.setCellWidget(i, 11, valley_spin)
         
         self.detect_button.setEnabled(True)
 
@@ -1070,28 +1039,103 @@ class MassMethodWidget(QMainWindow):
         Apply global detection method to all samples.
         
         Args:
-            method: Detection method name to apply to all sample rows
-        """
-        for row in range(self.detection_params_table.rowCount()):
-            method_combo = self.detection_params_table.cellWidget(row, 2)
-            if method_combo:
-                method_combo.setCurrentText(method)
+            method (str): Detection method name to apply to all sample rows.
 
-    def toggle_smoothing_parameters(self, row, state):
+        Returns:
+            None
         """
-        Enable or disable smoothing parameters for a specific row.
-        
+        apply_global_method(self.detection_params_table, method)
+
+    # ── Exclusion region helpers — particle detection plot ───────────────
+
+    def _visible_exclusion_entries_for(self, sample_name):
+        """Return stored exclusion entries for *sample_name* (empty list if none).
         Args:
-            row: Table row index
-            state: Checkbox state (checked/unchecked)
+            sample_name (Any): The sample name.
+        Returns:
+            object: Result of the operation.
         """
-        window_spin = self.detection_params_table.cellWidget(row, 5)
-        iterations_spin = self.detection_params_table.cellWidget(row, 6)
-        
-        if window_spin:
-            window_spin.setEnabled(state)
-        if iterations_spin:
-            iterations_spin.setEnabled(state)
+        return self._exclusion_regions_by_sample.get(sample_name, [])
+
+    def _on_exclusion_regions_changed(self):
+        """Sync particle-detection plot bands into the bookkeeping store."""
+        sample_name = self.sample_combo.currentText()
+        if not sample_name:
+            return
+        try:
+            plot_regions = self.plot_widget.get_exclusion_regions()
+        except Exception as e:
+            print(f"get_exclusion_regions failed: {e}")
+            return
+        self._exclusion_regions_by_sample[sample_name] = [
+            {'bounds': (float(lo), float(hi)), 'scope': 'sample', 'element_key': None}
+            for lo, hi, _sc in plot_regions
+        ]
+
+    def _rebuild_plot_exclusion_regions(self):
+        """Redraw particle-detection exclusion bands when switching sample."""
+        sample_name = self.sample_combo.currentText()
+        if not sample_name:
+            return
+        entries = self._exclusion_regions_by_sample.get(sample_name, [])
+        regions = [{'x0': e['bounds'][0], 'x1': e['bounds'][1]} for e in entries]
+        try:
+            try:
+                self.plot_widget.exclusionRegionsChanged.disconnect(
+                    self._on_exclusion_regions_changed)
+            except Exception:
+                pass
+            self.plot_widget.set_exclusion_regions(regions)
+        finally:
+            try:
+                self.plot_widget.exclusionRegionsChanged.connect(
+                    self._on_exclusion_regions_changed)
+            except Exception:
+                pass
+
+    # ── Exclusion region helpers — ionic calibration plot ────────────────
+
+    def _on_ionic_calibration_exclusion_changed(self):
+        """Persist ionic-calibration plot bands into the time-exclusion dicts."""
+        folder      = self._current_ionic_cal_folder
+        isotope_key = self._current_ionic_cal_isotope_key
+        if not folder or not isotope_key:
+            return
+        try:
+            regions = self.calibration_raw_plot.get_exclusion_regions()
+        except Exception as e:
+            print(f"calibration_raw_plot.get_exclusion_regions failed: {e}")
+            return
+
+        elem_regions   = [(float(lo), float(hi)) for lo, hi, sc in regions if sc == 'element']
+        sample_regions = [(float(lo), float(hi)) for lo, hi, sc in regions if sc == 'sample']
+
+        key = (folder, isotope_key)
+        if elem_regions:
+            self._ionic_cal_exclusions_element[key] = elem_regions
+        else:
+            self._ionic_cal_exclusions_element.pop(key, None)
+
+        if sample_regions:
+            self._ionic_cal_exclusions_sample[folder] = sample_regions
+        else:
+            self._ionic_cal_exclusions_sample.pop(folder, None)
+
+    def _restore_ionic_calibration_exclusions(self, folder_path, isotope_key):
+        """Reload stored ionic-calibration exclusion bands onto the plot.
+        Args:
+            folder_path (Any): The folder path.
+            isotope_key (Any): The isotope key.
+        """
+        key = (folder_path, isotope_key)
+        elem_regions   = self._ionic_cal_exclusions_element.get(key, [])
+        sample_regions = self._ionic_cal_exclusions_sample.get(folder_path, [])
+        combined = ([(lo, hi, 'element') for lo, hi in elem_regions] +
+                    [(lo, hi, 'sample')  for lo, hi in sample_regions])
+        try:
+            self.calibration_raw_plot.set_exclusion_regions(combined)
+        except Exception as e:
+            print(f"set_exclusion_regions failed: {e}")
 
     def on_detection_params_selection_changed(self):
         """
@@ -1125,7 +1169,6 @@ class MassMethodWidget(QMainWindow):
                 self.plot_sample_results(
                     results['sample_name'],
                     results['signal'],
-                    results['smoothed_signal'],
                     results['particles'],
                     results['lambda_bkgd'],
                     results['threshold'],
@@ -1135,6 +1178,10 @@ class MassMethodWidget(QMainWindow):
             else:
                 self.plot_raw_signal_preview(folder_path, sample_name)
                 self.visualization_status_label.setText(f"Showing raw signal preview for: {sample_name}")
+            try:
+                self._rebuild_plot_exclusion_regions()
+            except Exception:
+                pass
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
 
@@ -1158,12 +1205,12 @@ class MassMethodWidget(QMainWindow):
         self.plot_widget.plot(
             x=time_array, 
             y=signal, 
-            pen=pg.mkPen(color=(30, 144, 255), width=1), 
+            pen=PLOT_STYLES['raw_signal'], 
             name='Raw Signal'
         )
         
-        self.plot_widget.setBackground('w')
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.2)
+        self.plot_widget.setBackground(theme.palette.plot_bg)
+        self.plot_widget.showGrid(x=True, y=True, alpha=PLOT_STYLES['grid_alpha'])
         self.plot_widget.setLabel('left', 'Counts')
         self.plot_widget.setLabel('bottom', 'Time (s)')
         self.plot_widget.setTitle(f"Raw Signal Preview - {sample_name}")
@@ -1212,34 +1259,35 @@ class MassMethodWidget(QMainWindow):
                 signal = self.folder_data[folder_path]['isotope_signal']
                 time_array = self.folder_data[folder_path]['time_array']
                 
-                smoothed_signal, lambda_bkgd, threshold, mean_signal, threshold_data = self.peak_detector.detect_peaks_with_poisson(
+                _, lambda_bkgd, threshold, mean_signal, threshold_data = self.peak_detector.detect_peaks_with_poisson(
                     signal,
-                    window_length=params['smooth_window'],
-                    iterations=params['iterations'],
                     alpha=params['alpha'],
-                    apply_smoothing=params['apply_smoothing'],
                     method=params['method'],
                     manual_threshold=params['manual_threshold'],
                     element_thresholds={},
-                    current_sample=None
+                    current_sample=None,
+                    sigma=params.get('sigma', 0.55),
+                    iterative=params.get('iterative', True),
+                    use_window_size=params.get('use_window_size', False),
+                    window_size=params.get('window_size', 5000),
                 )
                 
                 particles = self.peak_detector.find_particles(
                     time_array,
-                    smoothed_signal,
                     signal,
                     lambda_bkgd,
                     threshold,
                     min_continuous_points=params['min_continuous'],
-                    apply_smoothing=params['apply_smoothing'],
-                    integration_method="Background"
+                    integration_method=params.get('integration_method', "Background"),
+                    split_method=params.get('split_method', "1D Watershed"),
+                    sigma=params.get('sigma', 0.55),
+                    min_valley_ratio=params.get('valley_ratio', 0.50),
                 )
                 
                 self.detection_results[folder_path] = {
                     'sample_name': sample_name,
                     'particles': particles,
                     'signal': signal,
-                    'smoothed_signal': smoothed_signal,
                     'time_array': time_array,
                     'lambda_bkgd': lambda_bkgd,
                     'threshold': threshold,
@@ -1327,19 +1375,40 @@ class MassMethodWidget(QMainWindow):
                         
                         masses = cached_data['masses']
                         folder_signals = cached_data['signals']
-                        run_info = cached_data['run_info']
+                        is_tofwerk = cached_data.get('is_tofwerk', False)
                         
                         mass_index = np.argmin(np.abs(masses - element_mass))
-                        
-                        acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
-                        accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
-                        dwell_time = acqtime * accumulations
-                        
+                        element_symbol = self.selected_element.get('symbol', '')
+                        isotope_key = f"{element_symbol}-{element_mass}"
+
+                        if is_tofwerk:
+                            dwell_time = cached_data['dwell_time']
+                            if hasattr(folder_signals.dtype, 'names') and folder_signals.dtype.names:
+                                isotope_signal = folder_signals[folder_signals.dtype.names[mass_index]]
+                            else:
+                                isotope_signal = folder_signals[:, mass_index]
+                        else:
+                            run_info = cached_data['run_info']
+                            acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
+                            accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
+                            dwell_time = acqtime * accumulations
+                            isotope_signal = folder_signals[:, mass_index]
+
+                        time_values = np.arange(len(isotope_signal)) * dwell_time
+                        time_mask = np.ones(len(time_values), dtype=bool)
+                        for lo, hi in self._ionic_cal_exclusions_element.get(
+                                (folder_path, isotope_key), []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        for lo, hi in self._ionic_cal_exclusions_sample.get(folder_path, []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        if not time_mask.any():
+                            continue
+
                         unit_combo = self.concentration_table.cellWidget(i, 2)
                         unit = unit_combo.currentText() if unit_combo else "ppb"
                         conc_ppb = self.convert_concentration_to_ppb(conc, unit)
                         
-                        avg_count_per_second = np.mean(folder_signals[:, mass_index]) / dwell_time
+                        avg_count_per_second = np.mean(isotope_signal[time_mask]) / dwell_time
                         
                         concentrations.append(conc_ppb)
                         signals.append(avg_count_per_second)
@@ -1395,47 +1464,38 @@ class MassMethodWidget(QMainWindow):
 
     def get_sample_detection_parameters(self, row):
         """
-        Get detection parameters for a specific sample.
-        
+        Get detection parameters for a specific sample row.
+
         Args:
-            row: Row index in the detection parameters table
-            
+            row (int): Row index in the detection parameters table.
+
         Returns:
-            Dictionary containing all detection parameters for the sample
+            dict: Keys include 'method', 'manual_threshold', 'min_continuous',
+                  'alpha', 'sigma', 'iterative', 'use_window_size', 'window_size',
+                  'integration_method', 'split_method', 'valley_ratio'.
         """
-        try:
-            method_widget = self.detection_params_table.cellWidget(row, 2)
-            manual_threshold_widget = self.detection_params_table.cellWidget(row, 3)
-            smoothing_widget = self.detection_params_table.cellWidget(row, 4)
-            window_widget = self.detection_params_table.cellWidget(row, 5)
-            iterations_widget = self.detection_params_table.cellWidget(row, 6)
-            min_points_widget = self.detection_params_table.cellWidget(row, 7)
-            alpha_widget = self.detection_params_table.cellWidget(row, 8)
-            
-            if not all([method_widget, manual_threshold_widget, smoothing_widget, 
-                       window_widget, iterations_widget, min_points_widget, alpha_widget]):
-                raise ValueError(f"Missing widgets in row {row}")
-            
-            return {
-                'method': method_widget.currentText(),
-                'manual_threshold': manual_threshold_widget.value(),
-                'apply_smoothing': smoothing_widget.isChecked(),
-                'smooth_window': window_widget.value(),
-                'iterations': iterations_widget.value(),
-                'min_continuous': min_points_widget.value(),
-                'alpha': alpha_widget.value()
-            }
-        except Exception as e:
-            print(f"Error getting parameters for row {row}: {e}")
-            return {
-                'method': 'Compound_Poisson',
-                'manual_threshold': 10.0,
-                'apply_smoothing': False,
-                'smooth_window': 3,
-                'iterations': 1,
-                'min_continuous': 1,
-                'alpha': 0.000001
-            }
+        params = read_detection_row(self.detection_params_table, row)
+
+        sigma_w = self.detection_params_table.cellWidget(row, 6)
+        iter_w  = self.detection_params_table.cellWidget(row, 7)
+        ws_cont = self.detection_params_table.cellWidget(row, 8)
+        int_w   = self.detection_params_table.cellWidget(row, 9)
+        split_w = self.detection_params_table.cellWidget(row, 10)
+        val_w   = self.detection_params_table.cellWidget(row, 11)
+
+        params['sigma']             = sigma_w.value()        if sigma_w  is not None else 0.55
+        params['iterative']         = iter_w.isChecked()     if iter_w   is not None else True
+
+        ws_cb = ws_cont.findChild(QCheckBox) if ws_cont is not None else None
+        ws_sb = ws_cont.findChild(QSpinBox)  if ws_cont is not None else None
+        params['use_window_size']   = ws_cb.isChecked() if ws_cb is not None else False
+        params['window_size']       = ws_sb.value()     if ws_sb is not None else 5000
+
+        params['integration_method']= int_w.currentText()   if int_w   is not None else "Background"
+        params['split_method']      = split_w.currentText()  if split_w is not None else "1D Watershed"
+        params['valley_ratio']      = val_w.value()          if val_w   is not None else 0.50
+
+        return params
 
     def update_results_table(self):
         """
@@ -1485,14 +1545,7 @@ class MassMethodWidget(QMainWindow):
                 height_item = NumericTableWidgetItem(f"{particle['max_height']:.0f}")
                 height_item.setData(Qt.UserRole, {'folder_path': folder_path, 'particle': particle})
                 
-                if height_threshold_ratio >= 3.0:
-                    color = QColor(144, 238, 144)
-                elif height_threshold_ratio >= 2.0:
-                    color = QColor(255, 255, 224)
-                elif height_threshold_ratio >= 1.0:
-                    color = QColor(255, 239, 213)
-                else:
-                    color = QColor(255, 200, 200)
+                color = snr_to_color(height_threshold_ratio)
                 
                 for item in [sample_item, start_item, end_item, counts_item, height_item]:
                     item.setBackground(color)
@@ -1505,6 +1558,13 @@ class MassMethodWidget(QMainWindow):
         
         self.results_table.setSortingEnabled(True)
         self.results_table.sortItems(0, Qt.AscendingOrder)
+
+        if hasattr(self, 'results_section'):
+            n = self.results_table.rowCount()
+            self.results_section.expand()
+            self.results_section.set_status(
+                f"{n} particle{'s' if n != 1 else ''} detected"
+            )
 
     def highlight_selected_particle(self):
         """
@@ -1552,30 +1612,17 @@ class MassMethodWidget(QMainWindow):
         Add highlighting to a specific particle in the plot.
         
         Args:
-            particle: Particle dictionary containing detection information
-            results: Detection results dictionary for the sample
+            particle (dict): Particle dictionary containing detection information.
+            results (dict): Detection results dictionary for the sample.
+
+        Returns:
+            None
         """
-        if hasattr(self, 'current_highlighted_particle') and self.current_highlighted_particle:
-            self.plot_widget.removeItem(self.current_highlighted_particle)
-        
-        time_array = results['time_array']
-        signal = results['signal']
-        
-        start_idx = particle['left_idx']
-        end_idx = particle['right_idx']
-        
-        particle_times = time_array[start_idx:end_idx+1]
-        particle_signal = signal[start_idx:end_idx+1]
-        
-        highlight_region = pg.PlotCurveItem(
-            x=particle_times,
-            y=particle_signal,
-            pen=pg.mkPen(color=(255, 0, 0), width=3),
-            name='Selected Particle'
+        self.current_highlighted_particle = highlight_particle(
+            self.plot_widget, particle,
+            results['time_array'], results['signal'],
+            self.current_highlighted_particle
         )
-        
-        self.plot_widget.addItem(highlight_region)
-        self.current_highlighted_particle = highlight_region
 
     def update_sample_visualization(self):
         """
@@ -1595,84 +1642,33 @@ class MassMethodWidget(QMainWindow):
         self.plot_sample_results(
             results['sample_name'],
             results['signal'],
-            results['smoothed_signal'],
             results['particles'],
             results['lambda_bkgd'],
             results['threshold'],
             results['time_array']
         )
 
-    def plot_sample_results(self, sample_name, signal, smoothed_signal, particles, lambda_bkgd, threshold, time_array):
+    def plot_sample_results(self, sample_name, signal, particles, lambda_bkgd, threshold, time_array):
         """
         Plot results for a specific sample.
         
         Args:
-            sample_name: Display name of the sample
-            signal: Raw signal array
-            smoothed_signal: Smoothed signal array
-            particles: List of detected particle dictionaries
-            lambda_bkgd: Background level value
-            threshold: Detection threshold value
-            time_array: Time array corresponding to signal data
+            sample_name (str): Display name of the sample.
+            signal (np.ndarray): Raw signal array.
+            particles (list[dict]): List of detected particle dictionaries.
+            lambda_bkgd (float): Background level value.
+            threshold (float): Detection threshold value.
+            time_array (np.ndarray): Time array corresponding to signal data.
+
+        Returns:
+            None
         """
-        self.plot_widget.clear()
-        
         self.current_highlighted_particle = None
-        
-        STYLES = {
-            'raw_signal': pg.mkPen(color=(30, 144, 255), width=1),
-            'smoothed_signal': pg.mkPen(color=(34, 139, 34), width=1),
-            'background': pg.mkPen(color=(128, 128, 128), style=Qt.DashLine, width=1.5),
-            'threshold': pg.mkPen(color=(220, 20, 60), style=Qt.DashLine, width=1.5),
-            'peaks': {'symbol': 't', 'size': 12, 'brush': 'r', 'pen': 'r'},
-            'grid': {'alpha': 0.2}
-        }
-        
-        plot_data = [
-            (time_array, signal, STYLES['raw_signal'], 'Raw Signal'),
-            (time_array, smoothed_signal, STYLES['smoothed_signal'], 'Smoothed Signal'),
-            (time_array, [lambda_bkgd] * len(time_array), STYLES['background'], 'Background Level'),
-            (time_array, [threshold] * len(time_array), STYLES['threshold'], 'Detection Threshold')
-        ]
-        
-        for x, y, pen, name in plot_data:
-            self.plot_widget.plot(x=x, y=y, pen=pen, name=name)
-        
-        if particles:
-            peak_data = {
-                'times': [],
-                'heights': [],
-                'snr': []
-            }
-            
-            for p in particles:
-                if p is not None:
-                    peak_idx = np.argmax(signal[p['left_idx']:p['right_idx']+1])
-                    peak_data['times'].append(time_array[p['left_idx'] + peak_idx])
-                    peak_height = p['max_height']
-                    peak_data['heights'].append(peak_height)
-                    peak_data['snr'].append(peak_height / threshold if threshold > 0 else 0)
-            
-            scatter = pg.ScatterPlotItem(
-                x=peak_data['times'],
-                y=peak_data['heights'],
-                symbol=STYLES['peaks']['symbol'],
-                size=STYLES['peaks']['size'],
-                brush=[pg.mkBrush(self.peak_detector.get_snr_color(snr)) for snr in peak_data['snr']],
-                pen=STYLES['peaks']['pen'],
-                name='Detected Peaks'
-            )
-            self.plot_widget.addItem(scatter)
-        
-        self.plot_widget.setBackground('w')
-        self.plot_widget.showGrid(x=True, y=True, alpha=STYLES['grid']['alpha'])
-        
-        self.plot_widget.setLabel('left', 'Counts')
-        self.plot_widget.setLabel('bottom', 'Time (s)')
-        self.plot_widget.setTitle(f"Particle Detection Results - {sample_name}")
-        
-        self.plot_widget.setMouseEnabled(x=True, y=True)
-        self.plot_widget.enableAutoRange()
+        plot_detection_results(
+            self.plot_widget, sample_name, signal,
+            particles, lambda_bkgd, threshold, time_array,
+            peak_detector=self.peak_detector
+        )
 
     def update_file_info_table(self):
         """
@@ -1736,24 +1732,22 @@ class MassMethodWidget(QMainWindow):
                     if item and item.text() == sample_name:
                         self.detection_params_table.selectRow(row)
                         break
-                
-                self.tab_widget.setCurrentIndex(1)
+
+                if hasattr(self, 'detection_section'):
+                    self.detection_section.expand()
 
     def calculate_particle_mass(self, diameter, density):
         """
         Calculate the mass of a spherical particle in femtograms.
         
         Args:
-            diameter: Particle diameter in nanometers
-            density: Particle density in g/cm³
+            diameter (float): Particle diameter in nanometers.
+            density (float): Particle density in g/cm³.
             
         Returns:
-            Particle mass in femtograms
+            float: Particle mass in femtograms.
         """
-        radius = diameter / 2 * 1e-7
-        volume = (4/3) * np.pi * (radius ** 3)
-        mass = volume * density
-        return mass * 1e15
+        return particle_mass_from_diameter(diameter, density)['mass_fg']
     
     def calculate_mass_and_regression(self):
         """
@@ -1812,8 +1806,9 @@ class MassMethodWidget(QMainWindow):
 
             is_single_folder = len(set(folders)) == 1
 
-            self.tab_widget.setCurrentIndex(3)
-            
+            if hasattr(self, 'analysis_section'):
+                self.analysis_section.expand()
+
             self.regression_plot.clear()
 
             if is_single_folder:
@@ -1892,91 +1887,13 @@ class MassMethodWidget(QMainWindow):
         Opens dialog allowing selection of NU folders, data files, or TOFWERK files for 
         ionic calibration, with multi-selection support and validation.
         """
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Select Calibration Data Source")
-        dialog.setMinimumWidth(500)
-        dialog.setMinimumHeight(450)
-        layout = QVBoxLayout(dialog)
-
-        instruction = QLabel("Choose your calibration data source type:")
-        instruction.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
-        layout.addWidget(instruction)
-
-        folder_radio = QRadioButton("NU Folders (with run.info files)", dialog)
-        csv_radio = QRadioButton("Data Files (*.csv *.txt *.xls *.xlsx *.xlsm *.xlsb)", dialog)
-        tofwerk_radio = QRadioButton("TOFWERK Files (*.h5)", dialog)
-        folder_radio.setChecked(True)
-        
-        radio_layout = QVBoxLayout()
-        radio_layout.addWidget(folder_radio)
-        radio_layout.addWidget(csv_radio)
-        radio_layout.addWidget(tofwerk_radio)
-        layout.addLayout(radio_layout)
-
-        folder_desc = QLabel("• Select folders containing NU instrument data with run.info files\n• Supports multiple folders for batch processing")
-        folder_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        csv_desc = QLabel("• Select Data Files with ionic standard solutions\n• Configure column mappings and concentration settings")
-        csv_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        tofwerk_desc = QLabel("• Select TOFWERK .h5 files from TofDAQ acquisitions\n• Supports multiple calibration standard files")
-        tofwerk_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        layout.addWidget(folder_desc)
-        layout.addWidget(csv_desc)
-        layout.addWidget(tofwerk_desc)
-        layout.addStretch()
-
-        button_box = QHBoxLayout()
-        ok_button = QPushButton("Continue", dialog)
-        cancel_button = QPushButton("Cancel", dialog)
-        
-        for btn in [ok_button, cancel_button]:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                    min-width: 80px;
-                }
-                QPushButton:hover {
-                    background-color: #545b62;
-                }
-            """)
-        
-        ok_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
-        
-        button_box.addStretch()
-        button_box.addWidget(ok_button)
-        button_box.addWidget(cancel_button)
-        layout.addLayout(button_box)
-
-        ok_button.clicked.connect(dialog.accept)
-        cancel_button.clicked.connect(dialog.reject)
-
-        if dialog.exec() == QDialog.Accepted:
-            if folder_radio.isChecked():
-                self.select_calibration_nu_folders()
-            elif csv_radio.isChecked():
-                self.select_calibration_data_files()
-            else:  
-                self.select_calibration_tofwerk_files()
+        choice = show_data_source_dialog(self)
+        if choice == "folder":
+            self.select_calibration_nu_folders()
+        elif choice == "csv":
+            self.select_calibration_data_files()
+        elif choice == "tofwerk":
+            self.select_calibration_tofwerk_files()
                 
     def select_calibration_nu_folders(self):
         """
@@ -2094,12 +2011,12 @@ class MassMethodWidget(QMainWindow):
                 QApplication.processEvents()
                 
                 try:
-                    if not data_loading.tofwerk_loading.is_tofwerk_file(h5_file):
+                    if not loading.tofwerk_loading.is_tofwerk_file(h5_file):
                         raise ValueError(f"Not a valid TOFWERK file: {h5_file.name}")
                     
                     sample_name = h5_file.stem
                     
-                    data, info, dwell_time = data_loading.tofwerk_loading.read_tofwerk_file(h5_path)
+                    data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_path)
                     
                     if 'mass' in info.dtype.names:
                         masses = info['mass']
@@ -2210,7 +2127,7 @@ class MassMethodWidget(QMainWindow):
                     else:
                         sample_name = Path(path).name
                         
-                    masses, signals, run_info = data_loading.vitesse_loading.read_nu_directory(path)
+                    masses, signals, run_info = loading.vitesse_loading.read_nu_directory(path)
                     
                     self.calibration_data_cache[path] = {
                         'masses': masses,
@@ -2256,7 +2173,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV calibration dialog and processes files with configuration.
         """
-        from data_loading.import_csv_dialogs import show_csv_calibration_dialog
+        from loading.import_csv_dialogs import show_csv_calibration_dialog
         
         config = show_csv_calibration_dialog(file_paths, self)
         
@@ -2379,91 +2296,13 @@ class MassMethodWidget(QMainWindow):
         Displays a dialog allowing user to choose between NU folders with run.info files,
         data files in various formats (CSV, TXT, Excel), or TOFWERK .h5 files.
         """
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Select Data Source")
-        dialog.setMinimumWidth(500)
-        dialog.setMinimumHeight(450)
-        layout = QVBoxLayout(dialog)
-
-        instruction = QLabel("Choose your data source type:")
-        instruction.setStyleSheet("font-size: 14px; font-weight: bold; margin: 10px;")
-        layout.addWidget(instruction)
-
-        folder_radio = QRadioButton("NU Folders (with run.info files)", dialog)
-        csv_radio = QRadioButton("Data Files (*.csv *.txt *.xls *.xlsx *.xlsm *.xlsb)", dialog)
-        tofwerk_radio = QRadioButton("TOFWERK Files (*.h5)", dialog)
-        folder_radio.setChecked(True)
-        
-        radio_layout = QVBoxLayout()
-        radio_layout.addWidget(folder_radio)
-        radio_layout.addWidget(csv_radio)
-        radio_layout.addWidget(tofwerk_radio)
-        layout.addLayout(radio_layout)
-
-        folder_desc = QLabel("• Select folders containing NU instrument data with run.info files\n• Supports multiple folders for batch processing")
-        folder_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        csv_desc = QLabel("• Select Data Files with mass spectrometry data\n• Configure column mappings and time settings for particle analysis")
-        csv_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        tofwerk_desc = QLabel("• Select TOFWERK .h5 files from TofDAQ acquisitions\n• Supports multiple files for batch processing")
-        tofwerk_desc.setStyleSheet("color: #666; margin-left: 20px; font-size: 11px;")
-        
-        layout.addWidget(folder_desc)
-        layout.addWidget(csv_desc)
-        layout.addWidget(tofwerk_desc)
-        layout.addStretch()
-
-        button_box = QHBoxLayout()
-        ok_button = QPushButton("Continue", dialog)
-        cancel_button = QPushButton("Cancel", dialog)
-        
-        for btn in [ok_button, cancel_button]:
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-weight: bold;
-                    min-width: 80px;
-                }
-                QPushButton:hover {
-                    background-color: #545b62;
-                }
-            """)
-        
-        ok_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-        """)
-        
-        button_box.addStretch()
-        button_box.addWidget(ok_button)
-        button_box.addWidget(cancel_button)
-        layout.addLayout(button_box)
-
-        ok_button.clicked.connect(dialog.accept)
-        cancel_button.clicked.connect(dialog.reject)
-
-        if dialog.exec() == QDialog.Accepted:
-            if folder_radio.isChecked():
-                self.select_nu_folders()
-            elif csv_radio.isChecked():
-                self.select_data_files()
-            else:  
-                self.select_tofwerk_files()
+        choice = show_data_source_dialog(self)
+        if choice == "folder":
+            self.select_nu_folders()
+        elif choice == "csv":
+            self.select_data_files()
+        elif choice == "tofwerk":
+            self.select_tofwerk_files()
                 
     def select_nu_folders(self):
         """
@@ -2550,13 +2389,13 @@ class MassMethodWidget(QMainWindow):
                 QApplication.processEvents()
                 
                 try:
-                    if not data_loading.tofwerk_loading.is_tofwerk_file(h5_file):
+                    if not loading.tofwerk_loading.is_tofwerk_file(h5_file):
                         raise ValueError(f"Not a valid TOFWERK file: {h5_file.name}")
                     
                     sample_name = h5_file.stem
                     
                     try:
-                        from data_loading.data_thread import DataProcessThread
+                        from loading.data_thread import DataProcessThread
                         masses = DataProcessThread.get_masses_only(str(h5_path))
                         all_masses_from_files.extend(masses)
                     except Exception as mass_error:
@@ -2654,7 +2493,7 @@ class MassMethodWidget(QMainWindow):
                     break
                     
                 try:
-                    masses, signals, run_info = data_loading.vitesse_loading.read_nu_directory(
+                    masses, signals, run_info = loading.vitesse_loading.read_nu_directory(
                         path=path,
                         max_integ_files=1,
                         autoblank=False,
@@ -2727,7 +2566,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV structure configuration dialog and initiates import.
         """
-        from data_loading.import_csv_dialogs import show_csv_structure_dialog, CSVDataProcessThread
+        from loading.import_csv_dialogs import show_csv_structure_dialog, CSVDataProcessThread
         
         config = show_csv_structure_dialog(file_paths, self)
         
@@ -2748,7 +2587,7 @@ class MassMethodWidget(QMainWindow):
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
             
-            from data_loading.import_csv_dialogs import CSVDataProcessThread
+            from loading.import_csv_dialogs import CSVDataProcessThread
             
             self.csv_thread = CSVDataProcessThread(config)
             self.csv_thread.progress.connect(progress.setValue)
@@ -2928,6 +2767,8 @@ class MassMethodWidget(QMainWindow):
         """
         Show raw data for a calibration sample using cached data.
         Supports NU folders, CSV files, and TOFWERK files.
+        Uses EnhancedPlotWidget so the user can draw time-exclusion bands
+        that will be respected by calculate_calibration (mirrors ionic_CAL.py).
         
         Args:
             folder_path: Path to the sample folder or virtual path
@@ -2956,6 +2797,9 @@ class MassMethodWidget(QMainWindow):
                 element_mass = self.selected_element['selected_isotope']
             else:
                 element_mass = self.selected_element['isotopes'][0]
+            
+            element_symbol = self.selected_element['symbol']
+            isotope_key = f"{element_symbol}-{element_mass}"
             
             mass_index = np.argmin(np.abs(masses - element_mass))
             
@@ -2987,14 +2831,18 @@ class MassMethodWidget(QMainWindow):
                 name='Raw Signal'
             )
             
-            element_symbol = self.selected_element['symbol']
             isotope_label = f"{int(round(element_mass))}{element_symbol}"
             self.calibration_raw_plot.setLabel('left', 'Counts')
             self.calibration_raw_plot.setLabel('bottom', 'Time (s)')
             
             source_type = "TOFWERK" if is_tofwerk else cached_data.get('source_type', 'NU').upper()
             self.calibration_raw_plot.setTitle(f"Raw Data - {sample_name} ({isotope_label}) [{source_type}]")
-            
+
+            self._current_ionic_cal_folder      = folder_path
+            self._current_ionic_cal_isotope_key = isotope_key
+
+            self._restore_ionic_calibration_exclusions(folder_path, isotope_key)
+
             avg_signal = np.mean(isotope_signal)
             self.calibration_sample_label.setText(f"{sample_name} - Avg: {avg_signal:.1f} counts [{source_type}]")
             
@@ -3108,7 +2956,7 @@ class MassMethodWidget(QMainWindow):
         
         for folder in folders:
             try:
-                masses, _, _ = data_loading.vitesse_loading.read_nu_directory(folder, max_integ_files=1)
+                masses, _, _ = loading.vitesse_loading.read_nu_directory(folder, max_integ_files=1)
                 
                 if len(masses) == len(self.all_masses):
                     mass_differences = np.abs(masses - self.all_masses)
@@ -3195,6 +3043,9 @@ class MassMethodWidget(QMainWindow):
                     is_tofwerk = cached_data.get('is_tofwerk', False)
 
                     mass_index = np.argmin(np.abs(masses - element_mass))
+
+                    element_symbol = self.selected_element.get('symbol', '')
+                    isotope_key = f"{element_symbol}-{element_mass}"
                     
                     if is_tofwerk:
                         dwell_time = cached_data['dwell_time']
@@ -3205,15 +3056,24 @@ class MassMethodWidget(QMainWindow):
                         else:
                             isotope_signal = folder_signals[:, mass_index]
                         
-                        avg_count_per_second = np.mean(isotope_signal) / dwell_time
-                        
                     else:
                         run_info = cached_data['run_info']
                         acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
                         accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
                         dwell_time = acqtime * accumulations
-                        
-                        avg_count_per_second = np.mean(folder_signals[:, mass_index]) / dwell_time
+                        isotope_signal = folder_signals[:, mass_index]
+
+                    time_values = np.arange(len(isotope_signal)) * dwell_time
+                    time_mask = np.ones(len(time_values), dtype=bool)
+                    for lo, hi in self._ionic_cal_exclusions_element.get(
+                            (folder_path, isotope_key), []):
+                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                    for lo, hi in self._ionic_cal_exclusions_sample.get(folder_path, []):
+                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                    if not time_mask.any():
+                        continue
+
+                    avg_count_per_second = np.mean(isotope_signal[time_mask]) / dwell_time
                     
                     signals.append(avg_count_per_second)
                     valid_samples.append(sample_name)
@@ -3481,14 +3341,7 @@ class MassMethodWidget(QMainWindow):
             self.diameter_distribution_plot.setTitle("No particle data available")
             return
         
-        colors = [(30, 144, 255, 180),   
-                (50, 205, 50, 180),     
-                (255, 69, 0, 180),      
-                (147, 112, 219, 180),   
-                (255, 215, 0, 180),     
-                (0, 191, 255, 180),     
-                (255, 127, 80, 180),    
-                (32, 178, 170, 180)]    
+        colors = HISTOGRAM_COLORS    
         
         legend_items = []
         
@@ -3571,47 +3424,11 @@ class MassMethodWidget(QMainWindow):
     def export_to_csv(self):
         """
         Export detection results to CSV file.
-        
-        Opens file dialog for saving location and writes all detection results
-        from the results table to a CSV file.
+
+        Returns:
+            None
         """
-        if self.results_table.rowCount() == 0:
-            QMessageBox.warning(self, "Export Error", "No results to export.")
-            return
-            
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, 
-            "Export Detection Results", 
-            "", 
-            "CSV Files (*.csv)"
-        )
-        
-        if not file_path:
-            return
-            
-        if not file_path.endswith('.csv'):
-            file_path += '.csv'
-            
-        try:
-            with open(file_path, mode='w', newline='') as file:
-                writer = csv.writer(file)
-                
-                headers = []
-                for col in range(self.results_table.columnCount()):
-                    headers.append(self.results_table.horizontalHeaderItem(col).text())
-                writer.writerow(headers)
-                
-                for row in range(self.results_table.rowCount()):
-                    row_data = []
-                    for col in range(self.results_table.columnCount()):
-                        item = self.results_table.item(row, col)
-                        row_data.append(item.text() if item else "")
-                    writer.writerow(row_data)
-                
-            QMessageBox.information(self, "Export Successful", f"Results exported to {file_path}")
-        
-        except Exception as e:
-            QMessageBox.critical(self, "Export Error", f"Error exporting results: {str(e)}")
+        export_table_to_csv(self.results_table, self)
     
 
 if __name__ == '__main__':

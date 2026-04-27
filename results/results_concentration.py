@@ -2,29 +2,33 @@
 Concentration-Comparison Plot Node – dot-and-circle strip chart.
 
 Each element gets a horizontal row.
-Individual sample values are small dots, group means are large open circles.
-Numeric mean values displayed on the right.
+Individual sample values are small dots (jittered), group means are large
+open circles.  Numeric mean values displayed on the right.
 
 Single sample  → one column of dots per element.
 Multi-sample   → overlaid colours per sample / group.
+
+Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea,
-    QSizePolicy, QLineEdit,
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QColorDialog,
+    QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
 )
-from PySide6.QtCore import Qt, Signal, QObject, QRectF, QPointF
-from PySide6.QtGui import (
-    QColor, QPen, QBrush, QFont, QPainter, QFontMetrics,
-)
+from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtGui import QColor, QCursor
+from matplotlib.figure import Figure
+import matplotlib.ticker as mticker
 import numpy as np
+import math
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_qfont, FontSettingsGroup,
-    get_display_name,
+    get_font_config, apply_font_to_matplotlib,
+    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
+    LABEL_MODES, format_element_label,
+    get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -42,58 +46,80 @@ CONC_DATA_TYPES = [
 ]
 
 CONC_DATA_KEY_MAP = {
-    'Counts': 'elements',
-    'Element Mass (fg)': 'element_mass_fg',
-    'Particle Mass (fg)': 'particle_mass_fg',
-    'Element Moles (fmol)': 'element_moles_fmol',
-    'Particle Moles (fmol)': 'particle_moles_fmol',
-    'Element Diameter (nm)': 'element_diameter_nm',
-    'Particle Diameter (nm)': 'particle_diameter_nm',
+    'Counts':                  'elements',
+    'Element Mass (fg)':       'element_mass_fg',
+    'Particle Mass (fg)':      'particle_mass_fg',
+    'Element Moles (fmol)':    'element_moles_fmol',
+    'Particle Moles (fmol)':   'particle_moles_fmol',
+    'Element Diameter (nm)':   'element_diameter_nm',
+    'Particle Diameter (nm)':  'particle_diameter_nm',
 }
 
 CONC_LABEL_MAP = {
-    'Counts': 'Intensity (counts)',
-    'Element Mass (fg)': 'Mass (fg)',
-    'Particle Mass (fg)': 'Particle Mass (fg)',
-    'Element Moles (fmol)': 'Moles (fmol)',
-    'Particle Moles (fmol)': 'Particle Moles (fmol)',
-    'Element Diameter (nm)': 'Diameter (nm)',
-    'Particle Diameter (nm)': 'Particle Diameter (nm)',
+    'Counts':                  'Intensity (counts)',
+    'Element Mass (fg)':       'Mass (fg)',
+    'Particle Mass (fg)':      'Particle Mass (fg)',
+    'Element Moles (fmol)':    'Moles (fmol)',
+    'Particle Moles (fmol)':   'Particle Moles (fmol)',
+    'Element Diameter (nm)':   'Diameter (nm)',
+    'Particle Diameter (nm)':  'Particle Diameter (nm)',
 }
 
 CONC_AGG_METHODS = ['Mean', 'Median', 'Geometric Mean']
 
 DEFAULT_CONFIG = {
-    'data_type_display': 'Counts',
-    'aggregation': 'Mean',
-    'log_scale': True,
-    'show_individual': True,
-    'show_mean_circle': True,
-    'show_values': True,
-    'dot_size': 5,
-    'circle_size_factor': 1.0,
-    'row_height': 34,
-    'dark_theme': True,
-    'sample_colors': {},
+    'data_type_display':  'Counts',
+    'aggregation':        'Mean',
+    'log_scale':          True,
+    'show_individual':    True,
+    'show_mean_circle':   True,
+    'show_values':        True,
+    'dot_size':           5,
+    'dot_alpha':          0.4,
+    'circle_size':        120,
+    'jitter':             0.15,
+    'label_mode':         'Symbol',
+    'font_family':        'Times New Roman',
+    'font_size':          10,
+    'font_bold':          False,
+    'font_italic':        False,
+    'font_color':         '#000000',
+    'sample_colors':      {},
     'sample_name_mappings': {},
-    'font_family': 'Times New Roman',
-    'font_size': 18,
-    'font_bold': False,
-    'font_italic': False,
-    'font_color': '#000000',
+    'bg_color':           '#FFFFFF',
+    'export_format':      'svg',
+    'export_dpi':         300,
+    'use_custom_figsize': False,
+    'figsize_w':          12.0,
+    'figsize_h':          8.0,
 }
 
-DEFAULT_GROUP_COLORS = ['#60A5FA', '#F472B6', '#34D399', '#FBBF24', '#A78BFA',
-                        '#FB923C', '#38BDF8', '#F87171', '#4ADE80', '#E879F9']
+DEFAULT_GROUP_COLORS = [
+    '#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6',
+    '#EC4899', '#06B6D4', '#F97316', '#84CC16', '#6366F1',
+]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
+    """
+    Args:
+        input_data (Any): The input data.
+    Returns:
+        object: Result of the operation.
+    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _agg(values, method):
+    """
+    Args:
+        values (Any): Array or sequence of values.
+        method (Any): The method.
+    Returns:
+        object: Result of the operation.
+    """
     if not values:
         return 0
     arr = np.array(values, dtype=float)
@@ -108,40 +134,47 @@ def _agg(values, method):
 
 
 def _fmt_val(v):
-    """Smart format: big nums get 2 decimals, small get more."""
+    """
+    Args:
+        v (Any): The v.
+    Returns:
+        object: Result of the operation.
+    """
     if v == 0:
         return "—"
-    if abs(v) >= 100:
-        return f"{v:.2f}"
+    if abs(v) >= 1000:
+        return f"{v:.2e}"
     elif abs(v) >= 1:
         return f"{v:.2f}"
     elif abs(v) >= 0.01:
         return f"{v:.3f}"
-    else:
-        return f"{v:.4f}"
+    return f"{v:.2e}"
 
 
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class ConcentrationSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None):
+        """
+        Args:
+            cfg (Any): The cfg.
+            input_data (Any): The input data.
+            parent (Any): Parent widget or object.
+        """
         super().__init__(parent)
         self.setWindowTitle("Concentration Comparison Settings")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(500)
         self._cfg = dict(cfg)
         self._input_data = input_data
         self._build_ui()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        inner = QWidget()
-        lay = QVBoxLayout(inner)
-        scroll.setWidget(inner)
-        root.addWidget(scroll)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        inner = QWidget(); lay = QVBoxLayout(inner)
+        scroll.setWidget(inner); root.addWidget(scroll)
 
-        # Data
+        # ── Data ──────────────────────────────────────────────────────
         g1 = QGroupBox("Data")
         f1 = QFormLayout(g1)
         self.dtype_combo = QComboBox()
@@ -154,319 +187,147 @@ class ConcentrationSettingsDialog(QDialog):
         f1.addRow("Aggregation:", self.agg_combo)
         lay.addWidget(g1)
 
-        # Display
+        # ── Display ───────────────────────────────────────────────────
         g2 = QGroupBox("Display")
         f2 = QFormLayout(g2)
+
         self.log_cb = QCheckBox()
         self.log_cb.setChecked(self._cfg.get('log_scale', True))
         f2.addRow("Log Scale:", self.log_cb)
+
         self.indiv_cb = QCheckBox()
         self.indiv_cb.setChecked(self._cfg.get('show_individual', True))
         f2.addRow("Show Individual Points:", self.indiv_cb)
+
         self.circle_cb = QCheckBox()
         self.circle_cb.setChecked(self._cfg.get('show_mean_circle', True))
-        f2.addRow("Show Mean Circles:", self.circle_cb)
+        f2.addRow("Show Mean Markers:", self.circle_cb)
+
         self.vals_cb = QCheckBox()
         self.vals_cb.setChecked(self._cfg.get('show_values', True))
         f2.addRow("Show Numeric Values:", self.vals_cb)
-        self.dark_cb = QCheckBox()
-        self.dark_cb.setChecked(self._cfg.get('dark_theme', True))
-        f2.addRow("Dark Theme:", self.dark_cb)
-        self.row_h = QDoubleSpinBox()
-        self.row_h.setRange(20, 80)
-        self.row_h.setDecimals(0)
-        self.row_h.setValue(self._cfg.get('row_height', 34))
-        f2.addRow("Row Height:", self.row_h)
-        self.dot_spin = QDoubleSpinBox()
-        self.dot_spin.setRange(2, 15)
-        self.dot_spin.setDecimals(0)
+
+        self.dot_spin = QSpinBox()
+        self.dot_spin.setRange(2, 20)
         self.dot_spin.setValue(self._cfg.get('dot_size', 5))
         f2.addRow("Dot Size:", self.dot_spin)
-        self.csf = QDoubleSpinBox()
-        self.csf.setRange(0.2, 3.0)
-        self.csf.setDecimals(1)
-        self.csf.setValue(self._cfg.get('circle_size_factor', 1.0))
-        f2.addRow("Circle Size Factor:", self.csf)
+
+        self.dot_alpha = QDoubleSpinBox()
+        self.dot_alpha.setRange(0.05, 1.0); self.dot_alpha.setSingleStep(0.05)
+        self.dot_alpha.setDecimals(2)
+        self.dot_alpha.setValue(self._cfg.get('dot_alpha', 0.4))
+        f2.addRow("Dot Alpha:", self.dot_alpha)
+
+        self.circle_size = QSpinBox()
+        self.circle_size.setRange(20, 500)
+        self.circle_size.setValue(self._cfg.get('circle_size', 120))
+        f2.addRow("Mean Marker Size:", self.circle_size)
+
+        self.jitter_spin = QDoubleSpinBox()
+        self.jitter_spin.setRange(0.0, 0.45); self.jitter_spin.setSingleStep(0.05)
+        self.jitter_spin.setDecimals(2)
+        self.jitter_spin.setSpecialValueText("No jitter")
+        self.jitter_spin.setValue(self._cfg.get('jitter', 0.15))
+        f2.addRow("Vertical Jitter:", self.jitter_spin)
+
+        self.label_mode_combo = QComboBox()
+        self.label_mode_combo.addItems(LABEL_MODES)
+        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        f2.addRow("Label Mode:", self.label_mode_combo)
+
         lay.addWidget(g2)
 
-        # Sample colors (multi)
+        # ── Sample colors (multi) ─────────────────────────────────────
+        self._sample_btns = {}
+        self._sample_edits = {}
+        self._sample_colors = {}
         if _is_multi(self._input_data):
             names = self._input_data.get('sample_names', [])
             if names:
                 g3 = QGroupBox("Sample Colors & Names")
                 v3 = QVBoxLayout(g3)
-                self._sample_btns = {}
-                self._sample_edits = {}
                 sc = dict(self._cfg.get('sample_colors', {}))
                 nm = dict(self._cfg.get('sample_name_mappings', {}))
                 for i, sn in enumerate(names):
                     h = QHBoxLayout()
-                    ed = QLineEdit(nm.get(sn, sn))
-                    ed.setFixedWidth(180)
-                    h.addWidget(ed)
-                    self._sample_edits[sn] = ed
-                    btn = QPushButton()
-                    btn.setFixedSize(25, 18)
+                    ed = QLineEdit(nm.get(sn, sn)); ed.setFixedWidth(180)
+                    h.addWidget(ed); self._sample_edits[sn] = ed
                     c = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
                     sc[sn] = c
-                    btn.setStyleSheet(f"background-color: {c}; border:1px solid black;")
+                    btn = QPushButton(); btn.setFixedSize(26, 20)
+                    btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
                     btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
-                    h.addWidget(btn)
-                    h.addStretch()
-                    w = QWidget()
-                    w.setLayout(h)
-                    v3.addWidget(w)
+                    h.addWidget(btn); h.addStretch()
+                    w = QWidget(); w.setLayout(h); v3.addWidget(w)
                     self._sample_btns[sn] = (btn, c)
                 self._sample_colors = sc
                 lay.addWidget(g3)
 
-        # Font
+        # ── Font ──────────────────────────────────────────────────────
         self._font_grp = FontSettingsGroup(self._cfg)
         lay.addWidget(self._font_grp.build())
 
+        # ── Export / appearance ───────────────────────────────────────
+        self._export_grp = ExportSettingsGroup(self._cfg)
+        lay.addWidget(self._export_grp.build())
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def _pick_color(self, sn, btn):
+        """
+        Args:
+            sn (Any): The sn.
+            btn (Any): The btn.
+        """
         c = QColorDialog.getColor(QColor(self._sample_colors.get(sn, '#3B82F6')), self)
         if c.isValid():
             self._sample_colors[sn] = c.name()
-            btn.setStyleSheet(f"background-color: {c.name()}; border:1px solid black;")
+            btn.setStyleSheet(f"background-color:{c.name()}; border:1px solid black;")
 
-    def collect(self):
+    def collect(self) -> dict:
+        """
+        Returns:
+            dict: Result of the operation.
+        """
         d = {
             'data_type_display': self.dtype_combo.currentText(),
-            'aggregation': self.agg_combo.currentText(),
-            'log_scale': self.log_cb.isChecked(),
-            'show_individual': self.indiv_cb.isChecked(),
-            'show_mean_circle': self.circle_cb.isChecked(),
-            'show_values': self.vals_cb.isChecked(),
-            'dark_theme': self.dark_cb.isChecked(),
-            'row_height': int(self.row_h.value()),
-            'dot_size': int(self.dot_spin.value()),
-            'circle_size_factor': self.csf.value(),
+            'aggregation':       self.agg_combo.currentText(),
+            'log_scale':         self.log_cb.isChecked(),
+            'show_individual':   self.indiv_cb.isChecked(),
+            'show_mean_circle':  self.circle_cb.isChecked(),
+            'show_values':       self.vals_cb.isChecked(),
+            'dot_size':          self.dot_spin.value(),
+            'dot_alpha':         self.dot_alpha.value(),
+            'circle_size':       self.circle_size.value(),
+            'jitter':            self.jitter_spin.value(),
+            'label_mode':        self.label_mode_combo.currentText(),
         }
         d.update(self._font_grp.collect())
-        if hasattr(self, '_sample_colors'):
+        d.update(self._export_grp.collect())
+        if self._sample_colors:
             d['sample_colors'] = dict(self._sample_colors)
-        if hasattr(self, '_sample_edits'):
+        if self._sample_edits:
             d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
         return d
-
-
-# ── Custom Painting Widget ────────────────────────────────────────────
-
-class ConcentrationWidget(QWidget):
-    """Custom-painted horizontal dot/circle chart."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.plot_data = None
-        self.cfg = {}
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-    def set_data(self, plot_data, cfg):
-        """
-        plot_data format:
-        {
-            'elements': ['Al', 'As', ...],
-            'groups': {
-                'Male': {'color': '#60A5FA', 'values': {'Al': [v1,v2,...], ...}, 'agg': {'Al': mean, ...}},
-                'Female': { ... },
-            },
-            'title': '...',
-            'subtitle': '...',
-            'unit': '...',
-        }
-        """
-        self.plot_data = plot_data
-        self.cfg = cfg
-        # Compute min size
-        if plot_data:
-            n_rows = len(plot_data['elements'])
-            rh = cfg.get('row_height', 34)
-            h = n_rows * rh + 160
-            self.setMinimumHeight(max(h, 400))
-        self.update()
-
-    def paintEvent(self, event):
-        if not self.plot_data:
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        cfg = self.cfg
-        dark = cfg.get('dark_theme', True)
-        bg = QColor(30, 37, 55) if dark else QColor(255, 255, 255)
-        painter.fillRect(self.rect(), bg)
-
-        elements = self.plot_data['elements']
-        groups = self.plot_data['groups']
-        n_groups = len(groups)
-        group_names = list(groups.keys())
-
-        rh = cfg.get('row_height', 34)
-        dot_size = cfg.get('dot_size', 5)
-        csf = cfg.get('circle_size_factor', 1.0)
-        log_scale = cfg.get('log_scale', True)
-        show_indiv = cfg.get('show_individual', True)
-        show_circle = cfg.get('show_mean_circle', True)
-        show_vals = cfg.get('show_values', True)
-
-        # Layout
-        label_w = 40
-        val_col_w = 65 * n_groups if show_vals else 0
-        top_margin = 100
-        left_margin = 20
-        right_margin = 20
-
-        plot_left = left_margin + label_w
-        plot_right = self.width() - right_margin - val_col_w - 10
-        plot_w = max(plot_right - plot_left, 100)
-
-        # Title
-        title = self.plot_data.get('title', '')
-        subtitle = self.plot_data.get('subtitle', '')
-
-        title_color = QColor('#F1F5F9') if dark else QColor('#1F2937')
-        painter.setPen(title_color)
-        painter.setFont(QFont(cfg.get('font_family', 'Segoe UI'), 16, QFont.Bold))
-        painter.drawText(
-            QRectF(0, 10, self.width(), 35),
-            Qt.AlignHCenter, title)
-
-        sub_color = QColor('#94A3B8') if dark else QColor('#6B7280')
-        painter.setPen(sub_color)
-        painter.setFont(QFont(cfg.get('font_family', 'Segoe UI'), 9))
-        painter.drawText(
-            QRectF(0, 42, self.width(), 20),
-            Qt.AlignHCenter, subtitle)
-
-        # Legend
-        legend_y = 68
-        legend_x = left_margin + 10
-        painter.setFont(QFont(cfg.get('font_family', 'Segoe UI'), 10))
-        for gn in group_names:
-            gc = QColor(groups[gn]['color'])
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(gc)
-            painter.drawEllipse(QPointF(legend_x + 5, legend_y + 6), 5, 5)
-            painter.setPen(gc)
-            painter.drawText(QRectF(legend_x + 14, legend_y - 2, 120, 18),
-                             Qt.AlignLeft | Qt.AlignVCenter, gn)
-            legend_x += QFontMetrics(painter.font()).horizontalAdvance(gn) + 30
-
-        # Compute global range for X scaling
-        all_vals = []
-        for gn, gd in groups.items():
-            for el in elements:
-                vs = gd['values'].get(el, [])
-                all_vals.extend([v for v in vs if v > 0])
-        if not all_vals:
-            painter.end()
-            return
-
-        if log_scale:
-            all_vals_t = [np.log10(v) for v in all_vals if v > 0]
-        else:
-            all_vals_t = list(all_vals)
-
-        if not all_vals_t:
-            painter.end()
-            return
-
-        vmin = min(all_vals_t)
-        vmax = max(all_vals_t)
-        vrange = vmax - vmin if vmax > vmin else 1
-
-        def x_pos(v):
-            if log_scale:
-                t = np.log10(v) if v > 0 else vmin
-            else:
-                t = v
-            return plot_left + (t - vmin) / vrange * plot_w
-
-        # Draw rows
-        txt_color = QColor('#CBD5E1') if dark else QColor('#374151')
-        line_color = QColor(50, 58, 80) if dark else QColor(220, 220, 220)
-        el_font = QFont(cfg.get('font_family', 'Segoe UI'), 10, QFont.Bold)
-        val_font = QFont(cfg.get('font_family', 'Segoe UI'), 9)
-
-        for ri, el in enumerate(elements):
-            cy = top_margin + ri * rh + rh / 2
-
-            # Separator line
-            painter.setPen(QPen(line_color, 0.5))
-            painter.drawLine(
-                QPointF(plot_left, cy),
-                QPointF(plot_right, cy))
-
-            # Element label
-            painter.setPen(txt_color)
-            painter.setFont(el_font)
-            painter.drawText(
-                QRectF(left_margin, cy - rh / 2, label_w - 4, rh),
-                Qt.AlignRight | Qt.AlignVCenter, el)
-
-            # Draw data per group
-            for gi, gn in enumerate(group_names):
-                gc = QColor(groups[gn]['color'])
-                vals = groups[gn]['values'].get(el, [])
-                agg_val = groups[gn]['agg'].get(el, 0)
-
-                # Individual dots
-                if show_indiv and vals:
-                    gc_light = QColor(gc)
-                    gc_light.setAlpha(160)
-                    painter.setPen(QPen(gc.darker(120), 0.5))
-                    painter.setBrush(gc_light)
-                    for v in vals:
-                        if v > 0:
-                            px = x_pos(v)
-                            painter.drawEllipse(QPointF(px, cy), dot_size, dot_size)
-
-                # Mean circle
-                if show_circle and agg_val > 0:
-                    px = x_pos(agg_val)
-                    r = max(6, min(16, 8 * csf * (1 + np.log10(max(agg_val, 0.001)) / 4)))
-                    painter.setPen(QPen(gc, 2.0))
-                    painter.setBrush(QBrush(Qt.NoBrush))
-                    painter.drawEllipse(QPointF(px, cy), r, r)
-
-                # Numeric value on right
-                if show_vals:
-                    val_x = plot_right + 12 + gi * 65
-                    painter.setPen(gc)
-                    painter.setFont(val_font)
-                    painter.drawText(
-                        QRectF(val_x, cy - rh / 2, 60, rh),
-                        Qt.AlignCenter, _fmt_val(agg_val))
-
-        # Value column headers
-        if show_vals:
-            painter.setFont(QFont(cfg.get('font_family', 'Segoe UI'), 8, QFont.Bold))
-            for gi, gn in enumerate(group_names):
-                gc = QColor(groups[gn]['color'])
-                painter.setPen(gc)
-                val_x = plot_right + 12 + gi * 65
-                painter.drawText(
-                    QRectF(val_x, top_margin - 22, 60, 18),
-                    Qt.AlignCenter, get_display_name(gn, cfg))
-
-        painter.end()
 
 
 # ── Display Dialog ─────────────────────────────────────────────────────
 
 class ConcentrationDisplayDialog(QDialog):
+    """Matplotlib-based concentration strip-chart with drag support."""
+
     def __init__(self, node, parent_window=None):
+        """
+        Args:
+            node (Any): Tree or graph node.
+            parent_window (Any): The parent window.
+        """
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Concentration Comparison Plot")
-        self.setMinimumSize(900, 750)
+        self.setMinimumSize(950, 700)
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
@@ -476,61 +337,91 @@ class ConcentrationDisplayDialog(QDialog):
         lay.setContentsMargins(6, 6, 6, 6)
 
         self._info = QLabel("")
-        self._info.setStyleSheet("color: #94A3B8; font-size: 11px; padding: 2px 6px;")
+        self._info.setStyleSheet("color:#94A3B8; font-size:11px; padding:2px 6px;")
         lay.addWidget(self._info)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._scroll.customContextMenuRequested.connect(self._ctx_menu)
-        lay.addWidget(self._scroll, stretch=1)
+        self.figure = Figure(figsize=(12, 8), dpi=120, tight_layout=True)
+        self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._ctx_menu)
+        lay.addWidget(self.canvas, stretch=1)
 
-        self._chart = ConcentrationWidget()
-        self._scroll.setWidget(self._chart)
+        tb = QHBoxLayout(); tb.setContentsMargins(0, 2, 0, 0)
+        btn_s = QPushButton("⚙  Settings"); btn_s.clicked.connect(self._open_settings)
+        btn_r = QPushButton("↺  Reset Layout")
+        btn_r.setToolTip("Reset subplot positions (or middle-click)")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("⬆  Export…"); btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
+        lay.addLayout(tb)
+
+    # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         cfg = self.node.config
         menu = QMenu(self)
 
         dm = menu.addMenu("Data Type")
         for dt in CONC_DATA_TYPES:
-            a = dm.addAction(dt)
-            a.setCheckable(True)
+            a = dm.addAction(dt); a.setCheckable(True)
             a.setChecked(cfg.get('data_type_display') == dt)
             a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
         am = menu.addMenu("Aggregation")
         for m in CONC_AGG_METHODS:
-            a = am.addAction(m)
-            a.setCheckable(True)
+            a = am.addAction(m); a.setCheckable(True)
             a.setChecked(cfg.get('aggregation') == m)
             a.triggered.connect(lambda _, v=m: self._set('aggregation', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, label in [
-            ('log_scale', 'Log Scale'),
-            ('show_individual', 'Show Individual Points'),
-            ('show_mean_circle', 'Show Mean Circles'),
-            ('show_values', 'Show Numeric Values'),
-            ('dark_theme', 'Dark Theme'),
+            ('log_scale',        'Log Scale'),
+            ('show_individual',  'Show Individual Points'),
+            ('show_mean_circle', 'Show Mean Markers'),
+            ('show_values',      'Show Numeric Values'),
         ]:
-            a = tm.addAction(label)
-            a.setCheckable(True)
+            a = tm.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
+        lm = menu.addMenu("Label Mode")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode); a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
         menu.addSeparator()
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure…").triggered.connect(self._download)
-        menu.exec(self._scroll.mapToGlobal(pos))
+        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
+        menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
+        menu.addAction("💾 Download Figure…").triggered.connect(self._export_figure)
+        menu.exec(QCursor.pos())
 
     def _toggle(self, key):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
+        """
+        Args:
+            key (Any): Dictionary or storage key.
+            value (Any): Value to set or process.
+        """
         self.node.config[key] = value
         self._refresh()
+
+    def _reset_layout(self):
+        self.canvas.reset_layout()
+
+    def _export_figure(self):
+        download_matplotlib_figure(self.figure, self, "concentration_comparison")
 
     def _open_settings(self):
         dlg = ConcentrationSettingsDialog(self.node.config, self.node.input_data, self)
@@ -538,77 +429,261 @@ class ConcentrationDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    def _download(self):
-        from PySide6.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save Concentration Plot", "concentration_comparison.png",
-            "PNG (*.png);;JPEG (*.jpg)")
-        if path:
-            pixmap = self._chart.grab()
-            pixmap.save(path)
+    # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
         try:
+            cfg = self.node.config
+
+            if cfg.get('use_custom_figsize', False):
+                self.figure.set_size_inches(cfg.get('figsize_w', 12.0),
+                                            cfg.get('figsize_h', 8.0))
+            self.figure.clear()
+            self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
+
             data = self.node.extract_concentration_data()
+
             if not data:
-                self._chart.plot_data = None
-                self._chart.update()
-                self._info.setText("No data available. Connect to a Sample Selector node.")
+                ax = self.figure.add_subplot(111)
+                ax.text(0.5, 0.5,
+                        'No data available\nConnect to a Sample Selector node.',
+                        ha='center', va='center', transform=ax.transAxes,
+                        fontsize=12, color='gray')
+                ax.axis('off')
+                self._info.setText("")
+                self.canvas.draw()
                 return
 
-            cfg = self.node.config
-            dark = cfg.get('dark_theme', True)
-            bg = "#1E293B" if dark else "white"
-            self._scroll.setStyleSheet(f"background: {bg};")
+            self._draw_chart(data, cfg)
 
-            self._chart.set_data(data, cfg)
-
-            n_el = len(data['elements'])
+            n_el  = len(data['elements'])
             n_grp = len(data['groups'])
-            self._info.setText(f"{n_el} elements · {n_grp} group(s)")
+            self._info.setText(
+                f"{n_el} elements · {n_grp} group(s) · "
+                f"{data.get('subtitle', '')}")
+
+            self.figure.tight_layout()
+            self.canvas.draw()
+            self.canvas.snapshot_positions()
 
         except Exception as e:
             print(f"Error refreshing concentration plot: {e}")
-            import traceback
-            traceback.print_exc()
+            import traceback; traceback.print_exc()
+
+    # ── Core drawing ───────────────────────────────────────────────────
+
+    def _draw_chart(self, data, cfg):
+        """Draw the horizontal strip chart onto self.figure.
+        Args:
+            data (Any): Input data.
+            cfg (Any): The cfg.
+        """
+        elements   = data['elements']
+        groups     = data['groups']
+        group_names = list(groups.keys())
+        n_el       = len(elements)
+        n_grp      = len(group_names)
+
+        fc         = get_font_config(cfg)
+        label_mode = cfg.get('label_mode', 'Symbol')
+        log_scale  = cfg.get('log_scale', True)
+        show_indiv = cfg.get('show_individual', True)
+        show_circ  = cfg.get('show_mean_circle', True)
+        show_vals  = cfg.get('show_values', True)
+        dot_size   = cfg.get('dot_size', 5)
+        dot_alpha  = cfg.get('dot_alpha', 0.4)
+        circle_s   = cfg.get('circle_size', 120)
+        jitter_fac = cfg.get('jitter', 0.15)
+        bg         = cfg.get('bg_color', '#FFFFFF')
+
+        y_labels = [format_element_label(e, label_mode) for e in elements]
+        y_pos = list(range(n_el - 1, -1, -1))
+
+        min_h = max(4.0, n_el * 0.38 + 1.5)
+        cur_h = self.figure.get_size_inches()[1]
+        if not cfg.get('use_custom_figsize', False):
+            self.figure.set_size_inches(self.figure.get_size_inches()[0],
+                                        max(cur_h, min_h))
+
+        ax = self.figure.add_subplot(111)
+        ax.set_facecolor(bg)
+
+        all_vals = []
+        for gd in groups.values():
+            for el in elements:
+                all_vals.extend([v for v in gd['values'].get(el, []) if v > 0])
+
+        if not all_vals:
+            ax.text(0.5, 0.5, 'No positive values to display',
+                    ha='center', va='center', transform=ax.transAxes, color='gray')
+            return
+
+        if log_scale:
+            ax.set_xscale('log')
+            ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation(base=10))
+
+        # ── Draw per element row ────────────────────────────────────────
+        rng = np.random.default_rng(42)
+
+        for ei, (el, yp) in enumerate(zip(elements, y_pos)):
+            if ei % 2 == 0:
+                band_color = '#F8F9FA' if bg == '#FFFFFF' else '#00000008'
+                ax.axhspan(yp - 0.5, yp + 0.5, color=band_color, zorder=0)
+
+            offsets = np.linspace(-jitter_fac * 0.5 * (n_grp - 1),
+                                   jitter_fac * 0.5 * (n_grp - 1), n_grp) \
+                      if n_grp > 1 else [0.0]
+
+            for gi, gn in enumerate(group_names):
+                gd     = groups[gn]
+                color  = gd['color']
+                vals   = [v for v in gd['values'].get(el, []) if v > 0]
+                agg_v  = gd['agg'].get(el, 0)
+                y_off  = offsets[gi]
+
+                if show_indiv and vals:
+                    jit = rng.uniform(-jitter_fac, jitter_fac, size=len(vals))
+                    ys  = yp + y_off + jit
+                    ax.scatter(vals, ys,
+                               s=dot_size ** 2,
+                               color=color, alpha=dot_alpha,
+                               linewidths=0, zorder=2)
+
+                if show_circ and agg_v > 0:
+                    ax.scatter([agg_v], [yp + y_off],
+                               s=circle_s,
+                               facecolors='none',
+                               edgecolors=color,
+                               linewidths=2.0,
+                               zorder=4)
+
+                if show_vals and agg_v > 0:
+                    ax.annotate(
+                        _fmt_val(agg_v),
+                        xy=(1.0, yp + y_off),
+                        xycoords=('axes fraction', 'data'),
+                        xytext=(8 + gi * 60, 0),
+                        textcoords='offset points',
+                        va='center', ha='left',
+                        fontsize=max(6, fc['size'] - 2),
+                        color=color,
+                        fontfamily=fc['family'],
+                        fontweight='bold' if fc['bold'] else 'normal',
+                        zorder=5,
+                    )
+
+        # ── Y axis (element labels) ─────────────────────────────────────
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(
+            y_labels,
+            fontsize=fc['size'],
+            fontfamily=fc['family'],
+            fontweight='bold' if fc['bold'] else 'normal',
+            color=fc['color'],
+        )
+        ax.set_ylim(-0.6, n_el - 0.4)
+
+        # ── X axis ─────────────────────────────────────────────────────
+        unit = data.get('unit', '')
+        ax.set_xlabel(unit, fontsize=fc['size'], color=fc['color'],
+                      fontfamily=fc['family'],
+                      fontweight='bold' if fc['bold'] else 'normal')
+        ax.tick_params(axis='x', labelsize=max(7, fc['size'] - 1),
+                       colors=fc['color'])
+        ax.tick_params(axis='y', length=0)
+
+        # ── Title ──────────────────────────────────────────────────────
+        title = data.get('title', '')
+        if title:
+            ax.set_title(title, fontsize=fc['size'] + 2, color=fc['color'],
+                         fontfamily=fc['family'],
+                         fontweight='bold' if fc['bold'] else 'normal', pad=10)
+
+        # ── Legend ─────────────────────────────────────────────────────
+        if n_grp > 1:
+            import matplotlib.lines as mlines
+            handles = [
+                mlines.Line2D([], [], color=groups[gn]['color'],
+                              marker='o', markersize=7, linestyle='none',
+                              markerfacecolor='none', markeredgewidth=2,
+                              label=get_display_name(gn, cfg))
+                for gn in group_names
+            ]
+            ax.legend(handles=handles,
+                      fontsize=max(7, fc['size'] - 1),
+                      loc='upper right', framealpha=0.8)
+
+        ax.grid(axis='x', linestyle='--', alpha=0.35, zorder=1)
+        ax.set_axisbelow(True)
+
+        if show_vals and n_grp:
+            extra = 0.04 + n_grp * 0.08
+            ax.set_position([ax.get_position().x0,
+                             ax.get_position().y0,
+                             ax.get_position().width * (1 - extra),
+                             ax.get_position().height])
+
+        apply_font_to_matplotlib(ax, cfg)
 
 
 # ── Node ───────────────────────────────────────────────────────────────
 
 class ConcentrationComparisonNode(QObject):
-    position_changed = Signal(object)
+    position_changed      = Signal(object)
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        """
         super().__init__()
-        self.title = "Concentration"
-        self.node_type = "concentration_comparison"
-        self.parent_window = parent_window
-        self.position = None
-        self._has_input = True
-        self._has_output = False
-        self.input_channels = ["input"]
+        self.title           = "Concentration"
+        self.node_type       = "concentration_comparison"
+        self.parent_window   = parent_window
+        self.position        = None
+        self._has_input      = True
+        self._has_output     = False
+        self.input_channels  = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
-        self.input_data = None
+        self.config          = dict(DEFAULT_CONFIG)
+        self.input_data      = None
 
     def set_position(self, pos):
+        """
+        Args:
+            pos (Any): Position point.
+        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
+        """
+        Args:
+            parent_window (Any): The parent window.
+        Returns:
+            bool: Result of the operation.
+        """
         dlg = ConcentrationDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
+        """
+        Args:
+            input_data (Any): The input data.
+        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def _get_elements(self):
+        """
+        Returns:
+            object: Result of the operation.
+        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
@@ -619,16 +694,20 @@ class ConcentrationComparisonNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def extract_concentration_data(self):
+        """
+        Returns:
+            None
+        """
         if not self.input_data:
             return None
 
-        data_key = CONC_DATA_KEY_MAP.get(
+        data_key   = CONC_DATA_KEY_MAP.get(
             self.config.get('data_type_display', 'Counts'), 'elements')
         agg_method = self.config.get('aggregation', 'Mean')
-        unit = CONC_LABEL_MAP.get(self.config.get('data_type_display', 'Counts'), '')
-        itype = self.input_data.get('type')
-
-        elements = self._get_elements()
+        unit       = CONC_LABEL_MAP.get(
+            self.config.get('data_type_display', 'Counts'), '')
+        itype      = self.input_data.get('type')
+        elements   = self._get_elements()
         if not elements:
             return None
 
@@ -639,75 +718,78 @@ class ConcentrationComparisonNode(QObject):
         return None
 
     def _extract_single(self, data_key, elements, agg_method, unit):
+        """
+        Args:
+            data_key (Any): The data key.
+            elements (Any): The elements.
+            agg_method (Any): The agg method.
+            unit (Any): The unit.
+        Returns:
+            dict: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
         if not particles:
             return None
-
         sname = self.input_data.get('sample_name', 'Sample')
-        sc = self.config.get('sample_colors', {})
-        color = sc.get(sname, DEFAULT_GROUP_COLORS[0])
+        color = self.config.get('sample_colors', {}).get(sname, DEFAULT_GROUP_COLORS[0])
 
         vals_by_el = {}
-        agg_by_el = {}
+        agg_by_el  = {}
         for el in elements:
             vs = [p.get(data_key, {}).get(el, 0) for p in particles]
             vs = [v for v in vs if v > 0 and not (isinstance(v, float) and np.isnan(v))]
             vals_by_el[el] = vs
-            agg_by_el[el] = _agg(vs, agg_method)
+            agg_by_el[el]  = _agg(vs, agg_method)
 
         return {
             'elements': elements,
             'groups': {
-                sname: {
-                    'color': color,
-                    'values': vals_by_el,
-                    'agg': agg_by_el,
-                }
+                sname: {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
             },
-            'title': f"{agg_method} conc. — {sname}",
-            'subtitle': f"Circle={agg_method.lower()}, dot=individual · {unit}",
-            'unit': unit,
+            'title':    f"{agg_method} — {sname}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
+            'unit':     unit,
         }
 
     def _extract_multi(self, data_key, elements, agg_method, unit):
+        """
+        Args:
+            data_key (Any): The data key.
+            elements (Any): The elements.
+            agg_method (Any): The agg method.
+            unit (Any): The unit.
+        Returns:
+            dict: Result of the operation.
+        """
         particles = self.input_data.get('particle_data', [])
-        names = self.input_data.get('sample_names', [])
+        names     = self.input_data.get('sample_names', [])
         if not particles or not names:
             return None
 
-        sc = self.config.get('sample_colors', {})
+        sc     = self.config.get('sample_colors', {})
         groups = {}
-
         for gi, sn in enumerate(names):
             sp = [p for p in particles if p.get('source_sample') == sn]
             if not sp:
                 continue
-            color = sc.get(sn, DEFAULT_GROUP_COLORS[gi % len(DEFAULT_GROUP_COLORS)])
-
+            color      = sc.get(sn, DEFAULT_GROUP_COLORS[gi % len(DEFAULT_GROUP_COLORS)])
             vals_by_el = {}
-            agg_by_el = {}
+            agg_by_el  = {}
             for el in elements:
                 vs = [p.get(data_key, {}).get(el, 0) for p in sp]
                 vs = [v for v in vs if v > 0 and not (isinstance(v, float) and np.isnan(v))]
                 vals_by_el[el] = vs
-                agg_by_el[el] = _agg(vs, agg_method)
-
-            dn = get_display_name(sn, self.config)
-            groups[sn] = {
-                'color': color,
-                'values': vals_by_el,
-                'agg': agg_by_el,
-            }
+                agg_by_el[el]  = _agg(vs, agg_method)
+            groups[sn] = {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
 
         if not groups:
             return None
 
-        group_labels = ' vs '.join(
-            [get_display_name(n, self.config) for n in groups.keys()])
+        labels = ' vs '.join(get_display_name(n, self.config) for n in groups)
         return {
             'elements': elements,
-            'groups': groups,
-            'title': f"{agg_method} conc. — {group_labels}",
-            'subtitle': f"Circle={agg_method.lower()}, dot=individual · {unit}",
-            'unit': unit,
+            'groups':   groups,
+            'title':    f"{agg_method} — {labels}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
+            'unit':     unit,
         }
