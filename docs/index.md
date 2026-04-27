@@ -24,8 +24,7 @@ If you use IsotopeTrack in your research, please cite:
 
 | Platform | Requirements | File |
 |----------|-------------|------|
-| **macOS — Apple Silicon (M1/M2/M3)** | macOS 11.0+ · 4 GB RAM | `IsotopeTrack_M.dmg` |
-| **macOS — Intel** | macOS 10.15+ · 4 GB RAM | `IsotopeTrack_Intel.dmg` |
+| **macOS — Apple Silicon** | macOS 11.0+ · 4 GB RAM | `IsotopeTrack_M.dmg` |
 | **Windows** | Windows 10 64-bit+ · 4 GB RAM | `IsotopeTrack_Windows.exe` |
 
 ---
