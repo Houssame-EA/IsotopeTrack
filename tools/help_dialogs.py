@@ -31,7 +31,6 @@ def get_resource_path(relative_path):
 try:
     from processing.peak_detection import CompoundPoissonLognormal
 except ImportError:
-    # Fallback: accurate approximation matching the detection code
     from scipy.stats import poisson as _sp_poisson, lognorm as _sp_lognorm
 
     def _zero_trunc_q(lam, y):
@@ -74,9 +73,7 @@ except ImportError:
                 return lambda_bkgd + 3.0 * np.sqrt(max(lambda_bkgd, 1))
 
 
-# ---------------------------------------------------------------------------
-#  SP-ICP-ToF-MS Signal Generator  (compound Poisson multinomial model)
-# ---------------------------------------------------------------------------
+
 class SPICPToFMSSimulator:
     """
     Background — compound Poisson-lognormal per bin
@@ -109,18 +106,11 @@ class SPICPToFMSSimulator:
          longer lognormal tail.
       5. Per-bin signal = sum of lognormal responses for ions in that bin.
 
-    The temporal profile parameters (σ_temporal=0.64, scale=3.08) were
-    fitted from real spICP-ToF-MS particle events measured at 204 µs
-    dwell time and are scaled proportionally for other dwell times.
-
-    Both background and particle signals share the same SIR distribution,
-    producing continuous-valued output identical in character to real
-    spICP-ToF-MS data.
     """
 
     ION_CLOUD_US = 400.0
     _TEMPORAL_SIGMA = 0.85
-    _TEMPORAL_SCALE_US = 3.8 * 204.4    # ≈ 777 µs in physical time
+    _TEMPORAL_SCALE_US = 3.8 * 204.4  
 
     def _temporal_profile(self, dwell_us):
         """
@@ -140,16 +130,13 @@ class SPICPToFMSSimulator:
             probs: ndarray, lognormal temporal probabilities (sums to 1).
                    Length = number of significant bins for one event.
         """
-        # Window: 5× the nominal cloud duration to capture the full tail
         total_us = 5.0 * self.ION_CLOUD_US
         n_bins = max(2, round(total_us / dwell_us))
 
-        # Evaluate lognormal PDF at bin centres (in physical time)
         t_centers = (np.arange(n_bins, dtype=np.float64) + 0.5) * dwell_us
         log_t = np.log(t_centers / self._TEMPORAL_SCALE_US)
         probs = np.exp(-0.5 * (log_t / self._TEMPORAL_SIGMA) ** 2) / t_centers
 
-        # Trim trailing bins below 0.3% of peak
         peak_val = np.max(probs)
         significant = probs > peak_val * 0.003
         if np.any(significant):
@@ -195,10 +182,8 @@ class SPICPToFMSSimulator:
         n_points = max(100, round(acq_time_s / dwell_s))
         times = np.arange(n_points, dtype=np.float64) * dwell_s
 
-        # ── Single-ion response parameters (shared by background + particles) ──
-        mu_sir = -0.5 * sigma_sir ** 2  # ensures E[X_i] = 1
+        mu_sir = -0.5 * sigma_sir ** 2  
 
-        # ── Background: compound Poisson-lognormal per bin ──
         # N_bg ~ Poisson(lambda_bg), S = sum_{i=1}^{N} X_i, X_i ~ LN(mu_sir, sigma_sir)
         bg_ion_counts = rng.poisson(lambda_bg, size=n_points)
         total_bg_ions = int(np.sum(bg_ion_counts))
@@ -217,20 +202,16 @@ class SPICPToFMSSimulator:
         particle_totals = np.array([], dtype=float)
 
         if n_particles > 0 and n_points > 2 * peak_width + 2:
-            # Particle size distribution (expected ion yields)
             mu_size = np.log(particle_mean_counts)
             expected_yields = rng.lognormal(mu_size, particle_sigma_log, size=n_particles)
 
-            # Poisson sampling of actual ion counts
             actual_ions = rng.poisson(np.maximum(expected_yields, 0).astype(np.float64))
 
             totals = np.zeros(n_particles, dtype=np.float64)
 
-            # Precompute the lognormal temporal profile for this dwell time
             temporal_probs = self._temporal_profile(dwell_us)
             event_bins = len(temporal_probs)
 
-            # Place particle onsets with enough room for the full event
             centres = rng.integers(0, n_points - event_bins, size=n_particles)
 
             for p_idx in range(n_particles):
@@ -239,7 +220,6 @@ class SPICPToFMSSimulator:
                 if n_ions <= 0:
                     continue
 
-                # Draw single-ion responses
                 ion_signals = rng.lognormal(mu_sir, sigma_sir, size=int(n_ions))
                 particle_total = np.sum(ion_signals)
                 totals[p_idx] = particle_total
@@ -264,7 +244,6 @@ class SPICPToFMSSimulator:
                             signal[onset + b] += np.sum(ion_signals[ion_idx:ion_idx + bc])
                             ion_idx += bc
 
-            # Report centre as the onset + peak of temporal profile
             peak_offset = int(np.argmax(temporal_probs))
             particle_centres = np.minimum(
                 np.asarray(centres, dtype=int) + peak_offset,
@@ -278,13 +257,6 @@ class SPICPToFMSSimulator:
 # ---------------------------------------------------------------------------
 #  Style helpers
 # ---------------------------------------------------------------------------
-# NOTE: The real _styled_label implementation is defined lower in the file
-# (after the visualizer classes, alongside _equation_label). It is the clean
-# prose-style variant matching the User Guide. The earlier duplicate that
-# lived here has been removed to avoid confusion — Python was already using
-# the lower definition since it's defined last, but keeping both around made
-# editing error-prone.
-
 
 def _slider(lo, hi, val):
     sl = QSlider(Qt.Horizontal)
@@ -306,7 +278,6 @@ class InteractiveEquationVisualizer(QWidget):
         self._sim  = SPICPToFMSSimulator()
         self._cpln = CompoundPoissonLognormal()
 
-        # cached results
         self._times           = np.array([])
         self._signal          = np.array([])
         self._particle_idx    = np.array([], dtype=int)
@@ -318,7 +289,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         self._build_ui()
 
-        # Debounce timer: fires _run_simulation after controls settle
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(180)
@@ -334,7 +304,6 @@ class InteractiveEquationVisualizer(QWidget):
         root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(6)
 
-        # ── Left: scrollable controls ──────────────────────────────────
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFixedWidth(350)
@@ -352,7 +321,6 @@ class InteractiveEquationVisualizer(QWidget):
         left_scroll.setWidget(left_w)
         root.addWidget(left_scroll)
 
-        # ── Right: scrollable plot panel ───────────────────────────────
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -363,7 +331,6 @@ class InteractiveEquationVisualizer(QWidget):
         right_lay.setSpacing(8)
         right_lay.setContentsMargins(4, 4, 4, 4)
 
-        # equation strip
         self._eq_label = QLabel()
         self._eq_label.setWordWrap(True)
         self._eq_label.setTextFormat(Qt.RichText)
@@ -376,7 +343,6 @@ class InteractiveEquationVisualizer(QWidget):
         )
         right_lay.addWidget(self._eq_label)
 
-        # --- time trace ---
         trace_lbl = QLabel("<b>Signal trace</b>")
         trace_lbl.setStyleSheet("font-size:12px; padding:2px;")
         right_lay.addWidget(trace_lbl)
@@ -387,7 +353,6 @@ class InteractiveEquationVisualizer(QWidget):
         self._trace_plot.setMinimumHeight(260)
         right_lay.addWidget(self._trace_plot)
 
-        # --- intensity histogram ---
         hist_lbl = QLabel("<b>Intensity histogram of detected events</b>")
         hist_lbl.setStyleSheet("font-size:12px; padding:2px;")
         right_lay.addWidget(hist_lbl)
@@ -399,19 +364,16 @@ class InteractiveEquationVisualizer(QWidget):
         self._hist_plot.setMinimumHeight(260)
         right_lay.addWidget(self._hist_plot)
 
-        # bottom padding so scroll always reveals the full histogram
         right_lay.addSpacing(20)
 
         right_scroll.setWidget(right_w)
         root.addWidget(right_scroll, stretch=1)
 
-    # ── Control groups ─────────────────────────────────────────────────
     def _grp_acquisition(self):
         grp = QGroupBox("Acquisition Parameters")
         lay = QGridLayout(grp)
         lay.setVerticalSpacing(5)
 
-        # acquisition time
         lay.addWidget(QLabel("Acquisition time:"), 0, 0)
         self._acq_spin = QDoubleSpinBox()
         self._acq_spin.setRange(1.0, 180.0)
@@ -434,7 +396,6 @@ class InteractiveEquationVisualizer(QWidget):
             lambda v: self._spin_to_sl(self._acq_sl, int(v * 10)))
         lay.addWidget(self._acq_sl, 1, 0, 1, 2)
 
-        # dwell time
         lay.addWidget(QLabel("Dwell time:"), 2, 0)
         self._dwell_spin = QDoubleSpinBox()
         self._dwell_spin.setRange(25.0, 10000.0)
@@ -452,7 +413,6 @@ class InteractiveEquationVisualizer(QWidget):
             lambda v: self._spin_to_sl(self._dwell_sl, int(v * 10)))
         lay.addWidget(self._dwell_sl, 3, 0, 1, 2)
 
-        # derived info labels
         self._acq_info = QLabel()
         self._acq_info.setStyleSheet("color:#555; font-size:10px;")
         lay.addWidget(self._acq_info, 4, 0, 1, 2)
@@ -461,7 +421,6 @@ class InteractiveEquationVisualizer(QWidget):
         self._pw_label.setStyleSheet("color:#2060a0; font-size:10px; font-weight:bold;")
         lay.addWidget(self._pw_label, 5, 0, 1, 2)
 
-        # seed
         lay.addWidget(QLabel("Random seed:"), 6, 0)
         self._seed_spin = QSpinBox()
         self._seed_spin.setRange(0, 9999)
@@ -711,7 +670,6 @@ class InteractiveEquationVisualizer(QWidget):
                pen=pg.mkPen("#e74c3c", width=2, style=Qt.DashLine),
                name=f"Threshold = {thr:.2f}")
 
-        # detected events (above threshold)
         det = s > thr
         if np.any(det):
             p.addItem(pg.ScatterPlotItem(
@@ -742,7 +700,6 @@ class InteractiveEquationVisualizer(QWidget):
         thr = self._threshold
         lod = self._lod
 
-        # ── Only detected events ──────────────────────────────────────
         detected = s[s > thr]
         n_det    = len(detected)
 
@@ -750,7 +707,6 @@ class InteractiveEquationVisualizer(QWidget):
             p.setTitle("Histogram — no detected events above threshold")
             return
 
-        # ── Histogram bins ────────────────────────────────────────────
         max_val = float(np.percentile(detected, 99.5))
         max_val = max(max_val, thr * 2.0, 10.0)
         n_bins  = min(200, max(30, int(max_val / 2)))
@@ -797,7 +753,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         p.addLegend(offset=(10, 10))
 
-        # ── LOD vertical line ────────────────────────────────────────
         lod_line = pg.InfiniteLine(
             pos=lod, angle=90,
             pen=pg.mkPen("#e67e22", width=2, style=Qt.DashLine),
@@ -807,7 +762,6 @@ class InteractiveEquationVisualizer(QWidget):
         )
         p.addItem(lod_line)
 
-        # ── Threshold vertical line ──────────────────────────────────
         thr_line = pg.InfiniteLine(
             pos=thr, angle=90,
             pen=pg.mkPen("#8e44ad", width=2, style=Qt.DashDotLine),
@@ -910,7 +864,6 @@ class PeakIntegrationVisualizer(QWidget):
         self.setMinimumHeight(500)
         layout = QVBoxLayout(self)
 
-        # Formula label (updates with method)
         self._formula_label = _styled_label("", bg="#fff8e1", border="#f39c12")
         self._formula_label.setMinimumHeight(70)
         layout.addWidget(self._formula_label)
@@ -921,7 +874,6 @@ class PeakIntegrationVisualizer(QWidget):
 
         controls = QHBoxLayout()
 
-        # Method selector
         method_grp = QGroupBox("Integration method")
         method_lay = QVBoxLayout(method_grp)
         self._method_combo = QComboBox()
@@ -963,10 +915,8 @@ class PeakIntegrationVisualizer(QWidget):
         sig = self.raw - 10 + bg
         midpoint = (bg + thr) / 2.0
 
-        # Update formula
         self._formula_label.setText(self.METHOD_FORMULAS.get(method, ""))
 
-        # Plot signal and reference lines
         self.plot.plot(self.x, sig, pen="b", name="Signal")
         self.plot.plot(self.x, [bg] * len(self.x),
                        pen=pg.mkPen("g", style=Qt.DashLine, width=2),
@@ -980,7 +930,6 @@ class PeakIntegrationVisualizer(QWidget):
                            pen=pg.mkPen("#8e44ad", style=Qt.DotLine, width=2),
                            name=f"Midpoint = {midpoint:.1f}")
 
-        # Determine integration bounds
         half = len(sig) // 2
 
         if method == "Background":
@@ -1000,7 +949,6 @@ class PeakIntegrationVisualizer(QWidget):
 
         elif method == "Threshold":
             above = sig > thr
-            # Find the contiguous region around the peak
             li = ri = half
             for i in range(half, 0, -1):
                 if not above[i]:
@@ -1017,7 +965,7 @@ class PeakIntegrationVisualizer(QWidget):
             shade_base = np.full_like(shade_sig, bg)
             area = float(np.sum(shade_sig - bg))
 
-        else:  # Midpoint
+        else:  
             li = ri = half
             for i in range(half, 0, -1):
                 if sig[i] <= midpoint:
@@ -1032,7 +980,6 @@ class PeakIntegrationVisualizer(QWidget):
             shade_base = np.full_like(shade_sig, bg)
             area = float(np.sum(shade_sig - bg))
 
-        # Draw shaded region
         fill_color = self.METHOD_COLORS[method]
         self.plot.addItem(pg.FillBetweenItem(
             pg.PlotDataItem(shade_x, shade_sig),
@@ -1059,8 +1006,6 @@ class PeakIntegrationVisualizer(QWidget):
 # ---------------------------------------------------------------------------
 class IterativeThresholdVisualizer(QWidget):
     """
-    Interactive visualizer explaining the iterative background refinement
-    with Aitken delta-squared acceleration used in IsotopeTrack.
 
     The algorithm is a fixed-point iteration:
         T_{n+1} = f(mean(signal[signal < T_n]))
@@ -1111,7 +1056,6 @@ class IterativeThresholdVisualizer(QWidget):
             bg="#eef4ff", border="#4a90d9",
         ))
 
-        # Controls
         params_grp = QGroupBox("Simulation Parameters")
         params_lay = QGridLayout(params_grp)
 
@@ -1159,7 +1103,6 @@ class IterativeThresholdVisualizer(QWidget):
         left_scroll.setWidget(left_w)
         root.addWidget(left_scroll)
 
-        # ── Right: plots ───────────────────────────────────────────────
         right_w = QWidget()
         right_lay = QVBoxLayout(right_w)
         right_lay.setSpacing(6)
@@ -1211,7 +1154,6 @@ class IterativeThresholdVisualizer(QWidget):
         max_iters = self._maxiter_spin.value()
         bg_init = float(np.mean(signal))
 
-        # ── Standard iteration (no Aitken) ─────────────────────────────
         std_thresholds = []
         std_backgrounds = []
         lam = bg_init
@@ -1234,7 +1176,6 @@ class IterativeThresholdVisualizer(QWidget):
             thr = self._cpln.get_threshold(lam, alpha, sigma=sigma)
             aitken_thresholds.append(float(thr))
 
-            # Aitken after 3 iterates
             if len(aitken_thresholds) == 3 and aitken_applied_at is None:
                 t0, t1, t2 = aitken_thresholds[-3], aitken_thresholds[-2], aitken_thresholds[-1]
                 denom = t2 - 2.0 * t1 + t0
@@ -1254,7 +1195,6 @@ class IterativeThresholdVisualizer(QWidget):
                 break
             lam = lam_new
 
-        # ── Plot trace with final thresholds ───────────────────────────
         p = self._trace_plot
         p.clear()
         p.addLegend(offset=(10, 10))
@@ -1271,7 +1211,6 @@ class IterativeThresholdVisualizer(QWidget):
 
         p.setTitle("Signal with iterative threshold convergence")
 
-        # ── Convergence plot ───────────────────────────────────────────
         p2 = self._conv_plot
         p2.clear()
         p2.addLegend(offset=(10, 10))
@@ -1342,7 +1281,6 @@ class WatershedSplittingVisualizer(QWidget):
         root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(6)
 
-        # ── Left: controls and explanation ─────────────────────────────
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFixedWidth(360)
@@ -1447,7 +1385,6 @@ class WatershedSplittingVisualizer(QWidget):
         left_scroll.setWidget(left_w)
         root.addWidget(left_scroll)
 
-        # ── Right: plots ───────────────────────────────────────────────
         right_w = QWidget()
         right_lay = QVBoxLayout(right_w)
 
@@ -1477,15 +1414,13 @@ class WatershedSplittingVisualizer(QWidget):
         valley_ratio = self._valley_spin.value()
         prom_factor = self._prom_spin.value()
 
-        # ── Generate two overlapping lognormal-shaped particle events ──
-        # Each event has the asymmetric shape: sharp rise → peak → lognormal tail
+  
         n_pts = 300
         x = np.linspace(0, 10, n_pts)
         dx = x[1] - x[0]
 
-        # Lognormal temporal profile for each particle event
         sigma_t = 0.85
-        scale_t = 1.2  # in x-axis units
+        scale_t = 1.2  
 
         def lognormal_peak(x_arr, onset, height, scale=scale_t, sigma=sigma_t):
             """Generate a single lognormal-shaped particle event."""
@@ -1501,9 +1436,8 @@ class WatershedSplittingVisualizer(QWidget):
                 result = result / mx * height
             return result
 
-        # Two particles arriving close together — their signals overlap
-        onset1 = 5.0 - sep / 2 - 0.5  # onset of particle 1
-        onset2 = 5.0 + sep / 2 - 0.5  # onset of particle 2
+        onset1 = 5.0 - sep / 2 - 0.5  
+        onset2 = 5.0 + sep / 2 - 0.5 
 
         peak1 = lognormal_peak(x, onset1, h1)
         peak2 = lognormal_peak(x, onset2, h2)
@@ -1515,7 +1449,6 @@ class WatershedSplittingVisualizer(QWidget):
 
         threshold = self._cpln.get_threshold(bg, alpha=1e-6, sigma=0.47)
 
-        # ── Find the two main peaks using prominence-based detection ───
         from scipy.signal import find_peaks as _find_peaks
         above_thresh = sig > threshold
         peak_region = np.where(above_thresh)[0]
@@ -1528,17 +1461,14 @@ class WatershedSplittingVisualizer(QWidget):
         end_idx = peak_region[-1]
         region = sig[start_idx:end_idx + 1]
 
-        # Require each peak to have prominence >= 20% of the tallest point
-        # in the region — this filters out noise bumps in the long tail
+ 
         min_prom = max(region) * 0.20
         raw_peaks, props = _find_peaks(region, prominence=min_prom)
 
         if len(raw_peaks) < 2:
-            # Fall back to the two highest points if fewer than 2 found
             raw_peaks = np.argsort(region)[::-1][:2]
             raw_peaks = np.sort(raw_peaks)
 
-        # Keep only the two most prominent peaks
         if len(raw_peaks) > 2:
             prominences = props.get("prominences", region[raw_peaks])
             top2 = np.argsort(prominences)[::-1][:2]
@@ -1546,18 +1476,15 @@ class WatershedSplittingVisualizer(QWidget):
 
         maxima = list(raw_peaks)
 
-        # ── Plot merged signal (top) ───────────────────────────────────
         p1 = self._merged_plot
         p1.clear()
         p1.addLegend(offset=(10, 10))
 
-        # Show individual particle contributions (dashed)
         p1.plot(x, peak1 + bg, pen=pg.mkPen("#3498db", width=1.5, style=Qt.DotLine),
                 name="Particle 1 (individual)")
         p1.plot(x, peak2 + bg, pen=pg.mkPen("#e67e22", width=1.5, style=Qt.DotLine),
                 name="Particle 2 (individual)")
 
-        # Show merged signal (solid)
         p1.plot(x, sig, pen=pg.mkPen("#2060c0", width=2), name="Merged signal")
         p1.plot(x, np.full_like(x, bg),
                 pen=pg.mkPen("#27ae60", width=1.5, style=Qt.DashLine),
@@ -1566,7 +1493,6 @@ class WatershedSplittingVisualizer(QWidget):
                 pen=pg.mkPen("#e74c3c", width=1.5, style=Qt.DashLine),
                 name=f"Threshold = {threshold:.1f}")
 
-        # ── Check splitting ────────────────────────────────────────────
         split_performed = False
         valley_info = ""
         split_point_global = None
@@ -1589,14 +1515,12 @@ class WatershedSplittingVisualizer(QWidget):
             right_prom = right_peak - valley_val
             min_prom_required = threshold * prom_factor
 
-            # ── Apply splitting criteria ───────────────────────────────
             if (ratio < valley_ratio and
                     left_prom >= min_prom_required and
                     right_prom >= min_prom_required):
                 split_performed = True
                 split_point_global = valley_global
 
-            # Mark valley with down-triangle
             p1.addItem(pg.ScatterPlotItem(
                 [x[valley_global]], [sig[valley_global]],
                 symbol="t3", size=14,
@@ -1604,13 +1528,11 @@ class WatershedSplittingVisualizer(QWidget):
                 brush=pg.mkBrush(155, 89, 182, 200),
             ))
 
-            # Vertical line at valley (split boundary)
             p1.addItem(pg.InfiniteLine(
                 pos=x[valley_global], angle=90,
                 pen=pg.mkPen("#9b59b6", width=2, style=Qt.DashDotLine),
             ))
 
-            # Valley annotation
             valley_text = pg.TextItem(
                 f"Valley ratio = {ratio:.3f}\n"
                 f"Left prom = {left_prom:.1f}\n"
@@ -1624,13 +1546,11 @@ class WatershedSplittingVisualizer(QWidget):
             f"Merged peak analysis  |  {len(maxima)} maxima detected"
         )
 
-        # ── Plot split result ──────────────────────────────────────────
         p2 = self._split_plot
         p2.clear()
         p2.addLegend(offset=(10, 10))
 
         if split_performed and split_point_global is not None:
-            # Left sub-peak
             left_mask = np.zeros_like(x, dtype=bool)
             left_mask[start_idx:split_point_global + 1] = True
 
@@ -1659,7 +1579,6 @@ class WatershedSplittingVisualizer(QWidget):
                 p2.plot(x[right_mask], sig[right_mask],
                         pen=pg.mkPen("#e74c3c", width=2), name=f"Peak 2 ({area_right:.0f} cts)")
 
-            # Split boundary
             p2.addItem(pg.InfiniteLine(
                 pos=x[split_point_global], angle=90,
                 pen=pg.mkPen("#9b59b6", width=2, style=Qt.DashDotLine),
@@ -1909,9 +1828,6 @@ class DetectionMethodsDialog(QDialog):
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
-        # Re-apply theme every time the dialog is shown — covers the
-        # case where mainwindow caches the dialog instance and the user
-        # toggles the theme while the dialog is hidden, then reopens it.
         self.apply_theme()
         super().showEvent(event)
 
@@ -2069,9 +1985,6 @@ class CalibrationMethodsDialog(QDialog):
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
-        # Re-apply theme every time the dialog is shown — covers the
-        # case where mainwindow caches the dialog instance and the user
-        # toggles the theme while the dialog is hidden, then reopens it.
         self.apply_theme()
         super().showEvent(event)
 
@@ -2131,7 +2044,6 @@ class CalibrationMethodsDialog(QDialog):
         sc.setWidget(cw)
         return sc
 
-    # ── Tab: Overview ────────────────────────────────────────────────────
 
     def _tab_overview(self):
         """
@@ -2158,7 +2070,6 @@ class CalibrationMethodsDialog(QDialog):
             self._img("images/calibration_overview.png"),
         )
 
-    # ── Tab: Ionic Calibration ───────────────────────────────────────────
 
     def _tab_ionic(self):
         """
@@ -2168,7 +2079,6 @@ class CalibrationMethodsDialog(QDialog):
             QScrollArea: Tab widget with descriptions, equations, and image.
         """
         return self._scroll(
-            # --- Introduction ---
             _styled_label(
                 "<h2>Ionic Calibration</h2>"
                 "<p>Standard solutions of known concentration are measured "
@@ -2178,7 +2088,6 @@ class CalibrationMethodsDialog(QDialog):
                 bg="#eef4ff", border="#4a90d9",
             ),
 
-            # --- Method 1: Force through zero ---
             _styled_label(
                 "<h3>1. Force Through Zero</h3>"
                 "<p>Linear regression forced through the origin (intercept = 0). "
@@ -2197,7 +2106,6 @@ class CalibrationMethodsDialog(QDialog):
                 "model passes through the origin.</span>"
             ),
 
-            # --- Method 2: Simple Linear ---
             _styled_label(
                 "<h3>2. Simple Linear (OLS)</h3>"
                 "<p>Ordinary least-squares regression with a free intercept. "
@@ -2215,7 +2123,6 @@ class CalibrationMethodsDialog(QDialog):
                 "<b>R²:</b>&nbsp;&nbsp; R² = 1 − Σ(yᵢ − ŷᵢ)² / Σ(yᵢ − ȳ)²"
             ),
 
-            # --- Method 3: Weighted ---
             _styled_label(
                 "<h3>3. Weighted Linear (WLS)</h3>"
                 "<p>Weighted least-squares regression where each point is "
@@ -2237,7 +2144,6 @@ class CalibrationMethodsDialog(QDialog):
                 "1 − Σwᵢ(yᵢ − ŷᵢ)² / Σwᵢ(yᵢ − ȳ)²"
             ),
 
-            # --- Figures of Merit ---
             _styled_label(
                 "<h3>Figures of Merit (IUPAC convention)</h3>"
                 "<p>Computed for each regression method using the standard "
@@ -2264,11 +2170,9 @@ class CalibrationMethodsDialog(QDialog):
                 "σ<sub>blank</sub> = std. dev. of signal at lowest standard.</span>"
             ),
 
-            # --- Calibration curve image ---
             self._img("images/ionic_calibration.png"),
         )
 
-    # ── Tab: Transport Rate ──────────────────────────────────────────────
 
     def _tab_transport(self):
         """
@@ -2278,7 +2182,6 @@ class CalibrationMethodsDialog(QDialog):
             QScrollArea: Tab widget with descriptions, equations, and images.
         """
         return self._scroll(
-            # --- Introduction ---
             _styled_label(
                 "<h2>Transport Rate Calibration</h2>"
                 "<p>The transport rate (η, µL·s⁻¹) is the volume of sample "
@@ -2291,7 +2194,6 @@ class CalibrationMethodsDialog(QDialog):
                 bg="#eef4ff", border="#4a90d9",
             ),
 
-            # --- Method 1: Weight Method ---
             _styled_label(
                 "<h3>1. Weight Method</h3>"
                 "<p>The most direct approach: measure the mass loss of the "
@@ -2317,7 +2219,6 @@ class CalibrationMethodsDialog(QDialog):
                 "Δt = analysis time (s). Result in µL·s⁻¹.</span>"
             ),
 
-            # --- Method 2: Particle Number Method ---
             _styled_label(
                 "<h3>2. Particle Number Method</h3>"
                 "<p>Uses a nanoparticle suspension of known size and "
@@ -2346,7 +2247,6 @@ class CalibrationMethodsDialog(QDialog):
                 "Δt = acquisition time (s).</span>"
             ),
 
-            # --- Method 3: Mass Method ---
             _styled_label(
                 "<h3>3. Mass Method (Dual-Calibration)</h3>"
                 "<p>Combines the particle calibration slope (counts vs. mass) "
@@ -2377,7 +2277,6 @@ class CalibrationMethodsDialog(QDialog):
                 "division (e.g. ppb → µg·L⁻¹ if needed).</span>"
             ),
 
-            # --- Particle sizing from transport rate ---
             _styled_label(
                 "<h3>Downstream: Particle Sizing</h3>"
                 "<p>Once the transport rate is known, individual particle "
@@ -2418,7 +2317,7 @@ class AboutDialog(QDialog):
         logo = QLabel()
         logo.setAlignment(Qt.AlignCenter)
         logo.setStyleSheet("font-size:52px")
-        logo.setText("🔬")
+        logo.setText("")
         try:
             pm = QPixmap(str(get_resource_path("images/isotrack_icon.png")))
             if not pm.isNull():
@@ -2429,7 +2328,7 @@ class AboutDialog(QDialog):
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.0.2</h3>"
+            "<h3 align='center'>Version 1.0.3</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))

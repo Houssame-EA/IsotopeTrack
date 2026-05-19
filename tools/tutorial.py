@@ -276,8 +276,8 @@ class UserGuideDialog(QDialog):
         """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.0.2</h2>
-            <p>A comprehensive software application for analyzing single particle
+            <h2>IsotopeTrack v1.0.3</h2>
+            <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 
             <h3>Key Features</h3>
@@ -295,7 +295,7 @@ class UserGuideDialog(QDialog):
               <tr>
                 <td><b>macOS</b></td>
                 <td>macOS 11.0 (Big Sur) or later &nbsp;·&nbsp;
-                    Apple Silicon (M1/M2/M3) recommended &nbsp;·&nbsp;
+                    Apple Silicon (M1/M2/M3/M4/M5) recommended &nbsp;·&nbsp;
                     4 GB RAM (8 GB recommended) &nbsp;·&nbsp</td>
               </tr>
               <tr>

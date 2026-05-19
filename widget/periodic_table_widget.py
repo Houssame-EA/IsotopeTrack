@@ -800,10 +800,8 @@ class PeriodicTableWidget(QDialog):
         self.initUI()
         self.add_control_panel()
         self.apply_theme()
-        theme.themeChanged.connect(self.apply_theme)
-        self.destroyed.connect(
-            lambda *_: theme.themeChanged.disconnect(self.apply_theme)
-        )
+        self._theme_cleanup = theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_cleanup())
         
         max_width = min(1200, int(screen.width() * 0.95))
         max_height = min(800, int(screen.height() * 0.9))

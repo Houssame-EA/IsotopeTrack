@@ -1,5 +1,66 @@
+import sys
 from dataclasses import dataclass
 from PySide6.QtCore import QObject, Signal, QSettings
+
+
+# --------------------------------------------------------------------------- #
+# System theme detection
+# --------------------------------------------------------------------------- #
+
+def _detect_system_theme() -> str:
+    """
+    Detect the OS dark/light mode preference.
+
+    Tries three methods in order:
+      1. Qt 6.5+ QStyleHints.colorScheme()  — cross-platform, most reliable
+      2. macOS ``defaults read -g AppleInterfaceStyle``  — works on macOS 10.14+
+      3. Windows registry AppsUseLightTheme key  — works on Windows 10+
+
+    Returns 'dark' or 'light'.
+    """
+    # ── Method 1: Qt 6.5+ cross-platform ────────────────────────────────────
+    try:
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtCore import Qt
+        app = QGuiApplication.instance()
+        if app is not None:
+            scheme = app.styleHints().colorScheme()
+            if scheme == Qt.ColorScheme.Dark:
+                return "dark"
+            if scheme == Qt.ColorScheme.Light:
+                return "light"
+            # Qt.ColorScheme.Unknown → fall through to OS-specific checks
+    except (AttributeError, ImportError):
+        pass
+
+    # ── Method 2: macOS ─────────────────────────────────────────────────────
+    if sys.platform == "darwin":
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True, text=True, timeout=2,
+            )
+            # Key is absent (non-zero exit) in light mode
+            return "dark" if "dark" in result.stdout.lower() else "light"
+        except Exception:
+            pass
+
+    # ── Method 3: Windows registry ──────────────────────────────────────────
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+            )
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            winreg.CloseKey(key)
+            return "light" if val == 1 else "dark"
+        except Exception:
+            pass
+
+    return "light"   # safe default
 
 
 # --------------------------------------------------------------------------- #
@@ -135,19 +196,28 @@ DARK = Palette(
 
 class ThemeManager(QObject):
     """
-    Singleton theme manager. Emits themeChanged(palette_name) whenever
-    the active theme changes. Widgets should connect to themeChanged
-    and reapply their stylesheets.
-    """
-    themeChanged = Signal(str)
+    Singleton theme manager.
 
+    Emits ``themeChanged(palette_name)`` whenever the active theme changes.
+    Widgets should connect to ``themeChanged`` and reapply their stylesheets.
+
+    System-theme integration
+    ------------------------
+    On first run (no saved preference) the OS dark/light setting is used
+    automatically.  Call ``sync_with_system()`` once after ``QApplication``
+    is created to:
+      • Apply the detected OS preference if follow-system is enabled.
+      • Hook into ``QStyleHints.colorSchemeChanged`` for live OS changes
+        (Qt 6.5 / PySide6 ≥ 6.5, macOS 13+, Windows 10+).
+
+    The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
+    (follow OS automatically).
+    """
+
+    themeChanged = Signal(str)
     _instance = None
 
     def __new__(cls):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -157,65 +227,141 @@ class ThemeManager(QObject):
             return
         super().__init__()
         self._initialized = True
+        self._follow_system = False
         self._settings = QSettings("IsotopeTrack", "IsotopeTrack")
-        saved = self._settings.value("theme/name", "light")
-        self._palette = DARK if saved == "dark" else LIGHT
+
+        saved = self._settings.value("theme/name", "system")   # default → follow OS
+
+        if saved == "system":
+            self._follow_system = True
+            # QApplication may not exist yet at import time — try anyway,
+            # sync_with_system() will correct it afterwards.
+            try:
+                detected = _detect_system_theme()
+                self._palette = DARK if detected == "dark" else LIGHT
+            except Exception:
+                self._palette = LIGHT
+        else:
+            self._follow_system = False
+            self._palette = DARK if saved == "dark" else LIGHT
+
+    # -- System-theme integration ------------------------------------------- #
+
+    def sync_with_system(self) -> None:
+        """
+        Call **once** right after ``QApplication`` is created (before the
+        main window is shown).
+
+        • If follow-system is enabled: detects the current OS preference
+          and emits ``themeChanged`` if it differs from the placeholder
+          set during ``__init__``.
+        • Connects ``QStyleHints.colorSchemeChanged`` for live OS updates
+          (Qt 6.5+; silently skipped on older Qt versions).
+
+        Usage in your entry-point::
+
+            app = QApplication(sys.argv)
+            theme.sync_with_system()        # ← add this line
+            window = MainWindow()
+            window.showMaximized()
+            sys.exit(app.exec())
+        """
+        if self._follow_system:
+            detected = _detect_system_theme()
+            new_palette = DARK if detected == "dark" else LIGHT
+            if new_palette.name != self._palette.name:
+                self._palette = new_palette
+                self.themeChanged.emit(new_palette.name)
+
+        # Hook into Qt's live color-scheme signal (Qt 6.5+)
+        try:
+            from PySide6.QtGui import QGuiApplication
+            hints = QGuiApplication.instance().styleHints()
+            hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
+        except (AttributeError, TypeError, RuntimeError):
+            pass   # Qt < 6.5 or no QApplication — live updates just won't fire
+
+    def _on_system_scheme_changed(self) -> None:
+        """Qt slot: called automatically when the OS changes dark/light mode."""
+        if not self._follow_system:
+            return
+        detected = _detect_system_theme()
+        new_palette = DARK if detected == "dark" else LIGHT
+        if new_palette.name != self._palette.name:
+            self._palette = new_palette
+            self.themeChanged.emit(new_palette.name)
 
     # -- Public API --------------------------------------------------------- #
 
     @property
     def palette(self) -> Palette:
-        """
-        Returns:
-            Palette: Result of the operation.
-        """
         return self._palette
 
     @property
     def is_dark(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
         return self._palette.name == "dark"
 
-    def set_theme(self, name: str):
+    @property
+    def follow_system(self) -> bool:
+        """True when the theme automatically tracks the OS preference."""
+        return self._follow_system
+
+    def set_follow_system(self, follow: bool) -> None:
         """
-        Args:
-            name (str): Name string.
+        Enable or disable automatic OS-theme following.
+
+        When *follow* is ``True``:
+          • Detects the current OS preference and applies it immediately.
+          • Saves ``'system'`` to QSettings.
+
+        When *follow* is ``False``:
+          • Freezes the current palette.
+          • Saves the palette name (``'dark'`` / ``'light'``) to QSettings.
+        """
+        self._follow_system = follow
+        if follow:
+            self._settings.setValue("theme/name", "system")
+            detected = _detect_system_theme()
+            self._apply_palette(DARK if detected == "dark" else LIGHT)
+        else:
+            self._settings.setValue("theme/name", self._palette.name)
+
+    def set_theme(self, name: str) -> None:
+        """
+        Manually set 'dark' or 'light'.  Disables follow-system automatically
+        so the manual choice is preserved across restarts.
         """
         new_palette = DARK if name == "dark" else LIGHT
-        if new_palette.name == self._palette.name:
-            return
-        self._palette = new_palette
+        self._follow_system = False
         self._settings.setValue("theme/name", new_palette.name)
-        self.themeChanged.emit(new_palette.name)
+        self._apply_palette(new_palette)
 
-    def toggle(self):
+    def toggle(self) -> None:
+        """Toggle between dark and light, disabling follow-system."""
         self.set_theme("light" if self.is_dark else "dark")
-        
+
     def connect_theme(self, slot) -> callable:
         """
-        Connect a slot to themeChanged and return a cleanup callable.
-        Calling the returned function safely disconnects the slot even
-        if the ThemeManager has already been deleted (swallows RuntimeError).
- 
-        Args:
-            slot (callable): The method to connect to themeChanged.
- 
-        Returns:
-            callable: Zero-argument cleanup function that disconnects slot.
+        Connect *slot* to ``themeChanged`` and return a zero-argument
+        disconnect callable (safe to call even after the manager is gone).
         """
         self.themeChanged.connect(slot)
+
         def _disconnect():
             try:
                 self.themeChanged.disconnect(slot)
             except RuntimeError:
                 pass
+
         return _disconnect
- 
-    def toggle(self):
-        self.set_theme("light" if self.is_dark else "dark")
+
+    # -- Internal ----------------------------------------------------------- #
+
+    def _apply_palette(self, new_palette: "Palette") -> None:
+        if new_palette.name == self._palette.name:
+            return
+        self._palette = new_palette
+        self.themeChanged.emit(new_palette.name)
 
 
 theme = ThemeManager()

@@ -868,7 +868,9 @@ class SignalSelectorDialog(QDialog):
 
         multi_sample = len(selected_samples) > 1
         single_element = len(selected_elements) == 1
-        scatter_groups = {}
+        # key: trace_color  →  integrated signal points / peak-max points
+        integ_groups: dict = {}
+        peak_groups:  dict = {}
 
         for elem_cfg in selected_elements:
             isotope = elem_cfg['isotope']
@@ -913,32 +915,68 @@ class SignalSelectorDialog(QDialog):
                 )
                 pw.addItem(curve)
 
+                # ── Collect integration window points + peak maximum ───────
                 for particle in self._get_detected_peaks(sample_name, element, isotope):
                     if particle is None:
                         continue
-                    left_idx = particle['left_idx']
+                    left_idx  = particle['left_idx']
                     right_idx = particle['right_idx']
-                    if right_idx >= len(signal) or left_idx >= len(signal):
+                    if left_idx >= len(signal) or right_idx >= len(signal):
                         continue
-                    peak_idx = left_idx + np.argmax(signal[left_idx: right_idx + 1])
-                    if peak_idx >= len(time_array):
-                        continue
-                    group = scatter_groups.setdefault(
-                        trace_color, {'times': [], 'heights': []}
-                    )
-                    group['times'].append(time_array[peak_idx])
-                    group['heights'].append(signal[peak_idx])
+                    end   = min(right_idx + 1, len(signal), len(time_array))
+                    start = min(left_idx, end)
+                    # All integration window points (orange)
+                    idxs = np.arange(start, end)
+                    grp = integ_groups.setdefault(trace_color, {'times': [], 'heights': []})
+                    grp['times'].extend(time_array[idxs].tolist())
+                    grp['heights'].extend(signal[idxs].tolist())
+                    # Peak maximum point (green)
+                    peak_local  = int(np.argmax(signal[start:end]))
+                    peak_global = start + peak_local
+                    pg_grp = peak_groups.setdefault(trace_color, {'times': [], 'heights': []})
+                    pg_grp['times'].append(float(time_array[peak_global]))
+                    pg_grp['heights'].append(float(signal[peak_global]))
 
-        for color, data in scatter_groups.items():
-            if data['times']:
-                pw.addItem(pg.ScatterPlotItem(
-                    x=np.array(data['times']),
-                    y=np.array(data['heights']),
-                    symbol='o',
-                    size=6,
-                    brush=pg.mkBrush(color),
-                    pen=pg.mkPen(255, 255, 255, 100, width=1),
-                ))
+        # ── Orange: integrated points (toggleable, one legend entry) ──────────
+        _first_integ = True
+        for color, data in integ_groups.items():
+            if not data['times']:
+                continue
+            scat = pg.ScatterPlotItem(
+                x=np.array(data['times']),
+                y=np.array(data['heights']),
+                symbol='o',
+                size=5,
+                brush=pg.mkBrush(255, 165, 0, 200),   # orange
+                pen=pg.mkPen(None),
+                name='Integrated Particles' if _first_integ else None,
+            )
+            scat._role = 'particle_integration'
+            scat._legend_representative = _first_integ
+            pw.addItem(scat)
+            _first_integ = False
+
+        # ── Green: peak maximum (always visible, one legend entry) ────────────
+        _first_peak = True
+        for color, data in peak_groups.items():
+            if not data['times']:
+                continue
+            scat_pk = pg.ScatterPlotItem(
+                x=np.array(data['times']),
+                y=np.array(data['heights']),
+                symbol='o',
+                size=9,
+                brush=pg.mkBrush(46, 204, 113, 240),  # green
+                pen=pg.mkPen(None),
+                name='Peak Maximum' if _first_peak else None,
+            )
+            scat_pk._role = 'peak_maximum'
+            scat_pk._legend_representative = _first_peak
+            pw.addItem(scat_pk)
+            _first_peak = False
+
+        # Keep pw.legend in sync so PlotSettingsDialog can find it
+        pw.legend = legend
 
         for sample, label in legend.items:
             label.setText(label.text, size='20pt')

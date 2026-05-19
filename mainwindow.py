@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimati
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtGui import QColor, QBrush, QAction
+from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup
 from PySide6.QtWidgets import QWidget
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
@@ -598,10 +598,28 @@ class MainWindow(QMainWindow):
         view_menu.addAction(log_action)
 
         self._theme_menu_action = QAction("Toggle Dark Mode", self)
-        self._theme_menu_action.setShortcut("Cmd+Shift+D")
+        self._theme_menu_action.setCheckable(True)
         self._theme_menu_action.triggered.connect(theme.toggle)
+
+        self._follow_system_action = QAction("System Theme", self)
+        self._follow_system_action.setCheckable(True)
+        self._follow_system_action.setChecked(theme.follow_system)
+        self._follow_system_action.triggered.connect(
+            lambda checked: theme.set_follow_system(checked)
+        )
+
+        self.theme_group = QActionGroup(self)
+        self.theme_group.addAction(self._theme_menu_action)
+        self.theme_group.addAction(self._follow_system_action)
+        self.theme_group.setExclusive(True) 
+
         view_menu.addSeparator()
         view_menu.addAction(self._theme_menu_action)
+        view_menu.addAction(self._follow_system_action)
+
+        theme.themeChanged.connect(
+            lambda _: self._follow_system_action.setChecked(theme.follow_system)
+        )
             
         help_menu = menu_bar.addMenu("Help")
         self._menu_icon_items.append((help_menu, 'fa6s.circle-question'))
@@ -779,29 +797,23 @@ class MainWindow(QMainWindow):
                 if getattr(self, '_current_plot_mode', 'time') == 'mz':
                     self._update_mz_plot()
 
-        # --- Progress bar --------------------------------------------------
         if hasattr(self, 'progress_bar'):
             self.progress_bar.setStyleSheet(progress_bar_qss(p))
 
-        # --- Group boxes (plot / control panel / summary) ------------------
         for gb in getattr(self, '_themed_groupboxes', []):
             gb.setStyleSheet(groupbox_qss(p))
 
-        # --- Parameters table ---------------------------------------------
         if hasattr(self, 'parameters_table'):
             self.parameters_table.setStyleSheet(parameters_table_qss(p))
 
-        # --- Primary buttons (batch edit / multi-signal / detect) ----------
         primary_style = primary_button_qss(p)
         for btn, icon_name in getattr(self, '_primary_buttons', []):
             btn.setStyleSheet(primary_style)
             btn.setIcon(qta.icon(icon_name, color=p.text_inverse))
 
-        # --- Summary label -------------------------------------------------
         if hasattr(self, 'summary_label'):
             self.summary_label.setStyleSheet(summary_label_qss(p))
 
-        # --- Results container + header + title + perf tip -----------------
         if hasattr(self, '_results_container'):
             self._results_container.setStyleSheet(results_container_qss(p))
         if hasattr(self, '_results_header_widget'):
@@ -811,12 +823,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_perf_tip_label'):
             self._perf_tip_label.setStyleSheet(perf_tip_qss(p))
 
-        # --- Enhanced checkboxes ------------------------------------------
         checkbox_style = enhanced_checkbox_qss(p)
         for cb in getattr(self, '_enhanced_checkboxes', []):
             cb.setStyleSheet(checkbox_style)
 
-        # --- Results data tables (Single Element + Multi-Element) ---------
         rt_style = results_table_qss(p)
         if hasattr(self, 'results_table'):
             self.results_table.setStyleSheet(rt_style)
@@ -825,7 +835,6 @@ class MainWindow(QMainWindow):
             self.multi_element_table.setStyleSheet(rt_style)
             self.multi_element_table.setAlternatingRowColors(True)
 
-        # --- Section header labels above the results tables ---------------
         if hasattr(self, '_element_header_label'):
             if theme.is_dark:
                 bg, fg = p.bg_tertiary, p.accent
@@ -843,7 +852,6 @@ class MainWindow(QMainWindow):
                 table_header_label_qss(p, bg, fg)
             )
 
-        # --- Re-render any HTML content that bakes in theme colors --------
         last_args = getattr(self, '_last_summary_args', None)
         if last_args is not None:
             try:
@@ -870,7 +878,6 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(6, 8, 6, 6)
         layout.setSpacing(4)
 
-        # ── Top bar: pill-style Time | m/z toggle ────────────────────────
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(0, 0, 0, 0)
         top_bar.setSpacing(2)
@@ -1231,7 +1238,7 @@ class MainWindow(QMainWindow):
         self.multi_element_table = QTableWidget()
         self.multi_element_table.setMinimumHeight(200)
         self.multi_element_table.setSortingEnabled(True)
-        self.multi_element_table.itemSelectionChanged.connect(self.highlight_selected_particle)
+        self.multi_element_table.itemSelectionChanged.connect(self.highlight_multi_element_particle)
         return self.multi_element_table
     
     def create_table_header(self, title, bg_color, text_color):
@@ -1693,7 +1700,6 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.error(
                     f"Error loading selected isotopes for {sample_name}: {e}")
-    # --- End append-mode helpers ----------------------------------------------
 
 
     @log_user_action('MENU', 'File -> Open Folder')
@@ -4719,7 +4725,6 @@ class MainWindow(QMainWindow):
                         self.sample_parameters[sample_name][element_key]['sigma'] = current_sigma
                         self.mark_element_changed(sample_name, element_key)
 
-        # ── Apply per-sample / per-element exclusion masks ─────────────
         backups = {}
         exclusion_map = getattr(self, '_exclusion_regions_by_sample', {}) or {}
 
@@ -5468,6 +5473,19 @@ class MainWindow(QMainWindow):
             (time_array, threshold_line, STYLES['threshold'], 'Detection Threshold'),
         ]
         
+        # ── Style-restore helpers (keyed by curve name) ─────────────────
+        _STYLE_MAP = {
+            'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.DotLine,
+            'Dash-Dot': Qt.DashDotLine, 'Dash-Dot-Dot': Qt.DashDotDotLine,
+        }
+        _SYM_MAP = {
+            'Circle': 'o', 'Square': 's', 'Triangle Up': 't',
+            'Triangle Down': 't1', 'Diamond': 'd', 'Plus': '+',
+            'Cross': 'x', 'Star': 'star', 'Pentagon': 'p', 'Hexagon': 'h',
+        }
+        _saved_traces  = getattr(self.plot_widget, '_trace_settings',   {})
+        _saved_scatter = getattr(self.plot_widget, '_scatter_settings', {})
+
         for x, y, pen, name in plot_data:
             keep = np.diff(y, n=2, append=np.inf, prepend=np.inf) != 0
             pen.setCosmetic(True)
@@ -5478,37 +5496,107 @@ class MainWindow(QMainWindow):
                 name=name,
                 skipFiniteCheck=True,
             )
+            if name in _saved_traces:
+                s = _saved_traces[name]
+                _p = pg.mkPen(
+                    QColor(s['color']),
+                    width=s.get('width', 1),
+                    style=_STYLE_MAP.get(s.get('style', 'Solid'), Qt.SolidLine),
+                )
+                _p.setCosmetic(True)
+                curve.setPen(_p)
             self.plot_widget.addItem(curve)
-        
-        if particles:
-            peak_times = []
-            peak_heights = []
 
-            for p in particles:
-                if p is not None:
-                    peak_idx = np.argmax(signal[p['left_idx']:p['right_idx']+1])
-                    global_idx = p['left_idx'] + peak_idx
-                    peak_times.append(time_array[global_idx])
-                    peak_heights.append(p['max_height'])
-
-            scatter = pg.ScatterPlotItem(
-                x=peak_times,
-                y=peak_heights,
-                symbol=STYLES['peaks']['symbol'],
-                brush=pg.mkBrush(46, 204, 113, 220),
-                pen=pg.mkPen((30, 150, 80), width=1),
-                name='Detected Peaks'
-            )
-            self.plot_widget.addItem(scatter)
-        
         self.plot_widget.setBackground('w')
-        
+
         legend = self.plot_widget.addLegend(
             offset=(10, 10),
             brush=pg.mkBrush(255, 255, 255, 150),
             pen=pg.mkPen(200, 200, 200, 100)
         )
         legend.setParentItem(self.plot_widget.graphicsItem())
+        self.plot_widget.legend = legend
+
+        if particles:
+            integ_times   = []
+            integ_heights = []
+            peak_times    = []
+            peak_heights  = []
+
+            for p in particles:
+                if p is None:
+                    continue
+                left_idx  = p['left_idx']
+                right_idx = p['right_idx']
+                end   = min(right_idx + 1, len(signal), len(time_array))
+                start = min(left_idx, end)
+                if start >= end:
+                    continue
+
+                # ── Filter to only the actually-integrated points ──────────
+                p_method = p.get('integration_method', 'Background')
+                if np.isscalar(lambda_bkgd):
+                    bkgd_l   = lambda_bkgd
+                    thresh_l = threshold
+                else:
+                    bkgd_l   = lambda_bkgd[start:end]
+                    thresh_l = (threshold[start:end]
+                                if not np.isscalar(threshold) else threshold)
+                if p_method == 'Threshold':
+                    integ_level = thresh_l
+                elif p_method == 'Midpoint':
+                    integ_level = (np.asarray(bkgd_l) + np.asarray(thresh_l)) / 2.0
+                else:
+                    integ_level = bkgd_l
+
+                s_region = signal[start:end]
+                above    = s_region > integ_level
+                valid    = np.arange(start, end)[above]
+                integ_times.extend(time_array[valid].tolist())
+                integ_heights.extend(signal[valid].tolist())
+
+                peak_local  = int(np.argmax(s_region))
+                peak_global = start + peak_local
+                peak_times.append(float(time_array[peak_global]))
+                peak_heights.append(float(signal[peak_global]))
+
+            if integ_times:
+                scatter_integ = pg.ScatterPlotItem(
+                    x=np.array(integ_times),
+                    y=np.array(integ_heights),
+                    symbol='o',
+                    size=5,
+                    brush=pg.mkBrush(255, 165, 0, 200),  
+                    pen=pg.mkPen(None),
+                    name='Integrated Particles',
+                )
+                scatter_integ._role               = 'particle_integration'
+                scatter_integ._legend_representative = True
+                if 'Integrated Particles' in _saved_scatter:
+                    ss = _saved_scatter['Integrated Particles']
+                    scatter_integ.setSymbol(_SYM_MAP.get(ss.get('symbol', 'Circle'), 'o'))
+                    scatter_integ.setSize(ss.get('size', 5))
+                    scatter_integ.setBrush(pg.mkBrush(QColor(ss['color'])))
+                self.plot_widget.addItem(scatter_integ)
+
+            if peak_times:
+                scatter_peak = pg.ScatterPlotItem(
+                    x=np.array(peak_times),
+                    y=np.array(peak_heights),
+                    symbol='o',
+                    size=9,
+                    brush=pg.mkBrush(46, 204, 113, 240), 
+                    pen=pg.mkPen(None),
+                    name='Peak Maximum',
+                )
+                scatter_peak._role               = 'peak_maximum'
+                scatter_peak._legend_representative = True
+                if 'Peak Maximum' in _saved_scatter:
+                    ss = _saved_scatter['Peak Maximum']
+                    scatter_peak.setSymbol(_SYM_MAP.get(ss.get('symbol', 'Circle'), 'o'))
+                    scatter_peak.setSize(ss.get('size', 9))
+                    scatter_peak.setBrush(pg.mkBrush(QColor(ss['color'])))
+                self.plot_widget.addItem(scatter_peak)
         
         for sample, label in legend.items:
             label.setText(label.text, size='20pt')
@@ -5594,13 +5682,11 @@ class MainWindow(QMainWindow):
         element_keys = [element_keys[i] for i in order]
         x          = np.arange(len(labels), dtype=float)
 
-        # ── Assign bar colours from element_colors palette ───────────────
         from widget.colors import element_colors as _ec
         bar_colors = [
             _ec[i % len(_ec)][0] for i in range(len(labels))
         ]
 
-        # ── Create floating dialog ────────────────────────────────────────
         p = theme.palette
         dialog = QDialog(self)
         dialog.setWindowTitle(f"Mass Spectrum — {self.current_sample}")
@@ -5711,12 +5797,7 @@ class MainWindow(QMainWindow):
             self._plot_stack.setCurrentIndex(0)
 
     def _update_mz_plot(self):
-        """
-        Refresh the embedded m/z bar chart (page 1 of _plot_stack).
-
-        User-customised bar colors are preserved across refreshes via
-        the bar-meta list stored on _mz_pg_widget.
-
+        """"
         Double-click editing is handled entirely by MzBarPlotWidget:
           • Double-click title       → TitleEditorDialog
           • Double-click left axis   → AxisLabelEditorDialog('left')
@@ -5737,7 +5818,6 @@ class MainWindow(QMainWindow):
         p = theme.palette
         pw.setBackground(p.plot_bg)
 
-        # ── Placeholder when nothing is loaded ───────────────────────────
         if not self.current_sample or not self.data or not self.selected_isotopes:
             placeholder = pg.TextItem(
                 "No data — load a sample and select elements first",
@@ -5751,7 +5831,6 @@ class MainWindow(QMainWindow):
             pw.set_bar_meta([])
             return
 
-        # ── Collect per-isotope mean / std ───────────────────────────────
         masses, mean_cts, std_cts, labels = [], [], [], []
 
         for element, isotopes in self.selected_isotopes.items():
@@ -5895,6 +5974,359 @@ class MainWindow(QMainWindow):
                         y_range = y_max - y_min
                         self.plot_widget.setYRange(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
                         return
+                    
+    def highlight_multi_element_particle(self):
+        """
+        Highlight and display selected multi-element particle.
+        
+        Args:
+            self: MainWindow instance
+            
+        Returns:
+            None
+        """
+        selected_rows = self.multi_element_table.selectedItems()
+        if not selected_rows:
+            return
+
+        self.plot_widget.clear()
+
+        row = selected_rows[0].row()
+        start_time = float(self.multi_element_table.item(row, 1).text())
+        end_time = float(self.multi_element_table.item(row, 2).text())
+        particle_number = self.multi_element_table.item(row, 0).text()
+
+        particle_duration = end_time - start_time
+        padding = max(0.3 * particle_duration, 0.05)  
+        view_start = start_time - padding
+        view_end = end_time + padding
+        
+        region = pg.LinearRegionItem(
+            [start_time, end_time], 
+            movable=False, 
+            brush=pg.mkBrush(100, 150, 200, 30), 
+            pen=pg.mkPen(100, 150, 200, 80, width=1, style=Qt.DashLine)
+        )
+        self.plot_widget.addItem(region)
+        
+        start_line = pg.InfiniteLine(
+            pos=start_time, 
+            angle=90, 
+            pen=pg.mkPen(70, 70, 70, 150, width=1.5, style=Qt.DashLine)
+        )
+        end_line = pg.InfiniteLine(
+            pos=end_time, 
+            angle=90, 
+            pen=pg.mkPen(70, 70, 70, 150, width=1.5, style=Qt.DashLine)
+        )
+        self.plot_widget.addItem(start_line)
+        self.plot_widget.addItem(end_line)
+
+        max_signal = float('-inf')
+        min_signal = float('inf')
+
+        start_index = max(0, np.argmin(np.abs(self.time_array - view_start)))
+        end_index = min(len(self.time_array) - 1, np.argmin(np.abs(self.time_array - view_end)))
+        
+        legend = self.plot_widget.addLegend(
+            offset=(15, 120),
+            brush=pg.mkBrush(255, 255, 255, 180),
+            pen=pg.mkPen(150, 150, 150, 100)
+        )
+        
+        element_data = {}
+        color_index = 0
+        hover_tooltips = []
+
+        for col in range(3, self.multi_element_table.columnCount()):
+            header_item = self.multi_element_table.horizontalHeaderItem(col)
+            if not header_item:
+                continue
+                
+            display_label = header_item.text()
+            cell_item = self.multi_element_table.item(row, col)
+            
+            if not cell_item or not cell_item.text() or float(cell_item.text()) <= 0:
+                continue  
+                
+            counts = float(cell_item.text())
+
+            found = False
+            for element, isotopes in self.selected_isotopes.items():
+                if found:
+                    break
+                for isotope in isotopes:
+                    element_key = f"{element}-{isotope:.4f}"
+                    if self.get_formatted_label(element_key) == display_label:
+                        color_info = element_colors.get(color_index % len(element_colors), 
+                                                    ('#2E86AB', '#87CEEB', 'Steel Blue'))
+                        primary_color, light_color, color_name = color_info
+                        color_index += 1
+                        
+                        closest_mass = self.find_closest_isotope(isotope)
+                        
+                        if closest_mass in self.data:
+                            signal = self.data[closest_mass]
+                            
+                            view_section = signal[start_index:end_index+1]
+                            time_section = self.time_array[start_index:end_index+1]
+                            
+                            section_max = np.max(view_section)
+                            section_min = np.min(view_section)
+                            max_signal = max(max_signal, section_max)
+                            min_signal = min(min_signal, section_min)
+                            
+                            background_val = 0
+                            threshold_val = 0
+                            try:
+                                if (self.current_sample in self.element_thresholds and 
+                                    element_key in self.element_thresholds[self.current_sample]):
+                                    thresholds = self.element_thresholds[self.current_sample][element_key]
+                                    background_val = thresholds.get('background', 0)
+                                    threshold_val = thresholds.get('threshold', 0)
+                            except:
+                                pass
+                            
+                            element_data[display_label] = {
+                                'signal': view_section,
+                                'color': primary_color,
+                                'light_color': light_color,
+                                'max': section_max,
+                                'counts': counts,
+                                'element': element,
+                                'isotope': isotope,
+                                'background': background_val,
+                                'threshold': threshold_val
+                            }
+
+                            plot_curve = self.plot_widget.plot(
+                                time_section,
+                                view_section,
+                                pen=pg.mkPen(primary_color, width=1),
+                                name=f"{display_label} ({counts:.0f} counts)",
+                                antialias=True
+                            )
+                
+                            if (element, isotope) in self.detected_peaks:
+                                peak_data = {'x': [], 'y': [], 'info': []}
+                                integ_data = {'x': [], 'y': []}
+                                
+                                for particle in self.detected_peaks[(element, isotope)]:
+                                    if particle is None:
+                                        continue
+                                        
+                                    particle_start = self.time_array[particle['left_idx']]
+                                    particle_end = self.time_array[particle['right_idx']]
+
+                                    if (particle_start <= end_time and particle_end >= start_time):
+                                        peak_idx = particle['left_idx'] + np.argmax(signal[particle['left_idx']:particle['right_idx']+1])
+                                        peak_x = self.time_array[peak_idx]
+                                        peak_y = signal[peak_idx]
+                                        
+                                        peak_data['x'].append(peak_x)
+                                        peak_data['y'].append(peak_y)
+                                        
+                                        # ── Collect integrated points for this particle ──
+                                        p_left   = particle['left_idx']
+                                        p_right  = particle['right_idx']
+                                        p_method = particle.get('integration_method', 'Background')
+                                        end_i    = min(p_right + 1, len(signal), len(self.time_array))
+                                        start_i  = min(p_left, end_i)
+                                        if start_i < end_i:
+                                            if p_method == 'Threshold':
+                                                integ_level = threshold_val
+                                            elif p_method == 'Midpoint':
+                                                integ_level = (background_val + threshold_val) / 2.0
+                                            else:
+                                                integ_level = background_val
+                                            s_region = signal[start_i:end_i]
+                                            above    = s_region > integ_level
+                                            valid    = np.arange(start_i, end_i)[above]
+                                            integ_data['x'].extend(self.time_array[valid].tolist())
+                                            integ_data['y'].extend(signal[valid].tolist())
+                                        
+                                        snr = particle.get('SNR', peak_y / particle.get('threshold', 1))
+                                        hover_info = (
+                                            f"Element: {display_label}\n"
+                                            f"Peak Height: {peak_y:.0f} counts\n"
+                                            f"SNR: {snr:.2f}\n"
+                                            f"Background: {background_val:.1f} counts\n"
+                                            f"Threshold: {threshold_val:.1f} counts"
+                                        )
+                                        peak_data['info'].append(hover_info)
+                                
+                                # ── Integrated points (element colour, small, under peak markers) ──
+                                if integ_data['x']:
+                                    _qc = QColor(light_color)
+                                    scatter_integ = pg.ScatterPlotItem(
+                                        x=np.array(integ_data['x']),
+                                        y=np.array(integ_data['y']),
+                                        symbol='o',
+                                        size=5,
+                                        brush=pg.mkBrush(_qc.red(), _qc.green(), _qc.blue(), 180),
+                                        pen=pg.mkPen(None),
+                                    )
+                                    self.plot_widget.addItem(scatter_integ)
+
+                                if peak_data['x']:
+                                    class HoverScatter(pg.ScatterPlotItem):
+                                        def __init__(self, parent_widget, hover_texts, *args, **kwargs):
+                                            super().__init__(*args, **kwargs)
+                                            self.parent_widget = parent_widget
+                                            self.hover_texts = hover_texts
+                                            self.hover_label = None
+                                            
+                                        def hoverEvent(self, ev):
+                                            if ev.isExit():
+                                                if self.hover_label:
+                                                    self.parent_widget.removeItem(self.hover_label)
+                                                    self.hover_label = None
+                                                return
+                                                
+                                            pos = ev.pos()
+                                            pts = self.pointsAt(pos)
+                                            
+                                            if len(pts) > 0:
+                                                point_index = 0
+                                                for i, point in enumerate(self.data):
+                                                    if point in pts:
+                                                        point_index = i
+                                                        break
+                                                
+                                                if point_index < len(self.hover_texts):
+                                                    if self.hover_label:
+                                                        self.parent_widget.removeItem(self.hover_label)
+                                                    
+                                                    self.hover_label = pg.TextItem(
+                                                        html=f"""
+                                                        <div style='
+                                                            background: rgba(255, 255, 255, 240);
+                                                            padding: 8px 12px;
+                                                            border: 2px solid {primary_color};
+                                                            border-radius: 6px;
+                                                            font-family: "Segoe UI", Arial, sans-serif;
+                                                            font-size: 10px;
+                                                            color: #333;
+                                                            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+                                                        '>
+                                                            {self.hover_texts[point_index].replace(chr(10), '<br>')}
+                                                        </div>
+                                                        """,
+                                                        anchor=(0, 1)
+                                                    )
+                                                    
+                                                    point_pos = pts[0].pos()
+                                                    self.hover_label.setPos(point_pos.x(), point_pos.y() + 50)
+                                                    self.parent_widget.addItem(self.hover_label)
+                                    
+                                    scatter = HoverScatter(
+                                        self.plot_widget,
+                                        peak_data['info'],
+                                        x=peak_data['x'],
+                                        y=peak_data['y'],
+                                        symbol='o',
+                                        size=12,
+                                        brush=pg.mkBrush(primary_color),
+                                        pen=pg.mkPen(255, 255, 255, 200, width=1),
+                                        hoverable=True,
+                                        hoverPen=pg.mkPen(255, 255, 255, 255, width=3),
+                                        hoverBrush=pg.mkBrush(primary_color)
+                                    )
+                                    self.plot_widget.addItem(scatter)
+                        
+                            try:
+                                if ((element, isotope) in self.detected_peaks and 
+                                    self.current_sample in self.element_thresholds and 
+                                    element_key in self.element_thresholds[self.current_sample]):
+                                    
+                                    thresholds = self.element_thresholds[self.current_sample][element_key]
+                                    threshold = thresholds.get('threshold', 0)
+                                    
+                                    if threshold > 0:
+                                        self.plot_widget.plot(
+                                            [view_start, view_end],
+                                            [threshold, threshold],
+                                            pen=pg.mkPen(primary_color, width=1, style=Qt.DotLine),
+                                            alpha=0.6
+                                        )
+                            except Exception as e:
+                                pass
+                                
+                        found = True
+                        break
+
+        self.plot_widget.setXRange(view_start, view_end, padding=0)
+
+        if max_signal > min_signal:
+            y_range = max_signal - min_signal
+            y_padding = 0.1 * y_range
+            y_min = max(0, min_signal - y_padding)
+            y_max = max_signal + y_padding
+            self.plot_widget.setYRange(y_min, y_max, padding=0)
+        else:
+            self.plot_widget.enableAutoRange()
+        
+        if element_data:
+            info_lines = [f"<b>Particle #{particle_number} Composition</b>"]
+            info_lines.append(f"<b>Duration:</b> {particle_duration*1000:.2f} ms")
+            info_lines.append("")
+            
+            sorted_elements = sorted(element_data.items(), key=lambda x: x[1]['counts'], reverse=True)
+            
+            for label, data in sorted_elements:
+                info_lines.append(
+                    f"<span style='color: {data['color']}; font-weight: bold;'>●</span> "
+                    f"<b>{label}:</b> {data['counts']:.0f} counts"
+                )
+            
+            info_text = "<br>".join(info_lines)
+            
+            info_label = pg.TextItem(
+                html=f"""
+                <div style='
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 rgba(255, 255, 255, 240), 
+                        stop:1 rgba(248, 248, 248, 240));
+                    padding: 12px 15px;
+                    border: 1px solid rgba(200, 200, 200, 180);
+                    border-radius: 8px;
+                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+                    font-family: "Segoe UI", Arial, sans-serif;
+                    font-size: 11px;
+                    line-height: 1.4;
+                '>
+                    {info_text}
+                </div>
+                """,
+                anchor=(0, 0)
+            )
+            
+            info_x = view_start + 0.02 * (view_end - view_start)
+            info_y = y_min + 0.6 * (y_max - y_min) if 'y_max' in locals() and 'y_min' in locals() else min_signal + 0.6 * (max_signal - min_signal)
+            info_label.setPos(info_x, info_y)
+            self.plot_widget.addItem(info_label)
+
+        self.plot_widget.setBackground('w')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.setLabel('left', 'Counts', 
+                                style={'color': '#333', 'font-size': '12px'})
+        self.plot_widget.setLabel('bottom', 'Time (s)', 
+                                style={'color': '#333', 'font-size': '12px'})
+        
+        self.plot_widget.setMouseEnabled(x=True, y=True)
+        self.plot_widget.enableAutoRange(enable=False)
+        
+        try:
+            highlight_region = pg.LinearRegionItem(
+                [start_time, end_time], 
+                movable=False, 
+                brush=pg.mkBrush(255, 215, 0, 80)
+            )
+            self.plot_widget.addItem(highlight_region)
+            
+            QTimer.singleShot(1500, lambda: self.plot_widget.removeItem(highlight_region))
+        except:
+            pass
                     
     def show_signal_selector(self):
         """
@@ -7158,8 +7590,9 @@ if __name__ == "__main__":
     """
     from PySide6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets 
+    from PySide6 import QtWebEngineWidgets
     app = QApplication(sys.argv)
+    theme.sync_with_system()       
     main_window = MainWindow()
     main_window.showMaximized()
     sys.exit(app.exec())
