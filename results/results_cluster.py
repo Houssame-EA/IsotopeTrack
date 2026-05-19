@@ -1,20 +1,18 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
-    QFrame, QScrollArea, QWidget, QMenu, QTabWidget, QToolBar,
+    QFrame, QScrollArea, QWidget, QMenu, QTabWidget,
     QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QProgressBar, QSlider, QLineEdit, QSizePolicy, QStackedWidget,
+    QProgressBar, QStackedWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor, QAction
+from PySide6.QtGui import QColor, QCursor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import math
-import gc
 import sys
 import warnings
 warnings.filterwarnings('ignore')
@@ -23,9 +21,20 @@ from sklearn.cluster import (
     KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering,
     MeanShift, OPTICS, MiniBatchKMeans, Birch,
 )
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
+
+try:
+    from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
+    _HDBSCAN_OK = True
+except ImportError:
+    try:
+        import hdbscan as _hm
+        _HDBSCAN_CLS = _hm.HDBSCAN
+        _HDBSCAN_OK = True
+    except ImportError:
+        _HDBSCAN_CLS = None
+        _HDBSCAN_OK = False
 from sklearn.metrics import (
     silhouette_score, calinski_harabasz_score, davies_bouldin_score,
     adjusted_rand_score, v_measure_score, fowlkes_mallows_score,
@@ -49,7 +58,7 @@ from results.utils_sort import (
 
 
 ALGORITHMS = [
-    'K-Means', 'Hierarchical', 'DBSCAN', 'Spectral',
+    'K-Means', 'Hierarchical', 'DBSCAN', 'HDBSCAN', 'Spectral', 'SOM',
     'MiniBatch K-Means', 'Birch', 'Mean Shift', 'OPTICS',
 ]
 
@@ -67,7 +76,7 @@ METRIC_KEYS = {
     'Fowlkes-Mallows':   ('Fowlkes-Mallows Index',   'fowlkes_mallows_scores'),
 }
 
-SCALING_OPTIONS = ['StandardScaler', 'MinMaxScaler', 'None']
+SCALING_OPTIONS = ['CLR', 'ILR', 'Robust Z-score', 'None']
 DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE']
 
 DATA_TYPE_OPTIONS = [
@@ -103,12 +112,198 @@ ALGO_LINE_STYLES = {
     'K-Means':           dict(color='#2563EB', ls='-',  marker='o'),
     'Hierarchical':      dict(color='#DC2626', ls='-',  marker='s'),
     'DBSCAN':            dict(color='#16A34A', ls='--', marker='^'),
+    'HDBSCAN':           dict(color='#7C3AED', ls='--', marker='v'),
     'Spectral':          dict(color='#D97706', ls='-',  marker='D'),
-    'MiniBatch K-Means': dict(color='#7C3AED', ls='--', marker='v'),
-    'Birch':             dict(color='#0891B2', ls='-',  marker='P'),
-    'Mean Shift':        dict(color='#DB2777', ls='--', marker='X'),
-    'OPTICS':            dict(color='#65A30D', ls='--', marker='*'),
+    'SOM':               dict(color='#0891B2', ls='-',  marker='P'),
+    'MiniBatch K-Means': dict(color='#4F46E5', ls='--', marker='p'),
+    'Birch':             dict(color='#DB2777', ls='-',  marker='H'),
+    'Mean Shift':        dict(color='#65A30D', ls='--', marker='X'),
+    'OPTICS':            dict(color='#EA580C', ls='--', marker='*'),
 }
+
+
+def _apply_clr(matrix):
+    """
+    Args:
+        matrix (np.ndarray): Data matrix (n_samples, n_features), values >= 0.
+    Returns:
+        np.ndarray: CLR-transformed matrix.
+    """
+    eps = 1e-10
+    X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
+    log_X = np.log(X)
+    return log_X - log_X.mean(axis=1, keepdims=True)
+
+
+def _apply_ilr(matrix):
+    """
+    Args:
+        matrix (np.ndarray): Data matrix (n_samples, n_features), values >= 0.
+    Returns:
+        np.ndarray: ILR-transformed matrix with p-1 coordinates.
+    """
+    clr = _apply_clr(matrix)
+    p = clr.shape[1]
+    if p < 2:
+        return clr
+    V = np.zeros((p, p - 1), dtype=np.float64)
+    for j in range(p - 1):
+        k = j + 1
+        scale = np.sqrt(k / (k + 1.0))
+        V[:k, j] = scale / k
+        V[k, j] = -scale
+    return clr @ V
+
+
+def _apply_robust_zscore(matrix):
+    """
+    Args:
+        matrix (np.ndarray): Data matrix (n_samples, n_features).
+    Returns:
+        np.ndarray: Robust Z-score normalised matrix (median / MAD).
+    """
+    X = matrix.astype(np.float64)
+    med = np.median(X, axis=0)
+    mad = np.median(np.abs(X - med), axis=0)
+    mad = np.where(mad < 1e-10, 1e-10, mad)
+    return (X - med) / mad
+
+
+class _SOM:
+    def __init__(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_state=42):
+        """
+        Args:
+            rows (int): Grid rows.
+            cols (int): Grid columns.
+            n_features (int): Input feature count.
+            sigma (float): Initial neighbourhood radius.
+            lr (float): Initial learning rate.
+            n_iter (int): Training iterations.
+            random_state (int): Random seed.
+        """
+        rng = np.random.RandomState(random_state)
+        self.weights = rng.randn(rows * cols, n_features).astype(np.float32)
+        self.rows = rows
+        self.cols = cols
+        self.sigma = sigma
+        self.lr = lr
+        self.n_iter = n_iter
+        ri, ci = np.meshgrid(np.arange(rows), np.arange(cols), indexing='ij')
+        self._coords = np.column_stack([ri.ravel(), ci.ravel()]).astype(np.float32)
+
+    def fit(self, X):
+        """
+        Args:
+            X (np.ndarray): Training data (n_samples, n_features).
+        Returns:
+            _SOM: self.
+        """
+        X = np.asarray(X, dtype=np.float32)
+        n = len(X)
+        rng = np.random.RandomState(42)
+        idx_seq = rng.randint(0, n, self.n_iter)
+        for t, idx in enumerate(idx_seq):
+            frac = t / max(self.n_iter - 1, 1)
+            lr_t = self.lr * np.exp(-frac * 4)
+            sig_t = max(self.sigma * np.exp(-frac * 3), 0.3)
+            x = X[idx]
+            diff = self.weights - x
+            bmu = int(np.argmin(np.sum(diff ** 2, axis=1)))
+            gd2 = np.sum((self._coords - self._coords[bmu]) ** 2, axis=1)
+            h = np.exp(-gd2 / (2 * sig_t ** 2))
+            self.weights += lr_t * h[:, None] * (-diff)
+        return self
+
+    def predict(self, X):
+        """
+        Args:
+            X (np.ndarray): Input data (n_samples, n_features).
+        Returns:
+            np.ndarray: BMU index per sample.
+        """
+        X = np.asarray(X, dtype=np.float32)
+        out = []
+        for x in X:
+            diff = self.weights - x
+            out.append(int(np.argmin(np.sum(diff ** 2, axis=1))))
+        return np.array(out)
+
+    def get_weights(self):
+        """
+        Returns:
+            np.ndarray: Neuron weight vectors (n_neurons, n_features).
+        """
+        return self.weights.copy()
+
+    def get_grid_labels(self, neuron_cluster_labels):
+        """
+        Args:
+            neuron_cluster_labels (np.ndarray): Cluster label per neuron.
+        Returns:
+            np.ndarray: 2-D grid of shape (rows, cols).
+        """
+        return neuron_cluster_labels.reshape(self.rows, self.cols)
+
+
+def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg):
+    """
+    Args:
+        fig (Figure): Matplotlib figure.
+        som_obj (_SOM): Trained SOM.
+        neuron_cluster_labels (np.ndarray): Cluster label per neuron.
+        data_labels (np.ndarray): Cluster label per data point.
+        cfg (dict): Configuration dictionary.
+    """
+    fig.clear()
+    if som_obj is None:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'Run ② Cluster with SOM first',
+                ha='center', va='center', fontsize=12, color='gray',
+                transform=ax.transAxes)
+        ax.set_xticks([]); ax.set_yticks([])
+        return
+
+    rows, cols = som_obj.rows, som_obj.cols
+    grid = som_obj.get_grid_labels(neuron_cluster_labels)
+    n_clusters = len(np.unique(neuron_cluster_labels[neuron_cluster_labels >= 0]))
+
+    ax1 = fig.add_subplot(121)
+    cmap = plt.get_cmap('tab20', max(n_clusters, 2))
+    im = ax1.imshow(grid, cmap=cmap, vmin=-0.5, vmax=n_clusters - 0.5,
+                    interpolation='nearest', aspect='auto')
+    ax1.set_title(f'SOM Grid — Cluster Map  ({rows}×{cols})',
+                  fontsize=11, fontweight='bold', pad=8)
+    ax1.set_xlabel('Column', fontsize=9)
+    ax1.set_ylabel('Row', fontsize=9)
+    for r in range(rows):
+        for c in range(cols):
+            lbl = grid[r, c]
+            ax1.text(c, r, str(lbl) if lbl >= 0 else '•',
+                     ha='center', va='center', fontsize=6,
+                     color='white' if lbl >= 0 else '#9CA3AF', fontweight='bold')
+    cb = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
+    cb.set_label('Cluster', fontsize=8)
+    cb.set_ticks(range(n_clusters))
+
+    ax2 = fig.add_subplot(122)
+    unique_c = np.unique(data_labels[data_labels >= 0])
+    sizes = [int(np.sum(data_labels == c)) for c in unique_c]
+    colors = [CLUSTER_COLORS[int(c) % len(CLUSTER_COLORS)] for c in unique_c]
+    bars = ax2.bar([f'C{c}' for c in unique_c], sizes,
+                   color=colors, edgecolor='white', linewidth=0.6, alpha=0.9)
+    for bar, sz in zip(bars, sizes):
+        ax2.text(bar.get_x() + bar.get_width() / 2,
+                 bar.get_height() + max(sizes) * 0.01,
+                 f'n={sz}', ha='center', va='bottom', fontsize=8)
+    _style_ax(ax2, cfg, xlabel='Cluster', ylabel='Particle count',
+              title='SOM Cluster Sizes')
+    ax2.set_ylim(0, max(sizes) * 1.3 if sizes else 1)
+    noise = int(np.sum(data_labels == -1))
+    if noise > 0:
+        ax2.text(0.98, 0.98, f'Noise: {noise}', transform=ax2.transAxes,
+                 ha='right', va='top', fontsize=8, color='#DC2626',
+                 bbox=dict(fc='#FEF2F2', ec='#DC2626', pad=3))
+    fig.tight_layout(pad=1.4)
 
 
 class ClusteringSettingsDialog(QDialog):
@@ -183,7 +378,6 @@ class ClusteringSettingsDialog(QDialog):
 
         self.algo_stack = QStackedWidget()
 
-        # ── 0: K-Means ──────────────────────────────────────────────
         p0 = QWidget(); f0 = QFormLayout(p0); f0.setContentsMargins(4, 4, 4, 4)
         self.km_n_init = QSpinBox(); self.km_n_init.setRange(1, 50)
         self.km_n_init.setValue(self._cfg.get('kmeans_n_init', 10))
@@ -193,7 +387,6 @@ class ClusteringSettingsDialog(QDialog):
         f0.addRow("max_iter:", self.km_max_iter)
         self.algo_stack.addWidget(p0)
 
-        # ── 1: Hierarchical ─────────────────────────────────────────
         p1 = QWidget(); f1 = QFormLayout(p1); f1.setContentsMargins(4, 4, 4, 4)
         self.hier_linkage = QComboBox()
         self.hier_linkage.addItems(['ward', 'complete', 'average', 'single'])
@@ -221,7 +414,6 @@ class ClusteringSettingsDialog(QDialog):
         _sync_hier_metric(self.hier_linkage.currentText())
         self.algo_stack.addWidget(p1)
 
-        # ── 2: DBSCAN ───────────────────────────────────────────────
         p2 = QWidget(); f2 = QFormLayout(p2); f2.setContentsMargins(4, 4, 4, 4)
         self.dbscan_eps = QDoubleSpinBox(); self.dbscan_eps.setRange(0.01, 50.0)
         self.dbscan_eps.setSingleStep(0.05); self.dbscan_eps.setDecimals(3)
@@ -236,7 +428,6 @@ class ClusteringSettingsDialog(QDialog):
         f2.addRow("metric:", self.dbscan_metric)
         self.algo_stack.addWidget(p2)
 
-        # ── 3: Spectral ─────────────────────────────────────────────
         p3 = QWidget(); f3 = QFormLayout(p3); f3.setContentsMargins(4, 4, 4, 4)
         self.spec_n_neighbors = QSpinBox(); self.spec_n_neighbors.setRange(2, 50)
         self.spec_n_neighbors.setValue(self._cfg.get('spectral_n_neighbors', 10))
@@ -247,7 +438,6 @@ class ClusteringSettingsDialog(QDialog):
         f3.addRow("affinity:", self.spec_affinity)
         self.algo_stack.addWidget(p3)
 
-        # ── 4: MiniBatch K-Means ────────────────────────────────────
         p4 = QWidget(); f4 = QFormLayout(p4); f4.setContentsMargins(4, 4, 4, 4)
         self.mbkm_n_init = QSpinBox(); self.mbkm_n_init.setRange(1, 50)
         self.mbkm_n_init.setValue(self._cfg.get('mbkm_n_init', 3))
@@ -261,7 +451,6 @@ class ClusteringSettingsDialog(QDialog):
         f4.addRow("max_iter:", self.mbkm_max_iter)
         self.algo_stack.addWidget(p4)
 
-        # ── 5: Birch ────────────────────────────────────────────────
         p5 = QWidget(); f5 = QFormLayout(p5); f5.setContentsMargins(4, 4, 4, 4)
         self.birch_thresh = QDoubleSpinBox(); self.birch_thresh.setRange(0.01, 5.0)
         self.birch_thresh.setSingleStep(0.05); self.birch_thresh.setDecimals(3)
@@ -272,7 +461,6 @@ class ClusteringSettingsDialog(QDialog):
         f5.addRow("branching_factor:", self.birch_branch)
         self.algo_stack.addWidget(p5)
 
-        # ── 6: Mean Shift ───────────────────────────────────────────
         p6 = QWidget(); f6 = QFormLayout(p6); f6.setContentsMargins(4, 4, 4, 4)
         self.ms_auto_bw = QCheckBox("Auto bandwidth (estimate_bandwidth)")
         self.ms_auto_bw.setChecked(self._cfg.get('meanshift_auto_bw', True))
@@ -288,7 +476,6 @@ class ClusteringSettingsDialog(QDialog):
         f6.addRow("min_bin_freq:", self.ms_min_bin_freq)
         self.algo_stack.addWidget(p6)
 
-        # ── 7: OPTICS ───────────────────────────────────────────────
         p7 = QWidget(); f7 = QFormLayout(p7); f7.setContentsMargins(4, 4, 4, 4)
         self.optics_min_samp = QSpinBox(); self.optics_min_samp.setRange(2, 100)
         self.optics_min_samp.setValue(self._cfg.get('optics_min_samples', 5))
@@ -303,6 +490,49 @@ class ClusteringSettingsDialog(QDialog):
         f7.addRow("metric:", self.optics_metric)
         f7.addRow("cluster_method:", self.optics_cluster_method)
         self.algo_stack.addWidget(p7)
+
+        p8 = QWidget(); f8 = QFormLayout(p8); f8.setContentsMargins(4, 4, 4, 4)
+        self.hdbscan_min_cluster = QSpinBox(); self.hdbscan_min_cluster.setRange(2, 200)
+        self.hdbscan_min_cluster.setValue(self._cfg.get('hdbscan_min_cluster_size', 5))
+        self.hdbscan_min_samp = QSpinBox(); self.hdbscan_min_samp.setRange(1, 100)
+        self.hdbscan_min_samp.setValue(self._cfg.get('hdbscan_min_samples', 5))
+        self.hdbscan_metric = QComboBox()
+        self.hdbscan_metric.addItems(['euclidean', 'manhattan', 'cosine', 'l2'])
+        self.hdbscan_metric.setCurrentText(self._cfg.get('hdbscan_metric', 'euclidean'))
+        _hdbscan_warn = QLabel("⚠ Requires scikit-learn ≥ 1.3 or: pip install hdbscan")
+        _hdbscan_warn.setStyleSheet("color:#D97706; font-size:10px;")
+        _hdbscan_warn.setVisible(not _HDBSCAN_OK)
+        f8.addRow(_hdbscan_warn)
+        f8.addRow("min_cluster_size:", self.hdbscan_min_cluster)
+        f8.addRow("min_samples:", self.hdbscan_min_samp)
+        f8.addRow("metric:", self.hdbscan_metric)
+        self.algo_stack.addWidget(p8)
+
+        p9 = QWidget(); f9 = QFormLayout(p9); f9.setContentsMargins(4, 4, 4, 4)
+        self.som_rows = QSpinBox(); self.som_rows.setRange(3, 30)
+        self.som_rows.setValue(self._cfg.get('som_rows', 10))
+        self.som_cols = QSpinBox(); self.som_cols.setRange(3, 30)
+        self.som_cols.setValue(self._cfg.get('som_cols', 10))
+        self.som_sigma = QDoubleSpinBox(); self.som_sigma.setRange(0.1, 10.0)
+        self.som_sigma.setSingleStep(0.1); self.som_sigma.setDecimals(2)
+        self.som_sigma.setValue(self._cfg.get('som_sigma', 1.0))
+        self.som_lr = QDoubleSpinBox(); self.som_lr.setRange(0.01, 1.0)
+        self.som_lr.setSingleStep(0.05); self.som_lr.setDecimals(3)
+        self.som_lr.setValue(self._cfg.get('som_lr', 0.5))
+        self.som_n_iter = QSpinBox(); self.som_n_iter.setRange(100, 20000)
+        self.som_n_iter.setSingleStep(500)
+        self.som_n_iter.setValue(self._cfg.get('som_n_iter', 2000))
+        self.som_final_algo = QComboBox()
+        self.som_final_algo.addItems(['Hierarchical (Ward)', 'K-Means'])
+        self.som_final_algo.setCurrentText(
+            self._cfg.get('som_final_algo', 'Hierarchical (Ward)'))
+        f9.addRow("Grid rows:", self.som_rows)
+        f9.addRow("Grid cols:", self.som_cols)
+        f9.addRow("Sigma (σ):", self.som_sigma)
+        f9.addRow("Learning rate:", self.som_lr)
+        f9.addRow("Iterations:", self.som_n_iter)
+        f9.addRow("Final clustering:", self.som_final_algo)
+        self.algo_stack.addWidget(p9)
 
         def _switch_page(text):
             """
@@ -407,6 +637,17 @@ class ClusteringSettingsDialog(QDialog):
         out['optics_min_samples']     = self.optics_min_samp.value()
         out['optics_metric']          = self.optics_metric.currentText()
         out['optics_cluster_method']  = self.optics_cluster_method.currentText()
+
+        out['hdbscan_min_cluster_size'] = self.hdbscan_min_cluster.value()
+        out['hdbscan_min_samples']      = self.hdbscan_min_samp.value()
+        out['hdbscan_metric']           = self.hdbscan_metric.currentText()
+
+        out['som_rows']       = self.som_rows.value()
+        out['som_cols']       = self.som_cols.value()
+        out['som_sigma']      = self.som_sigma.value()
+        out['som_lr']         = self.som_lr.value()
+        out['som_n_iter']     = self.som_n_iter.value()
+        out['som_final_algo'] = self.som_final_algo.currentText()
 
         out.update(self._font_grp.collect())
         return out
@@ -778,6 +1019,8 @@ class ClusteringDisplayDialog(QDialog):
         self._elements_cache = []
         self._particle_samples = None
         self._hover_ann = {}
+        self._som_obj = None
+        self._som_neuron_labels = None
 
         self._build_ui()
         self.node.configuration_changed.connect(self._on_node_changed)
@@ -848,6 +1091,7 @@ class ClusteringDisplayDialog(QDialog):
         self._build_overview_tab()
         self._build_dendrogram_tab()
         self._build_3d_tab()
+        self._build_som_tab()
 
         layout.addWidget(self.tabs)
 
@@ -878,7 +1122,6 @@ class ClusteringDisplayDialog(QDialog):
         btn.clicked.connect(slot)
         return btn
 
-    # ── Evaluation tab ──────────────────────
 
     def _build_eval_tab(self):
         tab = QWidget()
@@ -906,7 +1149,6 @@ class ClusteringDisplayDialog(QDialog):
 
         self.tabs.addTab(tab, "① Evaluation")
 
-    # ── Clustering tab ──────────────────────
 
     def _build_cluster_tab(self):
         tab = QWidget()
@@ -935,7 +1177,6 @@ class ClusteringDisplayDialog(QDialog):
 
         self.tabs.addTab(tab, "② Clusters")
 
-    # ── Characterisation tab ────────────────
 
     def _build_char_tab(self):
         tab = QWidget()
@@ -983,7 +1224,6 @@ class ClusteringDisplayDialog(QDialog):
 
         self.tabs.addTab(tab, "③ Characterisation")
 
-    # ── Context menu ────────────────────────
 
     def _ctx_menu(self, pos, tab):
         """
@@ -1011,18 +1251,19 @@ class ClusteringDisplayDialog(QDialog):
 
         fig_map = {'eval': self.eval_fig, 'cluster': self.cluster_fig,
                    'char': self.char_fig, 'overview': self.overview_fig,
-                   'dendro': self.dendro_fig, '3d': self._3d_fig}
+                   'dendro': self.dendro_fig, '3d': self._3d_fig,
+                   'som': self.som_fig}
         names   = {'eval': 'evaluation.png', 'cluster': 'clusters.png',
                    'char': 'characterisation.png', 'overview': 'overview.png',
-                   'dendro': 'dendrogram.png', '3d': '3d_scatter.png'}
-        dl = menu.addAction("💾 Download Figure…")
+                   'dendro': 'dendrogram.png', '3d': '3d_scatter.png',
+                   'som': 'som_grid.png'}
+        dl = menu.addAction("Download Figure…")
         dl.triggered.connect(
             lambda: download_matplotlib_figure(fig_map.get(tab, self.eval_fig),
                                                self, names.get(tab, 'figure.png')))
 
         menu.exec(QCursor.pos())
 
-    # ── Pop-out button factory ───────────────
 
     def _make_popout_btn(self, slot):
         """
@@ -1093,6 +1334,12 @@ class ClusteringDisplayDialog(QDialog):
             self._draw_dendrogram_into(new_fig)
         elif tab == '3d':
             self._draw_3d_into(new_fig)
+        elif tab == 'som':
+            if self._som_obj is not None and self._som_neuron_labels is not None:
+                som_labels = self.final_results.get('SOM', {}).get('labels')
+                if som_labels is not None:
+                    _draw_som_grid(new_fig, self._som_obj, self._som_neuron_labels,
+                                   som_labels, self.node.config)
 
         new_canvas.draw()
         dlg.show()
@@ -1196,7 +1443,6 @@ class ClusteringDisplayDialog(QDialog):
         elif tab == 'overview':
             self._draw_overview()
 
-    # ── Subplot drag (cluster tab) ───────────
 
     def _cl_drag_press(self, event):
         """
@@ -1244,7 +1490,6 @@ class ClusteringDisplayDialog(QDialog):
         self._data_matrix_cache = None
         self.status.setText(f"Changed {key} → re-run evaluation for updated results")
 
-    # ── Overview tab ────────────────────────
 
     def _build_overview_tab(self):
         tab = QWidget()
@@ -1317,7 +1562,6 @@ class ClusteringDisplayDialog(QDialog):
         vl  = QVBoxLayout(tab)
         vl.setContentsMargins(4, 4, 4, 4)
 
-        # ── Toolbar ──────────────────────────────────────────
         hl = QHBoxLayout()
 
         hl.addWidget(QLabel("Point size:"))
@@ -1361,7 +1605,6 @@ class ClusteringDisplayDialog(QDialog):
         hl.addWidget(po)
         vl.addLayout(hl)
 
-        # ── 3D canvas ────────────────────────────────────────
         self._3d_fig    = Figure(figsize=(13, 9), dpi=110)
         self._3d_canvas = FigureCanvas(self._3d_fig)
         self._3d_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1398,7 +1641,6 @@ class ClusteringDisplayDialog(QDialog):
 
         dr = cfg.get('dim_reduction', 'None')
 
-        # ── Guard: need 3-column data ────────────────────────
         if data is None or data.shape[1] < 3 or not results:
             ax = target_fig.add_subplot(111)
             msg = ("No 3D data available.\n\n"
@@ -1563,7 +1805,6 @@ class ClusteringDisplayDialog(QDialog):
                           if linkage_method != 'ward' else 'euclidean')
         n              = data.shape[0]
 
-        # ── Build linkage matrix ─────────────────────────────────────────────
         try:
             Z = scipy_linkage(
                 np.ascontiguousarray(data, dtype=np.float64),
@@ -1577,7 +1818,6 @@ class ClusteringDisplayDialog(QDialog):
             ax.set_xticks([]); ax.set_yticks([])
             return
 
-        # ── Leaf labels: particle index + cluster id + sample name ───────────
         algo_name = cfg.get('selected_algorithm', 'Hierarchical')
         labels_arr = None
         if algo_name in self.final_results:
@@ -1606,7 +1846,6 @@ class ClusteringDisplayDialog(QDialog):
 
         use_trunc = (p_eff > 0)
 
-        # ── scipy dendrogram call ────────────────────────────────────────────
         thresh = self.dendro_thresh.value()
 
         dkw = dict(
@@ -1645,7 +1884,6 @@ class ClusteringDisplayDialog(QDialog):
         finally:
             sys.setrecursionlimit(old_limit)
 
-        # ── Styling ──────────────────────────────────────────────────────────
         fp  = make_font_properties(cfg)
         fc  = get_font_config(cfg)
 
@@ -1978,11 +2216,13 @@ class ClusteringDisplayDialog(QDialog):
         self._raw_matrix = matrix.copy()
         self._particle_samples = sample_labels
 
-        scaling = cfg.get('scaling', 'StandardScaler')
-        if scaling == 'StandardScaler':
-            matrix = StandardScaler().fit_transform(matrix)
-        elif scaling == 'MinMaxScaler':
-            matrix = MinMaxScaler().fit_transform(matrix)
+        scaling = cfg.get('scaling', 'CLR')
+        if scaling == 'CLR':
+            matrix = _apply_clr(matrix)
+        elif scaling == 'ILR':
+            matrix = _apply_ilr(matrix)
+        elif scaling == 'Robust Z-score':
+            matrix = _apply_robust_zscore(matrix)
 
         dr = cfg.get('dim_reduction', 'None')
         if dr == 'PCA':
@@ -2069,11 +2309,63 @@ class ClusteringDisplayDialog(QDialog):
                     cluster_method=cfg.get('optics_cluster_method', 'xi'),
                 ).fit_predict(data)
 
+            elif name == 'HDBSCAN':
+                if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
+                    return None
+                return _HDBSCAN_CLS(
+                    min_cluster_size=cfg.get('hdbscan_min_cluster_size', 5),
+                    min_samples=cfg.get('hdbscan_min_samples', 5),
+                    metric=cfg.get('hdbscan_metric', 'euclidean'),
+                ).fit_predict(data)
+
+            elif name == 'SOM':
+                return self._run_som(k, data, cfg)
+
         except Exception as e:
             print(f"Clustering failed for {name}: {e}")
         return None
 
-    # ── Step 1: Evaluate ────────────────────
+    def _run_som(self, k, data, cfg):
+        """
+        Args:
+            k (int): Number of final clusters.
+            data (np.ndarray): Preprocessed data matrix.
+            cfg (dict): Configuration dictionary.
+        Returns:
+            np.ndarray or None: Cluster label per data point.
+        """
+        rows = cfg.get('som_rows', 10)
+        cols = cfg.get('som_cols', 10)
+        sigma = cfg.get('som_sigma', 1.0)
+        lr = cfg.get('som_lr', 0.5)
+        n_iter = cfg.get('som_n_iter', 2000)
+        final_algo = cfg.get('som_final_algo', 'Hierarchical (Ward)')
+
+        som = _SOM(rows, cols, data.shape[1], sigma=sigma, lr=lr, n_iter=n_iter)
+        som.fit(data)
+        weights = som.get_weights()
+        bmu_labels = som.predict(data)
+
+        n_neurons = len(weights)
+        k_eff = min(k, n_neurons)
+        try:
+            if final_algo == 'Hierarchical (Ward)':
+                neuron_cluster_labels = AgglomerativeClustering(
+                    n_clusters=k_eff, linkage='ward', metric='euclidean',
+                ).fit_predict(weights)
+            else:
+                neuron_cluster_labels = KMeans(
+                    n_clusters=k_eff, random_state=42, n_init=10,
+                ).fit_predict(weights)
+        except Exception:
+            neuron_cluster_labels = KMeans(
+                n_clusters=k_eff, random_state=42, n_init=5,
+            ).fit_predict(weights)
+
+        self._som_obj = som
+        self._som_neuron_labels = neuron_cluster_labels
+        return neuron_cluster_labels[bmu_labels]
+
 
     def _run_evaluation(self):
         try:
@@ -2266,7 +2558,6 @@ class ClusteringDisplayDialog(QDialog):
                          self.optimal_k, view)
         self.eval_canvas.draw()
 
-    # ── Step 2: Cluster ─────────────────────
 
     def _run_clustering(self):
         try:
@@ -2334,6 +2625,15 @@ class ClusteringDisplayDialog(QDialog):
             if data.shape[1] >= 3:
                 self._draw_3d()
 
+            if 'SOM' in self.final_results and self._som_obj is not None:
+                som_labels = self.final_results['SOM'].get('labels')
+                if som_labels is not None:
+                    _draw_som_grid(self.som_fig, self._som_obj,
+                                   self._som_neuron_labels, som_labels,
+                                   self.node.config)
+                    self.som_canvas.draw()
+                    self.tabs.setCurrentIndex(self.som_tab_idx)
+
             if (self.node.config.get('selected_algorithm') == 'Hierarchical'
                     and self.node.config.get('hier_show_dendrogram', False)):
                 self._draw_dendrogram()
@@ -2345,6 +2645,24 @@ class ClusteringDisplayDialog(QDialog):
         finally:
             self.progress.setVisible(False)
 
+
+    def _build_som_tab(self):
+        tab = QWidget()
+        vl = QVBoxLayout(tab)
+        vl.setContentsMargins(4, 4, 4, 4)
+        hl = QHBoxLayout()
+        hl.addWidget(QLabel("SOM Grid Map — active only when SOM algorithm is selected"))
+        hl.addStretch()
+        po = self._make_popout_btn(lambda: self._pop_out_figure('som'))
+        hl.addWidget(po)
+        vl.addLayout(hl)
+        self.som_fig = Figure(figsize=(12, 6), dpi=110, tight_layout=True)
+        self.som_canvas = FigureCanvas(self.som_fig)
+        self.som_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.som_canvas.customContextMenuRequested.connect(
+            lambda pos: self._ctx_menu(pos, 'som'))
+        vl.addWidget(self.som_canvas, stretch=1)
+        self.som_tab_idx = self.tabs.addTab(tab, "⑦ SOM Grid")
 
     def _characterise(self, elements, data):
         """Generate cluster characterisation with real element-% composition labels.
@@ -2374,7 +2692,6 @@ class ClusteringDisplayDialog(QDialog):
                 if not cp:
                     continue
 
-                # ── Per-element stats ─────────────────────────────────────
                 estats = {}
                 for el in elements:
                     vals = [p.get('elements', {}).get(el, 0) for p in cp]
@@ -2394,7 +2711,6 @@ class ClusteringDisplayDialog(QDialog):
                             'total_particles': len(cp), 'frequency': 0,
                         }
 
-                # ── Composition label based on mean-signal % ──────────────
                 means_all = {}
                 for el in elements:
                     all_vals = [p.get('elements', {}).get(el, 0) for p in cp]
@@ -2469,7 +2785,6 @@ class ClusteringDisplayDialog(QDialog):
         char = self.characterisation[algo]
         clusters = sorted(char.keys())
 
-        # ── Table — 8 columns now ────────────────────────────────────────────
         self.char_table.setRowCount(len(clusters))
         self.char_table.setColumnCount(8)
         self.char_table.setHorizontalHeaderLabels([
@@ -2506,13 +2821,11 @@ class ClusteringDisplayDialog(QDialog):
 
         self.char_table.resizeColumnsToContents()
 
-        # ── Plot ─────────────────────────────────────────────────────────────
         _draw_characterisation(self.char_fig, algo, elem, self.characterisation,
                                self.node.config)
         self.char_canvas.draw()
         self._draw_radar(algo)
 
-    # ── Export ──────────────────────────────
 
     def _export_results(self):
         from PySide6.QtWidgets import QFileDialog
@@ -2554,7 +2867,7 @@ class ClusteringPlotNode(QObject):
 
     DEFAULT_CONFIG = {
         'data_type_display': 'Counts',
-        'scaling': 'StandardScaler',
+        'scaling': 'CLR',
         'dim_reduction': 'None',
         'n_components': 2,
         'filter_zeros': True,
@@ -2568,6 +2881,9 @@ class ClusteringPlotNode(QObject):
         'dbscan_eps': 0.5,
         'dbscan_min_samples': 5,
         'dbscan_metric': 'euclidean',
+        'hdbscan_min_cluster_size': 5,
+        'hdbscan_min_samples': 5,
+        'hdbscan_metric': 'euclidean',
         'spectral_n_neighbors': 10,
         'spectral_affinity': 'rbf',
         'mbkm_n_init': 3,
@@ -2581,6 +2897,12 @@ class ClusteringPlotNode(QObject):
         'optics_min_samples': 5,
         'optics_metric': 'euclidean',
         'optics_cluster_method': 'xi',
+        'som_rows': 10,
+        'som_cols': 10,
+        'som_sigma': 1.0,
+        'som_lr': 0.5,
+        'som_n_iter': 2000,
+        'som_final_algo': 'Hierarchical (Ward)',
         'min_clusters': 2,
         'max_clusters': 20,
         'auto_select_k': True,

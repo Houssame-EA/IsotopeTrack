@@ -5,7 +5,7 @@
 **A fast, free, and open-source desktop application for single-particle ICP-ToF-MS data analysis**
 
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://isotopetrack.readthedocs.io/en/latest/)
-[![Version](https://img.shields.io/badge/version-1.0.2-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.0.3-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
@@ -20,21 +20,20 @@
 | Platform | Requirements | Download |
 |----------|-------------|----------|
 | **macOS — Apple Silicon** | macOS 11.0 (Big Sur) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_M.dmg](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
-| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_Setup_1.0.2_W.exe](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
+| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_Setup_1.0.3_W.exe](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
 
 ---
 
 ## Key Features
 
 - **Multi-isotope** single-particle detection across all measured elements simultaneously
-- **Three detection methods** — Currie, Formula C, Compound Poisson Log-Normal, and Manual threshold
+- **Three detection methods** — Compound Poisson Log-Normal and Manual threshold
 - **Transport rate calibration** — mass-based, number-based, and weighted liquid methods
 - **Ionic calibration** — automatic model selection (Simple Linear, Linear with intercept, Weighted Linear)
 - **16 result plot types** on a drag-and-drop canvas — bar charts, heatmaps, correlation, clustering, isotope ratios, triangle plots, network graphs, and more
 - Supports **Nu Vitesse folders** (`run.info`), **TOFWERK** (`.h5`), and **CSV** formats
 - Built-in **materials database** with mass fraction and density lookup
-- **Batch processing** and comprehensive CSV export
-- Light / dark theme with fully responsive UI
+- **Batch processing** and CSV export
 
 ---
 

@@ -28,6 +28,11 @@ from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
     ElementCompositionDisplayDialog, ElementCompositionPlotNode,
 )
+from results.results_reader import (      
+    integrate_insights_panel,
+    make_insights_toggle_button,
+)
+
 from results.results_heatmap import HeatmapDisplayDialog, HeatmapPlotNode
 from results.results_bar_charts import (
     ElementBarChartDisplayDialog, ElementBarChartPlotNode,
@@ -2598,7 +2603,12 @@ class StickyNoteItem(QGraphicsWidget):
             event (Any): Qt event object.
         """
         from PySide6.QtWidgets import QInputDialog
-        text, ok = QInputDialog.getMultiLineText(None, "Edit Note", "Note text:", self._text)
+        parent_widget = None
+        if self.scene() and self.scene().views():
+            parent_widget = self.scene().views()[0]
+        text, ok = QInputDialog.getMultiLineText(
+            parent_widget, "Edit Note", "Note text:", self._text
+        )
         if ok:
             self._text = text
             fm = QFontMetrics(QFont(DS.FONT_FAMILY, self._font_size))
@@ -2898,10 +2908,10 @@ def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class):
             ual = _ual()
             if ual:
                 ual.log_action('DIALOG_OPEN', f'Opened viz node: {label}',
-                               {'node_type': self.workflow_node.node_type,
+                            {'node_type': self.workflow_node.node_type,
                                 'dialog': dialog_class.__name__})
-            dlg = dialog_class(self.workflow_node, self.parent_window)
-            dlg.show()
+            self._active_dialog = dialog_class(self.workflow_node, self.parent_window)
+            self._active_dialog.show()
 
     VizIconNodeItem.__name__ = f"{label.replace(' ', '').replace('/', '')}IconNodeItem"
     return VizIconNodeItem
@@ -3899,18 +3909,18 @@ class CanvasResultsDialog(QDialog):
     def _apply_chrome_theme(self):
         self.setStyleSheet(_canvas_chrome_style())
 
-    def _build(self):
+    def _build(self):                          
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
+    
         # ── header bar ─────────────────────────────────────────────────────
         hdr = QFrame()
         hdr.setObjectName("chromeHeader")
         hdr.setFixedHeight(52)
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(16, 0, 16, 0)
-
+    
         logo = QLabel("◆  Workflow Builder")
         logo.setStyleSheet(
             f"color: {_app_theme.palette.text_primary};"
@@ -3919,74 +3929,51 @@ class CanvasResultsDialog(QDialog):
         )
         hl.addWidget(logo)
         hl.addStretch()
-
+    
         def _zoom_out():
             self.canvas.set_zoom(self.canvas._zoom / 1.2)
-            ual = _ual()
-            if ual:
-                ual.log_action('CLICK', 'Canvas zoom out',
-                               {'zoom': round(self.canvas._zoom, 2)})
-
         def _zoom_in():
             self.canvas.set_zoom(self.canvas._zoom * 1.2)
-            ual = _ual()
-            if ual:
-                ual.log_action('CLICK', 'Canvas zoom in',
-                               {'zoom': round(self.canvas._zoom, 2)})
-
         def _fit():
             self.canvas.fit_content()
-            ual = _ual()
-            if ual:
-                ual.log_action('CLICK', 'Canvas fit content',
-                               {'zoom': round(self.canvas._zoom, 2)})
-
+    
         zm = QPushButton("−")
         zm.setFixedSize(30, 30)
         zm.setStyleSheet(self._tool_btn_style())
         zm.clicked.connect(_zoom_out)
         hl.addWidget(zm)
-
+    
         self.zoom_label = QLabel("100%")
         self.zoom_label.setFixedWidth(50)
         self.zoom_label.setAlignment(Qt.AlignCenter)
         hl.addWidget(self.zoom_label)
-
+    
         zp = QPushButton("+")
         zp.setFixedSize(30, 30)
         zp.setStyleSheet(self._tool_btn_style())
         zp.clicked.connect(_zoom_in)
         hl.addWidget(zp)
-
+    
         fit = QPushButton("Fit")
         fit.setFixedSize(40, 30)
         fit.setStyleSheet(self._tool_btn_style())
         fit.clicked.connect(_fit)
         hl.addWidget(fit)
-
+    
         sep = QFrame()
         sep.setFixedWidth(1)
         sep.setStyleSheet(f"background: {DS.BORDER}; margin: 8px 12px;")
         hl.addWidget(sep)
-
+    
+  
+        self._insights_btn = None  
+    
         def _clear_and_log():
-            node_count = len(self.canvas.scene.workflow_nodes)
-            link_count = len(self.canvas.scene.workflow_links)
             self.clear_canvas()
-            ual = _ual()
-            if ual:
-                ual.log_action('CLICK', 'Cleared canvas',
-                               {'nodes_removed': node_count,
-                                'links_removed': link_count})
-
+    
         def _close_and_log():
-            ual = _ual()
-            if ual:
-                ual.log_action('CLICK', 'Closed Workflow Builder',
-                               {'nodes': len(self.canvas.scene.workflow_nodes),
-                                'links': len(self.canvas.scene.workflow_links)})
             self.close()
-
+    
         clr = QPushButton("Clear All")
         clr.setStyleSheet(f"""
             QPushButton {{
@@ -3997,8 +3984,7 @@ class CanvasResultsDialog(QDialog):
             QPushButton:hover {{ background: {DS.ERROR_BG}; }}
         """)
         clr.clicked.connect(_clear_and_log)
-        hl.addWidget(clr)
-
+    
         back = QPushButton("✕  Close")
         back.setStyleSheet(f"""
             QPushButton {{
@@ -4009,14 +3995,24 @@ class CanvasResultsDialog(QDialog):
             QPushButton:hover {{ background: {DS.ACCENT_HOVER}; }}
         """)
         back.clicked.connect(_close_and_log)
+    
+        # The Insights button is inserted between the separator and Clear All.
+        # We create it after the splitter so we can pass the splitter reference.
+        # Use a placeholder slot that will be replaced below.
+        self._insights_placeholder = QPushButton("✦  Insights")
+        self._insights_placeholder.setFixedHeight(30)
+        self._insights_placeholder.setStyleSheet(self._tool_btn_style())
+        hl.addWidget(self._insights_placeholder)   # temporary
+    
+        hl.addWidget(clr)
         hl.addWidget(back)
-
+    
         root.addWidget(hdr)
-
+    
         # ── body splitter ──────────────────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
-
+    
         pf = QFrame()
         pf.setObjectName("chromePalette")
         pf.setFixedWidth(240)
@@ -4024,29 +4020,38 @@ class CanvasResultsDialog(QDialog):
         pl.setContentsMargins(0, 0, 0, 0)
         self.palette = NodePalette(self.parent)
         pl.addWidget(self.palette)
-
+    
         self.canvas = EnhancedCanvasView(self.parent)
         self.canvas.zoom_changed.connect(
             lambda z: self.zoom_label.setText(f"{int(z * 100)}%"))
-
+    
         splitter.addWidget(pf)
         splitter.addWidget(self.canvas)
-        splitter.setSizes([240, 1060])
+    
+        self.insights_panel = integrate_insights_panel(self, splitter)
+        splitter.setSizes([240, 860, 0])  
+    
+        real_btn = make_insights_toggle_button(self, splitter)
+        hl.replaceWidget(self._insights_placeholder, real_btn)
+        self._insights_placeholder.deleteLater()
+        self._insights_btn = real_btn
+        # ──────────────────────────────────────────────────────────────────
+    
         root.addWidget(splitter)
-
+    
         sb = QFrame()
         sb.setObjectName("chromeStatus")
         sb.setFixedHeight(28)
         sbl = QHBoxLayout(sb)
         sbl.setContentsMargins(12, 0, 12, 0)
-
+    
         self.status_label = QLabel("Ready")
         sbl.addWidget(self.status_label)
         sbl.addStretch()
-
+    
         self.sel_label = QLabel("")
         sbl.addWidget(self.sel_label)
-
+    
         self.canvas.scene.node_selection_changed.connect(self._update_sel)
         root.addWidget(sb)
         

@@ -59,13 +59,6 @@ except ImportError:
 from scipy import stats, special
 from numba import jit
 
-try:
-    from sklearn.mixture import GaussianMixture
-    SKLEARN_AVAILABLE = True
-except ImportError:
-    SKLEARN_AVAILABLE = False
-    print("scikit-learn not available - GMM method disabled. Install with 'pip install scikit-learn'")
-
 
 # ----------------------------------------------------------------------------------------------------------
 # ------------------------------------mathematical utility--------------------------------------------

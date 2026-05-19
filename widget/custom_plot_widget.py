@@ -518,6 +518,17 @@ class TraceEditorDialog(QDialog):
                             break
                 except Exception:
                     pass
+
+        # ── Persist so Detect Peaks re-draw reapplies these settings ───
+        original_name = self.curve_item.opts.get('name') or ''
+        if original_name:
+            if not hasattr(self.plot_widget, '_trace_settings'):
+                self.plot_widget._trace_settings = {}
+            self.plot_widget._trace_settings[original_name] = {
+                'color': self.current_color.name(),
+                'width': self.width_spin.value(),
+                'style': self.style_combo.currentText(),
+            }
         self.accept()
 
 
@@ -600,6 +611,15 @@ class ScatterEditorDialog(QDialog):
         self.scatter_item.setSize(self.size_spin.value())
         self.scatter_item.setBrush(pg.mkBrush(self.current_color))
         self.scatter_item.setPen(pg.mkPen(self.current_color.darker(120), width=1))
+        # ── Persist so Detect Peaks re-draw reapplies these settings ───
+        scatter_name = self.scatter_item.opts.get('name') or 'Integrated Particles'
+        if not hasattr(self.plot_widget, '_scatter_settings'):
+            self.plot_widget._scatter_settings = {}
+        self.plot_widget._scatter_settings[scatter_name] = {
+            'color': self.current_color.name(),
+            'size': self.size_spin.value(),
+            'symbol': self.symbol_combo.currentText(),
+        }
         self.accept()
 
 
@@ -1109,6 +1129,26 @@ class PlotSettingsDialog(QDialog):
         info.setStyleSheet(_hint_label_qss())
         lay.addWidget(info)
 
+        # ── Integrated-particle visibility toggle ──────────────────────────
+        # Only shown when the current plot contains particle integration scatter.
+        pi_items = self.plot_widget.getPlotItem().items
+        has_particle = any(
+            getattr(i, '_role', None) in ('particle_integration', 'peak_maximum')
+            for i in pi_items
+        )
+        self._particle_toggle_box = QGroupBox("Particle Scatter Visibility")
+        pt_lay = QHBoxLayout(self._particle_toggle_box)
+        pt_lay.setContentsMargins(10, 6, 10, 6)
+        self._particle_vis_check = QCheckBox("Show integrated particle points (orange)")
+        self._particle_vis_check.setChecked(
+            getattr(self.plot_widget, '_particle_scatter_visible', True)
+        )
+        self._particle_vis_check.toggled.connect(self._toggle_particle_scatter)
+        pt_lay.addWidget(self._particle_vis_check)
+        self._particle_toggle_box.setVisible(has_particle)
+        lay.addWidget(self._particle_toggle_box)
+        # ──────────────────────────────────────────────────────────────────
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         _p = _app_theme.palette
@@ -1145,6 +1185,9 @@ class PlotSettingsDialog(QDialog):
 
         for item in plot_item.items:
             if isinstance(item, pg.ScatterPlotItem):
+                # Show ALL scatter items — particle scatter appears here for
+                # colour/size editing; the dedicated checkbox above controls
+                # its visibility.
                 self.traces_layout.addWidget(self._scatter_row(item, idx))
                 idx += 1
 
@@ -1252,6 +1295,16 @@ class PlotSettingsDialog(QDialog):
                                 l.setText(nn); break
                     except Exception:
                         pass
+            # ── Persist so Detect Peaks re-draw reapplies these settings ──
+            trace_name = itm.opts.get('name') or ''
+            if trace_name:
+                if not hasattr(self.plot_widget, '_trace_settings'):
+                    self.plot_widget._trace_settings = {}
+                self.plot_widget._trace_settings[trace_name] = {
+                    'color': col_b._color.name(),
+                    'width': w_s.value(),
+                    'style': st_c.currentText(),
+                }
             try:
                 self.plot_widget.getPlotItem().update()
                 self.plot_widget.repaint()
@@ -1272,7 +1325,8 @@ class PlotSettingsDialog(QDialog):
         row = QFrame()
         row.setStyleSheet(_scatter_row_qss())
         rl = QHBoxLayout(row); rl.setContentsMargins(8,4,8,4)
-        rl.addWidget(QLabel("⬤")); rl.addWidget(QLabel(f"Points {index+1}"))
+        item_name = item.opts.get('name') or f'Points {index + 1}'
+        rl.addWidget(QLabel("⬤")); rl.addWidget(QLabel(item_name))
 
         try: color = pg.mkBrush(item.opts.get('brush','r')).color()
         except: color = QColor(255,0,0)
@@ -1316,6 +1370,15 @@ class PlotSettingsDialog(QDialog):
             itm.setSize(sz_s.value())
             itm.setBrush(pg.mkBrush(col_b._color))
             itm.setPen(pg.mkPen(col_b._color.darker(120), width=1))
+            # ── Persist so Detect Peaks re-draw reapplies these settings ──
+            scatter_name = itm.opts.get('name') or 'Integrated Particles'
+            if not hasattr(self.plot_widget, '_scatter_settings'):
+                self.plot_widget._scatter_settings = {}
+            self.plot_widget._scatter_settings[scatter_name] = {
+                'color': col_b._color.name(),
+                'size': sz_s.value(),
+                'symbol': sym_c.currentText(),
+            }
             try:
                 itm.update()
                 self.plot_widget.getPlotItem().update()
@@ -1404,6 +1467,58 @@ class PlotSettingsDialog(QDialog):
         ab.clicked.connect(apply_b)
         rl.addWidget(ab)
         return row
+
+    # ── Particle scatter toggle ───────────────────────────────────────────
+
+    def _toggle_particle_scatter(self, checked: bool):
+        """Show or hide all particle integration scatter items on the plot.
+
+        When hidden the corresponding legend entry is removed so the legend
+        shrinks automatically. When shown it is added back. The visibility
+        state is persisted on the plot widget so re-opening the dialog
+        remembers the last choice.
+
+        Args:
+            checked (bool): True = show, False = hide
+        """
+        pi = self.plot_widget.getPlotItem()
+
+        # Resolve the live legend regardless of where it is stored
+        legend = getattr(self.plot_widget, 'legend', None)
+        if legend is None:
+            legend = getattr(pi, 'legend', None)
+
+        for item in list(pi.items):
+            if getattr(item, '_role', None) != 'particle_integration':
+                continue
+
+            item.setVisible(checked)
+
+            # Only the representative item carries the legend entry
+            if getattr(item, '_legend_representative', False) and legend is not None:
+                try:
+                    if checked:
+                        name = item.opts.get('name') or 'Integrated Particles'
+                        legend.addItem(item, name)
+                    else:
+                        legend.removeItem(item)
+                except Exception:
+                    pass
+
+        # Persist state so the checkbox is consistent when dialog reopens
+        self.plot_widget._particle_scatter_visible = checked
+
+        # Trigger legend auto-resize
+        if legend is not None:
+            try:
+                legend.updateSize()
+            except Exception:
+                pass
+
+        try:
+            self.plot_widget.repaint()
+        except Exception:
+            pass
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -2226,7 +2341,11 @@ class EnhancedPlotWidget(pg.PlotWidget):
         yr = vr[1][1] - vr[1][0]
         if xr == 0 or yr == 0:
             return None
-        best = None; best_d = float('inf')
+        # Higher number = preferred on distance tie.
+        # peak_maximum (2) beats particle_integration (1) so double-clicking
+        # the green peak dot always opens its own editor, not the orange one.
+        _ROLE_PRIORITY = {'peak_maximum': 2, 'particle_integration': 1}
+        best = None; best_d = float('inf'); best_priority = -1
         for item in pi.items:
             if not isinstance(item, pg.ScatterPlotItem):
                 continue
@@ -2243,8 +2362,11 @@ class EnhancedPlotWidget(pg.PlotWidget):
             dists = np.sqrt(dx**2 + dy**2)
             mi = np.argmin(dists); md = dists[mi]
             px = md * self.width()
-            if px < threshold_px and md < best_d:
-                best_d = md; best = item
+            priority = _ROLE_PRIORITY.get(getattr(item, '_role', None), 0)
+            if px < threshold_px and (
+                md < best_d or (md == best_d and priority > best_priority)
+            ):
+                best_d = md; best = item; best_priority = priority
         return best
 
     def _find_closest_curve(self, scene_pos, threshold_px=15):
