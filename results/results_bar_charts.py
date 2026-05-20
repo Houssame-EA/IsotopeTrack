@@ -30,7 +30,7 @@ except Exception:
     _PlotSettingsDialog = None
     _CUSTOM_PLOT_AVAILABLE = False
 from results.utils_sort import (
-    sort_elements_by_mass, sort_element_dict_by_mass,
+    sort_elements_by_mass, sort_element_dict_by_mass, element_alphabetical_key,
 )
 
 
@@ -2224,7 +2224,7 @@ def _sort_elements_for_display(elements, counts, sort_option):
     elif sort_option == 'Descending':
         pairs = sorted(zip(elements, counts), key=lambda x: x[1], reverse=True)
     elif sort_option == 'Alphabetical':
-        pairs = sorted(zip(elements, counts), key=lambda x: x[0])
+        pairs = sorted(zip(elements, counts), key=lambda x: element_alphabetical_key(x[0]))
     else:
         ec = dict(zip(elements, counts))
         return mass_sorted, [ec[e] for e in mass_sorted]
@@ -2568,7 +2568,7 @@ class ElementBarChartDisplayDialog(QDialog):
             elif sort_opt == 'Descending':
                 totals.sort(key=lambda x: x[1], reverse=True)
             elif sort_opt == 'Alphabetical':
-                totals.sort(key=lambda x: x[0])
+                totals.sort(key=lambda x: element_alphabetical_key(x[0]))
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(all_elems), dtype=float)
@@ -2653,7 +2653,7 @@ class ElementBarChartDisplayDialog(QDialog):
             elif sort_opt == 'Descending':
                 totals.sort(key=lambda x: x[1], reverse=True)
             elif sort_opt == 'Alphabetical':
-                totals.sort(key=lambda x: x[0])
+                totals.sort(key=lambda x: element_alphabetical_key(x[0]))
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(all_elems), dtype=float)
@@ -2740,7 +2740,7 @@ class ElementBarChartDisplayDialog(QDialog):
             elif sort_opt == 'Descending':
                 totals.sort(key=lambda x: x[1], reverse=True)
             elif sort_opt == 'Alphabetical':
-                totals.sort(key=lambda x: x[0])
+                totals.sort(key=lambda x: element_alphabetical_key(x[0]))
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(samples), dtype=float)
