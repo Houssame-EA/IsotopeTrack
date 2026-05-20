@@ -18,6 +18,7 @@ from results.utils_sort import extract_mass_and_element
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
+    LABEL_MODES, format_element_label,
     FontSettingsGroup,
     apply_saturation_filter, build_element_matrix,
     get_sample_color, get_display_name,
@@ -56,6 +57,13 @@ def _mass_of(label: str) -> float | None:
         return None
     mass, _ = extract_mass_and_element(label)
     return float(mass) if mass != 999 else None
+
+
+def _format_ratio_text(num_label: str, den_label: str, mode: str) -> str:
+    """Display-only ratio text using configured label mode."""
+    num = format_element_label(num_label or '', mode)
+    den = format_element_label(den_label or '', mode)
+    return f"{num}/{den}"
 
 
 _BATCH_SUFFIX_RE = re.compile(r'\s*\[W\d+\]\s*$')
@@ -770,6 +778,10 @@ class IsotopeSettingsDialog(QDialog):
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
+        self.label_mode = QComboBox()
+        self.label_mode.addItems(LABEL_MODES)
+        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Label Mode:", self.label_mode)
         layout.addWidget(g)
 
         g = QGroupBox("Element Selection")
@@ -1681,6 +1693,7 @@ class IsotopeSettingsDialog(QDialog):
         """
         out = dict(self._cfg)
         out['data_type_display'] = self.data_type.currentText()
+        out['label_mode'] = self.label_mode.currentText()
         out['element1'] = self.elem1.currentText()
         out['element2'] = self.elem2.currentText()
         out['x_axis_element'] = self.x_elem.currentText()
@@ -1948,6 +1961,13 @@ class IsotopicRatioDisplayDialog(QDialog):
             a = dt_menu.addAction(dt); a.setCheckable(True)
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda _, d=dt: self._set_data_type(d))
+
+        lm_menu = menu.addMenu("Label Mode")
+        cur_lm = cfg.get('label_mode', 'Symbol')
+        for mode in LABEL_MODES:
+            a = lm_menu.addAction(mode); a.setCheckable(True)
+            a.setChecked(mode == cur_lm)
+            a.triggered.connect(lambda _, m=mode: self._set_cfg('label_mode', m))
 
         elems = self._available_elements()
         if elems:
@@ -2485,13 +2505,14 @@ class IsotopicRatioDisplayDialog(QDialog):
         e2 = cfg.get('element2', '')
         x_elem = cfg.get('x_axis_element', e2)
         dt = cfg.get('data_type_display', 'Counts')
+        lm = cfg.get('label_mode', 'Symbol')
 
         eff_cfg = get_sample_correction_config(cfg, sample_name)
         method = eff_cfg.get('correction_method', 'None')
 
-        x_label = f"{x_elem} ({dt})"
+        x_label = f"{format_element_label(x_elem, lm)} ({dt})"
 
-        y_base = f"Ratio {e1}/{e2}"
+        y_base = f"Ratio {_format_ratio_text(e1, e2, lm)}"
         if method != 'None':
             y_base += f" (corrected)"
         y_label = y_base
@@ -2782,9 +2803,10 @@ class IsotopicRatioDisplayDialog(QDialog):
         x, ratios, _, color_values, corrected_linear, mean_raw = result
         color = cfg.get('single_sample_color', '#E74C3C')
         e1, e2 = cfg.get('element1', ''), cfg.get('element2', '')
+        lm = cfg.get('label_mode', 'Symbol')
 
         scatter, vmin, vmax = self._add_scatter(pi, x, ratios, cfg, color, color_values)
-        legend_items = [(scatter, f"Ratio {e1}/{e2}")]
+        legend_items = [(scatter, f"Ratio {_format_ratio_text(e1, e2, lm)}")]
 
         self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_key)
         self._add_reference_lines(pi, cfg, corrected_linear, legend_items, sample_name=sample_key)
@@ -2934,6 +2956,7 @@ class IsotopicRatioPlotNode(QObject):
         'element2': '',
         'x_axis_element': '',
         'color_element': '',
+        'label_mode': 'Symbol',
         'data_type_display': 'Counts',
         'correction_method': 'None',
         'ref_isotope_num': '',

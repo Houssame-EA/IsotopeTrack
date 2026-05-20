@@ -22,14 +22,13 @@ import numpy as np
 import pandas as pd
 from collections import defaultdict
 import math
-import re
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, make_font_properties, apply_font_to_matplotlib,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_sample_color, get_display_name,
-    download_matplotlib_figure,
+    download_matplotlib_figure, LABEL_MODES, format_combination_label,
 )
 from widget.colors import default_colors, colorheatmap
 
@@ -133,14 +132,14 @@ class SingleMultipleElementHelper:
                 'total_particles': total, 'all_combinations': sorted(combos.items(), key=lambda x: x[1]['count'], reverse=True)}
 
     @staticmethod
-    def format_clean(combo_str):
+    def format_clean(combo_str, label_mode='Symbol'):
         """
         Args:
             combo_str (Any): The combo str.
         Returns:
             object: Result of the operation.
         """
-        return ', '.join(re.sub(r'^\d+', '', e.strip()) for e in combo_str.split(','))
+        return format_combination_label(combo_str, label_mode)
 
     @staticmethod
     def calc_per_ml(count, parent_window, dilution=1.0, sample_info=None):
@@ -181,7 +180,7 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def pie_data(results, combo_type, custom_colors=None, per_ml=False,
-                 parent_window=None, dilution=1.0, sample_info=None):
+                 parent_window=None, dilution=1.0, sample_info=None, label_mode='Symbol'):
         """
         Args:
             results (Any): The results.
@@ -202,7 +201,7 @@ class SingleMultipleElementHelper:
         labels, values, colors, keys = [], [], [], []
         for i, (combo, det, pct) in enumerate(combos):
             val = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, sample_info) if per_ml else det['count']
-            clean = SingleMultipleElementHelper.format_clean(combo)
+            clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
             labels.append(f"{clean}\n({val:.0f} {unit})")
             values.append(val)
             colors.append((custom_colors or {}).get(combo, palette[i % len(palette)]))
@@ -210,7 +209,7 @@ class SingleMultipleElementHelper:
         return {'labels': labels, 'values': values, 'colors': colors, 'combinations': keys}
 
     @staticmethod
-    def heatmap_data(results_dict, per_ml=False, parent_window=None, dilution=1.0):
+    def heatmap_data(results_dict, per_ml=False, parent_window=None, dilution=1.0, label_mode='Symbol'):
         """
         Args:
             results_dict (Any): The results dict.
@@ -225,9 +224,9 @@ class SingleMultipleElementHelper:
         all_single, all_multi = set(), set()
         for sr in results_dict.values():
             for c, _, _ in sr['single_combinations']:
-                all_single.add(SingleMultipleElementHelper.format_clean(c))
+                all_single.add(SingleMultipleElementHelper.format_clean(c, label_mode))
             for c, _, _ in sr['multiple_combinations']:
-                all_multi.add(SingleMultipleElementHelper.format_clean(c))
+                all_multi.add(SingleMultipleElementHelper.format_clean(c, label_mode))
 
         names = list(results_dict.keys())
         s_part = pd.DataFrame(0.0, index=sorted(all_single), columns=names)
@@ -235,7 +234,7 @@ class SingleMultipleElementHelper:
 
         top_multi = sorted(all_multi, key=lambda x: sum(
             next((d['count'] for c, d, _ in sr['multiple_combinations']
-                  if SingleMultipleElementHelper.format_clean(c) == x), 0)
+                  if SingleMultipleElementHelper.format_clean(c, label_mode) == x), 0)
             for sr in results_dict.values()), reverse=True)[:30]
         m_part = pd.DataFrame(0.0, index=top_multi, columns=names)
         m_pct = pd.DataFrame(0.0, index=top_multi, columns=names)
@@ -243,13 +242,13 @@ class SingleMultipleElementHelper:
         for sn, sr in results_dict.items():
             si = {'is_summed': False}
             for combo, det, pct in sr['single_combinations']:
-                clean = SingleMultipleElementHelper.format_clean(combo)
+                clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
                 if clean in s_part.index:
                     v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
                     s_part.loc[clean, sn] = v
                     s_pct.loc[clean, sn] = pct
             for combo, det, pct in sr['multiple_combinations']:
-                clean = SingleMultipleElementHelper.format_clean(combo)
+                clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
                 if clean in m_part.index:
                     v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
                     m_part.loc[clean, sn] = v
@@ -259,7 +258,7 @@ class SingleMultipleElementHelper:
                 'multiple_particles': m_part, 'multiple_percentage': m_pct}
 
     @staticmethod
-    def statistics_table(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilution=1.0):
+    def statistics_table(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilution=1.0, label_mode='Symbol'):
         """
         Args:
             analysis_data (Any): The analysis data.
@@ -285,11 +284,11 @@ class SingleMultipleElementHelper:
                 rows.append([sn, 'SUMMARY', 'Single Total', f'{calc(sc):.1f}', f'{sp:.1f}%', f'sNPs {unit}'])
                 rows.append([sn, 'SUMMARY', 'Multiple Total', f'{calc(mc):.1f}', f'{mp:.1f}%', f'mNPs {unit}'])
                 for combo, det, pct in sr['single_combinations']:
-                    rows.append([sn, 'SINGLE', SingleMultipleElementHelper.format_clean(combo),
+                    rows.append([sn, 'SINGLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
                                  f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'sNP {unit}'])
                 for combo, det, pct in sr['multiple_combinations']:
                     ne = len(combo.split(', '))
-                    rows.append([sn, 'MULTIPLE', SingleMultipleElementHelper.format_clean(combo),
+                    rows.append([sn, 'MULTIPLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
                                  f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
             return pd.DataFrame(rows, columns=['Sample', 'Type', 'Combination', 'Count', '%', 'Description'])
         else:
@@ -302,11 +301,11 @@ class SingleMultipleElementHelper:
             rows.append(['SUMMARY', 'Single Total', f'{calc(sc):.1f}', f'{sp:.1f}%', f'sNPs {unit}'])
             rows.append(['SUMMARY', 'Multiple Total', f'{calc(mc):.1f}', f'{mp:.1f}%', f'mNPs {unit}'])
             for combo, det, pct in analysis_data['single_combinations']:
-                rows.append(['SINGLE', SingleMultipleElementHelper.format_clean(combo),
+                rows.append(['SINGLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
                              f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'sNP {unit}'])
             for combo, det, pct in analysis_data['multiple_combinations']:
                 ne = len(combo.split(', '))
-                rows.append(['MULTIPLE', SingleMultipleElementHelper.format_clean(combo),
+                rows.append(['MULTIPLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
                              f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
             return pd.DataFrame(rows, columns=['Type', 'Combination', 'Count', '%', 'Description'])
 
@@ -379,7 +378,7 @@ class PieStyleGroup:
         f = QFormLayout(g)
 
         self._label_mode = QComboBox()
-        self._label_mode.addItems(['Symbol', 'Mass + Symbol'])
+        self._label_mode.addItems(LABEL_MODES)
         self._label_mode.setCurrentText(cfg.get('label_mode', 'Symbol'))
         f.addRow("Label Mode:", self._label_mode)
 
@@ -738,7 +737,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
         lm = menu.addMenu("Label Mode")
-        for mode in ['Symbol', 'Mass + Symbol']:
+        for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
@@ -796,7 +795,9 @@ class SingleMultipleElementDisplayDialog(QDialog):
             QMessageBox.warning(self, "Warning", "No data available"); return
         cfg = self.node.config
         df = SingleMultipleElementHelper.statistics_table(
-            ad, self._multi, cfg.get('use_particles_per_ml'), self.parent_window, cfg.get('dilution_factor', 1.0))
+            ad, self._multi, cfg.get('use_particles_per_ml'),
+            self.parent_window, cfg.get('dilution_factor', 1.0),
+            cfg.get('label_mode', 'Symbol'))
         path, _ = QFileDialog.getSaveFileName(self, "Save Table", "statistics.csv", "CSV (*.csv);;All (*)")
         if path:
             try:
@@ -917,7 +918,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
             object: Result of the operation.
         """
         pd_data = SingleMultipleElementHelper.pie_data(
-            results, ctype, custom_colors, pml, self.parent_window, dil, si)
+            results, ctype, custom_colors, pml, self.parent_window, dil, si,
+            cfg.get('label_mode', 'Symbol'))
         if not pd_data:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center',
                     transform=ax.transAxes, color='gray')
@@ -938,13 +940,9 @@ class SingleMultipleElementDisplayDialog(QDialog):
             Returns:
                 str: Result of the operation.
             """
-            if mode == 'Symbol':
-                lines = lbl.split('\n')
-                lines[0] = ', '.join(
-                    re.sub(r'^\d+', '', tok.strip()) for tok in lines[0].split(',')
-                )
-                return '\n'.join(lines)
-            return lbl
+            lines = lbl.split('\n')
+            lines[0] = format_combination_label(lines[0], mode)
+            return '\n'.join(lines)
 
         # ── Optionally append percentage line ────────────────────────
         total_val = sum(values) or 1.0
@@ -1080,7 +1078,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
         fc = cfg.get('font_color', '#000000')
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
-        hd = SingleMultipleElementHelper.heatmap_data(ad, pml, self.parent_window, dil)
+        hd = SingleMultipleElementHelper.heatmap_data(
+            ad, pml, self.parent_window, dil, cfg.get('label_mode', 'Symbol'))
         if not hd:
             return
         cmap_name = cfg.get('colormap', 'YlGn')
@@ -1163,7 +1162,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
             cfg = self.node.config
             df = SingleMultipleElementHelper.statistics_table(
                 ad, self._multi, cfg.get('use_particles_per_ml'),
-                self.parent_window, cfg.get('dilution_factor', 1.0))
+                self.parent_window, cfg.get('dilution_factor', 1.0),
+                cfg.get('label_mode', 'Symbol'))
             self.table.setRowCount(len(df))
             self.table.setColumnCount(len(df.columns))
             self.table.setHorizontalHeaderLabels(df.columns.tolist())
@@ -1272,3 +1272,4 @@ class SingleMultipleElementPlotNode(QObject):
                 if r:
                     result[sn] = r
         return result if result else None
+

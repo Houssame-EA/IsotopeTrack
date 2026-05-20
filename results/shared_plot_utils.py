@@ -121,10 +121,54 @@ class MplDraggableCanvas(_FigureCanvasBase):
 
 
 # ─────────────────────────────────────────────
-# Element label formatting (Symbol vs Mass+Symbol)
+# Element label formatting (Symbol / Mass+Symbol / Atomic Notation)
 # ─────────────────────────────────────────────
 
-LABEL_MODES = ['Symbol', 'Mass + Symbol']
+LABEL_MODES = ['Symbol', 'Mass + Symbol', 'Atomic Notation']
+
+_SUPERSCRIPT_DIGITS = str.maketrans({
+    '0': '\u2070',
+    '1': '\u00B9',
+    '2': '\u00B2',
+    '3': '\u00B3',
+    '4': '\u2074',
+    '5': '\u2075',
+    '6': '\u2076',
+    '7': '\u2077',
+    '8': '\u2078',
+    '9': '\u2079',
+})
+_SUPERSCRIPT_DIGIT_RE = re.compile(r'[\u2070\u00B9\u00B2\u00B3\u2074\u2075\u2076\u2077\u2078\u2079]')
+
+
+def superscript_digits(text: str) -> str:
+    """Convert ASCII digits to unicode superscript digits."""
+    return str(text).translate(_SUPERSCRIPT_DIGITS)
+
+
+def parse_element_label(label: str) -> tuple[str, str | None]:
+    """Parse element/isotope text into (symbol_like, mass_or_none)."""
+    text = str(label or '').strip()
+    if not text:
+        return '', None
+    if _SUPERSCRIPT_DIGIT_RE.search(text):
+        return text, None
+
+    lead = re.match(r'^\s*(\d+)\s*([A-Za-z][A-Za-z]?)\s*([+\-]\d*)?\s*$', text)
+    if lead:
+        return lead.group(2), lead.group(1)
+
+    trail = re.match(r'^\s*([A-Za-z][A-Za-z]?)\s*(?:[-\s]?\s*(\d+))?\s*([+\-]\d*)?\s*$', text)
+    if trail:
+        sym = trail.group(1)
+        mass = trail.group(2)
+        charge = trail.group(3) or ''
+        return f"{sym}{charge}", mass
+
+    alpha = re.match(r'^\s*([A-Za-z][A-Za-z]?)', text)
+    if alpha:
+        return alpha.group(1), None
+    return text, None
 
 
 def format_element_label(key: str, mode: str) -> str:
@@ -142,8 +186,43 @@ def format_element_label(key: str, mode: str) -> str:
     """
     if mode == 'Mass + Symbol':
         return key
-    tokens = [re.sub(r'^\d+', '', tok.strip()) for tok in key.split(',')]
-    return ', '.join(tokens)
+
+    def _fmt_token(tok: str) -> str:
+        original = tok.strip()
+        if not original:
+            return original
+        symbol, mass = parse_element_label(original)
+        if mode == 'Atomic Notation':
+            if _SUPERSCRIPT_DIGIT_RE.search(original):
+                return original
+            if mass:
+                return f"{superscript_digits(mass)}{symbol}"
+            return symbol or original
+        return symbol or original
+
+    return ', '.join(_fmt_token(tok) for tok in str(key).split(','))
+
+
+def format_combination_label(label: str, mode: str) -> str:
+    """Format combo labels while preserving separators like ',' and '+'."""
+    text = str(label)
+    parts = [p for p in re.split(r'(\s*,\s*|\s*\+\s*)', text) if p != '']
+    out = []
+    for p in parts:
+        if re.fullmatch(r'\s*,\s*|\s*\+\s*', p):
+            out.append(p)
+        else:
+            out.append(format_element_label(p, mode))
+    return ''.join(out)
+
+
+def format_label_text_tokens(text: str, mode: str) -> str:
+    """Format isotope-like tokens inside a free-form label string."""
+    s = str(text or '')
+    token_re = re.compile(
+        r'(?<![A-Za-z0-9])(?:\d+[A-Za-z]{1,2}|[A-Za-z]{1,2}(?:[-\s]?\d+))(?![A-Za-z0-9])'
+    )
+    return token_re.sub(lambda m: format_element_label(m.group(0), mode), s)
 
 
 DEFAULT_FONT_FAMILY = "Times New Roman"
