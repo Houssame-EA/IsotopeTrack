@@ -1,5 +1,20 @@
 import re
 
+_ELEMENT_SYMBOLS = {
+    'H', 'He', 'Li', 'Be', 'B', 'C', 'N', 'O', 'F', 'Ne',
+    'Na', 'Mg', 'Al', 'Si', 'P', 'S', 'Cl', 'Ar', 'K', 'Ca',
+    'Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn',
+    'Ga', 'Ge', 'As', 'Se', 'Br', 'Kr', 'Rb', 'Sr', 'Y', 'Zr',
+    'Nb', 'Mo', 'Tc', 'Ru', 'Rh', 'Pd', 'Ag', 'Cd', 'In', 'Sn',
+    'Sb', 'Te', 'I', 'Xe', 'Cs', 'Ba', 'La', 'Ce', 'Pr', 'Nd',
+    'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb',
+    'Lu', 'Hf', 'Ta', 'W', 'Re', 'Os', 'Ir', 'Pt', 'Au', 'Hg',
+    'Tl', 'Pb', 'Bi', 'Po', 'At', 'Rn', 'Fr', 'Ra', 'Ac', 'Th',
+    'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm',
+    'Md', 'No', 'Lr', 'Rf', 'Db', 'Sg', 'Bh', 'Hs', 'Mt', 'Ds',
+    'Rg', 'Cn', 'Nh', 'Fl', 'Mc', 'Lv', 'Ts', 'Og',
+}
+
 def extract_mass_and_element(element_name):
     """ 
     Args:
@@ -91,3 +106,36 @@ def sort_element_dict_by_mass(element_dict):
     sorted_elements = sort_elements_by_mass(list(element_dict.keys()))
     
     return {element: element_dict[element] for element in sorted_elements}
+
+
+def _extract_element_symbol(label):
+    """Extract a valid chemical symbol from a label like 197Au, Au197, or Au+."""
+    text = str(label).strip()
+    for token in re.findall(r'[A-Za-z]{1,2}', text):
+        symbol = token[0].upper() + token[1:].lower()
+        if symbol in _ELEMENT_SYMBOLS:
+            return symbol
+    return None
+
+
+def _extract_isotope_mass(label):
+    """Extract isotope mass from labels with prefix or suffix notation."""
+    text = str(label).strip()
+    m = re.search(r'^\s*(\d+)\s*[A-Za-z]', text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'[A-Za-z]+\s*(\d+)\s*(?:[+-]\d*)?\s*$', text)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def element_alphabetical_key(label):
+    """Sort key that prioritizes chemical symbol, then mass/label for stability."""
+    text = str(label).strip()
+    symbol = _extract_element_symbol(text)
+    mass = _extract_isotope_mass(text)
+    unknown_symbol = 1 if symbol is None else 0
+    missing_mass = 1 if mass is None else 0
+    symbol_key = symbol if symbol is not None else text.casefold()
+    return (unknown_symbol, symbol_key, missing_mass, mass or 0, text.casefold(), text)
