@@ -14,11 +14,11 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
-    download_matplotlib_figure,
+    download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label,
 )
 
 from results.utils_sort import (
-    sort_elements_by_mass, format_element_label, format_combination_label
+    sort_elements_by_mass
 )
 from widget.colors import colorheatmap
 
@@ -123,8 +123,16 @@ class HeatmapSettingsDialog(QDialog):
 
         g = QGroupBox("Labels")
         fl = QFormLayout(g)
+        self.label_mode_combo = QComboBox()
+        self.label_mode_combo.addItems(LABEL_MODES)
+        self.label_mode_combo.setCurrentText(
+            self._config.get('label_mode',
+                             'Mass + Symbol' if self._config.get('show_mass_numbers', True) else 'Symbol'))
+        fl.addRow("Label mode:", self.label_mode_combo)
         self.mass_numbers_cb = QCheckBox()
-        self.mass_numbers_cb.setChecked(self._config.get('show_mass_numbers', True))
+        self.mass_numbers_cb.setChecked(
+            self._config.get('show_mass_numbers',
+                             self._config.get('label_mode', 'Mass + Symbol') != 'Symbol'))
         fl.addRow("Show mass numbers:", self.mass_numbers_cb)
         layout.addWidget(g)
 
@@ -244,7 +252,13 @@ class HeatmapSettingsDialog(QDialog):
         cfg['end_range'] = self.end_spin.value()
         cfg['filter_zeros'] = self.filter_zeros.isChecked()
         cfg['min_particles'] = self.min_particles.value()
-        cfg['show_mass_numbers'] = self.mass_numbers_cb.isChecked()
+        selected_mode = self.label_mode_combo.currentText()
+        if selected_mode == 'Atomic Notation':
+            cfg['label_mode'] = 'Atomic Notation'
+            cfg['show_mass_numbers'] = True
+        else:
+            cfg['show_mass_numbers'] = self.mass_numbers_cb.isChecked()
+            cfg['label_mode'] = 'Mass + Symbol' if cfg['show_mass_numbers'] else 'Symbol'
         cfg['show_numbers'] = self.show_numbers_cb.isChecked()
         cfg['show_colorbar'] = self.show_colorbar_cb.isChecked()
         cfg['colorscale'] = self.colorscale.currentText()
@@ -589,7 +603,11 @@ class HeatmapDisplayDialog(QDialog):
         start = cfg.get('start_range', 1)
         end = cfg.get('end_range', 10)
         min_p = cfg.get('min_particles', 1)
-        show_mass = cfg.get('show_mass_numbers', True)
+        label_mode = cfg.get('label_mode')
+        if not label_mode:
+            label_mode = 'Mass + Symbol' if cfg.get('show_mass_numbers', True) else 'Symbol'
+        elif not cfg.get('show_mass_numbers', True) and label_mode != 'Atomic Notation':
+            label_mode = 'Symbol'
         cscale = cfg.get('colorscale', 'YlGnBu')
         show_nums = cfg.get('show_numbers', True)
         show_cbar = cfg.get('show_colorbar', True)
@@ -636,7 +654,7 @@ class HeatmapDisplayDialog(QDialog):
 
         for combo, d in selected:
             count = d['particle_count']
-            fmt = format_combination_label(combo, show_mass)
+            fmt = format_combination_label(combo, label_mode)
             labels.append(f"{fmt} ({count})")
             hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
 
@@ -676,7 +694,7 @@ class HeatmapDisplayDialog(QDialog):
             ax.grid(which='minor', color='white', linewidth=cell_lw)
             ax.tick_params(which='minor', length=0)
 
-        x_labels = [format_element_label(e, show_mass) for e in all_elems]
+        x_labels = [format_element_label(e, label_mode) for e in all_elems]
         ax.set_xticks(range(len(x_labels)))
         ax.set_xticklabels(x_labels, rotation=x_rotation,
                            ha='right' if x_rotation > 0 else 'center',
@@ -737,9 +755,9 @@ def _combo_matches(combination: str, search_elements: list) -> bool:
     combo_parts = [p.strip() for p in combination.split(',')]
     for se in search_elements:
         found = False
-        se_clean = format_element_label(se, False).lower()
+        se_clean = format_element_label(se, 'Symbol').lower()
         for cp in combo_parts:
-            cp_clean = format_element_label(cp, False).lower()
+            cp_clean = format_element_label(cp, 'Symbol').lower()
             if se.lower() in cp.lower() or se_clean in cp_clean:
                 found = True
                 break
@@ -760,6 +778,7 @@ class HeatmapPlotNode(QObject):
         'filter_combinations': False,
         'start_range': 1, 'end_range': 10,
         'filter_zeros': True, 'min_particles': 1,
+        'label_mode': 'Mass + Symbol',
         'show_mass_numbers': True, 'colorscale': 'YlGnBu',
         'show_numbers': True, 'show_colorbar': True,
         'display_mode': 'Individual Subplots',

@@ -14,6 +14,7 @@ import math
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
+    LABEL_MODES, format_label_text_tokens,
     FontSettingsGroup, build_axis_labels,
     apply_saturation_filter, apply_zero_filter, apply_log_transform,
     evaluate_equation, evaluate_equation_array, build_element_matrix,
@@ -168,10 +169,14 @@ class CorrelationSettingsDialog(QDialog):
         layout.addWidget(self.custom_group)
 
         g = QGroupBox("Data Type")
-        vl = QVBoxLayout(g)
+        fl = QFormLayout(g)
         self.data_type = QComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._config.get('data_type_display', 'Counts'))
-        vl.addWidget(self.data_type)
+        fl.addRow("Data Type:", self.data_type)
+        self.label_mode_combo = QComboBox()
+        self.label_mode_combo.addItems(LABEL_MODES)
+        self.label_mode_combo.setCurrentText(self._config.get('label_mode', 'Symbol'))
+        fl.addRow("Label Mode:", self.label_mode_combo)
         layout.addWidget(g)
 
         g = QGroupBox("Plot Options")
@@ -424,6 +429,7 @@ class CorrelationSettingsDialog(QDialog):
         cfg['y_min'] = self._y_min.value()
         cfg['y_max'] = self._y_max.value()
         cfg['data_type_display'] = self.data_type.currentText()
+        cfg['label_mode'] = self.label_mode_combo.currentText()
         cfg['filter_zeros'] = self.filter_zeros.isChecked()
         cfg['filter_saturated'] = self.filter_sat.isChecked()
         cfg['saturation_threshold'] = self.sat_thresh.value()
@@ -687,6 +693,13 @@ class CorrelationPlotDisplayDialog(QDialog):
             a = dt_menu.addAction(dt); a.setCheckable(True)
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda checked, d=dt: self._set_data_type(d))
+
+        lm_menu = menu.addMenu("Label Mode")
+        cur_lm = cfg.get('label_mode', 'Symbol')
+        for mode in LABEL_MODES:
+            a = lm_menu.addAction(mode); a.setCheckable(True)
+            a.setChecked(mode == cur_lm)
+            a.triggered.connect(lambda _, m=mode: self._set_elem('label_mode', m))
 
         if cfg.get('mode') == 'Simple Element Correlation':
             elems = self._available_elements()
@@ -1300,11 +1313,13 @@ class CorrelationPlotDisplayDialog(QDialog):
         if cfg.get('mode') != 'Simple Element Correlation':
             x_lbl = cfg.get('x_label', '') or cfg.get('x_equation', 'X-axis')
             y_lbl = cfg.get('y_label', '') or cfg.get('y_equation', 'Y-axis')
-            dt = cfg.get('data_type_display', 'Counts')
             xl = f"log({x_lbl})" if cfg.get('log_x') else x_lbl
             yl = f"log({y_lbl})" if cfg.get('log_y') else y_lbl
         else:
             xl, yl = build_axis_labels(cfg)
+            lm = cfg.get('label_mode', 'Symbol')
+            xl = format_label_text_tokens(xl, lm)
+            yl = format_label_text_tokens(yl, lm)
         set_axis_labels(pi, xl, yl, cfg)
 
         if cfg.get('log_x'):
@@ -1425,6 +1440,7 @@ class CorrelationPlotNode(QObject):
         'x_element': '', 'y_element': '', 'color_element': 'None',
         'x_equation': '', 'y_equation': '',
         'x_label': 'X-axis', 'y_label': 'Y-axis',
+        'label_mode': 'Symbol',
         'data_type_display': 'Counts',
         'filter_zeros': True, 'filter_saturated': True,
         'filter_outliers': False,

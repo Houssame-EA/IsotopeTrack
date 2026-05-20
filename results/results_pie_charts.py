@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
+    LABEL_MODES, format_element_label, format_combination_label,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -50,7 +51,6 @@ DEFAULT_COMBO_COLORS = [
     '#FF6B35', '#FFD700', '#20B2AA', '#FF69B4', '#32CD32',
     '#FF4500', '#9370DB', '#00CED1', '#FF1493', '#00FF7F',
 ]
-LABEL_MODES = ['Symbol', 'Mass + Symbol']
 LEGEND_POSITIONS = [
     'best', 'upper right', 'upper left', 'lower left', 'lower right',
     'center left', 'center right', 'lower center', 'upper center', 'center',
@@ -69,25 +69,6 @@ def _is_multi(input_data):
         object: Result of the operation.
     """
     return bool(input_data and input_data.get('type') == 'multiple_sample_data')
-
-
-def _format_element_label(key: str, mode: str) -> str:
-    """Format an element key for display according to label mode.
-
-    'Symbol'        → bare symbol, stripping any leading mass number
-                      e.g. '107Ag' → 'Ag',  '107Ag, 197Au' → 'Ag, Au'
-    'Mass + Symbol' → keep as-is (full isotope notation)
-                      e.g. '107Ag',          '107Ag, 197Au'
-    Args:
-        key (str): Dictionary or storage key.
-        mode (str): Operating mode string.
-    Returns:
-        str: Result of the operation.
-    """
-    if mode == 'Mass + Symbol':
-        return key
-    tokens = [re.sub(r'^\d+', '', tok.strip()) for tok in key.split(',')]
-    return ', '.join(tokens)
 
 
 class _ColorBtn(QPushButton):
@@ -1059,7 +1040,7 @@ class PieChartDisplayDialog(QDialog):
                 colors.append(ec.get(lbl, DEFAULT_PIE_COLORS[i % len(DEFAULT_PIE_COLORS)]))
                 count = orig_counts.get(lbl, 0)
 
-            parts = [_format_element_label(lbl, cfg.get('label_mode', 'Symbol'))]
+            parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'))]
             if cfg.get('show_counts', True):      parts.append(f"({count:,})")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
@@ -1260,6 +1241,10 @@ class ElementCompositionSettingsDialog(QDialog):
         self._data_type.setCurrentText(
             self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
         f1.addRow("Data Type:", self._data_type)
+        self._label_mode = QComboBox()
+        self._label_mode.addItems(LABEL_MODES)
+        self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        f1.addRow("Element Label Mode:", self._label_mode)
         lay.addWidget(g1)
 
         # ── Display Mode (multi only) ─────────────────────────────────
@@ -1295,10 +1280,6 @@ class ElementCompositionSettingsDialog(QDialog):
         self._show_epct.setChecked(self._cfg.get('show_element_percentages', False))
         for cb in (self._show_vals, self._show_counts, self._show_pct, self._show_epct):
             f3.addRow("", cb)
-        self._label_mode = QComboBox()
-        self._label_mode.addItems(LABEL_MODES)
-        self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Label Mode:", self._label_mode)
         lay.addWidget(g3)
 
         # ── Combination Colours + Explode ─────────────────────────────
@@ -1618,7 +1599,7 @@ class ElementCompositionDisplayDialog(QDialog):
                 elems = data[lbl].get('elements', {})      if lbl in data else {}
 
             mode  = cfg.get('label_mode', 'Symbol')
-            parts = [_format_element_label(lbl, mode)]
+            parts = [format_combination_label(lbl, mode)]
             if cfg.get('show_counts', True):
                 parts.append(f"({pc:,} particles)")
             if cfg.get('show_data_values', True) and dt != 'Counts':
