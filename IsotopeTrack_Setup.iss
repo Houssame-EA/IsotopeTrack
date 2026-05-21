@@ -7,7 +7,7 @@
 #define AppVersion     "1.0.4"
 #define AppPublisher   "IsotopeTrack"
 #define AppExeName     "IsotopeTrack.exe"
-#define SourceDir      "C:\Users\Houssame-Eddine\Desktop\App_mac\dist\IsotopeTrack"
+#define SourceDir      "dist\IsotopeTrack"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -25,11 +25,11 @@ AllowNoIcons=yes
 PrivilegesRequired=admin
 
 ; Output installer file
-OutputDir=C:\Users\Houssame-Eddine\Desktop\Output
-OutputBaseFilename=IsotopeTrack_Setup_{#AppVersion}
+OutputDir=Output
+OutputBaseFilename=IsotopeTrack_Setup_{#AppVersion}_W
 
 ; Installer icon
-SetupIconFile=C:\Users\Houssame-Eddine\Desktop\App_mac\images\isotrack_icon.ico
+SetupIconFile=images\isotrack_icon.ico
 
 ; Compression
 Compression=lzma2/ultra64
@@ -41,8 +41,8 @@ MinVersion=10.0
 
 ; Wizard styling
 WizardStyle=modern
-WizardImageFile=C:\Users\Houssame-Eddine\Desktop\App_mac\images\dmg_background_PC.png
-WizardSmallImageFile=C:\Users\Houssame-Eddine\Desktop\App_mac\images\isotrack_icon.png
+WizardImageFile=images\dmg_background_PC.PNG
+WizardSmallImageFile=images\isotrack_icon.png
 
 ; Uninstall
 UninstallDisplayIcon={app}\{#AppExeName}
@@ -59,7 +59,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; ── Files to install ──────────────────────────────────────────────────────────
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "C:\Users\Houssame-Eddine\Desktop\App_mac\example_data\*"; DestDir: "{app}\example_data"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "example_data\*"; DestDir: "{app}\example_data"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ── Start Menu shortcuts ──────────────────────────────────────────────────────
 [Icons]
