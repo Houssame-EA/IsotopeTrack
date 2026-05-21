@@ -78,7 +78,7 @@ jobs:
         run: brew install create-dmg
 
       - name: Patch spec for Intel (x86_64)
-        run: sed -i '' "s/target_arch='arm64'/target_arch='x86_64'/" IsotopeTrack_M.spec
+        run: pyinstaller --noconfirm --clean IsotopeTrack_Intel.spec
 
       - name: Build .app with PyInstaller
         run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec

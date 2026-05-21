@@ -15,8 +15,6 @@ FILES = [
     ("README.md", [
         (r"version-[\d\.]+\-blue\.svg",
          "version-{v}-blue.svg"),
-        (r"IsotopeTrack_Setup_[\d\.]+_W\.exe",
-         "IsotopeTrack_Setup_{v}_W.exe"),
     ]),
 
     # ── docs/index.md ─────────────────────────────────────────────────────────
