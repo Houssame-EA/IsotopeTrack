@@ -18,6 +18,14 @@ from theme import theme
 
 
 def get_resource_path(relative_path):
+    """Resolve a resource path relative to the app bundle or source root.
+
+    Args:
+        relative_path (str | Path): Path relative to the application root.
+
+    Returns:
+        Path: Absolute path to the resource.
+    """
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
@@ -34,16 +42,45 @@ except ImportError:
     from scipy.stats import poisson as _sp_poisson, lognorm as _sp_lognorm
 
     def _zero_trunc_q(lam, y):
+        """Convert a raw quantile to its zero-truncated form for CPLN.
+
+        Args:
+            lam (float): Poisson background rate lambda.
+            y (float): Raw quantile level in [0, 1].
+
+        Returns:
+            float: Zero-truncated quantile, clamped to [0, 1].
+        """
         k0 = np.exp(-lam)
         return max((y - k0) / (1.0 - k0), 0.0)
 
     def _sum_iid_ln(n, mu, sigma):
+        """Moment-match the sum of n i.i.d. lognormals to a single lognormal.
+
+        Args:
+            n (int): Number of i.i.d. lognormal variables to sum.
+            mu (float): Log-mean of each lognormal component.
+            sigma (float): Log-std of each lognormal component.
+
+        Returns:
+            tuple[float, float]: (mu_x, sigma_x) parameters of the approximating lognormal.
+        """
         sig2x = np.log((np.exp(sigma ** 2) - 1.0) / n + 1.0)
         mux = np.log(n) + mu + 0.5 * (sigma ** 2 - sig2x)
         return mux, np.sqrt(sig2x)
 
     class CompoundPoissonLognormal:
         def get_threshold(self, lambda_bkgd, alpha, sigma=0.47):
+            """Compute the CPLN detection threshold via Fenton-Wilkinson approximation.
+
+            Args:
+                lambda_bkgd (float): Poisson background rate (counts per dwell).
+                alpha (float): False-positive rate; threshold is the (1-alpha) quantile.
+                sigma (float): Log-sigma of the single-ion response distribution.
+
+            Returns:
+                float: Detection threshold in counts.
+            """
             if lambda_bkgd <= 0:
                 return 0.0
             try:
@@ -184,7 +221,6 @@ class SPICPToFMSSimulator:
 
         mu_sir = -0.5 * sigma_sir ** 2  
 
-        # N_bg ~ Poisson(lambda_bg), S = sum_{i=1}^{N} X_i, X_i ~ LN(mu_sir, sigma_sir)
         bg_ion_counts = rng.poisson(lambda_bg, size=n_points)
         total_bg_ions = int(np.sum(bg_ion_counts))
         signal = np.zeros(n_points, dtype=np.float64)
@@ -259,6 +295,16 @@ class SPICPToFMSSimulator:
 # ---------------------------------------------------------------------------
 
 def _slider(lo, hi, val):
+    """Create a horizontal QSlider with the given range and initial value.
+
+    Args:
+        lo (int): Minimum slider value.
+        hi (int): Maximum slider value.
+        val (int): Initial slider value.
+
+    Returns:
+        QSlider: Configured horizontal slider.
+    """
     sl = QSlider(Qt.Horizontal)
     sl.setRange(lo, hi)
     sl.setValue(val)
@@ -272,6 +318,14 @@ class InteractiveEquationVisualizer(QWidget):
     METHODS = ["Compound_Poisson", "Manual"]
 
     def __init__(self, parent=None):
+        """Initialise the simulator visualiser with controls, trace plot, and histogram.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setMinimumHeight(750)
 
@@ -296,10 +350,15 @@ class InteractiveEquationVisualizer(QWidget):
 
         self._run_simulation()
 
-    # ------------------------------------------------------------------ #
-    # UI construction                                                      #
-    # ------------------------------------------------------------------ #
     def _build_ui(self):
+        """Build the two-column layout: controls scroll area on the left, plots on the right.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         root = QHBoxLayout(self)
         root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(6)
@@ -370,6 +429,14 @@ class InteractiveEquationVisualizer(QWidget):
         root.addWidget(right_scroll, stretch=1)
 
     def _grp_acquisition(self):
+        """Build the Acquisition Parameters group box with dwell/time spinboxes and sliders.
+
+        Args:
+            None
+
+        Returns:
+            QGroupBox: Configured group box widget.
+        """
         grp = QGroupBox("Acquisition Parameters")
         lay = QGridLayout(grp)
         lay.setVerticalSpacing(5)
@@ -433,6 +500,14 @@ class InteractiveEquationVisualizer(QWidget):
         return grp
 
     def _grp_background(self):
+        """Build the Background group box with the lambda_bg spinbox and slider.
+
+        Args:
+            None
+
+        Returns:
+            QGroupBox: Configured group box widget.
+        """
         grp = QGroupBox("Background")
         lay = QGridLayout(grp)
         lay.setVerticalSpacing(5)
@@ -461,6 +536,14 @@ class InteractiveEquationVisualizer(QWidget):
         return grp
 
     def _grp_particles(self):
+        """Build the Particles group box with particle count and size-distribution controls.
+
+        Args:
+            None
+
+        Returns:
+            QGroupBox: Configured group box widget.
+        """
         grp = QGroupBox("Particles")
         lay = QGridLayout(grp)
         lay.setVerticalSpacing(5)
@@ -505,6 +588,14 @@ class InteractiveEquationVisualizer(QWidget):
         return grp
 
     def _grp_detection(self):
+        """Build the Detection Method group box with method selector, alpha, and sigma controls.
+
+        Args:
+            None
+
+        Returns:
+            QGroupBox: Configured group box widget.
+        """
         grp = QGroupBox("Detection Method")
         lay = QGridLayout(grp)
         lay.setVerticalSpacing(5)
@@ -582,6 +673,14 @@ class InteractiveEquationVisualizer(QWidget):
         sl.blockSignals(False)
 
     def _alpha_moved(self, v):
+        """Convert the log-scale slider position to an alpha value and sync the spinbox.
+
+        Args:
+            v (int): Slider position (0–90); maps to alpha = 10^(-v/10).
+
+        Returns:
+            None
+        """
         alpha = 1.0 if v == 0 else 10 ** (-v / 10.0)
         self._alpha_spin.blockSignals(True)
         self._alpha_spin.setValue(alpha)
@@ -589,12 +688,25 @@ class InteractiveEquationVisualizer(QWidget):
         self._schedule()
 
     def _schedule(self):
+        """Restart the debounce timer so the simulation runs after a short idle period.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self._timer.start()
 
-    # ------------------------------------------------------------------ #
-    # Simulation                                                           #
-    # ------------------------------------------------------------------ #
     def _run_simulation(self):
+        """Generate a new simulated signal, compute the threshold, and refresh all plots.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         seed = self._seed_spin.value() if self._seed_spin.value() > 0 else None
 
         (self._times, self._signal,
@@ -638,16 +750,29 @@ class InteractiveEquationVisualizer(QWidget):
         self._update_plots()
         self._update_stats()
 
-    # ------------------------------------------------------------------ #
-    # Plots                                                                #
-    # ------------------------------------------------------------------ #
     def _update_plots(self):
+        """Redraw both the signal trace and the intensity histogram.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         if self._times.size == 0:
             return
         self._draw_trace()
         self._draw_histogram()
 
     def _draw_trace(self):
+        """Render the time-domain signal trace with threshold, LOD, and detected events.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         p = self._trace_plot
         p.clear()
         p.addLegend(offset=(10, 10))
@@ -783,10 +908,15 @@ class InteractiveEquationVisualizer(QWidget):
                    "Number of detected events" +
                    (" [log]" if self._log_chk.isChecked() else ""))
 
-    # ------------------------------------------------------------------ #
-    # Stats panel                                                          #
-    # ------------------------------------------------------------------ #
     def _update_stats(self):
+        """Compute and display detection statistics (TP, FP, FN, detection rate).
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         s      = self._signal
         thr    = self._threshold
         n_det  = int(np.sum(s > thr))
@@ -805,6 +935,18 @@ class InteractiveEquationVisualizer(QWidget):
 
 
     def _calc_threshold(self, method, bg, alpha, manual, sigma):
+        """Compute the detection threshold for the selected method.
+
+        Args:
+            method (str): Detection method name (e.g. 'Compound_Poisson', 'Manual').
+            bg (float): Estimated background lambda (counts per dwell).
+            alpha (float): False-positive rate.
+            manual (float): Manual threshold value used when method == 'Manual'.
+            sigma (float): Single-ion response log-sigma for the CPLN method.
+
+        Returns:
+            tuple[float, str, str]: (threshold_counts, equation_html, reference_html).
+        """
         if method == "Compound_Poisson":
             thr = self._cpln.get_threshold(bg, alpha, sigma=sigma)
             eq  = f"Compound Poisson-LogNormal (Fenton-Wilkinson)  sigma={sigma:.3f}"
@@ -860,6 +1002,14 @@ class PeakIntegrationVisualizer(QWidget):
     }
 
     def __init__(self, parent=None):
+        """Initialise the peak integration visualiser with method controls and a plot.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setMinimumHeight(500)
         layout = QVBoxLayout(self)
@@ -902,12 +1052,28 @@ class PeakIntegrationVisualizer(QWidget):
         self.update_visualization()
 
     def _gen_data(self):
+        """Generate a fixed synthetic Gaussian peak with Poisson-like noise for demonstration.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.x = np.linspace(0, 10, 500)
         self.raw = 100 * np.exp(-(self.x - 5) ** 2 / 0.5) + 10
         np.random.seed(42)
         self.raw += np.random.normal(0, 2, len(self.x))
 
     def update_visualization(self):
+        """Recompute integration bounds for the current method and redraw the plot.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.plot.clear()
         bg = self.bg_sl.value()
         thr = self.thr_sl.value()
@@ -1016,6 +1182,14 @@ class IterativeThresholdVisualizer(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Initialise the iterative threshold visualiser with parameter controls and convergence plots.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setMinimumHeight(700)
 
@@ -1026,7 +1200,6 @@ class IterativeThresholdVisualizer(QWidget):
         root.setContentsMargins(2, 2, 2, 2)
         root.setSpacing(6)
 
-        # ── Left: controls ─────────────────────────────────────────────
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
         left_scroll.setFixedWidth(340)
@@ -1168,7 +1341,6 @@ class IterativeThresholdVisualizer(QWidget):
                 break
             lam = lam_new
 
-        # ── With Aitken acceleration ───────────────────────────────────
         aitken_thresholds = []
         aitken_applied_at = None
         lam = bg_init
@@ -1245,7 +1417,6 @@ class IterativeThresholdVisualizer(QWidget):
 
         p2.setTitle("Threshold convergence: standard vs Aitken Δ²")
 
-        # ── Result summary ─────────────────────────────────────────────
         final_std = std_thresholds[-1] if std_thresholds else 0
         final_aitken = aitken_thresholds[-1] if aitken_thresholds else 0
 
@@ -1273,6 +1444,14 @@ class WatershedSplittingVisualizer(QWidget):
     """
 
     def __init__(self, parent=None):
+        """Initialise the watershed splitting visualiser with peak and criteria controls.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setMinimumHeight(650)
         self._cpln = CompoundPoissonLognormal()
@@ -1407,6 +1586,14 @@ class WatershedSplittingVisualizer(QWidget):
         self._update()
 
     def _update(self):
+        """Regenerate the merged peak signal and redraw both before/after watershed plots.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         sep = self._sep_spin.value()
         h1 = self._h1_spin.value()
         h2 = self._h2_spin.value()
@@ -1608,6 +1795,14 @@ class WatershedSplittingVisualizer(QWidget):
 # ---------------------------------------------------------------------------
 class HelpManager:
     def __init__(self, parent=None):
+        """Initialise the HelpManager and store dialog references.
+
+        Args:
+            parent (QWidget | None): Parent widget passed to child dialogs.
+
+        Returns:
+            None
+        """
         self.parent             = parent
         self.user_guide_dialog  = None
         self.detection_dialog   = None
@@ -1629,12 +1824,28 @@ class HelpManager:
         self.user_guide_dialog.raise_()
 
     def show_detection_methods(self):
+        """Show the Detection Methods dialog, creating it on first call.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         if not self.detection_dialog:
             self.detection_dialog = DetectionMethodsDialog(self.parent)
         self.detection_dialog.show()
         self.detection_dialog.raise_()
 
     def show_calibration_methods(self):
+        """Show the Calibration Methods dialog, creating it on first call.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         if not self.calibration_dialog:
             self.calibration_dialog = CalibrationMethodsDialog(self.parent)
         self.calibration_dialog.show()
@@ -1685,7 +1896,7 @@ def _help_dialog_qss() -> str:
         }}
         /* Inner content widget of each scrollable tab — without this the
            widget stays white on macOS even with the dialog-level bg set. */
-        QWidget#helpContent {{
+        QWidget {{
             background-color: {p.bg_secondary};
             color: {p.text_primary};
         }}
@@ -1780,8 +1991,519 @@ def _help_dialog_qss() -> str:
     """
 
 
-class DetectionMethodsDialog(QDialog):
+
+# ===========================================================================
+# CPLN Lookup Table — helpers and widgets
+# ===========================================================================
+
+def _lut_load():
+    """
+    Load cpln_quantiles.npz from the app resource folder.
+    Returns (lambdas, sigmas, ys, quantiles) or None on failure.
+    """
+    try:
+        path = get_resource_path("processing/cpln_quantiles.npz")
+        if not path.exists():
+            path = get_resource_path("processing/cpln_quantiles.npz")
+        if not path.exists():
+            path = get_resource_path("cpln_quantiles.npz")
+        data = np.load(path)
+        return (data["lambdas"], data["sigmas"],
+                data["ys"],     data["quantiles"])
+    except Exception as e:
+        print(f"[LUT] Could not load cpln_quantiles.npz: {e}")
+        return None
+
+
+def _lut_color_for(v, mn, mx):
+    """Map a value to a blue-white-red colour string + luminance."""
+    t = (v - mn) / (mx - mn) if mx > mn else 0.0
+    t = max(0.0, min(1.0, t))
+    stops = [
+        (0.043,0.369,0.627),(0.129,0.569,0.800),(0.259,0.710,0.855),
+        (0.569,0.851,0.918),(0.894,0.957,0.980),(0.996,0.878,0.565),
+        (0.992,0.682,0.380),(0.957,0.427,0.263),(0.843,0.188,0.153),
+    ]
+    n  = len(stops)
+    si = min(int(t * (n - 1)), n - 2)
+    lt = t * (n - 1) - si
+    a, b = stops[si], stops[si + 1]
+    r  = int((a[0] + (b[0]-a[0])*lt) * 255)
+    g  = int((a[1] + (b[1]-a[1])*lt) * 255)
+    bl = int((a[2] + (b[2]-a[2])*lt) * 255)
+    return f"rgb({r},{g},{bl})", 0.299*r + 0.587*g + 0.114*bl
+
+
+def _lut_info(html, bg="#eaf4fb", border="#2980b9"):
+    """Create a styled info QLabel with a left accent border, theme-aware text colour.
+
+    Args:
+        html (str): HTML content for the label.
+        bg (str): Background colour string (CSS).
+        border (str): Left-border accent colour string (CSS).
+
+    Returns:
+        QLabel: Styled info label.
+    """
+    p = theme.palette
+    lbl = QLabel(html)
+    lbl.setWordWrap(True)
+    lbl.setTextFormat(Qt.RichText)
+    lbl.setStyleSheet(
+        f"background:{bg}; border-left:4px solid {border}; "
+        f"border-radius:4px; padding:10px 14px; font-size:12px; "
+        f"color:{p.text_primary};"
+    )
+    return lbl
+
+
+def _lut_eq(html):
+    """Create a monospaced equation QLabel using theme bg/border colours.
+
+    Args:
+        html (str): HTML content containing the equation(s).
+
+    Returns:
+        QLabel: Styled equation label.
+    """
+    p = theme.palette
+    lbl = QLabel(html)
+    lbl.setWordWrap(True)
+    lbl.setTextFormat(Qt.RichText)
+    lbl.setStyleSheet(
+        f"background:{p.bg_tertiary}; border:1px solid {p.border}; border-radius:6px; "
+        f"padding:10px 16px; font-family:'Courier New',monospace; font-size:12px; "
+        f"color:{p.text_primary};"
+    )
+    return lbl
+
+
+def _lut_ref(text):
+    """Create a small muted reference citation QLabel.
+
+    Args:
+        text (str): Plain text citation string.
+
+    Returns:
+        QLabel: Muted reference label with a document emoji prefix.
+    """
+    p = theme.palette
+    lbl = QLabel(f"<span style='color:{p.text_muted};font-size:10px;'>📄 {text}</span>")
+    lbl.setTextFormat(Qt.RichText)
+    return lbl
+
+
+def _lut_section(title):
+    """Create a section heading QLabel styled with the current theme text colour.
+
+    Args:
+        title (str): Section heading text.
+
+    Returns:
+        QLabel: Heading label.
+    """
+    p = theme.palette
+    lbl = QLabel(f"<h3 style='margin:6px 0 2px 0; color:{p.text_primary};'>{title}</h3>")
+    lbl.setTextFormat(Qt.RichText)
+    return lbl
+
+
+def _lut_hline():
+    """Create a horizontal divider QFrame using the theme border colour.
+
+    Args:
+        None
+
+    Returns:
+        QFrame: Horizontal line widget.
+    """
+    p = theme.palette
+    f = QFrame(); f.setFrameShape(QFrame.HLine)
+    f.setStyleSheet(f"color:{p.border}; margin:4px 0;")
+    return f
+
+
+def _lut_scroll(widgets):
+    """Wrap a list of widgets in a vertical scroll area suitable for LUT sub-tabs.
+
+    Args:
+        widgets (list[QWidget | None]): Widgets to stack; None inserts spacing.
+
+    Returns:
+        QScrollArea: Configured scroll area containing all widgets.
+    """
+    w = QWidget(); w.setObjectName("helpContent"); w.setAutoFillBackground(True)
+    lay = QVBoxLayout(w)
+    lay.setContentsMargins(20, 14, 20, 20)
+    lay.setSpacing(10)
+    for item in widgets:
+        lay.addWidget(item) if item else lay.addSpacing(8)
+    lay.addStretch()
+    sa = QScrollArea()
+    sa.setWidgetResizable(True)
+    sa.setFrameShape(QScrollArea.NoFrame)
+    sa.viewport().setAutoFillBackground(False)
+    sa.setWidget(w)
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    return sa
+
+
+# ── Heatmap widget ─────────────────────────────────────────────────────────────
+class _LUTHeatmapWidget(QWidget):
+    """Colour-coded threshold grid loaded directly from cpln_quantiles.npz.
+
+    Improvements over the original:
+    - Fully theme-aware (dark-mode safe) — no hardcoded light colours.
+    - Heatmap grid is horizontally centred inside a scroll area.
+    - Row *and* column of the selected cell are highlighted with a subtle
+      accent ring so the user can trace λ and σ at a glance.
+    - The info bar at the top of the heatmap sub-tab is now inside this
+      widget so it re-reads the theme when the dialog is re-shown.
+    - A compact "selected cell" details strip lives below the grid.
+    """
+
     def __init__(self, parent=None):
+        """Build the interactive heatmap grid with alpha dropdown, centred grid, and details strip.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
+        super().__init__(parent)
+        self._selected = None
+        self._cells    = {}
+        self._row_lbls = {}
+        self._col_lbls = {}
+        self._mn = self._mx = 0.0
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(6)
+
+        self._lut = _lut_load()
+
+        if self._lut is None:
+            lay.addWidget(_lut_info(
+                "⚠️  cpln_quantiles.npz not found.  "
+                "Place the file in the app resources folder and reopen this dialog.",
+                bg="#fdecea", border="#e74c3c",
+            ))
+            return
+
+        lambdas, sigmas, ys, quantiles = self._lut
+        self._lambdas   = lambdas
+        self._sigmas    = sigmas
+        self._ys        = ys
+        self._quantiles = quantiles
+
+        self._li = list(range(0, len(lambdas), max(1, len(lambdas) // 15)))
+        self._si = list(range(0, len(sigmas),  max(1, len(sigmas)  // 15)))
+
+        targets = [1 - 1e-6, 1 - 1e-4, 1 - 1e-2]
+        self._yi_choices = [int(np.argmin(np.abs(ys - t))) for t in targets]
+        alpha_labels = ["α = 1×10⁻⁶", "α = 1×10⁻⁴", "α = 0.01"]
+
+        ctrl = QHBoxLayout()
+        p = theme.palette
+        lbl_a = QLabel("<b>Error rate α:</b>")
+        lbl_a.setStyleSheet(f"color:{p.text_primary};")
+        ctrl.addWidget(lbl_a)
+        self._cb = QComboBox()
+        for lbl in alpha_labels:
+            self._cb.addItem(lbl)
+        self._cb.currentIndexChanged.connect(self._draw)
+        ctrl.addWidget(self._cb)
+        ctrl.addStretch()
+        self._hint = QLabel()
+        self._hint.setTextFormat(Qt.RichText)
+        ctrl.addWidget(self._hint)
+        lay.addLayout(ctrl)
+
+        self._grid_w   = QWidget()
+        self._grid_lay = QGridLayout(self._grid_w)
+        self._grid_lay.setSpacing(2)
+        self._grid_lay.setContentsMargins(0, 0, 0, 0)
+
+        centre_w   = QWidget()
+        centre_lay = QHBoxLayout(centre_w)
+        centre_lay.setContentsMargins(0, 0, 0, 0)
+        centre_lay.addStretch()
+        centre_lay.addWidget(self._grid_w)
+        centre_lay.addStretch()
+
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setFrameShape(QScrollArea.NoFrame)
+        sa.setWidget(centre_w)
+        lay.addWidget(sa, stretch=1)
+
+
+        self._legend = QLabel()
+        self._legend.setTextFormat(Qt.RichText)
+        self._legend.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self._legend)
+
+        self._draw()
+
+    # ------------------------------------------------------------------
+    def _theme_colours(self):
+        """Return current palette convenience shorthand."""
+        return theme.palette
+
+    def _draw(self):
+        """Rebuild the full heatmap grid for the currently selected alpha level.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        p  = self._theme_colours()
+        gl = self._grid_lay
+        yi = self._yi_choices[self._cb.currentIndex()]
+
+        self._hint.setText(
+            f"<span style='color:{p.text_muted};font-size:11px;'>"
+            "Warm = high threshold · "
+            "<b style='color:{};'>Click</b> a cell to pin details"
+            "</span>".format(p.accent)
+        )
+
+
+        for i in reversed(range(gl.count())):
+            w = gl.itemAt(i).widget()
+            if w:
+                w.deleteLater()
+        self._cells    = {}
+        self._row_lbls = {}
+        self._col_lbls = {}
+        self._selected = None
+
+        lam  = self._lambdas
+        sig  = self._sigmas
+        q    = self._quantiles
+        data = [[float(q[li, si, yi]) for si in self._si] for li in self._li]
+        mn   = min(v for row in data for v in row)
+        mx   = max(v for row in data for v in row)
+        self._mn, self._mx = mn, mx
+
+        corner = QLabel("λ \\ σ")
+        corner.setStyleSheet(
+            f"font-size:10px; font-weight:bold; color:{p.text_primary};"
+        )
+        gl.addWidget(corner, 0, 0)
+
+        for j, si in enumerate(self._si):
+            h = QLabel(f"<b>{sig[si]:.2f}</b>")
+            h.setAlignment(Qt.AlignCenter)
+            h.setStyleSheet(f"font-size:10px; color:{p.text_primary};")
+            gl.addWidget(h, 0, j + 1)
+            self._col_lbls[j] = h
+
+        for i, li in enumerate(self._li):
+            row_lbl = QLabel(f"{lam[li]:.4g}")
+            row_lbl.setStyleSheet(
+                f"font-size:10px; color:{p.text_secondary}; padding-right:4px;"
+            )
+            row_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            gl.addWidget(row_lbl, i + 1, 0)
+            self._row_lbls[i] = row_lbl
+
+            for j, si in enumerate(self._si):
+                val = data[i][j]
+                bg_col, lum = _lut_color_for(val, mn, mx)
+                fg = "#111" if lum > 128 else "#fff"
+                cell = QLabel(f"{val:.1f}")
+                cell.setAlignment(Qt.AlignCenter)
+                cell.setFixedSize(50, 24)
+                cell.setStyleSheet(
+                    f"background:{bg_col}; color:{fg}; font-size:9px; "
+                    f"border-radius:3px; padding:1px 2px; border:1px solid transparent;"
+                )
+                cell.setToolTip(
+                    f"λ = {lam[li]:.4g}\n"
+                    f"σ = {sig[si]:.3f}\n"
+                    f"Threshold = {val:.3f} counts"
+                )
+                cell.setProperty("row_i",  i)
+                cell.setProperty("col_j",  j)
+                cell.setProperty("lambda", float(lam[li]))
+                cell.setProperty("sigma",  float(sig[si]))
+                cell.setProperty("val",    val)
+                cell.setProperty("bg",     bg_col)
+                cell.setProperty("fg",     fg)
+                cell.mousePressEvent = self._make_click_handler(cell)
+                gl.addWidget(cell, i + 1, j + 1)
+                self._cells[(i, j)] = cell
+
+        stops = ["#0b5fa0","#218dcc","#42b5da","#91d9ea","#e4f4fb",
+                 "#fee080","#fd9e41","#f56940","#d73027"]
+        self._legend.setText(
+            f"<div style='display:inline-block;width:320px;height:12px;"
+            f"background:linear-gradient(to right,{','.join(stops)});"
+
+        )
+
+    # ------------------------------------------------------------------
+    def _make_click_handler(self, cell):
+        """Return a mousePressEvent function bound to *cell*."""
+        def _handler(event):
+            """Forward a mouse-press event to _select_cell for the bound cell.
+
+            Args:
+                event (QMouseEvent): The mouse-press event (unused).
+
+            Returns:
+                None
+            """
+            self._select_cell(cell)
+        return _handler
+
+    def _select_cell(self, cell):
+        """Handle a cell click: highlight its row/column and update the details strip.
+
+        Args:
+            cell (QLabel): The cell widget that was clicked.
+
+        Returns:
+            None
+        """
+        p   = self._theme_colours()
+        i   = cell.property("row_i")
+        j   = cell.property("col_j")
+        lam = cell.property("lambda")
+        sig = cell.property("sigma")
+        val = cell.property("val")
+
+        prev = self._selected
+        if prev is not None:
+            pi, pj = prev
+            for (ri, rj), c in self._cells.items():
+                if ri == pi or rj == pj:
+                    self._reset_cell_style(c)
+            if pi in self._row_lbls:
+                self._row_lbls[pi].setStyleSheet(
+                    f"font-size:10px; color:{p.text_secondary}; padding-right:4px;"
+                )
+            if pj in self._col_lbls:
+                self._col_lbls[pj].setStyleSheet(
+                    f"font-size:10px; color:{p.text_primary};"
+                )
+
+        self._selected = (i, j)
+        for (ri, rj), c in self._cells.items():
+            if ri == i or rj == j:
+                bg_c = c.property("bg")
+                fg_c = c.property("fg")
+                c.setStyleSheet(
+                    f"background:{bg_c}; color:{fg_c}; font-size:9px; "
+                    f"border-radius:3px; padding:1px 2px; "
+                    f"border:2px solid {p.accent};"
+                )
+        cell.setStyleSheet(
+            f"background:{cell.property('bg')}; color:{cell.property('fg')}; "
+            f"font-size:9px; border-radius:3px; padding:1px 2px; "
+            f"border:2px solid {p.accent}; font-weight:bold;"
+        )
+        if i in self._row_lbls:
+            self._row_lbls[i].setStyleSheet(
+                f"font-size:10px; font-weight:bold; color:{p.accent}; padding-right:4px;"
+            )
+        if j in self._col_lbls:
+            self._col_lbls[j].setStyleSheet(
+                f"font-size:10px; font-weight:bold; color:{p.accent};"
+            )
+
+     
+    def _reset_cell_style(self, cell):
+        """Restore a cell to its default (unselected) stylesheet.
+
+        Args:
+            cell (QLabel): The cell widget to reset.
+
+        Returns:
+            None
+        """
+        bg_c = cell.property("bg")
+        fg_c = cell.property("fg")
+        cell.setStyleSheet(
+            f"background:{bg_c}; color:{fg_c}; font-size:9px; "
+            f"border-radius:3px; padding:1px 2px; border:1px solid transparent;"
+        )
+
+
+# ── Profile widget ─────────────────────────────────────────────────────────────
+class _LUTProfileWidget(QWidget):
+    """Threshold vs λ loaded directly from cpln_quantiles.npz."""
+
+    def __init__(self, parent=None):
+        """Build the λ-profile plot from cpln_quantiles.npz at a fixed sigma of 0.47.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(6)
+
+        lut = _lut_load()
+
+        if lut is None:
+            lay.addWidget(_lut_info(
+                "⚠️  cpln_quantiles.npz not found.",
+                bg="#fdecea", border="#e74c3c",
+            ))
+            return
+
+        lambdas, sigmas, ys, quantiles = lut
+
+        si = int(np.argmin(np.abs(sigmas - 0.47)))
+
+        plot = EnhancedPlotWidget()
+        plot.setLabel("bottom", "λ  (background counts / dwell)")
+        plot.setLabel("left",   "Detection threshold  (counts)")
+        plot.setLogMode(x=True, y=False)
+        plot.addLegend(offset=(10, 10))
+        plot.setMinimumHeight(320)
+        lay.addWidget(plot, stretch=1)
+
+        targets = {"α = 1×10⁻⁶": (1-1e-6, "#2980b9"),
+                   "α = 1×10⁻⁴": (1-1e-4, "#27ae60"),
+                   "α = 0.01":   (1-1e-2, "#e74c3c")}
+
+        for label, (y_target, col) in targets.items():
+            yi = int(np.argmin(np.abs(ys - y_target)))
+            vals = quantiles[:, si, yi].astype(float)
+            plot.plot(
+                lambdas, vals,
+                pen=pg.mkPen(col, width=2.5), name=label,
+                symbol="o", symbolSize=4, symbolBrush=col, symbolPen=None,
+            )
+
+        lay.addWidget(_lut_ref(
+            "Data: cpln_quantiles.npz (Lockwood et al., 2025). "
+            "α = 10⁻⁶ is the IsotopeTrack default."
+        ))
+
+
+class DetectionMethodsDialog(QDialog):
+
+    def __init__(self, parent=None):
+        """Initialise the Detection Methods dialog with all five sub-tabs.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setWindowTitle("Detection Methods - IsotopeTrack")
 
@@ -1810,10 +2532,11 @@ class DetectionMethodsDialog(QDialog):
         ))
 
         tabs = QTabWidget()
-        tabs.addTab(self._tab_simulator(), "Signal Simulator")
+        tabs.addTab(self._tab_simulator(),   "Signal Simulator")
         tabs.addTab(self._tab_integration(), "Peak Integration")
-        tabs.addTab(self._tab_iterative(), "Iterative Threshold")
-        tabs.addTab(self._tab_watershed(), "Watershed Splitting")
+        tabs.addTab(self._tab_iterative(),   "Iterative Threshold")
+        tabs.addTab(self._tab_watershed(),   "Watershed Splitting")
+        tabs.addTab(self._tab_lut(),         "Lookup Table")
         layout.addWidget(tabs)
 
         btn = QPushButton("Close")
@@ -1825,13 +2548,37 @@ class DetectionMethodsDialog(QDialog):
         self.apply_theme()
 
     def apply_theme(self):
+        """Reapply the palette-aware QSS whenever the theme changes.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
+        """Reapply the theme each time the dialog becomes visible.
+
+        Args:
+            event (QShowEvent): The show event.
+
+        Returns:
+            None
+        """
         self.apply_theme()
         super().showEvent(event)
 
     def _tab_simulator(self):
+        """Build the Signal Simulator sub-tab containing the interactive visualiser.
+
+        Args:
+            None
+
+        Returns:
+            QWidget: Tab content widget.
+        """
         w   = QWidget()
         w.setObjectName("helpContent")
         w.setAutoFillBackground(True)
@@ -1841,6 +2588,14 @@ class DetectionMethodsDialog(QDialog):
         return w
 
     def _tab_integration(self):
+        """Build the Peak Integration sub-tab with method description and visualiser.
+
+        Args:
+            None
+
+        Returns:
+            QScrollArea: Scrollable tab content.
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -1869,6 +2624,14 @@ class DetectionMethodsDialog(QDialog):
         return scroll
 
     def _tab_iterative(self):
+        """Build the Iterative Threshold sub-tab containing the convergence visualiser.
+
+        Args:
+            None
+
+        Returns:
+            QScrollArea: Scrollable tab content.
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -1883,6 +2646,14 @@ class DetectionMethodsDialog(QDialog):
         return scroll
 
     def _tab_watershed(self):
+        """Build the Watershed Splitting sub-tab containing the splitting visualiser.
+
+        Args:
+            None
+
+        Returns:
+            QScrollArea: Scrollable tab content.
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
@@ -1895,6 +2666,168 @@ class DetectionMethodsDialog(QDialog):
         cl.addWidget(WatershedSplittingVisualizer())
         scroll.setWidget(cw)
         return scroll
+
+
+    def _tab_lut(self):
+        """CPLN lookup table — Heatmap and λ Profile sub-tabs."""
+        outer = QWidget()
+        outer.setObjectName("helpContent")
+        outer.setAutoFillBackground(True)
+        lay = QVBoxLayout(outer)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
+        lay.addWidget(_styled_label(
+            "<h3 style='margin:0;'>Compound Poisson-Lognormal Lookup Table</h3>"
+            "<p style='margin:4px 0 0 0; color:#7f8c8d;'>"
+            "Lockwood et al., <i>J. Anal. At. Spectrom.</i> 2025, 40, 2633–2640 · "
+            "DOI: 10.1039/d5ja00230c</p>"
+        ))
+        sub = QTabWidget()
+        sub.addTab(self._lut_sub_heatmap(),  "Heatmap (λ × σ)")
+        sub.addTab(self._lut_sub_profile(),  "λ Profile")
+        lay.addWidget(sub, stretch=1)
+        return outer
+
+    def _lut_sub_overview(self):
+        """Build the Overview sub-tab with CPLN background, parameters, and benchmark table.
+
+        Args:
+            None
+
+        Returns:
+            QScrollArea: Scrollable content for the Overview sub-tab.
+        """
+        return _lut_scroll([
+            _lut_section("What is the CPLN Lookup Table?"),
+            _lut_info(
+                "At low count rates the background signal in ICP-ToF-MS follows a "
+                "<b>compound Poisson-lognormal (CPLN)</b> distribution — a mixture of "
+                "two physical processes:"
+                "<ul>"
+                "<li><b>Poisson</b>: the number of ions <i>k</i> arriving per dwell "
+                "is k ~ Poisson(λ).</li>"
+                "<li><b>Lognormal</b>: each ion contributes a signal drawn from "
+                "LN(μ, σ) — the single-ion area (SIA) distribution.</li>"
+                "</ul>"
+                "The detection threshold is the (1−α) quantile of this compound "
+                "distribution. Computing it analytically via Fenton-Wilkinson takes "
+                "<b>~85 ms per call</b>. The lookup table reduces this to "
+                "<b>&lt;0.001 ms</b> via trilinear interpolation.",
+                bg="#eaf4fb", border="#2980b9",
+            ),
+            _lut_ref("Lockwood et al., J. Anal. At. Spectrom., 2025, 40, 2633 · DOI: 10.1039/d5ja00230c"),
+            _lut_hline(),
+            _lut_section("The three parameters"),
+            _lut_eq(
+                "<b>λ  (lambda)</b> — Poisson background rate [counts / dwell]<br>"
+                "&nbsp;&nbsp;Estimated from the fraction of zero bins: λ = −ln P(Y = 0)<br><br>"
+                "<b>σ  (sigma)</b> — log-std of the single-ion area distribution<br>"
+                "&nbsp;&nbsp;Varies by element, mass, detector age and voltage<br><br>"
+                "<b>α  (alpha)</b> — false-positive rate (significance level)<br>"
+                "&nbsp;&nbsp;Threshold = (1−α) quantile.  Default in IsotopeTrack: α = 10⁻⁶"
+            ),
+            _lut_ref("Gundlach-Graham et al., Anal. Chem., 2018, 90, 11847"),
+            _lut_hline(),
+            _lut_section("How the table was built"),
+            _lut_info(
+                "The table (<code>cpln_quantiles.npz</code>) was generated by Lockwood et al. "
+                "using a C++ simulation (gcc 8.5.0):"
+                "<ul>"
+                "<li><b>10¹⁰ random draws</b> per (λ, σ) pair — using a t-digest "
+                "for memory-efficient quantile estimation.</li>"
+                "<li><b>71 λ values</b> geometrically spaced, 0.001 → 100.</li>"
+                "<li><b>41 σ values</b> linearly spaced, 0.25 → 0.95.</li>"
+                "<li><b>101 quantile levels</b> inverse-logistic spaced, 10⁻³ to 1−10⁻⁷.</li>"
+                "<li>μ = −σ²/2 so that E[single-ion signal] = 1 (unit mean).</li>"
+                "</ul>"
+                "Maximum interpolation error: <b>0.2%</b>.",
+                bg="#fef9e7", border="#f39c12",
+            ),
+            _lut_ref("Dunning T., Softw. Impacts, 2021, 7, 100049 — t-digest algorithm"),
+            _lut_hline(),
+            _lut_section("Runtime lookup procedure"),
+            _lut_eq(
+                "1.  Convert quantile y to its zero-truncated form:<br>"
+                "    y₀ = (y − e<sup>−λ</sup>) / (1 − e<sup>−λ</sup>)<br><br>"
+                "2.  Retrieve T_unit(λ, σ, α) by trilinear interpolation<br>"
+                "    in (log λ, σ, log α) space.<br><br>"
+                "3.  Rescale to actual ion-area units:<br>"
+                "    T = exp(μ + σ²/2) · T_unit(λ, σ, α)"
+            ),
+            _lut_ref("Lockwood et al., 2025 — Eqn (1) and Lookup table section"),
+            _lut_hline(),
+            _lut_section("Speed benchmark  (6 samples · 21 isotopes · 453 calls)"),
+            _lut_info(
+                "<table width='100%' cellspacing='5'>"
+                "<tr style='font-weight:bold;'><td>Method</td>"
+                "<td align='right'>Avg / call</td>"
+                "<td align='right'>Calls / s</td>"
+                "<td align='right'>453 calls total</td></tr>"
+                "<tr><td>Compound Poisson LogNormal (Fenton-Wilkinson)</td>"
+                "<td align='right'>~85 ms</td><td align='right'>~12</td>"
+                "<td align='right'>~38 s</td></tr>"
+                "<tr><td><b>Compound Poisson LogNormal LUT</b></td>"
+                "<td align='right'><b>&lt;0.001 ms</b></td>"
+                "<td align='right'><b>~930,000</b></td>"
+                "<td align='right'><b>&lt;1 ms</b></td></tr>"
+                "<tr><td colspan='3'><i>Speedup (threshold only)</i></td>"
+                "<td align='right'><b>~80,000×</b></td></tr>"
+                "</table>",
+                bg="#eafaf1", border="#27ae60",
+            ),
+            _lut_ref("IsotopeTrack benchmark — use the ⏱ Benchmark button to reproduce on your data."),
+        ])
+
+    def _lut_sub_heatmap(self):
+        """Build the Heatmap sub-tab with the interactive threshold grid and references.
+
+        Args:
+            None
+
+        Returns:
+            QWidget: Tab content widget containing the heatmap and reference list.
+        """
+        w = QWidget(); w.setObjectName("helpContent"); w.setAutoFillBackground(True)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
+        lay.addWidget(_lut_info(
+            "Each cell shows the detection threshold (counts) for a (λ, σ) pair at "
+            "the selected α level. <b>Warm colours = higher threshold.</b> "
+            "Switch α using the dropdown. Hover over any cell for the exact value. "
+            "<b>Click</b> a cell to pin λ, σ, and threshold details below the grid.",
+            bg="#eaf4fb", border="#2980b9",
+        ))
+        lay.addWidget(_LUTHeatmapWidget(), stretch=1)
+        lay.addWidget(_lut_hline())
+        lay.addWidget(_lut_section("References"))
+        lay.addWidget(_lut_info(
+            "<ol>"
+            "<li>Lockwood T.E. et al. <i>J. Anal. At. Spectrom.</i> <b>2025</b>, 40, 2633. "
+            "DOI: 10.1039/d5ja00230c</li>"
+            "<li>Lockwood T.E. et al. <i>J. Anal. At. Spectrom.</i> <b>2024</b>, 40, 130.</li>"
+            "</ol>",
+            bg="#f8f9fa", border="#95a5a6",
+        ))
+        return w
+
+    def _lut_sub_profile(self):
+        """Build the λ Profile sub-tab with the threshold-vs-lambda line chart.
+
+        Args:
+            None
+
+        Returns:
+            QWidget: Tab content widget containing the profile plot.
+        """
+        w = QWidget(); w.setObjectName("helpContent"); w.setAutoFillBackground(True)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(8)
+        lay.addWidget(_LUTProfileWidget(), stretch=1)
+        return w
+
+
 
 
 def _styled_label(html, bg=None, border=None):
@@ -1957,11 +2890,13 @@ class CalibrationMethodsDialog(QDialog):
     """Dialog displaying calibration method descriptions and equations."""
 
     def __init__(self, parent=None):
-        """
-        Initialise the calibration methods dialog.
+        """Initialise the Calibration Methods dialog with Overview, Ionic, and Transport tabs.
 
         Args:
-            parent (QWidget | None): Parent widget.
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
         """
         super().__init__(parent)
         self.setWindowTitle("Calibration Methods – IsotopeTrack")
@@ -1982,9 +2917,25 @@ class CalibrationMethodsDialog(QDialog):
         self.apply_theme()
 
     def apply_theme(self):
+        """Reapply the palette-aware QSS whenever the theme changes.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
+        """Reapply the theme each time the dialog becomes visible.
+
+        Args:
+            event (QShowEvent): The show event.
+
+        Returns:
+            None
+        """
         self.apply_theme()
         super().showEvent(event)
 
@@ -2298,13 +3249,20 @@ class CalibrationMethodsDialog(QDialog):
                 "d = 2 · (3V / 4π)<sup>1/3</sup>"
             ),
 
-            # --- Images ---
             self._img("images/methods.png"),
             self._img("images/transport_effect.png"),
         )
         
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
+        """Initialise the About dialog with version info and app icon.
+
+        Args:
+            parent (QWidget | None): Optional parent widget.
+
+        Returns:
+            None
+        """
         super().__init__(parent)
         self.setWindowTitle("About IsotopeTrack")
         self.setFixedSize(500, 380)
@@ -2328,7 +3286,7 @@ class AboutDialog(QDialog):
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.0.3</h3>"
+            "<h3 align='center'>Version 1.0.4</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))
@@ -2340,9 +3298,25 @@ class AboutDialog(QDialog):
         self.apply_theme()
 
     def apply_theme(self):
+        """Reapply the palette-aware QSS whenever the theme changes.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
+        """Reapply the theme each time the dialog becomes visible.
+
+        Args:
+            event (QShowEvent): The show event.
+
+        Returns:
+            None
+        """
         self.apply_theme()
         super().showEvent(event)
 

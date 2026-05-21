@@ -229,6 +229,7 @@ class BatchElementParametersDialog(QDialog):
         self.method_combo.addItems([
             "Manual",
             "Compound Poisson LogNormal",
+            "CPLN table",
         ])
         self.method_combo.currentTextChanged.connect(self.toggle_manual_threshold)
         grid.addWidget(self.method_combo, row, 1)
@@ -297,7 +298,7 @@ class BatchElementParametersDialog(QDialog):
         self.use_window_size.setToolTip("Enable a custom rolling window for background calculation.")
         self.use_window_size.stateChanged.connect(self.toggle_window_size)
         self.window_size = QSpinBox()
-        self.window_size.setRange(500, 100000)
+        self.window_size.setRange(10, 100000)
         self.window_size.setValue(5000)
         self.window_size.setSingleStep(100)
         self.window_size.setToolTip("Custom window size for background calculation.")
@@ -455,7 +456,7 @@ class BatchElementParametersDialog(QDialog):
         params = self.current_parameters[first_key]
 
         self.include_checkbox.setChecked(params.get('include', True))
-        method = params.get('Method', "Compound Poisson LogNormal")
+        method = params.get('Method', "CPLN table")
         self.method_combo.setCurrentText(method)
         self.manual_threshold.setValue(params.get('manual_threshold', 1000.0))
         self.min_points.setValue(params.get('min_continuous', 1))

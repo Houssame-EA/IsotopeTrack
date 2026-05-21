@@ -23,6 +23,7 @@ from PySide6.QtGui import (
 import math
 import numpy as np
 from collections import deque
+from pathlib import Path
 
 from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
@@ -74,6 +75,30 @@ def _ual():
         return logging_manager.get_user_action_logger()
     except Exception:
         return None
+
+def _collect_main_windows():
+    """
+    Return every visible MainWindow in this process.
+
+    Uses ``QApplication.topLevelWidgets`` so that windows opened via the
+    Windows taskbar (which bypass the ``app.main_windows`` list) are also
+    included.  Identifies MainWindow instances by the presence of
+    ``window_number`` to avoid a circular import with mainwindow.py.
+
+    Args:
+        None
+
+    Returns:
+        list: Visible top-level widgets that are MainWindow instances,
+            sorted by ``window_number``.
+    """
+    windows = [
+        w for w in QApplication.topLevelWidgets()
+        if hasattr(w, 'window_number') and w.isVisible()
+    ]
+    windows.sort(key=lambda w: getattr(w, 'window_number', 0))
+    return windows
+
 
 class DS:
 
@@ -2059,8 +2084,11 @@ class BatchSampleSelectorNode(WorkflowNode):
         if not self.selected_windows:
             return None
         names, particles, data, isos = [], [], {}, {}
-        for wi, w in enumerate(self.selected_windows):
-            lbl = f"W{wi+1}"
+        for w in self.selected_windows:
+            num = getattr(w, 'window_number', '?')
+            fp = getattr(w, '_project_filepath', None)
+            proj_name = Path(fp).stem if fp else "Unnamed"
+            lbl = f"W{num} ({proj_name})"
             if hasattr(w, 'selected_isotopes'):
                 for el, il in w.selected_isotopes.items():
                     isos.setdefault(el, set()).update(il)
@@ -2120,8 +2148,7 @@ class BatchSampleSelectorDialog(QDialog):
 
         self.parent_window = parent_window
         self.previously_selected = previously_selected or []
-        app = QApplication.instance()
-        self.all_windows = [w for w in getattr(app, 'main_windows', []) if w.isVisible()]
+        self.all_windows = _collect_main_windows()
         self.window_checkboxes = []
         self._build()
 
@@ -2143,12 +2170,15 @@ class BatchSampleSelectorDialog(QDialog):
         sl.setSpacing(8)
         sl.setContentsMargins(12, 12, 12, 12)
 
-        for i, w in enumerate(self.all_windows):
+        for w in self.all_windows:
             sc = len(getattr(w, 'data_by_sample', {}))
             pc = sum(len(p) for p in getattr(w, 'sample_particle_data', {}).values())
-            cs = getattr(w, 'current_sample', '?')
+            num = getattr(w, 'window_number', '?')
+            fp = getattr(w, '_project_filepath', None)
+            proj_name = Path(fp).stem if fp else "Unnamed"
+            label = f"Window {num} ({proj_name})  —  {sc} samples, {pc:,} particles"
 
-            cb = QCheckBox(f"Window {i+1}: {cs}  ({sc} samples, {pc:,} particles)")
+            cb = QCheckBox(label)
             was_selected = w in self.previously_selected
             cb.setChecked(was_selected)
             cb.window_ref = w

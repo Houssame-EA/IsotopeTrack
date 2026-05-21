@@ -12,6 +12,8 @@ import time
 from theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
 
+
+
 def is_pure_element(mass_fraction):
     """
     Check if mass fraction indicates a pure element (effectively 1.0).
@@ -860,6 +862,8 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
     summary_file.write("Sample,Element,Include,Method,Sigma,Manual Threshold,Min Points,Alpha (Error Rate),Integration Method,Iterative,Window Size Enabled,Window Size,Split Method,Valley Ratio\n")
     for row in detection_params_data:
         summary_file.write(",".join(row) + "\n")
+    summary_file.write("\n")
+
 
 def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type, units=None):
     """

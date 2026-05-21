@@ -276,7 +276,7 @@ class UserGuideDialog(QDialog):
         """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.0.3</h2>
+            <h2>IsotopeTrack v1.0.4</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 

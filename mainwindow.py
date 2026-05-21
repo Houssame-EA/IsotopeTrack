@@ -159,7 +159,6 @@ class MainWindow(QMainWindow):
         self.logger.info("MainWindow initialization starting")
         self.user_action_logger.log_action('STARTUP', 'Application started')
             
-        self.setWindowTitle("IsotopeTrack")
         self.unsaved_changes = False
         self.folder_paths = []
         self.current_sample = None
@@ -238,8 +237,38 @@ class MainWindow(QMainWindow):
         
         if not hasattr(QApplication.instance(), 'main_windows'):
             QApplication.instance().main_windows = []
+        if not hasattr(QApplication.instance(), '_window_counter'):
+            QApplication.instance()._window_counter = 0
+        QApplication.instance()._window_counter += 1
+        self.window_number = QApplication.instance()._window_counter
+        self._project_filepath = None
         QApplication.instance().main_windows.append(self)
+        self.update_window_title()
             
+    def update_window_title(self, filepath=None):
+        """
+        Update the window title to reflect the current project state.
+
+        When no project is saved the title reads
+        "IsotopeTrack — Window N (Unnamed)".  After a save or load the
+        project filename replaces the unnamed placeholder.
+
+        Args:
+            filepath (str | None): Path to the project file that was just
+                saved or loaded.  Pass None to keep the current filepath or
+                to show the unnamed title on a fresh window.
+
+        Returns:
+            None
+        """
+        if filepath is not None:
+            self._project_filepath = filepath
+        if self._project_filepath:
+            name = Path(self._project_filepath).stem
+            self.setWindowTitle(f"IsotopeTrack — Window {self.window_number} ({name})")
+        else:
+            self.setWindowTitle(f"IsotopeTrack — Window {self.window_number} (Unnamed)")
+
     def setup_window_size(self):
         """
         Configure initial window size and position.
@@ -3799,11 +3828,10 @@ class MainWindow(QMainWindow):
             self.parameters_table.setCellWidget(row, 1, include_checkbox)
 
             method_combo = NoWheelComboBox()
-            method_combo.addItems(["Manual", "Compound Poisson LogNormal"])
-            method_combo.setCurrentText(saved_element_params.get('method', "Compound Poisson LogNormal"))
+            method_combo.addItems(["Manual", "Compound Poisson LogNormal", "CPLN table"])
+            method_combo.setCurrentText(saved_element_params.get('method', "CPLN table"))
             self.parameters_table.setCellWidget(row, 2, method_combo)
 
-            # ── col 3: per-isotope sigma (next to CPLN method) ────────────
             per_isotope_mode = (getattr(self, '_sigma_mode', 'global') == 'per_isotope')
             element_sigma    = saved_element_params.get('sigma', getattr(self, '_global_sigma', 0.55))
 
@@ -3830,7 +3858,7 @@ class MainWindow(QMainWindow):
             manual_threshold_spinbox.setDecimals(2)
             manual_threshold_spinbox.setValue(saved_element_params.get('manual_threshold', 10.0))
             manual_threshold_spinbox.setSingleStep(10.0)
-            manual_threshold_spinbox.setEnabled(saved_element_params.get('method', "Compound Poisson LogNormal") == "Manual")
+            manual_threshold_spinbox.setEnabled(saved_element_params.get('method', "CPLN table") == "Manual")
             self.parameters_table.setCellWidget(row, 4, manual_threshold_spinbox)
 
             min_continuous = NoWheelSpinBox()
@@ -3861,7 +3889,7 @@ class MainWindow(QMainWindow):
             window_size_checkbox.setToolTip("Enable custom window size for background calculation")
             
             window_size_spinbox = NoWheelIntSpinBox()
-            window_size_spinbox.setRange(500, 100000)
+            window_size_spinbox.setRange(10, 100000)
             window_size_spinbox.setValue(saved_element_params.get('window_size', 5000))
             window_size_spinbox.setSingleStep(100)
             window_size_spinbox.setEnabled(saved_element_params.get('use_window_size', False))
@@ -4003,7 +4031,7 @@ class MainWindow(QMainWindow):
                     
                     self.sample_parameters[sample_name][element_key] = {
                         'include': True,
-                        'method': "Compound Poisson LogNormal",
+                        'method': "CPLN table",
                         'manual_threshold': 10.0,
                         'min_continuous': 1,
                         'alpha': 0.000001,
@@ -4579,7 +4607,6 @@ class MainWindow(QMainWindow):
     #------------------------------------peak detection and analysis--------------------------------------------
     #----------------------------------------------------------------------------------------------------------
 
-    @log_user_action('CLICK', 'Clicked detect peaks button')
     def _current_element_key(self):
         """element_key string for the currently displayed element, or None.
         Returns:
@@ -4685,7 +4712,8 @@ class MainWindow(QMainWindow):
                 })
 
         self._exclusion_regions_by_sample[sample] = new_store
-
+        
+    @log_user_action('CLICK', 'Clicked detect peaks button')
     def detect_particles(self):
         """
         Run particle detection, honouring per-sample / per-element
@@ -4872,7 +4900,7 @@ class MainWindow(QMainWindow):
         return self.peak_detector.process_single_sample(self, sample_name)
         
     def detect_peaks_with_poisson(self, signal, alpha=0.000001, 
-         sample_name=None, element_key=None, method="Compound Poisson LogNormal",
+         sample_name=None, element_key=None, method="CPLN table",
             manual_threshold=10.0):
         """
         Detect peaks using Poisson-based methods.
@@ -5263,6 +5291,8 @@ class MainWindow(QMainWindow):
             threshold_data = self.element_thresholds[self.current_sample][element_key]
             background_signal = threshold_data.get('background', 0.00000)
             threshold_counts = threshold_data.get('threshold', 0.00000)
+            background_signal = float(np.mean(background_signal))
+            threshold_counts  = float(np.mean(threshold_counts))
         mass_values = []
         if (hasattr(self, 'average_transport_rate') and 
             self.average_transport_rate > 0 and 
