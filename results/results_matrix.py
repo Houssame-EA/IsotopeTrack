@@ -1,8 +1,8 @@
-"""
-Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
+﻿"""
+Correlation-Matrix Plot Node â€“ pairwise Pearson-r heat-maps.
 
-Single sample  → one matrix.
-Multi-sample   → side-by-side or individual subplot matrices.
+Single sample  â†’ one matrix.
+Multi-sample   â†’ side-by-side or individual subplot matrices.
 
 Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
@@ -32,7 +32,7 @@ from results.shared_plot_utils import (
 from results.utils_sort import sort_elements_by_mass
 
 
-# ── Constants ──────────────────────────────────────────────────────────
+# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 MATRIX_DATA_TYPES = [
     'Counts',
@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
 }
 
 
-# ── Helpers ────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _is_multi(input_data):
     """
@@ -158,13 +158,13 @@ def _matrix_stats(mat):
     if not off_diag:
         return "No valid correlations"
     arr = np.array(off_diag)
-    return f"mean|r|={np.mean(np.abs(arr)):.3f}  ·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
+    return f"mean|r|={np.mean(np.abs(arr)):.3f}  Â·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
 
 
-# ── Settings Dialog ────────────────────────────────────────────────────
+# â”€â”€ Settings Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MatrixSettingsDialog(QDialog):
-    def __init__(self, cfg, input_data, parent=None):
+    def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
         Args:
             cfg (Any): The cfg.
@@ -176,6 +176,18 @@ class MatrixSettingsDialog(QDialog):
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
+        self._scope = scope
+        self.dtype_combo = None
+        self.min_part = None
+        self.thresh_spin = None
+        self.show_vals = None
+        self.show_diag = None
+        self.cmap_combo = None
+        self.label_mode_combo = None
+        self.x_rotation_spin = None
+        self.mode_combo = None
+        self._font_grp = None
+        self._export_grp = None
         self._build_ui()
 
     def _build_ui(self):
@@ -184,47 +196,49 @@ class MatrixSettingsDialog(QDialog):
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        g1 = QGroupBox("Data")
-        f1 = QFormLayout(g1)
-        self.dtype_combo = QComboBox()
-        self.dtype_combo.addItems(MATRIX_DATA_TYPES)
-        self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
-        f1.addRow("Data Type:", self.dtype_combo)
-        self.min_part = QDoubleSpinBox()
-        self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
-        self.min_part.setValue(self._cfg.get('min_particles', 5))
-        f1.addRow("Min Particles:", self.min_part)
-        self.thresh_spin = QDoubleSpinBox()
-        self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
-        self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.0))
-        f1.addRow("|r| Threshold:", self.thresh_spin)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Data")
+            f1 = QFormLayout(g1)
+            self.dtype_combo = QComboBox()
+            self.dtype_combo.addItems(MATRIX_DATA_TYPES)
+            self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
+            f1.addRow("Data Type:", self.dtype_combo)
+            self.min_part = QDoubleSpinBox()
+            self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
+            self.min_part.setValue(self._cfg.get('min_particles', 5))
+            f1.addRow("Min Particles:", self.min_part)
+            self.thresh_spin = QDoubleSpinBox()
+            self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
+            self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.0))
+            f1.addRow("|r| Threshold:", self.thresh_spin)
+            lay.addWidget(g1)
 
-        g2 = QGroupBox("Display")
-        f2 = QFormLayout(g2)
-        self.show_vals = QCheckBox()
-        self.show_vals.setChecked(self._cfg.get('show_values', True))
-        f2.addRow("Show r Values:", self.show_vals)
-        self.show_diag = QCheckBox()
-        self.show_diag.setChecked(self._cfg.get('show_diagonal', True))
-        f2.addRow("Show Diagonal:", self.show_diag)
-        self.cmap_combo = QComboBox()
-        self.cmap_combo.addItems(MATRIX_COLORMAPS)
-        raw_cmap = self._cfg.get('colormap', 'RdBu_r').split()[0]
-        self.cmap_combo.setCurrentText(raw_cmap if raw_cmap in MATRIX_COLORMAPS else 'RdBu_r')
-        f2.addRow("Colormap:", self.cmap_combo)
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f2.addRow("Isotope Label:", self.label_mode_combo)
-        from PySide6.QtWidgets import QSpinBox as _QSpin
-        self.x_rotation_spin = _QSpin()
-        self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
-        self.x_rotation_spin.setValue(self._cfg.get('x_rotation', 0))
-        f2.addRow("X Label Rotation:", self.x_rotation_spin)
-        lay.addWidget(g2)
+        if self._scope in ('all', 'format'):
+            g2 = QGroupBox("Display")
+            f2 = QFormLayout(g2)
+            self.show_vals = QCheckBox()
+            self.show_vals.setChecked(self._cfg.get('show_values', True))
+            f2.addRow("Show r Values:", self.show_vals)
+            self.show_diag = QCheckBox()
+            self.show_diag.setChecked(self._cfg.get('show_diagonal', True))
+            f2.addRow("Show Diagonal:", self.show_diag)
+            self.cmap_combo = QComboBox()
+            self.cmap_combo.addItems(MATRIX_COLORMAPS)
+            raw_cmap = self._cfg.get('colormap', 'RdBu_r').split()[0]
+            self.cmap_combo.setCurrentText(raw_cmap if raw_cmap in MATRIX_COLORMAPS else 'RdBu_r')
+            f2.addRow("Colormap:", self.cmap_combo)
+            self.label_mode_combo = QComboBox()
+            self.label_mode_combo.addItems(LABEL_MODES)
+            self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            f2.addRow("Isotope Label:", self.label_mode_combo)
+            from PySide6.QtWidgets import QSpinBox as _QSpin
+            self.x_rotation_spin = _QSpin()
+            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
+            self.x_rotation_spin.setValue(self._cfg.get('x_rotation', 0))
+            f2.addRow("X Label Rotation:", self.x_rotation_spin)
+            lay.addWidget(g2)
 
-        if _is_multi(self._input_data):
+        if self._scope in ('all', 'quantities') and _is_multi(self._input_data):
             g3 = QGroupBox("Multi-Sample Display")
             f3 = QFormLayout(g3)
             self.mode_combo = QComboBox()
@@ -234,11 +248,12 @@ class MatrixSettingsDialog(QDialog):
             f3.addRow("Display Mode:", self.mode_combo)
             lay.addWidget(g3)
 
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+        if self._scope in ('all', 'format'):
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
-        self._export_grp = ExportSettingsGroup(self._cfg)
-        lay.addWidget(self._export_grp.build())
+            self._export_grp = ExportSettingsGroup(self._cfg)
+            lay.addWidget(self._export_grp.build())
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -250,23 +265,25 @@ class MatrixSettingsDialog(QDialog):
             object: Result of the operation.
         """
         d = {
-            'data_type_display': self.dtype_combo.currentText(),
-            'min_particles':     int(self.min_part.value()),
-            'r_threshold':       self.thresh_spin.value(),
-            'show_values':       self.show_vals.isChecked(),
-            'show_diagonal':     self.show_diag.isChecked(),
-            'colormap':          self.cmap_combo.currentText(),
-            'label_mode':        self.label_mode_combo.currentText(),
-            'x_rotation':        self.x_rotation_spin.value(),
+            'data_type_display': self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
+            'min_particles':     int(self.min_part.value()) if self.min_part else int(self._cfg.get('min_particles', 5)),
+            'r_threshold':       self.thresh_spin.value() if self.thresh_spin else self._cfg.get('r_threshold', 0.0),
+            'show_values':       self.show_vals.isChecked() if self.show_vals else self._cfg.get('show_values', True),
+            'show_diagonal':     self.show_diag.isChecked() if self.show_diag else self._cfg.get('show_diagonal', True),
+            'colormap':          self.cmap_combo.currentText() if self.cmap_combo else self._cfg.get('colormap', 'RdBu_r'),
+            'label_mode':        self.label_mode_combo.currentText() if self.label_mode_combo else self._cfg.get('label_mode', 'Symbol'),
+            'x_rotation':        self.x_rotation_spin.value() if self.x_rotation_spin else self._cfg.get('x_rotation', 0),
         }
-        d.update(self._font_grp.collect())
-        d.update(self._export_grp.collect())
-        if hasattr(self, 'mode_combo'):
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
+        if self._export_grp is not None:
+            d.update(self._export_grp.collect())
+        if self.mode_combo is not None:
             d['display_mode'] = self.mode_combo.currentText()
         return d
 
 
-# ── Display Dialog ─────────────────────────────────────────────────────
+# â”€â”€ Display Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class CorrelationMatrixDisplayDialog(QDialog):
     """Matplotlib-based correlation matrix dialog with drag support."""
@@ -300,15 +317,22 @@ class CorrelationMatrixDisplayDialog(QDialog):
         lay.addWidget(self.canvas, stretch=1)
 
         tb = QHBoxLayout(); tb.setContentsMargins(0, 2, 0, 0)
-        btn_s = QPushButton("⚙  Settings"); btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset subplot positions (or middle-click)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("Export Figure…"); btn_e.clicked.connect(self._export_figure)
-        tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
+        btn_e = QPushButton("Export figure")
+        btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_fmt)
+        tb.addWidget(btn_qty)
+        tb.addWidget(btn_r)
+        tb.addWidget(btn_e)
         lay.addLayout(tb)
 
-    # ── Context menu ───────────────────────────────────────────────────
+    # â”€â”€ Context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _ctx_menu(self, pos):
         """
@@ -346,7 +370,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         rot_menu = menu.addMenu("X Label Rotation")
         cur_rot = cfg.get('x_rotation', 0)
         for rot in [0, 30, 45, 60, 90]:
-            a = rot_menu.addAction(f"{rot}°"); a.setCheckable(True)
+            a = rot_menu.addAction(f"{rot}Â°"); a.setCheckable(True)
             a.setChecked(cur_rot == rot)
             a.triggered.connect(lambda _, r=rot: self._set('x_rotation', r))
 
@@ -357,10 +381,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
                 a.setChecked(cfg.get('display_mode') == m)
                 a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
 
-        menu.addSeparator()
-        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
-        menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure…").triggered.connect(self._export_figure)
         menu.exec(QCursor.pos())
 
     def _toggle(self, key):
@@ -386,13 +406,27 @@ class CorrelationMatrixDisplayDialog(QDialog):
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "correlation_matrix")
 
+    def _open_plot_format_settings(self):
+        dlg = MatrixSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        dlg = MatrixSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
     def _open_settings(self):
         dlg = MatrixSettingsDialog(self.node.config, self.node.input_data, self)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    # ── Refresh / draw ─────────────────────────────────────────────────
+    # â”€â”€ Refresh / draw â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _refresh(self):
         try:
@@ -442,7 +476,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         elems = data['elements']
         n = data.get('n_particles', 0)
         self._header.setText(
-            f"Correlation Matrix · {len(elems)} elements · {n} particles · {_matrix_stats(mat)}")
+            f"Correlation Matrix Â· {len(elems)} elements Â· {n} particles Â· {_matrix_stats(mat)}")
         ax = self.figure.add_subplot(111)
         self._draw_matrix_ax(ax, mat, elems, cfg, title="")
         apply_font_to_matplotlib(ax, cfg)
@@ -457,7 +491,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         n = len(names)
         cols = min(n, 3)
         rows = math.ceil(n / cols)
-        self._header.setText(f"Correlation Matrices · {n} groups")
+        self._header.setText(f"Correlation Matrices Â· {n} groups")
         for idx, sn in enumerate(names):
             info = data[sn]
             ax = self.figure.add_subplot(rows, cols, idx + 1)
@@ -487,10 +521,10 @@ class CorrelationMatrixDisplayDialog(QDialog):
                 r2 = info2['matrix'][idx2[ei], idx2[ej]]
                 if not np.isnan(r1) and not np.isnan(r2):
                     diff[i, j] = r1 - r2
-        self._header.setText(f"Δr = {names[0]} − {names[1]} · {_matrix_stats(diff)}")
+        self._header.setText(f"Î”r = {names[0]} âˆ’ {names[1]} Â· {_matrix_stats(diff)}")
         ax = self.figure.add_subplot(111)
         self._draw_matrix_ax(ax, diff, common, cfg,
-                             title=f"Difference: {names[0]} − {names[1]}")
+                             title=f"Difference: {names[0]} âˆ’ {names[1]}")
         apply_font_to_matplotlib(ax, cfg)
 
     def _draw_matrix_ax(self, ax, mat, elems, cfg, title=""):
@@ -553,7 +587,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         ax.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
 
-# ── Node ───────────────────────────────────────────────────────────────
+# â”€â”€ Node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class CorrelationMatrixNode(QObject):
     position_changed      = Signal(object)
@@ -679,3 +713,4 @@ class CorrelationMatrixNode(QObject):
                 result[sn] = {'elements': elements, 'matrix': mat,
                               'p_matrix': p_mat, 'n_particles': len(sp)}
         return result if result else None
+
