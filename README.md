@@ -20,7 +20,7 @@
 | Platform | Requirements | Download |
 |----------|-------------|----------|
 | **macOS — Apple Silicon** | macOS 11.0 (Big Sur) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_M.dmg](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
-| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_Setup_1.0.3_W.exe](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
+| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_Setup_1.0.4_W.exe](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
 
 ---
 

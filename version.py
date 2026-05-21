@@ -1,32 +1,34 @@
 #!/usr/bin/env python3
 """
-bump_version.py — Update IsotopeTrack version across ALL files.
+version.py — Update IsotopeTrack version across ALL files.
 
-
+Usage:
+    python version.py 1.0.4
 """
 
 import sys
 import re
 from pathlib import Path
 
-# ── Every file and every pattern that needs updating ──────────────────────────
-
 FILES = [
-    # ── README badge ──────────────────────────────────────────────────────────
+    # ── README.md ─────────────────────────────────────────────────────────────
     ("README.md", [
-        (r"version-[\d\.]+\-blue\.svg", "version-{v}-blue.svg"),
+        (r"version-[\d\.]+\-blue\.svg",
+         "version-{v}-blue.svg"),
+        (r"IsotopeTrack_Setup_[\d\.]+_W\.exe",
+         "IsotopeTrack_Setup_{v}_W.exe"),
+    ]),
+
+    # ── docs/index.md ─────────────────────────────────────────────────────────
+    ("docs/index.md", [
+        (r"version-[\d\.]+-green\.svg",
+         "version-{v}-green.svg"),
+        (r"\*\*Version\*\*\s*\|\s*[\d\.]+",
+         "**Version** | {v}"),
     ]),
 
     # ── PyInstaller spec — macOS ──────────────────────────────────────────────
     ("IsotopeTrack_M.spec", [
-        (r"'CFBundleShortVersionString':\s*'[\d\.]+'",
-         "'CFBundleShortVersionString': '{v}'"),
-        (r"'CFBundleVersion':\s*'[\d\.]+'",
-         "'CFBundleVersion': '{v}'"),
-    ]),
-
-    # ── PyInstaller spec — Windows ────────────────────────────────────────────
-    ("IsotopeTrack_W.spec", [
         (r"'CFBundleShortVersionString':\s*'[\d\.]+'",
          "'CFBundleShortVersionString': '{v}'"),
         (r"'CFBundleVersion':\s*'[\d\.]+'",
@@ -39,7 +41,7 @@ FILES = [
          '#define AppVersion     "{v}"'),
     ]),
 
-    # ── project_manager.py (3 occurrences) ───────────────────────────────────
+    # ── project_manager.py ────────────────────────────────────────────────────
     ("save_export/project_manager.py", [
         (r"self\.project_version\s*=\s*'[\d\.]+'",
          "self.project_version = '{v}'"),
@@ -94,13 +96,12 @@ def bump(new_version: str):
         else:
             skipped.append(filename)
 
-    # ── Report ────────────────────────────────────────────────────────────────
     for f in updated:
-        print(f"   {f}")
+        print(f"    {f}")
     for f in skipped:
-        print(f"   {f}  (no match found — check pattern)")
+        print(f"     {f}  (no match found — check pattern)")
     for f in missing:
-        print(f"  {f}  (file not found)")
+        print(f"    {f}  (file not found)")
 
     print(f"\n Done! Version is now {new_version}")
     print("\nNext steps:")
@@ -112,13 +113,13 @@ def bump(new_version: str):
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python bump_version.py <version>")
-        print("Example: python bump_version.py 1.0.4")
+        print("Usage: python version.py <version>")
+        print("Example: python version.py 1.0.5")
         sys.exit(1)
 
     v = sys.argv[1].strip()
     if not re.match(r"^\d+\.\d+\.\d+$", v):
-        print(" Version must be X.Y.Z  (e.g. 1.0.4)")
+        print(" Version must be X.Y.Z  (e.g. 1.0.5)")
         sys.exit(1)
 
     bump(v)

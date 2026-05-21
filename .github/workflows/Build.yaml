@@ -26,10 +26,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
       - name: Install create-dmg
         run: brew install create-dmg
+
+      - name: Debug — list files
+        run: ls -la
 
       - name: Build .app with PyInstaller
         run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec
@@ -68,13 +70,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
       - name: Install create-dmg
         run: brew install create-dmg
 
       - name: Patch spec for Intel (x86_64)
         run: sed -i '' "s/target_arch='arm64'/target_arch='x86_64'/" IsotopeTrack_M.spec
+
+      - name: Debug — list files
+        run: ls -la
 
       - name: Build .app with PyInstaller
         run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec
@@ -116,7 +120,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+
+      - name: Debug — list files
+        run: dir
 
       - name: Build .exe with PyInstaller
         run: pyinstaller --noconfirm --clean IsotopeTrack_W.spec
@@ -125,19 +131,25 @@ jobs:
         shell: cmd
         run: dir dist\IsotopeTrack
 
+      - name: Download and install Inno Setup
+        run: |
+          curl -L -o innosetup.exe https://jrsoftware.org/download.php/is.exe
+          Start-Process -FilePath innosetup.exe -Args "/VERYSILENT /NORESTART" -Wait
+        shell: powershell
+
       - name: Build Windows installer with Inno Setup
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" installer\setup.iss
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" IsotopeTrack_Setup.iss
 
-      - name: Verify installer exists
+      - name: Find installer output
         shell: cmd
-        run: dir dist\IsotopeTrack_Windows.exe
+        run: dir /s *.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: IsotopeTrack_Windows
-          path: dist/IsotopeTrack_Windows.exe
+          path: Output/IsotopeTrack_Setup_*.exe
           if-no-files-found: error
 
   # =========================================================
@@ -154,12 +166,15 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts (debug)
+        run: find artifacts -type f
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
             artifacts/IsotopeTrack_Intel/IsotopeTrack_Intel.dmg
-            artifacts/IsotopeTrack_Windows/IsotopeTrack_Windows.exe
+            artifacts/IsotopeTrack_Windows/*.exe
           generate_release_notes: true
           draft: false
