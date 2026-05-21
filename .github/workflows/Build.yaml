@@ -129,10 +129,10 @@ jobs:
         run: dir dist\IsotopeTrack
 
       - name: Download and install Inno Setup
-        run: |
-          curl -L -o innosetup.exe https://jrsoftware.org/download.php/is.exe
-          Start-Process -FilePath innosetup.exe -Args "/VERYSILENT /NORESTART" -Wait
         shell: powershell
+        run: |
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "innosetup.exe"
+          Start-Process -FilePath "innosetup.exe" -Args "/VERYSILENT /NORESTART" -Wait
 
       - name: Build Windows installer with Inno Setup
         shell: cmd
