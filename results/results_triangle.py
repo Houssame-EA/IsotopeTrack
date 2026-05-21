@@ -216,7 +216,7 @@ class TernarySettingsDialog(QDialog):
         self.label_mode_combo = QComboBox()
         self.label_mode_combo.addItems(LABEL_MODES)
         self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Label Mode:", self.label_mode_combo)
+        fl.addRow("Isotope Label:", self.label_mode_combo)
         layout.addWidget(g)
 
         g = QGroupBox("Plot Style")
@@ -985,7 +985,7 @@ class TriangleDisplayDialog(QDialog):
         btn_r = QPushButton("Reset Layout")
         btn_r.setToolTip("Reset all subplot positions\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("Export…")
+        btn_e = QPushButton("Export Figure…")
         btn_e.clicked.connect(self._export_figure)
         tb.addWidget(btn_s); tb.addWidget(btn_r)
         tb.addStretch(); tb.addWidget(btn_e)
@@ -1085,7 +1085,7 @@ class TriangleDisplayDialog(QDialog):
         menu.addSeparator()
         menu.addAction("Reset Layout").triggered.connect(self._reset_layout)
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
@@ -1099,7 +1099,7 @@ class TriangleDisplayDialog(QDialog):
         settings_action = menu.addAction("⚙  Configure…")
         settings_action.triggered.connect(self._open_settings)
 
-        dl_action = menu.addAction("Download Figure…")
+        dl_action = menu.addAction("Export Figure…")
         dl_action.triggered.connect(self._export_figure)
 
         menu.exec(QCursor.pos())

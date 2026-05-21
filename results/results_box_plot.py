@@ -367,7 +367,7 @@ class BoxPlotSettingsDialog(QDialog):
         self.label_mode.addItems(LABEL_MODES)
         self.label_mode.setCurrentText(
             self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Element Label:", self.label_mode)
+        f3.addRow("Isotope Label:", self.label_mode)
         self.min_count = QSpinBox()
         self.min_count.setRange(0, 100000)
         self.min_count.setValue(self._cfg.get('min_particle_count', 0))
@@ -1016,7 +1016,7 @@ class BoxPlotDisplayDialog(QDialog):
 
         menu.addSeparator()
         menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure...").triggered.connect(
+        menu.addAction("Export Figure...").triggered.connect(
             lambda: download_pyqtgraph_figure(self.pw, self, "distribution_plot.png"))
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)

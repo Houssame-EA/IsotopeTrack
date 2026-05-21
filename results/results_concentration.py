@@ -233,7 +233,7 @@ class ConcentrationSettingsDialog(QDialog):
         self.label_mode_combo = QComboBox()
         self.label_mode_combo.addItems(LABEL_MODES)
         self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f2.addRow("Label Mode:", self.label_mode_combo)
+        f2.addRow("Isotope Label:", self.label_mode_combo)
 
         lay.addWidget(g2)
 
@@ -351,7 +351,7 @@ class ConcentrationDisplayDialog(QDialog):
         btn_r = QPushButton("↺  Reset Layout")
         btn_r.setToolTip("Reset subplot positions (or middle-click)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("⬆  Export…"); btn_e.clicked.connect(self._export_figure)
+        btn_e = QPushButton("Export Figure…"); btn_e.clicked.connect(self._export_figure)
         tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
         lay.addLayout(tb)
 
@@ -388,7 +388,7 @@ class ConcentrationDisplayDialog(QDialog):
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
@@ -397,7 +397,7 @@ class ConcentrationDisplayDialog(QDialog):
         menu.addSeparator()
         menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
         menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
-        menu.addAction("💾 Download Figure…").triggered.connect(self._export_figure)
+        menu.addAction("Export Figure…").triggered.connect(self._export_figure)
         menu.exec(QCursor.pos())
 
     def _toggle(self, key):

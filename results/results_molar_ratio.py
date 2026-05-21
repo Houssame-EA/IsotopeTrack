@@ -198,7 +198,7 @@ class MolarRatioSettingsDialog(QDialog):
         self.label_mode = QComboBox()
         self.label_mode.addItems(LABEL_MODES)
         self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f1.addRow("Element Label:", self.label_mode)
+        f1.addRow("Isotope Label:", self.label_mode)
         lay.addWidget(g1)
 
         g2 = QGroupBox("Molar Data Type")
@@ -1027,7 +1027,7 @@ class MolarRatioDisplayDialog(QDialog):
 
         menu.addSeparator()
         menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure…").triggered.connect(
+        menu.addAction("Export Figure…").triggered.connect(
             lambda: download_pyqtgraph_figure(self.pw, self, "molar_ratio_plot.png"))
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("\U0001f5bc  Plot Settings\u2026").triggered.connect(

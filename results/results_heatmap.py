@@ -128,7 +128,7 @@ class HeatmapSettingsDialog(QDialog):
         self.label_mode_combo.setCurrentText(
             self._config.get('label_mode',
                              'Mass + Symbol' if self._config.get('show_mass_numbers', True) else 'Symbol'))
-        fl.addRow("Label mode:", self.label_mode_combo)
+        fl.addRow("Isotope Label:", self.label_mode_combo)
         self.mass_numbers_cb = QCheckBox()
         self.mass_numbers_cb.setChecked(
             self._config.get('show_mass_numbers',
@@ -338,7 +338,7 @@ class HeatmapDisplayDialog(QDialog):
         btn_r = QPushButton("↺  Reset Layout")
         btn_r.setToolTip("Reset all subplot positions to auto layout\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("⬆  Export…")
+        btn_e = QPushButton("Export Figure…")
         btn_e.clicked.connect(self._export_figure)
         bb.addWidget(btn_s)
         bb.addWidget(btn_r)
@@ -412,7 +412,7 @@ class HeatmapDisplayDialog(QDialog):
         settings_action = menu.addAction("⚙  Configure…")
         settings_action.triggered.connect(self._open_settings)
 
-        dl_action = menu.addAction("💾 Download Figure…")
+        dl_action = menu.addAction("Export Figure…")
         dl_action.triggered.connect(self._export_figure)
 
         menu.exec(QCursor.pos())

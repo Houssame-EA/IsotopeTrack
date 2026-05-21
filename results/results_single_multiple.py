@@ -380,7 +380,7 @@ class PieStyleGroup:
         self._label_mode = QComboBox()
         self._label_mode.addItems(LABEL_MODES)
         self._label_mode.setCurrentText(cfg.get('label_mode', 'Symbol'))
-        f.addRow("Label Mode:", self._label_mode)
+        f.addRow("Isotope Label:", self._label_mode)
 
         self._donut = QCheckBox("Donut Mode")
         self._donut.setChecked(cfg.get('donut', False))
@@ -693,7 +693,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         btn_r = QPushButton("↺  Reset Layout")
         btn_r.setToolTip("Reset all subplot positions to auto layout\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("⬆  Export…")
+        btn_e = QPushButton("Export Figure…")
         btn_e.clicked.connect(self._export_figure)
         tb.addWidget(btn_s); tb.addWidget(btn_r)
         tb.addStretch(); tb.addWidget(btn_e)
@@ -736,7 +736,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
@@ -752,8 +752,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
         menu.addSeparator()
         menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
         menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure…").triggered.connect(self._export_figure)
-        menu.addAction("Download Statistics Table…").triggered.connect(self._download_table)
+        menu.addAction("Export Figure…").triggered.connect(self._export_figure)
+        menu.addAction("Export Statistics Table…").triggered.connect(self._download_table)
 
         menu.exec(self.canvas.mapToGlobal(pos))
 

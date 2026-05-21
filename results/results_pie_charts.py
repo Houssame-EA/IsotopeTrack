@@ -712,7 +712,7 @@ class PieChartSettingsDialog(QDialog):
         self._label_mode = QComboBox()
         self._label_mode.addItems(LABEL_MODES)
         self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Label Mode:", self._label_mode)
+        f3.addRow("Isotope Label:", self._label_mode)
         lay.addWidget(g3)
 
         # ── Wedge Colours + Explode ───────────────────────────────────
@@ -829,7 +829,7 @@ class PieChartDisplayDialog(QDialog):
         bb = QHBoxLayout(); bb.setContentsMargins(0, 4, 0, 0)
         btn_s = QPushButton("⚙  Settings");     btn_s.clicked.connect(self._open_settings)
         btn_r = QPushButton("↺  Reset Labels"); btn_r.clicked.connect(self._reset_labels)
-        btn_e = QPushButton("⬆  Export…");      btn_e.clicked.connect(self._export)
+        btn_e = QPushButton("Export Figure…");      btn_e.clicked.connect(self._export)
         bb.addWidget(btn_s); bb.addWidget(btn_r)
         bb.addStretch(); bb.addWidget(btn_e)
         lay.addLayout(bb)
@@ -870,7 +870,7 @@ class PieChartDisplayDialog(QDialog):
             a.setChecked(bool(cfg.get(key, False)))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
@@ -1244,7 +1244,7 @@ class ElementCompositionSettingsDialog(QDialog):
         self._label_mode = QComboBox()
         self._label_mode.addItems(LABEL_MODES)
         self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f1.addRow("Element Label Mode:", self._label_mode)
+        f1.addRow("Isotope Label:", self._label_mode)
         lay.addWidget(g1)
 
         # ── Display Mode (multi only) ─────────────────────────────────
@@ -1380,7 +1380,7 @@ class ElementCompositionDisplayDialog(QDialog):
         bb = QHBoxLayout(); bb.setContentsMargins(0, 4, 0, 0)
         btn_s = QPushButton("⚙  Settings");     btn_s.clicked.connect(self._open_settings)
         btn_r = QPushButton("↺  Reset Labels"); btn_r.clicked.connect(self._reset_labels)
-        btn_e = QPushButton("⬆  Export…");      btn_e.clicked.connect(self._export)
+        btn_e = QPushButton("Export Figure…");      btn_e.clicked.connect(self._export)
         bb.addWidget(btn_s); bb.addWidget(btn_r)
         bb.addStretch(); bb.addWidget(btn_e)
         lay.addLayout(bb)
@@ -1428,7 +1428,7 @@ class ElementCompositionDisplayDialog(QDialog):
                 a.setChecked(cfg.get('display_mode') == m)
                 a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)

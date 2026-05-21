@@ -1055,7 +1055,7 @@ class HistogramSettingsDialog(QDialog):
         self.label_mode = QComboBox()
         self.label_mode.addItems(LABEL_MODES)
         self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Element Label:", self.label_mode)
+        fl.addRow("Isotope Label:", self.label_mode)
         layout.addWidget(g)
 
         g = QGroupBox("Axis Limits")
@@ -1322,7 +1322,7 @@ class HistogramDisplayDialog(QDialog):
 
         menu.addSeparator()
         menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
@@ -1850,7 +1850,7 @@ class BarChartSettingsDialog(QDialog):
         self.label_mode = QComboBox()
         self.label_mode.addItems(LABEL_MODES)
         self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Element Label:", self.label_mode)
+        fl.addRow("Isotope Label:", self.label_mode)
         self.min_count = QSpinBox()
         self.min_count.setRange(0, 100000)
         self.min_count.setValue(self._cfg.get('min_particle_count', 10))
@@ -2380,7 +2380,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
         menu.addSeparator()
         menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
