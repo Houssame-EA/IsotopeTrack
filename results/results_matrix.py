@@ -172,7 +172,12 @@ class MatrixSettingsDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Correlation Matrix Settings")
+        if scope == 'format':
+            self.setWindowTitle("Correlation matrix plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Correlation matrix plot quantities configuration")
+        else:
+            self.setWindowTitle("Correlation Matrix Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data

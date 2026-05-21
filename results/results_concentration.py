@@ -1,12 +1,12 @@
-"""
-Concentration-Comparison Plot Node – dot-and-circle strip chart.
+﻿"""
+Concentration-Comparison Plot Node â€“ dot-and-circle strip chart.
 
 Each element gets a horizontal row.
 Individual sample values are small dots (jittered), group means are large
 open circles.  Numeric mean values displayed on the right.
 
-Single sample  → one column of dots per element.
-Multi-sample   → overlaid colours per sample / group.
+Single sample  â†’ one column of dots per element.
+Multi-sample   â†’ overlaid colours per sample / group.
 
 Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
@@ -33,7 +33,7 @@ from results.shared_plot_utils import (
 from results.utils_sort import sort_elements_by_mass
 
 
-# ── Constants ──────────────────────────────────────────────────────────
+# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 CONC_DATA_TYPES = [
     'Counts',
@@ -100,7 +100,7 @@ DEFAULT_GROUP_COLORS = [
 ]
 
 
-# ── Helpers ────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _is_multi(input_data):
     """
@@ -141,7 +141,7 @@ def _fmt_val(v):
         object: Result of the operation.
     """
     if v == 0:
-        return "—"
+        return "â€”"
     if abs(v) >= 1000:
         return f"{v:.2e}"
     elif abs(v) >= 1:
@@ -151,10 +151,10 @@ def _fmt_val(v):
     return f"{v:.2e}"
 
 
-# ── Settings Dialog ────────────────────────────────────────────────────
+# â”€â”€ Settings Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ConcentrationSettingsDialog(QDialog):
-    def __init__(self, cfg, input_data, parent=None):
+    def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
         Args:
             cfg (Any): The cfg.
@@ -162,10 +162,29 @@ class ConcentrationSettingsDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Concentration Comparison Settings")
+        if scope == 'format':
+            self.setWindowTitle("Concentration plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Concentration plot quantities configuration")
+        else:
+            self.setWindowTitle("Concentration Comparison Settings")
         self.setMinimumWidth(500)
         self._cfg = dict(cfg)
         self._input_data = input_data
+        self._scope = scope
+        self.dtype_combo = None
+        self.agg_combo = None
+        self.log_cb = None
+        self.indiv_cb = None
+        self.circle_cb = None
+        self.vals_cb = None
+        self.dot_spin = None
+        self.dot_alpha = None
+        self.circle_size = None
+        self.jitter_spin = None
+        self.label_mode_combo = None
+        self._font_grp = None
+        self._export_grp = None
         self._build_ui()
 
     def _build_ui(self):
@@ -174,102 +193,107 @@ class ConcentrationSettingsDialog(QDialog):
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        # ── Data ──────────────────────────────────────────────────────
-        g1 = QGroupBox("Data")
-        f1 = QFormLayout(g1)
-        self.dtype_combo = QComboBox()
-        self.dtype_combo.addItems(CONC_DATA_TYPES)
-        self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
-        f1.addRow("Data Type:", self.dtype_combo)
-        self.agg_combo = QComboBox()
-        self.agg_combo.addItems(CONC_AGG_METHODS)
-        self.agg_combo.setCurrentText(self._cfg.get('aggregation', 'Mean'))
-        f1.addRow("Aggregation:", self.agg_combo)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            # Data quantities
+            g1 = QGroupBox("Data")
+            f1 = QFormLayout(g1)
+            self.dtype_combo = QComboBox()
+            self.dtype_combo.addItems(CONC_DATA_TYPES)
+            self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
+            f1.addRow("Data Type:", self.dtype_combo)
+            self.agg_combo = QComboBox()
+            self.agg_combo.addItems(CONC_AGG_METHODS)
+            self.agg_combo.setCurrentText(self._cfg.get('aggregation', 'Mean'))
+            f1.addRow("Aggregation:", self.agg_combo)
+            lay.addWidget(g1)
 
-        # ── Display ───────────────────────────────────────────────────
-        g2 = QGroupBox("Display")
-        f2 = QFormLayout(g2)
+        if self._scope in ('all', 'format'):
+            # Display / formatting
+            g2 = QGroupBox("Display")
+            f2 = QFormLayout(g2)
 
-        self.log_cb = QCheckBox()
-        self.log_cb.setChecked(self._cfg.get('log_scale', True))
-        f2.addRow("Log Scale:", self.log_cb)
+            self.log_cb = QCheckBox()
+            self.log_cb.setChecked(self._cfg.get('log_scale', True))
+            f2.addRow("Log Scale:", self.log_cb)
 
-        self.indiv_cb = QCheckBox()
-        self.indiv_cb.setChecked(self._cfg.get('show_individual', True))
-        f2.addRow("Show Individual Points:", self.indiv_cb)
+            self.indiv_cb = QCheckBox()
+            self.indiv_cb.setChecked(self._cfg.get('show_individual', True))
+            f2.addRow("Show Individual Points:", self.indiv_cb)
 
-        self.circle_cb = QCheckBox()
-        self.circle_cb.setChecked(self._cfg.get('show_mean_circle', True))
-        f2.addRow("Show Mean Markers:", self.circle_cb)
+            self.circle_cb = QCheckBox()
+            self.circle_cb.setChecked(self._cfg.get('show_mean_circle', True))
+            f2.addRow("Show Mean Markers:", self.circle_cb)
 
-        self.vals_cb = QCheckBox()
-        self.vals_cb.setChecked(self._cfg.get('show_values', True))
-        f2.addRow("Show Numeric Values:", self.vals_cb)
+            self.vals_cb = QCheckBox()
+            self.vals_cb.setChecked(self._cfg.get('show_values', True))
+            f2.addRow("Show Numeric Values:", self.vals_cb)
 
-        self.dot_spin = QSpinBox()
-        self.dot_spin.setRange(2, 20)
-        self.dot_spin.setValue(self._cfg.get('dot_size', 5))
-        f2.addRow("Dot Size:", self.dot_spin)
+            self.dot_spin = QSpinBox()
+            self.dot_spin.setRange(2, 20)
+            self.dot_spin.setValue(self._cfg.get('dot_size', 5))
+            f2.addRow("Dot Size:", self.dot_spin)
 
-        self.dot_alpha = QDoubleSpinBox()
-        self.dot_alpha.setRange(0.05, 1.0); self.dot_alpha.setSingleStep(0.05)
-        self.dot_alpha.setDecimals(2)
-        self.dot_alpha.setValue(self._cfg.get('dot_alpha', 0.4))
-        f2.addRow("Dot Alpha:", self.dot_alpha)
+            self.dot_alpha = QDoubleSpinBox()
+            self.dot_alpha.setRange(0.05, 1.0); self.dot_alpha.setSingleStep(0.05)
+            self.dot_alpha.setDecimals(2)
+            self.dot_alpha.setValue(self._cfg.get('dot_alpha', 0.4))
+            f2.addRow("Dot Alpha:", self.dot_alpha)
 
-        self.circle_size = QSpinBox()
-        self.circle_size.setRange(20, 500)
-        self.circle_size.setValue(self._cfg.get('circle_size', 120))
-        f2.addRow("Mean Marker Size:", self.circle_size)
+            self.circle_size = QSpinBox()
+            self.circle_size.setRange(20, 500)
+            self.circle_size.setValue(self._cfg.get('circle_size', 120))
+            f2.addRow("Mean Marker Size:", self.circle_size)
 
-        self.jitter_spin = QDoubleSpinBox()
-        self.jitter_spin.setRange(0.0, 0.45); self.jitter_spin.setSingleStep(0.05)
-        self.jitter_spin.setDecimals(2)
-        self.jitter_spin.setSpecialValueText("No jitter")
-        self.jitter_spin.setValue(self._cfg.get('jitter', 0.15))
-        f2.addRow("Vertical Jitter:", self.jitter_spin)
+            self.jitter_spin = QDoubleSpinBox()
+            self.jitter_spin.setRange(0.0, 0.45); self.jitter_spin.setSingleStep(0.05)
+            self.jitter_spin.setDecimals(2)
+            self.jitter_spin.setSpecialValueText("No jitter")
+            self.jitter_spin.setValue(self._cfg.get('jitter', 0.15))
+            f2.addRow("Vertical Jitter:", self.jitter_spin)
 
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f2.addRow("Isotope Label:", self.label_mode_combo)
+            self.label_mode_combo = QComboBox()
+            self.label_mode_combo.addItems(LABEL_MODES)
+            self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            f2.addRow("Isotope Label:", self.label_mode_combo)
 
-        lay.addWidget(g2)
+            lay.addWidget(g2)
 
-        # ── Sample colors (multi) ─────────────────────────────────────
-        self._sample_btns = {}
-        self._sample_edits = {}
-        self._sample_colors = {}
-        if _is_multi(self._input_data):
-            names = self._input_data.get('sample_names', [])
-            if names:
-                g3 = QGroupBox("Sample Colors & Names")
-                v3 = QVBoxLayout(g3)
-                sc = dict(self._cfg.get('sample_colors', {}))
-                nm = dict(self._cfg.get('sample_name_mappings', {}))
-                for i, sn in enumerate(names):
-                    h = QHBoxLayout()
-                    ed = QLineEdit(nm.get(sn, sn)); ed.setFixedWidth(180)
-                    h.addWidget(ed); self._sample_edits[sn] = ed
-                    c = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
-                    sc[sn] = c
-                    btn = QPushButton(); btn.setFixedSize(26, 20)
-                    btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
-                    btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
-                    h.addWidget(btn); h.addStretch()
-                    w = QWidget(); w.setLayout(h); v3.addWidget(w)
-                    self._sample_btns[sn] = (btn, c)
-                self._sample_colors = sc
-                lay.addWidget(g3)
+            # Sample colors (multi)
+            self._sample_btns = {}
+            self._sample_edits = {}
+            self._sample_colors = {}
+            if _is_multi(self._input_data):
+                names = self._input_data.get('sample_names', [])
+                if names:
+                    g3 = QGroupBox("Sample Colors & Names")
+                    v3 = QVBoxLayout(g3)
+                    sc = dict(self._cfg.get('sample_colors', {}))
+                    nm = dict(self._cfg.get('sample_name_mappings', {}))
+                    for i, sn in enumerate(names):
+                        h = QHBoxLayout()
+                        ed = QLineEdit(nm.get(sn, sn)); ed.setFixedWidth(180)
+                        h.addWidget(ed); self._sample_edits[sn] = ed
+                        c = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
+                        sc[sn] = c
+                        btn = QPushButton(); btn.setFixedSize(26, 20)
+                        btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
+                        btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
+                        h.addWidget(btn); h.addStretch()
+                        w = QWidget(); w.setLayout(h); v3.addWidget(w)
+                        self._sample_btns[sn] = (btn, c)
+                    self._sample_colors = sc
+                    lay.addWidget(g3)
 
-        # ── Font ──────────────────────────────────────────────────────
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
-        # ── Export / appearance ───────────────────────────────────────
-        self._export_grp = ExportSettingsGroup(self._cfg)
-        lay.addWidget(self._export_grp.build())
+            self._export_grp = ExportSettingsGroup(self._cfg)
+            lay.addWidget(self._export_grp.build())
+        else:
+            # ensure helpers exist even in quantities scope
+            self._sample_btns = {}
+            self._sample_edits = {}
+            self._sample_colors = {}
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -292,20 +316,22 @@ class ConcentrationSettingsDialog(QDialog):
             dict: Result of the operation.
         """
         d = {
-            'data_type_display': self.dtype_combo.currentText(),
-            'aggregation':       self.agg_combo.currentText(),
-            'log_scale':         self.log_cb.isChecked(),
-            'show_individual':   self.indiv_cb.isChecked(),
-            'show_mean_circle':  self.circle_cb.isChecked(),
-            'show_values':       self.vals_cb.isChecked(),
-            'dot_size':          self.dot_spin.value(),
-            'dot_alpha':         self.dot_alpha.value(),
-            'circle_size':       self.circle_size.value(),
-            'jitter':            self.jitter_spin.value(),
-            'label_mode':        self.label_mode_combo.currentText(),
+            'data_type_display': self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
+            'aggregation':       self.agg_combo.currentText() if self.agg_combo else self._cfg.get('aggregation', 'Mean'),
+            'log_scale':         self.log_cb.isChecked() if self.log_cb else self._cfg.get('log_scale', True),
+            'show_individual':   self.indiv_cb.isChecked() if self.indiv_cb else self._cfg.get('show_individual', True),
+            'show_mean_circle':  self.circle_cb.isChecked() if self.circle_cb else self._cfg.get('show_mean_circle', True),
+            'show_values':       self.vals_cb.isChecked() if self.vals_cb else self._cfg.get('show_values', True),
+            'dot_size':          self.dot_spin.value() if self.dot_spin else self._cfg.get('dot_size', 5),
+            'dot_alpha':         self.dot_alpha.value() if self.dot_alpha else self._cfg.get('dot_alpha', 0.4),
+            'circle_size':       self.circle_size.value() if self.circle_size else self._cfg.get('circle_size', 120),
+            'jitter':            self.jitter_spin.value() if self.jitter_spin else self._cfg.get('jitter', 0.15),
+            'label_mode':        self.label_mode_combo.currentText() if self.label_mode_combo else self._cfg.get('label_mode', 'Symbol'),
         }
-        d.update(self._font_grp.collect())
-        d.update(self._export_grp.collect())
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
+        if self._export_grp is not None:
+            d.update(self._export_grp.collect())
         if self._sample_colors:
             d['sample_colors'] = dict(self._sample_colors)
         if self._sample_edits:
@@ -313,7 +339,7 @@ class ConcentrationSettingsDialog(QDialog):
         return d
 
 
-# ── Display Dialog ─────────────────────────────────────────────────────
+# â”€â”€ Display Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ConcentrationDisplayDialog(QDialog):
     """Matplotlib-based concentration strip-chart with drag support."""
@@ -347,15 +373,22 @@ class ConcentrationDisplayDialog(QDialog):
         lay.addWidget(self.canvas, stretch=1)
 
         tb = QHBoxLayout(); tb.setContentsMargins(0, 2, 0, 0)
-        btn_s = QPushButton("⚙  Settings"); btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset subplot positions (or middle-click)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("Export Figure…"); btn_e.clicked.connect(self._export_figure)
-        tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
+        btn_e = QPushButton("Export figure")
+        btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_fmt)
+        tb.addWidget(btn_qty)
+        tb.addWidget(btn_r)
+        tb.addWidget(btn_e)
         lay.addLayout(tb)
 
-    # ── Context menu ───────────────────────────────────────────────────
+    # â”€â”€ Context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _ctx_menu(self, pos):
         """
@@ -394,10 +427,6 @@ class ConcentrationDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        menu.addSeparator()
-        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
-        menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure…").triggered.connect(self._export_figure)
         menu.exec(QCursor.pos())
 
     def _toggle(self, key):
@@ -423,13 +452,27 @@ class ConcentrationDisplayDialog(QDialog):
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "concentration_comparison")
 
+    def _open_plot_format_settings(self):
+        dlg = ConcentrationSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        dlg = ConcentrationSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
     def _open_settings(self):
         dlg = ConcentrationSettingsDialog(self.node.config, self.node.input_data, self)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    # ── Refresh / draw ─────────────────────────────────────────────────
+    # â”€â”€ Refresh / draw â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _refresh(self):
         try:
@@ -459,7 +502,7 @@ class ConcentrationDisplayDialog(QDialog):
             n_el  = len(data['elements'])
             n_grp = len(data['groups'])
             self._info.setText(
-                f"{n_el} elements · {n_grp} group(s) · "
+                f"{n_el} elements Â· {n_grp} group(s) Â· "
                 f"{data.get('subtitle', '')}")
 
             self.figure.tight_layout()
@@ -470,7 +513,7 @@ class ConcentrationDisplayDialog(QDialog):
             print(f"Error refreshing concentration plot: {e}")
             import traceback; traceback.print_exc()
 
-    # ── Core drawing ───────────────────────────────────────────────────
+    # â”€â”€ Core drawing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _draw_chart(self, data, cfg):
         """Draw the horizontal strip chart onto self.figure.
@@ -522,7 +565,7 @@ class ConcentrationDisplayDialog(QDialog):
             ax.set_xscale('log')
             ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation(base=10))
 
-        # ── Draw per element row ────────────────────────────────────────
+        # â”€â”€ Draw per element row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         rng = np.random.default_rng(42)
 
         for ei, (el, yp) in enumerate(zip(elements, y_pos)):
@@ -572,7 +615,7 @@ class ConcentrationDisplayDialog(QDialog):
                         zorder=5,
                     )
 
-        # ── Y axis (element labels) ─────────────────────────────────────
+        # â”€â”€ Y axis (element labels) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         ax.set_yticks(y_pos)
         ax.set_yticklabels(
             y_labels,
@@ -583,7 +626,7 @@ class ConcentrationDisplayDialog(QDialog):
         )
         ax.set_ylim(-0.6, n_el - 0.4)
 
-        # ── X axis ─────────────────────────────────────────────────────
+        # â”€â”€ X axis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         unit = data.get('unit', '')
         ax.set_xlabel(unit, fontsize=fc['size'], color=fc['color'],
                       fontfamily=fc['family'],
@@ -592,14 +635,14 @@ class ConcentrationDisplayDialog(QDialog):
                        colors=fc['color'])
         ax.tick_params(axis='y', length=0)
 
-        # ── Title ──────────────────────────────────────────────────────
+        # â”€â”€ Title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         title = data.get('title', '')
         if title:
             ax.set_title(title, fontsize=fc['size'] + 2, color=fc['color'],
                          fontfamily=fc['family'],
                          fontweight='bold' if fc['bold'] else 'normal', pad=10)
 
-        # ── Legend ─────────────────────────────────────────────────────
+        # â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if n_grp > 1:
             import matplotlib.lines as mlines
             handles = [
@@ -626,7 +669,7 @@ class ConcentrationDisplayDialog(QDialog):
         apply_font_to_matplotlib(ax, cfg)
 
 
-# ── Node ───────────────────────────────────────────────────────────────
+# â”€â”€ Node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class ConcentrationComparisonNode(QObject):
     position_changed      = Signal(object)
@@ -746,8 +789,8 @@ class ConcentrationComparisonNode(QObject):
             'groups': {
                 sname: {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
             },
-            'title':    f"{agg_method} — {sname}",
-            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
+            'title':    f"{agg_method} â€” {sname}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual Â· {unit}",
             'unit':     unit,
         }
 
@@ -789,7 +832,8 @@ class ConcentrationComparisonNode(QObject):
         return {
             'elements': elements,
             'groups':   groups,
-            'title':    f"{agg_method} — {labels}",
-            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
+            'title':    f"{agg_method} â€” {labels}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual Â· {unit}",
             'unit':     unit,
         }
+

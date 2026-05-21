@@ -179,7 +179,12 @@ class NetworkSettingsDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Network Diagram Settings")
+        if scope == 'format':
+            self.setWindowTitle("Network plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Network plot quantities configuration")
+        else:
+            self.setWindowTitle("Network Diagram Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
