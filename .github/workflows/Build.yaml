@@ -128,11 +128,9 @@ jobs:
         shell: cmd
         run: dir dist\IsotopeTrack
 
-      - name: Download and install Inno Setup
+      - name: Install Inno Setup
+        run: choco install innosetup --yes
         shell: powershell
-        run: |
-          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "innosetup.exe"
-          Start-Process -FilePath "innosetup.exe" -Args "/VERYSILENT /NORESTART" -Wait
 
       - name: Build Windows installer with Inno Setup
         shell: cmd
