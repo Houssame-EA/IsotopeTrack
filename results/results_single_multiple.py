@@ -464,87 +464,118 @@ class PieStyleGroup:
 
 class SingleMultipleSettingsDialog(QDialog):
 
-    def __init__(self, cfg, input_data, analysis_data, parent=None):
+    def __init__(self, cfg, input_data, analysis_data, parent=None, scope='all'):
         """
+        Initialize Single/Multiple settings with optional scope-based filtering.
+
         Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            analysis_data (Any): The analysis data.
-            parent (Any): Parent widget or object.
+            cfg (dict): Current plot configuration.
+            input_data (dict): Current node input payload.
+            analysis_data (dict): Precomputed analysis summary (read-only context).
+            parent (Any): Parent widget.
+            scope (str): Dialog scope. Use:
+                - ``'format'`` for visual/formatting controls only.
+                - ``'quantities'`` for scientific quantity/configuration controls only.
+                - ``'all'`` for legacy combined behavior.
+
+        Preserved behavior:
+            The same config keys are read/written as before; only UI grouping and
+            access routing are changed.
         """
         super().__init__(parent)
-        self.setWindowTitle("Single vs Multiple Element Settings")
+        if scope == 'format':
+            self.setWindowTitle("Single/multiple plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Single/multiple plot quantities configuration")
+        else:
+            self.setWindowTitle("Single vs Multiple Element Settings")
         self.setMinimumWidth(500)
         self._cfg = dict(cfg)
         self._input_data = input_data
         self._analysis = analysis_data
         self._multi = (input_data and input_data.get('type') == 'multiple_sample_data')
+        self._scope = scope
+        self.mode_combo = None
         self._build_ui()
 
     def _build_ui(self):
+        """
+        Build settings groups for the selected scope.
+
+        ``quantities`` contains scientific/data controls (visualization type, units,
+        dilution, thresholds, display mode, and quantity-side heatmap log scaling).
+        ``format`` contains visual controls (pie/heatmap style, labels, fonts, legend,
+        sample appearance, and export appearance settings).
+        """
         root = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        g1 = QGroupBox("Visualization")
-        f1 = QFormLayout(g1)
-        self.viz_combo = QComboBox(); self.viz_combo.addItems(VIZ_TYPES)
-        self.viz_combo.setCurrentText(self._cfg.get('visualization_type', 'Pie Charts'))
-        f1.addRow("Type:", self.viz_combo)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Visualization")
+            f1 = QFormLayout(g1)
+            self.viz_combo = QComboBox(); self.viz_combo.addItems(VIZ_TYPES)
+            self.viz_combo.setCurrentText(self._cfg.get('visualization_type', 'Pie Charts'))
+            f1.addRow("Type:", self.viz_combo)
+            lay.addWidget(g1)
 
-        g2 = QGroupBox("Units & Dilution")
-        f2 = QFormLayout(g2)
-        self.pml_cb = QCheckBox(); self.pml_cb.setChecked(self._cfg.get('use_particles_per_ml', False))
-        f2.addRow("Use Particles/mL:", self.pml_cb)
-        self.dil_spin = QDoubleSpinBox(); self.dil_spin.setRange(0.001, 100000)
-        self.dil_spin.setDecimals(3); self.dil_spin.setValue(self._cfg.get('dilution_factor', 1.0))
-        f2.addRow("Dilution Factor:", self.dil_spin)
-        lay.addWidget(g2)
+            g2 = QGroupBox("Units & Dilution")
+            f2 = QFormLayout(g2)
+            self.pml_cb = QCheckBox(); self.pml_cb.setChecked(self._cfg.get('use_particles_per_ml', False))
+            f2.addRow("Use Particles/mL:", self.pml_cb)
+            self.dil_spin = QDoubleSpinBox(); self.dil_spin.setRange(0.001, 100000)
+            self.dil_spin.setDecimals(3); self.dil_spin.setValue(self._cfg.get('dilution_factor', 1.0))
+            f2.addRow("Dilution Factor:", self.dil_spin)
+            lay.addWidget(g2)
 
-        if self._multi:
-            gm = QGroupBox("Multiple Sample Display")
-            fm = QFormLayout(gm)
-            self.mode_combo = QComboBox(); self.mode_combo.addItems(SM_DISPLAY_MODES)
-            self.mode_combo.setCurrentText(self._cfg.get('display_mode', SM_DISPLAY_MODES[0]))
-            fm.addRow("Mode:", self.mode_combo)
-            lay.addWidget(gm)
+            if self._multi:
+                gm = QGroupBox("Multiple Sample Display")
+                fm = QFormLayout(gm)
+                self.mode_combo = QComboBox(); self.mode_combo.addItems(SM_DISPLAY_MODES)
+                self.mode_combo.setCurrentText(self._cfg.get('display_mode', SM_DISPLAY_MODES[0]))
+                fm.addRow("Mode:", self.mode_combo)
+                lay.addWidget(gm)
 
-        g3 = QGroupBox("Thresholds")
-        f3 = QFormLayout(g3)
-        self.st_spin = QDoubleSpinBox(); self.st_spin.setRange(0, 10); self.st_spin.setDecimals(2)
-        self.st_spin.setSuffix('%'); self.st_spin.setValue(self._cfg.get('single_threshold', 0.5))
-        f3.addRow("Single Threshold:", self.st_spin)
-        self.mt_spin = QDoubleSpinBox(); self.mt_spin.setRange(0, 10); self.mt_spin.setDecimals(2)
-        self.mt_spin.setSuffix('%'); self.mt_spin.setValue(self._cfg.get('multiple_threshold', 0.5))
-        f3.addRow("Multiple Threshold:", self.mt_spin)
-        lay.addWidget(g3)
+            g3 = QGroupBox("Thresholds")
+            f3 = QFormLayout(g3)
+            self.st_spin = QDoubleSpinBox(); self.st_spin.setRange(0, 10); self.st_spin.setDecimals(2)
+            self.st_spin.setSuffix('%'); self.st_spin.setValue(self._cfg.get('single_threshold', 0.5))
+            f3.addRow("Single Threshold:", self.st_spin)
+            self.mt_spin = QDoubleSpinBox(); self.mt_spin.setRange(0, 10); self.mt_spin.setDecimals(2)
+            self.mt_spin.setSuffix('%'); self.mt_spin.setValue(self._cfg.get('multiple_threshold', 0.5))
+            f3.addRow("Multiple Threshold:", self.mt_spin)
+            lay.addWidget(g3)
 
-        g4 = QGroupBox("Pie Chart Settings")
-        f4 = QFormLayout(g4)
-        self.pct_cb = QCheckBox(); self.pct_cb.setChecked(self._cfg.get('show_percentages', True))
-        f4.addRow("Show %:", self.pct_cb)
-        self.explode_cb = QCheckBox(); self.explode_cb.setChecked(self._cfg.get('explode_slices', False))
-        f4.addRow("Explode Slices:", self.explode_cb)
-        self.lbl_btn = QPushButton(); self._lbl_color = QColor(self._cfg.get('label_color', '#000000'))
-        self.lbl_btn.setStyleSheet(f"background-color:{self._lbl_color.name()}; min-height:25px;")
-        self.lbl_btn.clicked.connect(self._pick_lbl_color)
-        f4.addRow("Label Color:", self.lbl_btn)
-        lay.addWidget(g4)
+            gq = QGroupBox("Heatmap Quantity Settings")
+            fq = QFormLayout(gq)
+            self.log_cb = QCheckBox(); self.log_cb.setChecked(self._cfg.get('use_log_scale', True))
+            fq.addRow("Log Scale:", self.log_cb)
+            lay.addWidget(gq)
 
-        g5 = QGroupBox("Heatmap Settings")
-        f5 = QFormLayout(g5)
-        self.log_cb = QCheckBox(); self.log_cb.setChecked(self._cfg.get('use_log_scale', True))
-        f5.addRow("Log Scale:", self.log_cb)
-        self.val_cb = QCheckBox(); self.val_cb.setChecked(self._cfg.get('show_values', True))
-        f5.addRow("Show % on Cells:", self.val_cb)
-        self.cmap_combo = QComboBox(); self.cmap_combo.addItems(colorheatmap)
-        self.cmap_combo.setCurrentText(self._cfg.get('colormap', 'YlGn'))
-        f5.addRow("Colormap:", self.cmap_combo)
-        lay.addWidget(g5)
+        if self._scope in ('all', 'format'):
+            g4 = QGroupBox("Pie Chart Settings")
+            f4 = QFormLayout(g4)
+            self.pct_cb = QCheckBox(); self.pct_cb.setChecked(self._cfg.get('show_percentages', True))
+            f4.addRow("Show %:", self.pct_cb)
+            self.explode_cb = QCheckBox(); self.explode_cb.setChecked(self._cfg.get('explode_slices', False))
+            f4.addRow("Explode Slices:", self.explode_cb)
+            self.lbl_btn = QPushButton(); self._lbl_color = QColor(self._cfg.get('label_color', '#000000'))
+            self.lbl_btn.setStyleSheet(f"background-color:{self._lbl_color.name()}; min-height:25px;")
+            self.lbl_btn.clicked.connect(self._pick_lbl_color)
+            f4.addRow("Label Color:", self.lbl_btn)
+            lay.addWidget(g4)
 
-        if self._multi:
+            g5 = QGroupBox("Heatmap Settings")
+            f5 = QFormLayout(g5)
+            self.val_cb = QCheckBox(); self.val_cb.setChecked(self._cfg.get('show_values', True))
+            f5.addRow("Show % on Cells:", self.val_cb)
+            self.cmap_combo = QComboBox(); self.cmap_combo.addItems(colorheatmap)
+            self.cmap_combo.setCurrentText(self._cfg.get('colormap', 'YlGn'))
+            f5.addRow("Colormap:", self.cmap_combo)
+            lay.addWidget(g5)
+
+        if self._scope in ('all', 'format') and self._multi:
             names = self._input_data.get('sample_names', [])
             if names:
                 g6 = QGroupBox("Sample Colors & Names")
@@ -567,23 +598,29 @@ class SingleMultipleSettingsDialog(QDialog):
                 self._sc = sc; self._nm = nm
                 lay.addWidget(g6)
 
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+        self._font_grp = None
+        self._pie_style = None
+        self._legend_grp = None
+        self._export_grp = None
+        if self._scope in ('all', 'format'):
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
-        self._pie_style = PieStyleGroup(self._cfg)
-        lay.addWidget(self._pie_style.build())
+            self._pie_style = PieStyleGroup(self._cfg)
+            lay.addWidget(self._pie_style.build())
 
-        self._legend_grp = LegendGroup(self._cfg)
-        lay.addWidget(self._legend_grp.build())
+            self._legend_grp = LegendGroup(self._cfg)
+            lay.addWidget(self._legend_grp.build())
 
-        self._export_grp = ExportSettingsGroup(self._cfg)
-        lay.addWidget(self._export_grp.build())
+            self._export_grp = ExportSettingsGroup(self._cfg)
+            lay.addWidget(self._export_grp.build())
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def _pick_lbl_color(self):
+        """Pick pie-label text color used by format settings without changing data semantics."""
         c = QColorDialog.getColor(self._lbl_color, self)
         if c.isValid():
             self._lbl_color = c
@@ -602,26 +639,47 @@ class SingleMultipleSettingsDialog(QDialog):
 
     def collect(self):
         """
+        Collect selected settings for the active scope while preserving untouched values.
+
         Returns:
-            object: Result of the operation.
+            dict: Updated configuration dictionary.
+
+        Scope behavior:
+            - ``format`` updates visual/style/label/font/legend/export appearance keys.
+            - ``quantities`` updates scientific quantity/configuration keys.
+            - ``all`` preserves legacy combined update behavior.
         """
-        d = {
-            'visualization_type': self.viz_combo.currentText(),
-            'use_particles_per_ml': self.pml_cb.isChecked(),
-            'dilution_factor': self.dil_spin.value(),
-            'single_threshold': self.st_spin.value(),
-            'multiple_threshold': self.mt_spin.value(),
-            'show_percentages': self.pct_cb.isChecked(),
-            'explode_slices': self.explode_cb.isChecked(),
-            'label_color': self._lbl_color.name(),
-            'use_log_scale': self.log_cb.isChecked(),
-            'show_values': self.val_cb.isChecked(),
-            'colormap': self.cmap_combo.currentText(),
-        }
-        d.update(self._font_grp.collect())
-        d.update(self._pie_style.collect())
-        d.update(self._legend_grp.collect())
-        d.update(self._export_grp.collect())
+        d = dict(self._cfg)
+        if hasattr(self, 'viz_combo'):
+            d['visualization_type'] = self.viz_combo.currentText()
+        if hasattr(self, 'pml_cb'):
+            d['use_particles_per_ml'] = self.pml_cb.isChecked()
+        if hasattr(self, 'dil_spin'):
+            d['dilution_factor'] = self.dil_spin.value()
+        if hasattr(self, 'st_spin'):
+            d['single_threshold'] = self.st_spin.value()
+        if hasattr(self, 'mt_spin'):
+            d['multiple_threshold'] = self.mt_spin.value()
+        if hasattr(self, 'pct_cb'):
+            d['show_percentages'] = self.pct_cb.isChecked()
+        if hasattr(self, 'explode_cb'):
+            d['explode_slices'] = self.explode_cb.isChecked()
+        if hasattr(self, '_lbl_color'):
+            d['label_color'] = self._lbl_color.name()
+        if hasattr(self, 'log_cb'):
+            d['use_log_scale'] = self.log_cb.isChecked()
+        if hasattr(self, 'val_cb'):
+            d['show_values'] = self.val_cb.isChecked()
+        if hasattr(self, 'cmap_combo'):
+            d['colormap'] = self.cmap_combo.currentText()
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
+        if self._pie_style is not None:
+            d.update(self._pie_style.collect())
+        if self._legend_grp is not None:
+            d.update(self._legend_grp.collect())
+        if self._export_grp is not None:
+            d.update(self._export_grp.collect())
         if hasattr(self, 'mode_combo'):
             d['display_mode'] = self.mode_combo.currentText()
         if hasattr(self, '_sc'):
@@ -661,6 +719,13 @@ class SingleMultipleElementDisplayDialog(QDialog):
         return (self.node.input_data and self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _build_ui(self):
+        """
+        Build the display dialog with visualization and table tabs.
+
+        Bottom buttons provide primary workflows:
+        plot format settings, quantity configuration, reset, and figure export.
+        Statistics-table export is exposed in the table tab (not right-click).
+        """
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
 
@@ -670,7 +735,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         self.tabs = QTabWidget()
 
-        # ── Viz tab ───────────────────────────────────────────────────
         viz_widget = QWidget()
         viz_lay = QVBoxLayout(viz_widget)
         viz_lay.setContentsMargins(0, 0, 0, 0)
@@ -688,50 +752,71 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         tb = QHBoxLayout()
         tb.setContentsMargins(0, 2, 0, 0)
-        btn_s = QPushButton("⚙  Settings")
-        btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset all subplot positions to auto layout\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("Export Figure…")
+        btn_e = QPushButton("Export figure")
         btn_e.clicked.connect(self._export_figure)
-        tb.addWidget(btn_s); tb.addWidget(btn_r)
-        tb.addStretch(); tb.addWidget(btn_e)
+        tb.addWidget(btn_fmt)
+        tb.addWidget(btn_qty)
+        tb.addWidget(btn_r)
+        tb.addWidget(btn_e)
         viz_lay.addLayout(tb)
 
         self.tabs.addTab(viz_widget, "Visualization")
+
+        table_widget = QWidget()
+        table_lay = QVBoxLayout(table_widget)
+        table_lay.setContentsMargins(0, 0, 0, 0)
+        table_lay.setSpacing(4)
 
         self.table = QTableWidget()
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.tabs.addTab(self.table, "Statistics Table")
+        table_lay.addWidget(self.table)
+
+        table_btn_row = QHBoxLayout()
+        table_btn_row.setContentsMargins(0, 0, 0, 0)
+        table_btn_row.addStretch()
+        btn_export_table = QPushButton("Export statistics table")
+        btn_export_table.clicked.connect(self._download_table)
+        table_btn_row.addWidget(btn_export_table)
+        table_lay.addLayout(table_btn_row)
+
+        self.tabs.addTab(table_widget, "Statistics Table")
 
         lay.addWidget(self.tabs, stretch=1)
-
-
     def _ctx_menu(self, pos):
         """
+        Build an intentionally minimal right-click menu.
+
+        This menu only exposes lightweight visual quick toggles and isotope label mode.
+        Full format settings, quantity configuration, reset, figure export, and
+        statistics-table export are intentionally delegated to dedicated buttons.
+
+        Preserved behavior:
+            quick-toggle and isotope-label actions still update existing config keys.
+
         Args:
             pos (Any): Position point.
         """
         cfg = self.node.config
         menu = QMenu(self)
 
-        vm = menu.addMenu("Visualization Type")
-        for vt in VIZ_TYPES:
-            a = vm.addAction(vt); a.setCheckable(True)
-            a.setChecked(cfg.get('visualization_type') == vt)
-            a.triggered.connect(lambda _, v=vt: self._set('visualization_type', v))
-
         tm = menu.addMenu("Quick Toggles")
-        for key, label in [('show_percentages', 'Show Percentages'), ('explode_slices', 'Explode Slices'),
-                           ('use_log_scale', 'Log Scale (Heatmap)'), ('show_values', 'Values on Cells'),
-                           ('use_particles_per_ml', 'Particles/mL'),
-                           ('donut',                'Donut Mode'),
-                           ('shadow',               'Shadow'),
-                           ('legend_show',          'Show Legend'),
-                           ]:
+        for key, label in [
+            ('show_percentages', 'Show Percentages'),
+            ('explode_slices', 'Explode Slices'),
+            ('show_values', 'Values on Cells'),
+            ('donut', 'Donut Mode'),
+            ('shadow', 'Shadow'),
+            ('legend_show', 'Show Legend'),
+        ]:
             a = tm.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
@@ -742,21 +827,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        if self._multi:
-            mm = menu.addMenu("Display Mode")
-            for m in SM_DISPLAY_MODES:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
-
-        menu.addSeparator()
-        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure…").triggered.connect(self._export_figure)
-        menu.addAction("Export Statistics Table…").triggered.connect(self._download_table)
-
         menu.exec(self.canvas.mapToGlobal(pos))
-
     def _toggle(self, key):
         """
         Args:
@@ -775,21 +846,62 @@ class SingleMultipleElementDisplayDialog(QDialog):
         self._refresh()
 
     def _open_settings(self):
+        """
+        Open the legacy all-in-one settings dialog for compatibility.
+
+        This preserves prior behavior and is retained as an internal fallback route.
+        """
         ad = self.node.extract_analysis_data()
         dlg = SingleMultipleSettingsDialog(self.node.config, self.node.input_data, ad, self)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
+    def _open_plot_format_settings(self):
+        """
+        Open format-scoped settings dialog.
+
+        Handles visual formatting controls only and preserves scientific/data
+        computation semantics.
+        """
+        ad = self.node.extract_analysis_data()
+        dlg = SingleMultipleSettingsDialog(
+            self.node.config, self.node.input_data, ad, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """
+        Open quantities-scoped settings dialog.
+
+        Handles scientific quantity/configuration controls (visualization type,
+        units, dilution, thresholds, display mode, and heatmap log scaling).
+        """
+        ad = self.node.extract_analysis_data()
+        dlg = SingleMultipleSettingsDialog(
+            self.node.config, self.node.input_data, ad, self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
     def _reset_layout(self):
+        """Reset subplot layout and clear persisted draggable label positions."""
         self.node.config['label_positions'] = {}
         self._anns = {}
         self.canvas.reset_layout()
 
     def _export_figure(self):
+        """Open the existing figure export workflow for the Single/Multiple plot."""
         download_matplotlib_figure(self.fig, self, "single_multiple_analysis")
 
     def _download_table(self):
+        """
+        Export the statistics table as CSV from a table-specific UI location.
+
+        This preserves non-figure export behavior while intentionally removing
+        table export from the plot right-click menu.
+        """
         ad = self.node.extract_analysis_data()
         if not ad:
             QMessageBox.warning(self, "Warning", "No data available"); return
@@ -805,7 +917,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 QMessageBox.information(self, "Success", f"Saved to:\n{path}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
-
     def _persist_positions(self, _event):
         """Save current annotation positions into config so they survive redraws.
         Args:
@@ -1272,4 +1383,7 @@ class SingleMultipleElementPlotNode(QObject):
                 if r:
                     result[sn] = r
         return result if result else None
+
+
+
 
