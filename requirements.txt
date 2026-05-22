@@ -41,7 +41,7 @@ joblib==1.5.3
 threadpoolctl==3.6.0
 packaging==26.0
 platformdirs==4.9.4
-setuptools==82.0.1
+setuptools==69.5.1
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 pyinstaller==6.19.0
