@@ -59,6 +59,7 @@ jobs:
   build-macos-intel:
     name: macOS Intel
     runs-on: macos-13
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -77,11 +78,8 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: Patch spec for Intel (x86_64)
-        run: pyinstaller --noconfirm --clean IsotopeTrack_Intel.spec
-
       - name: Build .app with PyInstaller
-        run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec
+        run: pyinstaller --noconfirm --clean IsotopeTrack_Intel.spec
 
       - name: Clean dist for DMG (keep only .app)
         run: rm -rf dist/IsotopeTrack
@@ -89,10 +87,7 @@ jobs:
       - name: Build DMG
         run: |
           chmod +x create_dmg.sh
-          ./create_dmg.sh
-
-      - name: Rename DMG for Intel
-        run: mv IsotopeTrack_M.dmg IsotopeTrack_Intel.dmg
+          ./create_dmg.sh IsotopeTrack_Intel.dmg
 
       - name: Verify DMG exists
         run: ls -lh IsotopeTrack_Intel.dmg
