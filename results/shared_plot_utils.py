@@ -1,4 +1,5 @@
 import re
+import sys
 import math
 import numpy as np
 import pandas as pd
@@ -119,10 +120,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_start_px = None
         self._drag_ax_pos0  = None
 
-
-# ─────────────────────────────────────────────
-# Element label formatting (Symbol / Mass+Symbol / Atomic Notation)
-# ─────────────────────────────────────────────
+_USE_MATHTEXT = sys.platform == 'darwin'
 
 LABEL_MODES = ['Symbol', 'Mass + Symbol', 'Atomic Notation']
 
@@ -178,6 +176,12 @@ def format_element_label(key: str, mode: str) -> str:
                       e.g. '107Ag' → 'Ag',  '107Ag, 197Au' → 'Ag, Au'
     'Mass + Symbol' → keep as-is (full isotope notation)
                       e.g. '107Ag',          '107Ag, 197Au'
+    'Atomic Notation' → superscript mass before symbol.
+                      On macOS, uses matplotlib mathtext ($^{107}$Ag) instead
+                      of Unicode superscripts, because Times New Roman on macOS
+                      is missing glyphs for digits 0 and 4-9 in the Unicode
+                      Superscripts block. On Windows, Unicode superscripts are
+                      used as before.
     Args:
         key (str): Dictionary or storage key.
         mode (str): Operating mode string.
@@ -196,6 +200,8 @@ def format_element_label(key: str, mode: str) -> str:
             if _SUPERSCRIPT_DIGIT_RE.search(original):
                 return original
             if mass:
+                if _USE_MATHTEXT:
+                    return f"$^{{{mass}}}${symbol}"
                 return f"{superscript_digits(mass)}{symbol}"
             return symbol or original
         return symbol or original
