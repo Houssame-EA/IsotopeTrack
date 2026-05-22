@@ -505,7 +505,12 @@ class SingleMultipleSettingsDialog(QDialog):
         ``quantities`` contains scientific/data controls (visualization type, units,
         dilution, thresholds, display mode, and quantity-side heatmap log scaling).
         ``format`` contains visual controls (pie/heatmap style, labels, fonts, legend,
-        sample appearance, and export appearance settings).
+        and export appearance settings.
+
+        Preserved behavior:
+            Sample color/name editing and pie label-color editing are intentionally
+            not exposed for this plot type to avoid confusing controls that do not
+            materially improve the Single/Multiple workflow.
         """
         root = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -552,6 +557,9 @@ class SingleMultipleSettingsDialog(QDialog):
             self.log_cb = QCheckBox(); self.log_cb.setChecked(self._cfg.get('use_log_scale', True))
             fq.addRow("Log Scale:", self.log_cb)
             lay.addWidget(gq)
+            if hasattr(self, 'viz_combo'):
+                self.viz_combo.currentTextChanged.connect(self._update_quantities_scope_state)
+                self._update_quantities_scope_state(self.viz_combo.currentText())
 
         if self._scope in ('all', 'format'):
             g4 = QGroupBox("Pie Chart Settings")
@@ -560,10 +568,6 @@ class SingleMultipleSettingsDialog(QDialog):
             f4.addRow("Show %:", self.pct_cb)
             self.explode_cb = QCheckBox(); self.explode_cb.setChecked(self._cfg.get('explode_slices', False))
             f4.addRow("Explode Slices:", self.explode_cb)
-            self.lbl_btn = QPushButton(); self._lbl_color = QColor(self._cfg.get('label_color', '#000000'))
-            self.lbl_btn.setStyleSheet(f"background-color:{self._lbl_color.name()}; min-height:25px;")
-            self.lbl_btn.clicked.connect(self._pick_lbl_color)
-            f4.addRow("Label Color:", self.lbl_btn)
             lay.addWidget(g4)
 
             g5 = QGroupBox("Heatmap Settings")
@@ -574,29 +578,6 @@ class SingleMultipleSettingsDialog(QDialog):
             self.cmap_combo.setCurrentText(self._cfg.get('colormap', 'YlGn'))
             f5.addRow("Colormap:", self.cmap_combo)
             lay.addWidget(g5)
-
-        if self._scope in ('all', 'format') and self._multi:
-            names = self._input_data.get('sample_names', [])
-            if names:
-                g6 = QGroupBox("Sample Colors & Names")
-                v6 = QVBoxLayout(g6)
-                self._sample_btns = {}; self._sample_edits = {}
-                sc = dict(self._cfg.get('sample_colors', {}))
-                nm = dict(self._cfg.get('sample_name_mappings', {}))
-                for i, sn in enumerate(names):
-                    h = QHBoxLayout()
-                    ed = QLineEdit(nm.get(sn, sn)); ed.setFixedWidth(200)
-                    h.addWidget(ed); self._sample_edits[sn] = ed
-                    btn = QPushButton(); btn.setFixedSize(30, 20)
-                    c = sc.get(sn, default_colors[i % len(default_colors)])
-                    sc[sn] = c
-                    btn.setStyleSheet(f"background-color: {c}; border:1px solid black;")
-                    btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_sc(s, b))
-                    h.addWidget(btn); h.addStretch()
-                    w = QWidget(); w.setLayout(h); v6.addWidget(w)
-                    self._sample_btns[sn] = (btn, c)
-                self._sc = sc; self._nm = nm
-                lay.addWidget(g6)
 
         self._font_grp = None
         self._pie_style = None
@@ -619,23 +600,29 @@ class SingleMultipleSettingsDialog(QDialog):
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
-    def _pick_lbl_color(self):
-        """Pick pie-label text color used by format settings without changing data semantics."""
-        c = QColorDialog.getColor(self._lbl_color, self)
-        if c.isValid():
-            self._lbl_color = c
-            self.lbl_btn.setStyleSheet(f"background-color:{c.name()}; min-height:25px;")
+    def _update_quantities_scope_state(self, viz_type: str):
+        """
+        Update quantity-scope control availability based on visualization type.
 
-    def _pick_sc(self, sn, btn):
-        """
         Args:
-            sn (Any): The sn.
-            btn (Any): The btn.
+            viz_type (str): Current visualization type text selected in this dialog.
+
+        Behavior:
+            ``Log Scale`` remains available only for heatmap quantities. It is disabled
+            for non-heatmap views so users are not presented with non-applicable controls.
+
+        Preserved behavior:
+            The underlying config key/value semantics are unchanged; only control
+            enablement state is updated.
         """
-        c = QColorDialog.getColor(QColor(self._sc.get(sn, '#3B82F6')), self)
-        if c.isValid():
-            self._sc[sn] = c.name()
-            btn.setStyleSheet(f"background-color:{c.name()}; border:1px solid black;")
+        if not hasattr(self, 'log_cb') or self.log_cb is None:
+            return
+        is_heatmap = (viz_type == 'Heatmaps')
+        self.log_cb.setEnabled(is_heatmap)
+        if is_heatmap:
+            self.log_cb.setToolTip("")
+        else:
+            self.log_cb.setToolTip("Log scale is only available for heatmap view.")
 
     def collect(self):
         """
@@ -645,9 +632,13 @@ class SingleMultipleSettingsDialog(QDialog):
             dict: Updated configuration dictionary.
 
         Scope behavior:
-            - ``format`` updates visual/style/label/font/legend/export appearance keys.
+            - ``format`` updates visual/style/font/legend/export appearance keys.
             - ``quantities`` updates scientific quantity/configuration keys.
             - ``all`` preserves legacy combined update behavior.
+
+        Preserved behavior:
+            Removed UI features (sample colors/names and pie label color) are
+            intentionally not collected, preventing confusing no-op updates.
         """
         d = dict(self._cfg)
         if hasattr(self, 'viz_combo'):
@@ -664,8 +655,6 @@ class SingleMultipleSettingsDialog(QDialog):
             d['show_percentages'] = self.pct_cb.isChecked()
         if hasattr(self, 'explode_cb'):
             d['explode_slices'] = self.explode_cb.isChecked()
-        if hasattr(self, '_lbl_color'):
-            d['label_color'] = self._lbl_color.name()
         if hasattr(self, 'log_cb'):
             d['use_log_scale'] = self.log_cb.isChecked()
         if hasattr(self, 'val_cb'):
@@ -680,12 +669,8 @@ class SingleMultipleSettingsDialog(QDialog):
             d.update(self._legend_grp.collect())
         if self._export_grp is not None:
             d.update(self._export_grp.collect())
-        if hasattr(self, 'mode_combo'):
+        if self.mode_combo is not None:
             d['display_mode'] = self.mode_combo.currentText()
-        if hasattr(self, '_sc'):
-            d['sample_colors'] = dict(self._sc)
-        if hasattr(self, '_sample_edits'):
-            d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
         return d
 
 
@@ -969,9 +954,16 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
     def _draw_pies(self, ad, cfg):
         """
+        Draw pie/donut visualizations for single vs multiple-element distributions.
+
         Args:
-            ad (Any): The ad.
-            cfg (Any): The cfg.
+            ad (Any): Analysis data (single-sample dict or multi-sample mapping).
+            cfg (dict): Active plot configuration.
+
+        Preserved behavior:
+            Single/multiple classification and value computations are unchanged.
+            This method only controls subplot layout/routing for the selected
+            multi-sample display mode.
         """
         fp = make_font_properties(cfg)
         fc = cfg.get('font_color', '#000000')
@@ -986,20 +978,49 @@ class SingleMultipleElementDisplayDialog(QDialog):
         if self._multi:
             names = list(ad.keys())
             n = len(names)
-            for i, sn in enumerate(names):
-                sr = ad[sn]
-                dn = get_display_name(sn, cfg)
-                si = {'is_summed': False}
+            mode = cfg.get('display_mode', 'Individual Subplots')
 
-                ax1 = self.fig.add_subplot(n, 2, i*2 + 1)
-                self._pie_one(ax1, sr, 'single', s_colors, pml, dil, si, cfg, fp, lc,
-                              sp_key=f'{sn}_single')
-                ax1.set_title(f'{dn} – Single', fontproperties=fp, color=fc)
+            if mode == 'Side by Side Subplots':
+                for i, sn in enumerate(names):
+                    sr = ad[sn]
+                    dn = get_display_name(sn, cfg)
+                    si = {'is_summed': False}
 
-                ax2 = self.fig.add_subplot(n, 2, i*2 + 2)
-                self._pie_one(ax2, sr, 'multiple', m_colors, pml, dil, si, cfg, fp, lc,
-                              sp_key=f'{sn}_multiple')
-                ax2.set_title(f'{dn} – Multiple', fontproperties=fp, color=fc)
+                    ax1 = self.fig.add_subplot(2, n, i + 1)
+                    self._pie_one(ax1, sr, 'single', s_colors, pml, dil, si, cfg, fp, lc,
+                                  sp_key=f'{sn}_single')
+                    ax1.set_title(f'{dn} - Single', fontproperties=fp, color=fc)
+
+                    ax2 = self.fig.add_subplot(2, n, n + i + 1)
+                    self._pie_one(ax2, sr, 'multiple', m_colors, pml, dil, si, cfg, fp, lc,
+                                  sp_key=f'{sn}_multiple')
+                    ax2.set_title(f'{dn} - Multiple', fontproperties=fp, color=fc)
+            elif mode == 'Combined View':
+                combined = self._combine_multi_analysis(ad)
+                ax1 = self.fig.add_subplot(1, 2, 1)
+                self._pie_one(ax1, combined, 'single', s_colors, pml, dil, None, cfg, fp, lc,
+                              sp_key='combined_single')
+                ax1.set_title('Combined - Single', fontproperties=fp, color=fc)
+
+                ax2 = self.fig.add_subplot(1, 2, 2)
+                self._pie_one(ax2, combined, 'multiple', m_colors, pml, dil, None, cfg, fp, lc,
+                              sp_key='combined_multiple')
+                ax2.set_title('Combined - Multiple', fontproperties=fp, color=fc)
+            else:
+                for i, sn in enumerate(names):
+                    sr = ad[sn]
+                    dn = get_display_name(sn, cfg)
+                    si = {'is_summed': False}
+
+                    ax1 = self.fig.add_subplot(n, 2, i*2 + 1)
+                    self._pie_one(ax1, sr, 'single', s_colors, pml, dil, si, cfg, fp, lc,
+                                  sp_key=f'{sn}_single')
+                    ax1.set_title(f'{dn} - Single', fontproperties=fp, color=fc)
+
+                    ax2 = self.fig.add_subplot(n, 2, i*2 + 2)
+                    self._pie_one(ax2, sr, 'multiple', m_colors, pml, dil, si, cfg, fp, lc,
+                                  sp_key=f'{sn}_multiple')
+                    ax2.set_title(f'{dn} - Multiple', fontproperties=fp, color=fc)
         else:
             ax1 = self.fig.add_subplot(1, 2, 1)
             self._pie_one(ax1, ad, 'single', s_colors, pml, dil, None, cfg, fp, lc,
@@ -1010,6 +1031,48 @@ class SingleMultipleElementDisplayDialog(QDialog):
             self._pie_one(ax2, ad, 'multiple', m_colors, pml, dil, None, cfg, fp, lc,
                           sp_key='multiple')
             ax2.set_title('Multiple Element Particles', fontproperties=fp, color=fc)
+
+    def _combine_multi_analysis(self, analysis_by_sample):
+        """
+        Combine per-sample analysis into one aggregated analysis structure.
+
+        Args:
+            analysis_by_sample (dict): Mapping ``sample_name -> analysis result``.
+
+        Returns:
+            dict: Aggregated analysis in the schema expected by existing pie
+            rendering/statistics helpers.
+
+        Preserved behavior:
+            Classification semantics are preserved; this only aggregates counts for
+            Combined View rendering.
+        """
+        combo_counts = defaultdict(int)
+        total_particles = 0
+        for sample_result in analysis_by_sample.values():
+            total_particles += int(sample_result.get('total_particles', 0))
+            for combo, det in sample_result.get('all_combinations', []):
+                combo_counts[combo] += int(det.get('count', 0))
+
+        all_combos = []
+        for combo, count in sorted(combo_counts.items(), key=lambda kv: kv[1], reverse=True):
+            all_combos.append((combo, {'count': count, 'indices': [], 'is_single': len(combo.split(', ')) == 1}))
+
+        single = []
+        multiple = []
+        for combo, det in all_combos:
+            pct = (det['count'] / total_particles * 100) if total_particles else 0.0
+            if det['is_single']:
+                single.append((combo, det, pct))
+            else:
+                multiple.append((combo, det, pct))
+
+        return {
+            'single_combinations': single,
+            'multiple_combinations': multiple,
+            'total_particles': total_particles,
+            'all_combinations': all_combos,
+        }
 
     def _pie_one(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, sp_key=''):
         """
@@ -1383,6 +1446,7 @@ class SingleMultipleElementPlotNode(QObject):
                 if r:
                     result[sn] = r
         return result if result else None
+
 
 
 
