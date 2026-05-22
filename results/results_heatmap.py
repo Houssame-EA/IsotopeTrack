@@ -1,4 +1,4 @@
-﻿from PySide6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QFrame,
     QScrollArea, QWidget, QMenu, QDialogButtonBox, QMessageBox, QInputDialog, QColorDialog
@@ -208,7 +208,7 @@ class HeatmapSettingsDialog(QDialog):
             g = QGroupBox("Cell Appearance")
             fl = QFormLayout(g)
             self.x_rotation_spin = QSpinBox()
-            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
+            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("�")
             self.x_rotation_spin.setValue(self._config.get('x_rotation', 0))
             fl.addRow("X label rotation:", self.x_rotation_spin)
             self.ann_fontsize_spin = QSpinBox()
@@ -235,7 +235,7 @@ class HeatmapSettingsDialog(QDialog):
                 colors = self._config.get('sample_colors', {})
                 for i, sn in enumerate(self._sample_names):
                     row = QHBoxLayout()
-                    lbl = QLabel(sn[:25] + "…" if len(sn) > 25 else sn)
+                    lbl = QLabel(sn[:25] + "�" if len(sn) > 25 else sn)
                     lbl.setFixedWidth(160)
                     row.addWidget(lbl)
                     btn = QPushButton()
@@ -355,7 +355,7 @@ class HeatmapDisplayDialog(QDialog):
             return self.node.input_data.get('sample_names', [])
         return []
 
-    # â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── UI ──────────────────────────────────
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -367,7 +367,7 @@ class HeatmapDisplayDialog(QDialog):
         self.canvas.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.canvas)
 
-        # â”€â”€ Bottom toolbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Bottom toolbar ────────────────────────────────────────────
         bb = QHBoxLayout()
         bb.setContentsMargins(0, 4, 0, 0)
         btn_fmt = QPushButton("Plot format settings")
@@ -385,12 +385,22 @@ class HeatmapDisplayDialog(QDialog):
         bb.addWidget(btn_e)
         layout.addLayout(bb)
 
-    # â”€â”€ Context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
         """
+        Build a minimal Heatmap right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full format/quantity configuration, reset, and export
+        are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Heatmap calculations and search-safe label behavior remain unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -413,41 +423,7 @@ class HeatmapDisplayDialog(QDialog):
             a.setChecked(mode == current_mode)
             a.triggered.connect(lambda _, m=mode: self._set_label_mode(m))
 
-        cs_menu = menu.addMenu("Color Scale")
-        current_cs = cfg.get('colorscale', 'YlGnBu')
-        for cs in colorheatmap:
-            a = cs_menu.addAction(cs)
-            a.setCheckable(True)
-            a.setChecked(cs == current_cs)
-            a.triggered.connect(lambda _, c=cs: self._set_and_refresh('colorscale', c))
-
-        rot_menu = menu.addMenu("X Label Rotation")
-        cur_rot = cfg.get('x_rotation', 0)
-        for rot in [0, 30, 45, 60, 90]:
-            a = rot_menu.addAction(f"{rot}°")
-            a.setCheckable(True)
-            a.setChecked(cur_rot == rot)
-            a.triggered.connect(lambda _, r=rot: self._set_and_refresh('x_rotation', r))
-
-        search_action = menu.addAction("Search Elements...")
-        search_action.triggered.connect(self._search_dialog)
-
-        range_action = menu.addAction("Set Range...")
-        range_action.triggered.connect(self._range_dialog)
-
-        if self._is_multi():
-            dm_menu = menu.addMenu("Display Mode")
-            modes = ['Individual Subplots', 'Side by Side Subplots',
-                     'Combined Heatmap', 'Comparative View']
-            cur = cfg.get('display_mode', modes[0])
-            for m in modes:
-                a = dm_menu.addAction(m)
-                a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set_and_refresh('display_mode', mode))
-
         menu.exec(QCursor.pos())
-
     def _add_toggle(self, menu, label, key):
         """
         Args:
@@ -575,7 +551,7 @@ class HeatmapDisplayDialog(QDialog):
             print(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
 
-    # â”€â”€ Multi-sample dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Multi-sample dispatch ───────────────
 
     def _draw_multi(self, data, cfg, display_mode):
         """
@@ -634,7 +610,7 @@ class HeatmapDisplayDialog(QDialog):
                     combined[combo].setdefault('total_values', {}).setdefault(elem, []).extend(vals)
         return combined
 
-    # â”€â”€ Core heatmap drawing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Core heatmap drawing ────────────────
 
     def _draw_heatmap(self, ax, sample_data, cfg, title):
         """
@@ -838,16 +814,16 @@ class HeatmapPlotNode(QObject):
         'sample_colors': {},
         'font_family': 'Times New Roman', 'font_size': 12,
         'font_bold': False, 'font_italic': False, 'font_color': '#000000',
-        # â”€â”€ Color range â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Color range ──────────────────────────────────────────────────
         'use_custom_range':  False,
         'vmin':              0.0,
         'vmax':              100.0,
         'log_scale':         False,
-        # â”€â”€ Cell appearance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Cell appearance ──────────────────────────────────────────────
         'x_rotation':        0,
         'annotation_fontsize': 0,
         'cell_linewidth':    0.5,
-        # â”€â”€ Export / appearance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Export / appearance ──────────────────────────────────────────
         'bg_color':          '#FFFFFF',
         'export_format':     'svg',
         'export_dpi':        300,
@@ -998,6 +974,7 @@ def _build_combinations(particles, data_key):
         print(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None
+
 
 
 

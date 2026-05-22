@@ -1,12 +1,12 @@
-﻿"""
-Concentration-Comparison Plot Node â€“ dot-and-circle strip chart.
+"""
+Concentration-Comparison Plot Node – dot-and-circle strip chart.
 
 Each element gets a horizontal row.
 Individual sample values are small dots (jittered), group means are large
 open circles.  Numeric mean values displayed on the right.
 
-Single sample  â†’ one column of dots per element.
-Multi-sample   â†’ overlaid colours per sample / group.
+Single sample  → one column of dots per element.
+Multi-sample   → overlaid colours per sample / group.
 
 Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
@@ -33,7 +33,7 @@ from results.shared_plot_utils import (
 from results.utils_sort import sort_elements_by_mass
 
 
-# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Constants ──────────────────────────────────────────────────────────
 
 CONC_DATA_TYPES = [
     'Counts',
@@ -100,7 +100,7 @@ DEFAULT_GROUP_COLORS = [
 ]
 
 
-# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
     """
@@ -141,7 +141,7 @@ def _fmt_val(v):
         object: Result of the operation.
     """
     if v == 0:
-        return "â€”"
+        return "—"
     if abs(v) >= 1000:
         return f"{v:.2e}"
     elif abs(v) >= 1:
@@ -151,7 +151,7 @@ def _fmt_val(v):
     return f"{v:.2e}"
 
 
-# â”€â”€ Settings Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Settings Dialog ────────────────────────────────────────────────────
 
 class ConcentrationSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None, scope='all'):
@@ -339,7 +339,7 @@ class ConcentrationSettingsDialog(QDialog):
         return d
 
 
-# â”€â”€ Display Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Display Dialog ─────────────────────────────────────────────────────
 
 class ConcentrationDisplayDialog(QDialog):
     """Matplotlib-based concentration strip-chart with drag support."""
@@ -388,27 +388,25 @@ class ConcentrationDisplayDialog(QDialog):
         tb.addWidget(btn_e)
         lay.addLayout(tb)
 
-    # â”€â”€ Context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
         """
+        Build a minimal Concentration right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full format/quantity configuration, reset, and export
+        are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Concentration calculations and aggregation semantics are unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
-
-        dm = menu.addMenu("Data Type")
-        for dt in CONC_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
-
-        am = menu.addMenu("Aggregation")
-        for m in CONC_AGG_METHODS:
-            a = am.addAction(m); a.setCheckable(True)
-            a.setChecked(cfg.get('aggregation') == m)
-            a.triggered.connect(lambda _, v=m: self._set('aggregation', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, label in [
@@ -428,7 +426,6 @@ class ConcentrationDisplayDialog(QDialog):
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
         menu.exec(QCursor.pos())
-
     def _toggle(self, key):
         """
         Args:
@@ -472,7 +469,7 @@ class ConcentrationDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    # â”€â”€ Refresh / draw â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
         try:
@@ -502,7 +499,7 @@ class ConcentrationDisplayDialog(QDialog):
             n_el  = len(data['elements'])
             n_grp = len(data['groups'])
             self._info.setText(
-                f"{n_el} elements Â· {n_grp} group(s) Â· "
+                f"{n_el} elements · {n_grp} group(s) · "
                 f"{data.get('subtitle', '')}")
 
             self.figure.tight_layout()
@@ -513,7 +510,7 @@ class ConcentrationDisplayDialog(QDialog):
             print(f"Error refreshing concentration plot: {e}")
             import traceback; traceback.print_exc()
 
-    # â”€â”€ Core drawing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Core drawing ───────────────────────────────────────────────────
 
     def _draw_chart(self, data, cfg):
         """Draw the horizontal strip chart onto self.figure.
@@ -565,7 +562,7 @@ class ConcentrationDisplayDialog(QDialog):
             ax.set_xscale('log')
             ax.xaxis.set_major_formatter(mticker.LogFormatterSciNotation(base=10))
 
-        # â”€â”€ Draw per element row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Draw per element row ────────────────────────────────────────
         rng = np.random.default_rng(42)
 
         for ei, (el, yp) in enumerate(zip(elements, y_pos)):
@@ -615,7 +612,7 @@ class ConcentrationDisplayDialog(QDialog):
                         zorder=5,
                     )
 
-        # â”€â”€ Y axis (element labels) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Y axis (element labels) ─────────────────────────────────────
         ax.set_yticks(y_pos)
         ax.set_yticklabels(
             y_labels,
@@ -626,7 +623,7 @@ class ConcentrationDisplayDialog(QDialog):
         )
         ax.set_ylim(-0.6, n_el - 0.4)
 
-        # â”€â”€ X axis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── X axis ─────────────────────────────────────────────────────
         unit = data.get('unit', '')
         ax.set_xlabel(unit, fontsize=fc['size'], color=fc['color'],
                       fontfamily=fc['family'],
@@ -635,14 +632,14 @@ class ConcentrationDisplayDialog(QDialog):
                        colors=fc['color'])
         ax.tick_params(axis='y', length=0)
 
-        # â”€â”€ Title â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Title ──────────────────────────────────────────────────────
         title = data.get('title', '')
         if title:
             ax.set_title(title, fontsize=fc['size'] + 2, color=fc['color'],
                          fontfamily=fc['family'],
                          fontweight='bold' if fc['bold'] else 'normal', pad=10)
 
-        # â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Legend ─────────────────────────────────────────────────────
         if n_grp > 1:
             import matplotlib.lines as mlines
             handles = [
@@ -669,7 +666,7 @@ class ConcentrationDisplayDialog(QDialog):
         apply_font_to_matplotlib(ax, cfg)
 
 
-# â”€â”€ Node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Node ───────────────────────────────────────────────────────────────
 
 class ConcentrationComparisonNode(QObject):
     position_changed      = Signal(object)
@@ -789,8 +786,8 @@ class ConcentrationComparisonNode(QObject):
             'groups': {
                 sname: {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
             },
-            'title':    f"{agg_method} â€” {sname}",
-            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual Â· {unit}",
+            'title':    f"{agg_method} — {sname}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
             'unit':     unit,
         }
 
@@ -832,8 +829,9 @@ class ConcentrationComparisonNode(QObject):
         return {
             'elements': elements,
             'groups':   groups,
-            'title':    f"{agg_method} â€” {labels}",
-            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual Â· {unit}",
+            'title':    f"{agg_method} — {labels}",
+            'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
             'unit':     unit,
         }
+
 

@@ -1,8 +1,8 @@
-﻿"""
-Correlation-Matrix Plot Node â€“ pairwise Pearson-r heat-maps.
+"""
+Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
 
-Single sample  â†’ one matrix.
-Multi-sample   â†’ side-by-side or individual subplot matrices.
+Single sample  → one matrix.
+Multi-sample   → side-by-side or individual subplot matrices.
 
 Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 """
@@ -32,7 +32,7 @@ from results.shared_plot_utils import (
 from results.utils_sort import sort_elements_by_mass
 
 
-# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Constants ──────────────────────────────────────────────────────────
 
 MATRIX_DATA_TYPES = [
     'Counts',
@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
 }
 
 
-# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
     """
@@ -158,10 +158,10 @@ def _matrix_stats(mat):
     if not off_diag:
         return "No valid correlations"
     arr = np.array(off_diag)
-    return f"mean|r|={np.mean(np.abs(arr)):.3f}  Â·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
+    return f"mean|r|={np.mean(np.abs(arr)):.3f}  ·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
 
 
-# â”€â”€ Settings Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Settings Dialog ────────────────────────────────────────────────────
 
 class MatrixSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None, scope='all'):
@@ -238,7 +238,7 @@ class MatrixSettingsDialog(QDialog):
             f2.addRow("Isotope Label:", self.label_mode_combo)
             from PySide6.QtWidgets import QSpinBox as _QSpin
             self.x_rotation_spin = _QSpin()
-            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
+            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("�")
             self.x_rotation_spin.setValue(self._cfg.get('x_rotation', 0))
             f2.addRow("X Label Rotation:", self.x_rotation_spin)
             lay.addWidget(g2)
@@ -288,7 +288,7 @@ class MatrixSettingsDialog(QDialog):
         return d
 
 
-# â”€â”€ Display Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Display Dialog ─────────────────────────────────────────────────────
 
 class CorrelationMatrixDisplayDialog(QDialog):
     """Matplotlib-based correlation matrix dialog with drag support."""
@@ -337,27 +337,25 @@ class CorrelationMatrixDisplayDialog(QDialog):
         tb.addWidget(btn_e)
         lay.addLayout(tb)
 
-    # â”€â”€ Context menu â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
         """
+        Build a minimal Matrix right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full format/quantity configuration, reset, and export
+        are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Matrix calculations, thresholds, and data semantics are unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
-
-        dm = menu.addMenu("Data Type")
-        for dt in MATRIX_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
-
-        cm = menu.addMenu("Colormap")
-        for c in MATRIX_COLORMAPS:
-            a = cm.addAction(c); a.setCheckable(True)
-            a.setChecked(cfg.get('colormap') == c)
-            a.triggered.connect(lambda _, v=c: self._set('colormap', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, label in [('show_values', 'Show r Values'),
@@ -372,22 +370,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        rot_menu = menu.addMenu("X Label Rotation")
-        cur_rot = cfg.get('x_rotation', 0)
-        for rot in [0, 30, 45, 60, 90]:
-            a = rot_menu.addAction(f"{rot}Â°"); a.setCheckable(True)
-            a.setChecked(cur_rot == rot)
-            a.triggered.connect(lambda _, r=rot: self._set('x_rotation', r))
-
-        if _is_multi(self.node.input_data):
-            mm = menu.addMenu("Display Mode")
-            for m in MATRIX_DISPLAY_MODES:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
-
         menu.exec(QCursor.pos())
-
     def _toggle(self, key):
         """
         Args:
@@ -431,7 +414,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    # â”€â”€ Refresh / draw â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
         try:
@@ -481,7 +464,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         elems = data['elements']
         n = data.get('n_particles', 0)
         self._header.setText(
-            f"Correlation Matrix Â· {len(elems)} elements Â· {n} particles Â· {_matrix_stats(mat)}")
+            f"Correlation Matrix · {len(elems)} elements · {n} particles · {_matrix_stats(mat)}")
         ax = self.figure.add_subplot(111)
         self._draw_matrix_ax(ax, mat, elems, cfg, title="")
         apply_font_to_matplotlib(ax, cfg)
@@ -496,7 +479,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         n = len(names)
         cols = min(n, 3)
         rows = math.ceil(n / cols)
-        self._header.setText(f"Correlation Matrices Â· {n} groups")
+        self._header.setText(f"Correlation Matrices · {n} groups")
         for idx, sn in enumerate(names):
             info = data[sn]
             ax = self.figure.add_subplot(rows, cols, idx + 1)
@@ -526,10 +509,10 @@ class CorrelationMatrixDisplayDialog(QDialog):
                 r2 = info2['matrix'][idx2[ei], idx2[ej]]
                 if not np.isnan(r1) and not np.isnan(r2):
                     diff[i, j] = r1 - r2
-        self._header.setText(f"Î”r = {names[0]} âˆ’ {names[1]} Â· {_matrix_stats(diff)}")
+        self._header.setText(f"Δr = {names[0]} − {names[1]} · {_matrix_stats(diff)}")
         ax = self.figure.add_subplot(111)
         self._draw_matrix_ax(ax, diff, common, cfg,
-                             title=f"Difference: {names[0]} âˆ’ {names[1]}")
+                             title=f"Difference: {names[0]} − {names[1]}")
         apply_font_to_matplotlib(ax, cfg)
 
     def _draw_matrix_ax(self, ax, mat, elems, cfg, title=""):
@@ -592,7 +575,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         ax.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
 
-# â”€â”€ Node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Node ───────────────────────────────────────────────────────────────
 
 class CorrelationMatrixNode(QObject):
     position_changed      = Signal(object)
@@ -718,4 +701,5 @@ class CorrelationMatrixNode(QObject):
                 result[sn] = {'elements': elements, 'matrix': mat,
                               'p_matrix': p_mat, 'n_particles': len(sp)}
         return result if result else None
+
 

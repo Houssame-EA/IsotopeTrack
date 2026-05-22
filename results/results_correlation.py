@@ -542,10 +542,7 @@ class CorrelationPlotDisplayDialog(QDialog):
 
     Right-click anywhere on the plot to access:
     - Quick toggles (log axes, trend line, correlation coeff)
-    - Data type switching
-    - Auto-detect correlations
-    - Full settings dialog
-    - Download
+    - Isotope label switching
     """
 
     def __init__(self, correlation_node, parent_window=None):

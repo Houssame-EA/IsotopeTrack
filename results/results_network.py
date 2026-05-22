@@ -358,17 +358,21 @@ class NetworkDisplayDialog(QDialog):
 
     def _ctx_menu(self, pos):
         """
+        Build a minimal Network right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full formatting, quantity configuration, reset, and export
+        workflows are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Plot/data calculations are unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
-
-        dm = menu.addMenu("Data Type")
-        for dt in NET_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, label in [('show_labels', 'Show Labels'),
@@ -383,14 +387,7 @@ class NetworkDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        pm = menu.addMenu("|r| Threshold")
-        for t in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]:
-            a = pm.addAction(f"≥ {t}"); a.setCheckable(True)
-            a.setChecked(abs(cfg.get('r_threshold', 0.3) - t) < 0.01)
-            a.triggered.connect(lambda _, v=t: self._set('r_threshold', v))
-
         menu.exec(QCursor.pos())
-
     def _toggle(self, key):
         """
         Args:
@@ -725,3 +722,4 @@ class NetworkDiagramNode(QObject):
                 'title':       f"{dn}  (n={len(sp)})",
             }
         return result if result else None
+

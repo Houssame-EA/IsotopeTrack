@@ -132,29 +132,81 @@ def confidence_ellipse_params(data_x, data_y, n_std=2.0):
 
 
 class TernarySettingsDialog(QDialog):
-    """Full settings dialog opened from right-click → Configure."""
+    """Scoped settings dialog for triangle plot format and quantity configuration."""
 
-    def __init__(self, config, available_elements, is_multi, sample_names, parent=None):
+    def __init__(self, config, available_elements, is_multi, sample_names, parent=None, scope='all'):
         """
+        Initialize the triangle settings dialog.
+
         Args:
-            config (Any): Configuration dictionary.
-            available_elements (Any): The available elements.
-            is_multi (Any): The is multi.
-            sample_names (Any): The sample names.
-            parent (Any): Parent widget or object.
+            config (dict): Current triangle configuration.
+            available_elements (list): Elements available for A/B/C and color-by selectors.
+            is_multi (bool): Whether the plot is currently in multi-sample mode.
+            sample_names (list): Sample names used by sample visual settings.
+            parent: Parent widget.
+            scope (str): One of 'format', 'quantities', or 'all'.
+                - 'format' shows only visual/appearance settings.
+                - 'quantities' shows only scientific/data selection settings.
+                - 'all' preserves legacy combined dialog behavior.
         """
         super().__init__(parent)
-        self.setWindowTitle("Ternary Plot Settings")
+        if scope == 'format':
+            self.setWindowTitle("Triangle plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Triangle plot quantities configuration")
+        else:
+            self.setWindowTitle("Ternary Plot Settings")
         self.setMinimumWidth(500)
         self._cfg = dict(config)
         self._elems = available_elements
         self._is_multi = is_multi
         self._sample_names = sample_names
+        self._scope = scope
+
+        self.display_mode = None
+        self.elem_a = None
+        self.elem_b = None
+        self.elem_c = None
+        self.color_elem = None
+        self.data_type = None
+        self.label_mode_combo = None
+        self.plot_type = None
+        self.marker_size = None
+        self.marker_alpha = None
+        self.hexbin_grid = None
+        self.hexbin_alpha = None
+        self.show_grid = None
+        self.colormap = None
+        self.show_colorbar = None
+        self.cbar_label = None
+        self.show_avg = None
+        self.avg_only_all = None
+        self.show_avg_text = None
+        self.show_ellipse = None
+        self.avg_size = None
+        self.avg_color_btn = None
+        self.min_total = None
+        self.max_particles = None
+        self._avg_color = QColor(self._cfg.get('average_point_color', '#FF0000'))
+        self._font_group = None
+        self._legend_grp = None
+        self._export_grp = None
+        self._scatter_frame = None
+        self._hexbin_frame = None
+        self._color_btns = {}
+        self._name_edits = {}
         self._build_ui()
 
-    # ── UI construction ─────────────────────
-
     def _build_ui(self):
+        """
+        Build the dialog UI based on scope while preserving existing control behavior.
+
+        Scope routing:
+            - quantities: element selection, data type, filters, display mode.
+            - format: isotope label mode, plot style, average visuals, sample colors/names,
+              font/legend/export appearance controls.
+            - all: includes both groups (legacy behavior).
+        """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -164,7 +216,7 @@ class TernarySettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        if self._is_multi:
+        if self._scope in ('all', 'quantities') and self._is_multi:
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
             self.display_mode = QComboBox()
@@ -173,218 +225,202 @@ class TernarySettingsDialog(QDialog):
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
-        g = QGroupBox("Element Selection")
-        fl = QFormLayout(g)
-        placeholder = ['-- Select --']
+        if self._scope in ('all', 'quantities'):
+            g = QGroupBox("Element Selection")
+            fl = QFormLayout(g)
+            placeholder = ['-- Select --']
 
-        self.elem_a = QComboBox()
-        self.elem_a.addItems(placeholder + self._elems)
-        ea = self._cfg.get('element_a', '')
-        if ea in self._elems:
-            self.elem_a.setCurrentText(ea)
-        fl.addRow("Element A (Bottom Left):", self.elem_a)
+            self.elem_a = QComboBox()
+            self.elem_a.addItems(placeholder + self._elems)
+            ea = self._cfg.get('element_a', '')
+            if ea in self._elems:
+                self.elem_a.setCurrentText(ea)
+            fl.addRow("Element A (Bottom Left):", self.elem_a)
 
-        self.elem_b = QComboBox()
-        self.elem_b.addItems(placeholder + self._elems)
-        eb = self._cfg.get('element_b', '')
-        if eb in self._elems:
-            self.elem_b.setCurrentText(eb)
-        fl.addRow("Element B (Bottom Right):", self.elem_b)
+            self.elem_b = QComboBox()
+            self.elem_b.addItems(placeholder + self._elems)
+            eb = self._cfg.get('element_b', '')
+            if eb in self._elems:
+                self.elem_b.setCurrentText(eb)
+            fl.addRow("Element B (Bottom Right):", self.elem_b)
 
-        self.elem_c = QComboBox()
-        self.elem_c.addItems(placeholder + self._elems)
-        ec = self._cfg.get('element_c', '')
-        if ec in self._elems:
-            self.elem_c.setCurrentText(ec)
-        fl.addRow("Element C (Top):", self.elem_c)
+            self.elem_c = QComboBox()
+            self.elem_c.addItems(placeholder + self._elems)
+            ec = self._cfg.get('element_c', '')
+            if ec in self._elems:
+                self.elem_c.setCurrentText(ec)
+            fl.addRow("Element C (Top):", self.elem_c)
 
-        self.color_elem = QComboBox()
-        self.color_elem.addItems(['(None — use index)'] + self._elems)
-        ce = self._cfg.get('color_element', '')
-        if ce in self._elems:
-            self.color_elem.setCurrentText(ce)
-        fl.addRow("Color By Element:", self.color_elem)
-
-        layout.addWidget(g)
-
-        g = QGroupBox("Data Type")
-        fl = QFormLayout(g)
-        self.data_type = QComboBox()
-        self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
-        self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
-        fl.addRow("Data:", self.data_type)
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Isotope Label:", self.label_mode_combo)
-        layout.addWidget(g)
-
-        g = QGroupBox("Plot Style")
-        fl = QFormLayout(g)
-
-        self.plot_type = QComboBox()
-        self.plot_type.addItems(PLOT_TYPES)
-        self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
-        self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
-        fl.addRow("Plot Type:", self.plot_type)
-
-        self._scatter_frame = QFrame()
-        sfl = QFormLayout(self._scatter_frame)
-        sfl.setContentsMargins(0, 0, 0, 0)
-
-        self.marker_size = QSpinBox()
-        self.marker_size.setRange(1, 100)
-        self.marker_size.setValue(self._cfg.get('marker_size', 20))
-        sfl.addRow("Marker Size:", self.marker_size)
-
-        self.marker_alpha = QSlider(Qt.Horizontal)
-        self.marker_alpha.setRange(10, 100)
-        self.marker_alpha.setValue(int(self._cfg.get('marker_alpha', 0.7) * 100))
-        sfl.addRow("Transparency:", self.marker_alpha)
-        fl.addRow(self._scatter_frame)
-
-        self._hexbin_frame = QFrame()
-        hfl = QFormLayout(self._hexbin_frame)
-        hfl.setContentsMargins(0, 0, 0, 0)
-
-        self.hexbin_grid = QSpinBox()
-        self.hexbin_grid.setRange(10, 100)
-        self.hexbin_grid.setValue(self._cfg.get('hexbin_gridsize', 30))
-        hfl.addRow("Grid Size:", self.hexbin_grid)
-
-        self.hexbin_alpha = QSlider(Qt.Horizontal)
-        self.hexbin_alpha.setRange(10, 100)
-        self.hexbin_alpha.setValue(int(self._cfg.get('hexbin_alpha', 0.8) * 100))
-        hfl.addRow("Transparency:", self.hexbin_alpha)
-        fl.addRow(self._hexbin_frame)
-
-        self.show_grid = QCheckBox()
-        self.show_grid.setChecked(self._cfg.get('show_grid', True))
-        fl.addRow("Show Grid:", self.show_grid)
-
-        self.colormap = QComboBox()
-        self.colormap.addItems(COLORMAPS)
-        cm = self._cfg.get('colormap', 'YlGn')
-        if cm in COLORMAPS:
-            self.colormap.setCurrentText(cm)
-        fl.addRow("Color Map:", self.colormap)
-
-        self.show_colorbar = QCheckBox()
-        self.show_colorbar.setChecked(self._cfg.get('show_colorbar', True))
-        fl.addRow("Show Color Bar:", self.show_colorbar)
-
-        self.cbar_label = QLineEdit(self._cfg.get('colorbar_label', 'Density'))
-        fl.addRow("Color Bar Label:", self.cbar_label)
-
-        layout.addWidget(g)
-
-        self._on_plot_type_changed()
-
-        g = QGroupBox("Average Point")
-        fl = QFormLayout(g)
-
-        self.show_avg = QCheckBox()
-        self.show_avg.setChecked(self._cfg.get('show_average_point', True))
-        fl.addRow("Show Average:", self.show_avg)
-
-        self.avg_only_all = QCheckBox()
-        self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
-        fl.addRow("Only Particles With All 3:", self.avg_only_all)
-
-        self.show_avg_text = QCheckBox()
-        self.show_avg_text.setChecked(self._cfg.get('show_average_text', True))
-        fl.addRow("Show Stats Text:", self.show_avg_text)
-
-        self.show_ellipse = QCheckBox()
-        self.show_ellipse.setChecked(self._cfg.get('show_confidence_ellipse', False))
-        fl.addRow("Show 2σ Confidence Ellipse:", self.show_ellipse)
-
-        self.avg_size = QSpinBox()
-        self.avg_size.setRange(20, 300)
-        self.avg_size.setValue(self._cfg.get('average_point_size', 100))
-        fl.addRow("Average Marker Size:", self.avg_size)
-
-        self._avg_color = QColor(self._cfg.get('average_point_color', '#FF0000'))
-        self.avg_color_btn = QPushButton()
-        self.avg_color_btn.setStyleSheet(
-            f"background-color: {self._avg_color.name()}; min-height: 25px; border: 1px solid black;")
-        self.avg_color_btn.clicked.connect(self._pick_avg_color)
-        fl.addRow("Average Color:", self.avg_color_btn)
-
-        layout.addWidget(g)
-
-        g = QGroupBox("Filtering")
-        fl = QFormLayout(g)
-
-        self.min_total = QDoubleSpinBox()
-        self.min_total.setRange(0.0, 1e9)
-        self.min_total.setDecimals(2)
-        self.min_total.setValue(self._cfg.get('min_total', 0.0))
-        fl.addRow("Min Total (A+B+C):", self.min_total)
-
-        self.max_particles = QSpinBox()
-        self.max_particles.setRange(1, 100_000_000)
-        self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
-        fl.addRow("Max Particles:", self.max_particles)
-
-        layout.addWidget(g)
-
-        if self._is_multi:
-            g = QGroupBox("Sample Colors & Names")
-            vl = QVBoxLayout(g)
-            self._color_btns = {}
-            self._name_edits = {}
-            colors = self._cfg.get('sample_colors', {})
-            mappings = self._cfg.get('sample_name_mappings', {})
-            for i, sn in enumerate(self._sample_names):
-                row = QHBoxLayout()
-                ne = QLineEdit(mappings.get(sn, sn))
-                ne.setFixedWidth(180)
-                row.addWidget(ne)
-                self._name_edits[sn] = ne
-
-                cb = QPushButton()
-                cb.setFixedSize(30, 22)
-                c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                cb.setStyleSheet(f"background-color: {c}; border: 1px solid black;")
-                cb.clicked.connect(lambda _, s=sn, b=cb: self._pick_sample_color(s, b))
-                row.addWidget(cb)
-                self._color_btns[sn] = (cb, c)
-
-                rst = QPushButton("↺")
-                rst.setFixedSize(22, 22)
-                rst.setToolTip(f"Reset to: {sn}")
-                rst.clicked.connect(lambda _, orig=sn: self._reset_name(orig))
-                row.addWidget(rst)
-
-                row.addStretch()
-                w = QWidget()
-                w.setLayout(row)
-                vl.addWidget(w)
+            self.color_elem = QComboBox()
+            self.color_elem.addItems(['(None - use index)'] + self._elems)
+            ce = self._cfg.get('color_element', '')
+            if ce in self._elems:
+                self.color_elem.setCurrentText(ce)
+            fl.addRow("Color By Element:", self.color_elem)
             layout.addWidget(g)
 
-        self._font_group = FontSettingsGroup(self._cfg)
-        layout.addWidget(self._font_group.build())
+            g = QGroupBox("Data Type")
+            fl = QFormLayout(g)
+            self.data_type = QComboBox()
+            self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
+            self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
+            fl.addRow("Data:", self.data_type)
+            layout.addWidget(g)
 
-        self._legend_grp = LegendGroup(self._cfg)
-        layout.addWidget(self._legend_grp.build())
+            g = QGroupBox("Filtering")
+            fl = QFormLayout(g)
+            self.min_total = QDoubleSpinBox()
+            self.min_total.setRange(0.0, 1e9)
+            self.min_total.setDecimals(2)
+            self.min_total.setValue(self._cfg.get('min_total', 0.0))
+            fl.addRow("Min Total (A+B+C):", self.min_total)
+            self.max_particles = QSpinBox()
+            self.max_particles.setRange(1, 100_000_000)
+            self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
+            fl.addRow("Max Particles:", self.max_particles)
+            layout.addWidget(g)
 
-        self._export_grp = ExportSettingsGroup(self._cfg)
-        layout.addWidget(self._export_grp.build())
+        if self._scope in ('all', 'format'):
+            g = QGroupBox("Labels")
+            fl = QFormLayout(g)
+            self.label_mode_combo = QComboBox()
+            self.label_mode_combo.addItems(LABEL_MODES)
+            self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            fl.addRow("Isotope Label:", self.label_mode_combo)
+            layout.addWidget(g)
+
+            g = QGroupBox("Plot Style")
+            fl = QFormLayout(g)
+            self.plot_type = QComboBox()
+            self.plot_type.addItems(PLOT_TYPES)
+            self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
+            self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
+            fl.addRow("Plot Type:", self.plot_type)
+
+            self._scatter_frame = QFrame()
+            sfl = QFormLayout(self._scatter_frame)
+            sfl.setContentsMargins(0, 0, 0, 0)
+            self.marker_size = QSpinBox()
+            self.marker_size.setRange(1, 100)
+            self.marker_size.setValue(self._cfg.get('marker_size', 20))
+            sfl.addRow("Marker Size:", self.marker_size)
+            self.marker_alpha = QSlider(Qt.Horizontal)
+            self.marker_alpha.setRange(10, 100)
+            self.marker_alpha.setValue(int(self._cfg.get('marker_alpha', 0.7) * 100))
+            sfl.addRow("Transparency:", self.marker_alpha)
+            fl.addRow(self._scatter_frame)
+
+            self._hexbin_frame = QFrame()
+            hfl = QFormLayout(self._hexbin_frame)
+            hfl.setContentsMargins(0, 0, 0, 0)
+            self.hexbin_grid = QSpinBox()
+            self.hexbin_grid.setRange(10, 100)
+            self.hexbin_grid.setValue(self._cfg.get('hexbin_gridsize', 30))
+            hfl.addRow("Grid Size:", self.hexbin_grid)
+            self.hexbin_alpha = QSlider(Qt.Horizontal)
+            self.hexbin_alpha.setRange(10, 100)
+            self.hexbin_alpha.setValue(int(self._cfg.get('hexbin_alpha', 0.8) * 100))
+            hfl.addRow("Transparency:", self.hexbin_alpha)
+            fl.addRow(self._hexbin_frame)
+
+            self.show_grid = QCheckBox()
+            self.show_grid.setChecked(self._cfg.get('show_grid', True))
+            fl.addRow("Show Grid:", self.show_grid)
+            self.colormap = QComboBox()
+            self.colormap.addItems(COLORMAPS)
+            cm = self._cfg.get('colormap', 'YlGn')
+            if cm in COLORMAPS:
+                self.colormap.setCurrentText(cm)
+            fl.addRow("Color Map:", self.colormap)
+            self.show_colorbar = QCheckBox()
+            self.show_colorbar.setChecked(self._cfg.get('show_colorbar', True))
+            fl.addRow("Show Color Bar:", self.show_colorbar)
+            self.cbar_label = QLineEdit(self._cfg.get('colorbar_label', 'Density'))
+            fl.addRow("Color Bar Label:", self.cbar_label)
+            layout.addWidget(g)
+            self._on_plot_type_changed()
+
+            g = QGroupBox("Average Point")
+            fl = QFormLayout(g)
+            self.show_avg = QCheckBox()
+            self.show_avg.setChecked(self._cfg.get('show_average_point', True))
+            fl.addRow("Show Average:", self.show_avg)
+            self.avg_only_all = QCheckBox()
+            self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
+            fl.addRow("Only Particles With All 3:", self.avg_only_all)
+            self.show_avg_text = QCheckBox()
+            self.show_avg_text.setChecked(self._cfg.get('show_average_text', True))
+            fl.addRow("Show Stats Text:", self.show_avg_text)
+            self.show_ellipse = QCheckBox()
+            self.show_ellipse.setChecked(self._cfg.get('show_confidence_ellipse', False))
+            fl.addRow("Show 2s Confidence Ellipse:", self.show_ellipse)
+            self.avg_size = QSpinBox()
+            self.avg_size.setRange(20, 300)
+            self.avg_size.setValue(self._cfg.get('average_point_size', 100))
+            fl.addRow("Average Marker Size:", self.avg_size)
+            self.avg_color_btn = QPushButton()
+            self.avg_color_btn.setStyleSheet(
+                f"background-color: {self._avg_color.name()}; min-height: 25px; border: 1px solid black;")
+            self.avg_color_btn.clicked.connect(self._pick_avg_color)
+            fl.addRow("Average Color:", self.avg_color_btn)
+            layout.addWidget(g)
+
+            if self._is_multi:
+                g = QGroupBox("Sample Colors & Names")
+                vl = QVBoxLayout(g)
+                colors = self._cfg.get('sample_colors', {})
+                mappings = self._cfg.get('sample_name_mappings', {})
+                for i, sn in enumerate(self._sample_names):
+                    row = QHBoxLayout()
+                    ne = QLineEdit(mappings.get(sn, sn))
+                    ne.setFixedWidth(180)
+                    row.addWidget(ne)
+                    self._name_edits[sn] = ne
+                    cb = QPushButton()
+                    cb.setFixedSize(30, 22)
+                    c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                    cb.setStyleSheet(f"background-color: {c}; border: 1px solid black;")
+                    cb.clicked.connect(lambda _, s=sn, b=cb: self._pick_sample_color(s, b))
+                    row.addWidget(cb)
+                    self._color_btns[sn] = (cb, c)
+                    rst = QPushButton("R")
+                    rst.setFixedSize(22, 22)
+                    rst.setToolTip(f"Reset to: {sn}")
+                    rst.clicked.connect(lambda _, orig=sn: self._reset_name(orig))
+                    row.addWidget(rst)
+                    row.addStretch()
+                    w = QWidget()
+                    w.setLayout(row)
+                    vl.addWidget(w)
+                layout.addWidget(g)
+
+            self._font_group = FontSettingsGroup(self._cfg)
+            layout.addWidget(self._font_group.build())
+            self._legend_grp = LegendGroup(self._cfg)
+            layout.addWidget(self._legend_grp.build())
+            self._export_grp = ExportSettingsGroup(self._cfg)
+            layout.addWidget(self._export_grp.build())
 
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
-    # ── Slots ───────────────────────────────
-
     def _on_plot_type_changed(self):
+        """
+        Toggle scatter/hexbin sub-sections for format controls.
+
+        This method only affects visibility of visual control widgets and preserves
+        all scientific/data semantics.
+        """
+        if self.plot_type is None or self._scatter_frame is None or self._hexbin_frame is None:
+            return
         is_scatter = self.plot_type.currentText() == 'Scatter Plot'
         self._scatter_frame.setVisible(is_scatter)
         self._hexbin_frame.setVisible(not is_scatter)
 
     def _pick_avg_color(self):
+        """Pick average-point color used for plot formatting only."""
         from PySide6.QtWidgets import QColorDialog
         c = QColorDialog.getColor(self._avg_color, self, "Average Point Color")
         if c.isValid():
@@ -394,9 +430,11 @@ class TernarySettingsDialog(QDialog):
 
     def _pick_sample_color(self, name, btn):
         """
+        Pick visual color for a sample in multi-sample format settings.
+
         Args:
-            name (Any): Name string.
-            btn (Any): The btn.
+            name (str): Raw sample key.
+            btn (QPushButton): Swatch button to update.
         """
         from PySide6.QtWidgets import QColorDialog
         cur = QColor(self._color_btns[name][1])
@@ -407,61 +445,83 @@ class TernarySettingsDialog(QDialog):
 
     def _reset_name(self, original):
         """
-        Args:
-            original (Any): The original.
+        Reset user-facing sample display name to the raw original sample name.
+
+        This preserves sample identity while changing only visual labeling.
         """
         if original in self._name_edits:
             self._name_edits[original].setText(original)
 
-    # ── Collect ─────────────────────────────
-
     def collect(self) -> dict:
         """
+        Collect dialog values for the active scope and preserve untouched config fields.
+
         Returns:
-            dict: Result of the operation.
+            dict: Updated config containing scoped changes only.
         """
         out = dict(self._cfg)
-        ea = self.elem_a.currentText()
-        out['element_a'] = '' if ea.startswith('--') else ea
-        eb = self.elem_b.currentText()
-        out['element_b'] = '' if eb.startswith('--') else eb
-        ec = self.elem_c.currentText()
-        out['element_c'] = '' if ec.startswith('--') else ec
-        ce = self.color_elem.currentText()
-        out['color_element'] = '' if ce.startswith('(') else ce
-
-        out['data_type_display'] = self.data_type.currentText()
-        out['label_mode']        = self.label_mode_combo.currentText()
-        out['plot_type'] = self.plot_type.currentText()
-        out['marker_size'] = self.marker_size.value()
-        out['marker_alpha'] = self.marker_alpha.value() / 100.0
-        out['hexbin_gridsize'] = self.hexbin_grid.value()
-        out['hexbin_alpha'] = self.hexbin_alpha.value() / 100.0
-        out['show_grid'] = self.show_grid.isChecked()
-        out['colormap'] = self.colormap.currentText()
-        out['show_colorbar'] = self.show_colorbar.isChecked()
-        out['colorbar_label'] = self.cbar_label.text()
-
-        out['show_average_point'] = self.show_avg.isChecked()
-        out['average_only_with_all_elements'] = self.avg_only_all.isChecked()
-        out['show_average_text'] = self.show_avg_text.isChecked()
-        out['show_confidence_ellipse'] = self.show_ellipse.isChecked()
-        out['average_point_size'] = self.avg_size.value()
+        if self.elem_a is not None:
+            ea = self.elem_a.currentText()
+            out['element_a'] = '' if ea.startswith('--') else ea
+        if self.elem_b is not None:
+            eb = self.elem_b.currentText()
+            out['element_b'] = '' if eb.startswith('--') else eb
+        if self.elem_c is not None:
+            ec = self.elem_c.currentText()
+            out['element_c'] = '' if ec.startswith('--') else ec
+        if self.color_elem is not None:
+            ce = self.color_elem.currentText()
+            out['color_element'] = '' if ce.startswith('(') else ce
+        if self.data_type is not None:
+            out['data_type_display'] = self.data_type.currentText()
+        if self.label_mode_combo is not None:
+            out['label_mode'] = self.label_mode_combo.currentText()
+        if self.plot_type is not None:
+            out['plot_type'] = self.plot_type.currentText()
+        if self.marker_size is not None:
+            out['marker_size'] = self.marker_size.value()
+        if self.marker_alpha is not None:
+            out['marker_alpha'] = self.marker_alpha.value() / 100.0
+        if self.hexbin_grid is not None:
+            out['hexbin_gridsize'] = self.hexbin_grid.value()
+        if self.hexbin_alpha is not None:
+            out['hexbin_alpha'] = self.hexbin_alpha.value() / 100.0
+        if self.show_grid is not None:
+            out['show_grid'] = self.show_grid.isChecked()
+        if self.colormap is not None:
+            out['colormap'] = self.colormap.currentText()
+        if self.show_colorbar is not None:
+            out['show_colorbar'] = self.show_colorbar.isChecked()
+        if self.cbar_label is not None:
+            out['colorbar_label'] = self.cbar_label.text()
+        if self.show_avg is not None:
+            out['show_average_point'] = self.show_avg.isChecked()
+        if self.avg_only_all is not None:
+            out['average_only_with_all_elements'] = self.avg_only_all.isChecked()
+        if self.show_avg_text is not None:
+            out['show_average_text'] = self.show_avg_text.isChecked()
+        if self.show_ellipse is not None:
+            out['show_confidence_ellipse'] = self.show_ellipse.isChecked()
+        if self.avg_size is not None:
+            out['average_point_size'] = self.avg_size.value()
         out['average_point_color'] = self._avg_color.name()
-
-        out['min_total'] = self.min_total.value()
-        out['max_particles'] = self.max_particles.value()
-
-        if self._is_multi:
+        if self.min_total is not None:
+            out['min_total'] = self.min_total.value()
+        if self.max_particles is not None:
+            out['max_particles'] = self.max_particles.value()
+        if self._is_multi and self.display_mode is not None:
             out['display_mode'] = self.display_mode.currentText()
+        if self._is_multi and self._color_btns:
             out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
+        if self._is_multi and self._name_edits:
             out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
-
-        out.update(self._font_group.collect())
-        out.update(self._legend_grp.collect())
-        out.update(self._export_grp.collect())
+        if self._font_group is not None:
+            out.update(self._font_group.collect())
+        if self._legend_grp is not None:
+            out.update(self._legend_grp.collect())
+        if self._export_grp is not None:
+            out.update(self._export_grp.collect())
         return out
-
 
 ANNOTATION_MARKERS = [
     ('● Circle',       'o'),
@@ -965,6 +1025,7 @@ class TriangleDisplayDialog(QDialog):
     # ── UI ──────────────────────────────────
 
     def _setup_ui(self):
+        """Build the triangle display UI and wire bottom actions without altering plot logic."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(4)
@@ -980,15 +1041,17 @@ class TriangleDisplayDialog(QDialog):
         # ── Bottom toolbar ────────────────────────────────────────────
         tb = QHBoxLayout()
         tb.setContentsMargins(0, 2, 0, 0)
-        btn_s = QPushButton("Settings")
-        btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset all subplot positions\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("Export Figure…")
+        btn_e = QPushButton("Export figure")
         btn_e.clicked.connect(self._export_figure)
-        tb.addWidget(btn_s); tb.addWidget(btn_r)
-        tb.addStretch(); tb.addWidget(btn_e)
+        tb.addWidget(btn_fmt); tb.addWidget(btn_qty)
+        tb.addWidget(btn_r); tb.addWidget(btn_e)
         main_layout.addLayout(tb)
 
         self.stats_label = QLabel("")
@@ -1001,8 +1064,23 @@ class TriangleDisplayDialog(QDialog):
 
     def _show_context_menu(self, pos):
         """
+        Build the intentionally minimal Triangle right-click menu.
+
+        The context menu is intentionally limited to lightweight quick controls only:
+        - `Quick Toggles` for fast visual toggles already supported by current config.
+        - `Isotope Label` for quick label-mode switching.
+
+        Full configuration, quantities, reset, export, and annotation entry points are
+        intentionally excluded here to avoid duplicating bottom-button workflows:
+        `Plot format settings`, `Configure plot quantities`, `Reset layout`, and
+        `Export figure`.
+
+        Preserved behavior:
+        - Toggle and isotope label actions still update the same config keys.
+        - Plot calculations/data semantics are unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -1012,98 +1090,17 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Color Bar", 'show_colorbar')
         self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
         self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
-        self._add_toggle(toggle_menu, "Show 2σ Ellipse", 'show_confidence_ellipse')
+        self._add_toggle(toggle_menu, "Show 2s Ellipse", 'show_confidence_ellipse')
         self._add_toggle(toggle_menu, "Average: All 3 Required", 'average_only_with_all_elements')
-
-        elems = self._available_elements()
-        if elems:
-            ea_menu = menu.addMenu("Element A (Left)")
-            for e in elems:
-                a = ea_menu.addAction(e)
-                a.setCheckable(True)
-                a.setChecked(e == cfg.get('element_a'))
-                a.triggered.connect(lambda _, el=e: self._set('element_a', el))
-
-            eb_menu = menu.addMenu("Element B (Right)")
-            for e in elems:
-                a = eb_menu.addAction(e)
-                a.setCheckable(True)
-                a.setChecked(e == cfg.get('element_b'))
-                a.triggered.connect(lambda _, el=e: self._set('element_b', el))
-
-            ec_menu = menu.addMenu("Element C (Top)")
-            for e in elems:
-                a = ec_menu.addAction(e)
-                a.setCheckable(True)
-                a.setChecked(e == cfg.get('element_c'))
-                a.triggered.connect(lambda _, el=e: self._set('element_c', el))
-
-            ce_menu = menu.addMenu("Color By Element")
-            a_none = ce_menu.addAction("(None — use index)")
-            a_none.setCheckable(True)
-            a_none.setChecked(not cfg.get('color_element'))
-            a_none.triggered.connect(lambda _: self._set('color_element', ''))
-            for e in elems:
-                a = ce_menu.addAction(e)
-                a.setCheckable(True)
-                a.setChecked(e == cfg.get('color_element'))
-                a.triggered.connect(lambda _, el=e: self._set('color_element', el))
-
-        dt_menu = menu.addMenu("Data Type")
-        cur_dt = cfg.get('data_type_display', 'Counts (%)')
-        for dt in TERNARY_DATA_TYPE_OPTIONS:
-            a = dt_menu.addAction(dt)
-            a.setCheckable(True)
-            a.setChecked(dt == cur_dt)
-            a.triggered.connect(lambda _, d=dt: self._set('data_type_display', d))
-
-        pt_menu = menu.addMenu("Plot Type")
-        cur_pt = cfg.get('plot_type', 'Scatter Plot')
-        for pt in PLOT_TYPES:
-            a = pt_menu.addAction(pt)
-            a.setCheckable(True)
-            a.setChecked(pt == cur_pt)
-            a.triggered.connect(lambda _, p=pt: self._set('plot_type', p))
-
-        cm_menu = menu.addMenu("Color Map")
-        cur_cm = cfg.get('colormap', 'YlGn')
-        for cm in COLORMAPS:
-            a = cm_menu.addAction(cm)
-            a.setCheckable(True)
-            a.setChecked(cm == cur_cm)
-            a.triggered.connect(lambda _, c=cm: self._set('colormap', c))
-
-        if self._is_multi():
-            dm_menu = menu.addMenu("Display Mode")
-            cur = cfg.get('display_mode', DISPLAY_MODES[0])
-            for m in DISPLAY_MODES:
-                a = dm_menu.addAction(m)
-                a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
-
-        menu.addSeparator()
-        menu.addAction("Reset Layout").triggered.connect(self._reset_layout)
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
-            a = lm.addAction(mode); a.setCheckable(True)
+            a = lm.addAction(mode)
+            a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        menu.addSeparator()
-        menu.addAction("Add Annotation…").triggered.connect(self._add_annotation)
-        menu.addAction("Manage Annotations…").triggered.connect(self._manage_annotations)
-
-        menu.addSeparator()
-        settings_action = menu.addAction("⚙  Configure…")
-        settings_action.triggered.connect(self._open_settings)
-
-        dl_action = menu.addAction("Export Figure…")
-        dl_action.triggered.connect(self._export_figure)
-
         menu.exec(QCursor.pos())
-
     def _add_toggle(self, menu, label, key):
         """
         Args:
@@ -1135,6 +1132,7 @@ class TriangleDisplayDialog(QDialog):
         self._refresh()
 
     def _add_annotation(self):
+        """Open annotation creator; preserves existing annotation data model/behavior."""
         dlg = AnnotationDialog(parent=self)
         if dlg.exec() == QDialog.Accepted:
             anns = list(self.node.config.get('annotations', []))
@@ -1143,6 +1141,7 @@ class TriangleDisplayDialog(QDialog):
             self._refresh()
 
     def _manage_annotations(self):
+        """Open annotation manager; preserves existing annotation ordering/edit behavior."""
         anns = list(self.node.config.get('annotations', []))
         dlg = ManageAnnotationsDialog(anns, parent=self)
         if dlg.exec() == QDialog.Accepted:
@@ -1150,6 +1149,7 @@ class TriangleDisplayDialog(QDialog):
             self._refresh()
 
     def _open_settings(self):
+        """Open legacy combined settings dialog to preserve backward-compatible entry point."""
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self)
@@ -1157,10 +1157,38 @@ class TriangleDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
+    def _open_plot_format_settings(self):
+        """
+        Open format-scoped settings dialog.
+
+        This exposes visual controls only and preserves scientific/data selection semantics.
+        """
+        dlg = TernarySettingsDialog(
+            self.node.config, self._available_elements(),
+            self._is_multi(), self._sample_names(), self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """
+        Open quantities-scoped settings dialog.
+
+        This exposes element/data/filter choices only and preserves format/export behavior.
+        """
+        dlg = TernarySettingsDialog(
+            self.node.config, self._available_elements(),
+            self._is_multi(), self._sample_names(), self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
     def _reset_layout(self):
+        """Reset subplot layout/view positions; same behavior as prior reset action."""
         self.canvas.reset_layout()
 
     def _export_figure(self):
+        """Open the existing figure export workflow for the ternary figure."""
         download_matplotlib_figure(self.figure, self, "ternary_plot")
 
     # ── Refresh / draw ──────────────────────
@@ -1847,3 +1875,5 @@ class TrianglePlotNode(QObject):
             if pts:
                 result[sn] = pts
         return result or None
+
+
