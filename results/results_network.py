@@ -171,7 +171,7 @@ class _ColorBtn(QPushButton):
 
 
 class NetworkSettingsDialog(QDialog):
-    def __init__(self, cfg, input_data, parent=None):
+    def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
         Args:
             cfg (Any): The cfg.
@@ -179,10 +179,31 @@ class NetworkSettingsDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Network Diagram Settings")
+        if scope == 'format':
+            self.setWindowTitle("Network plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Network plot quantities configuration")
+        else:
+            self.setWindowTitle("Network Diagram Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
+        self._scope = scope
+        self.dtype_combo = None
+        self.thresh_spin = None
+        self.min_part = None
+        self._pos_btn = None
+        self._neg_btn = None
+        self._node_btn = None
+        self.alpha_spin = None
+        self.width_spin = None
+        self.node_r = None
+        self.radius_spin = None
+        self.labels_cb = None
+        self.edge_count_cb = None
+        self.label_mode_combo = None
+        self._font_grp = None
+        self._export_grp = None
         self._build_ui()
 
     def _build_ui(self):
@@ -191,67 +212,69 @@ class NetworkSettingsDialog(QDialog):
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        g1 = QGroupBox("Data")
-        f1 = QFormLayout(g1)
-        self.dtype_combo = QComboBox()
-        self.dtype_combo.addItems(NET_DATA_TYPES)
-        self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
-        f1.addRow("Data Type:", self.dtype_combo)
-        self.thresh_spin = QDoubleSpinBox()
-        self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
-        self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.3))
-        f1.addRow("|r| Threshold:", self.thresh_spin)
-        self.min_part = QDoubleSpinBox()
-        self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
-        self.min_part.setValue(self._cfg.get('min_particles', 5))
-        f1.addRow("Min Particles:", self.min_part)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Data")
+            f1 = QFormLayout(g1)
+            self.dtype_combo = QComboBox()
+            self.dtype_combo.addItems(NET_DATA_TYPES)
+            self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
+            f1.addRow("Data Type:", self.dtype_combo)
+            self.thresh_spin = QDoubleSpinBox()
+            self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
+            self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.3))
+            f1.addRow("|r| Threshold:", self.thresh_spin)
+            self.min_part = QDoubleSpinBox()
+            self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
+            self.min_part.setValue(self._cfg.get('min_particles', 5))
+            f1.addRow("Min Particles:", self.min_part)
+            lay.addWidget(g1)
 
-        g2 = QGroupBox("Colors")
-        f2 = QFormLayout(g2)
-        self._pos_btn  = _ColorBtn(self._cfg.get('positive_color', '#EF4444'))
-        self._neg_btn  = _ColorBtn(self._cfg.get('negative_color', '#3B82F6'))
-        self._node_btn = _ColorBtn(self._cfg.get('node_color', '#14B8A6'))
-        f2.addRow("Positive (r>0):", self._pos_btn)
-        f2.addRow("Negative (r<0):", self._neg_btn)
-        f2.addRow("Node Color:", self._node_btn)
-        lay.addWidget(g2)
+        if self._scope in ('all', 'format'):
+            g2 = QGroupBox("Colors")
+            f2 = QFormLayout(g2)
+            self._pos_btn  = _ColorBtn(self._cfg.get('positive_color', '#EF4444'))
+            self._neg_btn  = _ColorBtn(self._cfg.get('negative_color', '#3B82F6'))
+            self._node_btn = _ColorBtn(self._cfg.get('node_color', '#14B8A6'))
+            f2.addRow("Positive (r>0):", self._pos_btn)
+            f2.addRow("Negative (r<0):", self._neg_btn)
+            f2.addRow("Node Color:", self._node_btn)
+            lay.addWidget(g2)
 
-        g3 = QGroupBox("Display")
-        f3 = QFormLayout(g3)
-        self.alpha_spin = QDoubleSpinBox()
-        self.alpha_spin.setRange(0.1, 1.0); self.alpha_spin.setDecimals(1)
-        self.alpha_spin.setValue(self._cfg.get('edge_alpha', 0.6))
-        f3.addRow("Edge Transparency:", self.alpha_spin)
-        self.width_spin = QDoubleSpinBox()
-        self.width_spin.setRange(0.5, 10.0); self.width_spin.setDecimals(1)
-        self.width_spin.setValue(self._cfg.get('edge_width_factor', 3.0))
-        f3.addRow("Edge Width Factor:", self.width_spin)
-        self.node_r = QDoubleSpinBox()
-        self.node_r.setRange(0.02, 0.15); self.node_r.setDecimals(3)
-        self.node_r.setValue(self._cfg.get('node_radius', 0.06))
-        f3.addRow("Node Radius:", self.node_r)
-        self.radius_spin = QDoubleSpinBox()
-        self.radius_spin.setRange(0.15, 0.48); self.radius_spin.setDecimals(2)
-        self.radius_spin.setValue(self._cfg.get('layout_radius_factor', 0.38))
-        f3.addRow("Layout Radius:", self.radius_spin)
-        self.labels_cb = QCheckBox()
-        self.labels_cb.setChecked(self._cfg.get('show_labels', True))
-        f3.addRow("Show Labels:", self.labels_cb)
-        self.edge_count_cb = QCheckBox()
-        self.edge_count_cb.setChecked(self._cfg.get('show_edge_count', True))
-        f3.addRow("Show Edge Count:", self.edge_count_cb)
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Label Mode:", self.label_mode_combo)
-        lay.addWidget(g3)
+            g3 = QGroupBox("Display")
+            f3 = QFormLayout(g3)
+            self.alpha_spin = QDoubleSpinBox()
+            self.alpha_spin.setRange(0.1, 1.0); self.alpha_spin.setDecimals(1)
+            self.alpha_spin.setValue(self._cfg.get('edge_alpha', 0.6))
+            f3.addRow("Edge Transparency:", self.alpha_spin)
+            self.width_spin = QDoubleSpinBox()
+            self.width_spin.setRange(0.5, 10.0); self.width_spin.setDecimals(1)
+            self.width_spin.setValue(self._cfg.get('edge_width_factor', 3.0))
+            f3.addRow("Edge Width Factor:", self.width_spin)
+            self.node_r = QDoubleSpinBox()
+            self.node_r.setRange(0.02, 0.15); self.node_r.setDecimals(3)
+            self.node_r.setValue(self._cfg.get('node_radius', 0.06))
+            f3.addRow("Node Radius:", self.node_r)
+            self.radius_spin = QDoubleSpinBox()
+            self.radius_spin.setRange(0.15, 0.48); self.radius_spin.setDecimals(2)
+            self.radius_spin.setValue(self._cfg.get('layout_radius_factor', 0.38))
+            f3.addRow("Layout Radius:", self.radius_spin)
+            self.labels_cb = QCheckBox()
+            self.labels_cb.setChecked(self._cfg.get('show_labels', True))
+            f3.addRow("Show Labels:", self.labels_cb)
+            self.edge_count_cb = QCheckBox()
+            self.edge_count_cb.setChecked(self._cfg.get('show_edge_count', True))
+            f3.addRow("Show Edge Count:", self.edge_count_cb)
+            self.label_mode_combo = QComboBox()
+            self.label_mode_combo.addItems(LABEL_MODES)
+            self.label_mode_combo.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            f3.addRow("Isotope Label:", self.label_mode_combo)
+            lay.addWidget(g3)
 
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
-        self._export_grp = ExportSettingsGroup(self._cfg)
-        lay.addWidget(self._export_grp.build())
+            self._export_grp = ExportSettingsGroup(self._cfg)
+            lay.addWidget(self._export_grp.build())
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -263,22 +286,24 @@ class NetworkSettingsDialog(QDialog):
             object: Result of the operation.
         """
         d = {
-            'data_type_display':    self.dtype_combo.currentText(),
-            'r_threshold':          self.thresh_spin.value(),
-            'min_particles':        int(self.min_part.value()),
-            'positive_color':       self._pos_btn.color(),
-            'negative_color':       self._neg_btn.color(),
-            'node_color':           self._node_btn.color(),
-            'edge_alpha':           self.alpha_spin.value(),
-            'edge_width_factor':    self.width_spin.value(),
-            'node_radius':          self.node_r.value(),
-            'layout_radius_factor': self.radius_spin.value(),
-            'show_labels':          self.labels_cb.isChecked(),
-            'show_edge_count':      self.edge_count_cb.isChecked(),
-            'label_mode':           self.label_mode_combo.currentText(),
+            'data_type_display':    self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
+            'r_threshold':          self.thresh_spin.value() if self.thresh_spin else self._cfg.get('r_threshold', 0.3),
+            'min_particles':        int(self.min_part.value()) if self.min_part else int(self._cfg.get('min_particles', 5)),
+            'positive_color':       self._pos_btn.color() if self._pos_btn else self._cfg.get('positive_color', '#EF4444'),
+            'negative_color':       self._neg_btn.color() if self._neg_btn else self._cfg.get('negative_color', '#3B82F6'),
+            'node_color':           self._node_btn.color() if self._node_btn else self._cfg.get('node_color', '#14B8A6'),
+            'edge_alpha':           self.alpha_spin.value() if self.alpha_spin else self._cfg.get('edge_alpha', 0.6),
+            'edge_width_factor':    self.width_spin.value() if self.width_spin else self._cfg.get('edge_width_factor', 3.0),
+            'node_radius':          self.node_r.value() if self.node_r else self._cfg.get('node_radius', 0.06),
+            'layout_radius_factor': self.radius_spin.value() if self.radius_spin else self._cfg.get('layout_radius_factor', 0.38),
+            'show_labels':          self.labels_cb.isChecked() if self.labels_cb else self._cfg.get('show_labels', True),
+            'show_edge_count':      self.edge_count_cb.isChecked() if self.edge_count_cb else self._cfg.get('show_edge_count', True),
+            'label_mode':           self.label_mode_combo.currentText() if self.label_mode_combo else self._cfg.get('label_mode', 'Symbol'),
         }
-        d.update(self._font_grp.collect())
-        d.update(self._export_grp.collect())
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
+        if self._export_grp is not None:
+            d.update(self._export_grp.collect())
         return d
 
 
@@ -314,29 +339,40 @@ class NetworkDisplayDialog(QDialog):
         lay.addWidget(self.canvas, stretch=1)
 
         tb = QHBoxLayout(); tb.setContentsMargins(0, 2, 0, 0)
-        btn_s = QPushButton("⚙  Settings"); btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset subplot positions (or middle-click)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("⬆  Export…"); btn_e.clicked.connect(self._export_figure)
-        tb.addWidget(btn_s); tb.addWidget(btn_r); tb.addStretch(); tb.addWidget(btn_e)
+        btn_e = QPushButton("Export figure")
+        btn_e.clicked.connect(self._export_figure)
+        tb.addWidget(btn_fmt)
+        tb.addWidget(btn_qty)
+        tb.addWidget(btn_r)
+        tb.addWidget(btn_e)
         lay.addLayout(tb)
 
     # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
         """
+        Build a minimal Network right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full formatting, quantity configuration, reset, and export
+        workflows are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Plot/data calculations are unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
-
-        dm = menu.addMenu("Data Type")
-        for dt in NET_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, label in [('show_labels', 'Show Labels'),
@@ -345,24 +381,13 @@ class NetworkDisplayDialog(QDialog):
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
-        lm = menu.addMenu("Label Mode")
+        lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        pm = menu.addMenu("|r| Threshold")
-        for t in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]:
-            a = pm.addAction(f"≥ {t}"); a.setCheckable(True)
-            a.setChecked(abs(cfg.get('r_threshold', 0.3) - t) < 0.01)
-            a.triggered.connect(lambda _, v=t: self._set('r_threshold', v))
-
-        menu.addSeparator()
-        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
-        menu.addAction("⚙  Configure…").triggered.connect(self._open_settings)
-        menu.addAction("💾 Download Figure…").triggered.connect(self._export_figure)
         menu.exec(QCursor.pos())
-
     def _toggle(self, key):
         """
         Args:
@@ -385,6 +410,20 @@ class NetworkDisplayDialog(QDialog):
 
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "network_diagram")
+
+    def _open_plot_format_settings(self):
+        dlg = NetworkSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        dlg = NetworkSettingsDialog(
+            self.node.config, self.node.input_data, self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
 
     def _open_settings(self):
         dlg = NetworkSettingsDialog(self.node.config, self.node.input_data, self)
@@ -683,3 +722,4 @@ class NetworkDiagramNode(QObject):
                 'title':       f"{dn}  (n={len(sp)})",
             }
         return result if result else None
+

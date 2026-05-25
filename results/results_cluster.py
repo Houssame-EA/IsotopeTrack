@@ -1258,7 +1258,7 @@ class ClusteringDisplayDialog(QDialog):
                    'char': 'characterisation.png', 'overview': 'overview.png',
                    'dendro': 'dendrogram.png', '3d': '3d_scatter.png',
                    'som': 'som_grid.png'}
-        dl = menu.addAction("Download Figure…")
+        dl = menu.addAction("Export Figure…")
         dl.triggered.connect(
             lambda: download_matplotlib_figure(fig_map.get(tab, self.eval_fig),
                                                self, names.get(tab, 'figure.png')))

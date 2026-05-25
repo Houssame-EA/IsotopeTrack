@@ -1138,7 +1138,7 @@ class DownloadConfigDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Download Figure")
+        self.setWindowTitle("Export Figure")
         self.setMinimumWidth(380)
         self._filename_base = default_filename
         self._formats = formats or self.FORMATS_PYQTGRAPH

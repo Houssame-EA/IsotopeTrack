@@ -31,10 +31,10 @@ HEATMAP_DATA_TYPES = [
 
 
 class HeatmapSettingsDialog(QDialog):
-    """Full settings dialog opened from right-click → Configure…"""
+    """Scoped settings dialog for heatmap format/quantity configuration."""
 
     def __init__(self, config: dict, is_multi: bool,
-                 sample_names: list, parent=None):
+                 sample_names: list, parent=None, scope='all'):
         """
         Args:
             config (dict): Configuration dictionary.
@@ -43,11 +43,41 @@ class HeatmapSettingsDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Heatmap Settings")
+        if scope == 'format':
+            self.setWindowTitle("Heatmap plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Heatmap plot quantities configuration")
+        else:
+            self.setWindowTitle("Heatmap Settings")
         self.setMinimumWidth(480)
         self._config = dict(config)
         self._is_multi = is_multi
         self._sample_names = sample_names
+        self._scope = scope
+        self.display_mode = None
+        self.data_type = None
+        self.search_edit = None
+        self.highlight_cb = None
+        self.filter_only_cb = None
+        self.start_spin = None
+        self.end_spin = None
+        self.filter_zeros = None
+        self.min_particles = None
+        self.label_mode_combo = None
+        self.mass_numbers_cb = None
+        self.show_numbers_cb = None
+        self.show_colorbar_cb = None
+        self.colorscale = None
+        self.log_scale_cb = None
+        self.custom_range_cb = None
+        self.vmin_spin = None
+        self.vmax_spin = None
+        self.x_rotation_spin = None
+        self.ann_fontsize_spin = None
+        self.cell_lw_spin = None
+        self._font_group = None
+        self._export_grp = None
+        self._sample_btns = {}
         self._build()
 
     def _build(self):
@@ -60,7 +90,7 @@ class HeatmapSettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        if self._is_multi:
+        if self._scope in ('all', 'quantities') and self._is_multi:
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
             self.display_mode = QComboBox()
@@ -73,151 +103,152 @@ class HeatmapSettingsDialog(QDialog):
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
-        g = QGroupBox("Data Type")
-        vl = QVBoxLayout(g)
-        self.data_type = QComboBox()
-        self.data_type.addItems(HEATMAP_DATA_TYPES)
-        self.data_type.setCurrentText(
-            self._config.get('data_type_display', 'Counts'))
-        vl.addWidget(self.data_type)
-        layout.addWidget(g)
-
-        g = QGroupBox("Element Search & Filter")
-        sl = QVBoxLayout(g)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Search:"))
-        self.search_edit = QLineEdit(self._config.get('search_element', ''))
-        self.search_edit.setPlaceholderText("e.g. Fe, Ti (order doesn't matter)")
-        row.addWidget(self.search_edit)
-        sl.addLayout(row)
-        self.highlight_cb = QCheckBox("Highlight matches")
-        self.highlight_cb.setChecked(self._config.get('highlight_matches', True))
-        sl.addWidget(self.highlight_cb)
-        self.filter_only_cb = QCheckBox("Show only matches")
-        self.filter_only_cb.setChecked(self._config.get('filter_combinations', False))
-        sl.addWidget(self.filter_only_cb)
-        layout.addWidget(g)
-
-        g = QGroupBox("Combination Range")
-        fl = QFormLayout(g)
-        self.start_spin = QSpinBox()
-        self.start_spin.setRange(1, 1000)
-        self.start_spin.setValue(self._config.get('start_range', 1))
-        fl.addRow("Start:", self.start_spin)
-        self.end_spin = QSpinBox()
-        self.end_spin.setRange(2, 1000)
-        self.end_spin.setValue(self._config.get('end_range', 10))
-        fl.addRow("End:", self.end_spin)
-        layout.addWidget(g)
-
-        g = QGroupBox("Filters")
-        fl = QFormLayout(g)
-        self.filter_zeros = QCheckBox()
-        self.filter_zeros.setChecked(self._config.get('filter_zeros', True))
-        fl.addRow("Filter zeros:", self.filter_zeros)
-        self.min_particles = QSpinBox()
-        self.min_particles.setRange(1, 1000)
-        self.min_particles.setValue(self._config.get('min_particles', 1))
-        fl.addRow("Min particles:", self.min_particles)
-        layout.addWidget(g)
-
-        g = QGroupBox("Labels")
-        fl = QFormLayout(g)
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(
-            self._config.get('label_mode',
-                             'Mass + Symbol' if self._config.get('show_mass_numbers', True) else 'Symbol'))
-        fl.addRow("Label mode:", self.label_mode_combo)
-        self.mass_numbers_cb = QCheckBox()
-        self.mass_numbers_cb.setChecked(
-            self._config.get('show_mass_numbers',
-                             self._config.get('label_mode', 'Mass + Symbol') != 'Symbol'))
-        fl.addRow("Show mass numbers:", self.mass_numbers_cb)
-        layout.addWidget(g)
-
-        g = QGroupBox("Display")
-        fl = QFormLayout(g)
-        self.show_numbers_cb = QCheckBox()
-        self.show_numbers_cb.setChecked(self._config.get('show_numbers', True))
-        fl.addRow("Show numbers:", self.show_numbers_cb)
-        self.show_colorbar_cb = QCheckBox()
-        self.show_colorbar_cb.setChecked(self._config.get('show_colorbar', True))
-        fl.addRow("Show colorbar:", self.show_colorbar_cb)
-        layout.addWidget(g)
-
-        g = QGroupBox("Color Scale")
-        vl = QVBoxLayout(g)
-        self.colorscale = QComboBox()
-        self.colorscale.addItems(colorheatmap)
-        self.colorscale.setCurrentText(self._config.get('colorscale', 'YlGnBu'))
-        vl.addWidget(self.colorscale)
-        layout.addWidget(g)
-
-        from PySide6.QtWidgets import QDoubleSpinBox as _QDbl
-        g = QGroupBox("Color Range")
-        fl = QFormLayout(g)
-        self.log_scale_cb = QCheckBox()
-        self.log_scale_cb.setChecked(self._config.get('log_scale', False))
-        fl.addRow("Log scale:", self.log_scale_cb)
-        self.custom_range_cb = QCheckBox()
-        self.custom_range_cb.setChecked(self._config.get('use_custom_range', False))
-        fl.addRow("Custom range:", self.custom_range_cb)
-        self.vmin_spin = _QDbl()
-        self.vmin_spin.setRange(-1e9, 1e9); self.vmin_spin.setDecimals(3)
-        self.vmin_spin.setValue(self._config.get('vmin', 0.0))
-        fl.addRow("vmin:", self.vmin_spin)
-        self.vmax_spin = _QDbl()
-        self.vmax_spin.setRange(-1e9, 1e9); self.vmax_spin.setDecimals(3)
-        self.vmax_spin.setValue(self._config.get('vmax', 100.0))
-        fl.addRow("vmax:", self.vmax_spin)
-        layout.addWidget(g)
-
-        g = QGroupBox("Cell Appearance")
-        fl = QFormLayout(g)
-        self.x_rotation_spin = QSpinBox()
-        self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("°")
-        self.x_rotation_spin.setValue(self._config.get('x_rotation', 0))
-        fl.addRow("X label rotation:", self.x_rotation_spin)
-        self.ann_fontsize_spin = QSpinBox()
-        self.ann_fontsize_spin.setRange(0, 24)
-        self.ann_fontsize_spin.setSpecialValueText("Auto")
-        self.ann_fontsize_spin.setValue(self._config.get('annotation_fontsize', 0))
-        fl.addRow("Annotation font size:", self.ann_fontsize_spin)
-        self.cell_lw_spin = _QDbl()
-        self.cell_lw_spin.setRange(0.0, 5.0); self.cell_lw_spin.setSingleStep(0.25)
-        self.cell_lw_spin.setDecimals(2); self.cell_lw_spin.setSpecialValueText("Off")
-        self.cell_lw_spin.setValue(self._config.get('cell_linewidth', 0.5))
-        fl.addRow("Cell border width:", self.cell_lw_spin)
-        layout.addWidget(g)
-
-        self._font_group = FontSettingsGroup(self._config)
-        layout.addWidget(self._font_group.build())
-
-        self._export_grp = ExportSettingsGroup(self._config)
-        layout.addWidget(self._export_grp.build())
-
-        if self._is_multi:
-            g = QGroupBox("Sample Colors")
-            sl_layout = QVBoxLayout(g)
-            self._sample_btns = {}
-            colors = self._config.get('sample_colors', {})
-            for i, sn in enumerate(self._sample_names):
-                row = QHBoxLayout()
-                lbl = QLabel(sn[:25] + "…" if len(sn) > 25 else sn)
-                lbl.setFixedWidth(160)
-                row.addWidget(lbl)
-                btn = QPushButton()
-                btn.setFixedSize(30, 20)
-                c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
-                btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
-                row.addWidget(btn)
-                row.addStretch()
-                w = QWidget(); w.setLayout(row)
-                sl_layout.addWidget(w)
-                self._sample_btns[sn] = (btn, c)
+        if self._scope in ('all', 'quantities'):
+            g = QGroupBox("Data Type")
+            vl = QVBoxLayout(g)
+            self.data_type = QComboBox()
+            self.data_type.addItems(HEATMAP_DATA_TYPES)
+            self.data_type.setCurrentText(
+                self._config.get('data_type_display', 'Counts'))
+            vl.addWidget(self.data_type)
             layout.addWidget(g)
+
+            g = QGroupBox("Element Search & Filter")
+            sl = QVBoxLayout(g)
+            row = QHBoxLayout()
+            row.addWidget(QLabel("Search:"))
+            self.search_edit = QLineEdit(self._config.get('search_element', ''))
+            self.search_edit.setPlaceholderText("e.g. Fe, Ti (order doesn't matter)")
+            row.addWidget(self.search_edit)
+            sl.addLayout(row)
+            self.highlight_cb = QCheckBox("Highlight matches")
+            self.highlight_cb.setChecked(self._config.get('highlight_matches', True))
+            sl.addWidget(self.highlight_cb)
+            self.filter_only_cb = QCheckBox("Show only matches")
+            self.filter_only_cb.setChecked(self._config.get('filter_combinations', False))
+            sl.addWidget(self.filter_only_cb)
+            layout.addWidget(g)
+
+            g = QGroupBox("Combination Range")
+            fl = QFormLayout(g)
+            self.start_spin = QSpinBox()
+            self.start_spin.setRange(1, 1000)
+            self.start_spin.setValue(self._config.get('start_range', 1))
+            fl.addRow("Start:", self.start_spin)
+            self.end_spin = QSpinBox()
+            self.end_spin.setRange(2, 1000)
+            self.end_spin.setValue(self._config.get('end_range', 10))
+            fl.addRow("End:", self.end_spin)
+            layout.addWidget(g)
+
+            g = QGroupBox("Filters")
+            fl = QFormLayout(g)
+            self.filter_zeros = QCheckBox()
+            self.filter_zeros.setChecked(self._config.get('filter_zeros', True))
+            fl.addRow("Filter zeros:", self.filter_zeros)
+            self.log_scale_cb = QCheckBox()
+            self.log_scale_cb.setChecked(self._config.get('log_scale', False))
+            fl.addRow("Log scale:", self.log_scale_cb)
+            self.min_particles = QSpinBox()
+            self.min_particles.setRange(1, 1000)
+            self.min_particles.setValue(self._config.get('min_particles', 1))
+            fl.addRow("Min particles:", self.min_particles)
+            layout.addWidget(g)
+
+        if self._scope in ('all', 'format'):
+            g = QGroupBox("Labels")
+            fl = QFormLayout(g)
+            self.label_mode_combo = QComboBox()
+            self.label_mode_combo.addItems(LABEL_MODES)
+            self.label_mode_combo.setCurrentText(
+                self._config.get('label_mode',
+                                 'Mass + Symbol' if self._config.get('show_mass_numbers', True) else 'Symbol'))
+            fl.addRow("Isotope Label:", self.label_mode_combo)
+            self.mass_numbers_cb = QCheckBox()
+            self.mass_numbers_cb.setChecked(
+                self._config.get('show_mass_numbers',
+                                 self._config.get('label_mode', 'Mass + Symbol') != 'Symbol'))
+            fl.addRow("Show mass numbers:", self.mass_numbers_cb)
+            layout.addWidget(g)
+
+            g = QGroupBox("Display")
+            fl = QFormLayout(g)
+            self.show_numbers_cb = QCheckBox()
+            self.show_numbers_cb.setChecked(self._config.get('show_numbers', True))
+            fl.addRow("Show numbers:", self.show_numbers_cb)
+            self.show_colorbar_cb = QCheckBox()
+            self.show_colorbar_cb.setChecked(self._config.get('show_colorbar', True))
+            fl.addRow("Show colorbar:", self.show_colorbar_cb)
+            layout.addWidget(g)
+
+            g = QGroupBox("Color Scale")
+            vl = QVBoxLayout(g)
+            self.colorscale = QComboBox()
+            self.colorscale.addItems(colorheatmap)
+            self.colorscale.setCurrentText(self._config.get('colorscale', 'YlGnBu'))
+            vl.addWidget(self.colorscale)
+            layout.addWidget(g)
+
+            from PySide6.QtWidgets import QDoubleSpinBox as _QDbl
+            g = QGroupBox("Color Range")
+            fl = QFormLayout(g)
+            self.custom_range_cb = QCheckBox()
+            self.custom_range_cb.setChecked(self._config.get('use_custom_range', False))
+            fl.addRow("Custom range:", self.custom_range_cb)
+            self.vmin_spin = _QDbl()
+            self.vmin_spin.setRange(-1e9, 1e9); self.vmin_spin.setDecimals(3)
+            self.vmin_spin.setValue(self._config.get('vmin', 0.0))
+            fl.addRow("vmin:", self.vmin_spin)
+            self.vmax_spin = _QDbl()
+            self.vmax_spin.setRange(-1e9, 1e9); self.vmax_spin.setDecimals(3)
+            self.vmax_spin.setValue(self._config.get('vmax', 100.0))
+            fl.addRow("vmax:", self.vmax_spin)
+            layout.addWidget(g)
+
+            g = QGroupBox("Cell Appearance")
+            fl = QFormLayout(g)
+            self.x_rotation_spin = QSpinBox()
+            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("�")
+            self.x_rotation_spin.setValue(self._config.get('x_rotation', 0))
+            fl.addRow("X label rotation:", self.x_rotation_spin)
+            self.ann_fontsize_spin = QSpinBox()
+            self.ann_fontsize_spin.setRange(0, 24)
+            self.ann_fontsize_spin.setSpecialValueText("Auto")
+            self.ann_fontsize_spin.setValue(self._config.get('annotation_fontsize', 0))
+            fl.addRow("Annotation font size:", self.ann_fontsize_spin)
+            self.cell_lw_spin = _QDbl()
+            self.cell_lw_spin.setRange(0.0, 5.0); self.cell_lw_spin.setSingleStep(0.25)
+            self.cell_lw_spin.setDecimals(2); self.cell_lw_spin.setSpecialValueText("Off")
+            self.cell_lw_spin.setValue(self._config.get('cell_linewidth', 0.5))
+            fl.addRow("Cell border width:", self.cell_lw_spin)
+            layout.addWidget(g)
+
+            self._font_group = FontSettingsGroup(self._config)
+            layout.addWidget(self._font_group.build())
+
+            self._export_grp = ExportSettingsGroup(self._config)
+            layout.addWidget(self._export_grp.build())
+
+            if self._is_multi:
+                g = QGroupBox("Sample Colors")
+                sl_layout = QVBoxLayout(g)
+                colors = self._config.get('sample_colors', {})
+                for i, sn in enumerate(self._sample_names):
+                    row = QHBoxLayout()
+                    lbl = QLabel(sn[:25] + "�" if len(sn) > 25 else sn)
+                    lbl.setFixedWidth(160)
+                    row.addWidget(lbl)
+                    btn = QPushButton()
+                    btn.setFixedSize(30, 20)
+                    c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                    btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
+                    btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
+                    row.addWidget(btn)
+                    row.addStretch()
+                    w = QWidget(); w.setLayout(row)
+                    sl_layout.addWidget(w)
+                    self._sample_btns[sn] = (btn, c)
+                layout.addWidget(g)
 
         layout.addStretch()
 
@@ -225,7 +256,6 @@ class HeatmapSettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
-
     def _pick_color(self, name, btn):
         """
         Args:
@@ -244,40 +274,47 @@ class HeatmapSettingsDialog(QDialog):
             dict: Result of the operation.
         """
         cfg = dict(self._config)
-        cfg['data_type_display'] = self.data_type.currentText()
-        cfg['search_element'] = self.search_edit.text().strip()
-        cfg['highlight_matches'] = self.highlight_cb.isChecked()
-        cfg['filter_combinations'] = self.filter_only_cb.isChecked()
-        cfg['start_range'] = self.start_spin.value()
-        cfg['end_range'] = self.end_spin.value()
-        cfg['filter_zeros'] = self.filter_zeros.isChecked()
-        cfg['min_particles'] = self.min_particles.value()
-        selected_mode = self.label_mode_combo.currentText()
+        cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
+        cfg['search_element'] = self.search_edit.text().strip() if self.search_edit else self._config.get('search_element', '')
+        cfg['highlight_matches'] = self.highlight_cb.isChecked() if self.highlight_cb else self._config.get('highlight_matches', True)
+        cfg['filter_combinations'] = self.filter_only_cb.isChecked() if self.filter_only_cb else self._config.get('filter_combinations', False)
+        cfg['start_range'] = self.start_spin.value() if self.start_spin else self._config.get('start_range', 1)
+        cfg['end_range'] = self.end_spin.value() if self.end_spin else self._config.get('end_range', 10)
+        cfg['filter_zeros'] = self.filter_zeros.isChecked() if self.filter_zeros else self._config.get('filter_zeros', True)
+        cfg['min_particles'] = self.min_particles.value() if self.min_particles else self._config.get('min_particles', 1)
+
+        selected_mode = self.label_mode_combo.currentText() if self.label_mode_combo else self._config.get('label_mode', 'Mass + Symbol')
         if selected_mode == 'Atomic Notation':
             cfg['label_mode'] = 'Atomic Notation'
             cfg['show_mass_numbers'] = True
         else:
-            cfg['show_mass_numbers'] = self.mass_numbers_cb.isChecked()
-            cfg['label_mode'] = 'Mass + Symbol' if cfg['show_mass_numbers'] else 'Symbol'
-        cfg['show_numbers'] = self.show_numbers_cb.isChecked()
-        cfg['show_colorbar'] = self.show_colorbar_cb.isChecked()
-        cfg['colorscale'] = self.colorscale.currentText()
-        cfg['log_scale']         = self.log_scale_cb.isChecked()
-        cfg['use_custom_range']  = self.custom_range_cb.isChecked()
-        cfg['vmin']              = self.vmin_spin.value()
-        cfg['vmax']              = self.vmax_spin.value()
-        cfg['x_rotation']          = self.x_rotation_spin.value()
-        cfg['annotation_fontsize'] = self.ann_fontsize_spin.value()
-        cfg['cell_linewidth']      = self.cell_lw_spin.value()
-        cfg.update(self._font_group.collect())
-        cfg.update(self._export_grp.collect())
+            show_mass = self.mass_numbers_cb.isChecked() if self.mass_numbers_cb else self._config.get('show_mass_numbers', True)
+            cfg['show_mass_numbers'] = show_mass
+            cfg['label_mode'] = 'Mass + Symbol' if show_mass else 'Symbol'
+
+        cfg['show_numbers'] = self.show_numbers_cb.isChecked() if self.show_numbers_cb else self._config.get('show_numbers', True)
+        cfg['show_colorbar'] = self.show_colorbar_cb.isChecked() if self.show_colorbar_cb else self._config.get('show_colorbar', True)
+        cfg['colorscale'] = self.colorscale.currentText() if self.colorscale else self._config.get('colorscale', 'YlGnBu')
+        cfg['log_scale'] = self.log_scale_cb.isChecked() if self.log_scale_cb else self._config.get('log_scale', False)
+        cfg['use_custom_range'] = self.custom_range_cb.isChecked() if self.custom_range_cb else self._config.get('use_custom_range', False)
+        cfg['vmin'] = self.vmin_spin.value() if self.vmin_spin else self._config.get('vmin', 0.0)
+        cfg['vmax'] = self.vmax_spin.value() if self.vmax_spin else self._config.get('vmax', 100.0)
+        cfg['x_rotation'] = self.x_rotation_spin.value() if self.x_rotation_spin else self._config.get('x_rotation', 0)
+        cfg['annotation_fontsize'] = self.ann_fontsize_spin.value() if self.ann_fontsize_spin else self._config.get('annotation_fontsize', 0)
+        cfg['cell_linewidth'] = self.cell_lw_spin.value() if self.cell_lw_spin else self._config.get('cell_linewidth', 0.5)
+
+        if self._font_group is not None:
+            cfg.update(self._font_group.collect())
+        if self._export_grp is not None:
+            cfg.update(self._export_grp.collect())
 
         if self._is_multi:
-            cfg['display_mode'] = self.display_mode.currentText()
-            sc = {}
-            for sn, (btn, c) in self._sample_btns.items():
-                sc[sn] = c
-            cfg['sample_colors'] = sc
+            cfg['display_mode'] = self.display_mode.currentText() if self.display_mode else self._config.get('display_mode', 'Individual Subplots')
+            if self._sample_btns:
+                sc = {}
+                for sn, (btn, c) in self._sample_btns.items():
+                    sc[sn] = c
+                cfg['sample_colors'] = sc
         return cfg
 
 
@@ -333,16 +370,18 @@ class HeatmapDisplayDialog(QDialog):
         # ── Bottom toolbar ────────────────────────────────────────────
         bb = QHBoxLayout()
         bb.setContentsMargins(0, 4, 0, 0)
-        btn_s = QPushButton("⚙  Settings")
-        btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Layout")
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
         btn_r.setToolTip("Reset all subplot positions to auto layout\n(or middle-click on the figure)")
         btn_r.clicked.connect(self._reset_layout)
-        btn_e = QPushButton("⬆  Export…")
+        btn_e = QPushButton("Export figure")
         btn_e.clicked.connect(self._export_figure)
-        bb.addWidget(btn_s)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
         bb.addWidget(btn_r)
-        bb.addStretch()
         bb.addWidget(btn_e)
         layout.addLayout(bb)
 
@@ -350,8 +389,18 @@ class HeatmapDisplayDialog(QDialog):
 
     def _show_context_menu(self, pos):
         """
+        Build a minimal Heatmap right-click menu with quick controls only.
+
+        The context menu is intentionally limited to `Quick Toggles` and
+        `Isotope Label`. Full format/quantity configuration, reset, and export
+        are intentionally delegated to the four bottom buttons.
+
+        Preserved behavior:
+        - Toggle and label-mode actions still update the same config keys.
+        - Heatmap calculations and search-safe label behavior remain unchanged.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -366,57 +415,15 @@ class HeatmapDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Log Scale", 'log_scale')
         self._add_toggle(toggle_menu, "Custom Color Range", 'use_custom_range')
 
-        dt_menu = menu.addMenu("Data Type")
-        current_dt = cfg.get('data_type_display', 'Counts')
-        for dt in HEATMAP_DATA_TYPES:
-            a = dt_menu.addAction(dt)
+        lm_menu = menu.addMenu("Isotope Label")
+        current_mode = cfg.get('label_mode', 'Mass + Symbol')
+        for mode in LABEL_MODES:
+            a = lm_menu.addAction(mode)
             a.setCheckable(True)
-            a.setChecked(dt == current_dt)
-            a.triggered.connect(lambda _, d=dt: self._set_and_refresh('data_type_display', d))
-
-        cs_menu = menu.addMenu("Color Scale")
-        current_cs = cfg.get('colorscale', 'YlGnBu')
-        for cs in colorheatmap:
-            a = cs_menu.addAction(cs)
-            a.setCheckable(True)
-            a.setChecked(cs == current_cs)
-            a.triggered.connect(lambda _, c=cs: self._set_and_refresh('colorscale', c))
-
-        rot_menu = menu.addMenu("X Label Rotation")
-        cur_rot = cfg.get('x_rotation', 0)
-        for rot in [0, 30, 45, 60, 90]:
-            a = rot_menu.addAction(f"{rot}°")
-            a.setCheckable(True)
-            a.setChecked(cur_rot == rot)
-            a.triggered.connect(lambda _, r=rot: self._set_and_refresh('x_rotation', r))
-
-        search_action = menu.addAction("🔍 Search Elements…")
-        search_action.triggered.connect(self._search_dialog)
-
-        range_action = menu.addAction("📊 Set Range…")
-        range_action.triggered.connect(self._range_dialog)
-
-        if self._is_multi():
-            dm_menu = menu.addMenu("Display Mode")
-            modes = ['Individual Subplots', 'Side by Side Subplots',
-                     'Combined Heatmap', 'Comparative View']
-            cur = cfg.get('display_mode', modes[0])
-            for m in modes:
-                a = dm_menu.addAction(m)
-                a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set_and_refresh('display_mode', mode))
-
-        menu.addSeparator()
-        menu.addAction("↺  Reset Layout").triggered.connect(self._reset_layout)
-        settings_action = menu.addAction("⚙  Configure…")
-        settings_action.triggered.connect(self._open_settings)
-
-        dl_action = menu.addAction("💾 Download Figure…")
-        dl_action.triggered.connect(self._export_figure)
+            a.setChecked(mode == current_mode)
+            a.triggered.connect(lambda _, m=mode: self._set_label_mode(m))
 
         menu.exec(QCursor.pos())
-
     def _add_toggle(self, menu, label, key):
         """
         Args:
@@ -436,6 +443,14 @@ class HeatmapDisplayDialog(QDialog):
             value (Any): Value to set or process.
         """
         self.node.config[key] = value
+        self._refresh()
+
+    def _set_label_mode(self, mode):
+        self.node.config['label_mode'] = mode
+        if mode == 'Symbol':
+            self.node.config['show_mass_numbers'] = False
+        else:
+            self.node.config['show_mass_numbers'] = True
         self._refresh()
 
     def _set_and_refresh(self, key, value):
@@ -474,6 +489,20 @@ class HeatmapDisplayDialog(QDialog):
     def _open_settings(self):
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self)
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_plot_format_settings(self):
+        dlg = HeatmapSettingsDialog(
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        dlg = HeatmapSettingsDialog(
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities')
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -717,7 +746,7 @@ class HeatmapDisplayDialog(QDialog):
             cbar = self.figure.colorbar(im, ax=ax, shrink=0.8)
             cbar_label = dt
             if log_scale:
-                cbar_label = f"log₁₀({dt})"
+                cbar_label = f"log10({dt})"
             apply_font_to_colorbar_standalone(cbar, cfg, cbar_label)
 
         eff_fs = ann_fs if ann_fs else fc['size']
@@ -945,3 +974,7 @@ def _build_combinations(particles, data_key):
         print(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None
+
+
+
+

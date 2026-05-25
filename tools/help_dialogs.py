@@ -221,6 +221,7 @@ class SPICPToFMSSimulator:
 
         mu_sir = -0.5 * sigma_sir ** 2  
 
+        # N_bg ~ Poisson(lambda_bg), S = sum_{i=1}^{N} X_i, X_i ~ LN(mu_sir, sigma_sir)
         bg_ion_counts = rng.poisson(lambda_bg, size=n_points)
         total_bg_ions = int(np.sum(bg_ion_counts))
         signal = np.zeros(n_points, dtype=np.float64)

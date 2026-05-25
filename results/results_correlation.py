@@ -176,7 +176,7 @@ class CorrelationSettingsDialog(QDialog):
         self.label_mode_combo = QComboBox()
         self.label_mode_combo.addItems(LABEL_MODES)
         self.label_mode_combo.setCurrentText(self._config.get('label_mode', 'Symbol'))
-        fl.addRow("Label Mode:", self.label_mode_combo)
+        fl.addRow("Isotope Label:", self.label_mode_combo)
         layout.addWidget(g)
 
         g = QGroupBox("Plot Options")
@@ -542,10 +542,7 @@ class CorrelationPlotDisplayDialog(QDialog):
 
     Right-click anywhere on the plot to access:
     - Quick toggles (log axes, trend line, correlation coeff)
-    - Data type switching
-    - Auto-detect correlations
-    - Full settings dialog
-    - Download
+    - Isotope label switching
     """
 
     def __init__(self, correlation_node, parent_window=None):
@@ -694,7 +691,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda checked, d=dt: self._set_data_type(d))
 
-        lm_menu = menu.addMenu("Label Mode")
+        lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
         for mode in LABEL_MODES:
             a = lm_menu.addAction(mode); a.setCheckable(True)
@@ -740,7 +737,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._auto_detect_correlations)
         menu.addSeparator()
         menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure...").triggered.connect(
+        menu.addAction("Export Figure...").triggered.connect(
             lambda: download_pyqtgraph_figure(self.plot_widget, self, "correlation_plot.png"))
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)

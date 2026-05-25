@@ -781,7 +781,7 @@ class IsotopeSettingsDialog(QDialog):
         self.label_mode = QComboBox()
         self.label_mode.addItems(LABEL_MODES)
         self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Label Mode:", self.label_mode)
+        fl.addRow("Isotope Label", self.label_mode)
         layout.addWidget(g)
 
         g = QGroupBox("Element Selection")
@@ -1962,7 +1962,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             a.setChecked(dt == current_dt)
             a.triggered.connect(lambda _, d=dt: self._set_data_type(d))
 
-        lm_menu = menu.addMenu("Label Mode")
+        lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
         for mode in LABEL_MODES:
             a = lm_menu.addAction(mode); a.setCheckable(True)
@@ -2017,7 +2017,7 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         menu.addSeparator()
         menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Download Figure...").triggered.connect(self._download_figure)
+        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
         if _CUSTOM_PLOT_AVAILABLE:
             menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
 
