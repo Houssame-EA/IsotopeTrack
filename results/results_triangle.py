@@ -33,7 +33,7 @@ from results.shared_plot_utils import (
     get_font_config, make_font_properties,
     apply_font_to_ternary, apply_font_to_colorbar_standalone,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label,
+    LABEL_MODES, format_element_label, Renderer,
     get_sample_color, get_display_name,
     download_matplotlib_figure,
 )
@@ -73,7 +73,7 @@ def setup_ternary_axes(ax, element_labels, config):
     fp   = make_font_properties(config)
     fc   = get_font_config(config)
     mode = config.get('label_mode', 'Symbol')
-    fmt  = [format_element_label(e, mode) for e in element_labels]
+    fmt  = [format_element_label(e, mode, Renderer.MATHTEXT, config) for e in element_labels]
 
     ax.set_llabel(fmt[0], fontproperties=fp, color=fc['color'])
     ax.set_rlabel(fmt[1], fontproperties=fp, color=fc['color'])

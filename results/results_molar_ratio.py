@@ -16,7 +16,7 @@ from results.shared_plot_utils import (
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
     FontSettingsGroup, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES,
+    format_element_label, LABEL_MODES, Renderer,
 )
 from results.shared_annotation import (
     AnnotationManager, FloatingInspector, AnnotationShelfButton,
@@ -629,8 +629,8 @@ def _add_ref_line(plot_item, cfg):
     style = _QT_LINE.get(cfg.get('ref_line_style', 'dash'), pg.QtCore.Qt.DashLine)
     width = int(cfg.get('ref_line_width', 2))
     lm = cfg.get('label_mode', 'Symbol')
-    num = format_element_label(cfg.get('numerator_element') or 'X', lm)
-    den = format_element_label(cfg.get('denominator_element') or 'Y', lm)
+    num = format_element_label(cfg.get('numerator_element') or 'X', lm, Renderer.HTML)
+    den = format_element_label(cfg.get('denominator_element') or 'Y', lm, Renderer.HTML)
     custom_lbl = cfg.get('ref_line_label', '').strip()
     label = custom_lbl if custom_lbl else f"{num}:{den} = {val:g}"
     line = pg.InfiniteLine(
@@ -795,8 +795,8 @@ def _add_stats_text(plot_item, ratios, cfg):
         cfg (Any): The cfg.
     """
     lm = cfg.get('label_mode', 'Symbol')
-    num = format_element_label(cfg.get('numerator_element', '?'), lm)
-    den = format_element_label(cfg.get('denominator_element', '?'), lm)
+    num = format_element_label(cfg.get('numerator_element', '?'), lm, Renderer.HTML)
+    den = format_element_label(cfg.get('denominator_element', '?'), lm, Renderer.HTML)
     lx = cfg.get('log_x', True)
     fc = cfg.get('font_color', '#000000')
 
@@ -1109,8 +1109,8 @@ class MolarRatioDisplayDialog(QDialog):
 
             cfg = self.node.config
             lm = cfg.get('label_mode', 'Symbol')
-            num = format_element_label(cfg.get('numerator_element', ''), lm)
-            den = format_element_label(cfg.get('denominator_element', ''), lm)
+            num = format_element_label(cfg.get('numerator_element', ''), lm, Renderer.HTML)
+            den = format_element_label(cfg.get('denominator_element', ''), lm, Renderer.HTML)
             self._ratio_lbl.setText(f"Ratio: {num} / {den}" if num and den else "Ratio: Select elements")
 
             plot_data = self.node.extract_plot_data()

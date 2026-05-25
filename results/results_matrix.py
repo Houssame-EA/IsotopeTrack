@@ -26,7 +26,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label,
+    LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
@@ -545,7 +545,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         im = ax.imshow(plot_mat, cmap=cmap, vmin=-1, vmax=1,
                        aspect='equal', interpolation='nearest')
 
-        fmt_elems = [format_element_label(e, label_mode) for e in elems]
+        fmt_elems = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg) for e in elems]
 
         ax.set_xticks(range(n))
         ax.set_xticklabels(fmt_elems, rotation=x_rotation,

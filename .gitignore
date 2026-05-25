@@ -5,7 +5,6 @@ nano .gitignore
 
 build/
 dist/*.zip
-*.spec
 
 ```
 __pycache__/

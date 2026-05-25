@@ -1,3 +1,8 @@
+#!/bin/bash
+set -e
+
+OUTPUT_NAME="${1:-IsotopeTrack_M.dmg}"
+
 create-dmg \
   --volname "IsotopeTrack" \
   --volicon "images/isotrack_icon.icns" \
@@ -8,5 +13,5 @@ create-dmg \
   --hide-extension "IsotopeTrack.app" \
   --app-drop-link 485 185 \
   --background "images/dmg_background.png" \
-  "IsotopeTrack_M.dmg" \
+  "$OUTPUT_NAME" \
   "dist/"

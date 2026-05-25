@@ -12,15 +12,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-#  Format version constants
-# ---------------------------------------------------------------------------
+
 FORMAT_V2_MAGIC = b"ITPROJ_V2\n"
 FORMAT_V1_GZIP_MAGIC = b"\x1f\x8b"
 
-# ---------------------------------------------------------------------------
-#  Helpers: particle list <-> columnar numpy
-# ---------------------------------------------------------------------------
 
 _ELEMENT_DICT_KEYS = [
     'elements', 'element_mass_fg', 'element_moles_fmol',

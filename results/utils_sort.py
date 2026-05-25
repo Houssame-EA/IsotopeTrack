@@ -59,39 +59,6 @@ def sort_elements_by_mass(elements):
              
     return sorted(elements, key=get_sort_key)
 
-def format_element_label(element_name, show_mass_numbers):
-    """
-    Args:
-        element_name (str): Element name string, potentially with mass number prefix
-        show_mass_numbers (bool): If True, keep mass numbers; if False, remove them
-    
-    Returns:
-        str: Formatted element label (e.g., '55Fe' or 'Fe')
-    """
-    if not show_mass_numbers:
-        mass, element = extract_mass_and_element(element_name)
-        return element
-    else:
-        return element_name.strip()
-
-def format_combination_label(combination, show_mass_numbers):
-    """
-    
-    Args:
-        combination (str): Comma-separated element names (e.g., '56Fe, 48Ti, 63Cu')
-        show_mass_numbers (bool): If True, keep mass numbers; if False, remove them
-    
-    Returns:
-        str: Formatted combination label with elements sorted by mass (e.g., '48Ti, 55Fe, 63Cu' or 'Ti, Fe, Cu')
-    """
-    elements = [elem.strip() for elem in combination.split(',')]
-             
-    sorted_elements = sort_elements_by_mass(elements)
-             
-    formatted_elements = [format_element_label(elem, show_mass_numbers) for elem in sorted_elements]
-             
-    return ', '.join(formatted_elements)
-
 def sort_element_dict_by_mass(element_dict):
     """    
     Args:
@@ -108,34 +75,12 @@ def sort_element_dict_by_mass(element_dict):
     return {element: element_dict[element] for element in sorted_elements}
 
 
-def _extract_element_symbol(label):
-    """Extract a valid chemical symbol from a label like 197Au, Au197, or Au+."""
-    text = str(label).strip()
-    for token in re.findall(r'[A-Za-z]{1,2}', text):
-        symbol = token[0].upper() + token[1:].lower()
-        if symbol in _ELEMENT_SYMBOLS:
-            return symbol
-    return None
-
-
-def _extract_isotope_mass(label):
-    """Extract isotope mass from labels with prefix or suffix notation."""
-    text = str(label).strip()
-    m = re.search(r'^\s*(\d+)\s*[A-Za-z]', text)
-    if m:
-        return int(m.group(1))
-    m = re.search(r'[A-Za-z]+\s*(\d+)\s*(?:[+-]\d*)?\s*$', text)
-    if m:
-        return int(m.group(1))
-    return None
-
-
 def element_alphabetical_key(label):
-    """Sort key that prioritizes chemical symbol, then mass/label for stability."""
+    """Sort key that sorts by chemical symbol, ignoring any leading mass number.
+
+    e.g. '107Ag' and 'Ag' both sort under 'ag', '55Fe' under 'fe'.
+    """
     text = str(label).strip()
-    symbol = _extract_element_symbol(text)
-    mass = _extract_isotope_mass(text)
-    unknown_symbol = 1 if symbol is None else 0
-    missing_mass = 1 if mass is None else 0
-    symbol_key = symbol if symbol is not None else text.casefold()
-    return (unknown_symbol, symbol_key, missing_mass, mass or 0, text.casefold(), text)
+    match = re.match(r'^\d*([A-Za-z][A-Za-z]?)', text)
+    symbol = match.group(1) if match else text
+    return symbol.casefold()

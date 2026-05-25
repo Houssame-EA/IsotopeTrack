@@ -1,64 +1,92 @@
 # Changelog
 
-## v1.0.2 — Latest
-
-Main Window
-
-Full light / dark theme toggle with live switching across all dialogs and widgets
-
-Single-Ion Analysis (SIA)
-
-Detection parameters are now configured independently per isotope, giving finer control over threshold, smoothing, and method on a per-element basis
-
-Export
-
-CSV export now supports multiple unit systems — mass (ag, fg, pg, ng, µg), moles (amol, fmol, pmol, nmol), and diameter (nm, µm)
-
-Peak Detection
-
-Detection engine now uses Compound Poisson Log-Normal as the sole statistical model — all other detection methods have been removed
-Added integration threshold method
-Added midpoint separation
-Added watershed separation
-Added Aiken iterative threshold method for robust automatic threshold estimation
-Implemented result caching to avoid redundant recomputation when switching between samples or adjusting parameters, significantly reducing processing time on large datasets
-
-Signal Time Scan
-
-Exclusion regions can now be defined per sample and per isotope, allowing fine-grained control over which time segments are included in the analysis
-
-Ionic Calibration
-
-Nu Vitesse data: mass range mismatches are now detected and reported with a clear warning — the user can choose to ignore the mismatch and proceed with calibration
-Individual calibration points can be excluded from the curve interactively
-
-Transport Rate Calibration
-
-All three calibration method tabs (weight, number, mass) are now unified in a single window for easier switching and comparison
-
-Results Canvas
-
-Improvements across all 16 plot types
-Plot backends unified: Matplotlib for publication-quality static figures, PyQtGraph for interactive real-time plots
-Clustering module improved with more control over distance metrics and linkage parameters
-SOM (Self-Organising Map) clustering coming in a future release
-
-References & Citations
-
-Improved citation formatting and added missing references throughout the application
+All notable changes to IsotopeTrack are documented here.
 
 ---
 
-## v1.0.1 — March 2026
+## v1.0.5 — 2026-05-22
 
-- Initial public release
-- macOS Apple Silicon, macOS Intel, and Windows builds
-- Multi-isotope detection with 4 detection methods
-- 16 result plot types on drag-and-drop canvas
-- Nu Vitesse, TOFWERK, and CSV data support
+### Bug Fixes
+- Fixed atomic notation rendering inconsistency across platforms
+
+## v1.0.4 — 2026-05-21
+ 
+### New Features
+- **Window titles** — each window now displays its own name in the title bar
+- **CPLN quantiles** — implemented Compound Poisson Log-Normal quantiles from SPCal lookup table (`cpln_quantiles.npz`)
+- **Detection method info** — added additional information displayed in the detection method panel
+### Bug Fixes
+- Fixed main window: the background bug, when the user calculate the background using window size
+- Fixed bar plot display order — elements now appear in the correct order
+### Internal
+- Automated CI/CD pipeline for macOS and Windows builds
+- Added `version.py` to update version across all files in one command
 
 ---
 
-## v1.0.0 — February 2026
+## v1.0.3 — 2026-05-19
 
-- Beta release
+### Improvements
+- Integrated data points are now shown directly in the main window results
+- Updated cluster analysis with improved metrics
+
+### Bug Fixes
+- Fixed several rendering and interaction bugs on the results canvas
+
+---
+
+## v1.0.2 — 2026-04-30
+
+### Main Window
+- Full light / dark theme toggle with live switching across all dialogs and widgets
+
+### Single-Ion Analysis (SIA)
+- Detection parameters now configured independently per isotope
+
+### Export
+- CSV export supports multiple unit systems (ag, fg, pg, ng · amol, fmol, pmol · nm, µm)
+- Export includes additional analysis detection parameters
+
+### Peak Detection
+- Added integration threshold method
+- Added midpoint and watershed separation
+- Added Aiken iterative threshold method
+- Detection engine now uses Compound Poisson Log-Normal as the primary model
+- Implemented result caching — significantly reduces processing time on large datasets
+
+### Signal Time Scan
+- Exclusion regions can now be defined per sample and per isotope
+
+### Ionic Calibration
+- Mass range mismatches detected and reported for Nu Vitesse data
+- Individual calibration points can be excluded interactively
+
+### Transport Rate Calibration
+- All three calibration tabs unified in a single window
+
+### Results Canvas
+- Plot backends unified: Matplotlib and PyQtGraph for interactive plots
+- Clustering module improved with more control over distance metrics and linkage
+
+---
+
+## v1.0.1 — 2026-03-11
+
+### New Features
+- Results Canvas completely redesigned with three new figures:
+  - **Network** — multi-element particle relationships
+  - **Concentration** — particle concentration overview
+  - **Matrix** — element correlation matrix
+- Intel Mac support — dedicated native bundle for Intel-based Macs (x86_64)
+- Faster project saving and loading
+
+### Bug Fixes
+- Fixed multiple bugs in the Results Canvas display
+- Fixed several issues in the main window
+- Fixed Windows lag and slow response
+
+---
+
+## v1.0.0 — 2025-11-21
+
+First public release of IsotopeTrack for macOS and Windows.

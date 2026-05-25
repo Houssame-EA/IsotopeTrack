@@ -1,5 +1,4 @@
 import numpy as np
-from statistics import NormalDist
 from PySide6.QtGui import QColor
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
@@ -9,9 +8,7 @@ from PySide6.QtCore import Qt
 import os
 from functools import lru_cache
 from scipy.stats import poisson
-from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
-from scipy.special import erfc
 
 os.environ['NUMBA_THREADING_LAYER'] = 'safe'
 
@@ -420,6 +417,164 @@ class CompoundPoissonLognormalOptimized:
         self._threshold_cache.clear()
 
 
+class CompoundPoissonLognormaltable:
+    """
+    Lookup-table based Compound Poisson-Lognormal threshold.
+
+    Loads a pre-computed .npz table (cpln_quantiles.npz) of zero-truncated CPLN
+    quantiles (Lockwood et al., JAAS 2025) and serves thresholds via
+    trilinear interpolation in (log-λ, σ, y₀) space.
+
+    Expected .npz keys:
+        lambdas   shape (nL,)          background Poisson means
+        sigmas    shape (nS,)          single-ion lognormal shape parameters
+        ys        shape (nY,)          zero-truncated cumulative probabilities
+        quantiles shape (nL, nS, nY)   quantile values, assuming single-ion
+                                       lognormal with unit mean (μ = -σ²/2)
+
+    Per the paper (Eqn 1), the desired probability y = 1 - α is first
+    converted to its zero-truncated form before lookup:
+
+        y₀ = (y - exp(-λ)) / (1 - exp(-λ))
+
+    Routing:
+        λ ≤ 0              → threshold = 0
+        0 < λ ≤ table max  → table lookup (with Eqn-1 transform)
+        λ > table max      → analytical CPLN (lognormal) fallback
+        y₀ ≤ 0             → threshold = 0 (the (1-α) quantile lies
+                              inside the zero atom)
+        table not loaded   → analytical CPLN (lognormal) fallback
+
+    The unit-mean convention matches CompoundPoissonLognormal and
+    CompoundPoissonLognormalOptimized in this module, so callers can mix
+    methods without rescaling.
+    """
+
+    _lut_cache: dict = {}
+
+    def __init__(self, lut_path: str | None = None):
+        """
+        Args:
+            lut_path (str | None): Path to cpln_quantiles.npz.
+                Defaults to cpln_quantiles.npz in the same directory as this file.
+        """
+        self._ready   = False
+        self._interp  = None
+        self._lam_min = 0.0
+        self._lam_max = 0.0
+        self._sig_min = 0.0
+        self._sig_max = 0.0
+        self._y_min   = 0.0
+        self._y_max   = 0.0
+        self._fallback = CompoundPoissonLognormalOptimized()
+
+        if lut_path is None:
+            here     = os.path.dirname(os.path.abspath(__file__))
+            lut_path = os.path.join(here, "cpln_quantiles.npz")
+
+        self._lut_path = lut_path
+        self._load_table(lut_path)
+
+    def _load_table(self, path: str) -> None:
+        """Load and build the RegularGridInterpolator from the .npz file."""
+        if path in CompoundPoissonLognormaltable._lut_cache:
+            (self._interp,
+             self._lam_min, self._lam_max,
+             self._sig_min, self._sig_max,
+             self._y_min,   self._y_max) = CompoundPoissonLognormaltable._lut_cache[path]
+            self._ready = True
+            return
+
+        if not os.path.isfile(path):
+            print(f"[CompoundPoissonLognormaltable] Table not found at {path} — "
+                  f"using fallback (CompoundPoissonLognormalOptimized).")
+            return
+
+        try:
+            d         = np.load(path)
+            lambdas   = d['lambdas'].astype(np.float64)
+            sigmas    = d['sigmas'].astype(np.float64)
+            ys        = d['ys'].astype(np.float64)
+            quantiles = d['quantiles'].astype(np.float32)
+
+            self._interp = RegularGridInterpolator(
+                (np.log(lambdas), sigmas, ys),
+                quantiles,
+                method='linear',
+                bounds_error=False,
+                fill_value=None,
+            )
+
+            self._lam_min = float(lambdas[0])
+            self._lam_max = float(lambdas[-1])
+            self._sig_min = float(sigmas[0])
+            self._sig_max = float(sigmas[-1])
+            self._y_min   = float(ys[0])
+            self._y_max   = float(ys[-1])
+            self._ready   = True
+
+            CompoundPoissonLognormaltable._lut_cache[path] = (
+                self._interp,
+                self._lam_min, self._lam_max,
+                self._sig_min, self._sig_max,
+                self._y_min,   self._y_max,
+            )
+        except Exception as exc:
+            print(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
+                  f"— using fallback.")
+
+    def get_threshold(self, lambda_bkgd: float, alpha: float, sigma: float = 0.47) -> float:
+        """
+        Return the CPLN detection threshold.
+
+        Routing:
+          λ ≤ 0              → 0
+          0 < λ ≤ table max  → table lookup (with Eqn-1 transform)
+          λ > table max      → analytical CPLN (lognormal) fallback
+          table not loaded   → analytical CPLN (lognormal) fallback
+
+        Args:
+            lambda_bkgd (float): Background Poisson mean (counts / dwell)
+            alpha       (float): False-positive rate (significance level)
+            sigma       (float): Log-std of single-ion area distribution
+
+        Returns:
+            float: Detection threshold (counts, units of single-ion mean)
+        """
+        if lambda_bkgd <= 0.0:
+            return 0.0
+
+        if not self._ready or lambda_bkgd > self._lam_max:
+            return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
+
+        e_lam = np.exp(-lambda_bkgd)
+        denom = 1.0 - e_lam
+        if denom <= 0.0:
+
+            y0 = 1.0 - alpha
+        else:
+            y0 = ((1.0 - alpha) - e_lam) / denom
+
+        if y0 <= 0.0:
+            return 0.0
+
+        lam_q = float(np.clip(lambda_bkgd, self._lam_min, self._lam_max))
+        sig_q = float(np.clip(sigma,       self._sig_min, self._sig_max))
+        y0_q  = float(np.clip(y0,          self._y_min,   self._y_max))
+
+        try:
+            result = float(self._interp([[np.log(lam_q), sig_q, y0_q]]).item())
+            if np.isnan(result) or result < 0.0:
+                return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
+            return result
+        except Exception as exc:
+            print(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
+            return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
+
+    def clear_cache(self) -> None:
+        """No-op kept for interface compatibility with other classes."""
+
+
 INTEGRATION_METHODS = ["Background", "Threshold", "Midpoint"]
 
 PEAK_SPLIT_METHODS = [
@@ -476,17 +631,19 @@ class PeakDetection:
     - Five peak-splitting methods (see PEAK_SPLIT_METHODS)
 
     Threshold methods:
-      "Compound Poisson LogNormal"   – Analytical CPLN (Fenton-Wilkinson)
-      "Manual"                       – User-specified threshold
+      "Compound Poisson LogNormal"     - Analytical CPLN (Fenton-Wilkinson)
+      "CPLN table" - Pre-computed lookup table (default)
+                                         Falls back to LogNormal for lambda > 300.
+      "Manual"                         - User-specified threshold
 
     Integration methods:
-      "Background"  – signal − lambda_bkgd  (full peak region)
-      "Threshold"   – signal − threshold    (only above threshold)
-      "Midpoint"    – signal − midpoint     (only above midpoint)
+      "Background"  - signal - lambda_bkgd  (full peak region)
+      "Threshold"   - signal - threshold    (only above threshold)
+      "Midpoint"    - signal - midpoint     (only above midpoint)
 
     Peak splitting methods:
-      "No Splitting"  – baseline, no change
-      "1D Watershed"  – valley-depth ratio criterion (default, ratio=0.50)
+      "No Splitting"  - baseline, no change
+      "1D Watershed"  - valley-depth ratio criterion (default, ratio=0.50)
     """
 
     def __init__(self):
@@ -495,7 +652,8 @@ class PeakDetection:
         self._cache_misses = 0
         self.iter_eps = 1e-3
         self.default_max_iters = 4
-        self.compound_poisson_lognormal = CompoundPoissonLognormalOptimized()
+        self.compound_poisson_lognormal     = CompoundPoissonLognormalOptimized()
+        self.compound_poisson_lognormal_lut = CompoundPoissonLognormaltable()
         self.incremental_enabled = True
 
     # ----------------------------------------------------------------------------------------------------------
@@ -822,7 +980,7 @@ class PeakDetection:
         """
         if method in ["Manual"]:
             return self._calculate_single_threshold(lambda_bkgd_array, method, alpha, sigma)
-        elif method in ["Compound Poisson LogNormal"]:
+        elif method in ["Compound Poisson LogNormal", "CPLN table"]:
             min_bg = np.min(lambda_bkgd_array)
             max_bg = np.max(lambda_bkgd_array)
             if min_bg == max_bg:
@@ -851,7 +1009,9 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "Compound Poisson LogNormal":
+        if method == "CPLN table":
+            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma)
+        elif method == "Compound Poisson LogNormal":
             return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma)
         else:
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
@@ -870,7 +1030,9 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "Compound Poisson LogNormal":
+        if method == "CPLN table":
+            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma=0.47)
+        elif method == "Compound Poisson LogNormal":
             return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.47)
         else:
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
@@ -1251,7 +1413,6 @@ class PeakDetection:
             lambda_bkgd, threshold, integration_method
         )
 
-        # ── Numba fast path ──────────────────────────────────────────────────
         if NUMBA_AVAILABLE and len(signal) > 500:
             signal_f64 = signal.astype(np.float64)
 
@@ -1298,7 +1459,6 @@ class PeakDetection:
 
             return particles
 
-        # ── Pure-NumPy path ──────────────────────────────────────────────────
         return self.find_particles_vectorized(
             time, signal,
             lambda_bkgd, threshold,
@@ -1536,7 +1696,7 @@ class PeakDetection:
 
     def detect_peaks_with_poisson(self, signal, alpha=0.000001,
                                   sample_name=None, element_key=None,
-                                  method="Compound Poisson LogNormal",
+                                  method="CPLN table",
                                   manual_threshold=10.0, element_thresholds=None,
                                   current_sample=None,
                                   sigma=0.47, iterative=True,
@@ -1548,7 +1708,7 @@ class PeakDetection:
             alpha             (float):   Significance level (default 1e-6)
             sample_name       (str):     Sample name (unused, kept for API compat)
             element_key       (str):     Element identifier for caching
-            method            (str):     "Compound Poisson LogNormal" or "Manual"
+            method            (str):     "Compound Poisson LogNormal", "CPLN table", or "Manual"
             manual_threshold  (float):   Threshold value when method == "Manual"
             element_thresholds (dict):   Pre-calculated thresholds (unused here)
             current_sample    (str):     Current sample name (unused, kept for API compat)

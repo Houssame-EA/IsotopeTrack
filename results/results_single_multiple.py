@@ -28,7 +28,7 @@ from results.shared_plot_utils import (
     get_font_config, make_font_properties, apply_font_to_matplotlib,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_sample_color, get_display_name,
-    download_matplotlib_figure, LABEL_MODES, format_combination_label,
+    download_matplotlib_figure, LABEL_MODES, format_combination_label, Renderer,
 )
 from widget.colors import default_colors, colorheatmap
 
@@ -132,14 +132,26 @@ class SingleMultipleElementHelper:
                 'total_particles': total, 'all_combinations': sorted(combos.items(), key=lambda x: x[1]['count'], reverse=True)}
 
     @staticmethod
-    def format_clean(combo_str, label_mode='Symbol'):
+    def format_clean(combo_str, label_mode='Symbol', cfg=None):
         """
+        Format a raw combination label for display using the selected isotope label mode.
+
         Args:
-            combo_str (Any): The combo str.
+            combo_str (str): Raw combination key (for example ``"56Fe, 197Au"``).
+            label_mode (str): Isotope label mode (``Symbol``, ``Mass + Symbol``,
+                or ``Atomic Notation``).
+            cfg (dict | None): Optional plot config used by the formatter for
+                renderer/font-aware atomic notation. When omitted, formatting falls
+                back safely without config-specific font tuning.
+
         Returns:
-            object: Result of the operation.
+            str: Formatted display label.
+
+        Preserved behavior:
+            Raw combination keys remain unchanged in analysis data structures; this
+            method only formats display text.
         """
-        return format_combination_label(combo_str, label_mode)
+        return format_combination_label(combo_str, label_mode, Renderer.MATHTEXT, cfg)
 
     @staticmethod
     def calc_per_ml(count, parent_window, dilution=1.0, sample_info=None):
@@ -209,24 +221,34 @@ class SingleMultipleElementHelper:
         return {'labels': labels, 'values': values, 'colors': colors, 'combinations': keys}
 
     @staticmethod
-    def heatmap_data(results_dict, per_ml=False, parent_window=None, dilution=1.0, label_mode='Symbol'):
+    def heatmap_data(results_dict, per_ml=False, parent_window=None, dilution=1.0,
+                     label_mode='Symbol', cfg=None):
         """
+        Build heatmap matrices for single- and multiple-element combinations.
+
         Args:
-            results_dict (Any): The results dict.
-            per_ml (Any): The per ml.
-            parent_window (Any): The parent window.
-            dilution (Any): The dilution.
+            results_dict (dict): Per-sample analysis results.
+            per_ml (bool): Whether to convert counts to particles/mL.
+            parent_window (Any): Parent window with optional transport/time metadata.
+            dilution (float): Dilution factor used with particles/mL conversion.
+            label_mode (str): Isotope label mode used for display labels.
+            cfg (dict | None): Optional plotting config passed to label formatting.
+
         Returns:
-            dict: Result of the operation.
+            dict | None: Heatmap dataframes for particle values and percentages.
+
+        Preserved behavior:
+            Single/multiple calculations and thresholds are unchanged; only label
+            formatting wiring now accepts optional config safely.
         """
         if not results_dict:
             return None
         all_single, all_multi = set(), set()
         for sr in results_dict.values():
             for c, _, _ in sr['single_combinations']:
-                all_single.add(SingleMultipleElementHelper.format_clean(c, label_mode))
+                all_single.add(SingleMultipleElementHelper.format_clean(c, label_mode, cfg))
             for c, _, _ in sr['multiple_combinations']:
-                all_multi.add(SingleMultipleElementHelper.format_clean(c, label_mode))
+                all_multi.add(SingleMultipleElementHelper.format_clean(c, label_mode, cfg))
 
         names = list(results_dict.keys())
         s_part = pd.DataFrame(0.0, index=sorted(all_single), columns=names)
@@ -234,7 +256,7 @@ class SingleMultipleElementHelper:
 
         top_multi = sorted(all_multi, key=lambda x: sum(
             next((d['count'] for c, d, _ in sr['multiple_combinations']
-                  if SingleMultipleElementHelper.format_clean(c, label_mode) == x), 0)
+                  if SingleMultipleElementHelper.format_clean(c, label_mode, cfg) == x), 0)
             for sr in results_dict.values()), reverse=True)[:30]
         m_part = pd.DataFrame(0.0, index=top_multi, columns=names)
         m_pct = pd.DataFrame(0.0, index=top_multi, columns=names)
@@ -242,13 +264,13 @@ class SingleMultipleElementHelper:
         for sn, sr in results_dict.items():
             si = {'is_summed': False}
             for combo, det, pct in sr['single_combinations']:
-                clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
+                clean = SingleMultipleElementHelper.format_clean(combo, label_mode, cfg)
                 if clean in s_part.index:
                     v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
                     s_part.loc[clean, sn] = v
                     s_pct.loc[clean, sn] = pct
             for combo, det, pct in sr['multiple_combinations']:
-                clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
+                clean = SingleMultipleElementHelper.format_clean(combo, label_mode, cfg)
                 if clean in m_part.index:
                     v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
                     m_part.loc[clean, sn] = v
@@ -1115,7 +1137,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 str: Result of the operation.
             """
             lines = lbl.split('\n')
-            lines[0] = format_combination_label(lines[0], mode)
+            lines[0] = format_combination_label(lines[0], mode, Renderer.MATHTEXT, cfg)
             return '\n'.join(lines)
 
         # ── Optionally append percentage line ────────────────────────
@@ -1253,7 +1275,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
         hd = SingleMultipleElementHelper.heatmap_data(
-            ad, pml, self.parent_window, dil, cfg.get('label_mode', 'Symbol'))
+            ad, pml, self.parent_window, dil, cfg.get('label_mode', 'Symbol'), cfg)
         if not hd:
             return
         cmap_name = cfg.get('colormap', 'YlGn')

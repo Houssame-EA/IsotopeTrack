@@ -1,7 +1,7 @@
 # IsotopeTrack Documentation
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Version](https://img.shields.io/badge/version-1.0.2-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.0.5-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 
@@ -22,11 +22,10 @@ If you use IsotopeTrack in your research, please cite:
 
 ## Downloads
 
-| Platform | Requirements | File |
-|----------|-------------|------|
-| **macOS — Apple Silicon** | macOS 11.0+ · 4 GB RAM | `IsotopeTrack_M.dmg` |
-| **Windows** | Windows 10 64-bit+ · 4 GB RAM | `IsotopeTrack_Windows.exe` |
-
+| Platform | Requirements | Download |
+|----------|-------------|----------|
+| **macOS — Apple Silicon** | macOS 11.0 (Big Sur) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_M.dmg](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
+| **Windows** | Windows 10 (64-bit) or later · 4 GB RAM (8 GB recommended) | [IsotopeTrack_Setup_W.exe](https://github.com/Houssame-EA/IsotopeTrack/releases/latest) |
 ---
 
 ## Key Features
@@ -100,7 +99,7 @@ Run.py
 | **Methods** | 2134 |
 | **Functions** | 292 |
 | **License** | GPL-3.0 |
-| **Version** | 1.0.2 |
+| **Version** | 1.0.5 |
 
 ---
 
