@@ -1797,25 +1797,56 @@ class HistogramPlotNode(QObject):
         return {k: v for k, v in result.items() if v} or None
 
 class BarChartSettingsDialog(QDialog):
-    """Full settings dialog for element bar chart node."""
+    """Scope-aware settings dialog for the element bar chart."""
 
-    def __init__(self, config, is_multi, sample_names, parent=None):
+    def __init__(self, config, is_multi, sample_names, parent=None, scope='all'):
         """
+        Initialize bar-chart settings dialog with optional scope filtering.
+
         Args:
-            config (Any): Configuration dictionary.
-            is_multi (Any): The is multi.
-            sample_names (Any): The sample names.
-            parent (Any): Parent widget or object.
+            config (dict): Current plot configuration.
+            is_multi (bool): Whether data contains multiple samples.
+            sample_names (list[str]): Source sample names used for display controls.
+            parent (Any): Parent widget.
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+
+        Preserved behavior:
+            Existing config key semantics and rendering behavior are unchanged; this
+            only controls which settings groups are shown by each bottom-button route.
         """
         super().__init__(parent)
-        self.setWindowTitle("Element Bar Chart Settings")
+        if scope == 'format':
+            self.setWindowTitle("Element bar chart plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Element bar chart plot quantities configuration")
+        else:
+            self.setWindowTitle("Element Bar Chart Settings")
         self.setMinimumWidth(460)
         self._cfg = dict(config)
         self._multi = is_multi
         self._samples = sample_names
+        self._scope = scope
+
+        self.display_mode = None
+        self.show_values = None
+        self.sort_bars = None
+        self.log_y = None
+        self.label_mode = None
+        self.min_count = None
+        self._name_edits = None
+        self._order_list = None
+
         self._build_ui()
 
     def _build_ui(self):
+        """
+        Build settings controls for the selected scope.
+
+        Scope behavior:
+            - ``format``: visual/presentation controls.
+            - ``quantities``: scientific/view arrangement controls.
+            - ``all``: legacy combined dialog.
+        """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1825,7 +1856,7 @@ class BarChartSettingsDialog(QDialog):
         scroll.setWidget(container)
         outer.addWidget(scroll)
 
-        if self._multi:
+        if self._multi and self._scope in ('all', 'quantities'):
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
             self.display_mode = QComboBox()
@@ -1835,33 +1866,39 @@ class BarChartSettingsDialog(QDialog):
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
-        g = QGroupBox("Plot Options")
-        fl = QFormLayout(g)
-        self.show_values = QCheckBox()
-        self.show_values.setChecked(self._cfg.get('show_values', True))
-        fl.addRow("Show Values on Bars:", self.show_values)
-        self.sort_bars = QComboBox()
-        self.sort_bars.addItems(SORT_OPTIONS)
-        self.sort_bars.setCurrentText(self._cfg.get('sort_bars', 'No Sorting'))
-        fl.addRow("Sort Bars:", self.sort_bars)
-        self.log_y = QCheckBox()
-        self.log_y.setChecked(self._cfg.get('log_y', False))
-        fl.addRow("Log Y-axis:", self.log_y)
-        self.label_mode = QComboBox()
-        self.label_mode.addItems(LABEL_MODES)
-        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Isotope Label:", self.label_mode)
-        self.min_count = QSpinBox()
-        self.min_count.setRange(0, 100000)
-        self.min_count.setValue(self._cfg.get('min_particle_count', 10))
-        self.min_count.setSuffix(" particles")
-        self.min_count.setToolTip(
-            "Hide elements with fewer particles than this threshold.\n"
-            "Set to 0 to show all elements.")
-        fl.addRow("Min Particle Count:", self.min_count)
-        layout.addWidget(g)
+        if self._scope in ('all', 'format'):
+            g = QGroupBox("Plot Format")
+            fl = QFormLayout(g)
+            self.show_values = QCheckBox()
+            self.show_values.setChecked(self._cfg.get('show_values', True))
+            fl.addRow("Show Values on Bars:", self.show_values)
+            self.label_mode = QComboBox()
+            self.label_mode.addItems(LABEL_MODES)
+            self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            fl.addRow("Isotope Label:", self.label_mode)
+            layout.addWidget(g)
 
-        if self._multi:
+        if self._scope in ('all', 'quantities'):
+            g = QGroupBox("Plot Quantities")
+            fl = QFormLayout(g)
+            self.sort_bars = QComboBox()
+            self.sort_bars.addItems(SORT_OPTIONS)
+            self.sort_bars.setCurrentText(self._cfg.get('sort_bars', 'No Sorting'))
+            fl.addRow("Sort Bars:", self.sort_bars)
+            self.log_y = QCheckBox()
+            self.log_y.setChecked(self._cfg.get('log_y', False))
+            fl.addRow("Log Y-axis:", self.log_y)
+            self.min_count = QSpinBox()
+            self.min_count.setRange(0, 100000)
+            self.min_count.setValue(self._cfg.get('min_particle_count', 10))
+            self.min_count.setSuffix(" particles")
+            self.min_count.setToolTip(
+                "Hide elements with fewer particles than this threshold.\n"
+                "Set to 0 to show all elements.")
+            fl.addRow("Min Particle Count:", self.min_count)
+            layout.addWidget(g)
+
+        if self._multi and self._scope in ('all', 'format'):
             g = QGroupBox("Sample Names")
             vl = QVBoxLayout(g)
             self._name_edits = {}
@@ -1873,8 +1910,8 @@ class BarChartSettingsDialog(QDialog):
                 row.addWidget(QLabel(sn[:20]))
                 row.addWidget(ne)
                 self._name_edits[sn] = ne
-                rst = QPushButton("\u21ba")
-                rst.setFixedSize(22, 22)
+                rst = QPushButton("Reset")
+                rst.setFixedWidth(50)
                 rst.clicked.connect(lambda _, o=sn: self._name_edits[o].setText(o))
                 row.addWidget(rst)
                 row.addStretch()
@@ -1883,10 +1920,10 @@ class BarChartSettingsDialog(QDialog):
                 vl.addWidget(w)
             layout.addWidget(g)
 
+        if self._multi and self._scope in ('all', 'quantities'):
             g2 = QGroupBox("Sample Display Order")
             vl2 = QVBoxLayout(g2)
-            hint = QLabel(
-                "Drag or use ↑↓ to set the order — useful for time series.")
+            hint = QLabel("Drag or use Up/Down to set order; useful for time series.")
             hint.setStyleSheet("color: #6B7280; font-size: 10px;")
             hint.setWordWrap(True)
             vl2.addWidget(hint)
@@ -1901,10 +1938,10 @@ class BarChartSettingsDialog(QDialog):
                 self._order_list.addItem(s)
             vl2.addWidget(self._order_list)
             btn_row = QHBoxLayout()
-            up_btn = QPushButton("↑  Up")
+            up_btn = QPushButton("Up")
             up_btn.setFixedWidth(72)
             up_btn.clicked.connect(self._move_up)
-            dn_btn = QPushButton("↓  Down")
+            dn_btn = QPushButton("Down")
             dn_btn.setFixedWidth(72)
             dn_btn.clicked.connect(self._move_down)
             btn_row.addWidget(up_btn)
@@ -1919,6 +1956,9 @@ class BarChartSettingsDialog(QDialog):
         outer.addWidget(btns)
 
     def _move_up(self):
+        """Move selected sample-order row up in quantities scope."""
+        if self._order_list is None:
+            return
         row = self._order_list.currentRow()
         if row > 0:
             item = self._order_list.takeItem(row)
@@ -1926,6 +1966,9 @@ class BarChartSettingsDialog(QDialog):
             self._order_list.setCurrentRow(row - 1)
 
     def _move_down(self):
+        """Move selected sample-order row down in quantities scope."""
+        if self._order_list is None:
+            return
         row = self._order_list.currentRow()
         if row < self._order_list.count() - 1:
             item = self._order_list.takeItem(row)
@@ -1934,24 +1977,35 @@ class BarChartSettingsDialog(QDialog):
 
     def collect(self) -> dict:
         """
+        Collect settings values only for controls present in the active scope.
+
         Returns:
-            dict: Result of the operation.
+            dict: Updated config dictionary to merge into node config.
+
+        Preserved behavior:
+            Prevents scope-related missing-widget errors and preserves untouched keys.
         """
         out = dict(self._cfg)
-        out['show_values'] = self.show_values.isChecked()
-        out['sort_bars'] = self.sort_bars.currentText()
-        out['log_y'] = self.log_y.isChecked()
-        out['label_mode'] = self.label_mode.currentText()
-        out['min_particle_count'] = self.min_count.value()
-        if self._multi:
+        if self.show_values is not None:
+            out['show_values'] = self.show_values.isChecked()
+        if self.sort_bars is not None:
+            out['sort_bars'] = self.sort_bars.currentText()
+        if self.log_y is not None:
+            out['log_y'] = self.log_y.isChecked()
+        if self.label_mode is not None:
+            out['label_mode'] = self.label_mode.currentText()
+        if self.min_count is not None:
+            out['min_particle_count'] = self.min_count.value()
+        if self._multi and self.display_mode is not None:
             out['display_mode'] = self.display_mode.currentText()
+        if self._multi and self._name_edits is not None:
             out['sample_name_mappings'] = {
                 sn: ne.text() for sn, ne in self._name_edits.items()}
+        if self._multi and self._order_list is not None:
             out['sample_order'] = [
                 self._order_list.item(i).text()
                 for i in range(self._order_list.count())]
         return out
-
 
 def _prepare_values(values, data_type, log_x):
     """Filter and optionally log-transform histogram values.
@@ -2298,13 +2352,15 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
 
 
 class ElementBarChartDisplayDialog(QDialog):
-    """Full-figure bar chart dialog with PyQtGraph and right-click context menu."""
+    """Full-figure bar chart dialog with controlled custom context menu."""
 
     def __init__(self, bar_node, parent_window=None):
         """
+        Initialize the element bar chart display dialog.
+
         Args:
-            bar_node (Any): The bar node.
-            parent_window (Any): The parent window.
+            bar_node (Any): Plot node providing config and extracted plot data.
+            parent_window (Any): Parent window reference.
         """
         super().__init__(parent_window)
         self.node = bar_node
@@ -2321,6 +2377,13 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """
+        Build the PyQtGraph canvas plus standardized bottom action buttons.
+
+        Preserved behavior:
+            Plot rendering/data logic is unchanged. This only routes UI entry points
+            for format settings, quantity settings, reset, and export.
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
@@ -2337,12 +2400,33 @@ class ElementBarChartDisplayDialog(QDialog):
             "background: #F8FAFC; border-top: 1px solid #E2E8F0;")
         layout.addWidget(self.stats_label)
 
-    # ── Context menu ────────────────────────
+        bb = QHBoxLayout()
+        bb.setContentsMargins(0, 0, 0, 0)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_reset = QPushButton("Reset layout")
+        btn_reset.setToolTip("Reset plot view ranges to default auto-range.")
+        btn_reset.clicked.connect(self._reset_layout)
+        btn_export = QPushButton("Export figure")
+        btn_export.clicked.connect(self._export_figure)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_reset)
+        bb.addWidget(btn_export)
+        layout.addLayout(bb)
 
     def _ctx_menu(self, pos):
         """
+        Show the custom bar-chart right-click menu.
+
         Args:
-            pos (Any): Position point.
+            pos (Any): Local click position within the graphics widget.
+
+        Preserved behavior:
+            Keeps lightweight visual toggles plus plot-specific quick sorting while
+            delegating full configuration/export/reset to bottom buttons.
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -2350,59 +2434,60 @@ class ElementBarChartDisplayDialog(QDialog):
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
             ('show_values', 'Show Values on Bars', True),
-            ('log_y',       'Log Y-axis',          False),
-            ('show_box',    'Figure Box (frame)',   True),
+            ('show_box', 'Figure Box (frame)', True),
+            ('show_det_limit', 'Detection Limit Line', False),
         ]:
-            a = tg.addAction(label); a.setCheckable(True)
+            a = tg.addAction(label)
+            a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda _, k=key: self._toggle_key(k))
 
-        tg.addSeparator()
-        sep = tg.addAction("-- Reference Lines --"); sep.setEnabled(False)
-        det_a = tg.addAction("Detection Limit Line"); det_a.setCheckable(True)
-        det_a.setChecked(cfg.get('show_det_limit', False))
-        det_a.triggered.connect(lambda _: self._toggle_key('show_det_limit'))
+        lm = menu.addMenu("Isotope Label")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode)
+            a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
         sort_menu = menu.addMenu("Sort Bars")
         cur_sort = cfg.get('sort_bars', 'No Sorting')
         for s in SORT_OPTIONS:
-            a = sort_menu.addAction(s); a.setCheckable(True)
+            a = sort_menu.addAction(s)
+            a.setCheckable(True)
             a.setChecked(s == cur_sort)
             a.triggered.connect(lambda _, v=s: self._set('sort_bars', v))
 
-        if _is_multi(self.node.input_data):
-            dm = menu.addMenu("Display Mode")
-            cur = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
-            for m in BAR_DISPLAY_MODES:
-                a = dm.addAction(m); a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
-
-        menu.addSeparator()
-        menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _toggle_key(self, key):
         """
+        Toggle a lightweight visual option from the custom context menu.
+
         Args:
-            key (Any): Dictionary or storage key.
+            key (str): Config key to toggle.
         """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
         """
+        Set a config value from right-click quick actions.
+
         Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
+            key (str): Config key to update.
+            value (Any): New value to set.
         """
         self.node.config[key] = value
         self._refresh()
 
     def _open_settings(self):
+        """
+        Open the legacy all-in-one settings dialog for compatibility.
+
+        Preserved behavior:
+            Existing combined route remains available internally; bottom buttons now
+            use scoped settings dialogs.
+        """
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self)
@@ -2410,9 +2495,47 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    def _open_plot_settings(self):
-        """Open the full PlotSettingsDialog (font, grid, traces) on the
-        first available PlotItem inside the GraphicsLayoutWidget."""
+    def _open_plot_format_settings(self):
+        """
+        Open the rich PyQtGraph visual editor for bar-chart formatting.
+
+        Preserved behavior:
+            This intentionally reuses the pre-migration PlotSettings workflow for
+            visual edits (fonts, grid/axis styling, trace/item appearance, and
+            related plot presentation controls) while keeping quantity controls in
+            the separate ``Configure plot quantities`` dialog. The format route
+            intentionally hides live ``Apply`` so users confirm changes through
+            one-shot ``OK``.
+        """
+        self._open_plot_settings(
+            title_override="Element bar chart plot format settings",
+            show_apply=False)
+
+    def _open_configure_plot_quantities(self):
+        """Open quantities-scoped bar chart settings dialog."""
+        dlg = BarChartSettingsDialog(
+            self.node.config, _is_multi(self.node.input_data),
+            _sample_names(self.node.input_data), self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_plot_settings(self, title_override=None, show_apply=True):
+        """
+        Open the existing PlotSettingsDialog on the first available PlotItem.
+
+        Args:
+            title_override (str | None): Optional window-title override used by
+                the standardized bottom ``Plot format settings`` route.
+            show_apply (bool): Whether the shared PlotSettings dialog should
+                expose live ``Apply``. Element bar chart format workflow passes
+                ``False`` to enforce one-shot confirmation via ``OK``.
+
+        Preserved behavior:
+            Uses the same PyQtGraph formatting editor path that existed before
+            right-click cleanup, but keeps it accessible via bottom buttons
+            instead of context-menu entries.
+        """
         if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None:
             return
         pi = next(
@@ -2421,10 +2544,17 @@ class ElementBarChartDisplayDialog(QDialog):
             None,
         )
         if pi is not None:
-            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
-            
+            dlg = _PlotSettingsDialog(
+                _PlotWidgetAdapter(self.pw, pi), self, show_apply=show_apply)
+            if title_override:
+                try:
+                    dlg.setWindowTitle(title_override)
+                except Exception:
+                    pass
+            dlg.exec()
+
     def _download_figure(self):
-        """Export bar chart as image or CSV."""
+        """Export bar chart as image or CSV via existing PyQtGraph export path."""
         import pandas as pd
         csv_df = None
         try:
@@ -2452,6 +2582,47 @@ class ElementBarChartDisplayDialog(QDialog):
             csv_data=csv_df,
         )
 
+    def _export_figure(self):
+        """Route standardized export button to existing bar-chart export path."""
+        self._download_figure()
+
+    def _disable_native_pyqtgraph_context_menu(self):
+        """
+        Disable native PyQtGraph plot/view menus for this dialog only.
+
+        Preserved behavior:
+            This does not alter PyQtGraph globally or in other plots; it only
+            suppresses stacked native menus in this bar-chart dialog.
+        """
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                try:
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _reset_layout(self):
+        """
+        Reset current PyQtGraph view ranges to auto-range without changing data.
+
+        Preserved behavior:
+            Sorting and quantity configuration are left unchanged.
+        """
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.enableAutoRange(axis='xy', enable=True)
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.autoRange()
+                except Exception:
+                    pass
     # ── Refresh ─────────────────────────────
 
     def _refresh(self):
@@ -2498,6 +2669,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
                 _draw_single_bar_chart(pi, plot_data, cfg)
 
+            self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
 
         except Exception as e:
@@ -2930,3 +3102,5 @@ class ElementBarChartPlotNode(QObject):
             return {k: v for k, v in result.items() if v} or None
 
         return None
+
+
