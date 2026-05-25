@@ -24,7 +24,7 @@ from results.shared_plot_utils import (
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
     FontSettingsGroup, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES,
+    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
     _add_hband, _add_det_limit_h,
 )
@@ -177,7 +177,7 @@ def _fmt_elem(elem, cfg):
     Returns:
         object: Result of the operation.
     """
-    return format_element_label(elem, cfg.get('label_mode', 'Symbol'))
+    return format_element_label(elem, cfg.get('label_mode', 'Symbol'), Renderer.HTML)
 
 
 def _is_multi(input_data):
@@ -1084,11 +1084,11 @@ class BoxPlotDisplayDialog(QDialog):
                 elif mode == 'By Sample (Ordered)':
                     self._draw_by_sample(plot_data, cfg)
                 else:
-                    pi = self.pw.addPlot()
+                    pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
                     self._draw_combined(pi, plot_data, cfg)
                     apply_font_to_pyqtgraph(pi, cfg)
             else:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
                 self._draw_single_sample(pi, plot_data, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
 
@@ -1183,7 +1183,8 @@ class BoxPlotDisplayDialog(QDialog):
         first_pi = None
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c)
+            pi = self.pw.addPlot(row=r, col=c,
+                                  axisItems={'bottom': HtmlAxisItem('bottom')})
             sd = plot_data[sn]
             if sd:
                 self._draw_single_sample(

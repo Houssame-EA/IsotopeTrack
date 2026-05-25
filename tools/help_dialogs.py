@@ -3286,7 +3286,7 @@ class AboutDialog(QDialog):
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.0.4</h3>"
+            "<h3 align='center'>Version 1.0.5</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))

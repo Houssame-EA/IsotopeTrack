@@ -51,9 +51,10 @@ from results.shared_plot_utils import (
     apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
     FontSettingsGroup,
     download_matplotlib_figure,
+    format_element_label, Renderer,
 )
 from results.utils_sort import (
-    extract_mass_and_element, sort_elements_by_mass, format_element_label,
+    extract_mass_and_element, sort_elements_by_mass,
 )
 
 
@@ -1962,7 +1963,7 @@ class ClusteringDisplayDialog(QDialog):
                        edgecolor='white', linewidth=0.6, alpha=0.9)
         for bar, cid, sz in zip(bars, clusters, sizes):
             dom = char[cid].get('dominant_elements', [])
-            lbl = format_element_label(dom[0][0], False) if dom else '?'
+            lbl = format_element_label(dom[0][0], 'Symbol', Renderer.MATHTEXT) if dom else '?'
             ax2.text(bar.get_x() + bar.get_width() / 2,
                      bar.get_height() + max(sizes) * 0.01,
                      f'{lbl}\n(n={sz})', ha='center', va='bottom',
@@ -2730,7 +2731,7 @@ class ClusteringDisplayDialog(QDialog):
 
                 if sig:
                     ctype_full = '  '.join(
-                        f"{format_element_label(e, False)} {p:.1f}%"
+                        f"{format_element_label(e, 'Symbol', Renderer.MATHTEXT)} {p:.1f}%"
                         for e, p in sig
                     )
                 else:
@@ -2738,7 +2739,7 @@ class ClusteringDisplayDialog(QDialog):
 
                 if sig:
                     ctype_short = '+'.join(
-                        format_element_label(e, False) for e, _ in sig[:4]
+                        format_element_label(e, 'Symbol', Renderer.MATHTEXT) for e, _ in sig[:4]
                     )
                     if len(sig) > 4:
                         ctype_short += f'+{len(sig)-4}…'

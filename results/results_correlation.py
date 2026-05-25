@@ -14,7 +14,7 @@ import math
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    LABEL_MODES, format_label_text_tokens,
+    LABEL_MODES, format_label_text_tokens, Renderer,
     FontSettingsGroup, build_axis_labels,
     apply_saturation_filter, apply_zero_filter, apply_log_transform,
     evaluate_equation, evaluate_equation_array, build_element_matrix,
@@ -1318,8 +1318,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         else:
             xl, yl = build_axis_labels(cfg)
             lm = cfg.get('label_mode', 'Symbol')
-            xl = format_label_text_tokens(xl, lm)
-            yl = format_label_text_tokens(yl, lm)
+            xl = format_label_text_tokens(xl, lm, Renderer.HTML)
+            yl = format_label_text_tokens(yl, lm, Renderer.HTML)
         set_axis_labels(pi, xl, yl, cfg)
 
         if cfg.get('log_x'):

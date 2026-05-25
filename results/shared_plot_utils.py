@@ -1,10 +1,10 @@
 import re
-import sys
+import enum
 import math
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
-from PySide6.QtGui import QColor, QFont, QPen
+from PySide6.QtGui import QColor, QFont, QPen, QTextDocument
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QMessageBox, QMenu, QDialog,
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel,
@@ -120,37 +120,88 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_start_px = None
         self._drag_ax_pos0  = None
 
-_USE_MATHTEXT = sys.platform == 'darwin'
+
+
+class HtmlAxisItem(pg.AxisItem):
+    """AxisItem that renders tick labels as HTML using QTextDocument.
+
+    Drop-in replacement for the default pg.AxisItem when tick labels
+    contain HTML markup — e.g. atomic notation <sup>56</sup>Fe.
+    Plain-text labels fall through to the standard QPainter path so
+    there is no cost when Atomic Notation is not active.
+
+    Usage::
+        pi = layout.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
+    """
+
+    def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
+        p.setRenderHint(p.RenderHint.Antialiasing, False)
+        p.setRenderHint(p.RenderHint.TextAntialiasing, True)
+
+        # ── Axis line ───────────────────────────────────────────────
+        pen, p1, p2 = axisSpec
+        p.setPen(pen)
+        p.drawLine(p1, p2)
+
+        # ── Tick marks ──────────────────────────────────────────────
+        for pen, p1, p2 in tickSpecs:
+            p.setPen(pen)
+            p.drawLine(p1, p2)
+
+        # ── Tick labels ─────────────────────────────────────────────
+        if self.style.get('tickFont') is not None:
+            p.setFont(self.style['tickFont'])
+        p.setPen(self.textPen())
+        text_color = p.pen().color().name()
+
+        for rect, flags, text in textSpecs:
+            text = str(text)
+            if not text.strip():
+                continue
+            if '<' in text:
+                doc = QTextDocument()
+                doc.setDefaultFont(p.font())
+                doc.setDefaultStyleSheet(f'* {{ color: {text_color}; }}')
+                doc.setHtml(f'<center>{text}</center>')
+                doc.setTextWidth(rect.width())
+                p.save()
+                p.translate(rect.left(), rect.top())
+                doc_h = doc.size().height()
+                if doc_h < rect.height():
+                    p.translate(0.0, (rect.height() - doc_h) / 2.0)
+                doc.drawContents(p)
+                p.restore()
+            else:
+                p.drawText(rect, flags, text)
+
 
 LABEL_MODES = ['Symbol', 'Mass + Symbol', 'Atomic Notation']
 
-_SUPERSCRIPT_DIGITS = str.maketrans({
-    '0': '\u2070',
-    '1': '\u00B9',
-    '2': '\u00B2',
-    '3': '\u00B3',
-    '4': '\u2074',
-    '5': '\u2075',
-    '6': '\u2076',
-    '7': '\u2077',
-    '8': '\u2078',
-    '9': '\u2079',
-})
-_SUPERSCRIPT_DIGIT_RE = re.compile(r'[\u2070\u00B9\u00B2\u00B3\u2074\u2075\u2076\u2077\u2078\u2079]')
 
+class Renderer(enum.Enum):
+    """Target rendering engine for element label formatting.
 
-def superscript_digits(text: str) -> str:
-    """Convert ASCII digits to unicode superscript digits."""
-    return str(text).translate(_SUPERSCRIPT_DIGITS)
+    MATHTEXT  — matplotlib axes, titles, colorbars.
+                Atomic Notation uses mathtext: $^{107}\\mathrm{Ag}$
+                Normal digits raised by the math engine — same font throughout.
+
+    HTML      — pyqtgraph axes, legends, tick labels.
+                Atomic Notation uses Qt HTML: <sup>107</sup>Ag
+                Normal digits raised by Qt — same font throughout.
+    """
+    MATHTEXT = 'mathtext'
+    HTML     = 'html'
 
 
 def parse_element_label(label: str) -> tuple[str, str | None]:
-    """Parse element/isotope text into (symbol_like, mass_or_none)."""
+    """Parse element/isotope text into (symbol_like, mass_or_none).
+
+    Handles prefix notation (107Ag), suffix notation (Ag107), and bare
+    symbols (Ag). Returns (symbol, mass_string) or (symbol, None).
+    """
     text = str(label or '').strip()
     if not text:
         return '', None
-    if _SUPERSCRIPT_DIGIT_RE.search(text):
-        return text, None
 
     lead = re.match(r'^\s*(\d+)\s*([A-Za-z][A-Za-z]?)\s*([+\-]\d*)?\s*$', text)
     if lead:
@@ -169,47 +220,66 @@ def parse_element_label(label: str) -> tuple[str, str | None]:
     return text, None
 
 
-def format_element_label(key: str, mode: str) -> str:
-    """Format an element key for display according to label mode.
+def format_element_label(key: str, mode: str,
+                         renderer: Renderer = Renderer.HTML,
+                         config: dict | None = None) -> str:
+    """Format an element key for display according to label mode and renderer.
 
-    'Symbol'        → bare symbol, stripping any leading mass number
-                      e.g. '107Ag' → 'Ag',  '107Ag, 197Au' → 'Ag, Au'
-    'Mass + Symbol' → keep as-is (full isotope notation)
-                      e.g. '107Ag',          '107Ag, 197Au'
-    'Atomic Notation' → superscript mass before symbol.
-                      On macOS, uses matplotlib mathtext ($^{107}$Ag) instead
-                      of Unicode superscripts, because Times New Roman on macOS
-                      is missing glyphs for digits 0 and 4-9 in the Unicode
-                      Superscripts block. On Windows, Unicode superscripts are
-                      used as before.
+    'Symbol'          → bare symbol, stripping any leading mass number
+                        e.g. '107Ag' → 'Ag',  '107Ag, 197Au' → 'Ag, Au'
+    'Mass + Symbol'   → keep as-is (full isotope notation)
+                        e.g. '107Ag',          '107Ag, 197Au'
+    'Atomic Notation' → superscript mass before symbol, formatted for the
+                        target renderer so mass and symbol stay in the same
+                        font — no Unicode superscript code points involved:
+
+                        Renderer.MATHTEXT  →  $^{107}\\mathrm{Ag}$  (or \\mathbf / \\mathit)
+                        Renderer.HTML      →  <sup>107</sup>Ag
+
     Args:
-        key (str): Dictionary or storage key.
-        mode (str): Operating mode string.
+        key (str): Element key string, e.g. '107Ag' or '107Ag, 197Au'.
+        mode (str): One of LABEL_MODES.
+        renderer (Renderer): Target rendering engine (default: HTML).
+        config (dict | None): Font config dict. When provided and renderer is
+            MATHTEXT, configures the mathtext font immediately and respects
+            bold/italic settings via \\mathbf / \\mathit commands.
     Returns:
-        str: Result of the operation.
+        str: Formatted label ready to pass to the target renderer.
     """
     if mode == 'Mass + Symbol':
         return key
+
+    if renderer == Renderer.MATHTEXT and mode == 'Atomic Notation' and config:
+        fc = get_font_config(config)
+        _configure_mathtext_font(fc['family'])
+        bold   = fc.get('bold', False)
+        italic = fc.get('italic', False)
+        if bold:
+            _math_cmd = r'\mathbf'
+        elif italic:
+            _math_cmd = r'\mathit'
+        else:
+            _math_cmd = r'\mathrm'
+    else:
+        _math_cmd = r'\mathrm'
 
     def _fmt_token(tok: str) -> str:
         original = tok.strip()
         if not original:
             return original
         symbol, mass = parse_element_label(original)
-        if mode == 'Atomic Notation':
-            if _SUPERSCRIPT_DIGIT_RE.search(original):
-                return original
-            if mass:
-                if _USE_MATHTEXT:
-                    return f"$^{{{mass}}}${symbol}"
-                return f"{superscript_digits(mass)}{symbol}"
-            return symbol or original
+        if mode == 'Atomic Notation' and mass:
+            if renderer == Renderer.MATHTEXT:
+                return f"$^{{{mass}}}{_math_cmd}{{{symbol}}}$"
+            return f"<sup>{mass}</sup>{symbol}"
         return symbol or original
 
     return ', '.join(_fmt_token(tok) for tok in str(key).split(','))
 
 
-def format_combination_label(label: str, mode: str) -> str:
+def format_combination_label(label: str, mode: str,
+                             renderer: Renderer = Renderer.HTML,
+                             config: dict | None = None) -> str:
     """Format combo labels while preserving separators like ',' and '+'."""
     text = str(label)
     parts = [p for p in re.split(r'(\s*,\s*|\s*\+\s*)', text) if p != '']
@@ -218,22 +288,25 @@ def format_combination_label(label: str, mode: str) -> str:
         if re.fullmatch(r'\s*,\s*|\s*\+\s*', p):
             out.append(p)
         else:
-            out.append(format_element_label(p, mode))
+            out.append(format_element_label(p, mode, renderer, config))
     return ''.join(out)
 
 
-def format_label_text_tokens(text: str, mode: str) -> str:
+def format_label_text_tokens(text: str, mode: str,
+                             renderer: Renderer = Renderer.HTML,
+                             config: dict | None = None) -> str:
     """Format isotope-like tokens inside a free-form label string."""
     s = str(text or '')
     token_re = re.compile(
         r'(?<![A-Za-z0-9])(?:\d+[A-Za-z]{1,2}|[A-Za-z]{1,2}(?:[-\s]?\d+))(?![A-Za-z0-9])'
     )
-    return token_re.sub(lambda m: format_element_label(m.group(0), mode), s)
+    return token_re.sub(lambda m: format_element_label(m.group(0), mode, renderer, config), s)
 
 
 DEFAULT_FONT_FAMILY = "Times New Roman"
 DEFAULT_FONT_SIZE = 18
 DEFAULT_FONT_COLOR = "#000000"
+
 
 FONT_FAMILIES = [
     "Times New Roman", "Arial", "Helvetica", "Calibri", "Verdana",
@@ -380,6 +453,29 @@ def set_axis_labels(plot_item, x_label: str, y_label: str, config: dict):
     plot_item.setLabel('left', y_label, color=fc['color'], font=font_str)
 
 
+def _configure_mathtext_font(family: str) -> None:
+    """Sync matplotlib's mathtext roman font to the user's selected font.
+
+    When Atomic Notation is active, labels use mathtext ($^{107}\\mathrm{Ag}$).
+    By default matplotlib renders mathtext in Computer Modern regardless of the
+    axes font. This syncs the mathtext roman slot to the selected font so the
+    superscript and symbol render in the same typeface as the rest of the plot.
+
+    Falls back silently if the font is not supported by the mathtext engine.
+
+    Args:
+        family (str): Font family name (e.g. 'Arial', 'Times New Roman').
+    """
+    import matplotlib as mpl
+    try:
+        mpl.rcParams['mathtext.fontset'] = 'custom'
+        mpl.rcParams['mathtext.rm'] = family
+        mpl.rcParams['mathtext.it'] = f'{family}:italic'
+        mpl.rcParams['mathtext.bf'] = f'{family}:bold'
+    except Exception:
+        pass
+
+
 def apply_font_to_matplotlib(ax, config: dict):
     """
     Apply font settings to a Matplotlib Axes (ticks, title, colorbar).
@@ -392,6 +488,9 @@ def apply_font_to_matplotlib(ax, config: dict):
         fc = get_font_config(config)
         weight = 'bold' if fc['bold'] else 'normal'
         style = 'italic' if fc['italic'] else 'normal'
+
+        if config.get('label_mode') == 'Atomic Notation':
+            _configure_mathtext_font(fc['family'])
 
         ax.tick_params(axis='both', which='major', labelsize=fc['size'], colors=fc['color'])
         for label in ax.get_xticklabels() + ax.get_yticklabels():

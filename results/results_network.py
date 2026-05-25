@@ -26,7 +26,7 @@ from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label,
+    LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
@@ -465,7 +465,7 @@ class NetworkDisplayDialog(QDialog):
         label_mode = cfg.get('label_mode', 'Symbol')
         fc       = get_font_config(cfg)
 
-        fmt_labels = [format_element_label(el, label_mode) for el in elements]
+        fmt_labels = [format_element_label(el, label_mode, Renderer.MATHTEXT, cfg) for el in elements]
 
         ax.set_facecolor(bg)
         ax.set_xlim(-0.55, 0.55)

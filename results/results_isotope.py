@@ -18,7 +18,7 @@ from results.utils_sort import extract_mass_and_element
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
     get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    LABEL_MODES, format_element_label,
+    LABEL_MODES, format_element_label, Renderer,
     FontSettingsGroup,
     apply_saturation_filter, build_element_matrix,
     get_sample_color, get_display_name,
@@ -61,8 +61,8 @@ def _mass_of(label: str) -> float | None:
 
 def _format_ratio_text(num_label: str, den_label: str, mode: str) -> str:
     """Display-only ratio text using configured label mode."""
-    num = format_element_label(num_label or '', mode)
-    den = format_element_label(den_label or '', mode)
+    num = format_element_label(num_label or '', mode, Renderer.HTML)
+    den = format_element_label(den_label or '', mode, Renderer.HTML)
     return f"{num}/{den}"
 
 
@@ -2510,7 +2510,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         eff_cfg = get_sample_correction_config(cfg, sample_name)
         method = eff_cfg.get('correction_method', 'None')
 
-        x_label = f"{format_element_label(x_elem, lm)} ({dt})"
+        x_label = f"{format_element_label(x_elem, lm, Renderer.HTML)} ({dt})"
 
         y_base = f"Ratio {_format_ratio_text(e1, e2, lm)}"
         if method != 'None':

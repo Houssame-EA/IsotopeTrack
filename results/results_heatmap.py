@@ -14,7 +14,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
-    download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label,
+    download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
 )
 
 from results.utils_sort import (
@@ -654,7 +654,7 @@ class HeatmapDisplayDialog(QDialog):
 
         for combo, d in selected:
             count = d['particle_count']
-            fmt = format_combination_label(combo, label_mode)
+            fmt = format_combination_label(combo, label_mode, Renderer.MATHTEXT, cfg)
             labels.append(f"{fmt} ({count})")
             hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
 
@@ -694,7 +694,7 @@ class HeatmapDisplayDialog(QDialog):
             ax.grid(which='minor', color='white', linewidth=cell_lw)
             ax.tick_params(which='minor', length=0)
 
-        x_labels = [format_element_label(e, label_mode) for e in all_elems]
+        x_labels = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg) for e in all_elems]
         ax.set_xticks(range(len(x_labels)))
         ax.set_xticklabels(x_labels, rotation=x_rotation,
                            ha='right' if x_rotation > 0 else 'center',
@@ -755,9 +755,9 @@ def _combo_matches(combination: str, search_elements: list) -> bool:
     combo_parts = [p.strip() for p in combination.split(',')]
     for se in search_elements:
         found = False
-        se_clean = format_element_label(se, 'Symbol').lower()
+        se_clean = format_element_label(se, 'Symbol', Renderer.MATHTEXT).lower()
         for cp in combo_parts:
-            cp_clean = format_element_label(cp, 'Symbol').lower()
+            cp_clean = format_element_label(cp, 'Symbol', Renderer.MATHTEXT).lower()
             if se.lower() in cp.lower() or se_clean in cp_clean:
                 found = True
                 break

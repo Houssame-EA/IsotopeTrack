@@ -28,7 +28,7 @@ from results.shared_plot_utils import (
     get_font_config, make_font_properties, apply_font_to_matplotlib,
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_sample_color, get_display_name,
-    download_matplotlib_figure, LABEL_MODES, format_combination_label,
+    download_matplotlib_figure, LABEL_MODES, format_combination_label, Renderer,
 )
 from widget.colors import default_colors, colorheatmap
 
@@ -139,7 +139,7 @@ class SingleMultipleElementHelper:
         Returns:
             object: Result of the operation.
         """
-        return format_combination_label(combo_str, label_mode)
+        return format_combination_label(combo_str, label_mode, Renderer.MATHTEXT, cfg)
 
     @staticmethod
     def calc_per_ml(count, parent_window, dilution=1.0, sample_info=None):
@@ -941,7 +941,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 str: Result of the operation.
             """
             lines = lbl.split('\n')
-            lines[0] = format_combination_label(lines[0], mode)
+            lines[0] = format_combination_label(lines[0], mode, Renderer.MATHTEXT, cfg)
             return '\n'.join(lines)
 
         # ── Optionally append percentage line ────────────────────────
@@ -1272,4 +1272,3 @@ class SingleMultipleElementPlotNode(QObject):
                 if r:
                     result[sn] = r
         return result if result else None
-

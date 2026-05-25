@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
-    LABEL_MODES, format_element_label, format_combination_label,
+    LABEL_MODES, format_element_label, format_combination_label, Renderer,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -1040,7 +1040,7 @@ class PieChartDisplayDialog(QDialog):
                 colors.append(ec.get(lbl, DEFAULT_PIE_COLORS[i % len(DEFAULT_PIE_COLORS)]))
                 count = orig_counts.get(lbl, 0)
 
-            parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'))]
+            parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'), Renderer.MATHTEXT, cfg)]
             if cfg.get('show_counts', True):      parts.append(f"({count:,})")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
@@ -1599,7 +1599,7 @@ class ElementCompositionDisplayDialog(QDialog):
                 elems = data[lbl].get('elements', {})      if lbl in data else {}
 
             mode  = cfg.get('label_mode', 'Symbol')
-            parts = [format_combination_label(lbl, mode)]
+            parts = [format_combination_label(lbl, mode, Renderer.MATHTEXT, cfg)]
             if cfg.get('show_counts', True):
                 parts.append(f"({pc:,} particles)")
             if cfg.get('show_data_values', True) and dt != 'Counts':

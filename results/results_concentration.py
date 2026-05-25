@@ -27,7 +27,7 @@ from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_matplotlib,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label,
+    LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
@@ -496,7 +496,7 @@ class ConcentrationDisplayDialog(QDialog):
         jitter_fac = cfg.get('jitter', 0.15)
         bg         = cfg.get('bg_color', '#FFFFFF')
 
-        y_labels = [format_element_label(e, label_mode) for e in elements]
+        y_labels = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg) for e in elements]
         y_pos = list(range(n_el - 1, -1, -1))
 
         min_h = max(4.0, n_el * 0.38 + 1.5)

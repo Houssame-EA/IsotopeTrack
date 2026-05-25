@@ -199,7 +199,7 @@ class SplashScreen(QWidget):
         self,
         logo_path: Optional[str] = None,
         app_name: str = "IsotopeTrack",
-        version: str = "Version 1.0.4:Beta",
+        version: str = "Version 1.0.5:Beta",
     ):
         """
         Args:

@@ -19,7 +19,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES,
+    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES, _QT_LINE, _apply_box,
     _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
 )
@@ -107,7 +107,7 @@ def _fmt_elem(elem: str, cfg: dict) -> str:
     Returns:
         str: Result of the operation.
     """
-    return format_element_label(elem, cfg.get('label_mode', 'Symbol'))
+    return format_element_label(elem, cfg.get('label_mode', 'Symbol'), Renderer.HTML)
 
 
 class _PlotWidgetAdapter:
@@ -2495,7 +2495,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 else:
                     self._draw_grouped(plot_data, cfg)
             else:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
                 _draw_single_bar_chart(pi, plot_data, cfg)
 
             self._update_stats(plot_data)
@@ -2517,7 +2517,8 @@ class ElementBarChartDisplayDialog(QDialog):
         for idx, sn in enumerate(samples):
             if idx > 0 and idx % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg))
+            pi = self.pw.addPlot(title=get_display_name(sn, cfg),
+                                  axisItems={'bottom': HtmlAxisItem('bottom')})
             sd = plot_data[sn]
             if sd:
                 color = get_sample_color(sn, idx, cfg)
@@ -2531,7 +2532,8 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         samples = list(plot_data.keys())
         for idx, sn in enumerate(samples):
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg))
+            pi = self.pw.addPlot(title=get_display_name(sn, cfg),
+                                  axisItems={'bottom': HtmlAxisItem('bottom')})
             sd = plot_data[sn]
             if sd:
                 color = get_sample_color(sn, idx, cfg)
@@ -2544,7 +2546,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot()
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         show_vals = cfg.get('show_values', True)
@@ -2554,7 +2556,7 @@ class ElementBarChartDisplayDialog(QDialog):
         for sd in plot_data.values():
             all_elems.update(sd.keys())
         all_elems = sort_elements_by_mass(list(all_elems))
-        
+
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
             all_elems = [e for e in all_elems
@@ -2630,7 +2632,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot()
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         sort_opt = cfg.get('sort_bars', 'No Sorting')
@@ -2639,7 +2641,7 @@ class ElementBarChartDisplayDialog(QDialog):
         for sd in plot_data.values():
             all_elems.update(sd.keys())
         all_elems = sort_elements_by_mass(list(all_elems))
-        
+
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
             all_elems = [e for e in all_elems
@@ -2709,7 +2711,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot()
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         show_vals = cfg.get('show_values', True)
