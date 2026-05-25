@@ -649,126 +649,157 @@ class MplPieCanvas(QWidget):
 
 
 class PieChartSettingsDialog(QDialog):
-    def __init__(self, cfg, input_data, available_elements, parent=None):
+    def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
+        Initialize pie-chart settings with optional scope-based control filtering.
+
         Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            available_elements (Any): The available elements.
-            parent (Any): Parent widget or object.
+            cfg (dict): Current plot configuration.
+            input_data (dict): Current node input payload.
+            available_elements (list[str]): Element labels available for wedge styling.
+            parent (Any): Parent widget.
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+
+        Preserved behavior:
+            Existing config keys and rendering semantics are unchanged; only UI routing
+            between format and quantity dialogs is added.
         """
         super().__init__(parent)
-        self.setWindowTitle("Pie Chart Settings")
+        if scope == 'format':
+            self.setWindowTitle("Pie chart plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Pie chart plot quantities configuration")
+        else:
+            self.setWindowTitle("Pie Chart Settings")
         self.setMinimumWidth(520)
-        self._cfg  = dict(cfg)
+        self._cfg = dict(cfg)
         self._input_data = input_data
         self._available_elements = available_elements
+        self._scope = scope
+
+        self._chart_type = None
+        self._data_type = None
+        self._display_mode = None
+        self._thresh = None
+        self._filter_zeros = None
+        self._show_counts = None
+        self._show_pct = None
+        self._label_mode = None
+        self._pie_style = None
+        self._label_line = None
+        self._legend = None
+        self._export = None
+        self._font_grp = None
+        self._sample_edits: dict[str, QLineEdit] = {}
+        self._elem_color_btns: dict[str, _ColorBtn] = {}
+        self._elem_explode: dict[str, QDoubleSpinBox] = {}
         self._build_ui()
 
     def _build_ui(self):
-        root   = QVBoxLayout(self)
+        """
+        Build settings controls for the active scope.
+
+        ``quantities`` includes chart/data type, display mode, threshold, and zero filter.
+        ``format`` includes labels, isotope label mode, wedge style, sample names, pie
+        style, label-line style, legend, export appearance, and font controls.
+        """
+        root = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner  = QWidget(); lay = QVBoxLayout(inner)
+        inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        # ── Data & Chart Type ─────────────────────────────────────────
-        g1 = QGroupBox("Data & Chart Type"); f1 = QFormLayout(g1)
-        self._chart_type = QComboBox()
-        self._chart_type.addItems(PIE_CHART_TYPES)
-        self._chart_type.setCurrentText(self._cfg.get('chart_type', PIE_CHART_TYPES[0]))
-        f1.addRow("Chart Type:", self._chart_type)
-        self._data_type = QComboBox()
-        self._data_type.addItems(PIE_DATA_TYPES)
-        self._data_type.setCurrentText(self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
-        f1.addRow("Data Type:", self._data_type)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Data & Chart Type"); f1 = QFormLayout(g1)
+            self._chart_type = QComboBox()
+            self._chart_type.addItems(PIE_CHART_TYPES)
+            self._chart_type.setCurrentText(self._cfg.get('chart_type', PIE_CHART_TYPES[0]))
+            f1.addRow("Chart Type:", self._chart_type)
+            self._data_type = QComboBox()
+            self._data_type.addItems(PIE_DATA_TYPES)
+            self._data_type.setCurrentText(self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
+            f1.addRow("Data Type:", self._data_type)
+            lay.addWidget(g1)
 
-        # ── Display Mode (multi-sample only) ──────────────────────────
-        self._display_mode = None
-        if _is_multi(self._input_data):
-            g2 = QGroupBox("Multiple Sample Display"); f2 = QFormLayout(g2)
-            self._display_mode = QComboBox()
-            self._display_mode.addItems(PIE_DISPLAY_MODES)
-            self._display_mode.setCurrentText(
-                self._cfg.get('display_mode', PIE_DISPLAY_MODES[0]))
-            f2.addRow("Mode:", self._display_mode)
-            lay.addWidget(g2)
+            if _is_multi(self._input_data):
+                g2 = QGroupBox("Multiple Sample Display"); f2 = QFormLayout(g2)
+                self._display_mode = QComboBox()
+                self._display_mode.addItems(PIE_DISPLAY_MODES)
+                self._display_mode.setCurrentText(
+                    self._cfg.get('display_mode', PIE_DISPLAY_MODES[0]))
+                f2.addRow("Mode:", self._display_mode)
+                lay.addWidget(g2)
 
-        # ── Labels & Thresholds ───────────────────────────────────────
-        g3 = QGroupBox("Labels & Thresholds"); f3 = QFormLayout(g3)
-        self._thresh = QDoubleSpinBox()
-        self._thresh.setRange(0.0, 50.0); self._thresh.setSuffix(" %")
-        self._thresh.setValue(self._cfg.get('threshold', 1.0))
-        f3.addRow("Threshold ('Others'):", self._thresh)
-        self._filter_zeros = QCheckBox("Filter Zero Values")
-        self._filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
-        f3.addRow("", self._filter_zeros)
-        self._show_counts = QCheckBox("Show Particle Counts")
-        self._show_counts.setChecked(self._cfg.get('show_counts', True))
-        f3.addRow("", self._show_counts)
-        self._show_pct = QCheckBox("Show Percentages")
-        self._show_pct.setChecked(self._cfg.get('show_percentages', True))
-        f3.addRow("", self._show_pct)
-        self._label_mode = QComboBox()
-        self._label_mode.addItems(LABEL_MODES)
-        self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Isotope Label:", self._label_mode)
-        lay.addWidget(g3)
+            g3 = QGroupBox("Thresholds"); f3 = QFormLayout(g3)
+            self._thresh = QDoubleSpinBox()
+            self._thresh.setRange(0.0, 50.0); self._thresh.setSuffix(" %")
+            self._thresh.setValue(self._cfg.get('threshold', 1.0))
+            f3.addRow("Threshold ('Others'):", self._thresh)
+            self._filter_zeros = QCheckBox("Filter Zero Values")
+            self._filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
+            f3.addRow("", self._filter_zeros)
+            lay.addWidget(g3)
 
-        # ── Wedge Colours + Explode ───────────────────────────────────
-        self._elem_color_btns: dict[str, _ColorBtn]     = {}
-        self._elem_explode:    dict[str, QDoubleSpinBox] = {}
-        if self._available_elements:
-            g4 = QGroupBox("Wedge Colours & Explode Offset")
-            v4 = QVBoxLayout(g4)
-            ec      = self._cfg.get('element_colors', {})
-            exp_d   = self._cfg.get('explode', {})
-            hdr = QHBoxLayout()
-            hdr.addWidget(QLabel("<b>Element</b>"), 3)
-            hdr.addWidget(QLabel("<b>Colour</b>"), 1)
-            hdr.addWidget(QLabel("<b>Explode</b>"), 2)
-            v4.addLayout(hdr)
-            for i, el in enumerate(self._available_elements):
-                row = QHBoxLayout()
-                row.addWidget(QLabel(el), 3)
-                btn = _ColorBtn(ec.get(el, DEFAULT_PIE_COLORS[i % len(DEFAULT_PIE_COLORS)]))
-                self._elem_color_btns[el] = btn
-                row.addWidget(btn, 1)
-                sb = QDoubleSpinBox()
-                sb.setRange(0.0, 0.30); sb.setSingleStep(0.02); sb.setDecimals(2)
-                sb.setValue(exp_d.get(el, 0.0))
-                self._elem_explode[el] = sb
-                row.addWidget(sb, 2)
-                w = QWidget(); w.setLayout(row); v4.addWidget(w)
-            lay.addWidget(g4)
+        if self._scope in ('all', 'format'):
+            g3f = QGroupBox("Labels"); f3f = QFormLayout(g3f)
+            self._show_counts = QCheckBox("Show Particle Counts")
+            self._show_counts.setChecked(self._cfg.get('show_counts', True))
+            f3f.addRow("", self._show_counts)
+            self._show_pct = QCheckBox("Show Percentages")
+            self._show_pct.setChecked(self._cfg.get('show_percentages', True))
+            f3f.addRow("", self._show_pct)
+            self._label_mode = QComboBox()
+            self._label_mode.addItems(LABEL_MODES)
+            self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            f3f.addRow("Isotope Label:", self._label_mode)
+            lay.addWidget(g3f)
 
-        # ── Sample Name Mappings (multi only) ─────────────────────────
-        self._sample_edits: dict[str, QLineEdit] = {}
-        if _is_multi(self._input_data):
-            names = self._input_data.get('sample_names', [])
-            if names:
-                g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
-                nm = dict(self._cfg.get('sample_name_mappings', {}))
-                for sn in names:
+            if self._available_elements:
+                g4 = QGroupBox("Wedge Colours & Explode Offset")
+                v4 = QVBoxLayout(g4)
+                ec = self._cfg.get('element_colors', {})
+                exp_d = self._cfg.get('explode', {})
+                hdr = QHBoxLayout()
+                hdr.addWidget(QLabel("<b>Element</b>"), 3)
+                hdr.addWidget(QLabel("<b>Colour</b>"), 1)
+                hdr.addWidget(QLabel("<b>Explode</b>"), 2)
+                v4.addLayout(hdr)
+                for i, el in enumerate(self._available_elements):
                     row = QHBoxLayout()
-                    row.addWidget(QLabel(sn))
-                    ed = QLineEdit(nm.get(sn, sn))
-                    row.addWidget(ed)
-                    self._sample_edits[sn] = ed
-                    w = QWidget(); w.setLayout(row); v5.addWidget(w)
-                lay.addWidget(g5)
+                    row.addWidget(QLabel(el), 3)
+                    btn = _ColorBtn(ec.get(el, DEFAULT_PIE_COLORS[i % len(DEFAULT_PIE_COLORS)]))
+                    self._elem_color_btns[el] = btn
+                    row.addWidget(btn, 1)
+                    sb = QDoubleSpinBox()
+                    sb.setRange(0.0, 0.30); sb.setSingleStep(0.02); sb.setDecimals(2)
+                    sb.setValue(exp_d.get(el, 0.0))
+                    self._elem_explode[el] = sb
+                    row.addWidget(sb, 2)
+                    w = QWidget(); w.setLayout(row); v4.addWidget(w)
+                lay.addWidget(g4)
 
-        # ── New shared groups ─────────────────────────────────────────
-        self._pie_style  = PieStyleGroup(self._cfg)
-        self._label_line = LabelLineGroup(self._cfg)
-        self._legend     = LegendGroup(self._cfg)
-        self._export     = ExportGroup(self._cfg)
-        for grp in (self._pie_style, self._label_line, self._legend, self._export):
-            lay.addWidget(grp.build())
+            if _is_multi(self._input_data):
+                names = self._input_data.get('sample_names', [])
+                if names:
+                    g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
+                    nm = dict(self._cfg.get('sample_name_mappings', {}))
+                    for sn in names:
+                        row = QHBoxLayout()
+                        row.addWidget(QLabel(sn))
+                        ed = QLineEdit(nm.get(sn, sn))
+                        row.addWidget(ed)
+                        self._sample_edits[sn] = ed
+                        w = QWidget(); w.setLayout(row); v5.addWidget(w)
+                    lay.addWidget(g5)
 
-        # ── Font ──────────────────────────────────────────────────────
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+            self._pie_style = PieStyleGroup(self._cfg)
+            self._label_line = LabelLineGroup(self._cfg)
+            self._legend = LegendGroup(self._cfg)
+            self._export = ExportGroup(self._cfg)
+            for grp in (self._pie_style, self._label_line, self._legend, self._export):
+                lay.addWidget(grp.build())
+
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -776,38 +807,58 @@ class PieChartSettingsDialog(QDialog):
 
     def collect(self) -> dict:
         """
+        Collect updates from only the controls instantiated in the active scope.
+
         Returns:
-            dict: Result of the operation.
+            dict: Config updates to merge into node configuration.
+
+        Preserved behavior:
+            Prevents scope-related missing-widget access while keeping key semantics
+            unchanged for both formatting and quantity settings.
         """
-        d = {
-            'chart_type':         self._chart_type.currentText(),
-            'data_type_display':  self._data_type.currentText(),
-            'threshold':          self._thresh.value(),
-            'filter_zeros':       self._filter_zeros.isChecked(),
-            'show_counts':        self._show_counts.isChecked(),
-            'show_percentages':   self._show_pct.isChecked(),
-            'label_mode':         self._label_mode.currentText(),
-            'element_colors':     {k: b.color() for k, b in self._elem_color_btns.items()},
-            'explode':            {k: sb.value() for k, sb in self._elem_explode.items()},
-        }
+        d = dict(self._cfg)
+        if self._chart_type is not None:
+            d['chart_type'] = self._chart_type.currentText()
+        if self._data_type is not None:
+            d['data_type_display'] = self._data_type.currentText()
+        if self._thresh is not None:
+            d['threshold'] = self._thresh.value()
+        if self._filter_zeros is not None:
+            d['filter_zeros'] = self._filter_zeros.isChecked()
+        if self._show_counts is not None:
+            d['show_counts'] = self._show_counts.isChecked()
+        if self._show_pct is not None:
+            d['show_percentages'] = self._show_pct.isChecked()
+        if self._label_mode is not None:
+            d['label_mode'] = self._label_mode.currentText()
+        if self._elem_color_btns:
+            d['element_colors'] = {k: b.color() for k, b in self._elem_color_btns.items()}
+        if self._elem_explode:
+            d['explode'] = {k: sb.value() for k, sb in self._elem_explode.items()}
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
         if self._sample_edits:
             d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
-        d.update(self._pie_style.collect())
-        d.update(self._label_line.collect())
-        d.update(self._legend.collect())
-        d.update(self._export.collect())
-        d.update(self._font_grp.collect())
+        if self._pie_style is not None:
+            d.update(self._pie_style.collect())
+        if self._label_line is not None:
+            d.update(self._label_line.collect())
+        if self._legend is not None:
+            d.update(self._legend.collect())
+        if self._export is not None:
+            d.update(self._export.collect())
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
         return d
-
 
 class PieChartDisplayDialog(QDialog):
     def __init__(self, node, parent_window=None):
         """
+        Initialize the element-distribution pie-chart display dialog.
+
         Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
+            node (Any): Plot node containing config and plot-data extraction methods.
+            parent_window (Any): Parent window reference.
         """
         super().__init__(parent_window)
         self.node = node
@@ -818,6 +869,12 @@ class PieChartDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """
+        Build the pie display and standardized bottom action buttons.
+
+        The bottom row routes full workflows to plot-format settings, quantity
+        configuration, label-position reset, and figure export.
+        """
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
 
@@ -825,46 +882,45 @@ class PieChartDisplayDialog(QDialog):
         self.canvas_widget.set_context_menu_callback(self._ctx_menu)
         lay.addWidget(self.canvas_widget)
 
-        # ── Bottom toolbar ────────────────────────────────────────────
         bb = QHBoxLayout(); bb.setContentsMargins(0, 4, 0, 0)
-        btn_s = QPushButton("⚙  Settings");     btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Labels"); btn_r.clicked.connect(self._reset_labels)
-        btn_e = QPushButton("Export Figure…");      btn_e.clicked.connect(self._export)
-        bb.addWidget(btn_s); bb.addWidget(btn_r)
-        bb.addStretch(); bb.addWidget(btn_e)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
+        btn_r.setToolTip("Resets dragged label positions to default.")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("Export figure")
+        btn_e.clicked.connect(self._export)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_r)
+        bb.addWidget(btn_e)
         lay.addLayout(bb)
-
-    # ── Context menu ──────────────────────────────────────────────────
 
     def _ctx_menu(self, global_pos):
         """
+        Show minimal right-click controls for quick visual toggles and isotope labels.
+
         Args:
-            global_pos (Any): The global pos.
+            global_pos (Any): Global screen position for menu placement.
+
+        Preserved behavior:
+            Quick visual toggles and isotope-label updates are still available while
+            full settings/reset/export are intentionally delegated to bottom buttons.
         """
-        cfg  = self.node.config
+        cfg = self.node.config
         menu = QMenu(self)
-
-        cm = menu.addMenu("Chart Type")
-        for ct in PIE_CHART_TYPES:
-            a = cm.addAction(ct); a.setCheckable(True)
-            a.setChecked(cfg.get('chart_type') == ct)
-            a.triggered.connect(lambda _, v=ct: self._set('chart_type', v))
-
-        dm = menu.addMenu("Data Type")
-        for dt in PIE_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, lbl in [
-            ('show_counts',           'Show Counts'),
-            ('show_percentages',      'Show Percentages'),
+            ('show_counts', 'Show Counts'),
+            ('show_percentages', 'Show Percentages'),
             ('show_connection_lines', 'Connection Lines'),
-            ('donut',                 'Donut Mode'),
-            ('legend_show',           'Legend'),
-            ('shadow',                'Shadow'),
-            ('label_bbox',            'Label Box'),
+            ('donut', 'Donut Mode'),
+            ('legend_show', 'Legend'),
+            ('shadow', 'Shadow'),
+            ('label_bbox', 'Label Box'),
         ]:
             a = tm.addAction(lbl); a.setCheckable(True)
             a.setChecked(bool(cfg.get(key, False)))
@@ -876,60 +932,95 @@ class PieChartDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        if _is_multi(self.node.input_data):
-            mm = menu.addMenu("Display Mode")
-            for m in PIE_DISPLAY_MODES:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
-
-        menu.addSeparator()
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Reset Label Positions").triggered.connect(self._reset_labels)
-        menu.addAction("Export Figure…").triggered.connect(self._export)
         menu.exec(global_pos)
-
-    # ── Slot helpers ──────────────────────────────────────────────────
 
     def _toggle(self, key):
         """
+        Toggle a lightweight visual option from the Quick Toggles menu.
+
         Args:
-            key (Any): Dictionary or storage key.
+            key (str): Configuration key to toggle.
         """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
         """
+        Set a configuration value from right-click quick controls.
+
         Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
+            key (str): Configuration key to update.
+            value (Any): New value for that key.
         """
         self.node.config[key] = value
         self._refresh()
 
     def _reset_labels(self):
+        """
+        Reset persisted dragged label positions for pie labels.
+
+        Preserved behavior:
+            This is the existing pie reset mechanism; no new full-layout reset logic
+            is introduced.
+        """
         self.canvas_widget.reset_label_positions()
         self._refresh()
 
+    def _reset_layout(self):
+        """
+        Route standardized reset action to existing pie label-position reset behavior.
+        """
+        self._reset_labels()
+
     def _export(self):
+        """Open the existing pie-chart figure export workflow."""
         self.canvas_widget.export_figure(self)
 
     def _open_settings(self):
+        """
+        Open the legacy combined settings dialog.
+
+        Preserved behavior:
+            Kept for compatibility; scoped format/quantity dialogs are the primary
+            entry points for the migrated UI contract.
+        """
         elems = self._get_available_elements()
-        dlg   = PieChartSettingsDialog(
-            self.node.config, self.node.input_data, elems, self)
+        dlg = PieChartSettingsDialog(self.node.config, self.node.input_data, elems, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_plot_format_settings(self):
+        """
+        Open pie-chart format settings containing visual and presentation controls.
+        """
+        elems = self._get_available_elements()
+        dlg = PieChartSettingsDialog(
+            self.node.config, self.node.input_data, elems, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """
+        Open pie-chart quantity settings containing chart/data/threshold controls.
+        """
+        elems = self._get_available_elements()
+        dlg = PieChartSettingsDialog(
+            self.node.config, self.node.input_data, elems, self, scope='quantities')
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _get_available_elements(self):
         """
+        Collect sortable element keys available in current plot data.
+
         Returns:
-            object: Result of the operation.
+            list[str]: Elements sorted by mass-order helper.
         """
         pd_data = self.node.extract_plot_data()
-        elems   = set()
+        elems = set()
         if pd_data:
             if _is_multi(self.node.input_data):
                 for sd in pd_data.values():
@@ -939,8 +1030,6 @@ class PieChartDisplayDialog(QDialog):
                 elems.update(pd_data['element_data'].columns)
         return sort_elements_by_mass(list(elems))
 
-    # ── Render pipeline ───────────────────────────────────────────────
-
     def _refresh(self):
         try:
             plot_data = self.node.extract_plot_data()
@@ -948,7 +1037,7 @@ class PieChartDisplayDialog(QDialog):
                 self.canvas_widget.render([])
                 return
 
-            cfg      = self.node.config
+            cfg = self.node.config
             subplots = []
 
             if _is_multi(self.node.input_data):
@@ -957,8 +1046,10 @@ class PieChartDisplayDialog(QDialog):
                     comb_data, comb_counts = {}, {}
                     for sd in plot_data.values():
                         d, c = self._calc_single(sd, cfg)
-                        for k, v in d.items(): comb_data[k]   = comb_data.get(k, 0) + v
-                        for k, v in c.items(): comb_counts[k] = comb_counts.get(k, 0) + v
+                        for k, v in d.items():
+                            comb_data[k] = comb_data.get(k, 0) + v
+                        for k, v in c.items():
+                            comb_counts[k] = comb_counts.get(k, 0) + v
                     subplots.append(
                         self._build_sp(comb_data, comb_counts, cfg, 'Combined', 'combined'))
                 else:
@@ -977,17 +1068,20 @@ class PieChartDisplayDialog(QDialog):
 
     def _calc_single(self, sample_data, cfg):
         """
+        Calculate per-element totals and particle counts for one sample.
+
         Args:
-            sample_data (Any): The sample data.
-            cfg (Any): The cfg.
+            sample_data (dict): One sample's extracted element matrix payload.
+            cfg (dict): Active display configuration.
+
         Returns:
-            tuple: Result of the operation.
+            tuple[dict, dict]: (data_totals, particle_counts).
         """
         ed = sample_data.get('element_data')
         if ed is None:
             return {}, {}
-        chart_type     = cfg.get('chart_type', PIE_CHART_TYPES[0])
-        data_totals    = {}
+        chart_type = cfg.get('chart_type', PIE_CHART_TYPES[0])
+        data_totals = {}
         particle_counts = {}
         for col in ed.columns:
             pc = int((ed[col] > 0).sum())
@@ -1002,14 +1096,17 @@ class PieChartDisplayDialog(QDialog):
 
     def _build_sp(self, data, orig_counts, cfg, title, key) -> dict:
         """
+        Build one subplot payload consumed by ``MplPieCanvas.render``.
+
         Args:
-            data (Any): Input data.
-            orig_counts (Any): The orig counts.
-            cfg (Any): The cfg.
-            title (Any): Window or dialog title.
-            key (Any): Dictionary or storage key.
+            data (dict): Aggregated values by element/combo key.
+            orig_counts (dict): Raw particle counts by key for count labels.
+            cfg (dict): Active display configuration.
+            title (str): Subplot title.
+            key (str): Unique key used for label-position persistence.
+
         Returns:
-            dict: Result of the operation.
+            dict: Render payload with labels/sizes/text/colors/title/key.
         """
         empty = {'labels': [], 'sizes': [], 'texts': [],
                  'colors': [], 'title': title, 'key': key}
@@ -1019,17 +1116,17 @@ class PieChartDisplayDialog(QDialog):
         if total == 0:
             return empty
 
-        pcts   = {k: (v / total) * 100 for k, v in data.items()}
+        pcts = {k: (v / total) * 100 for k, v in data.items()}
         thresh = cfg.get('threshold', 1.0)
-        main   = {k: v for k, v in pcts.items() if v >= thresh}
+        main = {k: v for k, v in pcts.items() if v >= thresh}
         others = {k: v for k, v in pcts.items() if v < thresh}
         if others:
             main['Others'] = sum(others.values())
 
         sorted_e = sorted(main.items(), key=lambda x: x[1], reverse=True)
         labels = [x[0] for x in sorted_e]
-        sizes  = [x[1] for x in sorted_e]
-        ec     = cfg.get('element_colors', {})
+        sizes = [x[1] for x in sorted_e]
+        ec = cfg.get('element_colors', {})
 
         colors, texts = [], []
         for i, (lbl, sz) in enumerate(zip(labels, sizes)):
@@ -1041,13 +1138,14 @@ class PieChartDisplayDialog(QDialog):
                 count = orig_counts.get(lbl, 0)
 
             parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'))]
-            if cfg.get('show_counts', True):      parts.append(f"({count:,})")
-            if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
+            if cfg.get('show_counts', True):
+                parts.append(f"({count:,})")
+            if cfg.get('show_percentages', True):
+                parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
 
         return {'labels': labels, 'sizes': sizes, 'texts': texts,
                 'colors': colors, 'title': title, 'key': key}
-
 
 class PieChartPlotNode(QObject):
     position_changed      = Signal(object)
@@ -1782,3 +1880,5 @@ class ElementCompositionPlotNode(QObject):
                 for e, v in elems.items():
                     sd[src][c_name]['elements'][e] = sd[src][c_name]['elements'].get(e, 0) + v
         return {k: v for k, v in sd.items() if v} or None
+
+
