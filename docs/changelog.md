@@ -4,6 +4,11 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.0.5 — 2026-05-22
+
+### Bug Fixes
+- Fixed atomic notation rendering inconsistency across platforms
+
 ## v1.0.4 — 2026-05-21
  
 ### New Features
