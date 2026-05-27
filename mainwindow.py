@@ -391,7 +391,11 @@ class MainWindow(QMainWindow):
         self.edge_strip = QWidget()
         self.edge_strip.setFixedWidth(25)
         self.edge_strip.setCursor(Qt.PointingHandCursor)
-        self.edge_strip.mousePressEvent = lambda e: self.toggle_sidebar()
+
+        import weakref as _wr
+        _self_ref = _wr.ref(self)
+        self.edge_strip.mousePressEvent = lambda e: _self_ref() and _self_ref().toggle_sidebar()
+        del _wr, _self_ref  
         self.edge_strip.hide()
         self.sidebar = self.create_sidebar()
         sidebar_container_layout.addWidget(self.edge_strip)
@@ -646,9 +650,10 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._theme_menu_action)
         view_menu.addAction(self._follow_system_action)
 
-        theme.themeChanged.connect(
+        self._theme_follow_system_slot = (
             lambda _: self._follow_system_action.setChecked(theme.follow_system)
         )
+        theme.themeChanged.connect(self._theme_follow_system_slot)
             
         help_menu = menu_bar.addMenu("Help")
         self._menu_icon_items.append((help_menu, 'fa6s.circle-question'))
@@ -911,8 +916,8 @@ class MainWindow(QMainWindow):
         top_bar.setContentsMargins(0, 0, 0, 0)
         top_bar.setSpacing(2)
 
-        self._view_btn_time = QPushButton("⏱  Time")
-        self._view_btn_mz   = QPushButton("⚖  m/z")
+        self._view_btn_time = QPushButton("Time")
+        self._view_btn_mz   = QPushButton("m/z")
         for btn in (self._view_btn_time, self._view_btn_mz):
             btn.setCheckable(True)
             btn.setFixedHeight(28)
@@ -1150,7 +1155,7 @@ class MainWindow(QMainWindow):
         
         title_row.addStretch()
 
-        perf_tip = QLabel("💡 Tip: Keep tables unchecked for better performance during analysis")
+        perf_tip = QLabel("Tip: Keep tables unchecked for better performance during analysis")
         self._perf_tip_label = perf_tip
         title_row.addWidget(perf_tip)
         
@@ -2245,6 +2250,20 @@ class MainWindow(QMainWindow):
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(0)
             self.status_label.setText("Processing CSV files...")
+
+
+            if getattr(self, 'csv_thread', None) is not None:
+                if self.csv_thread.isRunning():
+                    self.csv_thread.quit()
+                    self.csv_thread.wait(3000) 
+                try:
+                    self.csv_thread.progress.disconnect()
+                    self.csv_thread.finished.disconnect()
+                    self.csv_thread.error.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+                self.csv_thread.deleteLater()
+                self.csv_thread = None
             
             self.csv_thread = CSVDataProcessThread(filtered_config, self)
             self.csv_thread.progress.connect(self.update_progress)
@@ -3018,6 +3037,17 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'element_limits') and sample_name in self.element_limits:
                 del self.element_limits[sample_name]
                 removed_count += 1
+
+            self.clear_element_caches()
+
+            if hasattr(self, 'detection_states'):
+                self.detection_states.pop(sample_name, None)
+                removed_count += 1
+            if hasattr(self, 'sample_status'):
+                self.sample_status.pop(sample_name, None)
+                removed_count += 1
+            if hasattr(self, 'needs_initial_detection'):
+                self.needs_initial_detection.discard(sample_name)
             
             self.update_sample_table()
             
@@ -3338,6 +3368,13 @@ class MainWindow(QMainWindow):
                             thread.error.connect(loop.quit)
                             thread.start()
                             loop.exec()
+
+                            try:
+                                thread.finished.disconnect()
+                                thread.error.disconnect()
+                            except (RuntimeError, TypeError):
+                                pass
+                            thread.deleteLater()
                                 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
@@ -3545,6 +3582,13 @@ class MainWindow(QMainWindow):
                             thread.error.connect(loop.quit)
                             thread.start()
                             loop.exec()
+
+                            try:
+                                thread.finished.disconnect()
+                                thread.error.disconnect()
+                            except (RuntimeError, TypeError):
+                                pass
+                            thread.deleteLater()
                                 
                         except Exception as e:
                             self.logger.error(f"Error processing sample {sample_name}: {str(e)}")
@@ -5451,11 +5495,12 @@ class MainWindow(QMainWindow):
         
         if self.canvas_results_dialog is None:
             self.canvas_results_dialog = CanvasResultsDialog(self)
-            
         self.canvas_results_dialog.showMaximized()
         self.canvas_results_dialog.raise_() 
         self.canvas_results_dialog.activateWindow()
         
+    
+                
     #----------------------------------------------------------------------------------------------------------
     #------------------------------------visualization--------------------------------------------
     #----------------------------------------------------------------------------------------------------------
@@ -7403,8 +7448,39 @@ class MainWindow(QMainWindow):
         for timer in self.findChildren(QTimer):
             timer.stop()
 
+        try:
+            theme.themeChanged.disconnect(self.apply_theme)
+        except (RuntimeError, TypeError):
+            pass 
+
+        if hasattr(self, '_theme_follow_system_slot'):
+            try:
+                theme.themeChanged.disconnect(self._theme_follow_system_slot)
+            except (RuntimeError, TypeError):
+                pass
+
+
+        if getattr(self, 'periodic_table_widget', None) is not None:
+            self.periodic_table_widget.close()
+            self.periodic_table_widget = None
+
+        if getattr(self, 'transport_rate_window', None) is not None:
+            self.transport_rate_window.close()
+            self.transport_rate_window = None
+
+        if getattr(self, 'ionic_calibration_window', None) is not None:
+            self.ionic_calibration_window.close()
+            self.ionic_calibration_window = None
+
         if getattr(self, 'canvas_results_dialog', None):
             self.canvas_results_dialog.close()
+            self.canvas_results_dialog = None
+
+        if getattr(self, 'csv_thread', None) is not None:
+            if self.csv_thread.isRunning():
+                self.csv_thread.quit()
+                self.csv_thread.wait(3000)   
+            self.csv_thread = None
 
         app = QApplication.instance()
         if hasattr(app, 'main_windows'):
