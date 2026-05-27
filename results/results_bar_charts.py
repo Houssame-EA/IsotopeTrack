@@ -500,6 +500,109 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             super().mouseDoubleClickEvent(event)
 
 
+class _ClickableLegendSwatch(pg.BarGraphItem):
+    """Legend swatch item that forwards click events to a visibility callback.
+
+    The swatch stores a raw histogram element/isotope key and emits that key
+    through ``toggle_callback`` when clicked. This keeps histogram visibility
+    state keyed by raw identifiers instead of formatted legend labels.
+    """
+
+    def __init__(self, *args, raw_key=None, toggle_callback=None, **kwargs):
+        """
+        Args:
+            *args: Forwarded positional args for ``pg.BarGraphItem``.
+            raw_key (str | None): Raw isotope/element key represented by this
+                legend swatch.
+            toggle_callback (Callable[[str], None] | None): Callback invoked on
+                left-click to toggle raw-key visibility.
+            **kwargs: Forwarded keyword args for ``pg.BarGraphItem``.
+        """
+        super().__init__(*args, **kwargs)
+        self._raw_key = raw_key
+        self._toggle_callback = toggle_callback
+
+    def mouseClickEvent(self, ev):
+        """Toggle the associated raw-key visibility on left-click.
+
+        Preserved behavior:
+            This only affects render-layer element visibility in the parent
+            histogram dialog and does not mutate scientific data.
+        """
+        if ev.button() == Qt.LeftButton and self._raw_key and self._toggle_callback:
+            try:
+                self._toggle_callback(self._raw_key)
+                ev.accept()
+                return
+            except Exception:
+                pass
+        super().mouseClickEvent(ev)
+
+
+def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
+    """Wire histogram legend-row clicks to a raw-key visibility toggle callback.
+
+    Args:
+        legend: ``pg.LegendItem`` that already received ``addItem(...)``.
+        raw_key (str): Raw isotope/element key represented by the legend row.
+        toggle_callback (Callable[[str], None] | None): Parent histogram
+            callback that toggles hidden-state and triggers refresh.
+
+    Returns:
+        bool: ``True`` when at least one legend row object was hooked.
+
+    Preserved behavior:
+        This attaches only Histogram-local click behavior and does not alter
+        PyQtGraph globally. Raw keys are used instead of formatted labels so
+        label-mode changes cannot break visibility identity.
+    """
+    if legend is None or not raw_key or toggle_callback is None:
+        return False
+    try:
+        if not getattr(legend, 'items', None):
+            return False
+        sample_item, label_item = legend.items[-1]
+    except Exception:
+        return False
+
+    def _bind_click(target):
+        """Bind one legend-row graphics object to the histogram toggle path."""
+        if target is None:
+            return False
+        try:
+            target._hist_raw_key = raw_key
+            target._hist_toggle_callback = toggle_callback
+            if getattr(target, '_hist_toggle_bound', False):
+                return True
+            orig_handler = getattr(target, 'mouseClickEvent', None)
+
+            def _wrapped_click(ev, _target=target, _orig=orig_handler):
+                if ev.button() == Qt.LeftButton:
+                    cb = getattr(_target, '_hist_toggle_callback', None)
+                    rk = getattr(_target, '_hist_raw_key', None)
+                    if cb is not None and rk:
+                        try:
+                            cb(rk)
+                            ev.accept()
+                            return
+                        except Exception:
+                            pass
+                if callable(_orig):
+                    _orig(ev)
+
+            target.mouseClickEvent = _wrapped_click
+            target._hist_toggle_bound = True
+            return True
+        except Exception:
+            return False
+
+    hooked = _bind_click(sample_item)
+    # Label click support is best-effort; some pyqtgraph versions may not
+    # dispatch click events on the label item itself.
+    hooked = _bind_click(label_item) or hooked
+    return hooked
+
+
 def _get_element_color(element, index, cfg):
     """Get color for an element from config or defaults.
     Args:
@@ -854,7 +957,8 @@ class HistogramSettingsDialog(QDialog):
     """Full settings dialog for histogram node."""
 
     def __init__(self, config, is_multi, sample_names, parent=None,
-                 available_elements=None):
+                 available_elements=None, lock_data_type=False,
+                 data_type_lock_message=""):
         """
         Args:
             config (Any): Configuration dictionary.
@@ -862,6 +966,15 @@ class HistogramSettingsDialog(QDialog):
             sample_names (Any): The sample names.
             parent (Any): Parent widget or object.
             available_elements (Any): The available elements.
+            lock_data_type (bool): When True, keep data-type selection
+                read-only in this dialog.
+            data_type_lock_message (str): Optional explanatory text shown near
+                the data-type control when locked.
+
+        Preserved behavior:
+            Parent histogram can still fully change data type. The lock is used
+            by decomposition child views that redraw from already-extracted
+            snapshots and therefore must not relabel values as another type.
         """
         super().__init__(parent)
         self.setWindowTitle("Histogram Settings")
@@ -870,6 +983,8 @@ class HistogramSettingsDialog(QDialog):
         self._multi = is_multi
         self._samples = sample_names
         self._available_elements = available_elements or []
+        self._lock_data_type = bool(lock_data_type)
+        self._data_type_lock_message = data_type_lock_message or ""
         self._build_ui()
 
     def _build_ui(self):
@@ -904,6 +1019,15 @@ class HistogramSettingsDialog(QDialog):
         self.data_type.setCurrentText(
             self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
+        if self._lock_data_type:
+            self.data_type.setEnabled(False)
+            self.data_type.setToolTip(self._data_type_lock_message)
+            self.data_type.setStatusTip(self._data_type_lock_message)
+            if self._data_type_lock_message:
+                lock_note = QLabel(self._data_type_lock_message)
+                lock_note.setWordWrap(True)
+                lock_note.setStyleSheet("color: #6B7280; font-size: 10px;")
+                fl.addRow("", lock_note)
         layout.addWidget(g)
 
         self._group_editor = ElementGroupEditor(
@@ -1166,9 +1290,17 @@ class HistogramSettingsDialog(QDialog):
         """
         Returns:
             dict: Result of the operation.
+
+        Preserved behavior:
+            When data type is locked (decomposition child safety mode), this
+            method preserves inherited ``data_type_display`` and collects other
+            quantity/format controls normally.
         """
         out = dict(self._cfg)
-        out['data_type_display'] = self.data_type.currentText()
+        if self._lock_data_type:
+            out['data_type_display'] = self._cfg.get('data_type_display', 'Counts')
+        else:
+            out['data_type_display'] = self.data_type.currentText()
         out['element_groups'] = self._group_editor.collect()
         out['show_curve'] = self.show_curve.isChecked()
         out['curve_type'] = self.curve_type.currentText()
@@ -1486,7 +1618,13 @@ def _get_label_color(label, idx, cfg):
 
 
 class HistogramDisplayDialog(QDialog):
-    """Full-figure histogram dialog with PyQtGraph and right-click menu."""
+    """Full-figure histogram dialog with PyQtGraph and right-click menu.
+
+    This dialog owns parent-level histogram visibility state for legend-click
+    hiding/showing of both raw isotope/element keys and raw sample keys.
+    Visibility state is UI-local and render-only; scientific calculations and
+    extracted data remain unchanged.
+    """
 
     def __init__(self, histogram_node, parent_window=None):
         """
@@ -1497,6 +1635,10 @@ class HistogramDisplayDialog(QDialog):
         super().__init__(parent_window)
         self.node = histogram_node
         self.parent_window = parent_window
+        self._histogram_panel_contexts = {}
+        self._decomposition_windows = []
+        self._hidden_histogram_elements = set()
+        self._hidden_histogram_samples = set()
         self.setWindowTitle("Particle Data Histogram Analysis")
         self.setMinimumSize(1000, 700)
 
@@ -1561,10 +1703,19 @@ class HistogramDisplayDialog(QDialog):
         Preserved behavior:
             Keeps right-click focused on visual quick toggles and isotope label
             mode while full quantity/format/reset/export workflows are handled by
-            bottom buttons.
+            bottom buttons. Unsupported overlay toggles are disabled per display
+            mode and marked with explicit unavailable suffix text. Unavailable
+            actions are also forced unchecked to avoid misleading checked-but-
+            disabled states. A panel-specific decomposition action is offered
+            only when clicked-panel context is eligible.
         """
         cfg = self.node.config
+        clicked_plot = self._plot_item_at(pos)
+        panel_ctx = self._histogram_panel_contexts.get(clicked_plot)
         menu = QMenu(self)
+        plot_data = self.node.extract_plot_data()
+        mode = self._get_hist_display_mode()
+        support = self._get_quick_toggle_support(mode, plot_data)
 
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
@@ -1574,7 +1725,19 @@ class HistogramDisplayDialog(QDialog):
         ]:
             a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
-            a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+            entry = support.get(key, {})
+            if not entry.get('enabled', True):
+                a.setChecked(False)
+                disabled_label = entry.get(
+                    'label_suffix', f"{label} (unavailable in Overlaid mode)")
+                a.setText(disabled_label)
+                a.setEnabled(False)
+                msg = entry.get(
+                    'reason', 'Unavailable in multi-sample Overlaid mode.')
+                a.setStatusTip(msg)
+                a.setToolTip(msg)
+            else:
+                a.triggered.connect(lambda _, k=key: self._toggle_key(k))
 
         tg.addSeparator()
         sep1 = tg.addAction("-- Stat Lines --"); sep1.setEnabled(False)
@@ -1586,19 +1749,367 @@ class HistogramDisplayDialog(QDialog):
         ]:
             a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, False))
-            a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+            entry = support.get(key, {})
+            if not entry.get('enabled', True):
+                a.setChecked(False)
+                disabled_label = entry.get(
+                    'label_suffix', f"{label} (unavailable in Overlaid mode)")
+                a.setText(disabled_label)
+                a.setEnabled(False)
+                msg = entry.get(
+                    'reason', 'Unavailable in multi-sample Overlaid mode.')
+                a.setStatusTip(msg)
+                a.setToolTip(msg)
+            else:
+                a.triggered.connect(lambda _, k=key: self._toggle_key(k))
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
+        decompose_action = menu.addAction("Decompose by isotope...")
+        eligible, reason = self._decomposition_eligibility(panel_ctx)
+        if eligible:
+            decompose_action.triggered.connect(
+                lambda _, ctx=panel_ctx: self._open_decomposition_window(ctx))
+        else:
+            decompose_action.setText("Decompose by isotope... (unavailable)")
+            decompose_action.setEnabled(False)
+            decompose_action.setStatusTip(reason)
+            decompose_action.setToolTip(reason)
+        if self._hidden_histogram_elements:
+            menu.addSeparator()
+            show_all = menu.addAction("Show all isotopes")
+            show_all.setToolTip(
+                "Restore all legend-hidden isotopes/elements in this histogram view.")
+            show_all.triggered.connect(self._show_all_histogram_elements)
+        if self._hidden_histogram_samples:
+            if not self._hidden_histogram_elements:
+                menu.addSeparator()
+            show_all_samples = menu.addAction("Show all samples")
+            show_all_samples.setToolTip(
+                "Restore all legend-hidden samples in Overlaid mode.")
+            show_all_samples.triggered.connect(self._show_all_histogram_samples)
         menu.exec(self.pw.mapToGlobal(pos))
 
-    def _toggle_key(self, key):
-        """
+    def _toggle_histogram_element_visibility(self, raw_element_key: str):
+        """Toggle parent histogram element visibility by raw isotope key.
+
         Args:
-            key (Any): Dictionary or storage key.
+            raw_element_key (str): Raw isotope/element identifier used by
+                extracted histogram data keys.
+
+        Preserved behavior:
+            This is render-layer filtering only. It does not delete data, alter
+            histogram calculations, or persist to project save/load state.
+            The method is invoked by legend-row click bindings attached at the
+            PyQtGraph legend sample/label level, then triggers ``_refresh()``.
+        """
+        if not raw_element_key:
+            return
+        if raw_element_key in self._hidden_histogram_elements:
+            self._hidden_histogram_elements.remove(raw_element_key)
+        else:
+            self._hidden_histogram_elements.add(raw_element_key)
+        self._refresh()
+
+    def _show_all_histogram_elements(self):
+        """Clear all legend-hidden isotopes/elements and redraw.
+
+        Preserved behavior:
+            Resets only this dialog's UI visibility filter state. Scientific
+            data extraction and histogram math remain unchanged.
+        """
+        if not self._hidden_histogram_elements:
+            return
+        self._hidden_histogram_elements.clear()
+        self._refresh()
+
+    def _toggle_histogram_sample_visibility(self, raw_sample_key: str):
+        """Toggle parent histogram sample visibility by raw sample key.
+
+        Args:
+            raw_sample_key (str): Raw source sample key from multi-sample
+                histogram data.
+
+        Preserved behavior:
+            This is render-layer filtering only for sample series (primarily
+            Overlaid mode). It does not mutate scientific values or extraction
+            semantics.
+        """
+        if not raw_sample_key:
+            return
+        if raw_sample_key in self._hidden_histogram_samples:
+            self._hidden_histogram_samples.remove(raw_sample_key)
+        else:
+            self._hidden_histogram_samples.add(raw_sample_key)
+        self._refresh()
+
+    def _show_all_histogram_samples(self):
+        """Clear legend-hidden samples and redraw the parent histogram.
+
+        Preserved behavior:
+            Only resets UI visibility filtering for raw sample keys; it does
+            not change scientific configuration or persisted project state.
+        """
+        if not self._hidden_histogram_samples:
+            return
+        self._hidden_histogram_samples.clear()
+        self._refresh()
+
+    def _plot_item_at(self, pos):
+        """Resolve the clicked histogram PlotItem from a context-menu position.
+
+        Args:
+            pos: Position in ``self.pw`` widget coordinates from
+                ``customContextMenuRequested``.
+
+        Returns:
+            pg.PlotItem | None: Plot item under cursor, if any.
+
+        Preserved behavior:
+            This is a UI-only context resolver and does not alter data or
+            rendering semantics.
+        """
+        try:
+            scene_pos = self.pw.mapToScene(pos)
+            for item in self.pw.scene().items():
+                if isinstance(item, pg.PlotItem):
+                    try:
+                        rect = item.mapRectToScene(item.boundingRect())
+                        if rect.contains(scene_pos):
+                            return item
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return None
+
+    def _get_hist_display_mode(self):
+        """Return the active histogram display mode for current input type.
+
+        Returns:
+            str: Normalized display-mode name.
+
+        Preserved behavior:
+            Uses the existing mode normalization and does not change scientific
+            display-mode semantics.
+        """
+        if _is_multi(self.node.input_data):
+            return _normalize_hist_display_mode(
+                self.node.config.get('display_mode', HIST_DISPLAY_MODES[0]))
+        return 'single'
+
+    def _density_curve_supported(self, mode, plot_data):
+        """Determine whether density curve toggle can render in current view.
+
+        Args:
+            mode (str): Active histogram display mode.
+            plot_data (dict | None): Data returned by histogram extraction.
+
+        Returns:
+            bool: True when existing draw paths can visibly render density.
+
+        Preserved behavior:
+            Reflects current implementation limits (single plottable series per
+            panel) without changing density calculations.
+        """
+        if mode == 'Overlaid (Different Colors)':
+            return False
+        if not plot_data:
+            return False
+        cfg = self.node.config
+        if mode == 'single':
+            return self._count_plottable_series(plot_data, cfg) == 1
+        # Conservative policy for subplot modes: enable only when every panel
+        # has a single element/series, matching current draw implementation.
+        if isinstance(plot_data, dict):
+            return all(
+                self._count_plottable_series(sd or {}, cfg) == 1
+                for sd in plot_data.values()
+            )
+        return False
+
+    def _count_plottable_series(self, element_data, cfg):
+        """Count series that can actually be plotted in a histogram panel.
+
+        Args:
+            element_data (dict): Element/isotope -> raw values for one panel.
+            cfg (dict): Active histogram config used by value preparation.
+
+        Returns:
+            int: Number of non-empty plottable element series in this panel.
+
+        Preserved behavior:
+            Uses existing `_prepare_values(...)` filtering rules only to gate UI
+            availability for density toggles; no density/stat math is changed.
+        """
+        dt = cfg.get('data_type_display', 'Counts')
+        log_x = cfg.get('log_x', False)
+        count = 0
+        for raw_vals in (element_data or {}).values():
+            vals = _prepare_values(raw_vals, dt, log_x)
+            if vals is not None and len(vals) > 0:
+                count += 1
+        return count
+
+    def _snapshot_panel_element_data(self, element_data):
+        """Copy per-element value arrays for a child decomposition snapshot.
+
+        Args:
+            element_data (dict): Element/isotope mapping for one histogram panel.
+
+        Returns:
+            dict: Deep-ish copy ``element -> list(values)`` suitable for
+            independent child-window rendering.
+
+        Preserved behavior:
+            Data values are copied for decoupling only; scientific semantics and
+            extraction logic remain unchanged.
+        """
+        out = {}
+        for elem, vals in (element_data or {}).items():
+            out[elem] = list(vals) if vals is not None else []
+        return out
+
+    def _register_panel_context(self, plot_item, mode, panel_label, element_data):
+        """Store per-panel context for right-click decomposition eligibility.
+
+        Args:
+            plot_item: PlotItem representing one rendered histogram panel.
+            mode (str): Display mode used for this panel.
+            panel_label (str): Human-readable sample/panel label.
+            element_data (dict): Per-element arrays for this panel.
+
+        Preserved behavior:
+            Context is rebuilt every refresh and never persisted into project
+            state, keeping parent/child window lifetimes decoupled.
+        """
+        self._histogram_panel_contexts[plot_item] = {
+            'mode': mode,
+            'panel_label': panel_label,
+            'element_data': self._snapshot_panel_element_data(element_data),
+        }
+
+    def _decomposition_eligibility(self, panel_ctx):
+        """Return whether isotope decomposition can open for clicked panel.
+
+        Args:
+            panel_ctx (dict | None): Stored panel context from right-click
+                lookup.
+
+        Returns:
+            tuple[bool, str]: ``(eligible, reason_if_not)``.
+
+        Preserved behavior:
+            Uses existing plottable-series filtering and display-mode semantics
+            only to gate this UI action; no scientific calculations are changed.
+        """
+        if not panel_ctx:
+            return False, (
+                "Available when right-clicking a specific histogram panel with "
+                "at least two isotope/element series.")
+        mode = panel_ctx.get('mode')
+        if mode == 'Overlaid (Different Colors)':
+            return False, "Unavailable in Overlaid multi-sample mode."
+        plottable = self._count_plottable_series(
+            panel_ctx.get('element_data', {}), self.node.config)
+        if plottable < 2:
+            return False, (
+                "Available when a histogram panel contains at least two "
+                "isotope/element series.")
+        return True, ""
+
+    def _open_decomposition_window(self, panel_ctx):
+        """Open a decoupled child histogram window split by isotope/element.
+
+        Args:
+            panel_ctx (dict): Context snapshot for the clicked histogram panel.
+
+        Preserved behavior:
+            Child receives copied panel data and copied config so parent and
+            child can be used independently without shared mutable state.
+        """
+        cfg_snapshot = dict(self.node.config)
+        child = HistogramDecompositionDialog(
+            config_snapshot=cfg_snapshot,
+            panel_label=panel_ctx.get('panel_label', 'Current panel'),
+            panel_element_data=panel_ctx.get('element_data', {}),
+            parent=self,
+        )
+        child.destroyed.connect(
+            lambda *_: self._decomposition_windows.remove(child)
+            if child in self._decomposition_windows else None)
+        self._decomposition_windows.append(child)
+        child.show()
+
+    def _get_quick_toggle_support(self, mode, plot_data):
+        """Return per-toggle enabled/disabled support for current histogram mode.
+
+        Args:
+            mode (str): Active histogram display mode.
+            plot_data (dict | None): Extracted histogram data for support checks.
+
+        Returns:
+            dict: Mapping ``config_key -> {enabled: bool, reason: str}``.
+
+        Preserved behavior:
+            This only gates UI availability so users are not shown inert
+            toggles; it does not alter calculations or overlay math. In
+            multi-sample Overlaid mode, unsupported statistical overlays are
+            disabled while ``Figure Box`` remains enabled because it still
+            affects presentation in that mode.
+        """
+        unsupported_overlaid = {
+            'show_curve', 'show_stats',
+            'show_median_line', 'show_mean_line',
+            'show_mode_marker', 'show_det_limit',
+        }
+        labels = {
+            'show_curve': 'Density Curve',
+            'show_stats': 'Statistics',
+            'show_box': 'Figure Box (frame)',
+            'show_median_line': 'Median Line',
+            'show_mean_line': 'Mean Line',
+            'show_mode_marker': 'Mode Marker',
+            'show_det_limit': 'Detection Limit',
+        }
+        support = {}
+        for key in [
+            'show_curve', 'show_stats', 'show_box',
+            'show_median_line', 'show_mean_line',
+            'show_mode_marker', 'show_det_limit',
+        ]:
+            support[key] = {'enabled': True, 'reason': ''}
+            if mode == 'Overlaid (Different Colors)' and key in unsupported_overlaid:
+                support[key] = {
+                    'enabled': False,
+                    'reason': 'Unavailable in multi-sample Overlaid mode.',
+                    'label_suffix': f"{labels[key]} (unavailable in Overlaid mode)",
+                }
+        if not self._density_curve_supported(mode, plot_data):
+            support['show_curve'] = {
+                'enabled': False,
+                'reason': 'Unavailable in multi-sample Overlaid mode.'
+                if mode == 'Overlaid (Different Colors)'
+                else 'Density curve requires a single series per panel',
+                'label_suffix': 'Density Curve (unavailable in Overlaid mode)'
+                if mode == 'Overlaid (Different Colors)'
+                else 'Density Curve (requires single series per panel)',
+            }
+        return support
+
+    def _toggle_key(self, key):
+        """Toggle a visual overlay key and redraw histogram.
+
+        Args:
+            key (str): Histogram visual-toggle config key.
+
+        Preserved behavior:
+            Only updates UI/overlay visibility state; scientific data extraction
+            and quantity settings are unchanged.
         """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
@@ -1803,7 +2314,8 @@ class HistogramDisplayDialog(QDialog):
             Scientific calculations and data extraction are unchanged. This
             method now normalizes legacy display-mode aliases and reapplies
             local native-menu suppression after redraw so the custom histogram
-            context menu remains authoritative.
+            context menu remains authoritative. Panel context mappings used for
+            decomposition are rebuilt fresh on every redraw.
         """
         try:
             parent_layout = self.pw.parent().layout()
@@ -1815,6 +2327,7 @@ class HistogramDisplayDialog(QDialog):
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)
             parent_layout.insertWidget(idx, self.pw, stretch=1)
+            self._histogram_panel_contexts = {}
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
@@ -1844,7 +2357,15 @@ class HistogramDisplayDialog(QDialog):
                     self._draw_overlaid(plot_data, cfg)
             else:
                 pi = self.pw.addPlot()
-                _draw_single_histogram(pi, plot_data, cfg)
+                _draw_single_histogram(
+                    pi,
+                    plot_data,
+                    cfg,
+                    hidden_elements=self._hidden_histogram_elements,
+                    legend_click_callback=self._toggle_histogram_element_visibility,
+                )
+                self._register_panel_context(
+                    pi, 'single', 'Current sample', plot_data)
                 if cfg.get('show_stats', True):
                     _add_stats_text(pi, plot_data, cfg)
 
@@ -1863,6 +2384,11 @@ class HistogramDisplayDialog(QDialog):
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
+
+        Preserved behavior:
+            Histogram calculations are unchanged. When enabled, statistics text
+            is now rendered per-sample subplot using that subplot's data. Each
+            subplot also registers per-panel context for decomposition actions.
         """
         samples = list(plot_data.keys())
         cols = min(2, len(samples))
@@ -1872,7 +2398,17 @@ class HistogramDisplayDialog(QDialog):
             pi = self.pw.addPlot(title=get_display_name(sn, cfg))
             sd = plot_data[sn]
             if sd:
-                _draw_single_histogram(pi, sd, cfg)
+                _draw_single_histogram(
+                    pi,
+                    sd,
+                    cfg,
+                    hidden_elements=self._hidden_histogram_elements,
+                    legend_click_callback=self._toggle_histogram_element_visibility,
+                )
+                self._register_panel_context(
+                    pi, 'Individual Subplots', get_display_name(sn, cfg), sd)
+                if cfg.get('show_stats', True):
+                    _add_stats_text(pi, sd, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """
@@ -1881,13 +2417,28 @@ class HistogramDisplayDialog(QDialog):
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
+
+        Preserved behavior:
+            Statistical overlays keep existing semantics; stats text is added
+            per subplot when enabled so each sample panel reports its own data.
+            Panel contexts are captured per sample for right-click decomposition.
         """
         first_pi = None
         xl, yl = _get_xy_labels(cfg)
         for idx, (sn, sd) in enumerate(plot_data.items()):
             pi = self.pw.addPlot(row=0, col=idx, title=get_display_name(sn, cfg))
             if sd:
-                _draw_single_histogram(pi, sd, cfg)
+                _draw_single_histogram(
+                    pi,
+                    sd,
+                    cfg,
+                    hidden_elements=self._hidden_histogram_elements,
+                    legend_click_callback=self._toggle_histogram_element_visibility,
+                )
+                self._register_panel_context(
+                    pi, 'Side by Side Subplots', get_display_name(sn, cfg), sd)
+                if cfg.get('show_stats', True):
+                    _add_stats_text(pi, sd, cfg)
             if first_pi is None:
                 first_pi = pi
             else:
@@ -1906,12 +2457,24 @@ class HistogramDisplayDialog(QDialog):
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
-        """
+        """Draw multi-sample overlaid histogram view.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
+
+        Preserved behavior:
+            Scientific aggregation and sample-color encoding are unchanged.
+            The plot frame/box toggle is applied in this mode for consistency
+            with other histogram layouts. Overlaid context is marked ineligible
+            for decomposition because it does not represent one sample panel.
+            Sample-level legend clicks can hide/show whole sample series using
+            raw sample keys, while hidden isotope keys are still filtered before
+            per-sample aggregation.
         """
         pi = self.pw.addPlot()
+        self._register_panel_context(
+            pi, 'Overlaid (Different Colors)', 'Overlaid', {})
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
         bins_n = cfg.get('bins', 20)
@@ -1920,23 +2483,62 @@ class HistogramDisplayDialog(QDialog):
         legend.setParentItem(pi.graphicsItem())
         pi.legend = legend
 
+        drew_any = False
+        hidden = self._hidden_histogram_elements
+        hidden_samples = self._hidden_histogram_samples
+        plottable_samples = [sn for sn, sd in plot_data.items() if sd]
+        all_plottable_samples_hidden = (
+            len(plottable_samples) > 0
+            and all(sn in hidden_samples for sn in plottable_samples)
+        )
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
                 continue
             color = get_sample_color(sn, idx, cfg)
             dname = get_display_name(sn, cfg)
+            sample_hidden = sn in hidden_samples
             combined = []
-            for vals in sd.values():
+            for elem, vals in sd.items():
+                if elem in hidden:
+                    continue
                 combined.extend(vals)
+            co = QColor(color)
+            s_alpha = 55 if sample_hidden else 180
+            swatch = _ClickableLegendSwatch(
+                x=[0], height=[0], width=0,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), s_alpha),
+                raw_key=sn,
+                toggle_callback=self._toggle_histogram_sample_visibility,
+            )
+            lbl = dname + (" (hidden)" if sample_hidden else "")
+            legend.addItem(swatch, lbl)
+            _attach_histogram_legend_toggle(
+                legend,
+                raw_key=sn,
+                toggle_callback=self._toggle_histogram_sample_visibility,
+            )
+            if sample_hidden:
+                continue
             v = _prepare_values(combined, dt, log_x)
             if v is None:
                 continue
+            drew_any = True
             _draw_histogram_bars(pi, v, cfg, color, bins_n)
-            co = QColor(color)
-            swatch = pg.BarGraphItem(
-                x=[0], height=[0], width=0,
-                brush=pg.mkBrush(co.red(), co.green(), co.blue(), 180))
-            legend.addItem(swatch, dname)
+
+        if not drew_any:
+            msg = (
+                "No visible samples"
+                if all_plottable_samples_hidden
+                else "No visible isotopes"
+            )
+            ti = pg.TextItem(msg, anchor=(0.5, 0.5), color='#9CA3AF')
+            pi.addItem(ti)
+            try:
+                vb = pi.getViewBox()
+                xr, yr = vb.viewRange()
+                ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
+            except Exception:
+                ti.setPos(0, 0)
 
         xl, yl = _get_xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
@@ -1951,6 +2553,7 @@ class HistogramDisplayDialog(QDialog):
             pi.setXRange(xn, xx, padding=0)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
+        _apply_box(pi, cfg)
         _apply_histogram_grid(pi, cfg)
         apply_font_to_pyqtgraph(pi, cfg)
 
@@ -1989,6 +2592,318 @@ class HistogramDisplayDialog(QDialog):
             self.stats_label.setText(
                 f"{len(plot_data)} elements/groups  \u00b7  "
                 f"{total:,} values{group_info}")
+
+
+class HistogramDecompositionDialog(QDialog):
+    """Independent child dialog that decomposes one histogram panel by isotope.
+
+    This window renders one single-series histogram panel per element/isotope
+    using a snapshot of parent panel data, with no write-back to parent node
+    or project lifecycle state.
+    """
+
+    def __init__(self, config_snapshot, panel_label, panel_element_data, parent=None):
+        """
+        Args:
+            config_snapshot (dict): Copied parent histogram config.
+            panel_label (str): Human-readable source sample/panel label.
+            panel_element_data (dict): Copied per-element arrays for one panel.
+            parent (QWidget | None): Qt parent for window ownership only.
+
+        Preserved behavior:
+            Child owns local rendering/config and reuses existing histogram
+            drawing helpers without changing scientific extraction semantics.
+            Data type is inherited from parent and intentionally locked because
+            this child redraws from frozen parent snapshot arrays rather than
+            re-extracting alternate data-type values.
+        """
+        super().__init__(parent)
+        self._cfg = dict(config_snapshot or {})
+        self._inherited_data_type = self._cfg.get('data_type_display', 'Counts')
+        self._cfg['data_type_display'] = self._inherited_data_type
+        # Child panels should not draw legacy median by default. Users can
+        # still explicitly request median lines via the quick-toggle path.
+        self._cfg['show_median'] = False
+        self._panel_label = panel_label or "Current panel"
+        self._element_data = {
+            k: list(v) for k, v in (panel_element_data or {}).items()
+        }
+        self.setWindowTitle(f"Histogram decomposition — {self._panel_label}")
+        self.setMinimumSize(1000, 700)
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self):
+        """Build decomposition plot area and standardized bottom buttons.
+
+        Preserved behavior:
+            Uses the same four-button contract as parent histogram while
+            keeping child controls local to this decomposed view only.
+        """
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        self.pw = EnhancedGraphicsLayoutWidget()
+        self.pw.setBackground('w')
+        self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.pw.customContextMenuRequested.connect(self._ctx_menu)
+        layout.addWidget(self.pw, stretch=1)
+
+        self.stats_label = QLabel("")
+        self.stats_label.setStyleSheet(
+            "color: #6B7280; font-size: 11px; padding: 2px 8px; "
+            "background: #F8FAFC; border-top: 1px solid #E2E8F0;")
+        layout.addWidget(self.stats_label)
+
+        bb = QHBoxLayout()
+        bb.setContentsMargins(0, 0, 0, 0)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_reset = QPushButton("Reset layout")
+        btn_reset.clicked.connect(self._reset_layout)
+        btn_export = QPushButton("Export figure")
+        btn_export.clicked.connect(self._export_figure)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_reset)
+        bb.addWidget(btn_export)
+        layout.addLayout(bb)
+
+    def _ctx_menu(self, pos):
+        """Show child quick toggles and isotope-label menu only.
+
+        Args:
+            pos: Right-click location in widget coordinates.
+
+        Preserved behavior:
+            Child keeps the same minimal right-click contract and does not
+            offer recursive decomposition actions.
+        """
+        menu = QMenu(self)
+        tg = menu.addMenu("Quick Toggles")
+        for key, label, default in [
+            ('show_curve',  'Density Curve',       True),
+            ('show_stats',  'Statistics',          True),
+            ('show_box',    'Figure Box (frame)',  True),
+            ('show_median_line', 'Median Line',    False),
+            ('show_mean_line',   'Mean Line',      False),
+            ('show_mode_marker', 'Mode Marker',    False),
+            ('show_det_limit',   'Detection Limit', False),
+        ]:
+            a = tg.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(self._cfg.get(key, default))
+            a.triggered.connect(lambda _, k=key: self._toggle_key(k))
+
+        lm = menu.addMenu("Isotope Label")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode)
+            a.setCheckable(True)
+            a.setChecked(self._cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set_key('label_mode', v))
+
+        menu.exec(self.pw.mapToGlobal(pos))
+
+    def _toggle_key(self, key):
+        """Toggle one local child visual setting and redraw."""
+        self._cfg[key] = not self._cfg.get(key, False)
+        self._refresh()
+
+    def _set_key(self, key, value):
+        """Set one local child config key and redraw."""
+        self._cfg[key] = value
+        self._refresh()
+
+    def _open_plot_format_settings(self):
+        """Open local format settings for decomposed histogram panels.
+
+        Preserved behavior:
+            Applies format updates to child-local config only; parent histogram
+            settings and project state are unchanged.
+        """
+        dlg = HistogramFormatSettingsDialog(
+            self._cfg, False, [], self,
+            available_elements=sorted(self._element_data.keys()))
+        dlg.setWindowTitle("Histogram plot format settings")
+        if dlg.exec() == QDialog.Accepted:
+            self._cfg.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """Open local quantity settings for decomposed histogram panels.
+
+        Preserved behavior:
+            Reuses histogram quantity dialog behavior but keeps all updates in
+            child-local config only. Data type is inherited from parent and
+            read-only here to avoid scientifically misleading relabeling of the
+            frozen decomposition snapshot values.
+        """
+        dlg = HistogramSettingsDialog(
+            self._cfg, False, [], self,
+            available_elements=sorted(self._element_data.keys()),
+            lock_data_type=True,
+            data_type_lock_message=(
+                "Data type inherited from parent for decomposed histograms. "
+                "Re-extraction for other data types is not available in this view yet."
+            ),
+        )
+        dlg.setWindowTitle("Histogram plot quantities configuration")
+        if dlg.exec() == QDialog.Accepted:
+            self._cfg.update(dlg.collect())
+            # Safety lock: child data arrays are parent-snapshot values.
+            self._cfg['data_type_display'] = self._inherited_data_type
+            self._refresh()
+
+    def _reset_layout(self):
+        """Reset child view ranges without modifying plotted values."""
+        self._cfg['auto_x'] = True
+        self._cfg['auto_y'] = True
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.enableAutoRange(axis='xy', enable=True)
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.autoRange()
+                except Exception:
+                    pass
+        self._refresh()
+
+    def _download_figure(self):
+        """Export the child decomposition figure and per-element CSV rows."""
+        import pandas as pd
+        rows = []
+        dt = self._cfg.get('data_type_display', 'Counts')
+        for elem, vals in self._element_data.items():
+            disp = _get_element_display_name(elem, self._cfg)
+            for v in vals or []:
+                rows.append({
+                    'Panel': self._panel_label,
+                    'Element/Group': elem,
+                    'Display Name': disp,
+                    dt: v,
+                })
+        csv_df = pd.DataFrame(rows) if rows else None
+        download_pyqtgraph_figure(
+            self.pw, self, default_name='histogram_decomposition', csv_data=csv_df)
+
+    def _export_figure(self):
+        """Route standardized export action to child export helper."""
+        self._download_figure()
+
+    def _disable_native_pyqtgraph_context_menu(self):
+        """Disable native PyQtGraph context menus for all child panels."""
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                try:
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _refresh(self):
+        """Rebuild and redraw one single-series subplot per isotope/element.
+
+        Preserved behavior:
+            Child uses parent snapshot data only. Each subplot receives exactly
+            one element series, preserving existing single-series density support
+            rules without introducing new scientific calculations. When density
+            is requested but unavailable for a panel, a small in-panel note is
+            shown instead of modal warnings.
+        """
+        parent_layout = self.pw.parent().layout()
+        idx = parent_layout.indexOf(self.pw)
+        parent_layout.removeWidget(self.pw)
+        self.pw.deleteLater()
+        self.pw = EnhancedGraphicsLayoutWidget()
+        self.pw.setBackground('w')
+        self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.pw.customContextMenuRequested.connect(self._ctx_menu)
+        parent_layout.insertWidget(idx, self.pw, stretch=1)
+
+        sorted_items = sort_element_dict_by_mass(self._element_data)
+        valid = []
+        dt = self._cfg.get('data_type_display', 'Counts')
+        log_x = self._cfg.get('log_x', False)
+        for elem, vals in sorted_items.items():
+            pv = _prepare_values(vals, dt, log_x)
+            if pv is not None and len(pv) > 0:
+                valid.append((elem, vals))
+
+        if not valid:
+            pi = self.pw.addPlot()
+            t = pg.TextItem(
+                "No plottable isotope data available",
+                anchor=(0.5, 0.5), color='gray')
+            pi.addItem(t)
+            t.setPos(0.5, 0.5)
+            pi.hideAxis('left')
+            pi.hideAxis('bottom')
+            self.stats_label.setText("")
+            return
+
+        cols = min(2, len(valid))
+        for idx_plot, (elem, vals) in enumerate(valid):
+            if idx_plot > 0 and idx_plot % cols == 0:
+                self.pw.nextRow()
+            pi = self.pw.addPlot(title=_fmt_elem(elem, self._cfg))
+            density_status = {}
+            _draw_single_histogram(
+                pi, {elem: vals}, self._cfg, density_status_out=density_status)
+            if self._cfg.get('show_curve', True):
+                st = density_status.get(elem, {})
+                if st and not st.get('success'):
+                    self._add_density_unavailable_note(pi)
+            if self._cfg.get('show_stats', True):
+                _add_stats_text(pi, {elem: vals}, self._cfg)
+
+        self._disable_native_pyqtgraph_context_menu()
+        total_values = sum(len(v or []) for _, v in valid)
+        self.stats_label.setText(
+            f"{len(valid)} isotope panels  \u00b7  {total_values:,} values")
+
+    def _add_density_unavailable_note(self, plot_item):
+        """Add a minimal per-panel note when density curve cannot be rendered.
+
+        Args:
+            plot_item: The child subplot PlotItem.
+
+        Preserved behavior:
+            This is non-modal UI feedback only. It does not alter density
+            calculations, value preparation, or histogram semantics. Note
+            position is centered at x=0 when visible, otherwise centered at the
+            visible x-range midpoint, and near the top of the visible y-range.
+        """
+        ti = pg.TextItem(
+            "Density curve unavailable",
+            anchor=(0.5, 0),
+            color='#9CA3AF')
+        ti.setZValue(50)
+        plot_item.addItem(ti)
+        try:
+            vb = plot_item.getViewBox()
+            rng = vb.viewRange()
+            x_min, x_max = rng[0]
+            y_min, y_max = rng[1]
+            if x_min <= 0 <= x_max:
+                x_pos = 0.0
+            else:
+                x_pos = x_min + (x_max - x_min) * 0.5
+            y_pos = y_min + (y_max - y_min) * 0.88
+            ti.setPos(
+                x_pos,
+                y_pos,
+            )
+        except Exception:
+            ti.setPos(0, 0)
 
 
 class HistogramPlotNode(QObject):
@@ -2482,6 +3397,13 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
         cfg (Any): The cfg.
         bin_edges (Any): The bin edges.
         total_count (Any): The total count.
+    Returns:
+        bool: ``True`` when a density curve item was added, otherwise ``False``.
+
+    Preserved behavior:
+        Curve calculations and fit choices are unchanged. The return value
+        provides non-disruptive status for callers that want to surface
+        availability notes.
     """
     curve_type = cfg.get('curve_type', 'Kernel Density')
     curve_color = cfg.get('curve_color', '#2C3E50')
@@ -2492,7 +3414,7 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
         x_min, x_max = values.min(), values.max()
         x_range = x_max - x_min
         if x_range <= 0:
-            return
+            return False
         x_curve = np.linspace(x_min - 0.1 * x_range, x_max + 0.1 * x_range, 300)
 
         if curve_type == 'Log-Normal Fit' and np.all(values > 0):
@@ -2507,12 +3429,51 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
         y_scaled = y_curve * total_count * bin_width
         if log_y:
             y_scaled = np.log10(y_scaled + 1)
+        if len(x_curve) == 0 or len(y_scaled) == 0:
+            return False
+        if not np.all(np.isfinite(x_curve)) or not np.all(np.isfinite(y_scaled)):
+            return False
 
         plot_item.addItem(pg.PlotDataItem(
             x=x_curve, y=y_scaled,
             pen=pg.mkPen(color=curve_color, width=2.5)))
+        return True
     except Exception as e:
         print(f"Density curve error: {e}")
+        return False
+
+
+def _density_curve_status(values, cfg):
+    """Classify whether density can be attempted for one histogram series.
+
+    Args:
+        values (np.ndarray | list[float]): Plot-space values for a single
+            histogram series after `_prepare_values(...)` filtering.
+        cfg (dict): Histogram configuration containing `show_curve`.
+
+    Returns:
+        tuple[bool, str | None]: `(can_attempt, reason)` where `reason` is
+            set only for unavailable cases.
+
+    Preserved behavior:
+        This helper does not change density math; it only reports eligibility
+        conditions so callers can provide truthful UI feedback.
+    """
+    if not cfg.get('show_curve', True):
+        return False, None
+    if values is None:
+        return False, 'no_values'
+    arr = np.asarray(values, dtype=float)
+    if arr.size <= 5:
+        return False, 'too_few_points'
+    if not np.all(np.isfinite(arr)):
+        return False, 'non_finite_values'
+    if np.unique(arr).size < 2:
+        return False, 'insufficient_unique_values'
+    x_min, x_max = float(np.min(arr)), float(np.max(arr))
+    if not np.isfinite(x_min) or not np.isfinite(x_max) or (x_max - x_min) <= 0:
+        return False, 'zero_or_invalid_span'
+    return True, None
 
 
 def _add_median_line(plot_item, values, cfg):
@@ -2594,29 +3555,50 @@ def _add_stats_text(plot_item, plot_data, cfg):
             ti.setPos(0, 0)
 
 
-def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
+def _draw_single_histogram(
+        plot_item, element_data, cfg, single_color=None, density_status_out=None,
+        hidden_elements=None, legend_click_callback=None):
     """Draw histogram for one set of element data onto a PyQtGraph PlotItem.
     Args:
         plot_item (Any): The plot item.
         element_data (Any): The element data.
         cfg (Any): The cfg.
         single_color (Any): The single color.
+        density_status_out (dict | None): Optional output mapping used by child
+            decomposition views to record density attempt/success per element.
+        hidden_elements (set[str] | None): Raw element/isotope keys to skip at
+            render time for parent histogram visibility filtering.
+        legend_click_callback (Callable[[str], None] | None): Optional callback
+            used to make element legend swatches clickable for visibility
+            toggling in parent histogram views.
     Returns:
         object: Result of the operation.
+
+    Preserved behavior:
+        Histogram/stat calculations are unchanged. Optional density status is
+        observational metadata only and does not affect rendering logic.
+        When ``legend_click_callback`` is provided, legend-row clicks are bound
+        to raw-key visibility toggles so parent histogram views can hide/show
+        isotopes via redraw filtering.
     """
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
     bins_n = cfg.get('bins', 20)
+    hidden = set(hidden_elements or set())
 
     sorted_data = sort_element_dict_by_mass(element_data)
     is_single = len(sorted_data) == 1
+    visible_count = 0
 
     all_vals = []
     for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
+        if elem in hidden:
+            continue
         vals = _prepare_values(raw_vals, dt, log_x)
         if vals is None:
             continue
 
+        visible_count += 1
         color = single_color or _get_element_color(elem, idx, cfg)
         _draw_histogram_bars(plot_item, vals, cfg, color, bins_n,
                              name=_fmt_elem(elem, cfg))
@@ -2624,8 +3606,20 @@ def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
 
         if is_single:
             _, bin_edges = np.histogram(vals, bins=bins_n)
-            if cfg.get('show_curve', True) and len(vals) > 5:
-                _add_density_curve(plot_item, vals, cfg, bin_edges, len(vals))
+            can_attempt_density, density_reason = _density_curve_status(vals, cfg)
+            density_attempted = cfg.get('show_curve', True)
+            density_success = False
+            if can_attempt_density:
+                density_success = _add_density_curve(
+                    plot_item, vals, cfg, bin_edges, len(vals))
+                if not density_success and density_reason is None:
+                    density_reason = 'curve_fit_or_kde_failure'
+            if density_status_out is not None:
+                density_status_out[elem] = {
+                    'attempted': density_attempted,
+                    'success': density_success,
+                    'reason': density_reason,
+                }
             if cfg.get('show_median', True):
                 _add_median_line(plot_item, vals, cfg)
 
@@ -2660,11 +3654,32 @@ def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
         for idx, elem in enumerate(sorted_data.keys()):
             color = single_color or _get_element_color(elem, idx, cfg)
             co = QColor(color)
-            swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 180))
-            legend.addItem(swatch, _fmt_elem(elem, cfg))
+            is_hidden = elem in hidden
+            alpha = 55 if is_hidden else 180
+            swatch = _ClickableLegendSwatch(
+                x=[0], height=[0], width=0,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                raw_key=elem,
+                toggle_callback=legend_click_callback,
+            )
+            lbl = _fmt_elem(elem, cfg) + (" (hidden)" if is_hidden else "")
+            legend.addItem(swatch, lbl)
+            _attach_histogram_legend_toggle(
+                legend,
+                raw_key=elem,
+                toggle_callback=legend_click_callback,
+            )
 
     apply_font_to_pyqtgraph(plot_item, cfg)
+    if visible_count == 0 and len(sorted_data) > 0:
+        ti = pg.TextItem("No visible isotopes", anchor=(0.5, 0.5), color='#9CA3AF')
+        plot_item.addItem(ti)
+        try:
+            vb = plot_item.getViewBox()
+            xr, yr = vb.viewRange()
+            ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
+        except Exception:
+            ti.setPos(0, 0)
     return sorted_data
 
 
