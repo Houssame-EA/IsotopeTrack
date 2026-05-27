@@ -1,4 +1,4 @@
-import csv
+import weakref
 import numpy as np
 from pathlib import Path
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -15,7 +15,8 @@ import traceback
 
 import loading.vitesse_loading
 import loading.tofwerk_loading
-from processing.peak_detection import erf, erfinv
+from processing.peak_detection import erfinv
+import csv
 
 from theme import theme, dialog_qss
 
@@ -427,7 +428,8 @@ class SingleIonDistributionManager(QObject):
             None
         """
         super().__init__(main_window)
-        self.main_window = main_window
+
+        self._main_window_ref = weakref.ref(main_window)
 
         self.single_ion_distribution_data = None
         self.single_ion_source_folder     = None
@@ -456,6 +458,12 @@ class SingleIonDistributionManager(QObject):
 
         theme.themeChanged.connect(self._on_theme_changed)
 
+    # ── weak-reference property ───────────────────────────────────────────────
+
+    @property
+    def main_window(self):
+        """Return the parent MainWindow, or None if it has been destroyed."""
+        return self._main_window_ref()
 
     # ── themed message box helper ─────────────────────────────────────────────
 
@@ -831,6 +839,11 @@ class SingleIonDistributionManager(QObject):
         """
         try:
             if self._loading_overlay:
+    
+                self._overlay_distribution_data = None
+                self._overlay_info              = None
+                self._overlay_per_mass          = {}
+
                 self._overlay_distribution_data = result['single_ion_distribution_data']
                 self._overlay_info              = result['single_ion_info']
                 self._overlay_per_mass          = result.get('per_mass_distributions', {})
@@ -888,7 +901,12 @@ class SingleIonDistributionManager(QObject):
 
     def _on_thread_cleanup(self):
         """
-        Nullify thread and worker references after the thread has finished.
+        Disconnect worker signals and nullify thread/worker references after
+        the thread has finished.
+
+        Without disconnecting, the signal slots keep bound-method references to
+        the worker, preventing it from being garbage-collected even after
+        ``sia_worker = None`` is assigned.
 
         Args:
             None
@@ -896,6 +914,18 @@ class SingleIonDistributionManager(QObject):
         Returns:
             None
         """
+        if self.sia_worker is not None:
+            for sig in (
+                self.sia_worker.finished,
+                self.sia_worker.error,
+                self.sia_worker.progress,
+                self.sia_worker.status_update,
+            ):
+                try:
+                    sig.disconnect()
+                except RuntimeError:
+                    pass  
+
         self.sia_thread = None
         self.sia_worker = None
 
@@ -2216,6 +2246,23 @@ class SingleIonDistributionManager(QObject):
                 self.sia_worker.stop_processing()
             self.sia_thread.quit()
             self.sia_thread.wait(3000)
+
+        if self.sia_worker is not None:
+            for sig in (
+                self.sia_worker.finished,
+                self.sia_worker.error,
+                self.sia_worker.progress,
+                self.sia_worker.status_update,
+            ):
+                try:
+                    sig.disconnect()
+                except RuntimeError:
+                    pass
+
+        try:
+            theme.themeChanged.disconnect(self._on_theme_changed)
+        except RuntimeError:
+            pass
 
         self.sia_thread     = None
         self.sia_worker     = None

@@ -4,6 +4,17 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+
+
+##  2026-05-27
+### Bug Fixes
+- Fixed memory leaks across multiple modules
+- Fixed errors and bugs in the AI results module
+- Fixed mass method — users can now select a new isotope after an initial selection
+
+##  2026-05-22
+Standardizes several Results plot dialogs around the four-button UI contract:Plot format settingsConfigure plot quantitiesReset layoutExport figureAlso cleans right-click menus to avoid duplicating bottom-button actions, while preserving quick toggles and isotope label controls.Implemented the feature for:-Ternary plots-Correlation Matrix-Concentration-Network-Pie Chart-Heatmap-Single/MultipleMinor rendering bug with the x axis rotation option, easy fix and will be done.Manually tested migrated plots after merging latest dev:Network, Correlation Matrix, Concentration, Heatmap, Triangle, Single/Multiple, Pie chart.
+
 ## v1.0.5 — 2026-05-22
 
 ### Bug Fixes

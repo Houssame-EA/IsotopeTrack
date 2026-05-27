@@ -157,6 +157,7 @@ def integrate_tof_data(
         peaks[start:end] = np.add.reduceat(
             chunk, indicies.flat, axis=-1
         )[..., ::2]
+    chunk = None  
 
     scale_factor = float(
         (h5["FullSpectra"].attrs["SampleInterval"][0] * 1e9)
@@ -204,6 +205,8 @@ def read_tofwerk_file(
         )
 
     names = [x.decode() for x in info["label"]]
+   
     data = rfn.unstructured_to_structured(data.reshape(-1, data.shape[-1]), names=names)
+    del names  
 
     return data, info, dwell

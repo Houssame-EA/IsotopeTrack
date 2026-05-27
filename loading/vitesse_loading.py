@@ -440,6 +440,7 @@ def read_nu_directory(
         integs[0], run_info["MassCalCoefficients"], segment_delays
     )[0]
     signals = get_signals_from_nu_data(integs, accumulations)
+    del integs  # free intermediate list — signals already holds the stacked result
 
     if not raw:
         signals /= run_info["AverageSingleIonArea"]
