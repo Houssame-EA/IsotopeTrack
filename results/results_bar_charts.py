@@ -24,10 +24,14 @@ from results.shared_plot_utils import (
     _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
 )
 try:
-    from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
+    from widget.custom_plot_widget import (
+        PlotSettingsDialog as _PlotSettingsDialog,
+        get_system_font_families as _get_system_font_families,
+    )
     _CUSTOM_PLOT_AVAILABLE = True
 except Exception:
     _PlotSettingsDialog = None
+    _get_system_font_families = lambda: FONT_FAMILIES[:]
     _CUSTOM_PLOT_AVAILABLE = False
 from results.utils_sort import (
     sort_elements_by_mass, sort_element_dict_by_mass, element_alphabetical_key,
@@ -69,7 +73,6 @@ HIST_DISPLAY_MODES = [
     'Overlaid (Different Colors)',
     'Side by Side Subplots',
     'Individual Subplots',
-    'Combined with Legend',
 ]
 
 BAR_DISPLAY_MODES = [
@@ -94,6 +97,26 @@ DEFAULT_ELEMENT_COLORS = [
     '#7209B7', '#F72585', '#4361EE', '#277DA1', '#F8961E',
     '#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED',
 ]
+
+
+def _normalize_hist_display_mode(mode: str) -> str:
+    """Normalize legacy histogram display-mode aliases to active modes.
+
+    Args:
+        mode (str): Display mode from config or UI.
+
+    Returns:
+        str: Supported histogram display mode.
+
+    Preserved behavior:
+        Existing configs that stored ``Combined with Legend`` are supported by
+        aliasing that value to ``Overlaid (Different Colors)``.
+    """
+    if mode == 'Combined with Legend':
+        return 'Overlaid (Different Colors)'
+    if mode in HIST_DISPLAY_MODES:
+        return mode
+    return HIST_DISPLAY_MODES[0]
 
 
 def _fmt_elem(elem: str, cfg: dict) -> str:
@@ -869,7 +892,8 @@ class HistogramSettingsDialog(QDialog):
             self.display_mode = QComboBox()
             self.display_mode.addItems(HIST_DISPLAY_MODES)
             self.display_mode.setCurrentText(
-                self._cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
+                _normalize_hist_display_mode(
+                    self._cfg.get('display_mode', HIST_DISPLAY_MODES[0])))
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
@@ -1178,10 +1202,266 @@ class HistogramSettingsDialog(QDialog):
             e: ne.text().strip() or e
             for e, ne in self._elem_name_edits.items()}
         if self._multi:
-            out['display_mode'] = self.display_mode.currentText()
+            out['display_mode'] = _normalize_hist_display_mode(
+                self.display_mode.currentText())
             out['sample_name_mappings'] = {
                 sn: ne.text() for sn, ne in self._name_edits.items()}
         out['label_mode'] = self.label_mode.currentText()
+        return out
+
+
+class HistogramFormatSettingsDialog(QDialog):
+    """Global visual-format settings dialog for Histogram plots.
+
+    This dialog is intentionally config-driven and plot-global: it collects
+    only presentation settings (fonts, labels, visual toggles, and element
+    colors) and relies on Histogram redraw to apply those settings uniformly
+    across all subplot PlotItems.
+    """
+
+    def __init__(self, config, is_multi, sample_names, parent=None,
+                 available_elements=None):
+        """
+        Initialize the histogram format-only settings dialog.
+
+        Args:
+            config (dict): Current histogram config snapshot.
+            is_multi (bool): Whether current histogram data is multi-sample.
+            sample_names (list[str]): Source sample names for display-name edits.
+            parent (QWidget | None): Parent dialog.
+            available_elements (list[str] | None): Element keys available for
+                global element-color and display-name edits.
+
+        Preserved behavior:
+            Scientific quantity controls (bins/data type/curve type/shade type/
+            element groups/log axes/display mode) are intentionally excluded and
+            remain in the quantities configuration workflow.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Histogram plot format settings")
+        self.setMinimumWidth(520)
+        self._cfg = dict(config)
+        self._multi = is_multi
+        self._samples = sample_names
+        self._available_elements = available_elements or []
+        self._font_color = QColor(self._cfg.get('font_color', '#000000'))
+        self._elem_color_btns = {}
+        self._build_ui()
+
+    def _build_ui(self):
+        """Build visual-only controls used by the histogram format route."""
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setSpacing(8)
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+        g = QGroupBox("Font && Text")
+        fl = QFormLayout(g)
+        self.font_family = QComboBox()
+        self.font_family.addItems(_get_system_font_families())
+        self.font_family.setCurrentText(self._cfg.get('font_family', 'Times New Roman'))
+        self.font_size = QSpinBox()
+        self.font_size.setRange(6, 72)
+        self.font_size.setValue(self._cfg.get('font_size', 18))
+        self.font_bold = QCheckBox()
+        self.font_bold.setChecked(self._cfg.get('font_bold', False))
+        self.font_italic = QCheckBox()
+        self.font_italic.setChecked(self._cfg.get('font_italic', False))
+        self.font_color_btn = QPushButton()
+        self.font_color_btn.setFixedSize(70, 24)
+        self._refresh_font_color_btn()
+        self.font_color_btn.clicked.connect(self._pick_font_color)
+        self.label_mode = QComboBox()
+        self.label_mode.addItems(LABEL_MODES)
+        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Font Family:", self.font_family)
+        fl.addRow("Font Size:", self.font_size)
+        fl.addRow("Bold:", self.font_bold)
+        fl.addRow("Italic:", self.font_italic)
+        fl.addRow("Font Color:", self.font_color_btn)
+        fl.addRow("Isotope Label:", self.label_mode)
+        layout.addWidget(g)
+
+        g = QGroupBox("Visual Toggles")
+        fl = QFormLayout(g)
+        self.show_curve = QCheckBox()
+        self.show_curve.setChecked(self._cfg.get('show_curve', True))
+        self.show_stats = QCheckBox()
+        self.show_stats.setChecked(self._cfg.get('show_stats', True))
+        self.show_box = QCheckBox()
+        self.show_box.setChecked(self._cfg.get('show_box', True))
+        self.show_median_line = QCheckBox()
+        self.show_median_line.setChecked(self._cfg.get('show_median_line', False))
+        self.show_mean_line = QCheckBox()
+        self.show_mean_line.setChecked(self._cfg.get('show_mean_line', False))
+        self.show_mode_marker = QCheckBox()
+        self.show_mode_marker.setChecked(self._cfg.get('show_mode_marker', False))
+        self.show_det_limit = QCheckBox()
+        self.show_det_limit.setChecked(self._cfg.get('show_det_limit', False))
+        fl.addRow("Show Density Curve:", self.show_curve)
+        fl.addRow("Show Statistics:", self.show_stats)
+        fl.addRow("Figure Box (frame):", self.show_box)
+        fl.addRow("Median Line:", self.show_median_line)
+        fl.addRow("Mean Line:", self.show_mean_line)
+        fl.addRow("Mode Marker:", self.show_mode_marker)
+        fl.addRow("Detection Limit Line:", self.show_det_limit)
+        layout.addWidget(g)
+
+        g = QGroupBox("Grid")
+        fl = QFormLayout(g)
+        self.show_x_grid = QCheckBox()
+        self.show_x_grid.setChecked(self._cfg.get('show_x_grid', False))
+        self.show_y_grid = QCheckBox()
+        self.show_y_grid.setChecked(self._cfg.get('show_y_grid', False))
+        self.grid_alpha = QDoubleSpinBox()
+        self.grid_alpha.setRange(0.05, 1.0)
+        self.grid_alpha.setDecimals(2)
+        self.grid_alpha.setSingleStep(0.05)
+        self.grid_alpha.setValue(float(self._cfg.get('grid_alpha', 0.2)))
+        fl.addRow("Show X Grid:", self.show_x_grid)
+        fl.addRow("Show Y Grid:", self.show_y_grid)
+        fl.addRow("Grid Alpha:", self.grid_alpha)
+        layout.addWidget(g)
+
+        g = QGroupBox("Element Colors")
+        vl = QVBoxLayout(g)
+        existing_colors = self._cfg.get('element_colors', {})
+        for i, el in enumerate(self._available_elements):
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(QLabel(el))
+            btn = QPushButton()
+            btn.setFixedSize(70, 24)
+            col = existing_colors.get(
+                el, DEFAULT_ELEMENT_COLORS[i % len(DEFAULT_ELEMENT_COLORS)])
+            btn._color = QColor(col)
+            btn.setStyleSheet(
+                f"background-color: {btn._color.name()}; border: 1px solid black;")
+            btn.clicked.connect(lambda _, e=el: self._pick_element_color(e))
+            row.addWidget(btn)
+            row.addStretch()
+            vl.addLayout(row)
+            self._elem_color_btns[el] = btn
+        if not self._available_elements:
+            vl.addWidget(QLabel("(No elements detected yet)"))
+        layout.addWidget(g)
+
+        g = QGroupBox("Element Display Names")
+        el_vl = QVBoxLayout(g)
+        self._elem_name_edits = {}
+        existing_names = self._cfg.get('element_name_mappings', {})
+        for el in self._available_elements:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            lbl = QLabel(el)
+            lbl.setFixedWidth(90)
+            row.addWidget(lbl)
+            ne = QLineEdit(existing_names.get(el, el))
+            ne.setFixedWidth(180)
+            ne.setPlaceholderText(el)
+            row.addWidget(ne)
+            self._elem_name_edits[el] = ne
+            rst = QPushButton("\u21ba")
+            rst.setFixedSize(22, 22)
+            rst.clicked.connect(lambda _, e=el: self._elem_name_edits[e].setText(e))
+            row.addWidget(rst)
+            row.addStretch()
+            el_vl.addLayout(row)
+        if not self._available_elements:
+            el_vl.addWidget(QLabel("(No elements detected yet)"))
+        layout.addWidget(g)
+
+        if self._multi:
+            g = QGroupBox("Sample Names")
+            vl = QVBoxLayout(g)
+            self._name_edits = {}
+            mappings = self._cfg.get('sample_name_mappings', {})
+            for sn in self._samples:
+                row = QHBoxLayout()
+                ne = QLineEdit(mappings.get(sn, sn))
+                ne.setFixedWidth(220)
+                row.addWidget(QLabel(sn[:20]))
+                row.addWidget(ne)
+                self._name_edits[sn] = ne
+                rst = QPushButton("\u21ba")
+                rst.setFixedSize(22, 22)
+                rst.clicked.connect(lambda _, o=sn: self._name_edits[o].setText(o))
+                row.addWidget(rst)
+                row.addStretch()
+                vl.addLayout(row)
+            layout.addWidget(g)
+        else:
+            self._name_edits = None
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        outer.addWidget(btns)
+
+    def _refresh_font_color_btn(self):
+        """Refresh the font-color swatch preview."""
+        self.font_color_btn.setStyleSheet(
+            f"background-color: {self._font_color.name()}; border: 1px solid black;")
+
+    def _pick_font_color(self):
+        """Select and store a global histogram font color."""
+        from PySide6.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(self._font_color, self, "Font Color")
+        if c.isValid():
+            self._font_color = c
+            self._refresh_font_color_btn()
+
+    def _pick_element_color(self, element):
+        """Select an element color used globally across histogram subplots."""
+        from PySide6.QtWidgets import QColorDialog
+        btn = self._elem_color_btns.get(element)
+        if btn is None:
+            return
+        c = QColorDialog.getColor(btn._color, self, f"{element} Color")
+        if c.isValid():
+            btn._color = c
+            btn.setStyleSheet(
+                f"background-color: {c.name()}; border: 1px solid black;")
+
+    def collect(self) -> dict:
+        """Collect only histogram visual-format settings.
+
+        Returns:
+            dict: Format-only config updates that are safe to merge via
+            ``node.config.update(...)`` without overwriting quantity settings.
+        """
+        out = {}
+        out['font_family'] = self.font_family.currentText()
+        out['font_size'] = self.font_size.value()
+        out['font_bold'] = self.font_bold.isChecked()
+        out['font_italic'] = self.font_italic.isChecked()
+        out['font_color'] = self._font_color.name()
+        out['label_mode'] = self.label_mode.currentText()
+        out['show_curve'] = self.show_curve.isChecked()
+        out['show_stats'] = self.show_stats.isChecked()
+        out['show_box'] = self.show_box.isChecked()
+        out['show_median_line'] = self.show_median_line.isChecked()
+        out['show_mean_line'] = self.show_mean_line.isChecked()
+        out['show_mode_marker'] = self.show_mode_marker.isChecked()
+        out['show_det_limit'] = self.show_det_limit.isChecked()
+        out['show_x_grid'] = self.show_x_grid.isChecked()
+        out['show_y_grid'] = self.show_y_grid.isChecked()
+        out['grid_alpha'] = self.grid_alpha.value()
+        out['element_name_mappings'] = {
+            e: ne.text().strip() or e
+            for e, ne in self._elem_name_edits.items()
+        }
+        out['element_colors'] = {
+            e: btn._color.name()
+            for e, btn in self._elem_color_btns.items()
+        }
+        if self._multi and self._name_edits is not None:
+            out['sample_name_mappings'] = {
+                sn: ne.text() for sn, ne in self._name_edits.items()}
         return out
 
 
@@ -1229,6 +1509,14 @@ class HistogramDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """
+        Build histogram canvas, stats footer, and standardized bottom buttons.
+
+        Preserved behavior:
+            Plot calculations are unchanged; this only adds consistent UI entry
+            points for formatting, quantity configuration, layout reset, and
+            figure export.
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
@@ -1245,11 +1533,35 @@ class HistogramDisplayDialog(QDialog):
             "background: #F8FAFC; border-top: 1px solid #E2E8F0;")
         layout.addWidget(self.stats_label)
 
+        bb = QHBoxLayout()
+        bb.setContentsMargins(0, 0, 0, 0)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_reset = QPushButton("Reset layout")
+        btn_reset.setToolTip("Reset plot ranges to automatic view.")
+        btn_reset.clicked.connect(self._reset_layout)
+        btn_export = QPushButton("Export figure")
+        btn_export.clicked.connect(self._export_figure)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_reset)
+        bb.addWidget(btn_export)
+        layout.addLayout(bb)
+
 
     def _ctx_menu(self, pos):
         """
+        Show lightweight histogram quick actions.
+
         Args:
             pos (Any): Position point.
+
+        Preserved behavior:
+            Keeps right-click focused on visual quick toggles and isotope label
+            mode while full quantity/format/reset/export workflows are handled by
+            bottom buttons.
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -1258,10 +1570,6 @@ class HistogramDisplayDialog(QDialog):
         for key, label, default in [
             ('show_curve',  'Density Curve',       True),
             ('show_stats',  'Statistics',          True),
-            ('log_x',       'Log X-axis',          False),
-            ('log_y',       'Log Y-axis',          False),
-            ('auto_x',      'Auto X Range',        True),
-            ('auto_y',      'Auto Y Range',        True),
             ('show_box',    'Figure Box (frame)',   True),
         ]:
             a = tg.addAction(label); a.setCheckable(True)
@@ -1280,51 +1588,11 @@ class HistogramDisplayDialog(QDialog):
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle_key(k))
 
-        tg.addSeparator()
-        sep2 = tg.addAction("-- Shaded Region --"); sep2.setEnabled(False)
-        shm = tg.addMenu("Shade Type")
-        for st in SHADE_TYPES:
-            a = shm.addAction(st); a.setCheckable(True)
-            a.setChecked(cfg.get('shade_type', 'None') == st)
-            a.triggered.connect(lambda _, v=st: self._set('shade_type', v))
-
-        dt_menu = menu.addMenu("Data Type")
-        cur_dt = cfg.get('data_type_display', 'Counts')
-        for dt in HIST_DATA_TYPES:
-            a = dt_menu.addAction(dt); a.setCheckable(True)
-            a.setChecked(dt == cur_dt)
-            a.triggered.connect(lambda _, d=dt: self._set('data_type_display', d))
-
-        ct_menu = menu.addMenu("Curve Type")
-        cur_ct = cfg.get('curve_type', 'Kernel Density')
-        for ct in CURVE_TYPES:
-            a = ct_menu.addAction(ct); a.setCheckable(True)
-            a.setChecked(ct == cur_ct)
-            a.triggered.connect(lambda _, c=ct: self._set('curve_type', c))
-
-        if _is_multi(self.node.input_data):
-            dm_menu = menu.addMenu("Display Mode")
-            cur = cfg.get('display_mode', HIST_DISPLAY_MODES[0])
-            for m in HIST_DISPLAY_MODES:
-                a = dm_menu.addAction(m); a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set('display_mode', mode))
-
-        groups = cfg.get('element_groups', [])
-        if groups:
-            menu.addSeparator()
-            gm = menu.addMenu(f"Element Groups ({len(groups)})")
-            for g in groups:
-                name = g.get('name', '?')
-                elems = ' + '.join(g.get('elements', []))
-                a = gm.addAction(f"{name} = {elems}")
-                a.setEnabled(False)
-
-        menu.addSeparator()
-        menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
+        lm = menu.addMenu("Isotope Label")
+        for mode in LABEL_MODES:
+            a = lm.addAction(mode); a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
+            a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _toggle_key(self, key):
@@ -1362,18 +1630,70 @@ class HistogramDisplayDialog(QDialog):
         except Exception:
             return []
 
-    def _open_settings(self):
+    def _open_settings(self, title_override=None):
+        """Open histogram quantity/configuration controls.
+
+        Args:
+            title_override (str | None): Optional explicit window title used by
+                standardized bottom-button routes.
+
+        Preserved behavior:
+            Reuses the existing combined Histogram settings schema for this
+            migration pass, keeping scientific quantity semantics unchanged.
+        """
         dlg = HistogramSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
             available_elements=self._get_available_elements())
+        if title_override:
+            dlg.setWindowTitle(title_override)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
-    def _open_plot_settings(self):
-        """Open the full PlotSettingsDialog (font, grid, traces) on the
-        first available PlotItem inside the GraphicsLayoutWidget."""
+    def _open_plot_format_settings(self):
+        """
+        Open histogram format-only settings with global multi-subplot scope.
+
+        Preserved behavior:
+            Avoids single-PlotItem mutation paths so accepted changes are stored
+            in canonical config and then redrawn consistently across all
+            histogram subplots and legends.
+        """
+        dlg = HistogramFormatSettingsDialog(
+            self.node.config,
+            _is_multi(self.node.input_data),
+            _sample_names(self.node.input_data),
+            self,
+            available_elements=self._get_available_elements(),
+        )
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """
+        Open histogram quantity/configuration controls.
+
+        Preserved behavior:
+            Keeps quantity/scientific options in the dedicated bottom-button
+            route and applies the standardized title.
+        """
+        self._open_settings(
+            title_override="Histogram plot quantities configuration")
+
+    def _open_plot_settings(self, title_override=None, show_apply=True):
+        """Compatibility wrapper for the legacy single-plot settings editor.
+
+        Args:
+            title_override (str | None): Optional window-title override.
+            show_apply (bool): Whether live Apply is visible in the dialog.
+
+        Preserved behavior:
+            Left available for non-primary legacy entry points, but Histogram's
+            standardized format workflow uses ``HistogramFormatSettingsDialog``
+            so settings apply globally across multi-subplot layouts.
+        """
         if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None:
             return
         pi = next(
@@ -1382,9 +1702,17 @@ class HistogramDisplayDialog(QDialog):
             None,
         )
         if pi is not None:
-            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
+            dlg = _PlotSettingsDialog(
+                _PlotWidgetAdapter(self.pw, pi), self, show_apply=show_apply)
+            if title_override:
+                try:
+                    dlg.setWindowTitle(title_override)
+                except Exception:
+                    pass
+            dlg.exec()
 
     def _download_figure(self):
+        """Export histogram figure and CSV via existing PyQtGraph helper."""
         import pandas as pd
         csv_df = None
         try:
@@ -1420,8 +1748,63 @@ class HistogramDisplayDialog(QDialog):
         download_pyqtgraph_figure(
             self.pw, self, default_name='histogram', csv_data=csv_df)
 
+    def _export_figure(self):
+        """Route standardized bottom export action to histogram export path."""
+        self._download_figure()
+
+    def _disable_native_pyqtgraph_context_menu(self):
+        """
+        Disable native PyQtGraph menus locally for Histogram.
+
+        Preserved behavior:
+            Prevents stacked native menus for this dialog only; global
+            PyQtGraph behavior remains unchanged.
+        """
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                try:
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _reset_layout(self):
+        """
+        Reset histogram layout/ranges without changing scientific settings.
+
+        Preserved behavior:
+            Data type, bins, curve/shade options, grouping, and log-axis
+            semantics remain unchanged; only auto-range layout state is reset.
+        """
+        self.node.config['auto_x'] = True
+        self.node.config['auto_y'] = True
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.enableAutoRange(axis='xy', enable=True)
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.autoRange()
+                except Exception:
+                    pass
+        self._refresh()
+
 
     def _refresh(self):
+        """
+        Rebuild and redraw the histogram canvas from current configuration.
+
+        Preserved behavior:
+            Scientific calculations and data extraction are unchanged. This
+            method now normalizes legacy display-mode aliases and reapplies
+            local native-menu suppression after redraw so the custom histogram
+            context menu remains authoritative.
+        """
         try:
             parent_layout = self.pw.parent().layout()
             idx = parent_layout.indexOf(self.pw)
@@ -1451,13 +1834,12 @@ class HistogramDisplayDialog(QDialog):
                 return
 
             if _is_multi(self.node.input_data):
-                mode = cfg.get('display_mode', HIST_DISPLAY_MODES[0])
+                mode = _normalize_hist_display_mode(
+                    cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
                 elif mode == 'Side by Side Subplots':
                     self._draw_side_by_side(plot_data, cfg)
-                elif mode == 'Combined with Legend':
-                    self._draw_combined(plot_data, cfg)
                 else:
                     self._draw_overlaid(plot_data, cfg)
             else:
@@ -1466,6 +1848,7 @@ class HistogramDisplayDialog(QDialog):
                 if cfg.get('show_stats', True):
                     _add_stats_text(pi, plot_data, cfg)
 
+            self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
 
         except Exception as e:
@@ -1475,6 +1858,8 @@ class HistogramDisplayDialog(QDialog):
 
     def _draw_subplots(self, plot_data, cfg):
         """
+        Draw one subplot per sample using per-element color encoding.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1487,11 +1872,12 @@ class HistogramDisplayDialog(QDialog):
             pi = self.pw.addPlot(title=get_display_name(sn, cfg))
             sd = plot_data[sn]
             if sd:
-                color = get_sample_color(sn, idx, cfg)
-                _draw_single_histogram(pi, sd, cfg, single_color=color)
+                _draw_single_histogram(pi, sd, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """
+        Draw side-by-side sample subplots using per-element color encoding.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1501,8 +1887,7 @@ class HistogramDisplayDialog(QDialog):
         for idx, (sn, sd) in enumerate(plot_data.items()):
             pi = self.pw.addPlot(row=0, col=idx, title=get_display_name(sn, cfg))
             if sd:
-                color = get_sample_color(sn, idx, cfg)
-                _draw_single_histogram(pi, sd, cfg, single_color=color)
+                _draw_single_histogram(pi, sd, cfg)
             if first_pi is None:
                 first_pi = pi
             else:
@@ -1566,10 +1951,13 @@ class HistogramDisplayDialog(QDialog):
             pi.setXRange(xn, xx, padding=0)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
+        _apply_histogram_grid(pi, cfg)
         apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_combined(self, plot_data, cfg):
         """
+        Legacy wrapper for historical ``Combined with Legend`` mode values.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -2067,6 +2455,25 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
     return values, bin_edges, counts
 
 
+def _apply_histogram_grid(plot_item, cfg):
+    """Apply histogram grid visibility/alpha settings to a PlotItem.
+
+    Args:
+        plot_item: Target ``pg.PlotItem``.
+        cfg (dict): Histogram config containing ``show_x_grid``,
+            ``show_y_grid``, and ``grid_alpha``.
+
+    Preserved behavior:
+        Affects only plot presentation and does not alter histogram data or
+        quantity semantics.
+    """
+    show_x = cfg.get('show_x_grid', False)
+    show_y = cfg.get('show_y_grid', False)
+    alpha = float(cfg.get('grid_alpha', 0.2))
+    alpha = max(0.0, min(1.0, alpha))
+    plot_item.showGrid(x=show_x, y=show_y, alpha=alpha)
+
+
 def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
     """Add density curve overlay scaled to match count histogram.
     Args:
@@ -2245,6 +2652,7 @@ def _draw_single_histogram(plot_item, element_data, cfg, single_color=None):
     if not cfg.get('auto_y', True):
         plot_item.setYRange(cfg.get('y_min', 0), cfg.get('y_max', 100), padding=0)
 
+    _apply_histogram_grid(plot_item, cfg)
     if not is_single and len(sorted_data) > 1:
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(plot_item.graphicsItem())
