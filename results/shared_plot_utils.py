@@ -1509,11 +1509,14 @@ def export_element_matrix_csv(df: pd.DataFrame, parent,
 def download_pyqtgraph_figure(plot_widget, parent,
                                default_name: str = 'figure',
                                csv_data=None,
-                               csv_columns: dict | None = None):
+                               csv_columns: dict | None = None,
+                               export_item=None):
     """
-    Export a PyQtGraph GraphicsLayoutWidget to PNG, SVG, PDF, or CSV.
+    Export a PyQtGraph graphics target to PNG, SVG, PDF, or CSV.
 
-    The FULL scene is captured (all subplots), not just a single PlotItem.
+    By default, the full widget scene is exported. When ``export_item`` is
+    supplied, export targets that specific subplot/item while reusing the same
+    export dialog and output options.
 
     Args:
         plot_widget:  pg.GraphicsLayoutWidget
@@ -1521,6 +1524,8 @@ def download_pyqtgraph_figure(plot_widget, parent,
         default_name: suggested filename stem (no extension)
         csv_data:     data to export when CSV is chosen (DataFrame, dict, etc.)
         csv_columns:  optional column rename mapping for CSV
+        export_item:  optional ``QGraphicsItem`` (e.g., ``pg.PlotItem``) to
+                      export instead of the full scene.
     """
     import pyqtgraph.exporters as exp
 
@@ -1564,13 +1569,44 @@ def download_pyqtgraph_figure(plot_widget, parent,
 
     try:
         scene = plot_widget.scene()
+        target = export_item if export_item is not None else scene
+        source_rect = None
+        if export_item is not None:
+            try:
+                from PySide6.QtCore import QRectF
+                rect = export_item.sceneBoundingRect()
+                if rect is not None and rect.isValid():
+                    pad_x = max(8.0, rect.width() * 0.03)
+                    pad_y = max(8.0, rect.height() * 0.03)
+                    source_rect = QRectF(
+                        rect.left() - pad_x,
+                        rect.top() - pad_y,
+                        rect.width() + 2 * pad_x,
+                        rect.height() + 2 * pad_y,
+                    )
+            except Exception:
+                source_rect = None
 
         if fmt == 'SVG':
-            exporter = exp.SVGExporter(scene)
+            exporter = exp.SVGExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
             exporter.export(path)
 
         elif fmt == 'PNG':
-            exporter = exp.ImageExporter(scene)
+            exporter = exp.ImageExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
 
             bg = cfg['background']
             if bg == 'Transparent':
@@ -1584,8 +1620,12 @@ def download_pyqtgraph_figure(plot_widget, parent,
                 exporter.parameters()['width']  = cfg['width']
                 exporter.parameters()['height'] = cfg['height']
             else:
-                exporter.parameters()['width']  = int(plot_widget.width()  * cfg['scale'])
-                exporter.parameters()['height'] = int(plot_widget.height() * cfg['scale'])
+                if source_rect is not None:
+                    exporter.parameters()['width'] = int(source_rect.width() * cfg['scale'])
+                    exporter.parameters()['height'] = int(source_rect.height() * cfg['scale'])
+                else:
+                    exporter.parameters()['width']  = int(plot_widget.width()  * cfg['scale'])
+                    exporter.parameters()['height'] = int(plot_widget.height() * cfg['scale'])
 
             exporter.export(path)
 
@@ -1594,10 +1634,21 @@ def download_pyqtgraph_figure(plot_widget, parent,
             from PySide6.QtGui import QPainter, QPixmap
             import tempfile, os
 
-            exporter = exp.ImageExporter(scene)
+            exporter = exp.ImageExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
             exporter.parameters()['background'] = pg.mkColor('w')
-            exporter.parameters()['width']  = int(plot_widget.width()  * 3)
-            exporter.parameters()['height'] = int(plot_widget.height() * 3)
+            if source_rect is not None:
+                exporter.parameters()['width'] = int(source_rect.width() * 3)
+                exporter.parameters()['height'] = int(source_rect.height() * 3)
+            else:
+                exporter.parameters()['width']  = int(plot_widget.width()  * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
 
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 tmp_path = tmp.name

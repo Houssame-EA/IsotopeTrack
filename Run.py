@@ -5,7 +5,6 @@ from PySide6.QtGui import QIcon
 from tools.splash_screen import SplashCoordinator
 from mainwindow import MainWindow
 
-
 def resource_path(relative_path):
     """Get absolute path to resource — works for dev and PyInstaller.
     Args:

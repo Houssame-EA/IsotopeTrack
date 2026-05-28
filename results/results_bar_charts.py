@@ -2672,8 +2672,40 @@ class HistogramDecompositionDialog(QDialog):
         bb.addWidget(btn_export)
         layout.addLayout(bb)
 
+    def _plot_item_at(self, pos):
+        """Resolve which decomposed histogram subplot was right-clicked.
+
+        Args:
+            pos: Position in ``self.pw`` widget coordinates from
+                ``customContextMenuRequested``.
+
+        Returns:
+            pg.PlotItem | None: Clicked subplot plot item when resolvable.
+        """
+        try:
+            scene_pos = self.pw.mapToScene(pos)
+            for item in self.pw.scene().items():
+                if isinstance(item, pg.PlotItem):
+                    try:
+                        rect = item.mapRectToScene(item.boundingRect())
+                        if rect.contains(scene_pos):
+                            return item
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _sanitize_filename_part(value):
+        """Return a filesystem-safe token for subplot export filenames."""
+        text = str(value or "").strip().replace(" ", "_")
+        cleaned = ''.join(ch if ch.isalnum() or ch in ('_', '-', '.') else '_'
+                          for ch in text)
+        return cleaned.strip('_') or "subplot"
+
     def _ctx_menu(self, pos):
-        """Show child quick toggles and isotope-label menu only.
+        """Show child quick toggles, isotope label, and subplot export action.
 
         Args:
             pos: Right-click location in widget coordinates.
@@ -2683,6 +2715,8 @@ class HistogramDecompositionDialog(QDialog):
             offer recursive decomposition actions.
         """
         menu = QMenu(self)
+        clicked_plot = self._plot_item_at(pos)
+        subplot_ctx = self._subplot_context_by_plotitem.get(clicked_plot)
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
             ('show_curve',  'Density Curve',       True),
@@ -2704,6 +2738,16 @@ class HistogramDecompositionDialog(QDialog):
             a.setCheckable(True)
             a.setChecked(self._cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set_key('label_mode', v))
+
+        if clicked_plot is not None and subplot_ctx is not None:
+            exp_act = menu.addAction("Export this subplot...")
+            exp_act.triggered.connect(
+                lambda *_: self._export_subplot(clicked_plot, subplot_ctx))
+        else:
+            exp_act = menu.addAction("Export this subplot... (unavailable here)")
+            exp_act.setEnabled(False)
+            exp_act.setStatusTip("Right-click a subplot panel to export only that panel.")
+            exp_act.setToolTip("Right-click a subplot panel to export only that panel.")
 
         menu.exec(self.pw.mapToGlobal(pos))
 
@@ -2790,6 +2834,36 @@ class HistogramDecompositionDialog(QDialog):
         download_pyqtgraph_figure(
             self.pw, self, default_name='histogram_decomposition', csv_data=csv_df)
 
+    def _export_subplot(self, plot_item, subplot_ctx):
+        """Export only one clicked decomposed histogram subplot.
+
+        Reuses the shared export dialog/options path while targeting a specific
+        rendered ``PlotItem`` instead of the full child scene.
+        """
+        import pandas as pd
+        raw_elem = subplot_ctx.get('element') if subplot_ctx else None
+        vals = list(self._element_data.get(raw_elem, []))
+        dt = self._cfg.get('data_type_display', 'Counts')
+        disp = _get_element_display_name(raw_elem, self._cfg) if raw_elem else "subplot"
+        rows = [{
+            'Panel': self._panel_label,
+            'Element/Group': raw_elem,
+            'Display Name': disp,
+            dt: v,
+        } for v in vals]
+        csv_df = pd.DataFrame(rows) if rows else None
+        default_name = (
+            f"histogram_{self._sanitize_filename_part(self._panel_label)}_"
+            f"{self._sanitize_filename_part(raw_elem or disp)}"
+        )
+        download_pyqtgraph_figure(
+            self.pw,
+            self,
+            default_name=default_name or "subplot_export",
+            csv_data=csv_df,
+            export_item=plot_item,
+        )
+
     def _export_figure(self):
         """Route standardized export action to child export helper."""
         self._download_figure()
@@ -2828,6 +2902,7 @@ class HistogramDecompositionDialog(QDialog):
         self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
         self.pw.customContextMenuRequested.connect(self._ctx_menu)
         parent_layout.insertWidget(idx, self.pw, stretch=1)
+        self._subplot_context_by_plotitem = {}
 
         sorted_items = sort_element_dict_by_mass(self._element_data)
         valid = []
@@ -2855,6 +2930,10 @@ class HistogramDecompositionDialog(QDialog):
             if idx_plot > 0 and idx_plot % cols == 0:
                 self.pw.nextRow()
             pi = self.pw.addPlot(title=_fmt_elem(elem, self._cfg))
+            self._subplot_context_by_plotitem[pi] = {
+                'element': elem,
+                'title': _get_element_display_name(elem, self._cfg),
+            }
             density_status = {}
             _draw_single_histogram(
                 pi, {elem: vals}, self._cfg, density_status_out=density_status)
