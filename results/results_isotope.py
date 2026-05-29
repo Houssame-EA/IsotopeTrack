@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import (
+﻿from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
@@ -423,7 +423,7 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
             cf = 1.0
 
         lines = [
-            f"{prefix}Exponential Law — Russell et al. (1978)\nRidley, W. I. (2005). Plumbo-isotopy: the measurement of lead isotopes by multi-collector inductively coupled mass spectrometry.",
+            f"{prefix}Exponential Law â€” Russell et al. (1978)\nRidley, W. I. (2005). Plumbo-isotopy: the measurement of lead isotopes by multi-collector inductively coupled mass spectrometry.",
             f"",
             f"  Instrumental mass fractionation: {ref_num}/{ref_den}",
             f"  R_T_std (certified) = {R_T_std:.6f}",
@@ -433,8 +433,8 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
             f"    = ln({R_T_std:.6f} / {R_M_std:.6f}) / ln({m_std_num:.0f} / {m_std_den:.0f})",
             f"    = {p_val:.6f}",
             f"",
-            f"  R_T({e1}/{e2}) = R_M({e1}/{e2}) × ({m_i:.0f}/{m_j:.0f})^p",
-            f"               = R_M × {cf:.6f}",
+            f"  R_T({e1}/{e2}) = R_M({e1}/{e2}) Ã— ({m_i:.0f}/{m_j:.0f})^p",
+            f"               = R_M Ã— {cf:.6f}",
         ]
         return '\n'.join(lines)
 
@@ -522,7 +522,7 @@ class SampleCorrectionDialog(QDialog):
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle(f"Correction Settings — {sample_name}")
+        self.setWindowTitle(f"Correction Settings â€” {sample_name}")
         self.setMinimumWidth(480)
         self._sample_name = sample_name
         self._cfg = dict(sample_cfg) if sample_cfg else _default_sample_correction()
@@ -717,7 +717,8 @@ class IsotopeSettingsDialog(QDialog):
                  all_isotope_labels: list,
                  is_multi: bool, sample_names: list,
                  parent_window=None, parent=None,
-                 node=None):
+                 node=None, scope: str = "all",
+                 dialog_title: str = "Isotopic Ratio Settings"):
         """
         Args:
             config (dict): Configuration dictionary.
@@ -730,7 +731,8 @@ class IsotopeSettingsDialog(QDialog):
             node (Any): Tree or graph node.
         """
         super().__init__(parent)
-        self.setWindowTitle("Isotopic Ratio Settings")
+        self._scope = scope if scope in {"format", "quantities", "correction", "all"} else "all"
+        self.setWindowTitle(dialog_title)
         self.setMinimumWidth(560)
         self._cfg = dict(config)
         self._elems = available_elements
@@ -743,13 +745,18 @@ class IsotopeSettingsDialog(QDialog):
         import copy
         self._sample_corr_cfgs = copy.deepcopy(
             config.get('sample_correction_configs', {}))
+        self.font_family_combo = None
+        self.font_size_spin = None
+        self._font_color = self._cfg.get('font_color', '#000000')
+        self._font_color_btn = None
 
         self._build_ui()
 
     def _build_ui(self):
-        """
-        Returns:
-            tuple: Result of the operation.
+        """Build settings UI and apply scope visibility rules.
+
+        The dialog still uses a shared layout, but scope visibility ensures
+        format/quantities/correction routes only show relevant control groups.
         """
         outer = QVBoxLayout(self)
 
@@ -778,11 +785,30 @@ class IsotopeSettingsDialog(QDialog):
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
-        self.label_mode = QComboBox()
-        self.label_mode.addItems(LABEL_MODES)
-        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        fl.addRow("Isotope Label", self.label_mode)
         layout.addWidget(g)
+        self._grp_data_type = g
+
+        g = QGroupBox("Font")
+        fl = QFormLayout(g)
+        self.font_family_combo = QComboBox()
+        self.font_family_combo.addItems(FONT_FAMILIES)
+        self.font_family_combo.setCurrentText(self._cfg.get('font_family', 'Times New Roman'))
+        fl.addRow("Family:", self.font_family_combo)
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(6, 48)
+        self.font_size_spin.setValue(int(self._cfg.get('font_size', 18)))
+        fl.addRow("Size:", self.font_size_spin)
+        row = QHBoxLayout()
+        self._font_color_btn = QPushButton()
+        self._font_color_btn.setFixedSize(26, 22)
+        self._font_color_btn.setStyleSheet(f"background:{self._font_color};")
+        self._font_color_btn.clicked.connect(
+            lambda: self._pick_color('_font_color', self._font_color_btn))
+        row.addWidget(self._font_color_btn)
+        row.addStretch()
+        fl.addRow("Text Color:", row)
+        layout.addWidget(g)
+        self._grp_font = g
 
         g = QGroupBox("Element Selection")
         fl = QFormLayout(g)
@@ -816,6 +842,7 @@ class IsotopeSettingsDialog(QDialog):
         fl.addRow("Color Element (3rd):", self.color_elem)
 
         layout.addWidget(g)
+        self._grp_elements = g
 
         g = QGroupBox("Reference Lines")
         fl = QFormLayout(g)
@@ -829,19 +856,20 @@ class IsotopeSettingsDialog(QDialog):
         self.show_mean.setChecked(self._cfg.get('show_mean_line', True))
         fl.addRow("Mean Ratio Line:", self.show_mean)
         layout.addWidget(g)
+        self._grp_ref_lines = g
 
         g = QGroupBox("Confidence Intervals")
         fl = QFormLayout(g)
-        self.show_ci = QCheckBox("Show Poisson 95 % CI (±2σ)")
+        self.show_ci = QCheckBox("Show Poisson 95 % CI (Â±2Ïƒ)")
         self.show_ci.setChecked(self._cfg.get('show_confidence_intervals', True))
         fl.addRow(self.show_ci)
         layout.addWidget(g)
+        self._grp_ci = g
 
         g = QGroupBox("Filtering")
         fl = QFormLayout(g)
-        self.filter_zeros = QCheckBox()
-        self.filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
-        fl.addRow("Filter Zero Values:", self.filter_zeros)
+        # Zero/invalid ratio handling is fixed in _prepare_sample; no UI toggle.
+        self.filter_zeros = None
         self.filter_outliers_cb = QCheckBox()
         self.filter_outliers_cb.setChecked(self._cfg.get('filter_outliers', False))
         fl.addRow("Filter Outliers:", self.filter_outliers_cb)
@@ -858,6 +886,7 @@ class IsotopeSettingsDialog(QDialog):
         self.sat_thresh.setValue(self._cfg.get('saturation_threshold', 9999999.0))
         fl.addRow("Saturation Threshold:", self.sat_thresh)
         layout.addWidget(g)
+        self._grp_filter = g
 
         g = QGroupBox("Statistical Overlays")
         fo = QFormLayout(g)
@@ -894,6 +923,7 @@ class IsotopeSettingsDialog(QDialog):
         self.det_label.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
         fo.addRow("DL Label:", self.det_label)
         layout.addWidget(g)
+        self._grp_overlays = g
 
         g = QGroupBox("Axis Settings")
         fl = QFormLayout(g)
@@ -938,6 +968,7 @@ class IsotopeSettingsDialog(QDialog):
             'auto_y', 'y_min', 'y_max', 0.0, 100.0)
         fl.addRow("Y Range:", yr)
         layout.addWidget(g)
+        self._grp_axis = g
 
         g = QGroupBox("Display Options")
         fl = QFormLayout(g)
@@ -952,6 +983,7 @@ class IsotopeSettingsDialog(QDialog):
         self.marker_alpha.setValue(self._cfg.get('marker_alpha', 0.7))
         fl.addRow("Marker Transparency:", self.marker_alpha)
         layout.addWidget(g)
+        self._grp_display = g
 
         if self._is_multi:
             g = QGroupBox("Sample Names")
@@ -973,6 +1005,7 @@ class IsotopeSettingsDialog(QDialog):
                 row.addStretch()
                 w = QWidget(); w.setLayout(row); vl.addWidget(w)
             layout.addWidget(g)
+            self._grp_sample_names = g
 
             g2 = QGroupBox("Sample Display Order")
             v2 = QVBoxLayout(g2)
@@ -1002,8 +1035,10 @@ class IsotopeSettingsDialog(QDialog):
             btn_row.addStretch()
             v2.addLayout(btn_row)
             layout.addWidget(g2)
+            self._grp_sample_order = g2
 
         tabs.addTab(general_scroll, "General")
+        self._tabs = tabs
 
         corr_widget = QWidget()
         corr_scroll = QScrollArea()
@@ -1021,7 +1056,7 @@ class IsotopeSettingsDialog(QDialog):
         gcl = QVBoxLayout(self.global_corr_frame)
         gcl.setContentsMargins(0, 0, 0, 0)
 
-        g = QGroupBox("Global Isotope Correction — Exponential Law (IMF)")
+        g = QGroupBox("Global Isotope Correction â€” Exponential Law (IMF)")
         fl = QFormLayout(g)
 
         self.correction_method = QComboBox()
@@ -1125,7 +1160,7 @@ class IsotopeSettingsDialog(QDialog):
             det_item.setFlags(det_item.flags() & ~Qt.ItemIsEditable)
             self.sample_corr_table.setItem(row, 2, det_item)
 
-            btn = QPushButton("Configure…")
+            btn = QPushButton("Configureâ€¦")
             btn.clicked.connect(lambda _, s=sn, r=row: self._configure_sample_correction(s, r))
             self.sample_corr_table.setCellWidget(row, 3, btn)
 
@@ -1147,7 +1182,7 @@ class IsotopeSettingsDialog(QDialog):
 
         corr_layout.addWidget(self.per_sample_frame)
 
-        ratio_group = QGroupBox("Replicate Reference Ratios — Individual Samples")
+        ratio_group = QGroupBox("Replicate Reference Ratios â€” Individual Samples")
         ratio_vl = QVBoxLayout(ratio_group)
 
         ratio_ctrl = QHBoxLayout()
@@ -1203,6 +1238,7 @@ class IsotopeSettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
+        self._apply_scope_visibility()
 
     def _format_correction_details(self, scfg):
         """
@@ -1234,6 +1270,56 @@ class IsotopeSettingsDialog(QDialog):
         method = self.correction_method.currentText()
         self.exp_frame.setVisible(method == 'Exponential Law (instrumental mass fractionation)')
 
+    def _apply_scope_visibility(self):
+        """Apply scope-based section visibility for format and quantity dialogs.
+
+        Controls are grouped into format-only and quantities-only sections and
+        hidden by group based on ``self._scope`` to prevent duplicated/stale UI.
+        Correction controls are isolated to the correction scope.
+        """
+        scope = getattr(self, "_scope", "all")
+        format_groups = [
+            getattr(self, '_grp_font', None),
+            getattr(self, '_grp_ref_lines', None),
+            getattr(self, '_grp_ci', None),
+            getattr(self, '_grp_overlays', None),
+            getattr(self, '_grp_display', None),
+            getattr(self, '_grp_sample_names', None),
+        ]
+        quantity_groups = [
+            getattr(self, '_grp_data_type', None),
+            getattr(self, '_grp_elements', None),
+            getattr(self, '_grp_filter', None),
+            getattr(self, '_grp_axis', None),
+            getattr(self, '_grp_sample_order', None),
+        ]
+
+        correction_tab_index = -1
+        if hasattr(self, "_tabs") and self._tabs is not None:
+            for i in range(self._tabs.count()):
+                if self._tabs.tabText(i) == "Isotope Correction":
+                    correction_tab_index = i
+                    break
+
+        if scope == "format":
+            for g in quantity_groups:
+                if g is not None:
+                    g.hide()
+            if correction_tab_index >= 0:
+                self._tabs.removeTab(correction_tab_index)
+        elif scope == "quantities":
+            for g in format_groups:
+                if g is not None:
+                    g.hide()
+            if correction_tab_index >= 0:
+                self._tabs.removeTab(correction_tab_index)
+        elif scope == "correction":
+            for g in format_groups + quantity_groups:
+                if g is not None:
+                    g.hide()
+            if hasattr(self, "_tabs") and self._tabs is not None and self._tabs.count() > 1:
+                self._tabs.removeTab(0)
+
     def _configure_sample_correction(self, sample_name, row):
         """
         Args:
@@ -1241,8 +1327,8 @@ class IsotopeSettingsDialog(QDialog):
             row (Any): Row index.
         """
         scfg = self._sample_corr_cfgs.get(sample_name, _default_sample_correction())
-        scfg['element1'] = self.elem1.currentText()
-        scfg['element2'] = self.elem2.currentText()
+        scfg['element1'] = self.elem1.currentText() if hasattr(self, 'elem1') else self._cfg.get('element1', '')
+        scfg['element2'] = self.elem2.currentText() if hasattr(self, 'elem2') else self._cfg.get('element2', '')
 
         ref_elems = self._all_isotopes if self._all_isotopes else self._elems
 
@@ -1388,7 +1474,7 @@ class IsotopeSettingsDialog(QDialog):
                 f"No valid data for {ref_num}/{ref_den} across any replicate.")
             return
 
-        # ── Plot ──────────────────────────────────────────────────────
+        # â”€â”€ Plot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._rep_plot.clear()
 
         if hasattr(self, '_cf_vb'):
@@ -1434,7 +1520,7 @@ class IsotopeSettingsDialog(QDialog):
 
         cert = self._rep_certified.value()
 
-        # ── Right Y-axis: Correction Factor (CF) ─────────────────────
+        # â”€â”€ Right Y-axis: Correction Factor (CF) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         e1 = self.elem1.currentText() if hasattr(self, 'elem1') else self._cfg.get('element1', '')
         e2 = self.elem2.currentText() if hasattr(self, 'elem2') else self._cfg.get('element2', '')
         m_i = _mass_of(e1)
@@ -1452,7 +1538,7 @@ class IsotopeSettingsDialog(QDialog):
         if not can_compute_cf:
             missing = []
             if cert <= 0 or abs(cert - 1.0) <= 1e-9:
-                missing.append(f"certified ratio = {cert:.6f} (must be ≠ 1.0)")
+                missing.append(f"certified ratio = {cert:.6f} (must be â‰  1.0)")
             if not m_i or m_i <= 0:
                 missing.append(f"cannot extract mass from numerator '{e1}'")
             if not m_j or m_j <= 0:
@@ -1527,7 +1613,7 @@ class IsotopeSettingsDialog(QDialog):
         self._rep_plot.setLabel('left', f'{ref_num} / {ref_den}')
         self._rep_plot.setLabel('bottom', 'Individual Replicate')
 
-        # ── Stats summary ─────────────────────────────────────────────
+        # â”€â”€ Stats summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         std_r = float(np.std(ratios_arr))
         rsd = (std_r / mean_r * 100) if mean_r > 0 else 0
         median_r = float(np.median(ratios_arr))
@@ -1538,7 +1624,7 @@ class IsotopeSettingsDialog(QDialog):
             f"Replicates: {len(ratios)}  |  "
             f"Mean: {mean_r:.6f}  |  Median: {median_r:.6f}  |  "
             f"Std: {std_r:.6f}  |  RSD: {rsd:.2f}%",
-            f"Range: [{r_min:.6f} — {r_max:.6f}]",
+            f"Range: [{r_min:.6f} â€” {r_max:.6f}]",
         ]
         if cert > 0 and abs(cert - 1.0) > 1e-9:
             bias = ((mean_r - cert) / cert) * 100
@@ -1551,7 +1637,7 @@ class IsotopeSettingsDialog(QDialog):
             std_cf = float(np.std(valid_cf))
             info_lines.append(
                 f"CF ({e1}/{e2}):  Mean = {mean_cf:.6f}  |  Std = {std_cf:.6f}  |  "
-                f"Range: [{float(np.min(valid_cf)):.6f} — {float(np.max(valid_cf)):.6f}]")
+                f"Range: [{float(np.min(valid_cf)):.6f} â€” {float(np.max(valid_cf)):.6f}]")
         elif cf_diagnostic:
             info_lines.append(cf_diagnostic)
 
@@ -1687,69 +1773,68 @@ class IsotopeSettingsDialog(QDialog):
             btn.setStyleSheet(f"background:{c.name()};")
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
+        """Collect settings for the active scope only.
+
+        This prevents format and quantity routes from overwriting each other
+        and avoids stale/duplicated control behavior.
         """
         out = dict(self._cfg)
-        out['data_type_display'] = self.data_type.currentText()
-        out['label_mode'] = self.label_mode.currentText()
-        out['element1'] = self.elem1.currentText()
-        out['element2'] = self.elem2.currentText()
-        out['x_axis_element'] = self.x_elem.currentText()
-        out['color_element'] = self.color_elem.currentText()
+        scope = self._scope
+        if scope in {"quantities", "all"}:
+            out['data_type_display'] = self.data_type.currentText()
+            out['element1'] = self.elem1.currentText()
+            out['element2'] = self.elem2.currentText()
+            out['x_axis_element'] = self.x_elem.currentText()
+            out['color_element'] = self.color_elem.currentText()
+            out['filter_outliers'] = self.filter_outliers_cb.isChecked()
+            out['outlier_percentile'] = self.outlier_pct.value()
+            out['filter_saturated'] = self.filter_sat.isChecked()
+            out['saturation_threshold'] = self.sat_thresh.value()
+            out['log_x'] = self.log_x.isChecked()
+            out['log_y'] = self.log_y.isChecked()
+            out['auto_x'] = self._x_auto.isChecked()
+            out['x_min'] = self._x_min.value()
+            out['x_max'] = self._x_max_spin.value()
+            out['auto_y'] = self._y_auto.isChecked()
+            out['y_min'] = self._y_min.value()
+            out['y_max'] = self._y_max_spin.value()
+            if self._is_multi:
+                out['display_mode'] = self.display_mode.currentText()
+                if hasattr(self, '_order_list'):
+                    out['sample_order'] = [
+                        self._order_list.item(i).text()
+                        for i in range(self._order_list.count())]
 
-        out['per_sample_correction'] = self.per_sample_cb.isChecked()
-        out['sample_correction_configs'] = dict(self._sample_corr_cfgs)
-
-        out['correction_method'] = self.correction_method.currentText()
-        out['ref_isotope_num'] = self.ref_num.currentText()
-        out['ref_isotope_den'] = self.ref_den.currentText()
-        out['ref_certified_ratio'] = self.ref_certified.value()
-        out['ref_measured_ratio'] = self.ref_measured.value()
-        out['exp_ref_sample'] = self.exp_ref_sample.currentText()
-
-        out['show_natural_line'] = self.show_natural.isChecked()
-        out['show_standard_line'] = self.show_standard.isChecked()
-        out['show_mean_line'] = self.show_mean.isChecked()
-
-        out['show_confidence_intervals'] = self.show_ci.isChecked()
-
-        out['filter_zeros'] = self.filter_zeros.isChecked()
-        out['filter_outliers'] = self.filter_outliers_cb.isChecked()
-        out['outlier_percentile'] = self.outlier_pct.value()
-        out['filter_saturated'] = self.filter_sat.isChecked()
-        out['saturation_threshold'] = self.sat_thresh.value()
-
-        out['show_box'] = self.show_box_cb.isChecked()
-        out['shade_type'] = self.shade_combo.currentText()
-        out['shade_color'] = self._shade_color
-        out['shade_alpha'] = self._shade_alpha.value()
-        out['show_det_limit'] = self.show_det_cb.isChecked()
-        out['det_limit_value'] = self.det_val.value()
-        out['det_limit_label'] = self.det_label.text().strip()
-
-        out['log_x'] = self.log_x.isChecked()
-        out['log_y'] = self.log_y.isChecked()
-        out['auto_x'] = self._x_auto.isChecked()
-        out['x_min'] = self._x_min.value()
-        out['x_max'] = self._x_max_spin.value()
-        out['auto_y'] = self._y_auto.isChecked()
-        out['y_min'] = self._y_min.value()
-        out['y_max'] = self._y_max_spin.value()
-
-        out['marker_size'] = self.marker_size.value()
-        out['marker_alpha'] = self.marker_alpha.value()
-
-        if self._is_multi:
-            out['display_mode'] = self.display_mode.currentText()
-            if hasattr(self, '_name_edits'):
+        if scope in {"format", "all"}:
+            out['font_family'] = self.font_family_combo.currentText()
+            out['font_size'] = self.font_size_spin.value()
+            out['font_color'] = self._font_color
+            out['show_natural_line'] = self.show_natural.isChecked()
+            out['show_standard_line'] = self.show_standard.isChecked()
+            out['show_mean_line'] = self.show_mean.isChecked()
+            out['show_confidence_intervals'] = self.show_ci.isChecked()
+            out['show_box'] = self.show_box_cb.isChecked()
+            out['shade_type'] = self.shade_combo.currentText()
+            out['shade_color'] = self._shade_color
+            out['shade_alpha'] = self._shade_alpha.value()
+            out['show_det_limit'] = self.show_det_cb.isChecked()
+            out['det_limit_value'] = self.det_val.value()
+            out['det_limit_label'] = self.det_label.text().strip()
+            out['marker_size'] = self.marker_size.value()
+            out['marker_alpha'] = self.marker_alpha.value()
+            if self._is_multi and hasattr(self, '_name_edits'):
                 out['sample_name_mappings'] = {
                     sn: ne.text() for sn, ne in self._name_edits.items()}
-            if hasattr(self, '_order_list'):
-                out['sample_order'] = [
-                    self._order_list.item(i).text()
-                    for i in range(self._order_list.count())]
+
+        if scope in {"correction", "all"}:
+            out['per_sample_correction'] = self.per_sample_cb.isChecked()
+            out['sample_correction_configs'] = dict(self._sample_corr_cfgs)
+            out['correction_method'] = self.correction_method.currentText()
+            out['ref_isotope_num'] = self.ref_num.currentText()
+            out['ref_isotope_den'] = self.ref_den.currentText()
+            out['ref_certified_ratio'] = self.ref_certified.value()
+            out['ref_measured_ratio'] = self.ref_measured.value()
+            out['exp_ref_sample'] = self.exp_ref_sample.currentText()
         return out
 
 
@@ -1812,6 +1897,12 @@ class IsotopicRatioDisplayDialog(QDialog):
         return get_all_isotope_labels(self.parent_window)
 
     def _setup_ui(self):
+        """Build the isotopic ratio dialog layout with the standard four-button row.
+
+        The bottom actions route to format settings, quantity settings, view reset,
+        and full-figure export. Scientific extraction and computation paths are
+        intentionally unchanged.
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
@@ -1820,6 +1911,24 @@ class IsotopicRatioDisplayDialog(QDialog):
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.plot_widget)
+
+        btn_row = QHBoxLayout()
+        self._btn_plot_format = QPushButton("Plot format settings")
+        self._btn_plot_format.clicked.connect(self._open_plot_format_settings)
+        btn_row.addWidget(self._btn_plot_format)
+
+        self._btn_quantities = QPushButton("Configure plot quantities")
+        self._btn_quantities.clicked.connect(self._open_configure_plot_quantities)
+        btn_row.addWidget(self._btn_quantities)
+
+        self._btn_reset = QPushButton("Reset layout")
+        self._btn_reset.clicked.connect(self._reset_layout)
+        btn_row.addWidget(self._btn_reset)
+
+        self._btn_export = QPushButton("Export figure")
+        self._btn_export.clicked.connect(self._download_figure)
+        btn_row.addWidget(self._btn_export)
+        layout.addLayout(btn_row)
 
 
     def _auto_calc_natural(self):
@@ -1913,22 +2022,18 @@ class IsotopicRatioDisplayDialog(QDialog):
             pass
 
     def _show_context_menu(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
+        """Show the minimal custom right-click menu for quick visual toggles.
+
+        This menu intentionally contains only lightweight visual toggles and
+        isotope label mode, plus a dedicated isotope-correction route. Data
+        quantity controls are routed through the bottom quantities dialog.
         """
         cfg = self.node.config
         menu = QMenu(self)
 
         tm = menu.addMenu("Quick Toggles")
         for key, label, default in [
-            ('log_x',                  'Log X-axis',             False),
-            ('log_y',                  'Log Y-axis',             False),
             ('show_confidence_intervals', 'Poisson 95% CI',      True),
-            ('filter_zeros',           'Filter Zeros',           True),
-            ('filter_outliers',        'Filter Outliers',        False),
-            ('filter_saturated',       'Filter Saturated',       False),
-            ('per_sample_correction',  'Per-Sample Correction',  False),
             ('show_box',               'Figure Box (frame)',     True),
         ]:
             a = tm.addAction(label); a.setCheckable(True)
@@ -1955,13 +2060,6 @@ class IsotopicRatioDisplayDialog(QDialog):
             a.setChecked(cfg.get('shade_type', 'None') == st)
             a.triggered.connect(lambda _, v=st: self._set_cfg('shade_type', v))
 
-        dt_menu = menu.addMenu("Data Type")
-        current_dt = cfg.get('data_type_display', 'Counts')
-        for dt in DATA_TYPE_OPTIONS:
-            a = dt_menu.addAction(dt); a.setCheckable(True)
-            a.setChecked(dt == current_dt)
-            a.triggered.connect(lambda _, d=dt: self._set_data_type(d))
-
         lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
         for mode in LABEL_MODES:
@@ -1969,57 +2067,9 @@ class IsotopicRatioDisplayDialog(QDialog):
             a.setChecked(mode == cur_lm)
             a.triggered.connect(lambda _, m=mode: self._set_cfg('label_mode', m))
 
-        elems = self._available_elements()
-        if elems:
-            e1_menu = menu.addMenu("Numerator (A)")
-            for e in elems:
-                a = e1_menu.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('element1'))
-                a.triggered.connect(lambda _, el=e: self._set_elem('element1', el))
-
-            e2_menu = menu.addMenu("Denominator (B)")
-            for e in elems:
-                a = e2_menu.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('element2'))
-                a.triggered.connect(lambda _, el=e: self._set_elem('element2', el))
-
-            xa_menu = menu.addMenu("X-axis Element")
-            for e in elems:
-                a = xa_menu.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('x_axis_element'))
-                a.triggered.connect(lambda _, el=e: self._set_elem('x_axis_element', el))
-
-            ce_menu = menu.addMenu("Color Element (3rd)")
-            a_none = ce_menu.addAction("(None - solid color)"); a_none.setCheckable(True)
-            a_none.setChecked(not cfg.get('color_element'))
-            a_none.triggered.connect(lambda _: self._set_elem('color_element', ''))
-            ce_menu.addSeparator()
-            for e in elems:
-                a = ce_menu.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('color_element'))
-                a.triggered.connect(lambda _, el=e: self._set_elem('color_element', el))
-
-        if not cfg.get('per_sample_correction', False):
-            cm_menu = menu.addMenu("Isotope Correction (Global)")
-            cur_method = cfg.get('correction_method', 'None')
-            for m in CORRECTION_METHODS:
-                a = cm_menu.addAction(m); a.setCheckable(True)
-                a.setChecked(m == cur_method)
-                a.triggered.connect(lambda _, method=m: self._set_correction(method))
-
-        if self._is_multi():
-            dm_menu = menu.addMenu("Display Mode")
-            cur = cfg.get('display_mode', DISPLAY_MODES[0])
-            for m in DISPLAY_MODES:
-                a = dm_menu.addAction(m); a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set_display_mode(mode))
-
         menu.addSeparator()
-        menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure...").triggered.connect(self._download_figure)
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
+        menu.addAction("Isotope correction...").triggered.connect(
+            self._open_isotope_correction_settings)
 
         menu.exec(QCursor.pos())
     
@@ -2092,18 +2142,65 @@ class IsotopicRatioDisplayDialog(QDialog):
         self.node.config['display_mode'] = mode
         self._refresh()
 
-    def _open_settings(self):
+    def _open_settings(self, scope: str = "all", title: str = "Isotopic Ratio Settings"):
+        """Open settings with a scope-safe collection path.
+
+        ``scope`` controls which config keys are collected and updated:
+        - ``format`` for presentation settings.
+        - ``quantities`` for scientific/data controls.
+        - ``correction`` for isotope correction controls.
+        - ``all`` for compatibility with legacy flows.
+        """
         dlg = IsotopeSettingsDialog(
             self.node.config, self._available_elements(),
             self._all_isotope_labels(),
             self._is_multi(), self._sample_names(),
             self.parent_window, self,
-            node=self.node)
+            node=self.node, scope=scope, dialog_title=title)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._auto_calc_natural()
             self._auto_calc_standard()
             self._refresh()
+
+    def _open_plot_format_settings(self):
+        """Open the format-scoped settings dialog for visual/presentation controls."""
+        self._open_settings(
+            scope="format",
+            title="Isotopic ratio plot format settings",
+        )
+
+    def _open_configure_plot_quantities(self):
+        """Open the quantities-scoped settings dialog for scientific/data controls."""
+        self._open_settings(
+            scope="quantities",
+            title="Isotopic ratio quantities configuration",
+        )
+
+    def _open_isotope_correction_settings(self):
+        """Open the correction-only settings dialog from right-click.
+
+        Correction controls are intentionally centralized here to avoid
+        duplication in format and quantity dialogs.
+        """
+        self._open_settings(
+            scope="correction",
+            title="Isotopic ratio isotope correction",
+        )
+
+    def _reset_layout(self):
+        """Reset view layout to autorange for all active plot panels.
+
+        This resets axes/view state only and preserves the existing scientific
+        selections and ratio computation settings.
+        """
+        self.node.config['auto_x'] = True
+        self.node.config['auto_y'] = True
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.PlotItem):
+                item.enableAutoRange(x=True, y=True)
+                item.autoRange()
+        self._refresh()
 
     def _open_plot_settings(self):
         """Open PlotSettingsDialog via the adapter bridge."""
@@ -2120,6 +2217,11 @@ class IsotopicRatioDisplayDialog(QDialog):
                 _PlotWidgetAdapter(self.plot_widget, pi), self).exec()
 
     def _refresh(self):
+        """Redraw the isotopic ratio plot from extracted source data and config.
+
+        This preserves existing scientific extraction/correction paths while
+        updating only presentation and quantity selections from dialog routes.
+        """
         self.plot_widget.clear()
         plot_data = self.node.extract_plot_data()
 
@@ -2151,6 +2253,19 @@ class IsotopicRatioDisplayDialog(QDialog):
             self._cached_elements = []
 
         cfg = self.node.config
+        e1 = (cfg.get('element1') or '').strip()
+        e2 = (cfg.get('element2') or '').strip()
+        if e1 and e2 and e1 == e2:
+            pi = self.plot_widget.addPlot(row=0, col=0)
+            ti = pg.TextItem(
+                "Choose different numerator and denominator isotopes.",
+                anchor=(0.5, 0.5), color='gray')
+            pi.addItem(ti)
+            ti.setPos(0.5, 0.5)
+            pi.hideAxis('left')
+            pi.hideAxis('bottom')
+            self._suppress_native_pg_context_menu()
+            return
 
         if self._is_multi():
             mode = cfg.get('display_mode', DISPLAY_MODES[0])
@@ -2165,14 +2280,48 @@ class IsotopicRatioDisplayDialog(QDialog):
             pi = self.plot_widget.addPlot(row=0, col=0)
             self._draw_single(pi, plot_data, cfg)
 
-    def _prepare_sample(self, element_data, cfg, sample_name=None):
+        self._suppress_native_pg_context_menu()
+
+    def _suppress_native_pg_context_menu(self):
+        """Disable native PyQtGraph menus on all current plot items.
+
+        The dialog uses a custom context menu contract. This prevents a stacked
+        native menu from appearing underneath it.
         """
-        Args:
-            element_data (Any): The element data.
-            cfg (Any): The cfg.
-            sample_name (Any): The sample name.
-        Returns:
-            tuple: Result of the operation.
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.PlotItem) and hasattr(item, "vb"):
+                try:
+                    item.vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _iter_samples_in_display_order(self, plot_data, cfg):
+        """Yield sample items in configured display order when provided.
+
+        This keeps multi-sample quantity controls meaningful without changing
+        scientific extraction.
+        """
+        if not isinstance(plot_data, dict):
+            return []
+        order = cfg.get('sample_order', []) or []
+        seen = set()
+        ordered_items = []
+        for name in order:
+            if name in plot_data:
+                ordered_items.append((name, plot_data[name]))
+                seen.add(name)
+        for name, sd in plot_data.items():
+            if name not in seen:
+                ordered_items.append((name, sd))
+        return ordered_items
+
+    def _prepare_sample(self, element_data, cfg, sample_name=None):
+        """Prepare one sample by filtering invalid ratio inputs before plotting.
+
+        This method now enforces fixed invalid-value handling regardless of
+        legacy ``filter_zeros`` config values: rows are skipped when numerator,
+        denominator, x-values, or computed ratios are missing, non-finite, or
+        nonpositive where required for ratio/log usage.
         """
         eff_cfg = get_sample_correction_config(cfg, sample_name)
 
@@ -2197,28 +2346,37 @@ class IsotopicRatioDisplayDialog(QDialog):
         for col in meta_cols:
             df[col] = meta_data[col]
 
-        if cfg.get('filter_zeros', True):
-            mask = (df[e1] > 0) & (df[e2] > 0)
-            df = df[mask]
-                    
+        num = pd.to_numeric(df[e1], errors='coerce').astype(float)
+        den = pd.to_numeric(df[e2], errors='coerce').astype(float)
+        valid_inputs = np.isfinite(num.values) & np.isfinite(den.values) & (num.values > 0) & (den.values > 0)
+        df = df.loc[valid_inputs].copy()
+
         if len(df) == 0:
             return None
 
-        ratios = (df[e1] / df[e2]).values
+        ratios = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
+                  pd.to_numeric(df[e2], errors='coerce').astype(float)).values
 
         if cfg.get('filter_outliers', False):
-            ratios = apply_outlier_filter(ratios, cfg)
+            ratios = apply_outlier_filter(ratios[np.isfinite(ratios)], cfg)
             if len(ratios) == 0:
                 return None
             pct = float(cfg.get('outlier_percentile', 99.0))
-            lo, hi = np.percentile((df[e1] / df[e2]).values,
+            raw_ratio = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
+                         pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+            raw_ratio = raw_ratio[np.isfinite(raw_ratio)]
+            if raw_ratio.size == 0:
+                return None
+            lo, hi = np.percentile(raw_ratio,
                                    [100.0 - pct, pct])
-            ratio_raw = (df[e1] / df[e2]).values
+            ratio_raw = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
+                         pd.to_numeric(df[e2], errors='coerce').astype(float)).values
             keep = (ratio_raw >= lo) & (ratio_raw <= hi)
             df = df[keep]
             if len(df) == 0:
                 return None
-            ratios = (df[e1] / df[e2]).values
+            ratios = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
+                      pd.to_numeric(df[e2], errors='coerce').astype(float)).values
 
         method = eff_cfg.get('correction_method', 'None')
         corr_col = '_original_sample' if '_original_sample' in df.columns else '_source_sample'
@@ -2234,12 +2392,17 @@ class IsotopicRatioDisplayDialog(QDialog):
             ratios = apply_isotope_correction(ratios, eff_cfg)
 
         if x_elem in df.columns:
-            x = df[x_elem].values
+            x = pd.to_numeric(df[x_elem], errors='coerce').astype(float).values
         else:
-            x = df[e2].values
+            x = pd.to_numeric(df[e2], errors='coerce').astype(float).values
 
         corrected_linear = ratios.copy()
-        mean_raw = float(np.mean((df[e1] / df[e2]).values))
+        raw_linear = (pd.to_numeric(df[e1], errors='coerce').astype(float) /
+                      pd.to_numeric(df[e2], errors='coerce').astype(float)).values
+        raw_linear = raw_linear[np.isfinite(raw_linear) & (raw_linear > 0)]
+        if raw_linear.size == 0:
+            return None
+        mean_raw = float(np.mean(raw_linear))
 
         color_values = None
         if color_elem and color_elem in df.columns:
@@ -2247,6 +2410,15 @@ class IsotopicRatioDisplayDialog(QDialog):
             color_values = np.full_like(raw_colors, np.nan)
             valid_c = raw_colors > 0
             color_values[valid_c] = np.log10(raw_colors[valid_c])
+
+        finite_mask = np.isfinite(x) & np.isfinite(ratios) & np.isfinite(corrected_linear) & (ratios > 0)
+        x = x[finite_mask]
+        ratios = ratios[finite_mask]
+        corrected_linear = corrected_linear[finite_mask]
+        if color_values is not None:
+            color_values = color_values[finite_mask]
+        if len(ratios) == 0:
+            return None
 
         if cfg.get('log_x', False):
             mask = x > 0
@@ -2262,6 +2434,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             x, ratios = x[mask], ratios[mask]
             if color_values is not None:
                 color_values = color_values[mask]
+            corrected_linear = corrected_linear[mask]
             if len(ratios) == 0:
                 return None
             ratios = np.log10(ratios)
@@ -2403,8 +2576,8 @@ class IsotopicRatioDisplayDialog(QDialog):
     def _compute_replicate_ref_ratio(self, sample_name, ref_num_label, ref_den_label):
         """Compute the reference ratio for a specific replicate sample.
 
-        FIX (batch windows): Now searches ALL open windows — not just
-        self.parent_window — using both the exact sample name and the
+        FIX (batch windows): Now searches ALL open windows â€” not just
+        self.parent_window â€” using both the exact sample name and the
         stripped batch name (e.g., 'SampleA' from 'SampleA [W1]').
         Args:
             sample_name (Any): The sample name.
@@ -2756,23 +2929,18 @@ class IsotopicRatioDisplayDialog(QDialog):
         _apply_box(pi, cfg)
 
     def _apply_labels_and_font(self, pi, cfg, x_label=None, y_label=None, sample_name=None):
-        """
-        Args:
-            pi (Any): The pi.
-            cfg (Any): The cfg.
-            x_label (Any): The x label.
-            y_label (Any): The y label.
-            sample_name (Any): The sample name.
+        """Apply labels, fonts, and explicit axis state to a plot item.
+
+        Log axis state and manual/auto ranges are set explicitly on every draw
+        path so visual state does not silently persist between refreshes.
         """
         if x_label is None or y_label is None:
             x_label, y_label = self._build_labels(cfg, sample_name)
         set_axis_labels(pi, x_label, y_label, cfg)
         apply_font_to_pyqtgraph(pi, cfg)
 
-        if cfg.get('log_x'):
-            pi.getAxis('bottom').setLogMode(True)
-        if cfg.get('log_y'):
-            pi.getAxis('left').setLogMode(True)
+        pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
+        pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
 
         if not cfg.get('auto_x', True):
             pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 99999999), padding=0)
@@ -2794,7 +2962,7 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         result = self._prepare_sample(edf, cfg, sample_name=sample_key)
         if result is None:
-            ti = pg.TextItem("No valid data for selected elements",
+            ti = pg.TextItem("No valid isotope ratios after skipping zero or invalid values.",
                              anchor=(0.5, 0.5), color='gray')
             pi.addItem(ti)
             ti.setPos(0.5, 0.5)
@@ -2831,8 +2999,9 @@ class IsotopicRatioDisplayDialog(QDialog):
         all_corrected = []
         global_vmin, global_vmax = float('inf'), float('-inf')
         has_color = bool(cfg.get('color_element'))
+        any_drawn = False
 
-        for i, (sn, sd) in enumerate(plot_data.items()):
+        for i, (sn, sd) in enumerate(self._iter_samples_in_display_order(plot_data, cfg)):
             if not sd or 'element_data' not in sd:
                 continue
             result = self._prepare_sample(sd['element_data'], cfg, sample_name=sn)
@@ -2845,6 +3014,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             all_corrected.extend(corrected_linear.tolist())
 
             scatter, vmin, vmax = self._add_scatter(pi, x, ratios, cfg, color, color_values)
+            any_drawn = True
             if vmin is not None:
                 global_vmin = min(global_vmin, vmin)
                 global_vmax = max(global_vmax, vmax)
@@ -2865,6 +3035,12 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         if has_color and global_vmin < global_vmax:
             self._add_inset_colorbar(pi, cfg, global_vmin, global_vmax)
+        if not any_drawn:
+            ti = pg.TextItem(
+                "No valid isotope ratios after skipping zero or invalid values.",
+                anchor=(0.5, 0.5), color='gray')
+            pi.addItem(ti)
+            ti.setPos(0.5, 0.5)
 
     def _draw_subplots(self, plot_data, cfg):
         """
@@ -2872,7 +3048,8 @@ class IsotopicRatioDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        samples = list(plot_data.keys())
+        samples = [sn for sn, _ in self._iter_samples_in_display_order(plot_data, cfg)]
+        sample_map = dict(plot_data)
         n = len(samples)
         cols = min(3, n)
         rows = math.ceil(n / cols)
@@ -2881,7 +3058,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             r, c = idx // cols, idx % cols
             pi = self.plot_widget.addPlot(row=r, col=c)
 
-            sd = plot_data[sn]
+            sd = sample_map[sn]
             if not sd or 'element_data' not in sd:
                 continue
 
@@ -2897,7 +3074,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         """
         first_pi = None
         col_idx = 0
-        for sn, sd in plot_data.items():
+        for sn, sd in self._iter_samples_in_display_order(plot_data, cfg):
             if not sd or 'element_data' not in sd:
                 continue
 
@@ -2916,16 +3093,14 @@ class IsotopicRatioDisplayDialog(QDialog):
             col_idx += 1
 
     def _draw_single_on_plot(self, pi, edf, cfg, color, sample_name):
-        """
-        Args:
-            pi (Any): The pi.
-            edf (Any): The edf.
-            cfg (Any): The cfg.
-            color (Any): Colour value.
-            sample_name (Any): The sample name.
-        """
+        """Draw one sample onto a target subplot using current ratio settings."""
         result = self._prepare_sample(edf, cfg, sample_name=sample_name)
         if result is None:
+            ti = pg.TextItem(
+                "No valid isotope ratios after skipping zero or invalid values.",
+                anchor=(0.5, 0.5), color='gray')
+            pi.addItem(ti)
+            ti.setPos(0.5, 0.5)
             return
 
         x, ratios, _, color_values, corrected_linear, mean_raw = result
@@ -3122,3 +3297,5 @@ class IsotopicRatioPlotNode(QObject):
             return result or None
 
         return None
+
+
