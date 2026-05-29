@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QAction, QCursor
 import pyqtgraph as pg
 import numpy as np
 import math
+import re
 
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
@@ -24,10 +25,6 @@ from results.shared_plot_utils import (
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
-)
-from results.shared_annotation import (
-    AnnotationManager, FloatingInspector, AnnotationShelfButton,
-    install_annotation_shortcuts,
 )
 
 try:
@@ -50,30 +47,45 @@ class CorrelationSettingsDialog(QDialog):
     """Full settings dialog opened from the right-click → Configure… action."""
 
     def __init__(self, config: dict, available_elements: list,
-                 is_multi: bool, sample_names: list, parent=None):
+                 is_multi: bool, sample_names: list,
+                 scope: str = "all", parent=None):
         """
         Args:
             config (dict): Configuration dictionary.
             available_elements (list): The available elements.
             is_multi (bool): The is multi.
             sample_names (list): The sample names.
+            scope (str): Which settings scope to expose and collect:
+                ``format``, ``quantities``, or ``all``.
             parent (Any): Parent widget or object.
         """
         super().__init__(parent)
-        self.setWindowTitle("Correlation Plot Settings")
+        self._scope = scope if scope in {"format", "quantities", "all"} else "all"
+        if self._scope == "format":
+            self.setWindowTitle("Correlation plot format settings")
+        elif self._scope == "quantities":
+            self.setWindowTitle("Correlation quantities configuration")
+        else:
+            self.setWindowTitle("Correlation Plot Settings")
         self.setMinimumWidth(460)
         self._config = dict(config)
         self._elements = available_elements
         self._is_multi = is_multi
         self._sample_names = sample_names
+        self.display_mode = None
+        self._sample_name_edits = None
+        self._format_groups = []
+        self._quantity_groups = []
         self._build_ui()
 
     # ── UI construction ──────────────────────
 
     def _build_ui(self):
         """
-        Returns:
-            tuple: Result of the operation.
+        Build settings UI sections and mark each section as format or quantities.
+
+        A single dialog class is reused for both bottom-button routes. Scope
+        visibility and scope-aware collection prevent duplicated/no-op controls.
         """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -90,11 +102,16 @@ class CorrelationSettingsDialog(QDialog):
             self.display_mode = QComboBox()
             self.display_mode.addItems([
                 'Overlaid (Different Colors)', 'Side by Side Subplots',
-                'Individual Subplots', 'Combined with Legend'
+                'Individual Subplots'
             ])
-            self.display_mode.setCurrentText(self._config.get('display_mode', 'Overlaid (Different Colors)'))
+            self.display_mode.setCurrentText(
+                CorrelationPlotDisplayDialog.normalize_display_mode(
+                    self._config.get('display_mode', 'Overlaid (Different Colors)')
+                )
+            )
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
+            self._quantity_groups.append(g)
 
         g = QGroupBox("Analysis Mode")
         vl = QVBoxLayout(g)
@@ -104,6 +121,7 @@ class CorrelationSettingsDialog(QDialog):
         self.mode_combo.currentTextChanged.connect(self._on_mode_changed)
         vl.addWidget(self.mode_combo)
         layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         self.simple_group = QGroupBox("Element Selection")
         fl = QFormLayout(self.simple_group)
@@ -119,6 +137,7 @@ class CorrelationSettingsDialog(QDialog):
         self.color_elem.setCurrentText(self._config.get('color_element', 'None'))
         fl.addRow("Color by:", self.color_elem)
         layout.addWidget(self.simple_group)
+        self._quantity_groups.append(self.simple_group)
 
         self.custom_group = QGroupBox("Custom Equations")
         cl = QFormLayout(self.custom_group)
@@ -167,22 +186,18 @@ class CorrelationSettingsDialog(QDialog):
                                "background:#DBEAFE; border-radius:4px;")
             cl.addRow(info)
         layout.addWidget(self.custom_group)
+        self._quantity_groups.append(self.custom_group)
 
         g = QGroupBox("Data Type")
         fl = QFormLayout(g)
         self.data_type = QComboBox(); self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._config.get('data_type_display', 'Counts'))
         fl.addRow("Data Type:", self.data_type)
-        self.label_mode_combo = QComboBox()
-        self.label_mode_combo.addItems(LABEL_MODES)
-        self.label_mode_combo.setCurrentText(self._config.get('label_mode', 'Symbol'))
-        fl.addRow("Isotope Label:", self.label_mode_combo)
         layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         g = QGroupBox("Plot Options")
         fl = QFormLayout(g)
-        self.filter_zeros = QCheckBox(); self.filter_zeros.setChecked(self._config.get('filter_zeros', True))
-        fl.addRow("Filter zeros:", self.filter_zeros)
         self.filter_sat = QCheckBox(); self.filter_sat.setChecked(self._config.get('filter_saturated', True))
         fl.addRow("Filter saturated:", self.filter_sat)
         self.sat_thresh = QSpinBox(); self.sat_thresh.setRange(1, 1_000_000)
@@ -195,17 +210,12 @@ class CorrelationSettingsDialog(QDialog):
         self.outlier_pct.setDecimals(1)
         self.outlier_pct.setValue(self._config.get('outlier_percentile', 99.0))
         fl.addRow("Keep below percentile:", self.outlier_pct)
-        self.show_corr = QCheckBox(); self.show_corr.setChecked(self._config.get('show_correlation', True))
-        fl.addRow("Show r:", self.show_corr)
-        self.show_trend = QCheckBox(); self.show_trend.setChecked(self._config.get('show_trendline', True))
-        fl.addRow("Trend line:", self.show_trend)
-        self.show_box_cb = QCheckBox(); self.show_box_cb.setChecked(self._config.get('show_box', True))
-        fl.addRow("Figure box (frame):", self.show_box_cb)
         self.log_x = QCheckBox(); self.log_x.setChecked(self._config.get('log_x', False))
         fl.addRow("Log X:", self.log_x)
         self.log_y = QCheckBox(); self.log_y.setChecked(self._config.get('log_y', False))
         fl.addRow("Log Y:", self.log_y)
         layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         g = QGroupBox("SD Envelope (around trend line)")
         fl = QFormLayout(g)
@@ -223,6 +233,7 @@ class CorrelationSettingsDialog(QDialog):
         sd_row.addWidget(self._sd_alpha); sd_row.addStretch()
         fl.addRow("Color / alpha:", sd_row)
         layout.addWidget(g)
+        self._format_groups.append(g)
 
         g = QGroupBox("Reference Diagonal Line")
         fl = QFormLayout(g)
@@ -253,6 +264,7 @@ class CorrelationSettingsDialog(QDialog):
         ref_style_row.addStretch()
         fl.addRow("Style:", ref_style_row)
         layout.addWidget(g)
+        self._format_groups.append(g)
 
         g = QGroupBox("Marker")
         fl = QFormLayout(g)
@@ -263,7 +275,29 @@ class CorrelationSettingsDialog(QDialog):
         self.m_alpha.setSingleStep(0.1); self.m_alpha.setDecimals(1)
         self.m_alpha.setValue(self._config.get('marker_alpha', 0.7))
         fl.addRow("Alpha:", self.m_alpha)
+        self.show_box_cb = QCheckBox(); self.show_box_cb.setChecked(self._config.get('show_box', True))
+        fl.addRow("Figure box (frame):", self.show_box_cb)
         layout.addWidget(g)
+        self._format_groups.append(g)
+
+        g = QGroupBox("Font")
+        fl = QFormLayout(g)
+        self.font_family_combo = QComboBox()
+        self.font_family_combo.addItems(FONT_FAMILIES)
+        self.font_family_combo.setCurrentText(self._config.get('font_family', 'Times New Roman'))
+        fl.addRow("Family:", self.font_family_combo)
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(6, 48)
+        self.font_size_spin.setValue(int(self._config.get('font_size', 18)))
+        fl.addRow("Size:", self.font_size_spin)
+        self.font_color_btn = QPushButton()
+        self._font_color = self._config.get('font_color', '#000000')
+        self.font_color_btn.setFixedWidth(40)
+        self.font_color_btn.setStyleSheet(f"background:{self._font_color};")
+        self.font_color_btn.clicked.connect(self._pick_font_color)
+        fl.addRow("Color:", self.font_color_btn)
+        layout.addWidget(g)
+        self._format_groups.append(g)
 
 
         if self._is_multi:
@@ -287,33 +321,7 @@ class CorrelationSettingsDialog(QDialog):
                 w = QWidget(); w.setLayout(row)
                 sl.addWidget(w)
             layout.addWidget(g)
-
-            g2 = QGroupBox("Sample Display Order")
-            v2 = QVBoxLayout(g2)
-            hint = QLabel(
-                "Drag or use \u2191\u2193 to reorder \u2014 useful for time series.")
-            hint.setStyleSheet("color:#6B7280; font-size:10px;")
-            hint.setWordWrap(True)
-            v2.addWidget(hint)
-            from PySide6.QtWidgets import QAbstractItemView as _AIV
-            self._order_list = QListWidget()
-            self._order_list.setMaximumHeight(130)
-            self._order_list.setDragDropMode(_AIV.InternalMove)
-            cur_order = self._config.get('sample_order', [])
-            ordered = [s for s in cur_order if s in self._sample_names]
-            ordered += [s for s in self._sample_names if s not in ordered]
-            for s in ordered:
-                self._order_list.addItem(s)
-            v2.addWidget(self._order_list)
-            btn_row = QHBoxLayout()
-            up_btn = QPushButton("\u2191  Up"); up_btn.setFixedWidth(72)
-            up_btn.clicked.connect(self._move_up)
-            dn_btn = QPushButton("\u2193  Down"); dn_btn.setFixedWidth(72)
-            dn_btn.clicked.connect(self._move_down)
-            btn_row.addWidget(up_btn); btn_row.addWidget(dn_btn)
-            btn_row.addStretch()
-            v2.addLayout(btn_row)
-            layout.addWidget(g2)
+            self._format_groups.append(g)
 
         g = QGroupBox("Axis Ranges")
         fl = QFormLayout(g)
@@ -352,6 +360,7 @@ class CorrelationSettingsDialog(QDialog):
             'y_min', 'y_max', 'auto_y', 0.0, 1000.0)
         fl.addRow("Y Range:", yr)
         layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         layout.addStretch()
 
@@ -360,9 +369,29 @@ class CorrelationSettingsDialog(QDialog):
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
+        self._apply_scope_visibility()
         self._on_mode_changed()
 
+    def _apply_scope_visibility(self):
+        """Show only relevant setting groups for the current route scope.
+
+        Format routes show visual controls; quantities routes show scientific
+        controls. This avoids duplicated/no-op controls while preserving one
+        dialog implementation.
+        """
+        show_format = self._scope in {"format", "all"}
+        show_quantities = self._scope in {"quantities", "all"}
+        for grp in self._format_groups:
+            if grp is not None:
+                grp.setVisible(show_format)
+        for grp in self._quantity_groups:
+            if grp is not None:
+                grp.setVisible(show_quantities)
+
     def _on_mode_changed(self):
+        """Toggle simple/custom selector groups for quantity-editing routes."""
+        if self._scope == "format":
+            return
         simple = self.mode_combo.currentText() == 'Simple Element Correlation'
         self.simple_group.setVisible(simple)
         self.custom_group.setVisible(not simple)
@@ -377,6 +406,8 @@ class CorrelationSettingsDialog(QDialog):
             self.y_lbl.setPlaceholderText(y_eq)
 
     def _move_up(self):
+        if not hasattr(self, '_order_list') or self._order_list is None:
+            return
         row = self._order_list.currentRow()
         if row > 0:
             item = self._order_list.takeItem(row)
@@ -384,6 +415,8 @@ class CorrelationSettingsDialog(QDialog):
             self._order_list.setCurrentRow(row - 1)
 
     def _move_down(self):
+        if not hasattr(self, '_order_list') or self._order_list is None:
+            return
         row = self._order_list.currentRow()
         if row < self._order_list.count() - 1:
             item = self._order_list.takeItem(row)
@@ -406,65 +439,72 @@ class CorrelationSettingsDialog(QDialog):
             self._ref_color = c.name()
             self._ref_color_btn.setStyleSheet(f"background:{self._ref_color};")
 
+    def _pick_font_color(self):
+        """Pick the font/text color used for axis labels and overlay text."""
+        c = QColorDialog.getColor(QColor(self._font_color), self)
+        if c.isValid():
+            self._font_color = c.name()
+            self.font_color_btn.setStyleSheet(f"background:{self._font_color};")
+
     def collect(self) -> dict:
-        """Return the updated config dict.
-        Returns:
-            dict: Result of the operation.
+        """Return scope-safe config updates for format/quantities routes.
+
+        The active scope controls which keys are collected so the dialog never
+        reads missing/deleted widgets from sections not created for that route.
         """
         cfg = dict(self._config)
-        cfg['mode'] = self.mode_combo.currentText()
-        cfg['x_element'] = self.x_elem.currentText()
-        cfg['y_element'] = self.y_elem.currentText()
-        cfg['color_element'] = self.color_elem.currentText()
-        cfg['x_equation'] = self.x_eq.text()
-        cfg['y_equation'] = self.y_eq.text()
-        x_lbl = self.x_lbl.text().strip()
-        y_lbl = self.y_lbl.text().strip()
-        cfg['x_label'] = x_lbl or self.x_eq.text().strip() or 'X-axis'
-        cfg['y_label'] = y_lbl or self.y_eq.text().strip() or 'Y-axis'
-        cfg['auto_x'] = self._x_auto.isChecked()
-        cfg['x_min'] = self._x_min.value()
-        cfg['x_max'] = self._x_max.value()
-        cfg['auto_y'] = self._y_auto.isChecked()
-        cfg['y_min'] = self._y_min.value()
-        cfg['y_max'] = self._y_max.value()
-        cfg['data_type_display'] = self.data_type.currentText()
-        cfg['label_mode'] = self.label_mode_combo.currentText()
-        cfg['filter_zeros'] = self.filter_zeros.isChecked()
-        cfg['filter_saturated'] = self.filter_sat.isChecked()
-        cfg['saturation_threshold'] = self.sat_thresh.value()
-        cfg['filter_outliers'] = self.filter_outliers_cb.isChecked()
-        cfg['outlier_percentile'] = self.outlier_pct.value()
-        cfg['show_correlation'] = self.show_corr.isChecked()
-        cfg['show_trendline'] = self.show_trend.isChecked()
-        cfg['show_box'] = self.show_box_cb.isChecked()
-        cfg['log_x'] = self.log_x.isChecked()
-        cfg['log_y'] = self.log_y.isChecked()
-        cfg['show_sd_band'] = self.show_sd_band.isChecked()
-        cfg['sd_band_color'] = self._sd_color
-        cfg['sd_band_alpha'] = self._sd_alpha.value()
-        cfg['show_ref_line'] = self.show_ref_cb.isChecked()
-        cfg['ref_line_slope'] = self.ref_slope.value()
-        cfg['ref_line_intercept'] = self.ref_intercept.value()
-        cfg['ref_line_label'] = self.ref_label_edit.text().strip()
-        cfg['ref_line_color'] = self._ref_color
-        cfg['ref_line_style'] = self._ref_style.currentText()
-        cfg['ref_line_width'] = self._ref_width.value()
-        cfg['marker_size'] = self.m_size.value()
-        cfg['marker_alpha'] = self.m_alpha.value()
+        if self._scope in {"quantities", "all"}:
+            cfg['mode'] = self.mode_combo.currentText()
+            cfg['x_element'] = self.x_elem.currentText()
+            cfg['y_element'] = self.y_elem.currentText()
+            cfg['color_element'] = self.color_elem.currentText()
+            cfg['x_equation'] = self.x_eq.text()
+            cfg['y_equation'] = self.y_eq.text()
+            x_lbl = self.x_lbl.text().strip()
+            y_lbl = self.y_lbl.text().strip()
+            cfg['x_label'] = x_lbl or self.x_eq.text().strip() or 'X-axis'
+            cfg['y_label'] = y_lbl or self.y_eq.text().strip() or 'Y-axis'
+            cfg['auto_x'] = self._x_auto.isChecked()
+            cfg['x_min'] = self._x_min.value()
+            cfg['x_max'] = self._x_max.value()
+            cfg['auto_y'] = self._y_auto.isChecked()
+            cfg['y_min'] = self._y_min.value()
+            cfg['y_max'] = self._y_max.value()
+            cfg['data_type_display'] = self.data_type.currentText()
+            cfg['filter_saturated'] = self.filter_sat.isChecked()
+            cfg['saturation_threshold'] = self.sat_thresh.value()
+            cfg['filter_outliers'] = self.filter_outliers_cb.isChecked()
+            cfg['outlier_percentile'] = self.outlier_pct.value()
+            cfg['log_x'] = self.log_x.isChecked()
+            cfg['log_y'] = self.log_y.isChecked()
+            if self._is_multi and self.display_mode is not None:
+                cfg['display_mode'] = CorrelationPlotDisplayDialog.normalize_display_mode(
+                    self.display_mode.currentText()
+                )
 
-        if self._is_multi:
-            cfg['display_mode'] = self.display_mode.currentText()
-            if hasattr(self, '_sample_name_edits'):
+        if self._scope in {"format", "all"}:
+            cfg['show_box'] = self.show_box_cb.isChecked()
+            cfg['show_sd_band'] = self.show_sd_band.isChecked()
+            cfg['sd_band_color'] = self._sd_color
+            cfg['sd_band_alpha'] = self._sd_alpha.value()
+            cfg['show_ref_line'] = self.show_ref_cb.isChecked()
+            cfg['ref_line_slope'] = self.ref_slope.value()
+            cfg['ref_line_intercept'] = self.ref_intercept.value()
+            cfg['ref_line_label'] = self.ref_label_edit.text().strip()
+            cfg['ref_line_color'] = self._ref_color
+            cfg['ref_line_style'] = self._ref_style.currentText()
+            cfg['ref_line_width'] = self._ref_width.value()
+            cfg['marker_size'] = self.m_size.value()
+            cfg['marker_alpha'] = self.m_alpha.value()
+            cfg['font_family'] = self.font_family_combo.currentText()
+            cfg['font_size'] = self.font_size_spin.value()
+            cfg['font_color'] = self._font_color
+            if self._is_multi and self._sample_name_edits is not None:
                 nm = {}
                 for sn, ne in self._sample_name_edits.items():
                     if ne.text() != sn:
                         nm[sn] = ne.text()
                 cfg['sample_name_mappings'] = nm
-            if hasattr(self, '_order_list'):
-                cfg['sample_order'] = [
-                    self._order_list.item(i).text()
-                    for i in range(self._order_list.count())]
         return cfg
 
 
@@ -540,10 +580,32 @@ class CorrelationPlotDisplayDialog(QDialog):
     """
     Full-figure correlation dialog.
 
-    Right-click anywhere on the plot to access:
-    - Quick toggles (log axes, trend line, correlation coeff)
-    - Isotope label switching
+    The dialog follows the four-button Results contract for settings, reset, and
+    export. Right-click stays minimal with quick visual toggles, isotope-label
+    rendering modes, and the correlation-specific auto-detect action.
     """
+
+    DISPLAY_MODE_OVERLAID = 'Overlaid (Different Colors)'
+    DISPLAY_MODE_SIDE = 'Side by Side Subplots'
+    DISPLAY_MODE_SUBPLOTS = 'Individual Subplots'
+    DISPLAY_MODE_LEGACY_COMBINED = 'Combined with Legend'
+
+    @staticmethod
+    def normalize_display_mode(mode: str) -> str:
+        """Normalize legacy Correlation display modes to active UI modes.
+
+        The old ``Combined with Legend`` mode is treated as overlaid because both
+        routes share the same combined draw path in current Correlation behavior.
+        """
+        if mode == CorrelationPlotDisplayDialog.DISPLAY_MODE_LEGACY_COMBINED:
+            return CorrelationPlotDisplayDialog.DISPLAY_MODE_OVERLAID
+        if mode in {
+            CorrelationPlotDisplayDialog.DISPLAY_MODE_OVERLAID,
+            CorrelationPlotDisplayDialog.DISPLAY_MODE_SIDE,
+            CorrelationPlotDisplayDialog.DISPLAY_MODE_SUBPLOTS,
+        }:
+            return mode
+        return CorrelationPlotDisplayDialog.DISPLAY_MODE_OVERLAID
 
     def __init__(self, correlation_node, parent_window=None):
         """
@@ -562,6 +624,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         pg.setConfigOption('foreground', 'k')
 
         self.active_color_bars: list[CustomColorBar] = []
+        self._subplot_context_by_plotitem = {}
+        self._current_display_mode = self.DISPLAY_MODE_OVERLAID
         self._setup_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
@@ -584,6 +648,22 @@ class CorrelationPlotDisplayDialog(QDialog):
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
+
+    def _ordered_plot_data_items(self, plot_data):
+        """Return plot_data items in configured sample order when available.
+
+        This preserves backward compatibility with existing ``sample_order``
+        config while avoiding a no-op sample-order editor in Phase 1 UI.
+        """
+        if not isinstance(plot_data, dict):
+            return []
+        keys = list(plot_data.keys())
+        order = self.node.config.get('sample_order', [])
+        if not order:
+            return list(plot_data.items())
+        ordered_keys = [k for k in order if k in plot_data]
+        ordered_keys += [k for k in keys if k not in ordered_keys]
+        return [(k, plot_data[k]) for k in ordered_keys]
 
     def _available_elements(self) -> list:
         """
@@ -609,87 +689,68 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── UI ──────────────────────────────────
 
     def _setup_ui(self):
+        """Build the Correlation dialog with a full-width four-button action row.
+
+        The bottom actions are kept in the standardized Results order and each
+        button is given equal layout stretch so the row spans the dialog width
+        consistently with other migrated result plots.
+        """
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-
-        self.node.config.setdefault('annotations', [])
-
-        self.ann_mgr = AnnotationManager(self.node.config, parent=self)
 
         self._plot_container = QWidget()
         self._plot_container_layout = QVBoxLayout(self._plot_container)
         self._plot_container_layout.setContentsMargins(0, 0, 0, 0)
         self._plot_container_layout.setSpacing(0)
 
-        self.plot_widget = EnhancedGraphicsLayoutWidget()
+        self.plot_widget = CorrelationGraphicsLayoutWidget()
         self.plot_widget.setBackground('w')
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
         self._plot_container_layout.addWidget(self.plot_widget)
-
         self._primary_plot_item = None
-
-        self.ann_inspector = FloatingInspector(self.ann_mgr, parent=self._plot_container)
-        self.ann_inspector.set_plot_accessor(
-            lambda: (self.plot_widget, self._primary_plot_item))
-
         layout.addWidget(self._plot_container, stretch=1)
 
         bottom = QHBoxLayout()
         bottom.setContentsMargins(6, 0, 6, 0)
-
-        self._hint_lbl = QLabel("Right-click the plot to add annotations")
-        self._hint_lbl.setStyleSheet(
-            "color: #999; font-size: 11px; font-style: italic;")
-        bottom.addWidget(self._hint_lbl)
-        bottom.addStretch(1)
-
-        self.ann_shelf = AnnotationShelfButton(self.ann_mgr)
-        bottom.addWidget(self.ann_shelf)
-
+        bottom.setSpacing(8)
+        self.format_btn = QPushButton("Plot format settings")
+        self.format_btn.clicked.connect(self._open_plot_format_settings)
+        bottom.addWidget(self.format_btn, 1)
+        self.quantities_btn = QPushButton("Configure plot quantities")
+        self.quantities_btn.clicked.connect(self._open_configure_plot_quantities)
+        bottom.addWidget(self.quantities_btn, 1)
+        self.reset_btn = QPushButton("Reset layout")
+        self.reset_btn.clicked.connect(self._reset_layout)
+        bottom.addWidget(self.reset_btn, 1)
+        self.export_btn = QPushButton("Export figure")
+        self.export_btn.clicked.connect(self._export_figure)
+        bottom.addWidget(self.export_btn, 1)
         layout.addLayout(bottom)
-
-        self.ann_mgr.sig_annotations_changed.connect(self._refresh_hint)
-        self._refresh_hint()
-
-        install_annotation_shortcuts(self, self.ann_mgr)
-
-    def _refresh_hint(self):
-        self._hint_lbl.setVisible(len(self.node.config.get('annotations', [])) == 0)
 
     # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
+        """Show Correlation right-click actions with mode-aware subplot export.
+
+        ``Export this subplot...`` is intentionally enabled only in
+        ``Individual Subplots`` mode. Other modes keep a disabled action with
+        an explanatory tooltip.
         """
         cfg = self.node.config
         menu = QMenu(self)
 
         tm = menu.addMenu("Quick Toggles")
         for key, label, default in [
-            ('log_x',           'Log X-axis',         False),
-            ('log_y',           'Log Y-axis',         False),
             ('show_trendline',  'Trend Line',         True),
             ('show_correlation','Correlation r',      True),
             ('show_sd_band',    'SD Envelope',        False),
             ('show_ref_line',   'Reference Line',     False),
-            ('filter_zeros',    'Filter Zeros',       True),
-            ('filter_outliers', 'Filter Outliers',    False),
-            ('filter_saturated','Filter Saturated',   True),
             ('show_box',        'Figure Box (frame)', True),
         ]:
             a = tm.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
             a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
-
-        dt_menu = menu.addMenu("Data Type")
-        current_dt = cfg.get('data_type_display', 'Counts')
-        for dt in DATA_TYPE_OPTIONS:
-            a = dt_menu.addAction(dt); a.setCheckable(True)
-            a.setChecked(dt == current_dt)
-            a.triggered.connect(lambda checked, d=dt: self._set_data_type(d))
 
         lm_menu = menu.addMenu("Isotope Label")
         cur_lm = cfg.get('label_mode', 'Symbol')
@@ -697,50 +758,33 @@ class CorrelationPlotDisplayDialog(QDialog):
             a = lm_menu.addAction(mode); a.setCheckable(True)
             a.setChecked(mode == cur_lm)
             a.triggered.connect(lambda _, m=mode: self._set_elem('label_mode', m))
-
-        if cfg.get('mode') == 'Simple Element Correlation':
-            elems = self._available_elements()
-            if elems:
-                xe_menu = menu.addMenu("X Element")
-                for e in elems:
-                    a = xe_menu.addAction(e); a.setCheckable(True)
-                    a.setChecked(e == cfg.get('x_element'))
-                    a.triggered.connect(lambda _, el=e: self._set_elem('x_element', el))
-                ye_menu = menu.addMenu("Y Element")
-                for e in elems:
-                    a = ye_menu.addAction(e); a.setCheckable(True)
-                    a.setChecked(e == cfg.get('y_element'))
-                    a.triggered.connect(lambda _, el=e: self._set_elem('y_element', el))
-
-                ce_menu = menu.addMenu("Color By Element")
-                cur_ce = cfg.get('color_element', 'None')
-                a_none = ce_menu.addAction("(None - single color)"); a_none.setCheckable(True)
-                a_none.setChecked(cur_ce == 'None' or not cur_ce)
-                a_none.triggered.connect(lambda _: self._set_elem('color_element', 'None'))
-                for e in elems:
-                    a = ce_menu.addAction(e); a.setCheckable(True)
-                    a.setChecked(e == cur_ce)
-                    a.triggered.connect(lambda _, el=e: self._set_elem('color_element', el))
-
-        if self._is_multi():
-            dm_menu = menu.addMenu("Display Mode")
-            modes = ['Overlaid (Different Colors)', 'Side by Side Subplots',
-                     'Individual Subplots', 'Combined with Legend']
-            cur = cfg.get('display_mode', modes[0])
-            for m in modes:
-                a = dm_menu.addAction(m); a.setCheckable(True)
-                a.setChecked(m == cur)
-                a.triggered.connect(lambda _, mode=m: self._set_display_mode(mode))
-
-        menu.addSeparator()
         menu.addAction("Auto-Detect Correlations...").triggered.connect(
             self._auto_detect_correlations)
-        menu.addSeparator()
-        menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure...").triggered.connect(
-            lambda: download_pyqtgraph_figure(self.plot_widget, self, "correlation_plot.png"))
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
+
+        clicked_plot = self._plot_item_at(pos)
+        subplot_ctx = self._subplot_context_by_plotitem.get(clicked_plot)
+        can_export_subplot = (
+            self._current_display_mode == self.DISPLAY_MODE_SUBPLOTS
+            and clicked_plot is not None
+            and subplot_ctx is not None
+        )
+        if can_export_subplot:
+            action = menu.addAction("Export this subplot...")
+            action.triggered.connect(
+                lambda: self._export_subplot(clicked_plot, subplot_ctx)
+            )
+        else:
+            disabled = menu.addAction("Export this subplot... (unavailable here)")
+            disabled.setEnabled(False)
+            if self._current_display_mode == self.DISPLAY_MODE_SIDE:
+                reason = (
+                    "Individual subplot export is only available in "
+                    "Individual Subplots mode."
+                )
+            else:
+                reason = "Right-click an individual subplot panel to export only that panel."
+            disabled.setToolTip(reason)
+            disabled.setStatusTip(reason)
 
         menu.exec(QCursor.pos())
 
@@ -783,20 +827,68 @@ class CorrelationPlotDisplayDialog(QDialog):
         self._refresh()
 
     def _set_display_mode(self, mode):
-        """
-        Args:
-            mode (Any): Operating mode string.
-        """
-        self.node.config['display_mode'] = mode
+        """Set display mode using alias-normalized values and refresh."""
+        self.node.config['display_mode'] = self.normalize_display_mode(mode)
         self._refresh()
 
-    def _open_settings(self):
+    def _open_plot_format_settings(self):
+        """Open scoped visual formatting controls and refresh on apply."""
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
-            self._is_multi(), self._sample_names(), self)
+            self._is_multi(), self._sample_names(), scope="format", parent=self)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """Open scoped quantity controls and refresh on apply."""
+        dlg = CorrelationSettingsDialog(
+            self.node.config, self._available_elements(),
+            self._is_multi(), self._sample_names(), scope="quantities", parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _reset_layout(self):
+        """Reset current view layout by re-enabling axis autorange and redrawing."""
+        self.node.config['auto_x'] = True
+        self.node.config['auto_y'] = True
+        self._refresh()
+
+    def _export_figure(self):
+        """Export the full Correlation figure with the shared export workflow."""
+        download_pyqtgraph_figure(self.plot_widget, self, "correlation_plot.png")
+
+    def _plot_item_at(self, pos):
+        """Resolve the clicked PlotItem using scene-space hit testing.
+
+        This mirrors the reliable subplot hit-testing pattern used in other
+        migrated result plots for item-targeted export actions.
+        """
+        scene_pos = self.plot_widget.mapToScene(pos)
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.PlotItem):
+                rect = item.mapRectToScene(item.boundingRect())
+                if rect.contains(scene_pos):
+                    return item
+        return None
+
+    def _sanitize_filename_token(self, text: str) -> str:
+        """Sanitize subplot names for use in export filename stems."""
+        cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', (text or '').strip())
+        return cleaned.strip('_') or "subplot"
+
+    def _export_subplot(self, plot_item, subplot_ctx: dict):
+        """Export only the clicked subplot while reusing full export options."""
+        name_hint = subplot_ctx.get("title") or subplot_ctx.get("sample") or "subplot"
+        token = self._sanitize_filename_token(name_hint)
+        default_name = f"correlation_{token}" if token else "correlation_subplot"
+        download_pyqtgraph_figure(
+            self.plot_widget,
+            self,
+            default_name,
+            export_item=plot_item,
+        )
 
     def _open_plot_settings(self):
         """Open PlotSettingsDialog via the adapter bridge."""
@@ -874,6 +966,9 @@ class CorrelationPlotDisplayDialog(QDialog):
         Returns:
             list: Result of the operation.
         """
+        # Annotation actions were intentionally removed in Correlation Phase 1.
+        return []
+
         actions = []
         cfg = self.node.config
         mgr = self.ann_mgr
@@ -1082,6 +1177,7 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── Refresh / draw ──────────────────────
 
     def _cleanup_color_bars(self):
+        """Remove any existing per-plot color bars before a redraw."""
         for cb in self.active_color_bars:
             try:
                 cb.remove()
@@ -1089,16 +1185,30 @@ class CorrelationPlotDisplayDialog(QDialog):
                 pass
         self.active_color_bars.clear()
 
-    def _refresh(self):
-        try:
-            if hasattr(self, 'ann_mgr'):
-                self.ann_mgr._detach_all()
+    def _suppress_native_plot_menus(self):
+        """Disable native PyQtGraph right-click menus for Correlation plot items."""
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                vb = item.getViewBox()
+                if vb is not None:
+                    try:
+                        vb.setMenuEnabled(False)
+                    except Exception:
+                        pass
 
+    def _refresh(self):
+        """Redraw Correlation plots from current config without changing math semantics."""
+        try:
             self._cleanup_color_bars()
+            self._subplot_context_by_plotitem = {}
 
             self._plot_container_layout.removeWidget(self.plot_widget)
             self.plot_widget.deleteLater()
-            self.plot_widget = EnhancedGraphicsLayoutWidget()
+            self.plot_widget = CorrelationGraphicsLayoutWidget()
             self.plot_widget.setBackground('w')
             self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
             self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
@@ -1118,13 +1228,17 @@ class CorrelationPlotDisplayDialog(QDialog):
                 primary_plot = pi
             else:
                 cfg = self.node.config
+                self._current_display_mode = self.normalize_display_mode(
+                    cfg.get('display_mode', self.DISPLAY_MODE_OVERLAID)
+                )
+                cfg['display_mode'] = self._current_display_mode
 
                 if self._is_multi():
-                    dm = cfg.get('display_mode', 'Overlaid (Different Colors)')
-                    if dm == 'Individual Subplots':
+                    dm = self._current_display_mode
+                    if dm == self.DISPLAY_MODE_SUBPLOTS:
                         self._draw_subplots(plot_data, cfg)
                         primary_plot = self.plot_widget.getItem(0, 0)
-                    elif dm == 'Side by Side Subplots':
+                    elif dm == self.DISPLAY_MODE_SIDE:
                         self._draw_side_by_side(plot_data, cfg)
                         primary_plot = self.plot_widget.getItem(0, 0)
                     else:
@@ -1139,11 +1253,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     primary_plot = pi
 
             self._primary_plot_item = primary_plot
-
-            if hasattr(self, 'ann_mgr') and primary_plot is not None:
-                self.ann_mgr.attach_plot(primary_plot)
-            if hasattr(self, 'ann_inspector'):
-                self.ann_inspector.attach(primary_plot)
+            self._suppress_native_plot_menus()
 
         except Exception as e:
             print(f"Error refreshing correlation display: {e}")
@@ -1222,8 +1332,18 @@ class CorrelationPlotDisplayDialog(QDialog):
 
         return x, y, c
 
-    def _plot_scatter(self, pi, x, y, c, cfg, color):
-        """Add scatter + optional trend + SD envelope + ref line + box to a PlotItem.
+    def _plot_scatter(
+        self, pi, x, y, c, cfg, color,
+        correlation_label: str | None = None,
+        correlation_index: int = 0,
+        correlation_count: int = 1,
+    ):
+        """Add scatter + overlays to a PlotItem using already-prepared sample data.
+
+        Trendline and correlation text visibility are owned by quick-toggle config
+        keys. In overlaid multi-sample mode, optional ``correlation_label`` and
+        index parameters place one visible r label per sample with capped lines
+        to avoid dense label clutter.
         Args:
             pi (Any): The pi.
             x (Any): Input array or value.
@@ -1231,6 +1351,11 @@ class CorrelationPlotDisplayDialog(QDialog):
             c (Any): The c.
             cfg (Any): The cfg.
             color (Any): Colour value.
+            correlation_label (str | None): Optional series label prefix for r
+                text (e.g. sample display name).
+            correlation_index (int): Series index used for r label vertical
+                offset in overlaid plots.
+            correlation_count (int): Number of series in the overlaid panel.
         Returns:
             object: Result of the operation.
         """
@@ -1272,7 +1397,40 @@ class CorrelationPlotDisplayDialog(QDialog):
                     print(f'[SD envelope] {e}')
 
         if cfg.get('show_correlation', True) and len(x) > 1:
-            add_correlation_text(pi, x, y, cfg)
+            if correlation_label:
+                try:
+                    r = float(np.corrcoef(x, y)[0, 1])
+                    if np.isfinite(r):
+                        fc = get_font_config(cfg)
+                        vr = pi.getViewBox().state['viewRange']
+                        x_pos = vr[0][0] + 0.05 * (vr[0][1] - vr[0][0])
+                        base_y = vr[1][0] + 0.95 * (vr[1][1] - vr[1][0])
+                        step = 0.055 * (vr[1][1] - vr[1][0])
+                        max_lines = 6
+                        if correlation_index < max_lines:
+                            y_pos = base_y - (correlation_index * step)
+                            txt = pg.TextItem(
+                                f"{correlation_label}: r = {r:.3f}",
+                                anchor=(0, 1),
+                                color=color if color else fc['color'],
+                            )
+                            pi.addItem(txt)
+                            txt.setPos(x_pos, y_pos)
+                        elif correlation_index == max_lines:
+                            hidden_count = max(correlation_count - max_lines, 0)
+                            if hidden_count > 0:
+                                y_pos = base_y - (max_lines * step)
+                                txt = pg.TextItem(
+                                    f"+{hidden_count} more",
+                                    anchor=(0, 1),
+                                    color=fc['color'],
+                                )
+                                pi.addItem(txt)
+                                txt.setPos(x_pos, y_pos)
+                except Exception:
+                    pass
+            else:
+                add_correlation_text(pi, x, y, cfg)
 
         if cfg.get('show_ref_line', False) and len(x) > 0:
             try:
@@ -1319,10 +1477,8 @@ class CorrelationPlotDisplayDialog(QDialog):
             yl = format_label_text_tokens(yl, lm, Renderer.HTML)
         set_axis_labels(pi, xl, yl, cfg)
 
-        if cfg.get('log_x'):
-            pi.getAxis('bottom').setLogMode(True)
-        if cfg.get('log_y'):
-            pi.getAxis('left').setLogMode(True)
+        pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
+        pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
 
         if not cfg.get('auto_x', True):
             pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 1000), padding=0)
@@ -1352,40 +1508,51 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── Multiple samples ────────────────────
 
     def _draw_subplots(self, plot_data, cfg):
+        """Draw one subplot per sample and register subplot-export context.
+
+        Empty panels after filtering show a clear message so users can
+        distinguish filtered-out samples from rendering failures.
         """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
-        names = list(plot_data.keys())
+        items = self._ordered_plot_data_items(plot_data)
+        names = [sn for sn, _ in items]
         cols = min(3, len(names))
-        for i, sn in enumerate(names):
+        for i, (sn, sd) in enumerate(items):
             pi = self.plot_widget.addPlot(row=i // cols, col=i % cols)
-            sd = plot_data[sn]
             if sd and 'element_data' in sd:
                 x, y, c = self._prepare_data(sd['element_data'], cfg)
                 if len(x):
                     color = get_sample_color(sn, i, cfg)
                     self._plot_scatter(pi, x, y, c, cfg, color)
-                pi.setTitle(get_display_name(sn, cfg))
+                else:
+                    self._add_no_valid_data_message(pi)
+                title = get_display_name(sn, cfg)
+                pi.setTitle(title)
                 self._apply_labels(pi, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
+                self._subplot_context_by_plotitem[pi] = {
+                    "sample": sn,
+                    "title": title,
+                    "mode": self.DISPLAY_MODE_SUBPLOTS,
+                }
 
     def _draw_side_by_side(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+        """Draw one panel per sample in one row and register export context.
+
+        Panels with no valid paired data after filtering display an explicit
+        message instead of remaining unexplained blank plots.
         """
         first_pi = None
-        for i, (sn, sd) in enumerate(plot_data.items()):
+        for i, (sn, sd) in enumerate(self._ordered_plot_data_items(plot_data)):
             pi = self.plot_widget.addPlot(row=0, col=i)
             if sd and 'element_data' in sd:
                 x, y, c = self._prepare_data(sd['element_data'], cfg)
                 if len(x):
                     color = get_sample_color(sn, i, cfg)
                     self._plot_scatter(pi, x, y, c, cfg, color)
-            pi.setTitle(get_display_name(sn, cfg))
+                else:
+                    self._add_no_valid_data_message(pi)
+            title = get_display_name(sn, cfg)
+            pi.setTitle(title)
             if first_pi is None:
                 first_pi = pi
                 self._apply_labels(pi, cfg)
@@ -1393,35 +1560,76 @@ class CorrelationPlotDisplayDialog(QDialog):
                 pi.setYLink(first_pi)
                 pi.getAxis('left').setLabel('')
                 pi.getAxis('left').setStyle(showValues=False)
-                if cfg.get('log_x'):
-                    pi.getAxis('bottom').setLogMode(True)
+                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
+                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
                 if not cfg.get('auto_x', True):
                     pi.setXRange(cfg.get('x_min', 0), cfg.get('x_max', 1000), padding=0)
             apply_font_to_pyqtgraph(pi, cfg)
+            self._subplot_context_by_plotitem[pi] = {
+                "sample": sn,
+                "title": title,
+                "mode": self.DISPLAY_MODE_SIDE,
+            }
 
     def _draw_combined(self, pi, plot_data, cfg):
-        """
-        Args:
-            pi (Any): The pi.
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
+        """Draw all samples overlaid in one panel with capped per-sample r labels."""
         legend_items = []
-        for i, (sn, sd) in enumerate(plot_data.items()):
+        valid_series = []
+        for i, (sn, sd) in enumerate(self._ordered_plot_data_items(plot_data)):
             if not (sd and 'element_data' in sd):
                 continue
             x, y, c = self._prepare_data(sd['element_data'], cfg)
             if len(x) == 0:
                 continue
+            valid_series.append((i, sn, x, y, c))
+
+        if not valid_series:
+            self._add_no_valid_data_message(pi)
+            self._apply_labels(pi, cfg)
+            return
+
+        for idx, (i, sn, x, y, c) in enumerate(valid_series):
             color = get_sample_color(sn, i, cfg)
-            scatter = self._plot_scatter(pi, x, y, c, cfg, color)
-            legend_items.append((scatter, get_display_name(sn, cfg)))
+            sample_label = get_display_name(sn, cfg)
+            scatter = self._plot_scatter(
+                pi, x, y, c, cfg, color,
+                correlation_label=sample_label,
+                correlation_index=idx,
+                correlation_count=len(valid_series),
+            )
+            legend_items.append((scatter, sample_label))
 
         self._apply_labels(pi, cfg)
         if legend_items:
             leg = pi.addLegend()
             for item, name in legend_items:
                 leg.addItem(item, name)
+
+    def _add_no_valid_data_message(self, pi, text: str = "No valid paired data after filtering."):
+        """Show a centered non-modal empty-data message in the given PlotItem."""
+        ti = pg.TextItem(text, anchor=(0.5, 0.5), color='gray')
+        pi.addItem(ti)
+        try:
+            vr = pi.getViewBox().state['viewRange']
+            x_mid = vr[0][0] + 0.5 * (vr[0][1] - vr[0][0])
+            y_mid = vr[1][0] + 0.5 * (vr[1][1] - vr[1][0])
+            ti.setPos(x_mid, y_mid)
+        except Exception:
+            ti.setPos(0.5, 0.5)
+
+
+class CorrelationGraphicsLayoutWidget(EnhancedGraphicsLayoutWidget):
+    """Correlation-local GraphicsLayout widget with double-click editor suppression.
+
+    Correlation scatter points use per-spot brush/pen styling. The generic
+    double-click editor changes item-level style and can produce misleading
+    legend-only updates. This local override disables those editors for
+    Correlation without affecting other result plot types.
+    """
+
+    def mouseDoubleClickEvent(self, event):
+        """Consume double-click events to suppress incompatible style editors."""
+        event.accept()
 
 
 class CorrelationPlotNode(QObject):
@@ -1465,7 +1673,6 @@ class CorrelationPlotNode(QObject):
         'sample_order': [],
         'font_family': 'Times New Roman', 'font_size': 18,
         'font_bold': False, 'font_italic': False, 'font_color': '#000000',
-        'annotations': [],
     }
 
     def __init__(self, parent_window=None):
