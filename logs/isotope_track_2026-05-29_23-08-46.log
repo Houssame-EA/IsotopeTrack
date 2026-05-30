@@ -1,0 +1,16 @@
+2026-05-29 23:08:46,890  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 23:08:46,890  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 23:08:47,080  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3850  update_parameters_table: rebuilding (force=True)
+2026-05-29 23:08:47,170  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:897  Theme applied: light
+2026-05-29 23:08:49,813  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:08:50,799  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded
+2026-05-29 23:08:51,854  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:08:52,795  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded
+2026-05-29 23:08:53,970  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:08:54,687  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded
+2026-05-29 23:08:56,079  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:08:57,220  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded
+2026-05-29 23:09:17,495  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:09:18,453  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded
+2026-05-29 23:09:19,795  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
+2026-05-29 23:09:21,953  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded

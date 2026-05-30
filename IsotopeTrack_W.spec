@@ -119,6 +119,11 @@ a = Analysis(
         # ── Poisson ───────────────────────────────────────────────────────────
         'poisson',
 
+        # ── Compression ───────────────────────────────────────────────────────────────
+        'lz4',
+        'lz4.frame',
+        'lz4.block',
+
         # ── Pandas ────────────────────────────────────────────────────────────
         'pandas',
         'pandas.io.formats.excel',
@@ -263,6 +268,8 @@ a = Analysis(
 
         # ── tools/ ────────────────────────────────────────────────────────────
         'tools',
+        'tools.app_version',
+        'tools.update_checker',
         'tools.help_dialogs',
         'tools.Info_table',
         'tools.info_file',

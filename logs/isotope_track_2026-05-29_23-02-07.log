@@ -1,0 +1,17 @@
+2026-05-29 23:02:08,017  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 23:02:08,017  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 23:02:08,091  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 23:02:08,150  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 23:02:10,790  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 23:02:10,790  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 23:02:15,848  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 23:02:15,949  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 23:02:16,022  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 23:02:16,023  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 23:02:16,023  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 23:02:16,023  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 23:02:17,991  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Batch Parameters
+2026-05-29 23:02:24,137  INFO      IsotopeTrack  .None:0  [USER ACTION] PARAMETER_CHANGE: Batch parameters applied
+2026-05-29 23:02:24,138  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 23:02:49,907  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
+2026-05-29 23:02:54,877  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'

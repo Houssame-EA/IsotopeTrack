@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy, 
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,QRadioButton,
                             QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox)
-from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint, QEvent, QEventLoop
+from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint, QEvent, QEventLoop, QSettings
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
@@ -177,7 +177,15 @@ class MainWindow(QMainWindow):
         self.overlap_threshold_percentage = 50.0
         self._global_sigma = 0.55
         self._sigma_mode   = 'global'
-        self.sidebar_width = 200
+        self.sidebar_min_width = 150
+        self.sidebar_max_width = 400
+        try:
+            _saved_w = int(QSettings("IsotopeTrack", "IsotopeTrack")
+                           .value("ui/sidebar_width", 200))
+        except (TypeError, ValueError):
+            _saved_w = 200
+        self.sidebar_width = max(self.sidebar_min_width,
+                                 min(self.sidebar_max_width, _saved_w))
         self.sidebar_visible = True
         self.multi_element_particles = []
         self.sample_parameters = {}
@@ -244,7 +252,13 @@ class MainWindow(QMainWindow):
         self._project_filepath = None
         QApplication.instance().main_windows.append(self)
         self.update_window_title()
-            
+        from tools.update_checker import UpdateChecker
+        self._update_checker = UpdateChecker(self)
+        _app = QApplication.instance()
+        if not getattr(_app, '_update_check_done', False):
+            _app._update_check_done = True
+            QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
+
     def update_window_title(self, filepath=None):
         """
         Update the window title to reflect the current project state.
@@ -393,19 +407,49 @@ class MainWindow(QMainWindow):
         self.edge_strip.setCursor(Qt.PointingHandCursor)
 
         import weakref as _wr
-        _self_ref = _wr.ref(self)
-        self.edge_strip.mousePressEvent = lambda e: _self_ref() and _self_ref().toggle_sidebar()
-        del _wr, _self_ref  
+        self.edge_strip.mousePressEvent = (
+            lambda e, _ref=_wr.ref(self): _ref() and _ref().toggle_sidebar()
+        )
+        del _wr
         self.edge_strip.hide()
         self.sidebar = self.create_sidebar()
         sidebar_container_layout.addWidget(self.edge_strip)
         sidebar_container_layout.addWidget(self.sidebar)
+        from PySide6.QtWidgets import QGridLayout, QSizePolicy
+        self.sidebar_grip = QWidget()
+        self.sidebar_grip.setObjectName("sidebarGrip")
+        self.sidebar_grip.setFixedWidth(12)
+        self.sidebar_grip.setCursor(Qt.SizeHorCursor)
+
+        _grip_layout = QGridLayout(self.sidebar_grip)
+        _grip_layout.setContentsMargins(0, 0, 0, 0)
+
+        _grip_line = QWidget()
+        _grip_line.setObjectName("gripLine")
+        _grip_line.setFixedWidth(1)
+        _grip_line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        _grip_line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        _grip_layout.addWidget(_grip_line, 0, 0, Qt.AlignHCenter)
+
+        _grip_pill = QWidget()
+        _grip_pill.setObjectName("gripPill")
+        _grip_pill.setFixedSize(5, 40)
+        _grip_pill.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        _grip_layout.addWidget(_grip_pill, 0, 0, Qt.AlignCenter)
+
+        self._apply_sidebar_grip_style()
+        self.sidebar_grip.mousePressEvent = self._sidebar_grip_press
+        self.sidebar_grip.mouseMoveEvent = self._sidebar_grip_move
+        self.sidebar_grip.mouseReleaseEvent = self._sidebar_grip_release
+        sidebar_container_layout.addWidget(self.sidebar_grip)
         content_widget = QWidget()
         content_widget.setObjectName("contentWidget")
         content_layout = QVBoxLayout(content_widget)
         
+        from PySide6.QtWidgets import QFrame
         scroll_area = QScrollArea()
         scroll_area.setObjectName("mainScrollArea")
+        scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -416,24 +460,9 @@ class MainWindow(QMainWindow):
         plot_container_layout.setContentsMargins(0, 0, 0, 0)
         plot_container_layout.setSpacing(0)
 
-        info_container = QWidget()
-        info_container.setObjectName("infoContainer")
-        info_layout = QVBoxLayout(info_container)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setAlignment(Qt.AlignTop | Qt.AlignRight)
-
-        self.info_button = QPushButton()
-        self.info_button.setIcon(qta.icon('fa6s.circle-info', color=theme.palette.accent))
-        self.info_button.setFixedSize(32, 32)
-        self.info_button.setToolTip("Sample information")
-        self.info_button.setCursor(Qt.PointingHandCursor)
-        self.info_button.clicked.connect(self.toggle_info)  
-        info_layout.addWidget(self.info_button)
-
         plot_widget = self.create_plot_widget()
         plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         plot_container_layout.addWidget(plot_widget)
-        plot_container_layout.addWidget(info_container)
 
         page_content = QWidget()
         page_content.setObjectName("pageContent")
@@ -469,7 +498,7 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(self.sidebar_width)
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setSpacing(0)
-        sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_layout.setContentsMargins(0, 6, 6, 6)
         header_container = QWidget()
         header_container.setFixedHeight(60)
         header_layout = QHBoxLayout(header_container)
@@ -665,20 +694,16 @@ class MainWindow(QMainWindow):
                                  self.show_calibration_methods)
         about_action = _ma('fa6s.circle-info', "About IsotopeTrack",
                            self.show_about_dialog)
+        update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
+                           lambda: self._update_checker.check(silent=False))
 
         help_menu.addAction(guide_action)
         help_menu.addAction(detection_action)
         help_menu.addAction(calibration_action)
         help_menu.addSeparator()
+        help_menu.addAction(update_action)
         help_menu.addAction(about_action)
 
-        self.theme_toggle_button = QPushButton()
-        self.theme_toggle_button.setFixedSize(32, 32)
-        self.theme_toggle_button.setCursor(Qt.PointingHandCursor)
-        self.theme_toggle_button.setToolTip("Toggle light / dark mode")
-        self.theme_toggle_button.clicked.connect(theme.toggle)
-        menu_bar.setCornerWidget(self.theme_toggle_button, Qt.TopRightCorner)
-        
     def open_new_window(self):
         """
         Returns:
@@ -772,6 +797,7 @@ class MainWindow(QMainWindow):
             self.sidebar.setStyleSheet(sidebar_qss(p))
         if hasattr(self, 'edge_strip'):
             self.edge_strip.setStyleSheet(edge_strip_qss(p))
+        self._apply_sidebar_grip_style()
         if hasattr(self, '_sidebar_logo'):
             self._sidebar_logo.setStyleSheet(sidebar_logo_qss(p))
         if hasattr(self, '_sample_list_label'):
@@ -893,6 +919,11 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.debug(f"Could not refresh summary on theme change: {e}")
 
+        if hasattr(self, '_dataviz_title'):
+            self._dataviz_title.setStyleSheet(
+                f"font-weight: bold; font-size: 14px; color: {p.text_secondary};"
+            )
+
         self.logger.info(f"Theme applied: {p.name}")
 
     def create_plot_widget(self):
@@ -905,16 +936,22 @@ class MainWindow(QMainWindow):
         Returns:
             QGroupBox: Plot widget container
         """
-        group_box = QGroupBox("Data Visualization")
-        self._themed_groupboxes = getattr(self, '_themed_groupboxes', [])
-        self._themed_groupboxes.append(group_box)
-        layout = QVBoxLayout(group_box)
-        layout.setContentsMargins(6, 8, 6, 6)
-        layout.setSpacing(4)
+        wrapper = QWidget()
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.setSpacing(4)
 
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(2)
+        header = QHBoxLayout()
+        header.setContentsMargins(14, 0, 8, 0)
+        header.setSpacing(8)
+
+        self._dataviz_title = QLabel("Data Visualization")
+        self._dataviz_title.setObjectName("dataVizTitle")
+        self._dataviz_title.setStyleSheet(
+            f"font-weight: bold; font-size: 14px; color: {theme.palette.text_secondary};"
+        )
+        header.addWidget(self._dataviz_title, 0, Qt.AlignVCenter)
+        header.addStretch()
 
         self._view_btn_time = QPushButton("Time")
         self._view_btn_mz   = QPushButton("m/z")
@@ -925,11 +962,33 @@ class MainWindow(QMainWindow):
         self._view_btn_time.setChecked(True)
         self._view_btn_time.clicked.connect(lambda: self.switch_plot_view('time'))
         self._view_btn_mz.clicked.connect(lambda: self.switch_plot_view('mz'))
+        header.addWidget(self._view_btn_time)
+        header.addWidget(self._view_btn_mz)
 
-        top_bar.addWidget(self._view_btn_time)
-        top_bar.addWidget(self._view_btn_mz)
-        top_bar.addStretch()
-        layout.addLayout(top_bar)
+        self.info_button = QPushButton()
+        self.info_button.setIcon(qta.icon('fa6s.circle-info', color=theme.palette.accent))
+        self.info_button.setFixedSize(28, 28)
+        self.info_button.setToolTip("Sample information")
+        self.info_button.setCursor(Qt.PointingHandCursor)
+        self.info_button.clicked.connect(self.toggle_info)
+        header.addWidget(self.info_button)
+
+        self.theme_toggle_button = QPushButton()
+        self.theme_toggle_button.setFixedSize(28, 28)
+        self.theme_toggle_button.setCursor(Qt.PointingHandCursor)
+        self.theme_toggle_button.setToolTip("Toggle light / dark mode")
+        self.theme_toggle_button.clicked.connect(theme.toggle)
+        header.addWidget(self.theme_toggle_button)
+
+        wrapper_layout.addLayout(header)
+
+        group_box = QGroupBox("")
+        group_box.setObjectName("plotCard")
+        self._themed_groupboxes = getattr(self, '_themed_groupboxes', [])
+        self._themed_groupboxes.append(group_box)
+        layout = QVBoxLayout(group_box)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(4)
 
         from PySide6.QtWidgets import QStackedWidget
         self._plot_stack = QStackedWidget()
@@ -950,7 +1009,8 @@ class MainWindow(QMainWindow):
         self._plot_stack.addWidget(self._mz_pg_widget)
 
         layout.addWidget(self._plot_stack)
-        return group_box
+        wrapper_layout.addWidget(group_box)
+        return wrapper
     
     def create_control_panel(self):
         """
@@ -1106,7 +1166,7 @@ class MainWindow(QMainWindow):
         Returns:
             QGroupBox: Summary statistics widget
         """
-        group_box = QGroupBox("Particle Summary Statistics")
+        group_box = QGroupBox("Particle summary statistics")
         self._themed_groupboxes.append(group_box)
         
         layout = QVBoxLayout(group_box)
@@ -1338,47 +1398,99 @@ class MainWindow(QMainWindow):
         Returns:
             None
         """
-        if self.animation is not None and self.animation.state() == QPropertyAnimation.Running:
-            return
+        current_width = self.sidebar.maximumWidth()
+        if getattr(self, 'animation_group', None) is not None:
+            try:
+                self.animation_group.stop()
+                self.animation_group.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self.animation_group = None
 
-        _is_open = self.sidebar.minimumWidth() > 0
+        opening = not self.sidebar_visible
+        target_width = self.sidebar_width if opening else 0
+
         self.user_action_logger.log_action(
             'CLICK',
-            'Sidebar collapsed' if _is_open else 'Sidebar expanded',
-            {'action': 'collapse' if _is_open else 'expand'})
+            'Sidebar expanded' if opening else 'Sidebar collapsed',
+            {'action': 'expand' if opening else 'collapse'})
 
-        self.animation = QPropertyAnimation(self.sidebar, b"minimumWidth")
-        self.animation.setDuration(250)
-        self.animation.setEasingCurve(QEasingCurve.InOutCubic)
-
-        self.animation_max = QPropertyAnimation(self.sidebar, b"maximumWidth")
-        self.animation_max.setDuration(250)
-        self.animation_max.setEasingCurve(QEasingCurve.InOutCubic)
-
-        if self.sidebar_visible:
-            self.animation.setStartValue(self.sidebar_width)
-            self.animation.setEndValue(0)
-            self.animation_max.setStartValue(self.sidebar_width)
-            self.animation_max.setEndValue(0)
-            self.toggle_button.hide()
-            self.edge_strip.show()
-        else:
-            self.animation.setStartValue(0)
-            self.animation.setEndValue(self.sidebar_width)
-            self.animation_max.setStartValue(0)
-            self.animation_max.setEndValue(self.sidebar_width)
-            self.sidebar.show()        
+        if opening:
+            self.sidebar.show()
             self.toggle_button.show()
             self.toggle_button.setIcon(qta.icon('fa6s.arrow-left', color=theme.palette.text_on_sidebar))
             self.edge_strip.hide()
+            if hasattr(self, 'sidebar_grip'):
+                self.sidebar_grip.show()
+        else:
+            self.toggle_button.hide()
+            self.edge_strip.show()
+            if hasattr(self, 'sidebar_grip'):
+                self.sidebar_grip.hide()
+
+        span = max(1, self.sidebar_width)
+        fraction = abs(target_width - current_width) / span
+        duration = max(120, int(240 * fraction))
+        easing = QEasingCurve.OutCubic
+
+        self.animation = QPropertyAnimation(self.sidebar, b"minimumWidth")
+        self.animation.setDuration(duration)
+        self.animation.setEasingCurve(easing)
+        self.animation.setStartValue(current_width)
+        self.animation.setEndValue(target_width)
+
+        self.animation_max = QPropertyAnimation(self.sidebar, b"maximumWidth")
+        self.animation_max.setDuration(duration)
+        self.animation_max.setEasingCurve(easing)
+        self.animation_max.setStartValue(current_width)
+        self.animation_max.setEndValue(target_width)
 
         self.animation_group = QParallelAnimationGroup()
         self.animation_group.addAnimation(self.animation)
         self.animation_group.addAnimation(self.animation_max)
         self.animation_group.finished.connect(self.on_animation_finished)
         self.animation_group.start()
-        
-        self.sidebar_visible = not self.sidebar_visible
+
+        self.sidebar_visible = opening
+
+    def _apply_sidebar_grip_style(self):
+        """Style the resize grip's divider line and pill holder for the theme."""
+        if not hasattr(self, 'sidebar_grip'):
+            return
+        p = theme.palette
+        self.sidebar_grip.setStyleSheet(
+            "QWidget#sidebarGrip { background-color: transparent; }"
+            f"QWidget#gripLine {{ background-color: {p.accent}; }}"
+            f"QWidget#gripPill {{ background-color: {p.text_muted}; border-radius: 2px; }}"
+        )
+
+    def _sidebar_grip_press(self, event):
+        """Begin a sidebar resize drag."""
+        if event.button() == Qt.LeftButton:
+            self._grip_dragging = True
+            event.accept()
+
+    def _sidebar_grip_move(self, event):
+        """Resize the sidebar live while dragging the grip."""
+        if not getattr(self, '_grip_dragging', False):
+            return
+        left = self.sidebar.mapToGlobal(QPoint(0, 0)).x()
+        new_width = int(event.globalPosition().x()) - left
+        new_width = max(self.sidebar_min_width,
+                        min(self.sidebar_max_width, new_width))
+        self.sidebar_width = new_width
+        self.sidebar.setFixedWidth(new_width)
+        event.accept()
+
+    def _sidebar_grip_release(self, event):
+        """End a sidebar resize drag and remember the chosen width."""
+        self._grip_dragging = False
+        try:
+            QSettings("IsotopeTrack", "IsotopeTrack").setValue(
+                "ui/sidebar_width", self.sidebar_width)
+        except Exception:
+            pass
+        event.accept()
 
     def on_animation_finished(self):
         """
@@ -1400,8 +1512,12 @@ class MainWindow(QMainWindow):
         
         self.animation = None
         self.animation_max = None
-        self.animation_group.finished.disconnect()
-        self.animation_group = None
+        if getattr(self, 'animation_group', None) is not None:
+            try:
+                self.animation_group.finished.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self.animation_group = None
         
     def toggle_info(self):
         """
@@ -1518,8 +1634,8 @@ class MainWindow(QMainWindow):
             None
         """
         super().resizeEvent(event)
-        if hasattr(self, 'sidebar'):
-            self.sidebar.setFixedWidth(int(self.width() * 0.2))
+        if hasattr(self, 'sidebar') and getattr(self, 'sidebar_visible', True):
+            self.sidebar.setFixedWidth(self.sidebar_width)
         
         if hasattr(self, 'content_area'):
             self.content_area.setSizes([int(self.height() * 0.7), int(self.height() * 0.3)])
@@ -1529,7 +1645,6 @@ class MainWindow(QMainWindow):
     #------------------------------------Data loading and import --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
 
-    # --- Append-mode helpers --------------------------------------------------
     def _has_loaded_samples(self):
         """
         Check whether any sample data is currently loaded in this window.
@@ -2563,7 +2678,7 @@ class MainWindow(QMainWindow):
                 self.data = self.data_by_sample[sample_name]
                 self.time_array = self.time_array_by_sample[sample_name]
                 
-                self.update_parameters_table()
+                self.update_parameters_table(force=False)
                 current_row = self.parameters_table.currentRow()
                 if current_row >= 0:
                     self.parameters_table_clicked(current_row, 0)
@@ -2626,7 +2741,7 @@ class MainWindow(QMainWindow):
                 self.data = self.data_by_sample[sample_name]
                 self.time_array = self.time_array_by_sample[sample_name]
                 
-                self.update_parameters_table()
+                self.update_parameters_table(force=False)
                 if self.sample_table.rowCount() > 0:
                     self.sample_table.selectRow(0)
                     item = self.sample_table.item(0, 0)
@@ -2695,7 +2810,7 @@ class MainWindow(QMainWindow):
             if sample_name == self.current_sample:
                 self.data.update(new_data)
                 
-                self.update_parameters_table()
+                self.update_parameters_table(force=False)
                 current_row = self.parameters_table.currentRow()
                 if current_row >= 0:
                     self.parameters_table_clicked(current_row, 0)
@@ -2759,7 +2874,7 @@ class MainWindow(QMainWindow):
             self.data = self.data_by_sample[sample_name]
             self.time_array = self.time_array_by_sample[sample_name]
             
-            self.update_parameters_table()
+            self.update_parameters_table(force=False)
 
             current_row = self.parameters_table.currentRow()
             if current_row >= 0:
@@ -2831,7 +2946,7 @@ class MainWindow(QMainWindow):
             else:
                 self.detected_peaks = {}
                 
-            self.update_parameters_table()
+            self.update_parameters_table(force=False)
             
             self.restore_results_tables(sample_name)
             
@@ -3797,7 +3912,43 @@ class MainWindow(QMainWindow):
     #------------------------------------detection parameters--------------------------------------------
     #----------------------------------------------------------------------------------------------------------
                         
-    def update_parameters_table(self):
+    def update_parameters_table(self, force=True):
+        """
+        Rebuild the detection-parameters table.
+
+        Wrapped so that painting is suppressed during the rebuild and so that
+        redundant rebuilds triggered by the same user action are skipped when
+        nothing relevant has changed. Pass force=False to allow skipping.
+        """
+        try:
+            signature = (
+                self.current_sample,
+                tuple(sorted(
+                    (element, float(isotope))
+                    for element, isotopes in self.selected_isotopes.items()
+                    for isotope in isotopes
+                )),
+                getattr(self, '_sigma_mode', 'global'),
+                len(getattr(self, 'detected_peaks', {}) or {}),
+            )
+        except Exception:
+            signature = None
+
+        if signature is not None:
+            if not force and signature == getattr(self, '_param_table_signature', None):
+                return
+            self._param_table_signature = signature
+
+        if hasattr(self, 'logger'):
+            self.logger.debug("update_parameters_table: rebuilding (force=%s)", force)
+
+        self.parameters_table.setUpdatesEnabled(False)
+        try:
+            self._populate_parameters_table()
+        finally:
+            self.parameters_table.setUpdatesEnabled(True)
+
+    def _populate_parameters_table(self):
         """
         Populate detection parameters table with element-specific settings.
         """
@@ -4098,7 +4249,6 @@ class MainWindow(QMainWindow):
                     self.sigma_spinbox.setValue(stored_sigma)
                     self.sigma_spinbox.valueChanged.connect(self.on_sigma_changed)
         
-        self.update_parameters_table()   
         
     def save_current_parameters(self):
         """

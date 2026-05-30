@@ -1,0 +1,32 @@
+2026-05-30 00:07:25,220  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-30 00:07:25,220  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-30 00:07:25,432  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3947  update_parameters_table: rebuilding (force=True)
+2026-05-30 00:07:25,536  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:33,828  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
+2026-05-30 00:07:34,426  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'
+2026-05-30 00:07:35,017  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
+2026-05-30 00:07:38,501  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'
+2026-05-30 00:07:39,991  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:40,823  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:41,287  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:42,781  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:43,705  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:44,723  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:45,881  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:46,731  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:47,238  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:48,552  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:48,994  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:49,667  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:50,160  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:51,306  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:07:51,777  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:07:52,586  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:08:02,634  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
+2026-05-30 00:08:03,277  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'
+2026-05-30 00:08:03,959  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
+2026-05-30 00:08:04,988  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'
+2026-05-30 00:08:07,292  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:08:07,840  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light
+2026-05-30 00:08:18,965  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: dark
+2026-05-30 00:08:21,830  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:917  Theme applied: light

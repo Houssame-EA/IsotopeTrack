@@ -1,0 +1,25 @@
+2026-05-29 22:56:30,894  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 22:56:30,895  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 22:56:31,101  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 22:56:31,208  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 22:56:36,735  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 22:56:36,735  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 22:56:42,715  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 22:56:42,815  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 22:56:42,894  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 22:56:42,894  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 22:56:42,894  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 22:56:42,895  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 22:56:49,907  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Clicked detect peaks button
+2026-05-29 22:56:49,908  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Analysis: Peak Detection Started
+2026-05-29 22:56:59,562  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Clicked detect peaks button
+2026-05-29 22:56:59,562  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Analysis: Peak Detection Started
+2026-05-29 22:57:02,987  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Clicked detect peaks button
+2026-05-29 22:57:02,987  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Analysis: Peak Detection Started
+2026-05-29 22:57:11,622  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_1
+2026-05-29 22:57:11,627  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 22:57:12,190  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2709a_100000x_3
+2026-05-29 22:57:12,195  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 22:57:23,681  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Batch Parameters
+2026-05-29 22:57:33,078  INFO      IsotopeTrack  .None:0  [USER ACTION] PARAMETER_CHANGE: Batch parameters applied
+2026-05-29 22:57:33,078  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)

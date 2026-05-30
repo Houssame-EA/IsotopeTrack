@@ -82,6 +82,7 @@ a = Analysis(
         'numpy.core',
         'numpy.linalg',
         'numpy.fft',
+        
 
         'numpy._core',
         'numpy._core.multiarray',
@@ -107,6 +108,11 @@ a = Analysis(
         'numpy._core._string_helpers',
         'numpy._core._type_aliases',
         'numpy._core._ufunc_config',
+
+        # ── Compression ───────────────────────────────────────────────────────────────
+        'lz4',
+        'lz4.frame',
+        'lz4.block',
 
         # ── SciPy ─────────────────────────────────────────────────────────────
         *scipy_hidden,
@@ -263,6 +269,8 @@ a = Analysis(
 
         # ── tools/ ────────────────────────────────────────────────────────────
         'tools',
+        'tools.app_version',
+        'tools.update_checker',
         'tools.help_dialogs',
         'tools.Info_table',
         'tools.info_file',

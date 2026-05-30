@@ -1,0 +1,318 @@
+2026-05-29 12:18:50,129  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 12:18:50,129  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 12:18:50,261  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 12:18:56,617  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 12:18:56,617  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 12:19:05,130  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 12:19:05,413  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 12:19:05,414  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 12:19:05,414  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 12:19:05,415  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 12:19:08,833  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 12:19:11,921  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Clustering
+2026-05-29 12:19:12,323  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Clustering Analysis
+2026-05-29 12:19:13,646  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Multi-Sample → Clustering Analysis
+2026-05-29 12:19:20,181  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Clustering
+2026-05-29 13:42:32,392  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 13:42:37,702  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: AI Data Assistant
+2026-05-29 13:42:37,913  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: AI Data Assistant
+2026-05-29 13:42:41,410  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Removed connection: Multi-Sample → Clustering Analysis
+2026-05-29 13:42:41,411  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Deleted node: Clustering Analysis
+2026-05-29 13:42:43,228  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Multi-Sample → AI Data Assistant
+2026-05-29 13:51:55,745  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened new analysis window
+2026-05-29 13:51:55,746  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 13:51:55,746  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 13:51:55,782  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 13:52:00,159  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 13:52:00,159  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 13:52:41,506  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 104_100x_1
+2026-05-29 13:52:41,725  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 13:52:43,413  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 13:52:44,673  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 13:52:48,207  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: AI Data Assistant
+2026-05-29 13:52:48,512  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: AI Data Assistant
+2026-05-29 13:52:50,405  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Multiple Sample
+2026-05-29 13:52:50,745  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 13:54:18,333  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Multi-Sample → AI Data Assistant
+2026-05-29 14:03:55,670  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Mass Fraction Calculator
+2026-05-29 14:25:08,993  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:25:11,351  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Single Sample
+2026-05-29 14:25:11,822  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:25:29,060  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: 105_100x_3
+2026-05-29 14:25:31,013  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Histogram
+2026-05-29 14:25:31,503  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:25:33,131  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:25:53,660  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Mass Fraction Calculator
+2026-05-29 14:34:06,238  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened new analysis window
+2026-05-29 14:34:06,239  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 14:34:06,239  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 14:34:06,281  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 14:34:12,431  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Open Folder
+2026-05-29 14:34:14,547  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Open multiple NU folders dialog
+2026-05-29 14:35:01,671  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: OPEN: /Volumes/Houssame-ED/Cluster_project/03/15-48-22 Ag@Au_80nm_150ppt_3, /Volumes/Houssame-ED/Cluster_project/03/15-47-07 Ag@Au_80nm_150ppt_2, /Volumes/Houssame-ED/Cluster_project/03/15-46-02 Ag@Au_80nm_150ppt_1…
+2026-05-29 14:35:01,671  INFO      IsotopeTrack.MainWindow  .None:0  Processing 9 folders
+2026-05-29 14:35:10,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration
+2026-05-29 14:35:10,456  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration window
+2026-05-29 14:35:12,569  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Load Folders — NU folders selected
+2026-05-29 14:35:27,095  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: OPEN: /Volumes/Houssame-ED/Cluster_project/03/12-59-44 68-B_Bi_In_Y-Sc_20ppb, /Volumes/Houssame-ED/Cluster_project/03/12-57-36 68-B_Bi_In_Y-Sc_10ppb, /Volumes/Houssame-ED/Cluster_project/03/12-55-00 68-B_Bi_In_Y-Sc_5ppb…
+2026-05-29 14:35:36,373  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Ag@Au_80nm_150ppt_3
+2026-05-29 14:35:37,379  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Auto-fill concentrations: 20 cells filled
+2026-05-29 14:35:42,844  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Ionic calibration calculation started
+2026-05-29 14:35:42,870  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Ionic calibration completed
+2026-05-29 14:35:42,873  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Calibration Results
+2026-05-29 14:35:46,515  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration — Back to Main
+2026-05-29 14:35:47,855  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Transport Rate Calibration
+2026-05-29 14:35:47,941  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Transport Rate Calibration
+2026-05-29 14:35:55,212  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Transport Rate calibration completed: Weight Method
+2026-05-29 14:35:56,805  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate Calibration — Back to Main
+2026-05-29 14:35:58,580  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:35:58,581  INFO      IsotopeTrack  .None:0  [USER ACTION] ERROR: Attempted to show results with no data
+2026-05-29 14:36:02,246  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Clicked detect peaks button
+2026-05-29 14:36:02,246  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Analysis: Peak Detection Started
+2026-05-29 14:36:04,739  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Ag@Au_80nm_150ppt_3
+2026-05-29 14:36:09,192  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:36:09,877  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 14:36:11,059  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Single Sample
+2026-05-29 14:36:11,478  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:36:17,943  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: Ag_100nm_200ppt_3
+2026-05-29 14:36:18,851  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Histogram
+2026-05-29 14:36:19,110  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:36:19,708  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Single Sample
+2026-05-29 14:36:20,024  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:36:25,914  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: Au_100nm_800ppt_3
+2026-05-29 14:36:27,433  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:36:27,433  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Duplicated node: Histogram
+2026-05-29 14:36:29,829  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:36:31,345  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:36:32,499  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:36:40,891  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:36:50,379  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:36:56,683  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Transport Rate Calibration
+2026-05-29 14:36:56,684  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate method switched: 
+2026-05-29 14:36:56,692  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate method switched: Liquid weight
+2026-05-29 14:36:58,371  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate method switched: Number based
+2026-05-29 14:37:30,353  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Transport Rate calibration completed: Particle Method
+2026-05-29 14:37:34,055  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate Calibration — Back to Main
+2026-05-29 14:37:40,084  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration
+2026-05-29 14:37:51,387  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Load Folders — NU folders selected
+2026-05-29 14:38:01,357  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: OPEN: /Volumes/Houssame-ED/Cluster_project/03/13-14-23 71A_20ppb, /Volumes/Houssame-ED/Cluster_project/03/13-12-28 71A_10ppb, /Volumes/Houssame-ED/Cluster_project/03/13-10-16 71A_5ppb…
+2026-05-29 14:38:05,502  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Data Management
+2026-05-29 14:38:06,788  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Auto-fill concentrations: 20 cells filled
+2026-05-29 14:38:13,491  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Ionic calibration calculation started
+2026-05-29 14:38:13,524  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Ionic calibration completed
+2026-05-29 14:38:13,526  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Calibration Results
+2026-05-29 14:38:17,656  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration — Back to Main
+2026-05-29 14:38:18,821  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:38:23,061  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: Ag_100nm_200ppt_3
+2026-05-29 14:38:23,837  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:38:31,819  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:38:37,652  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Ag@Au_80nm_150ppt_2
+2026-05-29 14:38:49,988  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:39:02,907  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:39:19,438  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:39:20,969  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:39:49,460  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Ag@Au_80nm_150ppt_3
+2026-05-29 14:40:20,244  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Ag_100nm_200ppt_3
+2026-05-29 14:40:26,979  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Au_100nm_800ppt_2
+2026-05-29 14:40:43,127  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Save Project
+2026-05-29 14:40:43,127  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Save Project
+2026-05-29 14:41:02,846  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Save: project.itp
+2026-05-29 14:43:05,440  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened new analysis window
+2026-05-29 14:43:05,440  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 14:43:05,441  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 14:43:05,489  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 14:43:15,574  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 14:43:15,575  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 14:43:18,339  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: Au_100nm_800ppt_2
+2026-05-29 14:43:18,362  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 14:43:18,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:43:18,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:43:18,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:43:18,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:43:18,363  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:43:18,403  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:43:18,448  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 14:43:19,639  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 14:43:22,345  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 14:43:22,345  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Duplicated node: Single Sample
+2026-05-29 14:43:29,475  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: Ag@Au_80nm_150ppt_3
+2026-05-29 14:43:30,811  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Histogram
+2026-05-29 14:43:31,421  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:43:32,847  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Deleted node: Histogram
+2026-05-29 14:43:33,865  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Histogram
+2026-05-29 14:43:33,865  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Duplicated node: Histogram
+2026-05-29 14:43:36,348  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Histogram
+2026-05-29 14:44:30,307  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Histogram
+2026-05-29 14:51:37,422  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration
+2026-05-29 14:51:37,534  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration window
+2026-05-29 14:51:39,285  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Manual Sensitivity
+2026-05-29 14:51:39,701  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Data Management
+2026-05-29 14:51:40,195  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Calibration Results
+2026-05-29 14:51:40,648  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Data Management
+2026-05-29 14:51:48,602  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Load Folders — NU folders selected
+2026-05-29 14:52:10,264  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: OPEN: /Volumes/Houssame-ED/Coincidence_Au_30_03_2026/18-24-16 Au_20ppb
+2026-05-29 14:52:42,911  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Ionic Calibration tab: Calibration Results
+2026-05-29 15:35:10,725  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Heatmap
+2026-05-29 15:35:11,004  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Element Heatmap
+2026-05-29 15:35:13,126  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Element Heatmap
+2026-05-29 15:35:13,650  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Heatmap
+2026-05-29 15:35:20,626  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Removed connection: Single Sample → Element Heatmap
+2026-05-29 15:35:23,377  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Element Heatmap
+2026-05-29 15:35:23,918  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Heatmap
+2026-05-29 15:35:31,281  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: Ag@Au_80nm_150ppt_3
+2026-05-29 15:35:32,743  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Removed connection: Single Sample → Element Heatmap
+2026-05-29 15:35:34,762  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Element Heatmap
+2026-05-29 15:35:35,214  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Heatmap
+2026-05-29 15:37:02,917  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Mass Fraction Calculator
+2026-05-29 15:56:13,559  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 15:56:16,975  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Removed connection: Multi-Sample → AI Data Assistant
+2026-05-29 15:56:16,975  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Deleted node: AI Data Assistant
+2026-05-29 15:56:16,975  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Deleted node: Multi-Sample
+2026-05-29 15:56:18,438  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Clustering
+2026-05-29 15:56:18,679  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Clustering Analysis
+2026-05-29 15:56:22,286  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: 2710a_100000x_3
+2026-05-29 15:56:24,047  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Clustering Analysis
+2026-05-29 15:56:24,553  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Clustering
+2026-05-29 16:07:11,941  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (IonicCalibrationWindow) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/calibration_methods/ionic_CAL.py", line 477, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:11,972  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:11,983  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:11,995  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,004  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,048  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,102  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,126  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (IonicCalibrationWindow) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/calibration_methods/ionic_CAL.py", line 477, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,132  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (TransportRateCalibrationWindow) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/calibration_methods/TE.py", line 58, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,144  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (NumberMethodWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/calibration_methods/TE_number.py", line 196, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+2026-05-29 16:07:12,198  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (InputMethodCalibration) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/calibration_methods/TE_input.py", line 34, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set

@@ -29,7 +29,6 @@ def _detect_system_theme() -> str:
                 return "dark"
             if scheme == Qt.ColorScheme.Light:
                 return "light"
-            # Qt.ColorScheme.Unknown → fall through to OS-specific checks
     except (AttributeError, ImportError):
         pass
 
@@ -41,7 +40,6 @@ def _detect_system_theme() -> str:
                 ["defaults", "read", "-g", "AppleInterfaceStyle"],
                 capture_output=True, text=True, timeout=2,
             )
-            # Key is absent (non-zero exit) in light mode
             return "dark" if "dark" in result.stdout.lower() else "light"
         except Exception:
             pass
@@ -60,7 +58,7 @@ def _detect_system_theme() -> str:
         except Exception:
             pass
 
-    return "light"   # safe default
+    return "light"  
 
 
 # --------------------------------------------------------------------------- #
@@ -118,9 +116,9 @@ class Palette:
 
 LIGHT = Palette(
     name="light",
-    bg_primary="#f0f4f8",
+    bg_primary="#e8edf3",
     bg_secondary="#ffffff",
-    bg_tertiary="#f8f9fa",
+    bg_tertiary="#f6f8fb",
     bg_sidebar="#2c3e50",
     bg_sidebar_alt="#34495e",
     bg_hover="#f0f4f8",
@@ -130,8 +128,8 @@ LIGHT = Palette(
     text_inverse="#ffffff",
     text_on_sidebar="#ecf0f1",
     text_muted="#7f8c8d",
-    border="#cccccc",
-    border_subtle="#e1e8ed",
+    border="#d4dde6",
+    border_subtle="#e6edf3",
     border_strong="#3498db",
     accent="#2196F3",
     accent_hover="#1976D2",
@@ -230,12 +228,10 @@ class ThemeManager(QObject):
         self._follow_system = False
         self._settings = QSettings("IsotopeTrack", "IsotopeTrack")
 
-        saved = self._settings.value("theme/name", "system")   # default → follow OS
+        saved = self._settings.value("theme/name", "system")   
 
         if saved == "system":
             self._follow_system = True
-            # QApplication may not exist yet at import time — try anyway,
-            # sync_with_system() will correct it afterwards.
             try:
                 detected = _detect_system_theme()
                 self._palette = DARK if detected == "dark" else LIGHT
@@ -273,13 +269,12 @@ class ThemeManager(QObject):
                 self._palette = new_palette
                 self.themeChanged.emit(new_palette.name)
 
-        # Hook into Qt's live color-scheme signal (Qt 6.5+)
         try:
             from PySide6.QtGui import QGuiApplication
             hints = QGuiApplication.instance().styleHints()
             hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         except (AttributeError, TypeError, RuntimeError):
-            pass   # Qt < 6.5 or no QApplication — live updates just won't fire
+            pass  
 
     def _on_system_scheme_changed(self) -> None:
         """Qt slot: called automatically when the OS changes dark/light mode."""
@@ -401,7 +396,7 @@ def main_window_qss(p: Palette) -> str:
             background-color: {p.accent};
             color: {p.text_inverse};
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             padding: 6px 12px;
             font-weight: bold;
         }}
@@ -419,7 +414,7 @@ def main_window_qss(p: Palette) -> str:
             background-color: {p.bg_tertiary};
             color: {p.text_primary};
             border: 1px solid {p.border};
-            border-radius: 4px;
+            border-radius: 6px;
             padding: 6px;
             selection-background-color: {p.accent};
             selection-color: {p.text_inverse};
@@ -692,30 +687,40 @@ def sidebar_qss(p: Palette) -> str:
             background-color: {p.bg_sidebar};
             color: {p.text_on_sidebar};
         }}
+        QWidget#sidebar {{
+            border-top-right-radius: 14px;
+            border-bottom-right-radius: 14px;
+        }}
         QPushButton {{
-            background-color: {p.bg_sidebar_alt};
+            background-color: transparent;
             color: {p.text_on_sidebar};
             text-align: left;
-            padding: 15px;
+            padding: 12px 16px;
             border: none;
-            border-radius: 0;
+            border-radius: 6px;
+            margin: 1px 8px;
         }}
         QPushButton:hover {{
             background-color: {p.accent};
             color: {p.text_inverse};
         }}
+        QPushButton:pressed {{
+            background-color: {p.accent_pressed};
+            color: {p.text_inverse};
+        }}
         QGroupBox {{
             font-weight: bold;
-            font-size: 18px;
-            border: 2px solid {p.bg_sidebar_alt};
-            border-radius: 8px;
-            margin-top: 1em;
-            padding-top: 15px;
-            color: {p.text_on_sidebar};
+            font-size: 16px;
+            border: none;
+            margin-top: 0.8em;
+            padding-top: 14px;
+            color: {p.accent};
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
-            padding: 0 10px;
+            subcontrol-position: top left;
+            left: 8px;
+            padding: 0 6px;
             color: {p.accent};
         }}
     """
@@ -758,8 +763,9 @@ def sidebar_list_label_qss(p: Palette) -> str:
     return f"""
         QLabel {{
             font-weight: bold;
-            padding: 10px 15px 5px 15px;
-            color: {p.text_muted};
+            font-size: 11px;
+            padding: 16px 15px 6px 15px;
+            color: {p.text_on_sidebar};
         }}
     """
 
@@ -973,17 +979,24 @@ def groupbox_qss(p: Palette) -> str:
     return f"""
         QGroupBox {{
             font-weight: bold;
-            border: 2px solid {p.border};
-            border-radius: 8px;
-            margin-top: 1.2em;
-            padding-top: 15px;
-            color: {p.text_primary};
+            font-size: 14px;
+            border: none;
+            border-radius: 10px;
+            margin-top: 1.4em;
+            padding: 16px 10px 10px 10px;
+            color: {p.text_secondary};
             background-color: {p.bg_secondary};
+        }}
+        QGroupBox#plotCard {{
+            margin-top: 0px;
+            padding: 6px;
         }}
         QGroupBox::title {{
             subcontrol-origin: margin;
-            padding: 0 10px;
-            color: {p.text_primary};
+            subcontrol-position: top left;
+            left: 14px;
+            padding: 2px 6px;
+            color: {p.text_secondary};
         }}
     """
 

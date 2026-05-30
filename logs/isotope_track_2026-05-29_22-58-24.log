@@ -1,0 +1,38 @@
+2026-05-29 22:58:24,895  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 22:58:24,896  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 22:58:24,970  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 22:58:25,027  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 22:58:29,852  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 22:58:29,852  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 22:58:34,841  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 22:58:34,946  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 22:58:35,019  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 22:58:35,019  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 22:58:35,020  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 22:58:35,020  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 22:58:37,415  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Batch Parameters
+2026-05-29 22:58:44,213  INFO      IsotopeTrack  .None:0  [USER ACTION] PARAMETER_CHANGE: Batch parameters applied
+2026-05-29 22:58:44,213  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=True)
+2026-05-29 22:58:49,890  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Clicked detect peaks button
+2026-05-29 22:58:49,890  INFO      IsotopeTrack  .None:0  [USER ACTION] ANALYSIS: Analysis: Peak Detection Started
+2026-05-29 22:59:30,642  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_2
+2026-05-29 22:59:30,646  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 23:00:14,437  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 23:00:14,443  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 23:00:25,441  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2709a_100000x_3
+2026-05-29 23:00:25,446  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 23:00:51,600  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_1
+2026-05-29 23:00:51,607  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3828  update_parameters_table: rebuilding (force=False)
+2026-05-29 23:01:47,107  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set

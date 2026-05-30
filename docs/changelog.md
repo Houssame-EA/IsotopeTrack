@@ -4,7 +4,20 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## 2026-05-30 (dev)
 
+### New Features
+- Version checker app now automatically checks for newer versions on startup
+- Cluster analysis new metric scores added
+
+### Improvements
+- Updated main window UI
+- Fixed cluster visualisation bugs
+
+### Bug Fixes
+- Fixed requirements
+- Fixed memory leaks across multiple modules
+- Fixed errors and bugs in the AI results module
 
 ##  2026-05-27
 ### Bug Fixes

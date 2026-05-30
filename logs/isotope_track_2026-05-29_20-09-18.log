@@ -1,0 +1,30 @@
+2026-05-29 20:09:19,176  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 20:09:19,176  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 20:09:19,590  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: dark
+2026-05-29 20:09:22,881  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 20:09:22,882  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 20:09:28,967  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 20:09:29,249  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 20:09:29,250  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 20:09:29,250  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 20:09:29,250  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 20:09:30,050  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 20:09:35,912  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: 2710a_100000x_3
+2026-05-29 20:09:39,150  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Clustering
+2026-05-29 20:09:39,648  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Clustering Analysis
+2026-05-29 20:09:41,566  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Clustering Analysis
+2026-05-29 20:09:42,175  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Clustering
+2026-05-29 20:09:52,020  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 21:20:58,418  CRITICAL  IsotopeTrack  .None:0  Unhandled exception: SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set
+RuntimeError: libshiboken: Internal C++ object (PeriodicTableWidget) already deleted.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/Houssame-E/Desktop/App_mac/widget/periodic_table_widget.py", line 804, in <lambda>
+    self.destroyed.connect(lambda *_: self._theme_cleanup())
+                                      ~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/Houssame-E/Desktop/App_mac/theme.py", line 352, in _disconnect
+    self.themeChanged.disconnect(slot)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+SystemError: <method 'disconnect' of 'PySide6.QtCore.SignalInstance' objects> returned a result with an exception set

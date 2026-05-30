@@ -1,0 +1,16 @@
+2026-05-29 16:23:56,308  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
+2026-05-29 16:23:56,309  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
+2026-05-29 16:23:56,460  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:896  Theme applied: light
+2026-05-29 16:24:01,222  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File -> Load Project
+2026-05-29 16:24:01,223  INFO      IsotopeTrack  .None:0  [USER ACTION] MENU: File → Load Project
+2026-05-29 16:24:07,960  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Selected sample: 2710a_100000x_3
+2026-05-29 16:24:08,254  INFO      IsotopeTrack  .None:0  [USER ACTION] NEW_WINDOW: Opened Workflow Builder canvas
+2026-05-29 16:24:08,255  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Multi-Sample
+2026-05-29 16:24:08,255  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Single Sample
+2026-05-29 16:24:08,255  INFO      IsotopeTrack  .None:0  [USER ACTION] FILE_OP: Project Load: project file
+2026-05-29 16:24:09,039  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
+2026-05-29 16:24:20,394  INFO      IsotopeTrack  .None:0  [USER ACTION] SAMPLE_SELECT: Canvas node configured: 2710a_100000x_3
+2026-05-29 16:24:21,791  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Dragged node from palette: Clustering
+2026-05-29 16:24:22,125  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Added node: Clustering Analysis
+2026-05-29 16:24:23,496  INFO      IsotopeTrack  .None:0  [USER ACTION] DATA_OP: Connected: Single Sample → Clustering Analysis
+2026-05-29 16:24:24,000  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened viz node: Clustering
