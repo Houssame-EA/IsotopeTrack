@@ -4,6 +4,27 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+v1.0.6 — 2026-05-30
+New Features
+
+Version checker app now automatically checks for newer versions on startup
+Cluster analysis new metric scores added
+
+Improvements
+
+Updated main window UI
+Standardized Results plot dialogs with a four-button UI contract (Plot format settings, Configure plot quantities, Reset layout, Export figure) across: Ternary plots, Correlation Matrix, Concentration, Network, Pie Chart, Heatmap, Single/Multiple
+Cleaned right-click menus to avoid duplicating bottom-button actions while preserving quick toggles and isotope label controls
+
+Bug Fixes
+
+Fixed memory leaks across multiple modules
+Fixed errors and bugs in the AI results module
+Fixed mass method — users can now select a new isotope after an initial selection
+Fixed cluster visualisation bugs
+Fixed requirements
+
+
 ## 2026-05-30 (dev)
 
 ### New Features
