@@ -89,9 +89,8 @@ BOX_LABEL_MAP = {
 
 BOX_DISPLAY_MODES = [
     'Side by Side',
-    'By Sample (Ordered)',
-    'Individual Subplots',
-    'Grouped by Element',
+    'Subplots by sample',
+    'Subplots by isotope',
 ]
 
 DEFAULT_ELEMENT_COLORS = [
@@ -140,6 +139,15 @@ DEFAULT_CONFIG = {
     'font_bold': False,
     'font_italic': False,
     'font_color': '#000000',
+    'show_x_grid': False,
+    'show_y_grid': False,
+    'grid_alpha': 50,
+}
+
+_DISPLAY_MODE_ALIASES = {
+    'Individual Subplots': 'Subplots by sample',
+    'Grouped by Element': 'Subplots by isotope',
+    'By Sample (Ordered)': 'Subplots by isotope',
 }
 
 
@@ -267,29 +275,109 @@ def _apply_box_overlays(plot_item, all_values_flat, cfg):
     _apply_box(plot_item, cfg)
 
 
+def _normalize_box_display_mode(mode):
+    """Normalize legacy Box Plot display-mode values to supported UI modes.
+
+    Preserved behavior:
+        Keeps backward compatibility for older configs by mapping legacy
+        mode names (``Individual Subplots``, ``Grouped by Element``, and
+        ``By Sample (Ordered)``) to the current user-facing names
+        (``Subplots by sample`` / ``Subplots by isotope``).
+    """
+    return _DISPLAY_MODE_ALIASES.get(mode, mode)
+
+
+def _apply_boxplot_grid(plot_item, cfg):
+    """Apply config-driven grid visibility to one Box Plot ``PlotItem``.
+
+    This helper is used by every Box Plot draw branch so grid toggles from
+    ``Plot format settings`` propagate uniformly across single-plot and
+    multi-subplot layouts.
+    """
+    show_x = bool(cfg.get('show_x_grid', False))
+    show_y = bool(cfg.get('show_y_grid', False))
+    alpha = max(0.0, min(1.0, float(cfg.get('grid_alpha', 50)) / 255.0))
+    plot_item.showGrid(x=show_x, y=show_y, alpha=alpha)
+
+
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class BoxPlotSettingsDialog(QDialog):
-    """Full settings dialog opened from context menu."""
+    """Scope-aware settings dialog for Box Plot format or quantity controls."""
 
-    def __init__(self, cfg, input_data, parent=None):
+    def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
         Args:
             cfg (Any): The cfg.
             input_data (Any): The input data.
             parent (Any): Parent widget or object.
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+
+        Preserved behavior:
+            Under ``all`` scope this dialog remains backward compatible with
+            the legacy combined settings route. Scoped routes collect only
+            relevant controls to avoid cross-overwrites.
         """
         super().__init__(parent)
-        self.setWindowTitle("Distribution Plot Settings")
+        if scope == 'format':
+            self.setWindowTitle("Box plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Box plot quantities configuration")
+        else:
+            self.setWindowTitle("Distribution Plot Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
         self._multi = _is_multi(input_data)
         self._samples = (input_data.get('sample_names', [])
                          if input_data else [])
+        self._scope = scope
+
+        self.shape_combo = None
+        self.bw_spin = None
+        self.jitter_spin = None
+        self.dtype_combo = None
+        self.mode_combo = None
+        self.outliers_cb = None
+        self.mean_cb = None
+        self.median_cb = None
+        self.stats_cb = None
+        self.alpha_spin = None
+        self.width_spin = None
+        self.log_y_cb = None
+        self.label_mode = None
+        self.min_count = None
+        self.y_min = None
+        self.y_max = None
+        self.auto_y = None
+        self.filter_outliers_cb = None
+        self.outlier_pct = None
+        self.show_box_cb = None
+        self.shade_combo = None
+        self._shade_clr_btn = None
+        self._shade_alpha = None
+        self._shade_min = None
+        self._shade_max = None
+        self.show_det_cb = None
+        self.det_val = None
+        self.det_label_edit = None
+        self._sample_edits = None
+        self._order_list = None
+        self._font_group = None
+        self.show_x_grid_cb = None
+        self.show_y_grid_cb = None
+        self.grid_alpha_spin = None
+
         self._build_ui()
 
     def _build_ui(self):
+        """Build settings widgets for the selected scope.
+
+        ``scope='format'`` exposes visual controls (fonts/grid/overlays) that
+        are applied via config + redraw to all Box Plot subplots. In
+        multi-sample format scope, title text editing is intentionally not
+        exposed here; a note explains that subplot titles are data-driven.
+        """
         root = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -298,170 +386,208 @@ class BoxPlotSettingsDialog(QDialog):
         scroll.setWidget(inner)
         root.addWidget(scroll)
 
-        g1 = QGroupBox("Plot Shape")
-        f1 = QFormLayout(g1)
-        self.shape_combo = QComboBox()
-        self.shape_combo.addItems(PLOT_SHAPES)
-        self.shape_combo.setCurrentText(
-            self._cfg.get('plot_shape', PLOT_SHAPES[0]))
-        f1.addRow("Shape:", self.shape_combo)
-        self.bw_spin = QDoubleSpinBox()
-        self.bw_spin.setRange(0.01, 2.0)
-        self.bw_spin.setDecimals(2)
-        self.bw_spin.setValue(self._cfg.get('violin_bandwidth', 0.2))
-        f1.addRow("Violin Bandwidth:", self.bw_spin)
-        self.jitter_spin = QDoubleSpinBox()
-        self.jitter_spin.setRange(0.0, 0.5)
-        self.jitter_spin.setDecimals(2)
-        self.jitter_spin.setValue(self._cfg.get('strip_jitter', 0.2))
-        f1.addRow("Strip Jitter:", self.jitter_spin)
-        lay.addWidget(g1)
+        if self._scope == 'all':
+            g1 = QGroupBox("Plot Shape")
+            f1 = QFormLayout(g1)
+            self.shape_combo = QComboBox()
+            self.shape_combo.addItems(PLOT_SHAPES)
+            self.shape_combo.setCurrentText(
+                self._cfg.get('plot_shape', PLOT_SHAPES[0]))
+            f1.addRow("Shape:", self.shape_combo)
+            self.bw_spin = QDoubleSpinBox()
+            self.bw_spin.setRange(0.01, 2.0)
+            self.bw_spin.setDecimals(2)
+            self.bw_spin.setValue(self._cfg.get('violin_bandwidth', 0.2))
+            f1.addRow("Violin Bandwidth:", self.bw_spin)
+            self.jitter_spin = QDoubleSpinBox()
+            self.jitter_spin.setRange(0.0, 0.5)
+            self.jitter_spin.setDecimals(2)
+            self.jitter_spin.setValue(self._cfg.get('strip_jitter', 0.2))
+            f1.addRow("Strip Jitter:", self.jitter_spin)
+            lay.addWidget(g1)
 
-        g2 = QGroupBox("Data Type")
-        f2 = QFormLayout(g2)
-        self.dtype_combo = QComboBox()
-        self.dtype_combo.addItems(BOX_DATA_TYPES)
-        self.dtype_combo.setCurrentText(
-            self._cfg.get('data_type_display', BOX_DATA_TYPES[0]))
-        f2.addRow("Type:", self.dtype_combo)
-        lay.addWidget(g2)
+        if self._scope in ('all', 'quantities'):
+            g2 = QGroupBox("Data Type")
+            f2 = QFormLayout(g2)
+            self.dtype_combo = QComboBox()
+            self.dtype_combo.addItems(BOX_DATA_TYPES)
+            self.dtype_combo.setCurrentText(
+                self._cfg.get('data_type_display', BOX_DATA_TYPES[0]))
+            f2.addRow("Type:", self.dtype_combo)
+            lay.addWidget(g2)
 
-        if self._multi:
+        if self._multi and self._scope in ('all', 'quantities'):
             g_dm = QGroupBox("Multiple Sample Display")
             f_dm = QFormLayout(g_dm)
             self.mode_combo = QComboBox()
             self.mode_combo.addItems(BOX_DISPLAY_MODES)
-            self.mode_combo.setCurrentText(
+            current_mode = _normalize_box_display_mode(
                 self._cfg.get('display_mode', BOX_DISPLAY_MODES[0]))
+            if current_mode not in BOX_DISPLAY_MODES:
+                current_mode = BOX_DISPLAY_MODES[0]
+            self.mode_combo.setCurrentText(current_mode)
             f_dm.addRow("Display Mode:", self.mode_combo)
             lay.addWidget(g_dm)
 
+        if self._scope in ('all', 'format'):
+            self._font_group = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_group.build())
+
+            g_grid = QGroupBox("Grid")
+            f_grid = QFormLayout(g_grid)
+            self.show_x_grid_cb = QCheckBox()
+            self.show_x_grid_cb.setChecked(self._cfg.get('show_x_grid', False))
+            f_grid.addRow("Show X Grid:", self.show_x_grid_cb)
+            self.show_y_grid_cb = QCheckBox()
+            self.show_y_grid_cb.setChecked(self._cfg.get('show_y_grid', False))
+            f_grid.addRow("Show Y Grid:", self.show_y_grid_cb)
+            self.grid_alpha_spin = QSpinBox()
+            self.grid_alpha_spin.setRange(0, 255)
+            self.grid_alpha_spin.setValue(int(self._cfg.get('grid_alpha', 50)))
+            f_grid.addRow("Grid Opacity (0-255):", self.grid_alpha_spin)
+            lay.addWidget(g_grid)
+
+            if self._multi:
+                title_note = QLabel(
+                    "Title text is managed per subplot in this display mode.")
+                title_note.setWordWrap(True)
+                title_note.setStyleSheet("color:#6B7280; font-size:11px;")
+                lay.addWidget(title_note)
+
         g3 = QGroupBox("Plot Options")
         f3 = QFormLayout(g3)
-        self.outliers_cb = QCheckBox()
-        self.outliers_cb.setChecked(self._cfg.get('show_outliers', True))
-        f3.addRow("Show Outliers:", self.outliers_cb)
-        self.mean_cb = QCheckBox()
-        self.mean_cb.setChecked(self._cfg.get('show_mean', True))
-        f3.addRow("Show Mean:", self.mean_cb)
-        self.median_cb = QCheckBox()
-        self.median_cb.setChecked(self._cfg.get('show_median', True))
-        f3.addRow("Show Median:", self.median_cb)
-        self.stats_cb = QCheckBox()
-        self.stats_cb.setChecked(self._cfg.get('show_stats', True))
-        f3.addRow("Show Statistics:", self.stats_cb)
-        self.alpha_spin = QDoubleSpinBox()
-        self.alpha_spin.setRange(0.1, 1.0)
-        self.alpha_spin.setDecimals(1)
-        self.alpha_spin.setValue(self._cfg.get('alpha', 0.7))
-        f3.addRow("Transparency:", self.alpha_spin)
-        self.width_spin = QDoubleSpinBox()
-        self.width_spin.setRange(0.1, 2.0)
-        self.width_spin.setDecimals(1)
-        self.width_spin.setValue(self._cfg.get('plot_width', 0.8))
-        f3.addRow("Plot Width:", self.width_spin)
-        self.log_y_cb = QCheckBox()
-        self.log_y_cb.setChecked(self._cfg.get('log_y', False))
-        f3.addRow("Log Y-axis:", self.log_y_cb)
-        self.label_mode = QComboBox()
-        self.label_mode.addItems(LABEL_MODES)
-        self.label_mode.setCurrentText(
-            self._cfg.get('label_mode', 'Symbol'))
-        f3.addRow("Isotope Label:", self.label_mode)
-        self.min_count = QSpinBox()
-        self.min_count.setRange(0, 100000)
-        self.min_count.setValue(self._cfg.get('min_particle_count', 0))
-        self.min_count.setSuffix(" particles")
-        self.min_count.setToolTip(
-            "Hide elements with fewer particles than this threshold.\n"
-            "Set to 0 to show all elements.")
-        f3.addRow("Min Particle Count:", self.min_count)
-        lay.addWidget(g3)
+        if self._scope in ('all', 'format'):
+            if self._scope == 'all':
+                self.outliers_cb = QCheckBox()
+                self.outliers_cb.setChecked(self._cfg.get('show_outliers', True))
+                f3.addRow("Show Outliers:", self.outliers_cb)
+            self.mean_cb = QCheckBox()
+            self.mean_cb.setChecked(self._cfg.get('show_mean', True))
+            f3.addRow("Show Mean:", self.mean_cb)
+            self.median_cb = QCheckBox()
+            self.median_cb.setChecked(self._cfg.get('show_median', True))
+            f3.addRow("Show Median:", self.median_cb)
+            self.stats_cb = QCheckBox()
+            self.stats_cb.setChecked(self._cfg.get('show_stats', True))
+            f3.addRow("Show Statistics:", self.stats_cb)
+            self.alpha_spin = QDoubleSpinBox()
+            self.alpha_spin.setRange(0.1, 1.0)
+            self.alpha_spin.setDecimals(1)
+            self.alpha_spin.setValue(self._cfg.get('alpha', 0.7))
+            f3.addRow("Transparency:", self.alpha_spin)
+            self.width_spin = QDoubleSpinBox()
+            self.width_spin.setRange(0.1, 2.0)
+            self.width_spin.setDecimals(1)
+            self.width_spin.setValue(self._cfg.get('plot_width', 0.8))
+            f3.addRow("Plot Width:", self.width_spin)
+            if self._scope == 'all':
+                self.label_mode = QComboBox()
+                self.label_mode.addItems(LABEL_MODES)
+                self.label_mode.setCurrentText(
+                    self._cfg.get('label_mode', 'Symbol'))
+                f3.addRow("Isotope Label:", self.label_mode)
+        if self._scope in ('all', 'quantities'):
+            self.log_y_cb = QCheckBox()
+            self.log_y_cb.setChecked(self._cfg.get('log_y', False))
+            f3.addRow("Log Y-axis:", self.log_y_cb)
+            self.min_count = QSpinBox()
+            self.min_count.setRange(0, 100000)
+            self.min_count.setValue(self._cfg.get('min_particle_count', 0))
+            self.min_count.setSuffix(" particles")
+            self.min_count.setToolTip(
+                "Hide elements with fewer particles than this threshold.\n"
+                "Set to 0 to show all elements.")
+            f3.addRow("Min Particle Count:", self.min_count)
+        if f3.rowCount() > 0:
+            lay.addWidget(g3)
 
-        g4 = QGroupBox("Y-Axis Limits")
-        f4 = QFormLayout(g4)
-        row = QHBoxLayout()
-        self.y_min = QDoubleSpinBox()
-        self.y_min.setRange(-999999, 999999)
-        self.y_min.setValue(self._cfg.get('y_min', 0))
-        self.y_max = QDoubleSpinBox()
-        self.y_max.setRange(-999999, 999999)
-        self.y_max.setValue(self._cfg.get('y_max', 100))
-        self.auto_y = QCheckBox("Auto")
-        self.auto_y.setChecked(self._cfg.get('auto_y', True))
-        self.auto_y.stateChanged.connect(lambda: (
-            self.y_min.setEnabled(not self.auto_y.isChecked()),
-            self.y_max.setEnabled(not self.auto_y.isChecked())))
-        self.y_min.setEnabled(not self.auto_y.isChecked())
-        self.y_max.setEnabled(not self.auto_y.isChecked())
-        row.addWidget(self.y_min)
-        row.addWidget(QLabel("to"))
-        row.addWidget(self.y_max)
-        row.addWidget(self.auto_y)
-        f4.addRow("Y Range:", row)
-        lay.addWidget(g4)
+        if self._scope in ('all', 'quantities'):
+            g4 = QGroupBox("Y-Axis Limits")
+            f4 = QFormLayout(g4)
+            row = QHBoxLayout()
+            self.y_min = QDoubleSpinBox()
+            self.y_min.setRange(-999999, 999999)
+            self.y_min.setValue(self._cfg.get('y_min', 0))
+            self.y_max = QDoubleSpinBox()
+            self.y_max.setRange(-999999, 999999)
+            self.y_max.setValue(self._cfg.get('y_max', 100))
+            self.auto_y = QCheckBox("Auto")
+            self.auto_y.setChecked(self._cfg.get('auto_y', True))
+            self.auto_y.stateChanged.connect(lambda: (
+                self.y_min.setEnabled(not self.auto_y.isChecked()),
+                self.y_max.setEnabled(not self.auto_y.isChecked())))
+            self.y_min.setEnabled(not self.auto_y.isChecked())
+            self.y_max.setEnabled(not self.auto_y.isChecked())
+            row.addWidget(self.y_min)
+            row.addWidget(QLabel("to"))
+            row.addWidget(self.y_max)
+            row.addWidget(self.auto_y)
+            f4.addRow("Y Range:", row)
+            lay.addWidget(g4)
 
-        g_filt = QGroupBox("Outlier Filtering")
-        f_filt = QFormLayout(g_filt)
-        self.filter_outliers_cb = QCheckBox()
-        self.filter_outliers_cb.setChecked(self._cfg.get('filter_outliers', False))
-        f_filt.addRow("Filter Outliers:", self.filter_outliers_cb)
-        self.outlier_pct = QDoubleSpinBox()
-        self.outlier_pct.setRange(90.0, 99.9); self.outlier_pct.setDecimals(1)
-        self.outlier_pct.setValue(self._cfg.get('outlier_percentile', 99.0))
-        f_filt.addRow("Keep Below Percentile:", self.outlier_pct)
-        lay.addWidget(g_filt)
+        if self._scope in ('all', 'quantities'):
+            g_filt = QGroupBox("Outlier Filtering")
+            f_filt = QFormLayout(g_filt)
+            self.filter_outliers_cb = QCheckBox()
+            self.filter_outliers_cb.setChecked(self._cfg.get('filter_outliers', False))
+            f_filt.addRow("Filter Outliers:", self.filter_outliers_cb)
+            self.outlier_pct = QDoubleSpinBox()
+            self.outlier_pct.setRange(90.0, 99.9); self.outlier_pct.setDecimals(1)
+            self.outlier_pct.setValue(self._cfg.get('outlier_percentile', 99.0))
+            f_filt.addRow("Keep Below Percentile:", self.outlier_pct)
+            lay.addWidget(g_filt)
 
-        g_ov = QGroupBox("Statistical Overlays")
-        f_ov = QFormLayout(g_ov)
-        self.show_box_cb = QCheckBox()
-        self.show_box_cb.setChecked(self._cfg.get('show_box', True))
-        f_ov.addRow("Figure Box (frame):", self.show_box_cb)
-        self.shade_combo = QComboBox()
-        self.shade_combo.addItems(SHADE_TYPES + ['User-defined range'])
-        self.shade_combo.setCurrentText(self._cfg.get('shade_type', 'None'))
-        self.shade_combo.currentTextChanged.connect(self._on_shade_type_changed)
-        f_ov.addRow("Horizontal Band:", self.shade_combo)
+        if self._scope in ('all', 'format'):
+            g_ov = QGroupBox("Statistical Overlays")
+            f_ov = QFormLayout(g_ov)
+            self.show_box_cb = QCheckBox()
+            self.show_box_cb.setChecked(self._cfg.get('show_box', True))
+            f_ov.addRow("Figure Box (frame):", self.show_box_cb)
+            self.shade_combo = QComboBox()
+            self.shade_combo.addItems(SHADE_TYPES + ['User-defined range'])
+            self.shade_combo.setCurrentText(self._cfg.get('shade_type', 'None'))
+            self.shade_combo.currentTextChanged.connect(self._on_shade_type_changed)
+            f_ov.addRow("Horizontal Band:", self.shade_combo)
 
-        shade_clr_row = QHBoxLayout()
-        self._shade_color = self._cfg.get('shade_color', '#534AB7')
-        self._shade_clr_btn = QPushButton(); self._shade_clr_btn.setFixedSize(26, 22)
-        self._shade_clr_btn.setStyleSheet(f"background:{self._shade_color};")
-        self._shade_clr_btn.clicked.connect(self._pick_shade_color)
-        self._shade_alpha = QDoubleSpinBox()
-        self._shade_alpha.setRange(0.01, 1.0); self._shade_alpha.setDecimals(2)
-        self._shade_alpha.setValue(self._cfg.get('shade_alpha', 0.18))
-        shade_clr_row.addWidget(self._shade_clr_btn)
-        shade_clr_row.addWidget(QLabel("alpha:")); shade_clr_row.addWidget(self._shade_alpha)
-        shade_clr_row.addStretch()
-        f_ov.addRow("Band Color / alpha:", shade_clr_row)
+            shade_clr_row = QHBoxLayout()
+            self._shade_color = self._cfg.get('shade_color', '#534AB7')
+            self._shade_clr_btn = QPushButton(); self._shade_clr_btn.setFixedSize(26, 22)
+            self._shade_clr_btn.setStyleSheet(f"background:{self._shade_color};")
+            self._shade_clr_btn.clicked.connect(self._pick_shade_color)
+            self._shade_alpha = QDoubleSpinBox()
+            self._shade_alpha.setRange(0.01, 1.0); self._shade_alpha.setDecimals(2)
+            self._shade_alpha.setValue(self._cfg.get('shade_alpha', 0.18))
+            shade_clr_row.addWidget(self._shade_clr_btn)
+            shade_clr_row.addWidget(QLabel("alpha:")); shade_clr_row.addWidget(self._shade_alpha)
+            shade_clr_row.addStretch()
+            f_ov.addRow("Band Color / alpha:", shade_clr_row)
 
-        self._user_range_frame = QFrame()
-        ur = QHBoxLayout(self._user_range_frame)
-        ur.setContentsMargins(0, 0, 0, 0)
-        self._shade_min = QDoubleSpinBox(); self._shade_min.setRange(-1e9, 1e9)
-        self._shade_min.setDecimals(4); self._shade_min.setValue(self._cfg.get('shade_min', 0.0))
-        self._shade_max = QDoubleSpinBox(); self._shade_max.setRange(-1e9, 1e9)
-        self._shade_max.setDecimals(4); self._shade_max.setValue(self._cfg.get('shade_max', 1.0))
-        ur.addWidget(QLabel("Min:")); ur.addWidget(self._shade_min)
-        ur.addWidget(QLabel("Max:")); ur.addWidget(self._shade_max)
-        ur.addStretch()
-        f_ov.addRow("User Range:", self._user_range_frame)
-        self._on_shade_type_changed(self.shade_combo.currentText())
+            self._user_range_frame = QFrame()
+            ur = QHBoxLayout(self._user_range_frame)
+            ur.setContentsMargins(0, 0, 0, 0)
+            self._shade_min = QDoubleSpinBox(); self._shade_min.setRange(-1e9, 1e9)
+            self._shade_min.setDecimals(4); self._shade_min.setValue(self._cfg.get('shade_min', 0.0))
+            self._shade_max = QDoubleSpinBox(); self._shade_max.setRange(-1e9, 1e9)
+            self._shade_max.setDecimals(4); self._shade_max.setValue(self._cfg.get('shade_max', 1.0))
+            ur.addWidget(QLabel("Min:")); ur.addWidget(self._shade_min)
+            ur.addWidget(QLabel("Max:")); ur.addWidget(self._shade_max)
+            ur.addStretch()
+            f_ov.addRow("User Range:", self._user_range_frame)
+            self._on_shade_type_changed(self.shade_combo.currentText())
 
-        self.show_det_cb = QCheckBox()
-        self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
-        f_ov.addRow("Detection Limit Line:", self.show_det_cb)
-        self.det_val = QDoubleSpinBox()
-        self.det_val.setRange(0.0, 999999999); self.det_val.setDecimals(4)
-        self.det_val.setValue(self._cfg.get('det_limit_value', 1.0))
-        f_ov.addRow("DL Value:", self.det_val)
-        self.det_label_edit = QLineEdit(self._cfg.get('det_limit_label', ''))
-        self.det_label_edit.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
-        f_ov.addRow("DL Label:", self.det_label_edit)
-        lay.addWidget(g_ov)
+            self.show_det_cb = QCheckBox()
+            self.show_det_cb.setChecked(self._cfg.get('show_det_limit', False))
+            f_ov.addRow("Detection Limit Line:", self.show_det_cb)
+            self.det_val = QDoubleSpinBox()
+            self.det_val.setRange(0.0, 999999999); self.det_val.setDecimals(4)
+            self.det_val.setValue(self._cfg.get('det_limit_value', 1.0))
+            f_ov.addRow("DL Value:", self.det_val)
+            self.det_label_edit = QLineEdit(self._cfg.get('det_limit_label', ''))
+            self.det_label_edit.setPlaceholderText("Auto  (e.g.  DL: 1.0)")
+            f_ov.addRow("DL Label:", self.det_label_edit)
+            lay.addWidget(g_ov)
 
-        if self._multi and self._samples:
+        if self._multi and self._samples and self._scope in ('all', 'format'):
             g6 = QGroupBox("Sample Names")
             v6 = QVBoxLayout(g6)
             self._sample_edits = {}
@@ -473,8 +599,8 @@ class BoxPlotSettingsDialog(QDialog):
                 ed.setFixedWidth(200)
                 h.addWidget(ed)
                 self._sample_edits[sn] = ed
-                rst = QPushButton("\u21ba")
-                rst.setFixedSize(22, 22)
+                rst = QPushButton("Reset")
+                rst.setFixedHeight(22)
                 rst.clicked.connect(
                     lambda _, o=sn: self._sample_edits[o].setText(o))
                 h.addWidget(rst)
@@ -484,10 +610,11 @@ class BoxPlotSettingsDialog(QDialog):
                 v6.addWidget(w)
             lay.addWidget(g6)
 
+        if self._multi and self._samples and self._scope in ('all', 'quantities'):
             g7 = QGroupBox("Sample Display Order")
             v7 = QVBoxLayout(g7)
             hint = QLabel(
-                "Drag or use \u2191\u2193 to reorder — useful for time series.")
+                "Drag or use Move up / Move down to reorder (useful for time series).")
             hint.setStyleSheet("color:#6B7280; font-size:10px;")
             hint.setWordWrap(True)
             v7.addWidget(hint)
@@ -502,11 +629,11 @@ class BoxPlotSettingsDialog(QDialog):
                 self._order_list.addItem(s)
             v7.addWidget(self._order_list)
             btn_row = QHBoxLayout()
-            up_btn = QPushButton("\u2191  Up")
-            up_btn.setFixedWidth(72)
+            up_btn = QPushButton("Move up")
+            up_btn.setFixedWidth(82)
             up_btn.clicked.connect(self._move_up)
-            dn_btn = QPushButton("\u2193  Down")
-            dn_btn.setFixedWidth(72)
+            dn_btn = QPushButton("Move down")
+            dn_btn.setFixedWidth(92)
             dn_btn.clicked.connect(self._move_down)
             btn_row.addWidget(up_btn)
             btn_row.addWidget(dn_btn)
@@ -550,45 +677,67 @@ class BoxPlotSettingsDialog(QDialog):
             self._order_list.setCurrentRow(row + 1)
 
     def collect(self):
-        """
+        """Collect settings from the active scope without touching missing widgets.
+
         Returns:
-            object: Result of the operation.
+            dict: Configuration updates for the selected scope.
+
+        Preserved behavior:
+            Scientific extraction semantics are unchanged. Under scoped usage,
+            only created controls contribute values so unrelated keys are not
+            overwritten by absent widgets.
         """
         d = {
-            'plot_shape': self.shape_combo.currentText(),
-            'violin_bandwidth': self.bw_spin.value(),
-            'strip_jitter': self.jitter_spin.value(),
-            'data_type_display': self.dtype_combo.currentText(),
-            'show_outliers': self.outliers_cb.isChecked(),
-            'show_mean': self.mean_cb.isChecked(),
-            'show_median': self.median_cb.isChecked(),
-            'show_stats': self.stats_cb.isChecked(),
-            'alpha': self.alpha_spin.value(),
-            'plot_width': self.width_spin.value(),
-            'log_y': self.log_y_cb.isChecked(),
-            'y_min': self.y_min.value(),
-            'y_max': self.y_max.value(),
-            'auto_y': self.auto_y.isChecked(),
-            'label_mode': self.label_mode.currentText(),
-            'min_particle_count': self.min_count.value(),
-            'filter_outliers': self.filter_outliers_cb.isChecked(),
-            'outlier_percentile': self.outlier_pct.value(),
-            'show_box': self.show_box_cb.isChecked(),
-            'shade_type': self.shade_combo.currentText(),
-            'shade_color': self._shade_color,
-            'shade_alpha': self._shade_alpha.value(),
-            'shade_min': self._shade_min.value(),
-            'shade_max': self._shade_max.value(),
-            'show_det_limit': self.show_det_cb.isChecked(),
-            'det_limit_value': self.det_val.value(),
-            'det_limit_label': self.det_label_edit.text().strip(),
         }
-        if hasattr(self, 'mode_combo'):
-            d['display_mode'] = self.mode_combo.currentText()
-        if hasattr(self, '_sample_edits'):
+        if self.shape_combo is not None:
+            d['plot_shape'] = self.shape_combo.currentText()
+            d['violin_bandwidth'] = self.bw_spin.value()
+            d['strip_jitter'] = self.jitter_spin.value()
+        if self.dtype_combo is not None:
+            d['data_type_display'] = self.dtype_combo.currentText()
+        if self.outliers_cb is not None:
+            d['show_outliers'] = self.outliers_cb.isChecked()
+        if self.mean_cb is not None:
+            d['show_mean'] = self.mean_cb.isChecked()
+            d['show_median'] = self.median_cb.isChecked()
+            d['show_stats'] = self.stats_cb.isChecked()
+            d['alpha'] = self.alpha_spin.value()
+            d['plot_width'] = self.width_spin.value()
+        if self.label_mode is not None:
+            d['label_mode'] = self.label_mode.currentText()
+        if self.log_y_cb is not None:
+            d['log_y'] = self.log_y_cb.isChecked()
+            d['min_particle_count'] = self.min_count.value()
+        if self.auto_y is not None:
+            d['y_min'] = self.y_min.value()
+            d['y_max'] = self.y_max.value()
+            d['auto_y'] = self.auto_y.isChecked()
+        if self.filter_outliers_cb is not None:
+            d['filter_outliers'] = self.filter_outliers_cb.isChecked()
+            d['outlier_percentile'] = self.outlier_pct.value()
+        if self.show_box_cb is not None:
+            d['show_box'] = self.show_box_cb.isChecked()
+            d['shade_type'] = self.shade_combo.currentText()
+            d['shade_color'] = self._shade_color
+            d['shade_alpha'] = self._shade_alpha.value()
+            d['shade_min'] = self._shade_min.value()
+            d['shade_max'] = self._shade_max.value()
+            d['show_det_limit'] = self.show_det_cb.isChecked()
+            d['det_limit_value'] = self.det_val.value()
+            d['det_limit_label'] = self.det_label_edit.text().strip()
+        if self.mode_combo is not None:
+            d['display_mode'] = _normalize_box_display_mode(
+                self.mode_combo.currentText())
+        if self._font_group is not None:
+            d.update(self._font_group.collect())
+        if self.show_x_grid_cb is not None:
+            d['show_x_grid'] = self.show_x_grid_cb.isChecked()
+            d['show_y_grid'] = self.show_y_grid_cb.isChecked()
+            d['grid_alpha'] = self.grid_alpha_spin.value()
+        if self._sample_edits is not None:
             d['sample_name_mappings'] = {
                 k: v.text() for k, v in self._sample_edits.items()}
-        if hasattr(self, '_order_list'):
+        if self._order_list is not None:
             d['sample_order'] = [
                 self._order_list.item(i).text()
                 for i in range(self._order_list.count())]
@@ -850,7 +999,7 @@ _SHAPE_DRAWERS = {
 
 
 def _draw_single_element(plot_item, x, values, sample_name, element, cfg, is_multi):
-    """Dispatch to the correct shape drawer.
+    """Dispatch one series to the configured Box Plot shape drawer.
     Args:
         plot_item (Any): The plot item.
         x (Any): Input array or value.
@@ -859,6 +1008,11 @@ def _draw_single_element(plot_item, x, values, sample_name, element, cfg, is_mul
         element (Any): The element.
         cfg (Any): The cfg.
         is_multi (Any): The is multi.
+    
+    Preserved behavior:
+        In combined multi-sample modes (``is_multi=True``), color identity
+        remains sample-based. In single-sample/per-sample panels
+        (``is_multi=False``), color identity remains element/isotope-based.
     """
     if len(values) < 2:
         return
@@ -873,6 +1027,19 @@ def _draw_single_element(plot_item, x, values, sample_name, element, cfg, is_mul
     shape = cfg.get('plot_shape', PLOT_SHAPES[0])
     drawer = _SHAPE_DRAWERS.get(shape, _draw_box)
     drawer(plot_item, x, values, color, alpha, width, cfg)
+
+
+def _add_empty_panel_message(plot_item, message="No valid data"):
+    """Add a small, panel-local empty-state note for subplot readability.
+
+    This message is used when filtering/min-count/log transforms leave a
+    sample panel with no drawable element distributions. It preserves all
+    scientific settings and only communicates that the current panel has no
+    valid plotted values.
+    """
+    txt = pg.TextItem(message, anchor=(0.5, 0.5), color='gray')
+    plot_item.addItem(txt)
+    txt.setPos(0.5, 0.5)
 
 
 def _add_stats_text(plot_item, plot_data, cfg):
@@ -933,6 +1100,7 @@ class BoxPlotDisplayDialog(QDialog):
         """
         super().__init__(parent_window)
         self.node = node
+        self._subplot_context_by_plotitem = {}
         self.setWindowTitle("Particle Data Distribution Plot Analysis")
         self.setMinimumSize(1100, 750)
 
@@ -945,6 +1113,13 @@ class BoxPlotDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """Build plot canvas, stats row, and standardized bottom action buttons.
+
+        Preserved behavior:
+            Plot calculations and extraction logic are unchanged. This only
+            adds homogenized UI routing for format, quantities, reset, and
+            export actions.
+        """
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
 
@@ -958,14 +1133,74 @@ class BoxPlotDisplayDialog(QDialog):
         self.pw.customContextMenuRequested.connect(self._ctx_menu)
         lay.addWidget(self.pw, stretch=1)
 
+        bb = QHBoxLayout()
+        bb.setContentsMargins(0, 0, 0, 0)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_reset = QPushButton("Reset layout")
+        btn_reset.setToolTip("Reset plot ranges to automatic view.")
+        btn_reset.clicked.connect(self._reset_layout)
+        btn_export = QPushButton("Export figure")
+        btn_export.clicked.connect(self._export_figure)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_reset)
+        bb.addWidget(btn_export)
+        lay.addLayout(bb)
+
 
     def _ctx_menu(self, pos):
-        """
+        """Show Box Plot custom right-click menu with Box-specific quick actions.
+
         Args:
             pos (Any): Position point.
+
+        Preserved behavior:
+            Keeps only lightweight visual toggles plus Box-specific ``Plot
+            Shape`` and ``Show Outliers`` actions in right-click. Quantity,
+            reset, and export workflows are routed through bottom buttons.
         """
         cfg = self.node.config
+        display_mode = _normalize_box_display_mode(
+            cfg.get('display_mode', 'Side by Side'))
+        clicked_plot = self._plot_item_at(pos)
+        subplot_ctx = self._subplot_context_by_plotitem.get(clicked_plot)
+        if clicked_plot is not None and subplot_ctx is None:
+            try:
+                scene_pos = self.pw.mapToScene(pos)
+                for pi, ctx in self._subplot_context_by_plotitem.items():
+                    try:
+                        rect = pi.mapRectToScene(pi.boundingRect())
+                    except Exception:
+                        continue
+                    if rect.contains(scene_pos):
+                        clicked_plot = pi
+                        subplot_ctx = ctx
+                        break
+            except Exception:
+                pass
         menu = QMenu(self)
+
+        tm = menu.addMenu("Quick Toggles")
+        for key, label, default in [
+            ('show_mean',       'Show Mean',            True),
+            ('show_median',     'Show Median',          True),
+            ('show_stats',      'Show Statistics',      True),
+            ('show_box',        'Figure Box (frame)',   True),
+            ('show_det_limit',  'Detection Limit Line', False),
+        ]:
+            a = tm.addAction(label); a.setCheckable(True)
+            a.setChecked(cfg.get(key, default))
+            a.triggered.connect(lambda _, k=key: self._toggle(k))
+
+        lm = menu.addMenu("Isotope Label")
+        for label_mode in LABEL_MODES:
+            a = lm.addAction(label_mode); a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == label_mode)
+            a.triggered.connect(
+                lambda _, v=label_mode: self._set('label_mode', v))
 
         sm = menu.addMenu("Plot Shape")
         for s in PLOT_SHAPES:
@@ -973,54 +1208,86 @@ class BoxPlotDisplayDialog(QDialog):
             a.setChecked(cfg.get('plot_shape') == s)
             a.triggered.connect(lambda _, v=s: self._set('plot_shape', v))
 
-        dm = menu.addMenu("Data Type")
-        for dt in BOX_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
+        show_outliers = menu.addAction("Show Outliers")
+        show_outliers.setCheckable(True)
+        show_outliers.setChecked(cfg.get('show_outliers', True))
+        show_outliers.triggered.connect(lambda _: self._toggle('show_outliers'))
 
-        tm = menu.addMenu("Quick Toggles")
-        for key, label, default in [
-            ('show_outliers',   'Show Outliers',      True),
-            ('show_mean',       'Show Mean',          True),
-            ('show_median',     'Show Median',        True),
-            ('show_stats',      'Show Statistics',    True),
-            ('log_y',           'Log Y-axis',         False),
-            ('filter_outliers', 'Filter Outliers',    False),
-            ('show_box',        'Figure Box (frame)', True),
-        ]:
-            a = tm.addAction(label); a.setCheckable(True)
-            a.setChecked(cfg.get(key, default))
-            a.triggered.connect(lambda _, k=key: self._toggle(k))
-
-        tm.addSeparator()
-        sep = tm.addAction("-- Horizontal Band --"); sep.setEnabled(False)
-        shm = tm.addMenu("Band Type")
-        for st in SHADE_TYPES + ['User-defined range']:
-            a = shm.addAction(st); a.setCheckable(True)
-            a.setChecked(cfg.get('shade_type', 'None') == st)
-            a.triggered.connect(lambda _, v=st: self._set('shade_type', v))
-
-        tm.addSeparator()
-        sep2 = tm.addAction("-- Reference Lines --"); sep2.setEnabled(False)
-        det_a = tm.addAction("Detection Limit Line"); det_a.setCheckable(True)
-        det_a.setChecked(cfg.get('show_det_limit', False))
-        det_a.triggered.connect(lambda _: self._toggle('show_det_limit'))
-
-        if _is_multi(self.node.input_data):
-            mm = menu.addMenu("Display Mode")
-            for m in BOX_DISPLAY_MODES:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
-
-        menu.addSeparator()
-        menu.addAction("Configure...").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure...").triggered.connect(
-            lambda: download_pyqtgraph_figure(self.pw, self, "distribution_plot.png"))
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("Plot Settings...").triggered.connect(self._open_plot_settings)
+        can_export_subplot = (
+            display_mode == 'Subplots by isotope'
+            and clicked_plot is not None
+            and subplot_ctx is not None
+        )
+        if can_export_subplot:
+            exp_act = menu.addAction("Export this subplot...")
+            exp_act.triggered.connect(
+                lambda _: self._export_subplot(clicked_plot, subplot_ctx))
+        else:
+            exp_act = menu.addAction("Export this subplot... (unavailable here)")
+            exp_act.setEnabled(False)
+            hint = "Right-click a subplot panel to export only that panel."
+            exp_act.setToolTip(hint)
+            exp_act.setStatusTip(hint)
         menu.exec(self.pw.mapToGlobal(pos))
+
+    def _plot_item_at(self, pos):
+        """Resolve the clicked subplot via ``mapRectToScene`` hit testing.
+
+        ``customContextMenuRequested`` provides widget coordinates. This helper
+        maps to scene coordinates and checks each ``pg.PlotItem`` using
+        ``item.mapRectToScene(item.boundingRect())`` to mirror the working
+        Histogram decomposition behavior. This avoids fragile
+        ``sceneBoundingRect()`` mismatches seen in some Box Plot layouts.
+        """
+        try:
+            scene_pos = self.pw.mapToScene(pos)
+        except Exception:
+            return None
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    rect = item.mapRectToScene(item.boundingRect())
+                except Exception:
+                    continue
+                if rect is not None and rect.contains(scene_pos):
+                    return item
+        return None
+
+    @staticmethod
+    def _sanitize_filename_part(value):
+        """Convert subplot context text into a filesystem-safe token."""
+        if value is None:
+            return "subplot"
+        text = str(value).strip()
+        if not text:
+            return "subplot"
+        keep = []
+        for ch in text:
+            if ch.isalnum() or ch in ("-", "_"):
+                keep.append(ch)
+            elif ch.isspace():
+                keep.append("_")
+        cleaned = "".join(keep).strip("_")
+        return cleaned or "subplot"
+
+    def _export_subplot(self, plot_item, subplot_ctx):
+        """Export one already-rendered Box Plot subplot using shared workflow.
+
+        The export dialog/options are reused from ``download_pyqtgraph_figure``
+        so format/resolution behavior remains consistent with full-figure
+        export. Only the clicked ``PlotItem`` is targeted when available.
+        """
+        raw_elem = subplot_ctx.get('element') if subplot_ctx else None
+        title = subplot_ctx.get('title') if subplot_ctx else None
+        stem = (
+            f"boxplot_{self._sanitize_filename_part(raw_elem or title)}_by_sample"
+        )
+        download_pyqtgraph_figure(
+            self.pw,
+            self,
+            default_name=stem or "subplot_export",
+            export_item=plot_item,
+        )
 
     def _toggle(self, key):
         """
@@ -1039,14 +1306,33 @@ class BoxPlotDisplayDialog(QDialog):
         self.node.config[key] = value
         self._refresh()
 
-    def _open_settings(self):
-        dlg = BoxPlotSettingsDialog(self.node.config, self.node.input_data, self)
+    def _open_settings(self, scope='all', title_override=None):
+        """Open scoped Box Plot settings dialog and apply updates on accept.
+
+        Args:
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+            title_override (str | None): Optional explicit window title.
+
+        Preserved behavior:
+            Reuses existing Box Plot settings schema while allowing scoped
+            routes for homogenized bottom-button workflows.
+        """
+        dlg = BoxPlotSettingsDialog(
+            self.node.config, self.node.input_data, self, scope=scope)
+        if title_override:
+            dlg.setWindowTitle(title_override)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_plot_settings(self):
-        """Open full PlotSettingsDialog via the adapter bridge."""
+        """Open rich PyQtGraph visual settings dialog bound to one PlotItem.
+
+        This route exposes shared PlotSettings controls (fonts, colors, grid,
+        title/axis styling, and trace appearance) for Box Plot presentation.
+        It is intentionally single-plot and therefore not used for
+        multi-subplot homogenized formatting.
+        """
         if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None \
                 or _PlotWidgetAdapter is None:
             return
@@ -1056,12 +1342,94 @@ class BoxPlotDisplayDialog(QDialog):
             None,
         )
         if pi is not None:
-            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
+            dlg = _PlotSettingsDialog(
+                _PlotWidgetAdapter(self.pw, pi),
+                self,
+                show_apply=False,
+            )
+            dlg.setWindowTitle("Box plot format settings")
+            dlg.exec()
+
+    def _open_plot_format_settings(self):
+        """Open Box Plot visual format settings in a config-driven route.
+
+        Preserved behavior:
+            Keeps scientific/data quantity configuration in the separate
+            quantities dialog while this route focuses on visual formatting.
+            In multi-subplot modes this route applies style through config and
+            redraw so axis/tick/title style updates propagate to every panel
+            without binding to a single PlotItem.
+        """
+        self._open_settings(
+            scope='format',
+            title_override="Box plot format settings",
+        )
+
+    def _open_configure_plot_quantities(self):
+        """Open quantity/data Box Plot settings routed from bottom button."""
+        self._open_settings(
+            scope='quantities',
+            title_override="Box plot quantities configuration",
+        )
+
+    def _export_figure(self):
+        """Export the current Box Plot figure using the existing helper."""
+        download_pyqtgraph_figure(self.pw, self, "distribution_plot.png")
+
+    def _disable_native_pyqtgraph_context_menu(self):
+        """Disable native PyQtGraph menus locally for Box Plot dialog only.
+
+        Preserved behavior:
+            Prevents stacked native menus while leaving global PyQtGraph menu
+            behavior for other plot types unchanged.
+        """
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                try:
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _reset_layout(self):
+        """Reset Box Plot view ranges to auto layout without changing data.
+
+        Preserved behavior:
+            Keeps scientific settings (data type, filtering, display mode,
+            shape, and label mode) intact; only view range state is reset.
+        """
+        self.node.config['auto_y'] = True
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.enableAutoRange(axis='xy', enable=True)
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.autoRange()
+                except Exception:
+                    pass
+        self._refresh()
 
 
     def _refresh(self):
+        """Rebuild the Box Plot from extracted data and current config.
+
+        Preserved behavior:
+            Data-type switching remains scientifically correct because redraw
+            always calls ``BoxPlotNode.extract_plot_data()`` with current
+            ``data_type_display``. This method additionally reapplies local
+            native-menu suppression after each redraw. Legacy display-mode
+            config values are normalized here so older names render through
+            ``Subplots by sample`` / ``Subplots by isotope``.
+        """
         try:
             self.pw.clear()
+            self._subplot_context_by_plotitem = {}
             plot_data = self.node.extract_plot_data()
             if not plot_data:
                 pi = self.pw.addPlot()
@@ -1076,13 +1444,13 @@ class BoxPlotDisplayDialog(QDialog):
             multi = _is_multi(self.node.input_data)
 
             if multi:
-                mode = cfg.get('display_mode', 'Side by Side')
-                if mode == 'Individual Subplots':
+                mode = _normalize_box_display_mode(
+                    cfg.get('display_mode', 'Side by Side'))
+                cfg['display_mode'] = mode
+                if mode == 'Subplots by sample':
                     self._draw_subplots(plot_data, cfg)
-                elif mode == 'Grouped by Element':
+                elif mode == 'Subplots by isotope':
                     self._draw_grouped(plot_data, cfg)
-                elif mode == 'By Sample (Ordered)':
-                    self._draw_by_sample(plot_data, cfg)
                 else:
                     pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
                     self._draw_combined(pi, plot_data, cfg)
@@ -1092,47 +1460,67 @@ class BoxPlotDisplayDialog(QDialog):
                 self._draw_single_sample(pi, plot_data, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
 
+            self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data, multi)
         except Exception as e:
             print(f"Error updating distribution plot: {e}")
             import traceback; traceback.print_exc()
-
     def _draw_single_sample(self, pi, data, cfg):
-        """Single sample – one shape per element.
+        """Draw one sample panel with element-only x-axis labels.
+
+        In ``Subplots by sample``, sample identity is conveyed by panel title.
+        X-axis ticks stay isotope/element-only for readability, and element
+        colors are applied per series inside the sample panel.
+
         Args:
             pi (Any): The pi.
             data (Any): Input data.
             cfg (Any): The cfg.
+
+        Returns:
+            bool: ``True`` when at least one element distribution was drawn.
         """
         sorted_data = sort_element_dict_by_mass(data)
         min_count = cfg.get('min_particle_count', 0)
         xp, xl = [], []
         x = 0
         all_vals_flat = []
-        for el, vals in sorted_data.items():
+        for idx, (el, vals) in enumerate(sorted_data.items()):
             if min_count > 0 and len(vals) < min_count:
                 continue
             fv = _filter_values(vals, cfg.get('data_type_display', 'Counts'),
                                 cfg.get('log_y'), cfg)
             if fv and len(fv) >= 2:
-                _draw_single_element(pi, x, fv, None, el, cfg, False)
+                element_cfg = dict(cfg)
+                element_cfg.setdefault('element_colors', {})
+                element_cfg['element_colors'].setdefault(
+                    el, _element_color(el, idx, cfg))
+                _draw_single_element(pi, x, fv, None, el, element_cfg, False)
                 all_vals_flat.extend(fv)
                 xp.append(x)
                 xl.append(_fmt_elem(el, cfg))
                 x += 1
         if xp:
             pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
+        else:
+            _add_empty_panel_message(pi, "No valid data")
         set_axis_labels(pi, "Elements", _y_label(cfg), cfg)
         if cfg.get('log_y'):
             pi.getAxis('left').setLogMode(True)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg['y_min'], cfg['y_max'])
-        if cfg.get('show_stats', True):
+        if cfg.get('show_stats', True) and xp:
             _add_stats_text(pi, sorted_data, cfg)
         _apply_box_overlays(pi, all_vals_flat, cfg)
-
+        _apply_boxplot_grid(pi, cfg)
+        return bool(xp)
     def _draw_combined(self, pi, plot_data, cfg):
-        """Multi-sample Side by Side.
+        """Draw the dense multi-sample ``Side by Side`` combined layout.
+
+        This mode remains a single-plot view where each tick combines element
+        and sample name. Font and grid style are still applied from config so
+        format settings remain consistent with subplot modes.
+
         Args:
             pi (Any): The pi.
             plot_data (Any): The plot data.
@@ -1165,9 +1553,16 @@ class BoxPlotDisplayDialog(QDialog):
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg['y_min'], cfg['y_max'])
         _apply_box_overlays(pi, all_vals_flat, cfg)
-
+        _apply_boxplot_grid(pi, cfg)
     def _draw_subplots(self, plot_data, cfg):
-        """
+        """Draw ``Subplots by sample`` as one panel per sample.
+
+        Each sample panel title shows the sample display name while the panel
+        x-axis uses only formatted isotope/element labels. This prevents dense
+        repeated sample names in tick labels and keeps sample identity in panel
+        position/title. Empty sample panels show a visible ``No valid data``
+        note.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1187,19 +1582,29 @@ class BoxPlotDisplayDialog(QDialog):
                                   axisItems={'bottom': HtmlAxisItem('bottom')})
             sd = plot_data[sn]
             if sd:
-                self._draw_single_sample(
-                    pi, sort_element_dict_by_mass(sd), cfg)
-                pi.setTitle(get_display_name(sn, cfg))
+                self._draw_single_sample(pi, sort_element_dict_by_mass(sd), cfg)
+            else:
+                _add_empty_panel_message(pi, "No valid data")
+                set_axis_labels(pi, "Elements", _y_label(cfg), cfg)
+            pi.setTitle(get_display_name(sn, cfg))
             if first_pi is None:
                 first_pi = pi
             elif cols > 1 and r == 0:
                 pi.setYLink(first_pi)
                 pi.getAxis('left').setLabel('')
                 pi.getAxis('left').setStyle(showValues=False)
+            _apply_boxplot_grid(pi, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
-
     def _draw_grouped(self, plot_data, cfg):
-        """
+        """Draw ``Subplots by isotope`` with one panel per element/isotope.
+
+        This is the canonical isotope-subplot multi-sample layout and the
+        target of legacy grouped/by-sample alias values. Sample x-positions are
+        reserved globally across panels so the same sample appears at the same
+        x-coordinate for every isotope panel, with gaps left for missing data.
+        Axis/tick font, grid styling, and figure overlays (including frame)
+        are applied per subplot from config.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1218,11 +1623,14 @@ class BoxPlotDisplayDialog(QDialog):
         all_elems = sort_elements_by_mass(list(all_elems))
         cols = min(3, len(all_elems))
         rows = math.ceil(len(all_elems) / cols)
+        sample_pos = {sn: idx for idx, sn in enumerate(ordered_samples)}
+        tick_pairs = [(sample_pos[sn], get_display_name(sn, cfg))
+                      for sn in ordered_samples]
         for i, el in enumerate(all_elems):
             r, c = divmod(i, cols)
             pi = self.pw.addPlot(row=r, col=c)
-            xp, xl = [], []
-            x = 0
+            drawn_any = False
+            panel_values = []
             for sn in ordered_samples:
                 sd = plot_data[sn]
                 if el in sd:
@@ -1231,21 +1639,35 @@ class BoxPlotDisplayDialog(QDialog):
                         continue
                     fv = _filter_values(vals, cfg.get('data_type_display'), cfg.get('log_y'), cfg)
                     if fv and len(fv) >= 2:
-                        _draw_single_element(pi, x, fv, sn, el, cfg, True)
-                        xp.append(x)
-                        xl.append(get_display_name(sn, cfg))
-                        x += 1
-            if xp:
-                pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
+                        _draw_single_element(pi, sample_pos[sn], fv, sn, el, cfg, True)
+                        panel_values.extend(fv)
+                        drawn_any = True
+            if tick_pairs:
+                pi.getAxis('bottom').setTicks([tick_pairs])
             pi.setTitle(_fmt_elem(el, cfg))
+            self._subplot_context_by_plotitem[pi] = {
+                "mode": "Subplots by isotope",
+                "element": el,
+                "title": _fmt_elem(el, cfg),
+            }
             set_axis_labels(pi, "Samples", _y_label(cfg), cfg)
             if cfg.get('log_y'):
                 pi.getAxis('left').setLogMode(True)
+            _apply_box_overlays(pi, panel_values, cfg)
+            if not drawn_any:
+                _add_empty_panel_message(pi, "No valid data")
+            _apply_boxplot_grid(pi, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_by_sample(self, plot_data, cfg):
         """X-axis = samples (time-ordered), one subplot per element.
         Colors = element colors. Sample order respected.
+
+        Compatibility note:
+            This renderer is retained for backward safety, but current config
+            normalization aliases legacy ``By Sample (Ordered)`` to
+            ``Subplots by isotope`` before draw dispatch.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1296,6 +1718,7 @@ class BoxPlotDisplayDialog(QDialog):
                 pi.getAxis('left').setLogMode(True)
             if not cfg.get('auto_y', True):
                 pi.setYRange(cfg['y_min'], cfg['y_max'])
+            _apply_boxplot_grid(pi, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _update_stats(self, plot_data, multi):
@@ -1431,3 +1854,4 @@ class BoxPlotNode(QObject):
             if d:
                 result[sn] = sort_element_dict_by_mass(d)
         return result if result else None
+

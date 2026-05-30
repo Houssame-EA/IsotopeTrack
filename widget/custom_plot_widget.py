@@ -1000,14 +1000,22 @@ class BackgroundEditorDialog(QDialog):
 
 class PlotSettingsDialog(QDialog):
 
-    def __init__(self, plot_widget, parent=None):
+    def __init__(self, plot_widget, parent=None, show_apply: bool = True):
         """
         Args:
             plot_widget (Any): The plot widget.
             parent (Any): Parent widget or object.
+            show_apply (bool): When ``True`` (default), show the live ``Apply``
+                button for incremental preview-style edits. When ``False``, hide
+                that button so users confirm changes with one-shot ``OK``.
+
+        Preserved behavior:
+            Default remains ``show_apply=True`` so existing callers keep the
+            historical Apply/OK/Cancel workflow.
         """
         super().__init__(parent)
         self.plot_widget = plot_widget
+        self.show_apply = show_apply
         self.setWindowTitle("Plot Settings")
         self.setMinimumSize(620, 550)
         _install_theme_subscription(self)
@@ -1015,6 +1023,14 @@ class PlotSettingsDialog(QDialog):
         self._load_persistent()
 
     def _setup_ui(self):
+        """
+        Build PlotSettings tabs and bottom action buttons.
+
+        Preserved behavior:
+            ``OK`` always applies settings and closes via
+            ``_accept_and_apply``. ``Apply`` is included only when
+            ``self.show_apply`` is enabled.
+        """
         layout = QVBoxLayout(self)
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
@@ -1025,18 +1041,20 @@ class PlotSettingsDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         self.reset_button = QPushButton("Reset to Defaults")
-        self.apply_button = QPushButton("Apply")
+        self.apply_button = QPushButton("Apply") if self.show_apply else None
         self.ok_button = QPushButton("OK")
         self.cancel_button = QPushButton("Cancel")
 
         btn_layout.addWidget(self.reset_button)
         btn_layout.addStretch()
-        btn_layout.addWidget(self.apply_button)
+        if self.apply_button is not None:
+            btn_layout.addWidget(self.apply_button)
         btn_layout.addWidget(self.ok_button)
         btn_layout.addWidget(self.cancel_button)
         layout.addLayout(btn_layout)
 
-        self.apply_button.clicked.connect(self._apply_settings)
+        if self.apply_button is not None:
+            self.apply_button.clicked.connect(self._apply_settings)
         self.ok_button.clicked.connect(self._accept_and_apply)
         self.cancel_button.clicked.connect(self.reject)
         self.reset_button.clicked.connect(self._reset_defaults)
