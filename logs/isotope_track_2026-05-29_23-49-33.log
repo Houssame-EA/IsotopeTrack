@@ -1,9 +1,0 @@
-2026-05-29 23:49:34,008  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
-2026-05-29 23:49:34,009  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
-2026-05-29 23:49:34,084  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3939  update_parameters_table: rebuilding (force=True)
-2026-05-29 23:49:34,145  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:939  Theme applied: light
-2026-05-29 23:49:45,735  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Transport Rate Calibration
-2026-05-29 23:49:45,848  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Transport Rate Calibration
-2026-05-29 23:49:49,088  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Transport Rate method switched: Number based
-2026-05-29 23:49:52,098  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration
-2026-05-29 23:49:52,212  INFO      IsotopeTrack  .None:0  [USER ACTION] DIALOG_OPEN: Opened Ionic Calibration window

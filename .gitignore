@@ -44,4 +44,4 @@ Thumbs.db
 *.csv
 *.xlsx
 data/
-test_data/
+test_data/logs/

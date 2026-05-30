@@ -1,4 +1,0 @@
-2026-05-30 11:44:11,798  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
-2026-05-30 11:44:11,798  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
-2026-05-30 11:44:11,872  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3943  update_parameters_table: rebuilding (force=True)
-2026-05-30 11:44:11,930  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:927  Theme applied: light

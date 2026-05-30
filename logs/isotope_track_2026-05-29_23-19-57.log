@@ -1,6 +1,0 @@
-2026-05-29 23:19:57,761  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
-2026-05-29 23:19:57,761  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
-2026-05-29 23:19:57,834  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3850  update_parameters_table: rebuilding (force=True)
-2026-05-29 23:19:57,896  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:897  Theme applied: light
-2026-05-29 23:20:00,126  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar collapsed
-2026-05-29 23:20:00,842  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Sidebar expanded

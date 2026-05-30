@@ -1,9 +1,0 @@
-2026-05-29 23:54:14,667  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:159  MainWindow initialization starting
-2026-05-29 23:54:14,667  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
-2026-05-29 23:54:14,919  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:3939  update_parameters_table: rebuilding (force=True)
-2026-05-29 23:54:15,033  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:939  Theme applied: light
-2026-05-29 23:57:06,707  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:939  Theme applied: dark
-2026-05-29 23:57:12,713  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Opened results dialog
-2026-05-29 23:57:12,713  INFO      IsotopeTrack  .None:0  [USER ACTION] ERROR: Attempted to show results with no data
-2026-05-29 23:57:19,754  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'mz'
-2026-05-29 23:57:20,220  INFO      IsotopeTrack  .None:0  [USER ACTION] CLICK: Switched plot view to 'time'
