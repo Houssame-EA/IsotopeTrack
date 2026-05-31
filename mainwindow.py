@@ -134,7 +134,64 @@ class NoWheelComboBox(QComboBox):
             None
         """
         event.ignore()
-        
+
+
+class HighResProgressBar(QProgressBar):
+    """
+    Args:
+        Inherits from QProgressBar
+
+    Returns:
+        None
+    """
+    RESOLUTION = 10 
+
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize the high-resolution progress bar.
+
+        Args:
+            *args, **kwargs: Passed through to QProgressBar
+
+        Returns:
+            None
+        """
+        super().__init__(*args, **kwargs)
+        super().setRange(0, 100 * self.RESOLUTION)
+        self._percent = 0.0
+        self.setFormat("0.0%")
+
+    def setValue(self, value):
+        """
+        Set progress from a 0..100 percentage at full internal resolution.
+
+        Args:
+            value (int | float): Progress percentage in the range 0..100
+
+        Returns:
+            None
+        """
+        try:
+            percent = float(value)
+        except (TypeError, ValueError):
+            percent = 0.0
+        percent = max(0.0, min(100.0, percent))
+        self._percent = percent
+        self.setFormat(f"{percent:.1f}%")
+        super().setValue(int(round(percent * self.RESOLUTION)))
+
+    def percent(self):
+        """
+        Return the current logical progress as a 0..100 float.
+
+        Args:
+            self: HighResProgressBar instance
+
+        Returns:
+            float: Current progress percentage (0..100)
+        """
+        return self._percent
+
     #----------------------------------------------------------------------------------------------------
     #---------------------------------------Initialization & setup---------------------------------------
     #----------------------------------------------------------------------------------------------------
@@ -756,11 +813,10 @@ class MainWindow(QMainWindow):
         self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout.addWidget(self.status_label, 1)
         
-        self.progress_bar = QProgressBar()
+        self.progress_bar = HighResProgressBar()
         self.progress_bar.setFixedHeight(16)
         self.progress_bar.setFixedWidth(400)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar, 0)
         
@@ -7430,7 +7486,7 @@ class MainWindow(QMainWindow):
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
-        overall_progress = int(base_progress + thread_contribution)
+        overall_progress = base_progress + thread_contribution
         self.progress_bar.setValue(overall_progress)
         self.status_label.setText(f"Processing sample {current_sample}/{total_samples}: {sample_name} ({thread_progress}%)")
         QApplication.processEvents()  
@@ -7452,7 +7508,7 @@ class MainWindow(QMainWindow):
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
-        overall_progress = int(base_progress + thread_contribution)
+        overall_progress = base_progress + thread_contribution
         self.progress_bar.setValue(overall_progress)
         self.status_label.setText(f"Processing elements for sample {current_sample}/{total_samples}: {sample_name} ({thread_progress}%)")
         QApplication.processEvents() 
