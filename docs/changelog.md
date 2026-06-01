@@ -4,7 +4,14 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
-v1.0.6 — 2026-05-30
+
+## v1.0.7 — 2026-05-31 (dev)
+
+### Improvements
+
+- Particle concentration per mL now reported in results figures
+
+## v1.0.6 — 2026-05-30
 New Features
 
 Version checker app now automatically checks for newer versions on startup
