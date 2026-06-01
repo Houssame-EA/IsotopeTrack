@@ -803,10 +803,10 @@ class MassFractionCalculator(QDialog):
                      width: int | None = None):
             """
              Args:
-                col_index: Column index in the table
-                title: Title that will be displayed for the column
-                resize_mode: `QHeaderView.ResizeMode` of the column
-                width: Width of the column (if `resize_mode` allows it)
+                col_index (int): Column index in the table
+                title (str): Title that will be displayed for the column
+                resize_mode (QHeaderView.ResizeMode): `QHeaderView.ResizeMode` of the column
+                width (int | None): Width of the column (if `resize_mode` allows it)
             """
             self.col_index = col_index
             self.title = title
@@ -818,14 +818,16 @@ class MassFractionCalculator(QDialog):
         @classmethod
         def col_indexes(cls) -> list[int]:
             """
-            Returns: a list of column indexes
+            Returns:
+                a list of column indexes
             """
             return [column.col_index for column in cls]
 
         @classmethod
-        def titles(cls):
+        def titles(cls) -> list[str]:
             """
-            Returns: a list of column titles
+            Returns:
+                a list of column titles
             """
             return [column.title for column in cls]
 
