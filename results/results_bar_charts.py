@@ -22,6 +22,7 @@ from results.shared_plot_utils import (
     format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES, _QT_LINE, _apply_box,
     _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
+    format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
 )
 try:
     from widget.custom_plot_widget import (
@@ -131,6 +132,111 @@ def _fmt_elem(elem: str, cfg: dict) -> str:
         str: Result of the operation.
     """
     return format_element_label(elem, cfg.get('label_mode', 'Symbol'), Renderer.HTML)
+
+
+def _meta_te_available(input_data):
+    """
+    Report whether any sample in the input carries a usable transport rate.
+
+    Args:
+        input_data (dict): Node input data dictionary.
+
+    Returns:
+        bool: True when at least one concentration metadata entry reports
+            te_available, otherwise False.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict):
+        return False
+    return any(bool(m and m.get('te_available')) for m in meta.values())
+
+
+def _per_ml_active(cfg, input_data):
+    """
+    Report whether the particles per millilitre y-axis unit should be used.
+
+    Args:
+        cfg (dict): Plot configuration.
+        input_data (dict): Node input data dictionary.
+
+    Returns:
+        bool: True when the unit is selected and a transport rate is available.
+    """
+    return cfg.get('y_axis_unit', 'count') == 'per_ml' and _meta_te_available(input_data)
+
+
+def _pml_factor(input_data, sample_name):
+    """
+    Return the multiplier that converts a particle count to particles per mL.
+
+    Args:
+        input_data (dict): Node input data dictionary.
+        sample_name (str): Output sample name to look up.
+
+    Returns:
+        float: dilution_factor divided by volume_ml, or 0.0 when unavailable.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    entry = meta.get(sample_name) if isinstance(meta, dict) else None
+    if not entry:
+        return 0.0
+    volume = entry.get('volume_ml', 0.0)
+    if not volume or volume <= 0:
+        return 0.0
+    return entry.get('dilution_factor', 1.0) / volume
+
+
+def _fmt_bar_value(value, per_ml, cfg=None):
+    """
+    Format a bar value label as an integer count or ten-to-a-power.
+
+    Args:
+        value (float): Bar height in count or particles per mL units.
+        per_ml (bool): Whether the value represents a concentration.
+        cfg (dict): Optional font config applied to the per mL label.
+
+    Returns:
+        str: Formatted label text.
+    """
+    if per_ml:
+        return _shared_format_per_ml(value, Renderer.HTML, cfg)
+    return str(int(round(value)))
+
+
+def _bar_value_textitem(value, per_ml, anchor=(0.5, 1), color='#374151', cfg=None):
+    """
+    Build a bar value-label TextItem, using HTML so a ten-to-a-power exponent
+    is raised by Qt in the configured font when particles-per-mL is active.
+
+    Args:
+        value (float): Bar height value.
+        per_ml (bool): Whether the value is a concentration.
+        anchor (tuple): TextItem anchor.
+        color (str): Text colour.
+        cfg (dict): Optional font config applied to the label.
+
+    Returns:
+        pg.TextItem: Configured text item.
+    """
+    if per_ml:
+        ti = pg.TextItem(anchor=anchor, color=color)
+        ti.setHtml(f'<span style="color:{color};">{_fmt_bar_value(value, True, cfg)}</span>')
+        return ti
+    return pg.TextItem(_fmt_bar_value(value, False), anchor=anchor, color=color)
+
+
+def _apply_sci_y_axis(plot_item, cfg=None):
+    """
+    Render the left axis tick labels of a plot as ten-to-a-power.
+
+    Args:
+        plot_item (Any): Target pyqtgraph PlotItem.
+        cfg (dict): Optional font config applied to the tick labels.
+
+    Returns:
+        None
+    """
+    _shared_apply_sci_y_axis(plot_item, cfg)
 
 
 class _PlotWidgetAdapter:
@@ -597,8 +703,6 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
             return False
 
     hooked = _bind_click(sample_item)
-    # Label click support is best-effort; some pyqtgraph versions may not
-    # dispatch click events on the label item itself.
     hooked = _bind_click(label_item) or hooked
     return hooked
 
@@ -958,7 +1062,7 @@ class HistogramSettingsDialog(QDialog):
 
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None, lock_data_type=False,
-                 data_type_lock_message=""):
+                 data_type_lock_message="", te_available=False):
         """
         Args:
             config (Any): Configuration dictionary.
@@ -985,6 +1089,7 @@ class HistogramSettingsDialog(QDialog):
         self._available_elements = available_elements or []
         self._lock_data_type = bool(lock_data_type)
         self._data_type_lock_message = data_type_lock_message or ""
+        self._te_available = bool(te_available)
         self._build_ui()
 
     def _build_ui(self):
@@ -1028,6 +1133,24 @@ class HistogramSettingsDialog(QDialog):
                 lock_note.setWordWrap(True)
                 lock_note.setStyleSheet("color: #6B7280; font-size: 10px;")
                 fl.addRow("", lock_note)
+        self.y_axis_unit = QComboBox()
+        self.y_axis_unit.addItem("Particle", "count")
+        self.y_axis_unit.addItem("Particle per mL", "per_ml")
+        cur_unit = self._cfg.get('y_axis_unit', 'count')
+        self.y_axis_unit.setCurrentIndex(1 if cur_unit == 'per_ml' else 0)
+        fl.addRow("Y Axis:", self.y_axis_unit)
+        if not self._te_available:
+            idx = self.y_axis_unit.findData('per_ml')
+            model = self.y_axis_unit.model()
+            item = model.item(idx)
+            if item is not None:
+                item.setEnabled(False)
+            if cur_unit == 'per_ml':
+                self.y_axis_unit.setCurrentIndex(0)
+            note = QLabel("Particle per mL requires Transport Rate calibration")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #6B7280; font-size: 10px;")
+            fl.addRow("", note)
         layout.addWidget(g)
 
         self._group_editor = ElementGroupEditor(
@@ -1302,6 +1425,7 @@ class HistogramSettingsDialog(QDialog):
         else:
             out['data_type_display'] = self.data_type.currentText()
         out['element_groups'] = self._group_editor.collect()
+        out['y_axis_unit'] = self.y_axis_unit.currentData()
         out['show_curve'] = self.show_curve.isChecked()
         out['curve_type'] = self.curve_type.currentText()
         out['show_median'] = self.show_median.isChecked()
@@ -1923,8 +2047,6 @@ class HistogramDisplayDialog(QDialog):
         cfg = self.node.config
         if mode == 'single':
             return self._count_plottable_series(plot_data, cfg) == 1
-        # Conservative policy for subplot modes: enable only when every panel
-        # has a single element/series, matching current draw implementation.
         if isinstance(plot_data, dict):
             return all(
                 self._count_plottable_series(sd or {}, cfg) == 1
@@ -1974,7 +2096,8 @@ class HistogramDisplayDialog(QDialog):
             out[elem] = list(vals) if vals is not None else []
         return out
 
-    def _register_panel_context(self, plot_item, mode, panel_label, element_data):
+    def _register_panel_context(self, plot_item, mode, panel_label, element_data,
+                                sample_name=None):
         """Store per-panel context for right-click decomposition eligibility.
 
         Args:
@@ -1982,6 +2105,9 @@ class HistogramDisplayDialog(QDialog):
             mode (str): Display mode used for this panel.
             panel_label (str): Human-readable sample/panel label.
             element_data (dict): Per-element arrays for this panel.
+            sample_name (str | None): Raw output sample name backing this panel,
+                used to resolve the particles-per-mL conversion factor for the
+                decomposition child view.
 
         Preserved behavior:
             Context is rebuilt every refresh and never persisted into project
@@ -1990,6 +2116,7 @@ class HistogramDisplayDialog(QDialog):
         self._histogram_panel_contexts[plot_item] = {
             'mode': mode,
             'panel_label': panel_label,
+            'sample_name': sample_name,
             'element_data': self._snapshot_panel_element_data(element_data),
         }
 
@@ -2033,10 +2160,15 @@ class HistogramDisplayDialog(QDialog):
             child can be used independently without shared mutable state.
         """
         cfg_snapshot = dict(self.node.config)
+        per_ml = _per_ml_active(cfg_snapshot, self.node.input_data)
+        y_scale = (_pml_factor(self.node.input_data, panel_ctx.get('sample_name'))
+                   if per_ml else 1.0)
         child = HistogramDecompositionDialog(
             config_snapshot=cfg_snapshot,
             panel_label=panel_ctx.get('panel_label', 'Current panel'),
             panel_element_data=panel_ctx.get('element_data', {}),
+            per_ml=per_ml,
+            y_scale=y_scale,
             parent=self,
         )
         child.destroyed.connect(
@@ -2155,7 +2287,8 @@ class HistogramDisplayDialog(QDialog):
         dlg = HistogramSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
-            available_elements=self._get_available_elements())
+            available_elements=self._get_available_elements(),
+            te_available=_meta_te_available(self.node.input_data))
         if title_override:
             dlg.setWindowTitle(title_override)
         if dlg.exec() == QDialog.Accepted:
@@ -2333,7 +2466,7 @@ class HistogramDisplayDialog(QDialog):
             cfg = self.node.config
 
             if not plot_data:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 t = pg.TextItem(
                     "No particle data available\n"
                     "Connect to Sample Selector\n"
@@ -2356,16 +2489,21 @@ class HistogramDisplayDialog(QDialog):
                 else:
                     self._draw_overlaid(plot_data, cfg)
             else:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
+                per_ml = _per_ml_active(cfg, self.node.input_data)
+                sn = self.node.input_data.get('sample_name') if self.node.input_data else None
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_histogram(
                     pi,
                     plot_data,
                     cfg,
                     hidden_elements=self._hidden_histogram_elements,
                     legend_click_callback=self._toggle_histogram_element_visibility,
+                    y_scale=y_scale,
+                    y_label='Particles/mL' if per_ml else None,
                 )
                 self._register_panel_context(
-                    pi, 'single', 'Current sample', plot_data)
+                    pi, 'single', 'Current sample', plot_data, sample_name=sn)
                 if cfg.get('show_stats', True):
                     _add_stats_text(pi, plot_data, cfg)
 
@@ -2392,21 +2530,27 @@ class HistogramDisplayDialog(QDialog):
         """
         samples = list(plot_data.keys())
         cols = min(2, len(samples))
+        per_ml = _per_ml_active(cfg, self.node.input_data)
         for idx, sn in enumerate(samples):
             if idx > 0 and idx % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg))
+            pi = self.pw.addPlot(title=get_display_name(sn, cfg),
+                                 axisItems={'left': HtmlAxisItem('left')})
             sd = plot_data[sn]
             if sd:
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_histogram(
                     pi,
                     sd,
                     cfg,
                     hidden_elements=self._hidden_histogram_elements,
                     legend_click_callback=self._toggle_histogram_element_visibility,
+                    y_scale=y_scale,
+                    y_label='Particles/mL' if per_ml else None,
                 )
                 self._register_panel_context(
-                    pi, 'Individual Subplots', get_display_name(sn, cfg), sd)
+                    pi, 'Individual Subplots', get_display_name(sn, cfg), sd,
+                    sample_name=sn)
                 if cfg.get('show_stats', True):
                     _add_stats_text(pi, sd, cfg)
 
@@ -2425,18 +2569,24 @@ class HistogramDisplayDialog(QDialog):
         """
         first_pi = None
         xl, yl = _get_xy_labels(cfg)
+        per_ml = _per_ml_active(cfg, self.node.input_data)
         for idx, (sn, sd) in enumerate(plot_data.items()):
-            pi = self.pw.addPlot(row=0, col=idx, title=get_display_name(sn, cfg))
+            pi = self.pw.addPlot(row=0, col=idx, title=get_display_name(sn, cfg),
+                                 axisItems={'left': HtmlAxisItem('left')})
             if sd:
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_histogram(
                     pi,
                     sd,
                     cfg,
                     hidden_elements=self._hidden_histogram_elements,
                     legend_click_callback=self._toggle_histogram_element_visibility,
+                    y_scale=y_scale,
+                    y_label='Particles/mL' if per_ml else None,
                 )
                 self._register_panel_context(
-                    pi, 'Side by Side Subplots', get_display_name(sn, cfg), sd)
+                    pi, 'Side by Side Subplots', get_display_name(sn, cfg), sd,
+                    sample_name=sn)
                 if cfg.get('show_stats', True):
                     _add_stats_text(pi, sd, cfg)
             if first_pi is None:
@@ -2472,12 +2622,13 @@ class HistogramDisplayDialog(QDialog):
             raw sample keys, while hidden isotope keys are still filtered before
             per-sample aggregation.
         """
-        pi = self.pw.addPlot()
+        pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
         self._register_panel_context(
             pi, 'Overlaid (Different Colors)', 'Overlaid', {})
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
         bins_n = cfg.get('bins', 20)
+        per_ml = _per_ml_active(cfg, self.node.input_data)
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
@@ -2523,7 +2674,8 @@ class HistogramDisplayDialog(QDialog):
             if v is None:
                 continue
             drew_any = True
-            _draw_histogram_bars(pi, v, cfg, color, bins_n)
+            y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+            _draw_histogram_bars(pi, v, cfg, color, bins_n, y_scale=y_scale)
 
         if not drew_any:
             msg = (
@@ -2541,6 +2693,8 @@ class HistogramDisplayDialog(QDialog):
                 ti.setPos(0, 0)
 
         xl, yl = _get_xy_labels(cfg)
+        if per_ml:
+            yl = 'Particles/mL'
         set_axis_labels(pi, xl, yl, cfg)
         if cfg.get('log_x', False):
             pi.getAxis('bottom').setLogMode(True)
@@ -2556,6 +2710,8 @@ class HistogramDisplayDialog(QDialog):
         _apply_box(pi, cfg)
         _apply_histogram_grid(pi, cfg)
         apply_font_to_pyqtgraph(pi, cfg)
+        if per_ml and not cfg.get('log_y', False):
+            _apply_sci_y_axis(pi, cfg)
 
     def _draw_combined(self, plot_data, cfg):
         """
@@ -2602,13 +2758,19 @@ class HistogramDecompositionDialog(QDialog):
     or project lifecycle state.
     """
 
-    def __init__(self, config_snapshot, panel_label, panel_element_data, parent=None):
+    def __init__(self, config_snapshot, panel_label, panel_element_data, parent=None,
+                 per_ml=False, y_scale=1.0):
         """
         Args:
             config_snapshot (dict): Copied parent histogram config.
             panel_label (str): Human-readable source sample/panel label.
             panel_element_data (dict): Copied per-element arrays for one panel.
             parent (QWidget | None): Qt parent for window ownership only.
+            per_ml (bool): Whether the parent panel is rendering the
+                particles-per-mL y-axis unit. Inherited so the decomposition
+                view respects the same y-axis selection.
+            y_scale (float): Multiplier converting raw bin counts to particles
+                per mL for this panel's sample. Defaults to 1.0 (raw counts).
 
         Preserved behavior:
             Child owns local rendering/config and reuses existing histogram
@@ -2619,10 +2781,10 @@ class HistogramDecompositionDialog(QDialog):
         """
         super().__init__(parent)
         self._cfg = dict(config_snapshot or {})
+        self._per_ml = bool(per_ml)
+        self._y_scale = float(y_scale) if y_scale else 1.0
         self._inherited_data_type = self._cfg.get('data_type_display', 'Counts')
         self._cfg['data_type_display'] = self._inherited_data_type
-        # Child panels should not draw legacy median by default. Users can
-        # still explicitly request median lines via the quick-toggle path.
         self._cfg['show_median'] = False
         self._panel_label = panel_label or "Current panel"
         self._element_data = {
@@ -2797,7 +2959,6 @@ class HistogramDecompositionDialog(QDialog):
         dlg.setWindowTitle("Histogram plot quantities configuration")
         if dlg.exec() == QDialog.Accepted:
             self._cfg.update(dlg.collect())
-            # Safety lock: child data arrays are parent-snapshot values.
             self._cfg['data_type_display'] = self._inherited_data_type
             self._refresh()
 
@@ -2914,7 +3075,7 @@ class HistogramDecompositionDialog(QDialog):
                 valid.append((elem, vals))
 
         if not valid:
-            pi = self.pw.addPlot()
+            pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
             t = pg.TextItem(
                 "No plottable isotope data available",
                 anchor=(0.5, 0.5), color='gray')
@@ -2929,14 +3090,17 @@ class HistogramDecompositionDialog(QDialog):
         for idx_plot, (elem, vals) in enumerate(valid):
             if idx_plot > 0 and idx_plot % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=_fmt_elem(elem, self._cfg))
+            pi = self.pw.addPlot(title=_fmt_elem(elem, self._cfg),
+                                 axisItems={'left': HtmlAxisItem('left')})
             self._subplot_context_by_plotitem[pi] = {
                 'element': elem,
                 'title': _get_element_display_name(elem, self._cfg),
             }
             density_status = {}
             _draw_single_histogram(
-                pi, {elem: vals}, self._cfg, density_status_out=density_status)
+                pi, {elem: vals}, self._cfg, density_status_out=density_status,
+                y_scale=self._y_scale if self._per_ml else 1.0,
+                y_label='Particles/mL' if self._per_ml else None)
             if self._cfg.get('show_curve', True):
                 st = density_status.get(elem, {})
                 if st and not st.get('success'):
@@ -2997,6 +3161,7 @@ class HistogramPlotNode(QObject):
 
     DEFAULT_CONFIG = {
         'data_type_display': 'Counts',
+        'y_axis_unit': 'count',
         'element_groups': [],
         'element_name_mappings': {},
         'show_curve': True,
@@ -3181,7 +3346,8 @@ class HistogramPlotNode(QObject):
 class BarChartSettingsDialog(QDialog):
     """Scope-aware settings dialog for the element bar chart."""
 
-    def __init__(self, config, is_multi, sample_names, parent=None, scope='all'):
+    def __init__(self, config, is_multi, sample_names, parent=None, scope='all',
+                 te_available=False):
         """
         Initialize bar-chart settings dialog with optional scope filtering.
 
@@ -3208,10 +3374,12 @@ class BarChartSettingsDialog(QDialog):
         self._multi = is_multi
         self._samples = sample_names
         self._scope = scope
+        self._te_available = bool(te_available)
 
         self.display_mode = None
         self.show_values = None
         self.sort_bars = None
+        self.y_axis_unit = None
         self.log_y = None
         self.label_mode = None
         self.min_count = None
@@ -3267,6 +3435,23 @@ class BarChartSettingsDialog(QDialog):
             self.sort_bars.addItems(SORT_OPTIONS)
             self.sort_bars.setCurrentText(self._cfg.get('sort_bars', 'No Sorting'))
             fl.addRow("Sort Bars:", self.sort_bars)
+            self.y_axis_unit = QComboBox()
+            self.y_axis_unit.addItem("Particle", "count")
+            self.y_axis_unit.addItem("Particle per mL", "per_ml")
+            cur_unit = self._cfg.get('y_axis_unit', 'count')
+            self.y_axis_unit.setCurrentIndex(1 if cur_unit == 'per_ml' else 0)
+            fl.addRow("Y Axis:", self.y_axis_unit)
+            if not self._te_available:
+                idx = self.y_axis_unit.findData('per_ml')
+                item = self.y_axis_unit.model().item(idx)
+                if item is not None:
+                    item.setEnabled(False)
+                if cur_unit == 'per_ml':
+                    self.y_axis_unit.setCurrentIndex(0)
+                note = QLabel("Particle per mL requires Transport Rate calibration")
+                note.setWordWrap(True)
+                note.setStyleSheet("color: #6B7280; font-size: 10px;")
+                fl.addRow("", note)
             self.log_y = QCheckBox()
             self.log_y.setChecked(self._cfg.get('log_y', False))
             fl.addRow("Log Y-axis:", self.log_y)
@@ -3372,6 +3557,8 @@ class BarChartSettingsDialog(QDialog):
             out['show_values'] = self.show_values.isChecked()
         if self.sort_bars is not None:
             out['sort_bars'] = self.sort_bars.currentText()
+        if self.y_axis_unit is not None:
+            out['y_axis_unit'] = self.y_axis_unit.currentData()
         if self.log_y is not None:
             out['log_y'] = self.log_y.isChecked()
         if self.label_mode is not None:
@@ -3414,7 +3601,7 @@ def _prepare_values(values, data_type, log_x):
 
 
 def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
-                         name=''):
+                         name='', y_scale=1.0):
     """Draw histogram bars using PyQtGraph BarGraphItem.
 
     Returns: (processed_values, bin_edges, counts)
@@ -3425,6 +3612,8 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
         color_hex (Any): The color hex.
         bins_n (Any): The bins n.
         name (Any): Name string.
+        y_scale (float): Multiplier applied to bin counts, used to convert raw
+            counts to particles per millilitre. Defaults to 1.0.
     """
     if bins_n is None:
         bins_n = cfg.get('bins', 20)
@@ -3432,7 +3621,8 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
     log_y = cfg.get('log_y', False)
 
     counts, bin_edges = np.histogram(values, bins=bins_n)
-    y_plot = np.log10(counts.astype(float) + 1) if log_y else counts.astype(float)
+    scaled = counts.astype(float) * y_scale
+    y_plot = np.log10(scaled + 1) if log_y else scaled
 
     centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
     bw = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1.0
@@ -3636,7 +3826,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
 
 def _draw_single_histogram(
         plot_item, element_data, cfg, single_color=None, density_status_out=None,
-        hidden_elements=None, legend_click_callback=None):
+        hidden_elements=None, legend_click_callback=None, y_scale=1.0, y_label=None):
     """Draw histogram for one set of element data onto a PyQtGraph PlotItem.
     Args:
         plot_item (Any): The plot item.
@@ -3680,7 +3870,7 @@ def _draw_single_histogram(
         visible_count += 1
         color = single_color or _get_element_color(elem, idx, cfg)
         _draw_histogram_bars(plot_item, vals, cfg, color, bins_n,
-                             name=_fmt_elem(elem, cfg))
+                             name=_fmt_elem(elem, cfg), y_scale=y_scale)
         all_vals.append(vals)
 
         if is_single:
@@ -3690,7 +3880,7 @@ def _draw_single_histogram(
             density_success = False
             if can_attempt_density:
                 density_success = _add_density_curve(
-                    plot_item, vals, cfg, bin_edges, len(vals))
+                    plot_item, vals, cfg, bin_edges, len(vals) * y_scale)
                 if not density_success and density_reason is None:
                     density_reason = 'curve_fit_or_kde_failure'
             if density_status_out is not None:
@@ -3710,6 +3900,8 @@ def _draw_single_histogram(
     _apply_box(plot_item, cfg)
 
     xl, yl = _get_xy_labels(cfg)
+    if y_label is not None:
+        yl = y_label
     set_axis_labels(plot_item, xl, yl, cfg)
 
     if cfg.get('log_x', False):
@@ -3750,6 +3942,8 @@ def _draw_single_histogram(
             )
 
     apply_font_to_pyqtgraph(plot_item, cfg)
+    if y_label is not None and not cfg.get('log_y', False):
+        _apply_sci_y_axis(plot_item, cfg)
     if visible_count == 0 and len(sorted_data) > 0:
         ti = pg.TextItem("No visible isotopes", anchor=(0.5, 0.5), color='#9CA3AF')
         plot_item.addItem(ti)
@@ -3789,7 +3983,7 @@ def _sort_elements_for_display(elements, counts, sort_option):
 
 
 def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
-                            show_y_label=True):
+                            show_y_label=True, y_scale=1.0, per_ml=False):
     """Draw bar chart for one set of element counts onto a PyQtGraph PlotItem.
     Args:
         plot_item (Any): The plot item.
@@ -3797,6 +3991,8 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
         cfg (Any): The cfg.
         single_color (Any): The single color.
         show_y_label (Any): The show y label.
+        y_scale (float): Multiplier converting counts to particles per mL.
+        per_ml (bool): Whether values are rendered as a concentration.
     """
     log_y = cfg.get('log_y', False)
     sort_opt = cfg.get('sort_bars', 'No Sorting')
@@ -3809,7 +4005,7 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
                           if c >= min_count}
 
     elems = list(element_counts.keys())
-    counts = [element_counts[e] for e in elems]
+    counts = [element_counts[e] * y_scale for e in elems]
     elems, counts = _sort_elements_for_display(elems, counts, sort_opt)
 
     original_counts = list(counts)
@@ -3832,7 +4028,7 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
         max_c = max(counts) if counts else 1
         for i, (xi, c, oc) in enumerate(zip(x, counts, original_counts)):
             if oc > 0:
-                ti = pg.TextItem(str(int(oc)), anchor=(0.5, 1), color='#374151')
+                ti = _bar_value_textitem(oc, per_ml, anchor=(0.5, 1), color="#374151", cfg=cfg)
                 ti.setFont(QFont(fc.get('family', 'Times New Roman'),
                                   max(fc.get('size', 18) - 4, 7)))
                 plot_item.addItem(ti)
@@ -3842,7 +4038,7 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
     ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(elems)]
     ax_bottom.setTicks([ticks])
 
-    yl = 'Particle Count' 
+    yl = 'Particles/mL' if per_ml else 'Particle Count'
     xl = 'Isotope Elements'
     set_axis_labels(plot_item, xl, yl if show_y_label else '', cfg)
     
@@ -3851,6 +4047,8 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
     _add_det_limit_h(plot_item, cfg)
     _apply_box(plot_item, cfg)
     apply_font_to_pyqtgraph(plot_item, cfg)
+    if per_ml and not log_y:
+        _apply_sci_y_axis(plot_item, cfg)
 
 
 class ElementBarChartDisplayDialog(QDialog):
@@ -3992,7 +4190,8 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
-            _sample_names(self.node.input_data), self)
+            _sample_names(self.node.input_data), self,
+            te_available=_meta_te_available(self.node.input_data))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -4017,7 +4216,8 @@ class ElementBarChartDisplayDialog(QDialog):
         """Open quantities-scoped bar chart settings dialog."""
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
-            _sample_names(self.node.input_data), self, scope='quantities')
+            _sample_names(self.node.input_data), self, scope='quantities',
+            te_available=_meta_te_available(self.node.input_data))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -4143,7 +4343,7 @@ class ElementBarChartDisplayDialog(QDialog):
             cfg = self.node.config
 
             if not plot_data:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 t = pg.TextItem(
                     "No particle data available\n"
                     "Connect to Sample Selector\nand run particle detection",
@@ -4168,8 +4368,11 @@ class ElementBarChartDisplayDialog(QDialog):
                 else:
                     self._draw_grouped(plot_data, cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
-                _draw_single_bar_chart(pi, plot_data, cfg)
+                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
+                per_ml = _per_ml_active(cfg, self.node.input_data)
+                sn = self.node.input_data.get('sample_name') if self.node.input_data else None
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_single_bar_chart(pi, plot_data, cfg, y_scale=y_scale, per_ml=per_ml)
 
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
@@ -4188,15 +4391,18 @@ class ElementBarChartDisplayDialog(QDialog):
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(2, n)
+        per_ml = _per_ml_active(cfg, self.node.input_data)
         for idx, sn in enumerate(samples):
             if idx > 0 and idx % cols == 0:
                 self.pw.nextRow()
             pi = self.pw.addPlot(title=get_display_name(sn, cfg),
-                                  axisItems={'bottom': HtmlAxisItem('bottom')})
+                                  axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
             sd = plot_data[sn]
             if sd:
                 color = get_sample_color(sn, idx, cfg)
-                _draw_single_bar_chart(pi, sd, cfg, single_color=color)
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_single_bar_chart(pi, sd, cfg, single_color=color,
+                                        y_scale=y_scale, per_ml=per_ml)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """
@@ -4205,14 +4411,17 @@ class ElementBarChartDisplayDialog(QDialog):
             cfg (Any): The cfg.
         """
         samples = list(plot_data.keys())
+        per_ml = _per_ml_active(cfg, self.node.input_data)
         for idx, sn in enumerate(samples):
             pi = self.pw.addPlot(title=get_display_name(sn, cfg),
-                                  axisItems={'bottom': HtmlAxisItem('bottom')})
+                                  axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
             sd = plot_data[sn]
             if sd:
                 color = get_sample_color(sn, idx, cfg)
+                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_bar_chart(pi, sd, cfg, single_color=color,
-                                        show_y_label=(idx == 0))
+                                        show_y_label=(idx == 0),
+                                        y_scale=y_scale, per_ml=per_ml)
 
     def _draw_grouped(self, plot_data, cfg):
         """
@@ -4220,11 +4429,12 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         show_vals = cfg.get('show_values', True)
         sort_opt = cfg.get('sort_bars', 'No Sorting')
+        per_ml = _per_ml_active(cfg, self.node.input_data)
 
         all_elems = set()
         for sd in plot_data.values():
@@ -4259,7 +4469,8 @@ class ElementBarChartDisplayDialog(QDialog):
         for i, (sn, sd) in enumerate(plot_data.items()):
             color = get_sample_color(sn, i, cfg)
             dname = get_display_name(sn, cfg)
-            heights = [sd.get(e, 0) for e in all_elems]
+            y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+            heights = [sd.get(e, 0) * y_scale for e in all_elems]
             orig = list(heights)
             if log_y:
                 heights = [np.log10(h + 1) for h in heights]
@@ -4283,7 +4494,7 @@ class ElementBarChartDisplayDialog(QDialog):
             if show_vals:
                 for j, (xp, h, o) in enumerate(zip(offsets, heights, orig)):
                     if o > 0:
-                        ti = pg.TextItem(str(int(o)), anchor=(0.5, 1), color='#374151')
+                        ti = _bar_value_textitem(o, per_ml, anchor=(0.5, 1), color="#374151", cfg=cfg)
                         ti.setFont(QFont(fc.get('family', 'Times New Roman'),
                                           max(fc.get('size', 18) - 5, 6)))
                         pi.addItem(ti)
@@ -4293,12 +4504,14 @@ class ElementBarChartDisplayDialog(QDialog):
         ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(all_elems)]
         ax_bottom.setTicks([ticks])
 
-        yl = 'Particle Count' 
+        yl = 'Particles/mL' if per_ml else 'Particle Count'
         set_axis_labels(pi, 'Isotope Elements', yl, cfg)
         
         if log_y:
             pi.getAxis('left').setLogMode(True)        
         apply_font_to_pyqtgraph(pi, cfg)
+        if per_ml and not log_y:
+            _apply_sci_y_axis(pi, cfg)
 
     def _draw_stacked(self, plot_data, cfg):
         """
@@ -4306,7 +4519,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         sort_opt = cfg.get('sort_bars', 'No Sorting')
@@ -4334,6 +4547,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
         x = np.arange(len(all_elems), dtype=float)
         bottom = np.zeros(len(all_elems))
+        per_ml = _per_ml_active(cfg, self.node.input_data)
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
@@ -4342,7 +4556,8 @@ class ElementBarChartDisplayDialog(QDialog):
         for i, (sn, sd) in enumerate(plot_data.items()):
             color = get_sample_color(sn, i, cfg)
             dname = get_display_name(sn, cfg)
-            heights = np.array([sd.get(e, 0) for e in all_elems], dtype=float)
+            y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+            heights = np.array([sd.get(e, 0) * y_scale for e in all_elems], dtype=float)
 
             if log_y:
                 top = bottom + heights
@@ -4371,12 +4586,14 @@ class ElementBarChartDisplayDialog(QDialog):
         ticks = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(all_elems)]
         ax_bottom.setTicks([ticks])
 
-        yl = 'Particle Count' 
+        yl = 'Particles/mL' if per_ml else 'Particle Count'
         set_axis_labels(pi, 'Isotope Elements', yl, cfg)
         
         if log_y:
             pi.getAxis('left').setLogMode(True)        
         apply_font_to_pyqtgraph(pi, cfg)
+        if per_ml and not log_y:
+            _apply_sci_y_axis(pi, cfg)
 
     def _draw_by_sample(self, plot_data, cfg):
         """X-axis = samples, one bar per element per sample, colors = elements.
@@ -4385,7 +4602,7 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
-        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
+        pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
         show_vals = cfg.get('show_values', True)
@@ -4428,10 +4645,13 @@ class ElementBarChartDisplayDialog(QDialog):
         pi.legend = legend
 
         global_max = 0.0
+        per_ml = _per_ml_active(cfg, self.node.input_data)
         for j, elem in enumerate(all_elems):
             color = _get_element_color(elem, j, cfg)
             label = _fmt_elem(elem, cfg)
-            heights = [plot_data[s].get(elem, 0) for s in samples]
+            heights = [plot_data[s].get(elem, 0) *
+                       (_pml_factor(self.node.input_data, s) if per_ml else 1.0)
+                       for s in samples]
             orig = list(heights)
             if log_y:
                 heights = [np.log10(h + 1) for h in heights]
@@ -4455,8 +4675,8 @@ class ElementBarChartDisplayDialog(QDialog):
             if show_vals:
                 for xp, h, o in zip(offsets, heights, orig):
                     if o > 0:
-                        ti = pg.TextItem(str(int(o)), anchor=(0.5, 1),
-                                         color='#374151')
+                        ti = _bar_value_textitem(o, per_ml, anchor=(0.5, 1),
+                                                 color='#374151', cfg=cfg)
                         ti.setFont(QFont(fc.get('family', 'Times New Roman'),
                                          max(fc.get('size', 18) - 5, 6)))
                         pi.addItem(ti)
@@ -4467,10 +4687,12 @@ class ElementBarChartDisplayDialog(QDialog):
                  for i, s in enumerate(samples)]
         ax_bottom.setTicks([ticks])
 
-        set_axis_labels(pi, 'Sample', 'Particle Count', cfg)
+        set_axis_labels(pi, 'Sample', 'Particles/mL' if per_ml else 'Particle Count', cfg)
         if log_y:
             pi.getAxis('left').setLogMode(True)
         apply_font_to_pyqtgraph(pi, cfg)
+        if per_ml and not log_y:
+            _apply_sci_y_axis(pi, cfg)
 
     def _update_stats(self, plot_data):
         """
@@ -4496,6 +4718,7 @@ class ElementBarChartPlotNode(QObject):
     DEFAULT_CONFIG = {
         'show_values': True,
         'sort_bars': 'No Sorting',
+        'y_axis_unit': 'count',
         'log_x': False,
         'log_y': False,
         'show_box': True,
@@ -4604,5 +4827,3 @@ class ElementBarChartPlotNode(QObject):
             return {k: v for k, v in result.items() if v} or None
 
         return None
-
-

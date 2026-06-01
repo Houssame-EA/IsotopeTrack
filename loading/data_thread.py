@@ -216,13 +216,18 @@ class DataProcessThread(QThread):
         dwell_time = acqtime * accumulations
 
         self.progress.emit(20)
+
+        def _read_progress(frac):
+            self.progress.emit(int(20 + frac * 40))
+
         masses, signals, run_info = loading.vitesse_loading.read_nu_directory(
             path=self.folder_path,
             max_integ_files=None,
             autoblank=True,
             cycle=None,
             segment=None,
-            raw=False
+            raw=False,
+            progress_callback=_read_progress,
         )
         
         self.progress.emit(60)
@@ -290,9 +295,14 @@ class DataProcessThread(QThread):
             print(f"Using first .h5 file in directory: {h5_file}")
         
         self.progress.emit(20)
-        
+
+        def _read_progress(frac):
+            self.progress.emit(int(20 + frac * 40))
+
         print(f"Reading TOFWERK data...")
-        data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_file)
+        data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(
+            h5_file, progress_callback=_read_progress
+        )
         
         print(f"\n--- TOFWERK DATA PROCESSING ---")
         print(f"Data shape: {data.shape}")

@@ -15,6 +15,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
     download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
+    per_ml_factor, conc_meta_available, format_per_ml,
 )
 
 from results.utils_sort import (
@@ -34,13 +35,15 @@ class HeatmapSettingsDialog(QDialog):
     """Scoped settings dialog for heatmap format/quantity configuration."""
 
     def __init__(self, config: dict, is_multi: bool,
-                 sample_names: list, parent=None, scope='all'):
+                 sample_names: list, parent=None, scope='all', input_data=None):
         """
         Args:
             config (dict): Configuration dictionary.
             is_multi (bool): The is multi.
             sample_names (list): The sample names.
             parent (Any): Parent widget or object.
+            input_data (dict | None): Node input payload used to detect whether
+                a transport rate is available for particles-per-mL output.
         """
         super().__init__(parent)
         if scope == 'format':
@@ -54,8 +57,10 @@ class HeatmapSettingsDialog(QDialog):
         self._is_multi = is_multi
         self._sample_names = sample_names
         self._scope = scope
+        self._input_data = input_data
         self.display_mode = None
         self.data_type = None
+        self.y_axis_unit = None
         self.search_edit = None
         self.highlight_cb = None
         self.filter_only_cb = None
@@ -111,6 +116,20 @@ class HeatmapSettingsDialog(QDialog):
             self.data_type.setCurrentText(
                 self._config.get('data_type_display', 'Counts'))
             vl.addWidget(self.data_type)
+            self.y_axis_unit = QComboBox()
+            self.y_axis_unit.addItem("Particle", "count")
+            self.y_axis_unit.addItem("Particle per mL", "per_ml")
+            _cu = self._config.get('y_axis_unit', 'count')
+            self.y_axis_unit.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+            if not conc_meta_available(getattr(self, '_input_data', None)):
+                _ix = self.y_axis_unit.findData('per_ml')
+                _it = self.y_axis_unit.model().item(_ix)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cu == 'per_ml':
+                    self.y_axis_unit.setCurrentIndex(0)
+            vl.addWidget(QLabel("Row count unit:"))
+            vl.addWidget(self.y_axis_unit)
             layout.addWidget(g)
 
             g = QGroupBox("Element Search & Filter")
@@ -275,6 +294,8 @@ class HeatmapSettingsDialog(QDialog):
         """
         cfg = dict(self._config)
         cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
+        if self.y_axis_unit is not None:
+            cfg['y_axis_unit'] = self.y_axis_unit.currentData()
         cfg['search_element'] = self.search_edit.text().strip() if self.search_edit else self._config.get('search_element', '')
         cfg['highlight_matches'] = self.highlight_cb.isChecked() if self.highlight_cb else self._config.get('highlight_matches', True)
         cfg['filter_combinations'] = self.filter_only_cb.isChecked() if self.filter_only_cb else self._config.get('filter_combinations', False)
@@ -488,21 +509,24 @@ class HeatmapDisplayDialog(QDialog):
 
     def _open_settings(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self)
+            self.node.config, self._is_multi(), self._sample_names(), self,
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_plot_format_settings(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self, scope='format')
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='format',
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities')
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities',
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -603,9 +627,11 @@ class HeatmapDisplayDialog(QDialog):
             for combo, d in sample_data.items():
                 if combo not in combined:
                     combined[combo] = {
-                        'count': 0, 'total_values': {}, 'particle_count': 0}
+                        'count': 0, 'total_values': {}, 'particle_count': 0,
+                        'pml': 0.0}
                 combined[combo]['count'] += d['count']
                 combined[combo]['particle_count'] += d['particle_count']
+                combined[combo]['pml'] += d.get('pml', 0.0)
                 for elem, vals in d['total_values'].items():
                     combined[combo].setdefault('total_values', {}).setdefault(elem, []).extend(vals)
         return combined
@@ -745,7 +771,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     for combo, d in selected:
         count = d['particle_count']
         fmt = format_combination_label(combo, label_mode, Renderer.MATHTEXT, cfg)
-        labels.append(f"{fmt} ({count})")
+        if cfg.get('y_axis_unit', 'count') == 'per_ml' and d.get('pml', 0.0) > 0:
+            labels.append(f"{fmt} ({format_per_ml(d['pml'], Renderer.MATHTEXT, cfg)})")
+        else:
+            labels.append(f"{fmt} ({count})")
         hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
 
         is_pct = dt.endswith('%')
@@ -786,14 +815,16 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     x_labels = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg)
                 for e in all_elems]
+    fw = 'bold' if fc['bold'] else 'normal'
+    fst = 'italic' if fc['italic'] else 'normal'
     ax.set_xticks(range(len(x_labels)))
     ax.set_xticklabels(x_labels, rotation=x_rotation,
                        ha='right' if x_rotation > 0 else 'center',
-                       fontsize=fc['size'],
-                       fontweight='bold' if fc['bold'] else 'normal')
+                       fontsize=fc['size'], fontfamily=fc['family'],
+                       fontweight=fw, fontstyle=fst, color=fc['color'])
     ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels, fontsize=fc['size'],
-                       fontweight='bold' if fc['bold'] else 'normal')
+    ax.set_yticklabels(labels, fontsize=fc['size'], fontfamily=fc['family'],
+                       fontweight=fw, fontstyle=fst, color=fc['color'])
 
     if search_elems and highlight:
         for i, hl in enumerate(hl_rows):
@@ -803,7 +834,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                 ax.get_yticklabels()[i].set_weight('bold')
 
     if is_multi and title:
-        ax.set_title(title, fontsize=fc['size'] + 2, fontweight='bold', pad=20)
+        ax.set_title(title, fontsize=fc['size'] + 2, fontfamily=fc['family'],
+                     fontweight=fw, fontstyle=fst, color=fc['color'], pad=20)
 
     if show_cbar:
         cbar = fig.colorbar(im, ax=ax, shrink=0.8)
@@ -833,7 +865,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                         txt = f'{v_orig:.2f}'
                     ax.text(j, i, txt, ha='center', va='center',
                             color=tc, fontsize=eff_fs,
-                            fontfamily=fc['family'], weight=weight)
+                            fontfamily=fc['family'], weight=weight,
+                            style='italic' if fc['italic'] else 'normal')
 
 
 class HeatmapPlotNode(QObject):
@@ -844,6 +877,7 @@ class HeatmapPlotNode(QObject):
 
     DEFAULT_CONFIG = {
         'data_type_display': 'Counts',
+        'y_axis_unit': 'count',
         'search_element': '', 'highlight_matches': True,
         'filter_combinations': False,
         'start_range': 1, 'end_range': 10,
@@ -947,7 +981,9 @@ class HeatmapPlotNode(QObject):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        return _build_combinations(particles, data_key)
+        sname = self.input_data.get('sample_name', 'Sample')
+        return _build_combinations(particles, data_key,
+                                   per_ml_factor(self.input_data, sname))
 
     def _extract_multi(self, data_key):
         """
@@ -969,17 +1005,20 @@ class HeatmapPlotNode(QObject):
 
         result = {}
         for sn, plist in grouped.items():
-            combos = _build_combinations(plist, data_key)
+            combos = _build_combinations(plist, data_key,
+                                         per_ml_factor(self.input_data, sn))
             if combos:
                 result[sn] = combos
         return result or None
 
 
-def _build_combinations(particles, data_key):
+def _build_combinations(particles, data_key, pml_factor=0.0):
     """Build combination dict from a list of particle dicts.
     Args:
         particles (Any): The particles.
         data_key (Any): The data key.
+        pml_factor (float): Multiplier converting a particle count to
+            particles per mL for the sample these particles belong to.
     Returns:
         object: Result of the operation.
     """
@@ -1004,9 +1043,11 @@ def _build_combinations(particles, data_key):
 
             key = ', '.join(sort_elements_by_mass(elems))
             if key not in combos:
-                combos[key] = {'count': 0, 'particle_count': 0, 'total_values': {}}
+                combos[key] = {'count': 0, 'particle_count': 0, 'pml': 0.0,
+                               'total_values': {}}
             combos[key]['count'] += 1
             combos[key]['particle_count'] += 1
+            combos[key]['pml'] += pml_factor
             for e, v in vals.items():
                 combos[key]['total_values'].setdefault(e, []).append(v)
 

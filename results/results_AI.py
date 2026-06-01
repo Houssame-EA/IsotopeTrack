@@ -118,6 +118,46 @@ def _extract_element_counts(particles):
             if _safe_positive(v): c[el] = c.get(el, 0) + 1
     return c
 
+def _extract_element_per_ml(particles, dc):
+    """Compute per-element particle concentration in particles per mL.
+
+    Each particle's element detection is attributed to that particle's source
+    sample, multiplied by the sample's dilution-over-volume factor taken from
+    the node's concentration metadata. Returns an empty dict when no transport
+    rate is available.
+
+    Args:
+        particles (list): Particle dictionaries.
+        dc (dict): Data context carrying concentration_meta and sample keys.
+
+    Returns:
+        dict: Mapping of element label to particles-per-mL concentration.
+    """
+    meta = (dc or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict) or not meta:
+        return {}
+
+    def _factor(sample_name):
+        entry = meta.get(sample_name)
+        if not entry:
+            return 0.0
+        vol = entry.get('volume_ml', 0.0)
+        if not vol or vol <= 0:
+            return 0.0
+        return entry.get('dilution_factor', 1.0) / vol
+
+    default_sample = (dc or {}).get('sample_name', 'Sample')
+    out = {}
+    for p in particles:
+        sn = p.get('source_sample', default_sample)
+        f = _factor(sn)
+        if f <= 0:
+            continue
+        for el, v in p.get('elements', {}).items():
+            if _safe_positive(v):
+                out[el] = out.get(el, 0.0) + f
+    return out
+
 def _extract_total_values(particles, total_key='total_element_mass_fg'):
     vals = []
     for p in particles:
@@ -203,6 +243,7 @@ CODE SANDBOX — pre-loaded variables:
   moles            {el: [moles_fmol...]}        mass_pct        {el: [mass_%...]}
   mole_pct         {el: [mole_%...]}            total_masses    [total_mass_fg per particle]
   total_moles      [total_moles_fmol per particle]
+  element_per_ml   {el: particles_per_mL}  (empty if no transport rate; already dilution-corrected)
   by_sample        {sample_name: [particles]}   sample_names    [list of names]
   sample_name      current sample name (single mode)
   np, math, Counter, defaultdict, stats (scipy.stats)
@@ -607,6 +648,7 @@ def _execute_query_code(code, particles, dc):
         'particles':      particles,
         'elements':       _extract_element_values(particles, 'elements'),
         'element_counts': _extract_element_counts(particles),
+        'element_per_ml': _extract_element_per_ml(particles, dc),
         'masses':         _extract_element_values(particles, 'element_mass_fg'),
         'diameters':      _extract_element_values(particles, 'element_diameter_nm'),
         'moles':          _extract_element_values(particles, 'element_moles_fmol'),

@@ -169,6 +169,34 @@ def _build_dashboard_data(data_context):
             'elements': elements_in_combo,
         }
 
+    conc_meta = data_context.get('concentration_meta', {})
+    te_available = isinstance(conc_meta, dict) and any(
+        bool(m and m.get('te_available')) for m in conc_meta.values())
+    _single_key = (next(iter(conc_meta)) if isinstance(conc_meta, dict)
+                   and len(conc_meta) == 1 else None)
+
+    def _pml_factor(sample_name):
+        entry = conc_meta.get(sample_name) if isinstance(conc_meta, dict) else None
+        if not entry and _single_key is not None:
+            entry = conc_meta.get(_single_key)
+        if not entry:
+            return 0.0
+        vol = entry.get('volume_ml', 0.0)
+        if not vol or vol <= 0:
+            return 0.0
+        return entry.get('dilution_factor', 1.0) / vol
+
+    element_per_ml = {}
+    if te_available:
+        for p in particles:
+            sn = p.get('source_sample', sample_name)
+            f = _pml_factor(sn)
+            if f <= 0:
+                continue
+            for el, v in p.get('elements', {}).items():
+                if _safe_positive(v):
+                    element_per_ml[el] = element_per_ml.get(el, 0.0) + f
+
     return {
         'type': dtype,
         'sample_name': sample_name,
@@ -179,6 +207,8 @@ def _build_dashboard_data(data_context):
         'unique_elements': len(elem_counts),
         'element_labels': [el for el, _ in top_elements],
         'element_counts': {el: c for el, c in top_elements},
+        'element_per_ml': element_per_ml,
+        'te_available': te_available,
         'element_stats': elem_stats,
         'combinations': top_combos,
         'combo_heatmap': combo_heatmap,
@@ -493,7 +523,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   <div class="metrics" id="metrics"></div>
   <div class="grid">
     <div class="card">
-      <div class="card-title"><span class="dot" style="background:var(--accent)"></span>Element Frequency</div>
+      <div class="card-title"><span class="dot" style="background:var(--accent)"></span>Element Frequency
+        <button id="freqUnitBtn" onclick="toggleFreqUnit()" style="display:none;float:right;font-size:11px;padding:2px 8px;border-radius:4px;border:1px solid #30363D;background:#161B22;color:#E8ECF1;cursor:pointer;">Show Particles/mL</button>
+      </div>
       <div class="chart-wrap" style="height:320px"><canvas id="freqChart"></canvas></div>
     </div>
     <div class="card">
@@ -715,6 +747,21 @@ function scaleOpts(axis, label, grid) {
   };
 }
 
+function toSuperscript(n) {
+  const map = {'0':'\u2070','1':'\u00b9','2':'\u00b2','3':'\u00b3','4':'\u2074',
+               '5':'\u2075','6':'\u2076','7':'\u2077','8':'\u2078','9':'\u2079','-':'\u207b'};
+  return String(n).split('').map(c=>map[c]||c).join('');
+}
+
+function fmtPerMl(v) {
+  v = Number(v);
+  if (!v) return '0';
+  let exp = Math.floor(Math.log10(Math.abs(v)));
+  let man = v / Math.pow(10, exp);
+  if (Math.abs(man) >= 9.995) { man /= 10; exp += 1; }
+  return man.toFixed(2) + '\u00d710' + toSuperscript(exp);
+}
+
 /* ═══ INIT ═══ */
 function init(jsonStr) {
   DATA = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
@@ -784,16 +831,32 @@ function buildMetrics() {
 }
 
 /* ═══ OVERVIEW: Frequency ═══ */
+let freqUnit = 'count';
+function toggleFreqUnit() {
+  freqUnit = (freqUnit === 'count') ? 'per_ml' : 'count';
+  const btn = document.getElementById('freqUnitBtn');
+  if (btn) btn.textContent = (freqUnit === 'count') ? 'Show Particles/mL' : 'Show Particle count';
+  buildFreqChart();
+}
 function buildFreqChart() {
   destroyChart('freq');
+  const btn = document.getElementById('freqUnitBtn');
+  if (btn) btn.style.display = DATA.te_available ? 'inline-block' : 'none';
+  const usePerMl = (freqUnit === 'per_ml') && DATA.te_available;
   const labels = DATA.element_labels.slice(0,20);
-  const values = labels.map(e=>DATA.element_counts[e]);
+  const source = usePerMl ? (DATA.element_per_ml || {}) : DATA.element_counts;
+  const values = labels.map(e=>source[e]||0);
+  const axisLabel = usePerMl ? 'Particles/mL' : 'Particle count';
+  const xScale = scaleOpts('x',axisLabel,true);
+  if (usePerMl) {
+    xScale.ticks = Object.assign({}, xScale.ticks, {callback:v=>fmtPerMl(v)});
+  }
   charts.freq = new Chart(document.getElementById('freqChart'), {
     type:'bar', data:{labels, datasets:[{data:values,
       backgroundColor:labels.map((_,i)=>COLORS[i%COLORS.length]), borderRadius:5, borderSkipped:false}]},
     options:{indexAxis:'y', responsive:true, maintainAspectRatio:false,
       plugins:{legend:{display:false}, tooltip:tooltipOpts()},
-      scales:{x:scaleOpts('x','Particle count',true), y:{grid:{display:false},
+      scales:{x:xScale, y:{grid:{display:false},
         ticks:{color:'#E8ECF1', font:{family:CHART_FONT.family, weight:500, size:CHART_FONT.size}}}}}
   });
 }

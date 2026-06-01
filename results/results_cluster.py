@@ -53,6 +53,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup,
     download_matplotlib_figure,
     format_element_label, Renderer,
+    per_ml_active, per_ml_factor, conc_meta_available, format_per_ml,
 )
 from results.utils_sort import (
     extract_mass_and_element, sort_elements_by_mass,
@@ -568,12 +569,9 @@ CLUSTER_COLORS = [
 ]
 
 # ── App theme integration ──────────────────────────────────────────────────────
-# The application ships a singleton ThemeManager (theme.py) with light/dark
-# Palettes and a themeChanged signal.  We hook into it so this dialog follows the
-# app theme automatically and updates live when the user toggles dark/light.
 try:
     from theme import theme as _app_theme
-except Exception:  # pragma: no cover - layout fallback
+except Exception: 
     try:
         from ..theme import theme as _app_theme
     except Exception:
@@ -927,7 +925,8 @@ def _contrast_text_for(cmap_name, norm_value):
         return '#FFFFFF'
 
 
-def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg):
+def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
+                   sample_labels=None, input_data=None):
     """Draw the SOM diagnostic panels: cluster grid, U-matrix, hit-count,
     and cluster size bar chart.
 
@@ -1065,18 +1064,42 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg):
 
     ax_s = fig.add_subplot(rows_layout, cols_layout, positions['sizes'])
     unique_c = np.unique(data_labels[data_labels >= 0])
-    sizes = [int(np.sum(data_labels == c)) for c in unique_c]
+    per_ml = per_ml_active(cfg, input_data)
+    meta = (input_data or {}).get('concentration_meta', {}) if per_ml else {}
+    single_key = None
+    if per_ml and isinstance(meta, dict) and len(meta) == 1:
+        single_key = next(iter(meta))
+    if per_ml:
+        labels_ok = (sample_labels is not None
+                     and len(np.asarray(sample_labels)) == len(data_labels))
+        sample_labels = np.asarray(sample_labels) if labels_ok else None
+        sizes = []
+        for c in unique_c:
+            mask = data_labels == c
+            total = 0.0
+            if single_key is not None:
+                total = int(np.sum(mask)) * per_ml_factor(input_data, single_key)
+            elif sample_labels is not None:
+                members = sample_labels[mask]
+                for sn in np.unique(members):
+                    f = per_ml_factor(input_data, str(sn))
+                    total += int(np.sum(members == sn)) * f
+            sizes.append(total)
+    else:
+        sizes = [int(np.sum(data_labels == c)) for c in unique_c]
     colors = [CLUSTER_COLORS[int(c) % len(CLUSTER_COLORS)] for c in unique_c]
     bars = ax_s.bar([_cluster_label_short(c) for c in unique_c], sizes,
                     color=colors, edgecolor='white', linewidth=0.6, alpha=0.9)
+    _smax = max(sizes) if sizes else 0
     for bar, sz in zip(bars, sizes):
         ax_s.text(bar.get_x() + bar.get_width() / 2,
-                  bar.get_height() + max(sizes) * 0.01,
-                  f'n={sz}', ha='center', va='bottom',
+                  bar.get_height() + (_smax * 0.01 if _smax else 0),
+                  (format_per_ml(sz, Renderer.MATHTEXT, cfg) if per_ml else f'n={sz}'), ha='center', va='bottom',
                   fontproperties=fp_annot, color=col)
-    _style_ax(ax_s, cfg, xlabel='Cluster', ylabel='Particle count',
+    _style_ax(ax_s, cfg, xlabel='Cluster',
+              ylabel='Particles/mL' if per_ml else 'Particle count',
               title='SOM Cluster Sizes')
-    ax_s.set_ylim(0, max(sizes) * 1.3 if sizes else 1)
+    ax_s.set_ylim(0, _smax * 1.3 if _smax else 1)
     noise = int(np.sum(data_labels == -1))
     if noise > 0:
         ax_s.text(0.98, 0.98, f'Noise: {noise}', transform=ax_s.transAxes,
@@ -1100,7 +1123,7 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg):
 class ClusteringSettingsDialog(QDialog):
     """Full settings dialog opened from right-click → Configure."""
 
-    def __init__(self, config, parent=None):
+    def __init__(self, config, parent=None, input_data=None):
         """Initialise the dialog and build the UI from the supplied config.
 
         Args:
@@ -1108,11 +1131,14 @@ class ClusteringSettingsDialog(QDialog):
                 copy is taken so the original is not mutated until ``collect``
                 is called and the caller applies the result.
             parent (QWidget | None): Optional parent widget.
+            input_data (dict | None): Node input payload, used to detect whether
+                a transport rate is available for particles-per-mL output.
         """
         super().__init__(parent)
         self.setWindowTitle("Clustering Analysis Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(config)
+        self._input_data = input_data
         self._build_ui()
 
     def _build_ui(self):
@@ -1131,6 +1157,19 @@ class ClusteringSettingsDialog(QDialog):
         self.data_type.addItems(DATA_TYPE_OPTIONS)
         self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
         fl.addRow("Data:", self.data_type)
+        self.y_axis_unit = QComboBox()
+        self.y_axis_unit.addItem("Particle", "count")
+        self.y_axis_unit.addItem("Particle per mL", "per_ml")
+        _cu = self._cfg.get('y_axis_unit', 'count')
+        self.y_axis_unit.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+        if not conc_meta_available(getattr(self, '_input_data', None)):
+            _ix = self.y_axis_unit.findData('per_ml')
+            _itm = self.y_axis_unit.model().item(_ix)
+            if _itm is not None:
+                _itm.setEnabled(False)
+            if _cu == 'per_ml':
+                self.y_axis_unit.setCurrentIndex(0)
+        fl.addRow("Cluster size unit:", self.y_axis_unit)
         layout.addWidget(g)
 
         g = QGroupBox("Preprocessing")
@@ -1425,6 +1464,7 @@ class ClusteringSettingsDialog(QDialog):
         """
         out = dict(self._cfg)
         out['data_type_display'] = self.data_type.currentText()
+        out['y_axis_unit'] = self.y_axis_unit.currentData()
         out['scaling'] = self.scaling.currentText()
         out['dim_reduction'] = self.dim_red.currentText()
         out['n_components'] = self.n_comp.value()
@@ -1627,8 +1667,60 @@ def _cluster_label_short(cid):
     return 'Noise' if c < 0 else f'C{c + 1}'
 
 
+def _cluster_per_ml_value(cd, input_data):
+    """Convert a cluster's particle count to particles per mL.
+
+    Uses the per-sample breakdown when available (multi-sample input) so each
+    sample's particles are scaled by its own transport factor, mirroring the
+    heatmap convention. Falls back to ``particle_count`` times the single
+    sample factor otherwise.
+
+    Args:
+        cd (dict): Cluster characterisation dict (holds ``particle_count`` and
+            optionally ``sample_breakdown``).
+        input_data (dict | None): Node input payload carrying concentration
+            metadata.
+
+    Returns:
+        float: Concentration in particles per mL for this cluster.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    breakdown = cd.get('sample_breakdown') or {}
+    if isinstance(meta, dict) and len(breakdown) > 1:
+        total = 0.0
+        for sname, info in breakdown.items():
+            total += int(info.get('count', 0)) * per_ml_factor(input_data, str(sname))
+        return total
+    single_key = None
+    if isinstance(meta, dict) and len(meta) == 1:
+        single_key = next(iter(meta))
+    elif isinstance(meta, dict) and len(breakdown) == 1:
+        single_key = next(iter(breakdown))
+    return int(cd.get('particle_count', 0)) * per_ml_factor(input_data, single_key)
+
+
+def _cluster_size_str(cd, cfg, input_data, renderer=Renderer.MATHTEXT):
+    """Return the size annotation for a cluster honouring the y-axis unit.
+
+    When the per-mL unit is active a transport-scaled concentration string is
+    returned; otherwise the plain comma-grouped particle count is returned.
+
+    Args:
+        cd (dict): Cluster characterisation dict.
+        cfg (dict): Plot configuration.
+        input_data (dict | None): Node input payload.
+        renderer (Renderer): Renderer for the per-mL formatter.
+
+    Returns:
+        str: Formatted size string (no surrounding parentheses).
+    """
+    if per_ml_active(cfg, input_data):
+        return format_per_ml(_cluster_per_ml_value(cd, input_data), renderer, cfg)
+    return f"{int(cd.get('particle_count', 0)):,}"
+
+
 def _build_cluster_label(cd, threshold_pct=0.1, max_elems=5, include_count=True,
-                         label_mode='Symbol'):
+                         label_mode='Symbol', cfg=None, input_data=None):
     """Build a "Fe, O, Si (1,234)" style row label from a cluster's
     characterisation dict, honouring the user's threshold + cap settings.
 
@@ -1662,6 +1754,8 @@ def _build_cluster_label(cd, threshold_pct=0.1, max_elems=5, include_count=True,
     sig_str = ', '.join(disp)
     if not include_count:
         return sig_str
+    if cfg is not None and per_ml_active(cfg, input_data):
+        return f"{sig_str} ({_cluster_size_str(cd, cfg, input_data)})"
     n = cd.get('particle_count', 0)
     return f"{sig_str} ({n:,})"
 
@@ -1729,7 +1823,8 @@ def _build_sample_data_from_characterisation(char_for_algo, elements,
                                              threshold_pct=0.1,
                                              max_elems=5,
                                              group_by_dominant=True,
-                                             label_mode='Symbol'):
+                                             label_mode='Symbol',
+                                             input_data=None):
     """Synthesise a ``sample_data`` dict from per-cluster characterisation data.
 
     Each cluster becomes one row in the heatmap. The row's ``total_values``
@@ -1770,13 +1865,14 @@ def _build_sample_data_from_characterisation(char_for_algo, elements,
         out[label] = {
             'count': cd.get('particle_count', 0),
             'particle_count': cd.get('particle_count', 0),
+            'pml': _cluster_per_ml_value(cd, input_data),
             'total_values': total_values,
         }
     return out
 
 
 def _draw_composition_strips(ax, char_for_algo, elements, cfg,
-                              algo_name=''):
+                              algo_name='', input_data=None):
     """Draw one horizontal stacked bar per cluster showing mass composition.
 
     Each bar is normalised to 100% so segment widths read as composition
@@ -1824,7 +1920,8 @@ def _draw_composition_strips(ax, char_for_algo, elements, cfg,
         labels.append(_build_cluster_label(
             cd, threshold, max_elems,
             label_mode=cfg.get('label_mode',
-                               cfg.get('overview_label_mode', 'Symbol'))))
+                               cfg.get('overview_label_mode', 'Symbol')),
+            cfg=cfg, input_data=input_data))
         primaries.append(primary)
         cursor += 1.0
         prev = primary
@@ -1970,7 +2067,7 @@ def _draw_sample_share_strip(ax, char_for_algo, sample_names, cfg,
 
 
 def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
-                           group_by_dominant=True):
+                           group_by_dominant=True, input_data=None):
     """Draw per-cluster real detection counts for selected elements.
 
     For each cluster, shows ``particle_count × frequency[elem]`` — the
@@ -2005,8 +2102,10 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
         cursor += 1.0
         prev = primary
 
+    per_ml = per_ml_active(cfg, input_data)
     if not sel:
-        sizes = [char_for_algo[cid].get('particle_count', 0)
+        sizes = [(_cluster_per_ml_value(char_for_algo[cid], input_data)
+                  if per_ml else char_for_algo[cid].get('particle_count', 0))
                  for cid, _ in ordered]
         all_elements = sorted({
             _cluster_primary(char_for_algo[cid]) for cid, _ in ordered
@@ -2016,10 +2115,13 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
             color = _element_color(primary, all_elements) if primary != '?' else '#94A3B8'
             ax.barh(y, sz, left=0, height=0.85, color=color,
                     edgecolor='white', linewidth=0.6)
-            ax.text(sz, y, f' {sz:,}', va='center', ha='left',
+            txt = (format_per_ml(sz, Renderer.MATHTEXT, cfg) if per_ml
+                   else f'{sz:,}')
+            ax.text(sz, y, f' {txt}', va='center', ha='left',
                     fontproperties=fp_annot, color=col)
         ax.set_yticks([])
-        ax.set_xlabel('Particle count', fontproperties=fp_lbl, color=col)
+        ax.set_xlabel('Particles/mL' if per_ml else 'Particle count',
+                      fontproperties=fp_lbl, color=col)
         ax.set_title('Cluster sizes', fontproperties=fp_title, color=col, pad=10)
         ax.tick_params(colors=col)
         if sizes:
@@ -2042,6 +2144,7 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
     for (cid, _), y in zip(ordered, y_pos):
         cd = char_for_algo[cid]
         n = cd.get('particle_count', 0)
+        n_scaled = _cluster_per_ml_value(cd, input_data) if per_ml else n
         estats = cd.get('element_stats', {})
         for i, elem in enumerate(sorted_elements):
             es = estats.get(elem, {})
@@ -2052,7 +2155,7 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
             elif is_mean:
                 value = mean
             else:
-                value = freq * n
+                value = freq * n_scaled
             max_val = max(max_val, value)
             color = _element_color(elem, sorted_elements)
             yi = y - 0.425 + (i + 0.5) * bar_h
@@ -2069,6 +2172,8 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
                     vtxt = f'{value:.1f}%'
                 elif is_mean:
                     vtxt = f'{value:.2f}'
+                elif per_ml:
+                    vtxt = format_per_ml(value, Renderer.MATHTEXT, cfg)
                 else:
                     vtxt = f'{int(round(value)):,}'
                 ax.text(value, yi, f'  {sym} ({vtxt})', va='center', ha='left',
@@ -2085,7 +2190,7 @@ def _draw_detection_panel(ax, char_for_algo, selected_elements, cfg,
         if max_val > 0:
             ax.set_xlim(0, max_val * 1.30)
     else:
-        ax.set_xlabel('Detected particles',
+        ax.set_xlabel('Detected particles/mL' if per_ml else 'Detected particles',
                       fontproperties=fp_lbl, color=col)
         if max_val > 0:
             ax.set_xlim(0, max_val * 1.30)
@@ -2487,7 +2592,8 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
     fig.tight_layout(pad=1.0)
 
 
-def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg):
+def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg,
+                     input_data=None):
     """Draw cluster scatter plots on a matplotlib Figure.
 
     Visual encoding:
@@ -2599,17 +2705,23 @@ def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg
                     continue
                 cluster_color = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
                 ctype = ''
+                cd = None
                 if (algo_name in characterisation
                         and lab in characterisation[algo_name]):
-                    ctype = characterisation[algo_name][lab].get(
+                    cd = characterisation[algo_name][lab]
+                    ctype = cd.get(
                         'cluster_type_short',
-                        characterisation[algo_name][lab].get('cluster_type', ''))
+                        cd.get('cluster_type', ''))
+                base = _cluster_label_short(lab)
+                if ctype:
+                    base = f'{base}: {ctype}'
+                if cd is not None and per_ml_active(cfg, input_data):
+                    base = f'{base} ({_cluster_size_str(cd, cfg, input_data)})'
                 legend_handles.append(Line2D(
                     [0], [0], marker='o', linestyle='',
                     markerfacecolor=cluster_color, markeredgecolor='white',
                     markeredgewidth=0.4, markersize=7,
-                    label=(f'{_cluster_label_short(lab)}: {ctype}'
-                           if ctype else _cluster_label_short(lab))))
+                    label=base))
 
         if multi:
             for sname in unique_samples:
@@ -2734,7 +2846,7 @@ class _ClusterWorker(QThread):
                 'elements_eff': elements_eff,
                 'sel_k': self._sel_k,
             })
-        except Exception as exc:  # noqa: BLE001 — surfaced to the user via signal
+        except Exception as exc: 
             self.failed.emit(str(exc))
 
 
@@ -2802,7 +2914,7 @@ class _EvalWorker(QThread):
                 'per_sample_eval': per_sample_eval,
                 'per_sample_optk': per_sample_optk,
             })
-        except Exception as exc:  # noqa: BLE001 — surfaced to the user via signal
+        except Exception as exc: 
             self.failed.emit(str(exc))
 
 
@@ -2914,7 +3026,7 @@ class _BootstrapWorker(QThread):
                 'completed': completed,
                 'n_boot': self._n_boot,
             })
-        except Exception as exc:  # noqa: BLE001 — surfaced to the user via signal
+        except Exception as exc: 
             self.failed.emit(str(exc))
 
 
@@ -2993,14 +3105,14 @@ class ClusteringDisplayDialog(QDialog):
         self._pal = _current_plot_palette()
         self._dark = self._pal['dark']
         self._apply_theme()
-        # Redraw any populated figures so plot colours follow the new theme.
         try:
             if self.eval_results:
                 self._refresh_eval_plot()
             if self.final_results and self._data_matrix_cache is not None:
                 _draw_clustering(self.cluster_fig, self.final_results,
                                  self._data_matrix_cache,
-                                 self.characterisation, self.node.config)
+                                 self.characterisation, self.node.config,
+                                 input_data=self.node.input_data)
                 self.cluster_canvas.draw()
                 if self._data_matrix_cache.shape[1] >= 3:
                     self._draw_3d()
@@ -3191,7 +3303,8 @@ class ClusteringDisplayDialog(QDialog):
             if data is not None:
                 _draw_clustering(self.cluster_fig, self.final_results,
                                  data, self.characterisation,
-                                 self.node.config)
+                                 self.node.config,
+                                 input_data=self.node.input_data)
                 self.cluster_canvas.draw()
                 if data.shape[1] >= 3:
                     self._draw_3d()
@@ -3671,7 +3784,8 @@ class ClusteringDisplayDialog(QDialog):
                 _draw_clustering(new_fig, self.final_results,
                                  self._data_matrix_cache,
                                  self.characterisation,
-                                 self.node.config)
+                                 self.node.config,
+                                 input_data=self.node.input_data)
         elif tab == 'overview':
             self._draw_overview_into(new_fig)
         elif tab == 'dendro':
@@ -3683,7 +3797,9 @@ class ClusteringDisplayDialog(QDialog):
                 som_labels = self.final_results.get('SOM', {}).get('labels')
                 if som_labels is not None:
                     _draw_som_grid(new_fig, self._som_obj, self._som_neuron_labels,
-                                   som_labels, self.node.config)
+                                   som_labels, self.node.config,
+                                   sample_labels=self._particle_samples,
+                                   input_data=self.node.input_data)
 
         new_canvas.draw()
         dlg.show()
@@ -3828,7 +3944,8 @@ class ClusteringDisplayDialog(QDialog):
                 _draw_clustering(self.cluster_fig, self.final_results,
                                  self._data_matrix_cache,
                                  self.characterisation,
-                                 self.node.config)
+                                 self.node.config,
+                                 input_data=self.node.input_data)
                 self.cluster_canvas.draw()
         elif tab == 'overview':
             self._draw_overview()
@@ -3843,7 +3960,9 @@ class ClusteringDisplayDialog(QDialog):
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
                                    self._som_neuron_labels, som_labels,
-                                   self.node.config)
+                                   self.node.config,
+                                   sample_labels=self._particle_samples,
+                                   input_data=self.node.input_data)
                     self.som_canvas.draw()
 
 
@@ -4314,17 +4433,24 @@ class ClusteringDisplayDialog(QDialog):
                         continue
                     cc = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
                     ctype = ''
+                    cd = None
                     if (algo_name in active_char
                             and lab in active_char[algo_name]):
-                        ctype = active_char[algo_name][lab].get(
+                        cd = active_char[algo_name][lab]
+                        ctype = cd.get(
                             'cluster_type_short',
-                            active_char[algo_name][lab].get('cluster_type', ''))
+                            cd.get('cluster_type', ''))
+                    base = _cluster_label_short(lab)
+                    if ctype:
+                        base = f'{base}: {ctype}'
+                    if cd is not None and per_ml_active(self.node.config,
+                                                        self.node.input_data):
+                        base = f'{base} ({_cluster_size_str(cd, self.node.config, self.node.input_data)})'
                     legend_handles.append(Line2D(
                         [0], [0], marker='o', linestyle='',
                         markerfacecolor=cc, markeredgecolor='white',
                         markeredgewidth=0.4, markersize=7,
-                        label=(f'{_cluster_label_short(lab)}: {ctype}'
-                           if ctype else _cluster_label_short(lab))))
+                        label=base))
             if multi:
                 for sname in unique_samples:
                     marker = sample_to_marker[sname]
@@ -4566,6 +4692,7 @@ class ClusteringDisplayDialog(QDialog):
                 max_elems=int(cfg.get('display_max_isotopes', 4)),
                 group_by_dominant=group,
                 label_mode=label_mode,
+                input_data=self.node.input_data,
             )
             hm_cfg = dict(cfg)
             hm_cfg.setdefault('colorscale',
@@ -4580,6 +4707,7 @@ class ClusteringDisplayDialog(QDialog):
                               cfg.get('data_type_display', 'Counts'))
             hm_cfg['label_mode'] = label_mode
             hm_cfg['show_mass_numbers'] = (label_mode != 'Symbol')
+            hm_cfg['y_axis_unit'] = cfg.get('y_axis_unit', 'count')
             draw_combinations_heatmap(
                 ax_left, target_fig, sample_data, hm_cfg,
                 title=f'Cluster overview — {algo}',
@@ -4588,14 +4716,16 @@ class ClusteringDisplayDialog(QDialog):
             self._restyle_heatmap_axes(ax_left, target_fig, cfg)
         else:
             _draw_composition_strips(ax_left, char, elements, cfg,
-                                      algo_name=algo)
+                                      algo_name=algo,
+                                      input_data=self.node.input_data)
 
         if show_sample_strip:
             _draw_sample_share_strip(ax_right, char, sample_names, cfg,
                                       group_by_dominant=right_group)
         else:
             _draw_detection_panel(ax_right, char, sel, cfg,
-                                   group_by_dominant=right_group)
+                                   group_by_dominant=right_group,
+                                   input_data=self.node.input_data)
 
         try:
             ax_right.set_ylim(ax_left.get_ylim())
@@ -4638,12 +4768,9 @@ class ClusteringDisplayDialog(QDialog):
             lab.set_fontproperties(fp_tick)
             lab.set_color(col)
 
-        # In-cell annotation texts: keep their own (contrast) colour, only
-        # normalise the font family/size so they match the rest of the figure.
         for txt in ax.texts:
             txt.set_fontproperties(fp_cell)
 
-        # Restyle any colorbar axes attached to this figure.
         for other in fig.axes:
             if other is ax:
                 continue
@@ -4771,7 +4898,8 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _open_settings(self):
-        dlg = ClusteringSettingsDialog(self.node.config, self)
+        dlg = ClusteringSettingsDialog(self.node.config, self,
+                                       input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._apply_display_settings()
@@ -5838,7 +5966,8 @@ class ClusteringDisplayDialog(QDialog):
                 if self._particle_samples is not None else [])
 
             _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, self.node.config)
+                             self.characterisation, self.node.config,
+                             input_data=self.node.input_data)
             self.cluster_canvas.draw()
 
             self._hover_ann = {}
@@ -5872,7 +6001,9 @@ class ClusteringDisplayDialog(QDialog):
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
                                    self._som_neuron_labels, som_labels,
-                                   self.node.config)
+                                   self.node.config,
+                                   sample_labels=self._particle_samples,
+                                   input_data=self.node.input_data)
                     self.som_canvas.draw()
                     self.tabs.setCurrentIndex(self.som_tab_idx)
                     return
@@ -6031,7 +6162,8 @@ class ClusteringDisplayDialog(QDialog):
             self._rebuild_display_labels()
 
             _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, cfg)
+                             self.characterisation, cfg,
+                             input_data=self.node.input_data)
             self.cluster_canvas.draw()
             self._hover_ann = {}
             if data.shape[1] >= 3:
@@ -6242,7 +6374,8 @@ class ClusteringDisplayDialog(QDialog):
         data = self._data_matrix_cache
         if data is not None and self.final_results:
             _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, cfg)
+                             self.characterisation, cfg,
+                             input_data=self.node.input_data)
             self.cluster_canvas.draw()
             self._hover_ann = {}
             if data.shape[1] >= 3:
@@ -6256,7 +6389,9 @@ class ClusteringDisplayDialog(QDialog):
             if som_labels is not None:
                 _draw_som_grid(self.som_fig, self._som_obj,
                                self._som_neuron_labels, som_labels,
-                               cfg)
+                               cfg,
+                               sample_labels=self._particle_samples,
+                               input_data=self.node.input_data)
                 self.som_canvas.draw()
 
     def _export_results(self):
@@ -6349,6 +6484,7 @@ class ClusteringPlotNode(QObject):
         'som_n_iter': 2000,
         'som_final_algo': 'Hierarchical (Ward)',
         'som_cluster_cmap': 'CLUSTER_COLORS',
+        'y_axis_unit': 'count',
         'som_sequential_cmap': 'viridis',
         'som_show_u_matrix': True,
         'som_show_hit_count': True,
