@@ -17,6 +17,8 @@ from results.shared_plot_utils import (
     FontSettingsGroup, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
     format_element_label, LABEL_MODES, Renderer,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    apply_sci_y_axis, HtmlAxisItem,
 )
 
 try:
@@ -103,6 +105,7 @@ DEFAULT_CONFIG = {
     'sample_colors': {},
     'sample_name_mappings': {},
     'sample_order': [],
+    'y_axis_unit': 'count',
     'label_mode': 'Symbol',
     'font_family': 'Times New Roman',
     'font_size': 18,
@@ -138,7 +141,7 @@ def _xy_labels(cfg):
     num = format_element_label(num, lm)
     den = format_element_label(den, lm)
     xl = f"{num}/{den}"
-    yl = "Number of Particles"
+    yl = "Particles/mL" if cfg.get('y_axis_unit', 'count') == 'per_ml' else "Number of Particles"
     return xl, yl
 
 
@@ -190,6 +193,7 @@ class MolarRatioSettingsDialog(QDialog):
         self.label_mode = None
         self.dtype_combo = None
         self.mode_combo = None
+        self.y_unit_combo = None
         self.bins_spin = None
         self.outlier_cb = None
         self.pct_spin = None
@@ -314,6 +318,20 @@ class MolarRatioSettingsDialog(QDialog):
         self.bins_spin.setValue(self._cfg.get('bins', 50))
         if self._scope in ('all', 'quantities'):
             f4.addRow("Bins:", self.bins_spin)
+        self.y_unit_combo = QComboBox()
+        self.y_unit_combo.addItem("Particle", "count")
+        self.y_unit_combo.addItem("Particle per mL", "per_ml")
+        _cur_u = self._cfg.get('y_axis_unit', 'count')
+        self.y_unit_combo.setCurrentIndex(1 if _cur_u == 'per_ml' else 0)
+        if self._scope in ('all', 'quantities'):
+            if not conc_meta_available(self._input_data):
+                _i = self.y_unit_combo.findData('per_ml')
+                _it = self.y_unit_combo.model().item(_i)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cur_u == 'per_ml':
+                    self.y_unit_combo.setCurrentIndex(0)
+            f4.addRow("Y Axis:", self.y_unit_combo)
         self.alpha_spin = QDoubleSpinBox(); self.alpha_spin.setRange(0.1, 1.0)
         self.alpha_spin.setDecimals(1); self.alpha_spin.setValue(self._cfg.get('alpha', 0.7))
         if self._scope in ('all', 'format'):
@@ -590,6 +608,8 @@ class MolarRatioSettingsDialog(QDialog):
                 d['outlier_percentile'] = self.pct_spin.value()
             if self.bins_spin is not None:
                 d['bins'] = self.bins_spin.value()
+            if getattr(self, 'y_unit_combo', None) is not None:
+                d['y_axis_unit'] = self.y_unit_combo.currentData()
             if self.curve_cb is not None:
                 d['show_curve'] = self.curve_cb.isChecked()
                 d['show_stats'] = self.stats_cb.isChecked()
@@ -652,13 +672,14 @@ class MolarRatioSettingsDialog(QDialog):
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
-def _draw_histogram_bars(plot_item, ratios, cfg, color):
+def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0):
     """Draw histogram bars for ratio values.
     Args:
         plot_item (Any): The plot item.
         ratios (Any): The ratios.
         cfg (Any): The cfg.
         color (Any): Colour value.
+        y_scale (float): Multiplier converting bin counts to particles per mL.
     Returns:
         tuple: Result of the operation.
     """
@@ -668,6 +689,7 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color):
 
     pr = np.log10(ratios) if log_x else ratios.copy()
     y, edges = np.histogram(pr, bins=bins)
+    y = y.astype(float) * y_scale
     if log_y:
         y = np.log10(y + 1)
 
@@ -956,20 +978,21 @@ def _add_stats_text(plot_item, ratios, cfg):
         ti.setPos(0.02, 0.98)
 
 
-def _draw_ratio_plot(plot_item, ratios, cfg, color):
+def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0):
     """Draw a complete ratio histogram with overlays (applied to every subplot).
     Args:
         plot_item (Any): The plot item.
         ratios (Any): The ratios.
         cfg (Any): The cfg.
         color (Any): Colour value.
+        y_scale (float): Multiplier converting bin counts to particles per mL.
     """
     if ratios is None or len(ratios) == 0:
         return
-    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color)
+    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale)
 
     if cfg.get('show_curve', True) and len(ratios) > 5:
-        _add_density_curve(plot_item, pr, cfg, edges, len(ratios))
+        _add_density_curve(plot_item, pr, cfg, edges, len(ratios) * y_scale)
 
     _add_shaded_region(plot_item, pr, cfg)
     _add_stat_lines(plot_item, pr, cfg)
@@ -1265,7 +1288,7 @@ class MolarRatioDisplayDialog(QDialog):
                         (hasattr(plot_data, '__len__') and len(plot_data) == 0))
 
             if is_empty:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 if reason == 'same_elements':
                     msg = "Choose different numerator and denominator elements."
                 elif reason == 'no_valid_ratios':
@@ -1288,11 +1311,11 @@ class MolarRatioDisplayDialog(QDialog):
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
                 else:
-                    pi = self.pw.addPlot()
+                    pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                     self._draw_overlaid(pi, plot_data, cfg)
                     apply_font_to_pyqtgraph(pi, cfg)
             else:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 self._draw_single(pi, plot_data, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
 
@@ -1319,12 +1342,17 @@ class MolarRatioDisplayDialog(QDialog):
         """
         sc = cfg.get('sample_colors', {})
         color = sc.get('single_sample', '#663399')
-        _draw_ratio_plot(pi, ratios, cfg, color)
+        per_ml = per_ml_active(cfg, self.node.input_data)
+        sn = single_sample_name(self.node.input_data)
+        y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+        _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
         xl, yl = _xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
         
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        if per_ml and not cfg.get('log_y', False):
+            apply_sci_y_axis(pi, cfg)
         if cfg.get('show_stats', True):
             pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
             _add_stats_text(pi, pr, cfg)
@@ -1341,13 +1369,15 @@ class MolarRatioDisplayDialog(QDialog):
         sc = cfg.get('sample_colors', {})
         legend_items = []
         all_pr = []
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
                 c = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c, y_scale)
                 legend_items.append((sn, c))
                 if cfg.get('show_curve', True) and len(ratios) > 5:
-                    _add_density_curve(pi, pr, cfg, edges, len(ratios))
+                    _add_density_curve(pi, pr, cfg, edges, len(ratios) * y_scale)
                 all_pr.append(pr)
         if all_pr:
             pooled = np.concatenate(all_pr)
@@ -1358,6 +1388,8 @@ class MolarRatioDisplayDialog(QDialog):
         set_axis_labels(pi, xl, yl, cfg)
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        if per_ml and not cfg.get('log_y', False):
+            apply_sci_y_axis(pi, cfg)
         _apply_box(pi, cfg)
         if legend_items:
             legend = pi.addLegend()
@@ -1378,19 +1410,24 @@ class MolarRatioDisplayDialog(QDialog):
         cols = min(3, len(names))
         rows = math.ceil(len(names) / cols)
         sc = cfg.get('sample_colors', {})
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c)
+            pi = self.pw.addPlot(row=r, col=c,
+                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                _draw_ratio_plot(pi, ratios, cfg, color)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl, cfg)
                 
                 pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
                 pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                if per_ml and not cfg.get('log_y', False):
+                    apply_sci_y_axis(pi, cfg)
                 if cfg.get('show_stats', True):
                     pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
                     _add_stats_text(pi, pr, cfg)
@@ -1406,18 +1443,23 @@ class MolarRatioDisplayDialog(QDialog):
         """
         names = list(plot_data.keys())
         sc = cfg.get('sample_colors', {})
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, sn in enumerate(names):
-            pi = self.pw.addPlot(row=0, col=i)
+            pi = self.pw.addPlot(row=0, col=i,
+                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                _draw_ratio_plot(pi, ratios, cfg, color)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
                 
                 pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
                 pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                if per_ml and not cfg.get('log_y', False):
+                    apply_sci_y_axis(pi, cfg)
                 if cfg.get('show_stats', True):
                     pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
                     _add_stats_text(pi, pr, cfg)
@@ -1615,4 +1657,3 @@ class MolarRatioPlotNode(QObject):
         if not result:
             self._last_extract_reason = 'no_valid_ratios'
         return result if result else None
-

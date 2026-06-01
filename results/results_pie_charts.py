@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
     LABEL_MODES, format_element_label, format_combination_label, Renderer,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    format_per_ml,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -549,6 +551,8 @@ class MplPieCanvas(QWidget):
         ff  = cfg.get('font_family', 'DejaVu Sans')
         fs  = int(cfg.get('font_size', 10))
         fc  = cfg.get('font_color', cfg.get('label_color', '#000000'))
+        fw  = 'bold' if cfg.get('font_bold', False) else 'normal'
+        fst = 'italic' if cfg.get('font_italic', False) else 'normal'
 
         # â”€â”€ Pie geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         donut     = cfg.get('donut', False)
@@ -578,7 +582,8 @@ class MplPieCanvas(QWidget):
         )
         wedges = result[0]
 
-        ax.set_title(title, fontsize=fs + 2, color=fc, fontfamily=ff, pad=8)
+        ax.set_title(title, fontsize=fs + 2, color=fc, fontfamily=ff,
+                     fontweight=fw, fontstyle=fst, pad=8)
 
         # â”€â”€ Draggable annotations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         show_lines = cfg.get('show_connection_lines', True)
@@ -608,6 +613,7 @@ class MplPieCanvas(QWidget):
                 xytext=(lx, ly),
                 ha='center', va='center',
                 fontsize=fs, color=fc, fontfamily=ff,
+                fontweight=fw, fontstyle=fst,
                 arrowprops=dict(
                     arrowstyle='-',
                     color=line_color,
@@ -630,19 +636,25 @@ class MplPieCanvas(QWidget):
 
         # â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if cfg.get('legend_show', False):
+            from matplotlib.font_manager import FontProperties
+            leg_fp = FontProperties(family=ff, size=max(6, fs - 2),
+                                    weight=fw, style=fst)
             handles = [mpatches.Patch(facecolor=c, label=l)
                        for c, l in zip(colors, labels)]
-            kw = dict(handles=handles, fontsize=max(6, fs - 2), framealpha=0.8)
+            kw = dict(handles=handles, prop=leg_fp, framealpha=0.8)
             if cfg.get('legend_outside', False):
-                ax.legend(loc='upper left', bbox_to_anchor=(1.0, 1.0), **kw)
+                leg = ax.legend(loc='upper left', bbox_to_anchor=(1.0, 1.0), **kw)
             else:
-                ax.legend(loc=cfg.get('legend_position', 'best'), **kw)
+                leg = ax.legend(loc=cfg.get('legend_position', 'best'), **kw)
+            for txt in leg.get_texts():
+                txt.set_color(fc)
 
         # â”€â”€ Donut centre label â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         centre = cfg.get('donut_center_text', '')
         if donut and centre:
             ax.text(0, 0, centre, ha='center', va='center',
-                    fontsize=fs, color=fc, fontfamily=ff, zorder=11)
+                    fontsize=fs, color=fc, fontfamily=ff,
+                    fontweight=fw, fontstyle=fst, zorder=11)
 
         ax.set_aspect('equal')
         ax.axis('off')
@@ -679,6 +691,7 @@ class PieChartSettingsDialog(QDialog):
 
         self._chart_type = None
         self._data_type = None
+        self._y_unit = None
         self._display_mode = None
         self._thresh = None
         self._filter_zeros = None
@@ -718,6 +731,23 @@ class PieChartSettingsDialog(QDialog):
             self._data_type.addItems(PIE_DATA_TYPES)
             self._data_type.setCurrentText(self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
             f1.addRow("Data Type:", self._data_type)
+            self._y_unit = QComboBox()
+            self._y_unit.addItem("Particle", "count")
+            self._y_unit.addItem("Particle per mL", "per_ml")
+            _cur_unit = self._cfg.get('y_axis_unit', 'count')
+            self._y_unit.setCurrentIndex(1 if _cur_unit == 'per_ml' else 0)
+            f1.addRow("Count Unit:", self._y_unit)
+            if not conc_meta_available(self._input_data):
+                _idx = self._y_unit.findData('per_ml')
+                _item = self._y_unit.model().item(_idx)
+                if _item is not None:
+                    _item.setEnabled(False)
+                if _cur_unit == 'per_ml':
+                    self._y_unit.setCurrentIndex(0)
+                _note = QLabel("Particle per mL requires Transport Rate calibration")
+                _note.setWordWrap(True)
+                _note.setStyleSheet("color: #6B7280; font-size: 10px;")
+                f1.addRow("", _note)
             lay.addWidget(g1)
 
             if _is_multi(self._input_data):
@@ -821,6 +851,8 @@ class PieChartSettingsDialog(QDialog):
             d['chart_type'] = self._chart_type.currentText()
         if self._data_type is not None:
             d['data_type_display'] = self._data_type.currentText()
+        if self._y_unit is not None:
+            d['y_axis_unit'] = self._y_unit.currentData()
         if self._thresh is not None:
             d['threshold'] = self._thresh.value()
         if self._filter_zeros is not None:
@@ -1039,28 +1071,40 @@ class PieChartDisplayDialog(QDialog):
 
             cfg = self.node.config
             subplots = []
+            per_ml = per_ml_active(cfg, self.node.input_data)
 
             if _is_multi(self.node.input_data):
                 mode = cfg.get('display_mode', PIE_DISPLAY_MODES[0])
                 if mode == 'Combined Distribution':
                     comb_data, comb_counts = {}, {}
-                    for sd in plot_data.values():
+                    for sn, sd in plot_data.items():
                         d, c = self._calc_single(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                         for k, v in d.items():
                             comb_data[k] = comb_data.get(k, 0) + v
                         for k, v in c.items():
-                            comb_counts[k] = comb_counts.get(k, 0) + v
+                            comb_counts[k] = comb_counts.get(k, 0) + v * factor
                     subplots.append(
-                        self._build_sp(comb_data, comb_counts, cfg, 'Combined', 'combined'))
+                        self._build_sp(comb_data, comb_counts, cfg, 'Combined', 'combined',
+                                       per_ml=per_ml))
                 else:
                     for sn, sd in plot_data.items():
                         d, cnt = self._calc_single(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                        if per_ml:
+                            cnt = {k: v * factor for k, v in cnt.items()}
                         subplots.append(
-                            self._build_sp(d, cnt, cfg, get_display_name(sn, cfg), sn))
+                            self._build_sp(d, cnt, cfg, get_display_name(sn, cfg), sn,
+                                           per_ml=per_ml))
             else:
                 d, cnt = self._calc_single(plot_data, cfg)
+                sn = single_sample_name(self.node.input_data)
+                factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                if per_ml:
+                    cnt = {k: v * factor for k, v in cnt.items()}
                 subplots.append(
-                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default'))
+                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default',
+                                   per_ml=per_ml))
 
             self.canvas_widget.render(subplots)
         except Exception:
@@ -1094,16 +1138,17 @@ class PieChartDisplayDialog(QDialog):
                     data_totals[col] = filt.sum()
         return data_totals, particle_counts
 
-    def _build_sp(self, data, orig_counts, cfg, title, key) -> dict:
+    def _build_sp(self, data, orig_counts, cfg, title, key, per_ml=False) -> dict:
         """
         Build one subplot payload consumed by ``MplPieCanvas.render``.
 
         Args:
             data (dict): Aggregated values by element/combo key.
-            orig_counts (dict): Raw particle counts by key for count labels.
+            orig_counts (dict): Raw particle counts (or particles/mL) by key.
             cfg (dict): Active display configuration.
             title (str): Subplot title.
             key (str): Unique key used for label-position persistence.
+            per_ml (bool): When True, count labels show particles/mL values.
 
         Returns:
             dict: Render payload with labels/sizes/text/colors/title/key.
@@ -1138,7 +1183,8 @@ class PieChartDisplayDialog(QDialog):
                 count = orig_counts.get(lbl, 0)
 
             parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'), Renderer.MATHTEXT, cfg)]
-            if cfg.get('show_counts', True):      parts.append(f"({count:,})")
+            if cfg.get('show_counts', True):
+                parts.append(f"({format_per_ml(count, Renderer.MATHTEXT, cfg)} P/mL)" if per_ml else f"({count:,})")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
 
@@ -1167,6 +1213,7 @@ class PieChartPlotNode(QObject):
         self.config = {
             'chart_type':            'Element Distribution',
             'data_type_display':     'Counts',
+            'y_axis_unit':           'count',
             'threshold':             1.0,
             'filter_zeros':          True,
             'display_mode':          'Individual Subplots',
@@ -1333,6 +1380,7 @@ class ElementCompositionSettingsDialog(QDialog):
 
         self._analysis = None
         self._data_type = None
+        self._y_unit = None
         self._label_mode = None
         self._display_mode = None
         self._p_thresh = None
@@ -1379,6 +1427,19 @@ class ElementCompositionSettingsDialog(QDialog):
             self._data_type.setCurrentText(
                 self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
             f1.addRow("Data Type:", self._data_type)
+            self._y_unit = QComboBox()
+            self._y_unit.addItem("Particle", "count")
+            self._y_unit.addItem("Particle per mL", "per_ml")
+            _cu = self._cfg.get('y_axis_unit', 'count')
+            self._y_unit.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+            if not conc_meta_available(getattr(self, '_input_data', None)):
+                _ix = self._y_unit.findData('per_ml')
+                _it = self._y_unit.model().item(_ix)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cu == 'per_ml':
+                    self._y_unit.setCurrentIndex(0)
+            f1.addRow("Count Unit:", self._y_unit)
             lay.addWidget(g1)
 
             if _is_multi(self._input_data):
@@ -1476,6 +1537,8 @@ class ElementCompositionSettingsDialog(QDialog):
             d['analysis_type'] = self._analysis.currentText()
         if self._data_type is not None:
             d['data_type_display'] = self._data_type.currentText()
+        if self._y_unit is not None:
+            d['y_axis_unit'] = self._y_unit.currentData()
         if self._p_thresh is not None:
             d['particle_threshold'] = self._p_thresh.value()
         if self._pct_thresh is not None:
@@ -1709,28 +1772,38 @@ class ElementCompositionDisplayDialog(QDialog):
 
             cfg = self.node.config
             subplots = []
+            per_ml = per_ml_active(cfg, self.node.input_data)
 
             if _is_multi(self.node.input_data):
                 mode = cfg.get('display_mode', 'Individual Subplots')
                 if mode == 'Combined Analysis':
                     comb: dict = {}
-                    for sd in plot_data.values():
+                    comb_pml: dict = {}
+                    for sn, sd in plot_data.items():
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                         for k, v in sd.items():
                             if k not in comb:
                                 comb[k] = {'particle_count': 0, 'data_value': 0, 'elements': {}}
                             comb[k]['particle_count'] += v.get('particle_count', 0)
                             comb[k]['data_value'] += v.get('data_value', 0)
+                            comb_pml[k] = comb_pml.get(k, 0.0) + v.get('particle_count', 0) * factor
                     subplots.append(
-                        self._build_sp(self._calc_data(comb, cfg), cfg, 'Combined', 'combined'))
+                        self._build_sp(self._calc_data(comb, cfg), cfg, 'Combined', 'combined',
+                                       per_ml=per_ml, pml_map=comb_pml))
                 else:
                     for sn, sd in plot_data.items():
                         data = self._calc_data(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                         subplots.append(
-                            self._build_sp(data, cfg, get_display_name(sn, cfg), sn))
+                            self._build_sp(data, cfg, get_display_name(sn, cfg), sn,
+                                           per_ml=per_ml, pml_factor=factor))
             else:
                 data = self._calc_data(plot_data, cfg)
+                sn = single_sample_name(self.node.input_data)
+                factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                 subplots.append(
-                    self._build_sp(data, cfg, 'Element Combinations', 'default'))
+                    self._build_sp(data, cfg, 'Element Combinations', 'default',
+                                   per_ml=per_ml, pml_factor=factor))
 
             self.canvas_widget.render(subplots)
         except Exception:
@@ -1769,7 +1842,8 @@ class ElementCompositionDisplayDialog(QDialog):
 
         return filtered
 
-    def _build_sp(self, data, cfg, title, key) -> dict:
+    def _build_sp(self, data, cfg, title, key, per_ml=False,
+                  pml_factor=0.0, pml_map=None) -> dict:
         """
         Build one subplot payload consumed by ``MplPieCanvas.render``.
 
@@ -1824,7 +1898,14 @@ class ElementCompositionDisplayDialog(QDialog):
             mode = cfg.get('label_mode', 'Symbol')
             parts = [format_combination_label(lbl, mode, Renderer.MATHTEXT, cfg)]
             if cfg.get('show_counts', True):
-                parts.append(f"({pc:,} particles)")
+                if per_ml:
+                    if pml_map is not None:
+                        pc_pml = sum(pml_map.get(k, 0.0) for k in others) if lbl == 'Others' else pml_map.get(lbl, 0.0)
+                    else:
+                        pc_pml = pc * pml_factor
+                    parts.append(f"({format_per_ml(pc_pml, Renderer.MATHTEXT, cfg)} P/mL)")
+                else:
+                    parts.append(f"({pc:,} particles)")
             if cfg.get('show_data_values', True) and dt != 'Counts':
                 unit = 'fg' if 'Mass' in dt else 'fmol' if 'Moles' in dt else ''
                 parts.append(f"[{dv:.2f} {unit}]".strip())
@@ -1866,6 +1947,7 @@ class ElementCompositionPlotNode(QObject):
         self.config = {
             'analysis_type':             'Single vs Multiple Elements',
             'data_type_display':         'Counts',
+            'y_axis_unit':               'count',
             'particle_threshold':        10,
             'percentage_threshold':      1.0,
             'filter_zeros':              True,
@@ -2008,6 +2090,3 @@ class ElementCompositionPlotNode(QObject):
                 for e, v in elems.items():
                     sd[src][c_name]['elements'][e] = sd[src][c_name]['elements'].get(e, 0) + v
         return {k: v for k, v in sd.items() if v} or None
-
-
-

@@ -106,7 +106,7 @@ def factor_extraction_to_acquisition(h5: h5py._hl.files.File) -> float:
 
 
 def integrate_tof_data(
-    h5: h5py._hl.files.File, idx: np.ndarray | None = None
+    h5: h5py._hl.files.File, idx: np.ndarray | None = None, progress_callback=None
 ) -> np.ndarray:
     """
     Integrate TofData to recreate PeakData.
@@ -120,6 +120,9 @@ def integrate_tof_data(
     Args:
         h5 (h5py._hl.files.File): Opened h5 file
         idx (np.ndarray | None): Only integrate these peak idx, or None for all
+        progress_callback (callable | None): Called with a 0..1 fraction after
+            each chunk of TofData is integrated, so callers can report progress
+            proportional to the amount of data read.
 
     Returns:
         np.ndarray: Data equivalent to PeakData
@@ -157,6 +160,11 @@ def integrate_tof_data(
         peaks[start:end] = np.add.reduceat(
             chunk, indicies.flat, axis=-1
         )[..., ::2]
+        if progress_callback is not None:
+            try:
+                progress_callback(end / max(1, n_samples))
+            except Exception:
+                pass
     chunk = None  
 
     scale_factor = float(
@@ -169,7 +177,7 @@ def integrate_tof_data(
 
 
 def read_tofwerk_file(
-    path: Path | str, idx: np.ndarray | None = None
+    path: Path | str, idx: np.ndarray | None = None, progress_callback=None
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """
     Read a TOFWERK TofDaq .hdf file and return peak data and peak info.
@@ -177,6 +185,9 @@ def read_tofwerk_file(
     Args:
         path (Path | str): Path to .hdf archive
         idx (np.ndarray | None): Limit extraction to these idx, or None for all
+        progress_callback (callable | None): Called with a 0..1 fraction as the
+            data is read. When the file stores precomputed PeakData the read is
+            a single fast slice, so the callback only reports completion.
 
     Returns:
         tuple: (data, info, dwell_time) where:
@@ -194,7 +205,7 @@ def read_tofwerk_file(
         if "PeakData" in h5["PeakData"]:
             data = h5["PeakData"]["PeakData"][..., idx]
         else:
-            data = integrate_tof_data(h5, idx=idx)
+            data = integrate_tof_data(h5, idx=idx, progress_callback=progress_callback)
 
         data *= factor_extraction_to_acquisition(h5)
         info = h5["PeakData"]["PeakTable"][idx]
@@ -203,6 +214,12 @@ def read_tofwerk_file(
             * 1e-9
             * factor_extraction_to_acquisition(h5)
         )
+
+    if progress_callback is not None:
+        try:
+            progress_callback(1.0)
+        except Exception:
+            pass
 
     names = [x.decode() for x in info["label"]]
    

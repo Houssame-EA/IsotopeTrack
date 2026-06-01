@@ -10,6 +10,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup
 from PySide6.QtWidgets import QWidget
+import tools.dilution_utils
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -134,63 +135,8 @@ class NoWheelComboBox(QComboBox):
             None
         """
         event.ignore()
+        
 
-
-class HighResProgressBar(QProgressBar):
-    """
-    Args:
-        Inherits from QProgressBar
-
-    Returns:
-        None
-    """
-    RESOLUTION = 10 
-
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize the high-resolution progress bar.
-
-        Args:
-            *args, **kwargs: Passed through to QProgressBar
-
-        Returns:
-            None
-        """
-        super().__init__(*args, **kwargs)
-        super().setRange(0, 100 * self.RESOLUTION)
-        self._percent = 0.0
-        self.setFormat("0.0%")
-
-    def setValue(self, value):
-        """
-        Set progress from a 0..100 percentage at full internal resolution.
-
-        Args:
-            value (int | float): Progress percentage in the range 0..100
-
-        Returns:
-            None
-        """
-        try:
-            percent = float(value)
-        except (TypeError, ValueError):
-            percent = 0.0
-        percent = max(0.0, min(100.0, percent))
-        self._percent = percent
-        self.setFormat(f"{percent:.1f}%")
-        super().setValue(int(round(percent * self.RESOLUTION)))
-
-    def percent(self):
-        """
-        Return the current logical progress as a 0..100 float.
-
-        Args:
-            self: HighResProgressBar instance
-
-        Returns:
-            float: Current progress percentage (0..100)
-        """
-        return self._percent
 
     #----------------------------------------------------------------------------------------------------
     #---------------------------------------Initialization & setup---------------------------------------
@@ -262,6 +208,7 @@ class MainWindow(QMainWindow):
         self.sia_manager = SingleIonDistributionManager(self)
         self.element_thresholds = {}
         self.time_array_by_sample = {}
+        self.sample_dilutions = {}
         self.canvas_results_dialog = None
         self._current_plot_mode = 'time'
         self.sample_run_info = {}
@@ -409,6 +356,7 @@ class MainWindow(QMainWindow):
         self.sample_to_folder_map = {}
         self.element_thresholds = {}
         self.element_limits = {}
+        self.sample_dilutions = {}
         self.sample_run_info = {}
         self.sample_method_info = {}
         
@@ -701,10 +649,13 @@ class MainWindow(QMainWindow):
         ionic_action = _ma('fa6s.gear', "Sensitivity", self.open_ionic_calibration)
         mass_fraction_action = _ma('fa6s.calculator', "Mass Fraction Calculator",
                                    self.open_mass_fraction_calculator)
+        dilution_action = _ma('fa6s.flask', "Dilution Factor",
+                              self.open_dilution_factor_dialog)
 
         tools_menu.addAction(periodic_action)
         tools_menu.addAction(mass_fraction_action)
         tools_menu.addAction(ionic_action)
+        tools_menu.addAction(dilution_action)
 
         view_menu = menu_bar.addMenu("View")
         self._menu_icon_items.append((view_menu, 'fa6s.eye'))
@@ -813,10 +764,11 @@ class MainWindow(QMainWindow):
         self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout.addWidget(self.status_label, 1)
         
-        self.progress_bar = HighResProgressBar()
+        self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(16)
         self.progress_bar.setFixedWidth(400)
         self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar, 0)
         
@@ -1887,24 +1839,55 @@ class MainWindow(QMainWindow):
             masses_to_load.extend(isotopes)
         if not masses_to_load:
             return
+        pending = [
+            (name, self.sample_to_folder_map.get(name)) for name in sample_names
+        ]
+        pending = [
+            (name, fp) for name, fp in pending
+            if fp and not str(fp).endswith('.csv')
+        ]
+        if not pending:
+            return
 
-        for sample_name in sample_names:
-            folder_path = self.sample_to_folder_map.get(sample_name)
-            if not folder_path or str(folder_path).endswith('.csv'):
-                continue
+        total = len(pending)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+
+        for i, (sample_name, folder_path) in enumerate(pending):
+            self.status_label.setText(
+                f"Loading data for new sample {i+1}/{total}: {sample_name}")
+            QApplication.processEvents()
             try:
                 thread = DataProcessThread(folder_path, masses_to_load, sample_name)
                 thread.finished.connect(self.handle_new_elements_finished)
                 thread.error.connect(self.handle_error)
+
+                def _on_thread_progress(value, _i=i):
+                    overall = ((_i + value / 100.0) / total) * 100.0
+                    self.progress_bar.setValue(int(overall))
+                    QApplication.processEvents()
+                thread.progress.connect(_on_thread_progress)
 
                 loop = QEventLoop()
                 thread.finished.connect(loop.quit)
                 thread.error.connect(loop.quit)
                 thread.start()
                 loop.exec()
+
+                try:
+                    thread.progress.disconnect()
+                    thread.finished.disconnect()
+                    thread.error.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+                thread.deleteLater()
             except Exception as e:
                 self.logger.error(
                     f"Error loading selected isotopes for {sample_name}: {e}")
+
+        self.progress_bar.setValue(100)
+        self.status_label.setText(f"Loaded data for {total} new sample(s)")
+        self.progress_bar.setVisible(False)
 
 
     @log_user_action('MENU', 'File -> Open Folder')
@@ -3533,6 +3516,12 @@ class MainWindow(QMainWindow):
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
+
+                            def _elem_progress(value, _i=i, _tot=total_samples):
+                                overall = 20 + ((_i + value / 100.0) / max(1, _tot)) * 80
+                                self.progress_bar.setValue(int(overall))
+                                QApplication.processEvents()
+                            thread.progress.connect(_elem_progress)
                             
                             loop = QEventLoop()
                             thread.finished.connect(loop.quit)
@@ -3541,6 +3530,7 @@ class MainWindow(QMainWindow):
                             loop.exec()
 
                             try:
+                                thread.progress.disconnect()
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
@@ -3747,6 +3737,12 @@ class MainWindow(QMainWindow):
                             thread = DataProcessThread(folder_path, new_masses_to_process, sample_name)
                             thread.finished.connect(self.handle_new_elements_finished)
                             thread.error.connect(self.handle_error)
+
+                            def _elem_progress(value, _i=i, _tot=total_samples):
+                                overall = 20 + ((_i + value / 100.0) / max(1, _tot)) * 80
+                                self.progress_bar.setValue(int(overall))
+                                QApplication.processEvents()
+                            thread.progress.connect(_elem_progress)
                             
                             loop = QEventLoop()
                             thread.finished.connect(loop.quit)
@@ -3755,6 +3751,7 @@ class MainWindow(QMainWindow):
                             loop.exec()
 
                             try:
+                                thread.progress.disconnect()
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
@@ -5581,24 +5578,8 @@ class MainWindow(QMainWindow):
                             sorted_mass = sorted(mass_values)
                             median_mass_fg = sorted_mass[len(sorted_mass)//2]
         
-        particles_per_ml = 0.00000
-        if hasattr(self, 'average_transport_rate') and self.average_transport_rate > 0 and self.time_array is not None:
-            total_time = self.time_array[-1] - self.time_array[0]
-
-            sample = getattr(self, 'current_sample', None)
-            if sample:
-                t_min = self.time_array[0]
-                t_max = self.time_array[-1]
-                for entry in self._visible_exclusion_entries_for(sample, element_key):
-                    x0, x1 = entry['bounds']
-                    x0 = max(x0, t_min)
-                    x1 = min(x1, t_max)
-                    if x1 > x0:
-                        total_time -= (x1 - x0)
-            total_time = max(total_time, 0.0)
-
-            volume_ml = (self.average_transport_rate * total_time) / 1000
-            particles_per_ml = particle_count / volume_ml if volume_ml > 0 else 0.00000
+        sample = getattr(self, 'current_sample', None)
+        particles_per_ml = self.particles_per_ml(sample, particle_count, element_key) if sample else 0.00000
         
         total_particles_all_elements = 0
         if hasattr(self, 'detected_peaks') and self.detected_peaks:
@@ -5704,6 +5685,7 @@ class MainWindow(QMainWindow):
         self.canvas_results_dialog.showMaximized()
         self.canvas_results_dialog.raise_() 
         self.canvas_results_dialog.activateWindow()
+        self.maybe_prompt_dilution()
         
     
                 
@@ -7267,6 +7249,87 @@ class MainWindow(QMainWindow):
         diameter_cm = ((6 * mass_g) / (np.pi * density)) ** (1/3)
         return diameter_cm * 1e7
 
+    def get_sample_dilution(self, sample_name):
+        """
+        Return the dilution factor stored for a sample.
+
+        Args:
+            sample_name (str): Sample identifier.
+
+        Returns:
+            float: Dilution factor, defaulting to 1.0 when unset.
+        """
+        return tools.dilution_utils.get_sample_dilution(self, sample_name)
+
+    def set_sample_dilution(self, sample_name, factor):
+        """
+        Store the dilution factor for a sample.
+
+        Args:
+            sample_name (str): Sample identifier.
+            factor (float): Dilution factor to store.
+
+        Returns:
+            None
+        """
+        tools.dilution_utils.set_sample_dilution(self, sample_name, factor)
+
+    def effective_volume_ml(self, sample_name, element_key=None):
+        """
+        Return the analyzed sample volume in millilitres for a sample.
+
+        Args:
+            sample_name (str): Sample identifier.
+            element_key (str): Optional element key for element scope exclusions.
+
+        Returns:
+            float: Effective analyzed volume in millilitres.
+        """
+        return tools.dilution_utils.effective_volume_ml(self, sample_name, element_key)
+
+    def particles_per_ml(self, sample_name, particle_count, element_key=None, apply_dilution=True):
+        """
+        Return the particle number concentration in particles per millilitre.
+
+        Args:
+            sample_name (str): Sample identifier.
+            particle_count (int): Number of particles for the quantity of interest.
+            element_key (str): Optional element key for element scope exclusions.
+            apply_dilution (bool): Multiply by the sample dilution factor when True.
+
+        Returns:
+            float: Concentration in particles per millilitre.
+        """
+        return tools.dilution_utils.particles_per_ml(
+            self, sample_name, particle_count, element_key, apply_dilution)
+
+    def has_transport_rate(self):
+        """
+        Report whether a transport rate calibration is available.
+
+        Returns:
+            bool: True when an average transport rate greater than zero exists.
+        """
+        return tools.dilution_utils.has_transport_rate(self)
+
+    def open_dilution_factor_dialog(self):
+        """
+        Open the per sample dilution factor editor dialog.
+
+        Returns:
+            None
+        """
+        tools.dilution_utils.open_dilution_factor_dialog(self)
+
+    def maybe_prompt_dilution(self):
+        """
+        Show the one time dilution correction prompt when appropriate.
+
+        Returns:
+            None
+        """
+        tools.dilution_utils.maybe_prompt_dilution(self)
+
     def update_calculations(self):
         """
         Update calculations after transport rate changes.
@@ -7486,7 +7549,7 @@ class MainWindow(QMainWindow):
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
-        overall_progress = base_progress + thread_contribution
+        overall_progress = int(base_progress + thread_contribution)
         self.progress_bar.setValue(overall_progress)
         self.status_label.setText(f"Processing sample {current_sample}/{total_samples}: {sample_name} ({thread_progress}%)")
         QApplication.processEvents()  
@@ -7508,7 +7571,7 @@ class MainWindow(QMainWindow):
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
-        overall_progress = base_progress + thread_contribution
+        overall_progress = int(base_progress + thread_contribution)
         self.progress_bar.setValue(overall_progress)
         self.status_label.setText(f"Processing elements for sample {current_sample}/{total_samples}: {sample_name} ({thread_progress}%)")
         QApplication.processEvents() 

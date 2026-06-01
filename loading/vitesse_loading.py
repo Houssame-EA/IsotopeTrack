@@ -142,6 +142,7 @@ def collect_nu_integ_data(
     index: list[dict],
     cyc_number: int | None = None,
     seg_number: int | None = None,
+    progress_callback=None,
 ) -> list[np.ndarray]:
     """
     Collect Nu integrated data from multiple files.
@@ -151,12 +152,16 @@ def collect_nu_integ_data(
         index (list[dict]): List of index dictionaries
         cyc_number (int | None): Cycle number to filter, or None for all
         seg_number (int | None): Segment number to filter, or None for all
+        progress_callback (callable | None): Called with a 0..1 fraction after
+            each integ file is read, so callers can report read progress that
+            is proportional to the number of .integ files.
         
     Returns:
         list[np.ndarray]: List of integrated data arrays
     """
     integs = []
-    for idx in index:
+    total = max(1, len(index))
+    for file_pos, idx in enumerate(index):
         integ_path = root.joinpath(f"{idx['FileNum']}.integ")
         if integ_path.exists():
             data = read_nu_integ_binary(
@@ -175,6 +180,11 @@ def collect_nu_integ_data(
             logger.warning(
                 f"collect_nu_integ_data: missing integ {idx['FileNum']}, skipping"
             )
+        if progress_callback is not None:
+            try:
+                progress_callback((file_pos + 1) / total)
+            except Exception:
+                pass
     return integs
 
 
@@ -391,6 +401,7 @@ def read_nu_directory(
     cycle: int | None = None,
     segment: int | None = None,
     raw: bool = False,
+    progress_callback=None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
     Read the Nu Instruments raw data directory, returning data and run info.
@@ -406,6 +417,9 @@ def read_nu_directory(
         cycle (int | None): Limit import to cycle
         segment (int | None): Limit import to segment
         raw (bool): Return raw ADC counts
+        progress_callback (callable | None): Called with a 0..1 fraction as the
+            read proceeds. Most of the range tracks the .integ files; the tail
+            covers signal assembly and autoblanking.
 
     Returns:
         tuple: (masses, signals, run_info) where:
@@ -433,14 +447,27 @@ def read_nu_directory(
 
     accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
 
+    def _integ_progress(frac):
+        if progress_callback is not None:
+            try:
+                progress_callback(frac * 0.85)
+            except Exception:
+                pass
+
     integs = collect_nu_integ_data(
-        path, integ_index, cyc_number=cycle, seg_number=segment
+        path, integ_index, cyc_number=cycle, seg_number=segment,
+        progress_callback=_integ_progress,
     )
     masses = get_masses_from_nu_data(
         integs[0], run_info["MassCalCoefficients"], segment_delays
     )[0]
     signals = get_signals_from_nu_data(integs, accumulations)
-    del integs  # free intermediate list — signals already holds the stacked result
+    del integs 
+    if progress_callback is not None:
+        try:
+            progress_callback(0.93)
+        except Exception:
+            pass
 
     if not raw:
         signals /= run_info["AverageSingleIonArea"]
@@ -457,7 +484,13 @@ def read_nu_directory(
             run_info["BlMassCalStartCoef"],
             run_info["BlMassCalEndCoef"],
         )
-        
+
+    if progress_callback is not None:
+        try:
+            progress_callback(1.0)
+        except Exception:
+            pass
+
     return masses, signals, run_info
 
 
