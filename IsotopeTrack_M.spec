@@ -7,6 +7,17 @@ sklearn_hidden = collect_submodules('sklearn')
 scipy_hidden   = collect_submodules('scipy')
 numba_hidden   = collect_submodules('numba')
 
+
+_rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
+with open(_rth, 'w') as _f:
+    _f.write(
+        "import sys, types\n"
+        "if 'pyarrow' not in sys.modules:\n"
+        "    m = types.ModuleType('pyarrow')\n"
+        "    m.__version__ = '0.0.0'\n"
+        "    sys.modules['pyarrow'] = m\n"
+    )
+
 data_files = []
 
 if os.path.exists('images'):
@@ -297,7 +308,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[_rth],
     excludes=[
         'tkinter',
         'turtle',
