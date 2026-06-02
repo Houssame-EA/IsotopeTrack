@@ -1,35 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata, collect_all
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 sklearn_hidden = collect_submodules('sklearn')
 scipy_hidden   = collect_submodules('scipy')
 numba_hidden   = collect_submodules('numba')
 
-# ── pytz: collect code + metadata together; FAIL the build if it's missing ───
-# pandas reads importlib.metadata.version('pytz') at import. collect_all grabs
-# the .dist-info too. If pytz isn't installed on the build machine, abort now
-# with a clear message instead of shipping a broken exe.
-pytz_datas, pytz_binaries, pytz_hidden = collect_all('pytz')
-if not pytz_datas:
-    raise SystemExit(
-        "BUILD ERROR: pytz metadata not found. "
-        "Add `pip install pytz tzdata` to the build environment."
-    )
-
-# ── Other dist-info metadata that pandas reads at import time ────────────────
 pandas_meta = []
-for _pkg in ('pandas', 'numpy', 'python-dateutil', 'six', 'tzdata'):
+for _pkg in ('pytz', 'tzdata', 'pandas', 'numpy', 'python-dateutil', 'six'):
     try:
         pandas_meta += copy_metadata(_pkg)
     except Exception:
-        print(f"WARNING: could not copy metadata for {_pkg}")
+        print(f"WARNING: could not copy metadata for {_pkg} (is it installed?)")
 
-# ── Stub pyarrow so pandas skips its Arrow version check in frozen builds ────
-# pyarrow is excluded below, but a partial remnant can still be importable and
-# pandas/compat/pyarrow.py reads pyarrow.__version__ at import time. We write a
-# tiny runtime hook (next to this spec) that installs a stub before pandas loads.
 _rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
 with open(_rth, 'w') as _f:
     _f.write(
@@ -61,7 +45,6 @@ if os.path.exists('data'):
 if os.path.exists('images/isotrack_icon.ico'):
     data_files.append(('images/isotrack_icon.ico', '.'))
 
-# ── CPLN quantile look-up table (used by processing/peak_detection.py) ───────
 if os.path.exists('processing/cpln_quantiles.npz'):
     data_files.append(('processing/cpln_quantiles.npz', 'processing'))
     print("Including cpln_quantiles.npz")
@@ -73,13 +56,11 @@ print(f"Total data files to include: {len(data_files)}")
 a = Analysis(
     ['Run.py'],
     pathex=[],
-    binaries=pytz_binaries,
-    datas=data_files + pandas_meta + pytz_datas,
+    binaries=[],
+    datas=data_files + pandas_meta,
     hiddenimports=[
-        *pytz_hidden,
         'pytz',
         'tzdata',
-        # ── Qt / PySide6 ─────────────────────────────────────────────────────
         'PySide6',
         'PySide6.QtCore',
         'PySide6.QtGui',
@@ -89,7 +70,6 @@ a = Analysis(
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
 
-        # ── PyQtGraph ─────────────────────────────────────────────────────────
         'pyqtgraph',
         'pyqtgraph.Qt',
         'pyqtgraph.graphicsItems',
@@ -104,13 +84,11 @@ a = Analysis(
         'pyqtgraph.exporters.ImageExporter',
         'pyqtgraph.exporters.SVGExporter',
 
-        # ── QtAwesome ─────────────────────────────────────────────────────────
         'qtawesome',
         'qtawesome.iconic_font',
         'qtawesome.animation',
         'qtawesome.icon_browser',
 
-        # ── NumPy ─────────────────────────────────────────────────────────────
         'numpy',
         'numpy.lib',
         'numpy.lib.recfunctions',
@@ -144,29 +122,23 @@ a = Analysis(
         'numpy._core._type_aliases',
         'numpy._core._ufunc_config',
 
-        # ── SciPy ─────────────────────────────────────────────────────────────
         *scipy_hidden,
 
-        # ── Numba / llvmlite ──────────────────────────────────────────────────
         *numba_hidden,
         'llvmlite',
         'llvmlite.binding',
 
-        # ── Poisson ───────────────────────────────────────────────────────────
         'poisson',
 
-        # ── Compression ───────────────────────────────────────────────────────────────
         'lz4',
         'lz4.frame',
         'lz4.block',
 
-        # ── Pandas ────────────────────────────────────────────────────────────
         'pandas',
         'pandas.io.formats.excel',
         'pandas.io.common',
         'pandas.io.parsers.readers',
 
-        # ── Matplotlib ────────────────────────────────────────────────────────
         'matplotlib',
         'matplotlib.pyplot',
         'matplotlib.colors',
@@ -178,15 +150,12 @@ a = Analysis(
         'matplotlib.text',
         'matplotlib.font_manager',
 
-        # ── mpltern (ternary plots) ───────────────────────────────────────────
         'mpltern',
         'mpltern.ternary',
         'mpltern.ternary.axes',
 
-        # ── scikit-learn ──────────────────────────────────────────────────────
         *sklearn_hidden,
 
-        # ── h5py (Cython extensions must be listed explicitly) ────────────────
         'h5py',
         'h5py._conv',
         'h5py._proxy',
@@ -212,7 +181,6 @@ a = Analysis(
         'h5py.ipy_completer',
         'h5py.version',
 
-        # ── HTTP / network ────────────────────────────────────────────────────
         'requests',
         'requests.adapters',
         'requests.auth',
@@ -226,12 +194,10 @@ a = Analysis(
         'charset_normalizer',
         'idna',
 
-        # ── Concurrency ───────────────────────────────────────────────────────
         'concurrent.futures',
         'multiprocessing',
         'threading',
 
-        # ── Standard library ──────────────────────────────────────────────────
         'json',
         'pathlib',
         'collections',
@@ -248,11 +214,9 @@ a = Analysis(
         'gc',
         're',
 
-        # ── Application root ──────────────────────────────────────────────────
         'mainwindow',
         'theme',
 
-        # ── calibration_methods/ ──────────────────────────────────────────────
         'calibration_methods',
         'calibration_methods.ionic_CAL',
         'calibration_methods.TE_input',
@@ -261,7 +225,6 @@ a = Analysis(
         'calibration_methods.TE',
         'calibration_methods.te_common',
 
-        # ── loading/ ─────────────────────────────────────────────────────────
         'loading',
         'loading.data_thread',
         'loading.import_csv_dialogs',
@@ -269,11 +232,9 @@ a = Analysis(
         'loading.tofwerk_loading',
         'loading.vitesse_loading',
 
-        # ── processing/ ───────────────────────────────────────────────────────
         'processing',
         'processing.peak_detection',
 
-        # ── results/ ─────────────────────────────────────────────────────────
         'results',
         'results.results_AI',
         'results.results_bar_charts',
@@ -295,14 +256,12 @@ a = Analysis(
         'results.shared_plot_utils',
         'results.utils_sort',
 
-        # ── save_export/ ──────────────────────────────────────────────────────
         'save_export',
         'save_export.export_utils',
         'save_export.fast_project_io',
         'save_export.ionic_session',
         'save_export.project_manager',
 
-        # ── tools/ ────────────────────────────────────────────────────────────
         'tools',
         'tools.app_version',
         'tools.update_checker',
@@ -317,7 +276,6 @@ a = Analysis(
         'tools.tutorial',
         'tools.unit',
 
-        # ── widget/ ───────────────────────────────────────────────────────────
         'widget',
         'widget.batch_parameters',
         'widget.calibration_info',
@@ -383,5 +341,3 @@ coll = COLLECT(
     name='IsotopeTrack',
 )
 
-# NOTE: No BUNDLE block — macOS only (.app).
-# On Windows the output is: dist\IsotopeTrack\IsotopeTrack.exe
