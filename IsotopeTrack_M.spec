@@ -1,12 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 sklearn_hidden = collect_submodules('sklearn')
 scipy_hidden   = collect_submodules('scipy')
 numba_hidden   = collect_submodules('numba')
 
+pandas_meta = []
+for _pkg in ('pytz', 'pandas', 'numpy', 'python-dateutil', 'six', 'tzdata'):
+    try:
+        pandas_meta += copy_metadata(_pkg)
+    except Exception:
+        pass
 
 _rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
 with open(_rth, 'w') as _f:
@@ -52,7 +58,7 @@ a = Analysis(
     ['Run.py'],
     pathex=[],
     binaries=[],
-    datas=data_files,
+    datas=data_files + pandas_meta,
     hiddenimports=[
         # ── Qt / PySide6 ─────────────────────────────────────────────────────
         'PySide6',
