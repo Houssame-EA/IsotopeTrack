@@ -345,7 +345,7 @@ class ThemeManager(QObject):
         def _disconnect():
             try:
                 self.themeChanged.disconnect(slot)
-            except RuntimeError:
+            except (RuntimeError, SystemError, TypeError):
                 pass
 
         return _disconnect
@@ -812,6 +812,10 @@ def sample_table_qss(p: Palette) -> str:
             background-color: {p.bg_sidebar};
             color: {p.text_on_sidebar};
             padding: 5px;
+            border: none;
+        }}
+        QTableCornerButton::section {{
+            background-color: {p.bg_sidebar};
             border: none;
         }}
     """

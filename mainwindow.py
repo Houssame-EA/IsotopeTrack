@@ -3,8 +3,10 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy, 
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,QRadioButton,
-                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox)
-from PySide6.QtCore import Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint, QEvent, QEventLoop, QSettings
+                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox,
+                            QLayout, QFrame, QGridLayout)
+from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
+                            QRect, QEvent, QEventLoop, QSettings, Signal)
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
@@ -59,6 +61,248 @@ from theme import (
     table_header_label_qss,
     html_table_css,
 )
+
+
+def element_chip_qss(p) -> str:
+    """Stylesheet for a single element chip in the quick-selector.
+
+    ``p`` is a theme ``Palette``. The ``:checked`` state marks the element
+    currently shown in the plot.
+    """
+    return (
+        f"QPushButton{{"
+        f"background:{p.bg_tertiary};color:{p.text_primary};"
+        f"border:1px solid {p.border};border-radius:6px;"
+        f"padding:4px 8px;font-weight:600;font-size:12px;}}"
+        f"QPushButton:hover{{border-color:{p.accent};background:{p.bg_hover};}}"
+        f"QPushButton:checked{{background:{p.accent};color:{p.text_inverse};"
+        f"border:1px solid {p.accent};}}"
+    )
+
+
+class ElementGridPopup(QWidget):
+    """Pop-up grid of every element, shown only while the user is choosing.
+
+    Built fresh each time it opens. The currently selected element is
+    highlighted. Clicking any chip emits ``selected(index)`` and closes the
+    pop-up. Clicking outside (or pressing Esc) just closes it.
+    """
+
+    selected = Signal(int)
+
+    def __init__(self, items, current_index, columns, chip_qss, palette, parent=None):
+        super().__init__(parent, Qt.Popup)
+        self._columns = max(1, int(columns))
+        p = palette
+        self.setObjectName("elementGridPopup")
+        self.setStyleSheet(
+            f"QWidget#elementGridPopup {{ background:{p.bg_secondary}; "
+            f"border:1px solid {p.border}; border-radius:8px; }}"
+        )
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QWidget#popupGridContent { background: transparent; }"
+        )
+
+        content = QWidget()
+        content.setObjectName("popupGridContent")
+        grid = QGridLayout(content)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(6)
+
+        self._buttons = []
+        for idx, (key, label) in enumerate(items):
+            b = QPushButton(str(label))
+            b.setCheckable(True)
+            b.setChecked(idx == current_index)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setMinimumSize(QSize(50, 30))
+            if chip_qss:
+                b.setStyleSheet(chip_qss)
+            b.clicked.connect(lambda _checked=False, i=idx: self._choose(i))
+            grid.addWidget(b, idx // self._columns, idx % self._columns)
+            self._buttons.append(b)
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+        rows = max(1, (len(items) + self._columns - 1) // self._columns)
+        chip_w, chip_h, gap = 56, 30, 6
+        max_rows_visible = 8
+        vis_rows = min(rows, max_rows_visible)
+        width = self._columns * chip_w + (self._columns - 1) * gap + 16
+        height = vis_rows * chip_h + (vis_rows - 1) * gap + 16
+        if rows > max_rows_visible:
+            width += 12
+        self.setFixedWidth(width)
+        self.setFixedHeight(height)
+
+    def _choose(self, idx):
+        self.selected.emit(idx)
+        self.close()
+
+
+class ElementPicker(QWidget):
+    """Compact element navigator for the plot header.
+
+    Three small controls: a left arrow (previous element), a grid button that
+    opens :class:`ElementGridPopup`, and a right arrow (next element). No
+    element name is shown. Activating any of them emits
+    ``elementActivated(element_key)``; the host commits the change and calls
+    :meth:`set_current_key` to keep this widget in sync.
+    """
+
+    elementActivated = Signal(str)
+
+    def __init__(self, columns=7, parent=None):
+        super().__init__(parent)
+        self._columns = columns
+        self._keys = []
+        self._labels = []
+        self._current_index = -1
+        self._chip_qss = ""
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+
+        self._prev_btn = QPushButton()
+        self._grid_btn = QPushButton()
+        self._next_btn = QPushButton()
+        for b in (self._prev_btn, self._grid_btn, self._next_btn):
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFocusPolicy(Qt.NoFocus)
+        self._prev_btn.setFixedSize(28, 28)
+        self._next_btn.setFixedSize(28, 28)
+        self._grid_btn.setFixedSize(34, 28)
+        self._prev_btn.setToolTip("Previous element")
+        self._next_btn.setToolTip("Next element")
+        self._grid_btn.setToolTip("Choose element")
+
+        self._prev_btn.clicked.connect(lambda: self._step(-1))
+        self._next_btn.clicked.connect(lambda: self._step(1))
+        self._grid_btn.clicked.connect(self._open_popup)
+
+        lay.addWidget(self._prev_btn)
+        lay.addWidget(self._grid_btn)
+        lay.addWidget(self._next_btn)
+
+        self._update_enabled()
+
+    # -- styling ------------------------------------------------------------ #
+
+    def set_chip_style(self, qss):
+        self._chip_qss = qss
+
+    def apply_button_style(self, p):
+        btn_qss = (
+            f"QPushButton{{background:{p.bg_tertiary};color:{p.text_primary};"
+            f"border:1px solid {p.border};border-radius:6px;}}"
+            f"QPushButton:hover{{border-color:{p.accent};background:{p.bg_hover};}}"
+            f"QPushButton:disabled{{color:{p.text_muted};"
+            f"border-color:{p.border_subtle};}}"
+        )
+        grid_qss = (
+            f"QPushButton{{background:{p.bg_tertiary};color:{p.text_primary};"
+            f"border:1px solid {p.accent};border-radius:6px;}}"
+            f"QPushButton:hover{{background:{p.bg_hover};}}"
+            f"QPushButton:disabled{{border-color:{p.border_subtle};}}"
+        )
+        self._prev_btn.setStyleSheet(btn_qss)
+        self._next_btn.setStyleSheet(btn_qss)
+        self._grid_btn.setStyleSheet(grid_qss)
+        self._prev_btn.setIcon(qta.icon('fa6s.chevron-left', color=p.text_primary))
+        self._next_btn.setIcon(qta.icon('fa6s.chevron-right', color=p.text_primary))
+        self._grid_btn.setIcon(qta.icon('fa6s.table-cells', color=p.accent))
+        self._prev_btn.setIconSize(QSize(14, 14))
+        self._next_btn.setIconSize(QSize(14, 14))
+        self._grid_btn.setIconSize(QSize(15, 15))
+
+    # -- population / selection -------------------------------------------- #
+
+    def set_elements(self, items):
+        """``items``: list of ``(element_key, label)`` in display order."""
+        prev_key = self.current_key()
+        self._keys = [k for k, _ in items]
+        self._labels = [l for _, l in items]
+        if prev_key is not None and prev_key in self._keys:
+            self._current_index = self._keys.index(prev_key)
+        elif self._keys:
+            self._current_index = 0
+        else:
+            self._current_index = -1
+        self._update_enabled()
+
+    def current_key(self):
+        if 0 <= self._current_index < len(self._keys):
+            return self._keys[self._current_index]
+        return None
+
+    def set_current_key(self, key, emit=False):
+        if key in self._keys:
+            self._current_index = self._keys.index(key)
+            self._update_enabled()
+            if emit:
+                self.elementActivated.emit(key)
+
+    def _update_enabled(self):
+        n = len(self._keys)
+        i = self._current_index
+        self._grid_btn.setEnabled(n > 0)
+        self._prev_btn.setEnabled(n > 0 and i > 0)
+        self._next_btn.setEnabled(n > 0 and 0 <= i < n - 1)
+
+    # -- actions ----------------------------------------------------------- #
+
+    def _emit_index(self, i):
+        if 0 <= i < len(self._keys):
+            self.elementActivated.emit(self._keys[i])
+
+    def _step(self, delta):
+        if not self._keys:
+            return
+        i = self._current_index if self._current_index >= 0 else 0
+        self._emit_index(max(0, min(i + delta, len(self._keys) - 1)))
+
+    def _on_popup_selected(self, idx):
+        self._emit_index(idx)
+
+    def _open_popup(self):
+        if not self._keys:
+            return
+        items = list(zip(self._keys, self._labels))
+        popup = ElementGridPopup(
+            items, self._current_index, self._columns,
+            self._chip_qss, theme.palette, self,
+        )
+        popup.selected.connect(self._on_popup_selected)
+        popup.adjustSize()
+
+        anchor = self._grid_btn.mapToGlobal(QPoint(0, self._grid_btn.height() + 4))
+        x, y = anchor.x(), anchor.y()
+        try:
+            scr = QGuiApplication.primaryScreen().availableGeometry()
+            if x + popup.width() > scr.right():
+                x = scr.right() - popup.width() - 8
+            if x < scr.left():
+                x = scr.left() + 8
+            if y + popup.height() > scr.bottom():
+                y = self._grid_btn.mapToGlobal(QPoint(0, 0)).y() - popup.height() - 4
+        except Exception:
+            pass
+        popup.move(x, y)
+        popup.show()
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
@@ -787,6 +1031,9 @@ class MainWindow(QMainWindow):
         This is the single source of truth for styling — all inline
         stylesheets have been removed from widget creation methods.
         """
+        _was_maximized = self.isMaximized() or self.isFullScreen()
+        _saved_size = self.size()
+
         p = theme.palette
 
         self.setStyleSheet(main_window_qss(p))
@@ -932,6 +1179,13 @@ class MainWindow(QMainWindow):
                 f"font-weight: bold; font-size: 14px; color: {p.text_secondary};"
             )
 
+        if hasattr(self, 'element_picker'):
+            self.element_picker.set_chip_style(element_chip_qss(p))
+            self.element_picker.apply_button_style(p)
+
+        if not _was_maximized:
+            self.resize(_saved_size)
+
         self.logger.info(f"Theme applied: {p.name}")
 
     def create_plot_widget(self):
@@ -960,6 +1214,14 @@ class MainWindow(QMainWindow):
         )
         header.addWidget(self._dataviz_title, 0, Qt.AlignVCenter)
         header.addStretch()
+        self.element_picker = ElementPicker(columns=7)
+        self.element_picker.setFixedHeight(28)
+        self.element_picker.set_chip_style(element_chip_qss(theme.palette))
+        self.element_picker.apply_button_style(theme.palette)
+        self.element_picker.elementActivated.connect(
+            self._on_element_selector_activated
+        )
+        header.addWidget(self.element_picker, 0, Qt.AlignVCenter)
 
         self._view_btn_time = QPushButton("Time")
         self._view_btn_mz   = QPushButton("m/z")
@@ -4200,6 +4462,14 @@ class MainWindow(QMainWindow):
         self._build_element_lookup_cache()
         self.color_parameters_table_rows()
 
+        if hasattr(self, 'element_picker'):
+            self.element_picker.set_elements(
+                [(ek, self.get_formatted_label(ek)) for ek, _ in element_items]
+            )
+            cur_key = self._current_element_key()
+            if cur_key:
+                self.element_picker.set_current_key(cur_key, emit=False)
+
     def color_parameters_table_rows(self):
         """
         Highlight parameter table rows red when >=90% of that element's
@@ -4464,6 +4734,24 @@ class MainWindow(QMainWindow):
         self.unsaved_changes = True
 
         
+    def _on_element_selector_activated(self, element_key):
+        """Switch the plotted element when a chip in the quick-selector is
+        activated (clicked or reached with the arrow keys).
+
+        Routes through the existing ``parameters_table_clicked`` logic by
+        finding the matching table row, so plotting, results and summary all
+        update exactly as they do on a table click.
+        """
+        if getattr(self, 'showing_all_signals', False):
+            return
+        target_label = self.get_formatted_label(element_key)
+        for row in range(self.parameters_table.rowCount()):
+            item = self.parameters_table.item(row, 0)
+            if item is not None and item.text() == target_label:
+                self.parameters_table.selectRow(row)
+                self.parameters_table_clicked(row, 0)
+                break
+
     def parameters_table_clicked(self, row, column):
         """
         Handle click on parameters table row.
@@ -4499,6 +4787,8 @@ class MainWindow(QMainWindow):
                     self.current_element = element
                     self.current_isotope = isotope
 
+                    if hasattr(self, 'element_picker'):
+                        self.element_picker.set_current_key(element_key, emit=False)
 
                     isotope_key = self.find_closest_isotope(isotope)
                     if isotope_key is not None and isotope_key in self.data:
@@ -5736,7 +6026,6 @@ class MainWindow(QMainWindow):
             (time_array, threshold_line, STYLES['threshold'], 'Detection Threshold'),
         ]
         
-        # ── Style-restore helpers (keyed by curve name) ─────────────────
         _STYLE_MAP = {
             'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.DotLine,
             'Dash-Dot': Qt.DashDotLine, 'Dash-Dot-Dot': Qt.DashDotDotLine,
@@ -5770,15 +6059,11 @@ class MainWindow(QMainWindow):
                 curve.setPen(_p)
             self.plot_widget.addItem(curve)
 
-        self.plot_widget.setBackground('w')
-
-        legend = self.plot_widget.addLegend(
-            offset=(10, 10),
-            brush=pg.mkBrush(255, 255, 255, 150),
-            pen=pg.mkPen(200, 200, 200, 100)
-        )
+        legend = self.plot_widget.addLegend(offset=(10, 10))
         legend.setParentItem(self.plot_widget.graphicsItem())
         self.plot_widget.legend = legend
+        if hasattr(self.plot_widget, '_style_legend'):
+            self.plot_widget._style_legend(legend)
 
         if particles:
             integ_times   = []
@@ -5865,6 +6150,8 @@ class MainWindow(QMainWindow):
             label.setText(label.text, size='20pt')
         self.plot_widget.setLabel('left', 'Counts')
         self.plot_widget.setLabel('bottom', 'Time (s)')
+        if hasattr(self.plot_widget, 'apply_theme'):
+            self.plot_widget.apply_theme()
         self.plot_widget.setMouseEnabled(x=True, y=True)
         
         if preserve_view_range and preserve_view_range[0] and preserve_view_range[1]:
@@ -6291,11 +6578,10 @@ class MainWindow(QMainWindow):
         start_index = max(0, np.argmin(np.abs(self.time_array - view_start)))
         end_index = min(len(self.time_array) - 1, np.argmin(np.abs(self.time_array - view_end)))
         
-        legend = self.plot_widget.addLegend(
-            offset=(15, 120),
-            brush=pg.mkBrush(255, 255, 255, 180),
-            pen=pg.mkPen(150, 150, 150, 100)
-        )
+        legend = self.plot_widget.addLegend(offset=(15, 120))
+        self.plot_widget.legend = legend
+        if hasattr(self.plot_widget, '_style_legend'):
+            self.plot_widget._style_legend(legend)
         
         element_data = {}
         color_index = 0
@@ -6569,13 +6855,12 @@ class MainWindow(QMainWindow):
             info_label.setPos(info_x, info_y)
             self.plot_widget.addItem(info_label)
 
-        self.plot_widget.setBackground('w')
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.setLabel('left', 'Counts', 
-                                style={'color': '#333', 'font-size': '12px'})
-        self.plot_widget.setLabel('bottom', 'Time (s)', 
-                                style={'color': '#333', 'font-size': '12px'})
-        
+        self.plot_widget.showGrid(x=False, y=False)
+        self.plot_widget.setLabel('left', 'Counts')
+        self.plot_widget.setLabel('bottom', 'Time (s)')
+        if hasattr(self.plot_widget, 'apply_theme'):
+            self.plot_widget.apply_theme()
+
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.enableAutoRange(enable=False)
         

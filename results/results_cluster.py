@@ -93,7 +93,7 @@ class _SafeFigureCanvas(FigureCanvas):
 
 ALGORITHMS = [
     'K-Means', 'Hierarchical', 'DBSCAN', 'HDBSCAN', 'Spectral', 'SOM',
-    'MiniBatch K-Means', 'Mean Shift',
+    'MiniBatch K-Means', 'Mean Shift', 'Birch', 'OPTICS', 'Gaussian Mixture',
 ]
 
 def _cluster_centroids(data, labels, valid_labels):
@@ -393,7 +393,7 @@ METRIC_REGISTRY = {
         'direction':      'max',
         'rule':           'elbow',
         'bootstrap_safe': True,
-        'color':          '#16A34A',
+        'color':          '#2563EB',
     },
     'Davies-Bouldin': {
         'display':        'Davies-Bouldin Index',
@@ -401,7 +401,7 @@ METRIC_REGISTRY = {
         'direction':      'min',
         'rule':           'min',
         'bootstrap_safe': True,
-        'color':          '#DC2626',
+        'color':          '#2563EB',
     },
     'S_Dbw': {
         'display':        'S_Dbw Index',
@@ -409,7 +409,7 @@ METRIC_REGISTRY = {
         'direction':      'min',
         'rule':           'min',
         'bootstrap_safe': True,
-        'color':          '#D97706',
+        'color':          '#2563EB',
     },
     'Xie-Beni': {
         'display':        'Xie-Beni Index',
@@ -417,7 +417,7 @@ METRIC_REGISTRY = {
         'direction':      'min',
         'rule':           'min',
         'bootstrap_safe': True,
-        'color':          '#7C3AED',
+        'color':          '#2563EB',
     },
     'PBM': {
         'display':        'PBM (I-index)',
@@ -425,7 +425,7 @@ METRIC_REGISTRY = {
         'direction':      'max',
         'rule':           'max',
         'bootstrap_safe': True,
-        'color':          '#0891B2',
+        'color':          '#2563EB',
     },
     'Dunn-Sym': {
         'display':        'Dunn-Symmetric Index',
@@ -433,7 +433,7 @@ METRIC_REGISTRY = {
         'direction':      'max',
         'rule':           'max',
         'bootstrap_safe': False,
-        'color':          '#DB2777',
+        'color':          '#2563EB',
     },
 }
 
@@ -649,6 +649,7 @@ ALGO_LINE_STYLES = {
     'Birch':             dict(color='#DB2777', ls='-',  marker='H'),
     'Mean Shift':        dict(color='#65A30D', ls='--', marker='X'),
     'OPTICS':            dict(color='#EA580C', ls='--', marker='*'),
+    'Gaussian Mixture':  dict(color='#9333EA', ls='-',  marker='8'),
 }
 
 
@@ -951,7 +952,9 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
     if som_obj is None:
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'Run ② Cluster with SOM first',
-                ha='center', va='center', fontsize=12, color='gray',
+                ha='center', va='center',
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg),
                 transform=ax.transAxes)
         ax.set_xticks([]); ax.set_yticks([])
         return
@@ -1058,7 +1061,7 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
                          bbox=dict(fc='#FEF2F2', ec='#DC2626', pad=2))
         else:
             ax3.text(0.5, 0.5, 'Input not cached', ha='center', va='center',
-                     fontproperties=fp_annot, color='gray',
+                     fontproperties=fp_annot, color=_muted_color(cfg),
                      transform=ax3.transAxes)
             ax3.set_xticks([]); ax3.set_yticks([])
 
@@ -1380,6 +1383,41 @@ class ClusteringSettingsDialog(QDialog):
         f6.addRow("min_bin_freq:", self.ms_min_bin_freq)
         self._algo_pages['Mean Shift'] = self.algo_stack.addWidget(p6)
 
+        p_birch = QWidget(); f_birch = QFormLayout(p_birch)
+        f_birch.setContentsMargins(4, 4, 4, 4)
+        self.birch_threshold = QDoubleSpinBox(); self.birch_threshold.setRange(0.05, 5.0)
+        self.birch_threshold.setSingleStep(0.05); self.birch_threshold.setDecimals(3)
+        self.birch_threshold.setValue(self._cfg.get('birch_threshold', 0.5))
+        self.birch_branching = QSpinBox(); self.birch_branching.setRange(10, 200)
+        self.birch_branching.setValue(self._cfg.get('birch_branching_factor', 50))
+        f_birch.addRow("threshold:", self.birch_threshold)
+        f_birch.addRow("branching_factor:", self.birch_branching)
+        self._algo_pages['Birch'] = self.algo_stack.addWidget(p_birch)
+
+        p_optics = QWidget(); f_optics = QFormLayout(p_optics)
+        f_optics.setContentsMargins(4, 4, 4, 4)
+        self.optics_min_samp = QSpinBox(); self.optics_min_samp.setRange(2, 100)
+        self.optics_min_samp.setValue(self._cfg.get('optics_min_samples', 5))
+        self.optics_metric = QComboBox()
+        self.optics_metric.addItems(['euclidean', 'manhattan', 'cosine', 'l1', 'l2'])
+        self.optics_metric.setCurrentText(self._cfg.get('optics_metric', 'euclidean'))
+        self.optics_cluster_method = QComboBox()
+        self.optics_cluster_method.addItems(['xi', 'dbscan'])
+        self.optics_cluster_method.setCurrentText(
+            self._cfg.get('optics_cluster_method', 'xi'))
+        f_optics.addRow("min_samples:", self.optics_min_samp)
+        f_optics.addRow("metric:", self.optics_metric)
+        f_optics.addRow("cluster_method:", self.optics_cluster_method)
+        self._algo_pages['OPTICS'] = self.algo_stack.addWidget(p_optics)
+
+        p_gmm = QWidget(); f_gmm = QFormLayout(p_gmm)
+        f_gmm.setContentsMargins(4, 4, 4, 4)
+        self.gmm_cov = QComboBox()
+        self.gmm_cov.addItems(['full', 'tied', 'diag', 'spherical'])
+        self.gmm_cov.setCurrentText(self._cfg.get('gmm_covariance_type', 'full'))
+        f_gmm.addRow("covariance_type:", self.gmm_cov)
+        self._algo_pages['Gaussian Mixture'] = self.algo_stack.addWidget(p_gmm)
+
         def _switch_page(text):
             """Show the settings panel for the chosen algorithm.
 
@@ -1518,6 +1556,15 @@ class ClusteringSettingsDialog(QDialog):
         out['som_show_u_matrix']   = self.som_show_u.isChecked()
         out['som_show_hit_count']  = self.som_show_hits.isChecked()
 
+        out['birch_threshold']        = self.birch_threshold.value()
+        out['birch_branching_factor'] = self.birch_branching.value()
+
+        out['optics_min_samples']    = self.optics_min_samp.value()
+        out['optics_metric']         = self.optics_metric.currentText()
+        out['optics_cluster_method'] = self.optics_cluster_method.currentText()
+
+        out['gmm_covariance_type'] = self.gmm_cov.currentText()
+
         return out
 
 
@@ -1558,7 +1605,53 @@ def _font_scale(cfg, role='label'):
     fp.set_size(max(base + offsets.get(role, 0), floors.get(role, 6)))
     if role == 'title':
         fp.set_weight('bold')
-    return fp, fc['color']
+    return fp, _text_color(cfg)
+
+
+def _text_color(cfg):
+    """Resolve the colour for figure text in a theme-consistent way.
+
+    The user's explicit font colour (``font_color``) always wins. When it is
+    left at the default black (``#000000``) — i.e. the user never overrode it —
+    the active theme's text colour is used instead, so titles, labels, ticks
+    and annotations read correctly in both light and dark mode across every
+    figure in the dialog.
+
+    Args:
+        cfg (dict): Configuration dictionary.
+
+    Returns:
+        str: Hex colour string for figure text.
+    """
+    fc = get_font_config(cfg)
+    user_col = (fc.get('color') or '').strip().lower()
+    if user_col not in ('', '#000000', '#000', 'black'):
+        return fc['color']
+    return _plot_theme(cfg)['text']
+
+
+def _muted_color(cfg):
+    """Theme-aware muted colour for placeholder / empty-state text."""
+    pal = cfg.get('_theme') or _current_plot_palette()
+    return pal.get('text_muted', '#64748B')
+
+
+def _empty_message(ax, cfg, text):
+    """Draw a centered, theme- and font-consistent placeholder message.
+
+    Used for empty/no-data states so they share the same font family and a
+    legible muted colour across every figure instead of a bare hardcoded
+    ``fontsize`` + grey.
+
+    Args:
+        ax (matplotlib.axes.Axes): Target axes.
+        cfg (dict): Configuration dictionary.
+        text (str): Message to display.
+    """
+    fp_lbl, _ = _font_scale(cfg, 'label')
+    ax.text(0.5, 0.5, text, ha='center', va='center',
+            transform=ax.transAxes,
+            fontproperties=fp_lbl, color=_muted_color(cfg))
 
 
 def _plot_theme(cfg):
@@ -1902,7 +1995,7 @@ def _draw_composition_strips(ax, char_for_algo, elements, cfg,
     if not ordered:
         ax.text(0.5, 0.5, 'No clusters to display',
                 ha='center', va='center', transform=ax.transAxes,
-                fontproperties=fp_lbl, color='gray')
+                fontproperties=fp_lbl, color=_muted_color(cfg))
         return
 
     sorted_elements = sort_elements_by_mass(list(elements))
@@ -2226,7 +2319,8 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
     if not active:
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'No metrics selected', ha='center', va='center',
-                fontsize=13, color='gray', transform=ax.transAxes)
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg), transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
         return
@@ -2237,7 +2331,8 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
     if not algos:
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'No algorithm data', ha='center', va='center',
-                fontsize=13, color='gray', transform=ax.transAxes)
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg), transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
         return
@@ -2343,7 +2438,8 @@ def _draw_evaluation_per_sample(fig, per_sample_eval, cfg,
         ax = fig.add_subplot(111)
         msg = 'No metrics selected' if not active else 'No per-sample data'
         ax.text(0.5, 0.5, msg, ha='center', va='center',
-                fontsize=13, color='gray', transform=ax.transAxes)
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg), transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
         return
@@ -2491,7 +2587,9 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
     if not metrics or not eval_results:
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'Run ① Evaluate K to populate the summary',
-                ha='center', va='center', fontsize=13, color='gray',
+                ha='center', va='center',
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg),
                 transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -2512,6 +2610,10 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
 
     fc = get_font_config(cfg)
     base = fc['size']
+    tcol = _text_color(cfg)
+    _th = _plot_theme(cfg)
+    _empty_face = _th['face']
+    _empty_edge = _th['border']
     n_rows = len(metrics) + 1
     n_cols = len(columns)
 
@@ -2525,11 +2627,11 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
     for ci, col in enumerate(columns):
         ax.text(ci + 1.5, header_y, col, ha='center', va='center',
                 fontsize=base, fontweight='bold',
-                fontfamily=fc['family'], color=fc['color'])
+                fontfamily=fc['family'], color=tcol)
     if bootstrap_stability:
         ax.text(n_cols + 1.0, header_y, 'Stability', ha='center', va='center',
                 fontsize=base, fontweight='bold',
-                fontfamily=fc['family'], color=fc['color'])
+                fontfamily=fc['family'], color=tcol)
 
     for ri, metric in enumerate(metrics):
         row_y = ri + 1.5
@@ -2537,12 +2639,12 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
         ax.text(0.95, row_y, metric, ha='right', va='center',
                 fontsize=base, fontfamily=fc['family'],
                 fontweight='bold' if is_sel else 'normal',
-                color=METRIC_COLORS.get(metric, fc['color']))
+                color=METRIC_COLORS.get(metric, tcol))
         for ci, picks in enumerate(col_picks):
             k = picks.get(metric)
             cons_k = consensus[ci][0]
             if k is None:
-                txt, face = '—', '#E2E8F0'
+                txt, face = '—', _empty_face
             else:
                 if cons_k is not None and k == cons_k:
                     face = '#16A34A'
@@ -2553,12 +2655,12 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
                 txt = f'K={k}'
             rect = plt.Rectangle((ci + 1.05, row_y - 0.42), 0.9, 0.84,
                                  facecolor=face, alpha=0.22 if txt != '—' else 0.5,
-                                 edgecolor=face if txt != '—' else '#CBD5E1',
+                                 edgecolor=face if txt != '—' else _empty_edge,
                                  linewidth=1.4)
             ax.add_patch(rect)
             ax.text(ci + 1.5, row_y, txt, ha='center', va='center',
                     fontsize=base, fontfamily=fc['family'],
-                    color=fc['color'])
+                    color=tcol)
         if bootstrap_stability:
             stab = bootstrap_stability.get(metric)
             k_pool = col_picks[0].get(metric)
@@ -2566,7 +2668,7 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
                 frac = stab['distribution'].get(k_pool, 0) / stab['n']
                 ax.text(n_cols + 1.0, row_y, f'{frac:.0%}',
                         ha='center', va='center', fontsize=base,
-                        fontfamily=fc['family'], color=fc['color'])
+                        fontfamily=fc['family'], color=tcol)
             else:
                 ax.text(n_cols + 1.0, row_y, '–', ha='center', va='center',
                         fontsize=base, fontfamily=fc['family'],
@@ -2575,7 +2677,7 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
     cons_y = n_rows + 0.4
     ax.text(0.95, cons_y, 'Consensus', ha='right', va='center',
             fontsize=base, fontweight='bold', fontfamily=fc['family'],
-            color=fc['color'])
+            color=tcol)
     for ci, (ck, frac) in enumerate(consensus):
         if ck is None:
             txt = '—'
@@ -2587,7 +2689,7 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
         ax.add_patch(rect)
         ax.text(ci + 1.5, cons_y, txt, ha='center', va='center',
                 fontsize=base, fontweight='bold', fontfamily=fc['family'],
-                color=fc['color'])
+                color=tcol)
 
     fig.tight_layout(pad=1.0)
 
@@ -2618,7 +2720,9 @@ def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg
     if not clustering_results or data_matrix is None:
         ax = fig.add_subplot(111)
         ax.text(0.5, 0.5, 'No clustering data\nRun Step 2 first',
-                ha='center', va='center', fontsize=13, color='gray',
+                ha='center', va='center',
+                fontproperties=_font_scale(cfg, 'label')[0],
+                color=_muted_color(cfg),
                 transform=ax.transAxes)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -2648,7 +2752,8 @@ def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg
         labels = result.get('labels')
         if labels is None:
             ax.text(0.5, 0.5, 'No labels', ha='center', va='center',
-                    color='gray', transform=ax.transAxes)
+                    fontproperties=_font_scale(cfg, 'label')[0],
+                    color=_muted_color(cfg), transform=ax.transAxes)
             continue
 
         if data_matrix.shape[1] >= 2:
@@ -3092,6 +3197,12 @@ class ClusteringDisplayDialog(QDialog):
             except Exception:
                 pass
 
+        try:
+            from results.results_cluster_tools import attach_to_dialog
+            attach_to_dialog(self)
+        except Exception:
+            pass
+
     def _on_app_theme_changed(self, _name=None):
         """Re-theme the dialog and redraw figures when the app theme changes.
 
@@ -3326,7 +3437,7 @@ class ClusteringDisplayDialog(QDialog):
         self.eval_btn = self._make_btn("① Evaluate K", '#2563EB', self._run_evaluation)
         tl.addWidget(self.eval_btn)
 
-        self.bs_btn = self._make_btn("↻ Bootstrap K", '#7C3AED', self._run_bootstrap)
+        self.bs_btn = self._make_btn("↻ Bootstrap K", '#2563EB', self._run_bootstrap)
         self.bs_btn.setEnabled(False)
         self.bs_btn.setToolTip(
             "Resample the data with replacement and rerun K selection "
@@ -3376,13 +3487,13 @@ class ClusteringDisplayDialog(QDialog):
         self.color_by_combo.currentTextChanged.connect(self._on_color_by_changed)
         tl.addWidget(self.color_by_combo)
 
-        self.cluster_btn = self._make_btn("② Cluster", '#16A34A', self._run_clustering)
+        self.cluster_btn = self._make_btn("② Cluster", '#2563EB', self._run_clustering)
         self.cluster_btn.setEnabled(False)
         tl.addWidget(self.cluster_btn)
 
         tl.addStretch()
 
-        self.export_btn = self._make_btn("Export", '#D97706', self._export_results)
+        self.export_btn = self._make_btn("Export", '#2563EB', self._export_results)
         self.export_btn.setEnabled(False)
         tl.addWidget(self.export_btn)
 
@@ -3651,6 +3762,7 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_hover_ann = {}
         self._3d_point_cache = {}
         self._3d_canvas.mpl_connect('motion_notify_event', self._on_3d_hover)
+        self._3d_canvas.mpl_connect('scroll_event', self._on_3d_scroll)
         self._cluster_stack.addWidget(self._3d_canvas)
 
         vl.addWidget(self._cluster_stack, stretch=1)
@@ -4198,6 +4310,27 @@ class ClusteringDisplayDialog(QDialog):
         self.node.config['plot3d_hidden_samples'] = []
         self._draw_3d()
 
+    def _on_3d_scroll(self, event):
+        """Zoom the 3D axes under the cursor in/out on mouse-wheel scroll.
+
+        Scaling all three axis limits about their midpoints emulates a
+        camera dolly; scroll up zooms in, scroll down zooms out.
+        """
+        ax = getattr(event, 'inaxes', None)
+        if ax is None or not hasattr(ax, 'get_zlim3d'):
+            return
+        scale = 0.85 if event.button == 'up' else 1.0 / 0.85
+        for get_lim, set_lim in (
+            (ax.get_xlim3d, ax.set_xlim3d),
+            (ax.get_ylim3d, ax.set_ylim3d),
+            (ax.get_zlim3d, ax.set_zlim3d),
+        ):
+            lo, hi = get_lim()
+            mid = 0.5 * (lo + hi)
+            half = 0.5 * (hi - lo) * scale
+            set_lim(mid - half, mid + half)
+        self._3d_canvas.draw_idle()
+
     def _set_3d_view(self, elev, azim):
         """Snap all 3D axes to a preset view angle.
         Args:
@@ -4311,12 +4444,14 @@ class ClusteringDisplayDialog(QDialog):
                    "  • Components = 3\n\n"
                    "Then re-run ① Evaluate K → ② Cluster.")
             ax.text(0.5, 0.5, msg, ha='center', va='center',
-                    fontsize=11, color='#475569', linespacing=1.6,
+                    fontproperties=_font_scale(cfg, 'label')[0],
+                    color=_muted_color(cfg), linespacing=1.6,
                     transform=ax.transAxes,
-                    bbox=dict(boxstyle='round,pad=0.6', fc='#F8FAFC',
-                              ec='#CBD5E1', lw=1))
+                    bbox=dict(boxstyle='round,pad=0.6',
+                              fc=_plot_theme(cfg)['face'],
+                              ec=_plot_theme(cfg)['border'], lw=1))
             ax.set_xticks([]); ax.set_yticks([])
-            ax.set_facecolor('#F8FAFC')
+            ax.set_facecolor(_plot_theme(cfg)['face'])
             for sp in ax.spines.values():
                 sp.set_visible(False)
             target_fig.tight_layout()
@@ -4369,8 +4504,13 @@ class ClusteringDisplayDialog(QDialog):
         for idx, (algo_name, result) in enumerate(results.items()):
             ax = target_fig.add_subplot(rows, cols, idx + 1,
                                         projection='3d')
-            ax.set_facecolor('#FAFAFA')
+            ax.set_facecolor(_plot_theme(cfg)['face'])
             ax._algo_name = algo_name
+       
+            try:
+                ax.set_box_aspect(None, zoom=1.2)
+            except Exception:
+                pass
             labels_arr  = result.get('labels')
             if labels_arr is None:
                 continue
@@ -4498,6 +4638,8 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_info.setStyleSheet("color:#2563EB;font-size:10px;font-weight:bold;")
 
         target_fig.tight_layout(pad=1.2)
+        target_fig.subplots_adjust(left=0.03, right=0.97, top=0.95,
+                                   bottom=0.04, wspace=0.04, hspace=0.18)
 
     def _draw_dendrogram(self):
         self._draw_dendrogram_into(self.dendro_fig)
@@ -4514,7 +4656,9 @@ class ClusteringDisplayDialog(QDialog):
         data = self._data_matrix_cache
         if data is None or data.shape[0] < 2:
             ax.text(0.5, 0.5, 'Run ② Cluster first with Hierarchical algorithm',
-                    ha='center', va='center', fontsize=12, color='gray',
+                    ha='center', va='center',
+                    fontproperties=_font_scale(self.node.config, 'label')[0],
+                    color=_muted_color(self.node.config),
                     transform=ax.transAxes)
             ax.set_xticks([]); ax.set_yticks([])
             return
@@ -4533,7 +4677,9 @@ class ClusteringDisplayDialog(QDialog):
             )
         except Exception as e:
             ax.text(0.5, 0.5, f'Linkage failed:\n{e}',
-                    ha='center', va='center', fontsize=10, color='#DC2626',
+                    ha='center', va='center',
+                    fontproperties=_font_scale(self.node.config, 'tick')[0],
+                    color='#DC2626',
                     transform=ax.transAxes)
             ax.set_xticks([]); ax.set_yticks([])
             return
@@ -4681,6 +4827,10 @@ class ClusteringDisplayDialog(QDialog):
         ax_left = target_fig.add_subplot(gs[0, 0])
         ax_right = target_fig.add_subplot(gs[0, 1])
 
+        _face = _plot_theme(cfg)['face']
+        ax_left.set_facecolor(_face)
+        ax_right.set_facecolor(_face)
+
         right_group = group if view == 'Strips' else False
 
         if view == 'Heatmap':
@@ -4756,6 +4906,8 @@ class ClusteringDisplayDialog(QDialog):
         fp_lbl, _ = _font_scale(cfg, 'label')
         fp_tick, _ = _font_scale(cfg, 'tick')
         fp_cell, _ = _font_scale(cfg, 'cell')
+
+        ax.set_facecolor(th['face'])
 
         if ax.get_title():
             ax.set_title(ax.get_title(), fontproperties=fp_title, color=col)
@@ -5072,6 +5224,13 @@ class ClusteringDisplayDialog(QDialog):
                     n_clusters=k,
                     threshold=cfg.get('birch_threshold', 0.5),
                     branching_factor=cfg.get('birch_branching_factor', 50),
+                ).fit_predict(data)
+
+            elif name == 'Gaussian Mixture':
+                return GaussianMixture(
+                    n_components=k,
+                    covariance_type=cfg.get('gmm_covariance_type', 'full'),
+                    random_state=42,
                 ).fit_predict(data)
 
             elif name == 'DBSCAN':
@@ -6007,9 +6166,6 @@ class ClusteringDisplayDialog(QDialog):
                     self.som_canvas.draw()
                     self.tabs.setCurrentIndex(self.som_tab_idx)
                     return
-
-            self.tabs.setCurrentIndex(1)
-
             if (self.node.config.get('selected_algorithm') == 'Hierarchical'
                     and self.node.config.get('hier_show_dendrogram', False)):
                 self._draw_dendrogram()
@@ -6477,6 +6633,7 @@ class ClusteringPlotNode(QObject):
         'optics_min_samples': 5,
         'optics_metric': 'euclidean',
         'optics_cluster_method': 'xi',
+        'gmm_covariance_type': 'full',
         'som_rows': 10,
         'som_cols': 10,
         'som_sigma': 1.0,
