@@ -4,6 +4,15 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.0.7 — 2026-06-01
+
+### New Features
+- Cluster analysis added option to test all clustering methods at once
+
+### Improvements
+- Particle concentration per mL now reported in results figures
+- UI improvements in the main window
+
 ## v1.0.7 — (dev)
 
 ### New Features
