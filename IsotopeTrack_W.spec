@@ -1,19 +1,35 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata, collect_all
 
 sklearn_hidden = collect_submodules('sklearn')
 scipy_hidden   = collect_submodules('scipy')
 numba_hidden   = collect_submodules('numba')
 
+# ── pytz: collect code + metadata together; FAIL the build if it's missing ───
+# pandas reads importlib.metadata.version('pytz') at import. collect_all grabs
+# the .dist-info too. If pytz isn't installed on the build machine, abort now
+# with a clear message instead of shipping a broken exe.
+pytz_datas, pytz_binaries, pytz_hidden = collect_all('pytz')
+if not pytz_datas:
+    raise SystemExit(
+        "BUILD ERROR: pytz metadata not found. "
+        "Add `pip install pytz tzdata` to the build environment."
+    )
+
+# ── Other dist-info metadata that pandas reads at import time ────────────────
 pandas_meta = []
-for _pkg in ('pytz', 'pandas', 'numpy', 'python-dateutil', 'six', 'tzdata'):
+for _pkg in ('pandas', 'numpy', 'python-dateutil', 'six', 'tzdata'):
     try:
         pandas_meta += copy_metadata(_pkg)
     except Exception:
-        pass
+        print(f"WARNING: could not copy metadata for {_pkg}")
 
+# ── Stub pyarrow so pandas skips its Arrow version check in frozen builds ────
+# pyarrow is excluded below, but a partial remnant can still be importable and
+# pandas/compat/pyarrow.py reads pyarrow.__version__ at import time. We write a
+# tiny runtime hook (next to this spec) that installs a stub before pandas loads.
 _rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
 with open(_rth, 'w') as _f:
     _f.write(
@@ -57,9 +73,12 @@ print(f"Total data files to include: {len(data_files)}")
 a = Analysis(
     ['Run.py'],
     pathex=[],
-    binaries=[],
-    datas=data_files + pandas_meta,
+    binaries=pytz_binaries,
+    datas=data_files + pandas_meta + pytz_datas,
     hiddenimports=[
+        *pytz_hidden,
+        'pytz',
+        'tzdata',
         # ── Qt / PySide6 ─────────────────────────────────────────────────────
         'PySide6',
         'PySide6.QtCore',
