@@ -4,13 +4,12 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QPushButton, QLabel, QLineEdit,
     QComboBox, QCheckBox, QGroupBox, QMessageBox,
-    QHeaderView, QSplitter, QTextEdit, QTabWidget,
-    QSpinBox, QDoubleSpinBox, QFrame, QProgressBar,
-    QFileDialog, QListWidget, QListWidgetItem, QWidget,
-    QRadioButton, QButtonGroup, QStyledItemDelegate,
+    QHeaderView, QSplitter, QFileDialog, QListWidget,
+    QListWidgetItem, QWidget, QRadioButton, QButtonGroup,
+    QStyledItemDelegate, QCompleter,
 )
-from PySide6.QtCore import Qt, Signal, QThread, QTimer, QSortFilterProxyModel
-from PySide6.QtGui import QFont, QColor, QDesktopServices, QDoubleValidator
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtCore import QUrl
 import logging
 import re
@@ -483,7 +482,7 @@ class FormulaComboBox(QComboBox):
         self.csv_database = csv_database
         self.tracked_elements = tracked_elements or set()
         self.setEditable(True)
-        self.setInsertPolicy(QComboBox.NoInsert)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.setMaxVisibleItems(15)
         self.lineEdit().setPlaceholderText("Type a formula (e.g., TiO2)")
 
@@ -499,6 +498,8 @@ class FormulaComboBox(QComboBox):
 
         self._setup_compounds()
 
+        # TODO: `[int]` is legacy so it should be removed... but examples still uses it
+        # TODO: Is activated necessary because the completer is desactivated anyawy
         self.activated[int].connect(self._on_item_activated)
         self.lineEdit().editingFinished.connect(self._on_editing_finished)
         self.lineEdit().textChanged.connect(self._on_text_changed)
@@ -639,6 +640,7 @@ class FormulaComboBox(QComboBox):
         Args:
             index (int): Row or item index.
         """
+        print("Item activated")
         if self._updating:
             return
         self._debounce_timer.stop()
@@ -758,7 +760,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
             editor (Any): The editor.
             index (Any): Row or item index.
         """
-        editor.setText(index.data(Qt.DisplayRole) or '')
+        editor.setText(index.data(Qt.ItemDataRole.DisplayRole) or '')
 
     def setModelData(self, editor, model, index):
         """
@@ -774,7 +776,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
                 raise ValueError
         except ValueError:
             return
-        model.setData(index, f"{val:.6f}", Qt.EditRole)
+        model.setData(index, f"{val:.6f}", Qt.ItemDataRole.EditRole)
 
 
 # ---------------------------------------------------------------------------
@@ -787,7 +789,7 @@ class MassFractionCalculator(QDialog):
     mass_fractions_updated = Signal(dict)
 
     class CalculatorColumn(Enum):
-        """`CalculatorColumn` stores display information"""
+        """`CalculatorColumn` stores display information about the table"""
         ELEMENT = 0, 'Element', QHeaderView.ResizeMode.Fixed, 80
         FORMULA = 1, 'Compound Formula', QHeaderView.ResizeMode.Stretch, None
         MASSFRAC = 2, 'Mass Fraction', QHeaderView.ResizeMode.Fixed, 120
@@ -811,7 +813,6 @@ class MassFractionCalculator(QDialog):
             self.col_index = col_index
             self.title = title
 
-            # TODO: add logic to restrain combinations
             self.resize_mode = resize_mode
             self.width = width
 
@@ -827,7 +828,7 @@ class MassFractionCalculator(QDialog):
         def titles(cls) -> list[str]:
             """
             Returns:
-                a list of column titles
+                a list of all titles
             """
             return [column.title for column in cls]
 
@@ -1157,7 +1158,7 @@ class MassFractionCalculator(QDialog):
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # ---- left panel: sample selection ----------------------------
         left_panel = self._build_sample_panel()
@@ -1274,6 +1275,8 @@ class MassFractionCalculator(QDialog):
             self.CalculatorColumn.COMP_DENS.col_index, _PositiveDoubleDelegate(self.table)
         )
 
+        #self.table.setItemDelegateForColumn(self.CalculatorColumn.NP_SHAPE.col_index, _NpSelectorDelegate(self.table)) # TODO add the class
+
     def _build_buttons(self) -> QHBoxLayout:
         """
         Returns:
@@ -1312,11 +1315,13 @@ class MassFractionCalculator(QDialog):
         self.table.setRowCount(len(sorted_elems))
 
         for row, (_, element, ed) in enumerate(sorted_elems):
+            # Adds the element symbole
             el_item = QTableWidgetItem(element)
-            el_item.setFlags(el_item.flags() & ~Qt.ItemIsEditable)
-            el_item.setTextAlignment(Qt.AlignCenter)
+            el_item.setFlags(el_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            el_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.CalculatorColumn.ELEMENT.col_index, el_item)
 
+            # Adds Compound Formula
             combo = FormulaComboBox(
                 element, self.csv_database,
                 tracked_elements=self.tracked_elements,
@@ -1325,19 +1330,24 @@ class MassFractionCalculator(QDialog):
             combo.formula_selected.connect(lambda f, d, r=row: self._on_compound_selected(r, f, d))
             self.table.setCellWidget(row, self.CalculatorColumn.FORMULA.col_index, combo)
 
+            # Adds Mass Fraction
             mf = self._make_readonly_item("1.000000")
             self.table.setItem(row, self.CalculatorColumn.MASSFRAC.col_index, mf)
 
+            # Adds Molecular Weight
             mass = float(ed.get('mass', 0))
             self.table.setItem(row, self.CalculatorColumn.MW.col_index, self._make_readonly_item(f"{mass:.6f}"))
 
+            # Adds Density
             edens = float(ed.get('density', 0) or 0)
             self.table.setItem(row, self.CalculatorColumn.ELEM_DENS.col_index, self._make_readonly_item(f"{edens:.6f}"))
 
+            # Compound Density
             cd_item = QTableWidgetItem(f"{edens:.6f}")
-            cd_item.setTextAlignment(Qt.AlignCenter)
+            cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.CalculatorColumn.COMP_DENS.col_index, cd_item)
 
+            # Adds link from the compound to materialsproject
             btn = QPushButton("Open")
             btn.setToolTip("Open structure page on Materials Project")
             btn.clicked.connect(lambda _, r=row: self._open_structure(r))
@@ -1352,8 +1362,8 @@ class MassFractionCalculator(QDialog):
             QTableWidgetItem: Result of the operation.
         """
         item = QTableWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-        item.setTextAlignment(Qt.AlignCenter)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
     def _element_data(self, symbol: str) -> dict | None:
@@ -1384,12 +1394,15 @@ class MassFractionCalculator(QDialog):
             row (int): Row index.
             formula (str): The formula.
         """
+        # Get the string formula
         el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
         if not el_item:
             return
         element = el_item.text()
 
+        # Get the elements count with reduced values
         counts = _reduce_counts(_parse_formula_to_counts(formula))
+        # Defines the mass fraction (mf) for the element
         if not counts:
             mf = 1.0
         else:
@@ -1408,6 +1421,7 @@ class MassFractionCalculator(QDialog):
                 logger.warning("Formula '%s' contains element(s) not in periodic table data", formula)
             mf = (target / total) if total > 0 and target > 0 else 1.0
 
+        # Displays the result
         self.table.setItem(row, self.CalculatorColumn.MASSFRAC.col_index, self._make_readonly_item(f"{mf:.6f}"))
 
     def _calc_molecular_weight(self, row: int, formula: str):
@@ -1416,7 +1430,10 @@ class MassFractionCalculator(QDialog):
             row (int): Row index.
             formula (str): The formula.
         """
+        # Get the elements count with reduced values
         counts = _reduce_counts(_parse_formula_to_counts(formula))
+        # Calculate molecular weight (MW) while checking if the molecule is
+        # valid (all elements exists in `_element_data`).
         mw = 0.0
         valid = bool(counts)
         for el, n in counts.items():
@@ -1427,6 +1444,9 @@ class MassFractionCalculator(QDialog):
                 valid = False
                 break
 
+        # Invalid molecules or invalid molecular mass will set the molecular
+        # mass to the row's element mass or 0 (if the element is not found in
+        # the row or the element data)
         if not valid or mw <= 0:
             el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
             if el_item:
@@ -1435,6 +1455,7 @@ class MassFractionCalculator(QDialog):
             else:
                 mw = 0.0
 
+        # Display the final molecular weight
         self.table.setItem(row, self.CalculatorColumn.MW.col_index, self._make_readonly_item(f"{mw:.6f}"))
 
     def _on_compound_selected(self, row: int, formula: str, density_csv: float):
@@ -1444,10 +1465,13 @@ class MassFractionCalculator(QDialog):
             formula (str): The formula.
             density_csv (float): The density csv.
         """
+        # Update mass fraction and molecular weight
         self._calc_mass_fraction(row, formula)
         self._calc_molecular_weight(row, formula)
 
+        # reduce counts
         counts = _reduce_counts(_parse_formula_to_counts(formula))
+        # If the counts are only tracking the 
         if len(counts) <= 1:
             el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
             ed = self._element_data(el_item.text()) if el_item else None
@@ -1456,7 +1480,7 @@ class MassFractionCalculator(QDialog):
             d = float(density_csv or 0.0)
 
         cd_item = QTableWidgetItem(f"{d:.6f}")
-        cd_item.setTextAlignment(Qt.AlignCenter)
+        cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, self.CalculatorColumn.COMP_DENS.col_index, cd_item)
 
         self._highlight_tracked(row, formula)
@@ -1505,7 +1529,7 @@ class MassFractionCalculator(QDialog):
             self.table.setItem(row, self.CalculatorColumn.MW.col_index, self._make_readonly_item(f"{mass:.6f}"))
             d = float(ed.get('density', 0) or 0) if ed else 0.0
             cd = QTableWidgetItem(f"{d:.6f}")
-            cd.setTextAlignment(Qt.AlignCenter)
+            cd.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.CalculatorColumn.COMP_DENS.col_index, cd)
 
     def _select_all_samples(self):
@@ -1602,7 +1626,7 @@ class MassFractionCalculator(QDialog):
             if element in saved_densities:
                 custom_density = saved_densities[element]
                 cd_item = QTableWidgetItem(f"{custom_density:.6f}")
-                cd_item.setTextAlignment(Qt.AlignCenter)
+                cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, self.CalculatorColumn.COMP_DENS.col_index, cd_item)
 
     def _manual_load_csv(self):
