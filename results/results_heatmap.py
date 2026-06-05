@@ -30,6 +30,8 @@ HEATMAP_DATA_TYPES = [
     'Element Mass %', 'Particle Mass %', 'Element Mole %', 'Particle Mole %'
 ]
 
+DEGREE_SIGN = "\N{DEGREE SIGN}"
+
 
 class HeatmapSettingsDialog(QDialog):
     """Scoped settings dialog for heatmap format/quantity configuration."""
@@ -227,7 +229,8 @@ class HeatmapSettingsDialog(QDialog):
             g = QGroupBox("Cell Appearance")
             fl = QFormLayout(g)
             self.x_rotation_spin = QSpinBox()
-            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("�")
+            self.x_rotation_spin.setRange(0, 90)
+            self.x_rotation_spin.setSuffix(DEGREE_SIGN)
             self.x_rotation_spin.setValue(self._config.get('x_rotation', 0))
             fl.addRow("X label rotation:", self.x_rotation_spin)
             self.ann_fontsize_spin = QSpinBox()

@@ -422,13 +422,18 @@ VIRIDIS_COLORS = np.array([
 # Font helpers
 # ─────────────────────────────────────────────
 
-def get_font_config(config: dict) -> dict:
-    """Extract font configuration from a config dict.
+def get_font_config(config: dict | None) -> dict:
+    """Extract normalized font configuration from config or defaults.
+
     Args:
-        config (dict): Configuration dictionary.
+        config (dict | None): Optional configuration dictionary. When ``None``,
+            the shared default font settings are used.
+
     Returns:
-        dict: Result of the operation.
+        dict: Normalized font settings with ``family``, ``size``, ``bold``,
+        ``italic``, and ``color`` keys.
     """
+    config = config or {}
     return {
         'family': config.get('font_family', DEFAULT_FONT_FAMILY),
         'size': config.get('font_size', DEFAULT_FONT_SIZE),
@@ -438,12 +443,15 @@ def get_font_config(config: dict) -> dict:
     }
 
 
-def make_qfont(config: dict) -> QFont:
-    """Build a QFont from a config dict.
+def make_qfont(config: dict | None) -> QFont:
+    """Build a ``QFont`` from config values or shared defaults.
+
     Args:
-        config (dict): Configuration dictionary.
+        config (dict | None): Optional configuration dictionary. When ``None``,
+            the shared default font settings are used.
+
     Returns:
-        QFont: Result of the operation.
+        QFont: Font built from explicit config values or defaults.
     """
     fc = get_font_config(config)
     font = QFont(fc['family'], fc['size'])

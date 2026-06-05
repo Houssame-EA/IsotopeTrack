@@ -60,6 +60,7 @@ LEGEND_POSITIONS = [
 _LINE_STYLES = ['-', '--', '-.', ':']
 _LINE_NAMES  = ['Solid', 'Dashed', 'Dash-dot', 'Dotted']
 EXPORT_FORMATS = ['svg', 'pdf', 'png', 'eps']
+DEGREE_SIGN = "\N{DEGREE SIGN}"
 
 # â”€â”€ Small helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -154,7 +155,8 @@ class PieStyleGroup:
         f.addRow("Centre Label:", self._center_text)
 
         self._start = QSpinBox()
-        self._start.setRange(0, 360); self._start.setSuffix("Â°")
+        self._start.setRange(0, 360)
+        self._start.setSuffix(DEGREE_SIGN)
         self._start.setValue(cfg.get('start_angle', 90))
         f.addRow("Start Angle:", self._start)
 

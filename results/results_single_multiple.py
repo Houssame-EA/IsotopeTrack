@@ -36,6 +36,7 @@ from widget.colors import default_colors, colorheatmap
 
 VIZ_TYPES = ['Pie Charts', 'Heatmaps']
 SM_DISPLAY_MODES = ['Individual Subplots', 'Side by Side Subplots', 'Combined View']
+DEGREE_SIGN = "\N{DEGREE SIGN}"
 
 DEFAULT_CONFIG = {
     'custom_title': 'Single vs Multiple Element Analysis',
@@ -418,7 +419,8 @@ class PieStyleGroup:
         f.addRow("Centre Label:", self._center_text)
 
         self._start = QSpinBox()
-        self._start.setRange(0, 360); self._start.setSuffix("°")
+        self._start.setRange(0, 360)
+        self._start.setSuffix(DEGREE_SIGN)
         self._start.setValue(cfg.get('start_angle', 90))
         f.addRow("Start Angle:", self._start)
 
