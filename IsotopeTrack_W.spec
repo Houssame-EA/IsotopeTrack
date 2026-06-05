@@ -213,6 +213,8 @@ a = Analysis(
         'warnings',
         'gc',
         're',
+        'argparse',
+        'dataclasses',
 
         'mainwindow',
         'theme',
@@ -275,6 +277,7 @@ a = Analysis(
         'tools.splash_screen',
         'tools.tutorial',
         'tools.unit',
+        'tools.cli_utils',
 
         'widget',
         'widget.batch_parameters',
