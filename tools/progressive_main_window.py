@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QApplication
 from mainwindow import MainWindow
+from tools.logging_utils import logging_manager
 from tools.mass_fraction_calculator import CSVCompoundDatabase
 from widget.periodic_table_widget import PeriodicTableWidget
 
@@ -30,6 +31,8 @@ class ProgressiveMainWindow(QObject):
             None
         """
         super().__init__()
+        if not hasattr(self, 'logger'):
+            self.logger = logging_manager.get_logger('ProgressiveMainWindow')
         self.main_window = None
         self.current_step = 0
         self.total_steps = 10
@@ -212,24 +215,23 @@ class ProgressiveMainWindow(QObject):
         if len(sys.argv) <= 1 or not self.main_window:
             return
 
-        self.main_window.log_status("Parsing cli arguments")  # TODO: dependency injection (DI)
+        self.log_status("Parsing cli arguments")
 
         # Parsing arguments
         parser = self.get_argument_parser()
         arguments: CliArguments = CliArguments.from_args_parser_namespace(parser.parse_args())
 
         main_window: MainWindow = self.main_window
-        main_window.log_status(f"Arguments : {arguments}")  # TODO: DI
+        self.log_status(f"Arguments : {arguments}")
         if arguments.project_file:
-            main_window.log_status(
-                f"Project loading via CLI")  # TODO: Change for a new type of log passed via dependency injection
+            self.log_status(f"Project loading via CLI")
             main_window.load_project(filepath=str(arguments.project_file))
             return
 
         loaded_files = False
 
         if arguments.nu_files:
-            main_window.log_status(f"Nu data loading via CLI")  # TODO: DI and add an indicator for discarded files
+            self.log_status(f"Nu data loading via CLI")
             main_window.process_folders(
                 [str(path) for path in arguments.nu_files
                  if path.exists() and path.is_dir()]
@@ -239,7 +241,7 @@ class ProgressiveMainWindow(QObject):
         if arguments.tofwerk_files:
             has_h5_extention = lambda path: ".h5" == path.suffix.lower()
 
-            main_window.log_status(f"TOFWERK (.H5) data loading via CLI")  # TODO: DI and add an indicator for discarded files
+            self.log_status(f"TOFWERK (.H5) data loading via CLI")
             main_window.process_tofwerk_files(
                 [str(path) for path in arguments.tofwerk_files
                  if path.exists() and has_h5_extention(path)]
@@ -253,19 +255,19 @@ class ProgressiveMainWindow(QObject):
             if selected_isotopes_by_element:
                 # Tries to load the isotopes
                 selected_isotopes_count = sum([len(masses) for masses in selected_isotopes_by_element.values()])
-                main_window.log_status(f"Selecting {selected_isotopes_count} isotopes(s) via CLI")  # TODO: DI
+                self.log_status(f"Selecting {selected_isotopes_count} isotopes(s) via CLI")
                 updated_element_cout, not_loaded_elements = periodic_table.update_selection(
                     selected_isotopes_by_element)
 
                 # Automatically confirms the loaded isotopes
-                main_window.log_status(f"Selected {updated_element_cout} / {selected_isotopes_count} isotopes. "
-                                       f"Missing elements/isotopes: {not_loaded_elements}")  # TODO: DI
+                self.log_status(f"Selected {updated_element_cout} / {selected_isotopes_count} isotopes. "
+                                       f"Missing elements/isotopes: {not_loaded_elements}")
                 periodic_table.confirm_selections()
         else:
             if not loaded_files:
-                main_window.log_status("No files were loaded.")  # TODO: DI
+                self.log_status("No files were loaded.")
             else:
-                main_window.log_status("No periodic table was loaded.")  # TODO: DI
+                self.log_status("No periodic table was loaded.")
 
     def get_selected_isotopes(self,
                               isotopes: list[str] | None,
@@ -469,6 +471,9 @@ class ProgressiveMainWindow(QObject):
         except Exception as e:
             print(f"[ProgressiveMainWindow] CSV preload skipped: {e}")
             QApplication.processEvents()
+
+    def log_status(self, message: str):
+        self.logger.info(message)
 
 
 @dataclass
