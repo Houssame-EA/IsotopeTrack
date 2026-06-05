@@ -789,7 +789,7 @@ class PeriodicTableWidget(QDialog):
         self.buttons = {}
         self.current_element = None
         self.selected_preset = None
-        self._elements_list = self._create_elements_data()  
+        self._elements_list = self.create_elements_data()
         self._elements_by_symbol = {e['symbol']: e for e in self._elements_list}  
         screen = QApplication.primaryScreen().geometry()
         if screen.width() < 1400 or screen.height() < 900:
@@ -1000,7 +1000,8 @@ class PeriodicTableWidget(QDialog):
             }}
         """
 
-    def _create_elements_data(self):
+    @staticmethod
+    def create_elements_data():
         """
         Returns:
             list: Result of the operation.
