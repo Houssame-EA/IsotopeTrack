@@ -13,6 +13,11 @@ import pandas as pd
 from pathlib import Path
 
 from theme import theme as _app_theme
+from results.shared_plot_utils import (
+    apply_axis_label_style,
+    apply_plot_item_text_styling,
+    apply_plot_title_style,
+)
 
 
 # ── Theme helpers for editor dialogs ─────────────────────────────────────────
@@ -704,27 +709,26 @@ class AxisLabelEditorDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _pick_color(self):
+        """Select a color for the axis label text."""
         c = QColorDialog.getColor(self.label_color, self, "Label Color")
         if c.isValid():
             self.label_color = c
             self.color_button.setStyleSheet(_color_swatch_qss(c.name()))
 
     def _apply(self):
+        """Apply axis label text plus explicit styling to the target axis."""
         family = self.font_combo.currentText()
-        size = self.size_spin.value()
-        bold = "bold" if self.bold_check.isChecked() else "normal"
-        italic = "italic" if self.italic_check.isChecked() else "normal"
-        font_str = f"{italic} {bold} {size}pt {family}"
-
         text = self.label_edit.text().strip()
         units = self.units_edit.text().strip() or None
 
         plot_item = self.plot_widget.getPlotItem()
-        if units:
-            plot_item.setLabel(self.axis_name, text, units=units, color=self.label_color.name(), font=font_str)
-        else:
-            plot_item.setLabel(self.axis_name, text, color=self.label_color.name(), font=font_str)
+        apply_axis_label_style(
+            plot_item, self.axis_name, text, units=units, family=family,
+            size=self.size_spin.value(), bold=self.bold_check.isChecked(),
+            italic=self.italic_check.isChecked(),
+            color=self.label_color.name())
 
+        size = self.size_spin.value()
         tick_font = QFont(family, size)
         tick_font.setBold(self.bold_check.isChecked())
         tick_font.setItalic(self.italic_check.isChecked())
@@ -736,32 +740,48 @@ class AxisLabelEditorDialog(QDialog):
         if not hasattr(self.plot_widget, 'custom_axis_labels'):
             self.plot_widget.custom_axis_labels = {}
         self.plot_widget.custom_axis_labels[self.axis_name] = {
-            'text': text, 'units': units, 'font': font_str, 'color': self.label_color.name()}
+            'text': text,
+            'units': units,
+            'family': family,
+            'size': size,
+            'bold': self.bold_check.isChecked(),
+            'italic': self.italic_check.isChecked(),
+            'color': self.label_color.name(),
+        }
         self.accept()
 
 
 class TitleEditorDialog(QDialog):
     """Edit the plot title."""
 
-    def __init__(self, plot_widget, parent=None):
+    def __init__(self, plot_widget, parent=None, text_only: bool = False,
+                 title_apply_callback=None):
         """
         Args:
             plot_widget (Any): The plot widget.
             parent (Any): Parent widget or object.
+            text_only (bool): When ``True``, show only the title-text control
+                and hide title-style controls.
+            title_apply_callback (Callable[[str], None] | None): Optional
+                callback used to apply title text through plot-specific state
+                management instead of the default live ``setTitle(...)`` path.
         """
         super().__init__(parent)
         self.plot_widget = plot_widget
+        self.text_only = text_only
+        self.title_apply_callback = title_apply_callback
         self.setWindowTitle("Edit Plot Title")
-        self.setFixedWidth(400)
+        self.setFixedWidth(320 if text_only else 400)
         _install_theme_subscription(self)
         self._setup_ui()
 
     def _setup_ui(self):
+        """Build the title editor controls for the current plot widget."""
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        header = QLabel("Title Properties")
+        header = QLabel("Title Text" if self.text_only else "Title Properties")
         header.setStyleSheet(_editor_header_qss())
         layout.addWidget(header)
 
@@ -773,32 +793,33 @@ class TitleEditorDialog(QDialog):
         self.title_edit.setText(pi.titleLabel.text if pi.titleLabel and pi.titleLabel.text else "")
         form.addRow("Title:", self.title_edit)
 
-        self.font_combo = QComboBox()
-        self.font_combo.addItems(get_system_font_families())
-        self.font_combo.setCurrentText("Times New Roman")
-        self.font_combo.setMaxVisibleItems(20)
-        form.addRow("Font:", self.font_combo)
+        if not self.text_only:
+            self.font_combo = QComboBox()
+            self.font_combo.addItems(get_system_font_families())
+            self.font_combo.setCurrentText("Times New Roman")
+            self.font_combo.setMaxVisibleItems(20)
+            form.addRow("Font:", self.font_combo)
 
-        self.size_spin = QSpinBox()
-        self.size_spin.setRange(6, 72)
-        self.size_spin.setValue(20)
-        form.addRow("Size:", self.size_spin)
+            self.size_spin = QSpinBox()
+            self.size_spin.setRange(6, 72)
+            self.size_spin.setValue(20)
+            form.addRow("Size:", self.size_spin)
 
-        style_layout = QHBoxLayout()
-        self.bold_check = QCheckBox("Bold")
-        self.bold_check.setChecked(True)
-        self.italic_check = QCheckBox("Italic")
-        style_layout.addWidget(self.bold_check)
-        style_layout.addWidget(self.italic_check)
-        style_layout.addStretch()
-        form.addRow("Style:", style_layout)
+            style_layout = QHBoxLayout()
+            self.bold_check = QCheckBox("Bold")
+            self.bold_check.setChecked(True)
+            self.italic_check = QCheckBox("Italic")
+            style_layout.addWidget(self.bold_check)
+            style_layout.addWidget(self.italic_check)
+            style_layout.addStretch()
+            form.addRow("Style:", style_layout)
 
-        self.title_color = QColor("#000000")
-        self.color_button = QPushButton()
-        self.color_button.setFixedHeight(30)
-        self.color_button.setStyleSheet(_color_swatch_qss("#000000"))
-        self.color_button.clicked.connect(self._pick_color)
-        form.addRow("Color:", self.color_button)
+            self.title_color = QColor("#000000")
+            self.color_button = QPushButton()
+            self.color_button.setFixedHeight(30)
+            self.color_button.setStyleSheet(_color_swatch_qss("#000000"))
+            self.color_button.clicked.connect(self._pick_color)
+            form.addRow("Color:", self.color_button)
 
         layout.addLayout(form)
 
@@ -815,23 +836,31 @@ class TitleEditorDialog(QDialog):
         layout.addLayout(btn_layout)
 
     def _pick_color(self):
+        """Select a title text color for the styled editor mode."""
         c = QColorDialog.getColor(self.title_color, self, "Title Color")
         if c.isValid():
             self.title_color = c
             self.color_button.setStyleSheet(_color_swatch_qss(c.name()))
 
     def _apply(self):
-        family = self.font_combo.currentText()
-        size = self.size_spin.value()
-        bold = "bold" if self.bold_check.isChecked() else "normal"
-        italic = "italic" if self.italic_check.isChecked() else "normal"
+        """Apply the edited title text, with optional style controls."""
         text = self.title_edit.text().strip()
-        font_str = f"{italic} {bold} {size}pt {family}"
+        if self.text_only:
+            if callable(self.title_apply_callback):
+                self.title_apply_callback(text)
+            else:
+                pi = self.plot_widget.getPlotItem()
+                pi.setTitle(text if text else '')
+            self.accept()
+            return
+
+        family = self.font_combo.currentText()
         pi = self.plot_widget.getPlotItem()
-        if text:
-            pi.setTitle(text, color=self.title_color.name(), size=font_str)
-        else:
-            pi.setTitle('')
+        apply_plot_title_style(
+            pi, text, family=family, size=self.size_spin.value(),
+            bold=self.bold_check.isChecked(),
+            italic=self.italic_check.isChecked(),
+            color=self.title_color.name())
         self.accept()
 
 
@@ -1000,7 +1029,8 @@ class BackgroundEditorDialog(QDialog):
 
 class PlotSettingsDialog(QDialog):
 
-    def __init__(self, plot_widget, parent=None, show_apply: bool = True):
+    def __init__(self, plot_widget, parent=None, show_apply: bool = True,
+                 allow_title_text: bool = True):
         """
         Args:
             plot_widget (Any): The plot widget.
@@ -1008,14 +1038,19 @@ class PlotSettingsDialog(QDialog):
             show_apply (bool): When ``True`` (default), show the live ``Apply``
                 button for incremental preview-style edits. When ``False``, hide
                 that button so users confirm changes with one-shot ``OK``.
+            allow_title_text (bool): When ``True`` (default), expose the shared
+                ``Title Text`` field. When ``False``, the dialog edits only
+                global title formatting and preserves existing title content.
 
         Preserved behavior:
-            Default remains ``show_apply=True`` so existing callers keep the
-            historical Apply/OK/Cancel workflow.
+            Defaults remain ``show_apply=True`` and ``allow_title_text=True`` so
+            existing callers keep the historical Apply/OK/Cancel workflow and
+            title-text ownership.
         """
         super().__init__(parent)
         self.plot_widget = plot_widget
         self.show_apply = show_apply
+        self.allow_title_text = allow_title_text
         self.setWindowTitle("Plot Settings")
         self.setMinimumSize(620, 550)
         _install_theme_subscription(self)
@@ -1062,6 +1097,7 @@ class PlotSettingsDialog(QDialog):
     # ── Font tab ──────────────────────────────────────────────────────────
 
     def _create_font_tab(self):
+        """Build global text-format controls for the current plot widget."""
         w = QWidget()
         lay = QVBoxLayout(w)
         grp = QGroupBox("Global Font Settings")
@@ -1089,8 +1125,6 @@ class PlotSettingsDialog(QDialog):
         self.bg_color_button.setStyleSheet(_tall_color_swatch_qss("#FFFFFF"))
         self.bg_color_button.clicked.connect(lambda: self._choose_color('bg'))
 
-        self.title_text = QLineEdit()
-
         fl.addRow("Font Family:", self.global_font_family)
         fl.addRow("Axis Font Size:", self.axis_font_size)
         fl.addRow("Title Font Size:", self.title_font_size)
@@ -1098,7 +1132,9 @@ class PlotSettingsDialog(QDialog):
         fl.addRow("Font Style:", sl)
         fl.addRow("Font Color:", self.font_color_button)
         fl.addRow("Background Color:", self.bg_color_button)
-        fl.addRow("Title Text:", self.title_text)
+        self.title_text = QLineEdit() if self.allow_title_text else None
+        if self.title_text is not None:
+            fl.addRow("Title Text:", self.title_text)
 
         lay.addWidget(grp)
         note = QLabel("Tip: Double-click any element on the plot to edit it directly.")
@@ -1460,11 +1496,16 @@ class PlotSettingsDialog(QDialog):
         ab.setStyleSheet(_inline_apply_btn_qss('warn'))
 
         def apply_b(*_args, itms=items, col_b=cb):
-            """
+            """Apply one color to all bars in the selected grouped-bar row.
+
             Args:
-                itms (Any): The itms.
-                col_b (Any): The col b.
+                itms (Any): Live ``pg.BarGraphItem`` objects grouped under the
+                    same trace row in the Plot Settings dialog.
+                col_b (Any): Color-swatch button holding the selected color.
                 *_args (Any): Additional positional arguments.
+
+            Returns:
+                None
             """
             c = col_b._color
             alpha = c.alpha() if c.alpha() < 255 else 215
@@ -1474,6 +1515,12 @@ class PlotSettingsDialog(QDialog):
                 try:
                     itm.setOpts(brush=new_brush, pen=new_pen)
                     itm.update()
+                except Exception:
+                    pass
+            if hasattr(self.plot_widget, 'notify_bar_group_color_changed'):
+                try:
+                    self.plot_widget.notify_bar_group_color_changed(
+                        list(itms), c.name())
                 except Exception:
                     pass
             try:
@@ -1556,6 +1603,7 @@ class PlotSettingsDialog(QDialog):
                 setattr(self, f"{color_type}_color", c)
 
     def _load_persistent(self):
+        """Restore shared plot-format state from the target plot widget."""
         if hasattr(self.plot_widget, 'persistent_dialog_settings'):
             s = self.plot_widget.persistent_dialog_settings
             try:
@@ -1571,7 +1619,8 @@ class PlotSettingsDialog(QDialog):
                 self.font_color_button.setStyleSheet(_tall_color_swatch_qss(self.font_color.name()))
                 self.bg_color_button.setStyleSheet(_tall_color_swatch_qss(self.bg_color.name()))
                 self.grid_color_button.setStyleSheet(_tall_color_swatch_qss(self.grid_color.name()))
-                self.title_text.setText(s.get('title_text',''))
+                if self.title_text is not None:
+                    self.title_text.setText(s.get('title_text',''))
                 self.show_x_grid.setChecked(s.get('show_x_grid',False))
                 self.show_y_grid.setChecked(s.get('show_y_grid',False))
                 self.grid_alpha.setValue(s.get('grid_alpha',50))
@@ -1580,7 +1629,8 @@ class PlotSettingsDialog(QDialog):
                 print(f"Error loading settings: {e}")
 
     def _save_persistent(self):
-        self.plot_widget.persistent_dialog_settings = {
+        """Persist shared plot-format state back onto the target plot widget."""
+        settings = {
             'global_font_family': self.global_font_family.currentText(),
             'axis_font_size': self.axis_font_size.value(),
             'title_font_size': self.title_font_size.value(),
@@ -1590,67 +1640,59 @@ class PlotSettingsDialog(QDialog):
             'font_color': self.font_color.name(),
             'bg_color': self.bg_color.name(),
             'grid_color': self.grid_color.name(),
-            'title_text': self.title_text.text(),
             'show_x_grid': self.show_x_grid.isChecked(),
             'show_y_grid': self.show_y_grid.isChecked(),
             'grid_alpha': self.grid_alpha.value(),
             'grid_style': self.grid_style.currentText()}
+        if self.title_text is not None:
+            settings['title_text'] = self.title_text.text()
+        self.plot_widget.persistent_dialog_settings = settings
 
     def _apply_settings(self):
+        """Apply shared global plot-format settings to the live plot widget."""
         try:
             pi = self.plot_widget.getPlotItem()
             self.plot_widget.setBackground(self.bg_color)
             ff = self.global_font_family.currentText()
             ib = self.global_bold.isChecked()
             ii = self.global_italic.isChecked()
-            af = QFont(ff, self.axis_font_size.value()); af.setBold(ib); af.setItalic(ii)
-            fw = "bold" if ib else "normal"
-            fs = "italic" if ii else "normal"
-
-            for an in ['bottom','left']:
-                ax = pi.getAxis(an)
-                ax.setStyle(tickFont=af, tickTextOffset=10, tickLength=10)
-                ax.setTextPen(self.font_color)
-                ax.setPen(QPen(self.font_color, 1))
-
-            if hasattr(self.plot_widget, 'custom_axis_labels'):
-                for an in ['bottom','left']:
-                    if an in self.plot_widget.custom_axis_labels:
-                        info = self.plot_widget.custom_axis_labels[an]
-                        args = [an, info['text']]
-                        kw = {'color': self.font_color.name(),
-                              'font': f'{fs} {fw} {self.axis_font_size.value()}pt {ff}'}
-                        if info.get('units'):
-                            kw['units'] = info['units']
-                        pi.setLabel(*args, **kw)
-            else:
-                pi.setLabel('bottom','Time',units='s',color=self.font_color.name(),
-                           font=f'{fs} {fw} {self.axis_font_size.value()}pt {ff}')
-                pi.setLabel('left','Intensity',units='counts',color=self.font_color.name(),
-                           font=f'{fs} {fw} {self.axis_font_size.value()}pt {ff}')
-
             if self.show_x_grid.isChecked() or self.show_y_grid.isChecked():
                 pi.showGrid(x=self.show_x_grid.isChecked(), y=self.show_y_grid.isChecked(),
                            alpha=self.grid_alpha.value()/255.0)
             else:
                 pi.showGrid(x=False, y=False)
 
-            if self.title_text.text():
-                pi.setTitle(self.title_text.text(), color=self.font_color.name(),
-                           size=f'{fs} {fw} {self.title_font_size.value()}pt {ff}')
+            if self.title_text is not None:
+                title_text = self.title_text.text().strip()
             else:
-                pi.setTitle('')
+                title_text = (
+                    pi.titleLabel.text.strip()
+                    if pi.titleLabel and getattr(pi.titleLabel, 'text', '')
+                    else ''
+                )
+            axis_labels = {}
+            custom_axis_labels = getattr(
+                self.plot_widget, 'custom_axis_labels', {}) or {}
+            for axis_name in ('bottom', 'left'):
+                axis = pi.getAxis(axis_name)
+                info = custom_axis_labels.get(axis_name, {})
+                axis_labels[axis_name] = {
+                    'text': info.get('text', getattr(axis, 'labelText', '') or ''),
+                    'units': info.get('units', getattr(axis, 'labelUnits', None) or None),
+                }
 
-            legend = getattr(self.plot_widget, 'legend', None)
-            if legend:
-                try:
-                    lsz = f'{self.legend_font_size.value()}pt'
-                    legend.setLabelTextSize(lsz)
-                    legend.setLabelTextColor(self.font_color)
-                    for s, l in legend.items:
-                        l.setText(l.text, size=lsz, color=self.font_color.name())
-                except Exception:
-                    pass
+            apply_plot_item_text_styling(
+                pi,
+                family=ff,
+                title_size=self.title_font_size.value(),
+                axis_size=self.axis_font_size.value(),
+                legend_size=self.legend_font_size.value(),
+                bold=ib,
+                italic=ii,
+                color=self.font_color.name(),
+                title_text=title_text,
+                axis_labels=axis_labels,
+            )
 
             pi.getViewBox().updateAutoRange()
             self.plot_widget.repaint()
@@ -1660,13 +1702,16 @@ class PlotSettingsDialog(QDialog):
             QMessageBox.warning(self, "Error", f"Error applying settings: {str(e)}")
 
     def _reset_defaults(self):
+        """Reset shared plot-format controls to their default values."""
         self.global_font_family.setCurrentText("Times New Roman")
         self.axis_font_size.setValue(20); self.title_font_size.setValue(20); self.legend_font_size.setValue(16)
         self.global_bold.setChecked(True); self.global_italic.setChecked(False)
         for c, btn in [("#000000",self.font_color_button),("#FFFFFF",self.bg_color_button),("#808080",self.grid_color_button)]:
             btn.setStyleSheet(_tall_color_swatch_qss(c))
         self.font_color = QColor("#000000"); self.bg_color = QColor("#FFFFFF"); self.grid_color = QColor("#808080")
-        self.title_text.setText(""); self.show_x_grid.setChecked(False); self.show_y_grid.setChecked(False)
+        if self.title_text is not None:
+            self.title_text.setText("")
+        self.show_x_grid.setChecked(False); self.show_y_grid.setChecked(False)
         self.grid_alpha.setValue(50); self.grid_style.setCurrentText("Solid")
         if hasattr(self.plot_widget, 'persistent_dialog_settings'):
             del self.plot_widget.persistent_dialog_settings

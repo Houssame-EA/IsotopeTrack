@@ -1,3 +1,6 @@
+import os
+import sys
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
@@ -13,9 +16,32 @@ import math
 from scipy import stats
 from scipy.stats import gaussian_kde
 
+
+def _ensure_project_root_on_sys_path():
+    """Ensure package-style imports work when this file is run directly.
+
+    Returns:
+        None
+
+    Preserved behavior:
+        Normal application startup through ``Run.py`` already has the correct
+        import context. This helper only adds the parent ``IsotopeTrack``
+        source directory when the current module is executed from inside the
+        ``results`` directory, which keeps absolute imports like ``results.*``
+        and ``widget.*`` resolvable without changing runtime behavior.
+    """
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(current_dir)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+
+_ensure_project_root_on_sys_path()
+
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
+    apply_plot_item_text_styling, apply_plot_title_style,
     FontSettingsGroup,
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
@@ -329,6 +355,24 @@ class _PlotWidgetAdapter:
         except Exception:
             pass
 
+    def notify_bar_group_color_changed(self, items, color_hex):
+        """Forward shared bar-color edits to a plot-specific sync callback.
+
+        Args:
+            items (list[pg.BarGraphItem]): Edited bar items from the Plot
+                Settings dialog.
+            color_hex (str): Selected bar color in ``#RRGGBB`` form.
+
+        Returns:
+            None
+        """
+        callback = getattr(self._pi, '_bar_group_color_sync_callback', None)
+        if callable(callback):
+            try:
+                callback(items, color_hex)
+            except Exception:
+                pass
+
     def parent(self):
         """
         Returns:
@@ -511,9 +555,18 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     # ── Double-click ─────────────────────────────────────────────────
 
     def mouseDoubleClickEvent(self, event):
-        """
+        """Route double-click editing to the most specific plot item hit.
+
         Args:
             event (Any): Qt event object.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Existing shared editor dialogs remain available. Individual
+            ``PlotItem`` objects may opt into alternate title-editor options
+            through ``_title_editor_options`` without affecting other plots.
         """
         if not _CUSTOM_PLOT_AVAILABLE:
             super().mouseDoubleClickEvent(event)
@@ -541,7 +594,10 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             if tl and tl.isVisible():
                 if tl.mapRectToScene(
                         tl.boundingRect()).contains(scene_pos):
-                    TitleEditorDialog(adapter, dlg_parent).exec()
+                    title_editor_options = getattr(
+                        pi, '_title_editor_options', {})
+                    TitleEditorDialog(
+                        adapter, dlg_parent, **title_editor_options).exec()
                     event.accept(); return
 
             la = pi.getAxis('left')
@@ -732,6 +788,37 @@ def _get_element_display_name(element, cfg):
     """
     mappings = cfg.get('element_name_mappings', {})
     return mappings.get(element, element)
+
+
+def _tag_element_color_item(item, raw_element_key, trace_name):
+    """Attach canonical raw-element identity metadata to a graphics item.
+
+    Args:
+        item (Any): Bar or legend-swatch graphics item to annotate.
+        raw_element_key (str): Canonical raw element key such as ``Fe``.
+        trace_name (str): Display-only trace label shown to users.
+
+    Returns:
+        None
+    """
+    if item is None or not raw_element_key:
+        return
+    setattr(item, '_color_identity_role', 'element')
+    setattr(item, '_raw_element_key', raw_element_key)
+    setattr(item, '_trace_name', trace_name)
+
+
+def _get_legend_sample_graphics_item(legend_sample_item):
+    """Resolve the live swatch graphics item stored in a legend row.
+
+    Args:
+        legend_sample_item (Any): Sample-side entry from ``legend.items``.
+
+    Returns:
+        Any: Underlying swatch graphics item when exposed by PyQtGraph,
+            otherwise ``legend_sample_item`` itself.
+    """
+    return getattr(legend_sample_item, 'item', legend_sample_item)
 
 
 def _get_xy_labels(cfg):
@@ -3984,7 +4071,7 @@ def _sort_elements_for_display(elements, counts, sort_option):
 
 def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
                             show_y_label=True, y_scale=1.0, per_ml=False):
-    """Draw bar chart for one set of element counts onto a PyQtGraph PlotItem.
+    """Draw one element bar chart and tag element-colored bars for sync hooks.
     Args:
         plot_item (Any): The plot item.
         element_counts (Any): The element counts.
@@ -3993,6 +4080,11 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
         show_y_label (Any): The show y label.
         y_scale (float): Multiplier converting counts to particles per mL.
         per_ml (bool): Whether values are rendered as a concentration.
+
+    Preserved behavior:
+        Scientific counts, ordering rules, and value scaling are unchanged.
+        Canonical raw element metadata is attached only when element colors are
+        active so shared format edits can update config and legend swatches.
     """
     log_y = cfg.get('log_y', False)
     sort_opt = cfg.get('sort_bars', 'No Sorting')
@@ -4022,6 +4114,8 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
             brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
             pen=pg.mkPen(color='w', width=0.5))
         bar.opts['_trace_name'] = _fmt_elem(elem, cfg)
+        if single_color is None:
+            _tag_element_color_item(bar, elem, bar.opts['_trace_name'])
         plot_item.addItem(bar)
 
     if show_vals:
@@ -4246,14 +4340,358 @@ class ElementBarChartDisplayDialog(QDialog):
             None,
         )
         if pi is not None:
+            pi._bar_group_color_sync_callback = self._sync_element_bar_group_color
             dlg = _PlotSettingsDialog(
-                _PlotWidgetAdapter(self.pw, pi), self, show_apply=show_apply)
+                _PlotWidgetAdapter(self.pw, pi), self, show_apply=show_apply,
+                allow_title_text=False)
             if title_override:
                 try:
                     dlg.setWindowTitle(title_override)
                 except Exception:
                     pass
-            dlg.exec()
+            try:
+                result = dlg.exec()
+                if result == QDialog.Accepted:
+                    self._propagate_plot_format_text_settings(pi)
+            finally:
+                try:
+                    delattr(pi, '_bar_group_color_sync_callback')
+                except Exception:
+                    pass
+
+    def _plot_items(self):
+        """Return all current PyQtGraph plot items in the dialog canvas.
+
+        Returns:
+            list: Current ``pg.PlotItem`` instances in draw order.
+        """
+        return [
+            item for item in self.pw.scene().items()
+            if isinstance(item, pg.PlotItem)
+        ]
+
+    def _get_custom_title_map(self):
+        """Return the mutable Element Bar Chart custom-title mapping.
+
+        Returns:
+            dict: Node-config mapping from stable plot identifiers to custom
+            title text strings.
+        """
+        custom_titles = self.node.config.get('custom_titles')
+        if not isinstance(custom_titles, dict):
+            custom_titles = {}
+            self.node.config['custom_titles'] = custom_titles
+        return custom_titles
+
+    def _title_key_for_combined_plot(self, mode_key):
+        """Build the stable custom-title key for a combined bar-chart view.
+
+        Args:
+            mode_key (str): Stable internal mode identifier for one combined
+                Element Bar Chart plot.
+
+        Returns:
+            str: Canonical config key used for custom title lookup.
+        """
+        return f"combined:{mode_key}"
+
+    def _title_key_for_sample_plot(self, sample_name):
+        """Build the stable custom-title key for one sample subplot.
+
+        Args:
+            sample_name (str): Canonical raw sample name represented by the
+                subplot.
+
+        Returns:
+            str: Canonical config key used for custom title lookup.
+        """
+        return f"sample:{sample_name}"
+
+    def _default_title_for_key(self, plot_key):
+        """Return the default rendered title for one custom-title key.
+
+        Args:
+            plot_key (str): Stable custom-title identifier for a plot or
+                subplot.
+
+        Returns:
+            str: Default title text when no custom override is stored.
+        """
+        if plot_key.startswith('sample:'):
+            raw_sample_name = plot_key.split(':', 1)[1]
+            return get_display_name(raw_sample_name, self.node.config)
+        return ''
+
+    def _effective_title_for_key(self, plot_key, default_title):
+        """Resolve the visible title text for one plot from config state.
+
+        Args:
+            plot_key (str): Stable custom-title identifier for a plot.
+            default_title (str): Fallback title when no custom text exists.
+
+        Returns:
+            str: Title text that should be rendered on the plot.
+        """
+        custom_title = self._get_custom_title_map().get(plot_key)
+        if isinstance(custom_title, str) and custom_title.strip():
+            return custom_title.strip()
+        return default_title
+
+    def _apply_title_text_to_plot(self, plot_item, title_text):
+        """Apply title text while preserving current global title formatting.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            title_text (str): Title text that should be rendered.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This does not create a second title-style system. When shared plot
+            settings are active on the live plot, their current title font
+            settings are reused. Otherwise the Element Bar Chart font config is
+            used as the default title styling.
+        """
+        title_text = (title_text or '').strip()
+        if not title_text:
+            plot_item.setTitle('')
+            return
+
+        settings = getattr(plot_item, '_persistent_dialog_settings', {}) or {}
+        apply_plot_title_style(
+            plot_item,
+            title_text,
+            family=settings.get(
+                'global_font_family',
+                self.node.config.get('font_family', 'Times New Roman')),
+            size=settings.get(
+                'title_font_size',
+                self.node.config.get('font_size', 18)),
+            bold=settings.get(
+                'global_bold',
+                self.node.config.get('font_bold', False)),
+            italic=settings.get(
+                'global_italic',
+                self.node.config.get('font_italic', False)),
+            color=settings.get(
+                'font_color',
+                self.node.config.get('font_color', '#000000')),
+        )
+
+    def _propagate_plot_format_text_settings(self, source_plot_item):
+        """Apply accepted plot-format text settings to every current subplot.
+
+        Args:
+            source_plot_item (Any): Plot item whose shared dialog just stored
+                the accepted persistent text-format settings.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This propagates formatting only. Custom title content remains owned
+            by ``custom_titles`` and each subplot keeps its own title text.
+        """
+        settings = getattr(source_plot_item, '_persistent_dialog_settings', None)
+        if not settings:
+            return
+        self.node.config['plot_format_settings'] = dict(settings)
+        for plot_item in self._plot_items():
+            plot_item._persistent_dialog_settings = dict(settings)
+            self._apply_plot_text_settings_to_plot_item(plot_item, settings)
+
+    def _reapply_saved_plot_format_settings(self):
+        """Reapply saved Element Bar Chart plot-format settings after redraw.
+
+        Returns:
+            None
+        """
+        settings = self.node.config.get('plot_format_settings')
+        if not isinstance(settings, dict) or not settings:
+            return
+        for plot_item in self._plot_items():
+            plot_item._persistent_dialog_settings = dict(settings)
+            self._apply_plot_text_settings_to_plot_item(plot_item, settings)
+
+    def _apply_plot_text_settings_to_plot_item(self, plot_item, settings):
+        """Apply explicit shared-format text styling to one plot item.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            settings (dict): Shared Plot Settings dialog state from
+                ``persistent_dialog_settings``.
+
+        Returns:
+            None
+        """
+        axis_labels = {}
+        custom_axis_labels = getattr(plot_item, '_custom_axis_labels', {}) or {}
+        for axis_name in ('bottom', 'left'):
+            axis = plot_item.getAxis(axis_name)
+            info = custom_axis_labels.get(axis_name, {})
+            axis_labels[axis_name] = {
+                'text': info.get('text', getattr(axis, 'labelText', '') or ''),
+                'units': info.get(
+                    'units', getattr(axis, 'labelUnits', None) or None),
+            }
+
+        title_label = getattr(plot_item, 'titleLabel', None)
+        title_text = (
+            title_label.text.strip()
+            if title_label and getattr(title_label, 'text', '')
+            else ''
+        )
+        apply_plot_item_text_styling(
+            plot_item,
+            family=settings.get(
+                'global_font_family',
+                self.node.config.get('font_family', 'Times New Roman')),
+            title_size=settings.get(
+                'title_font_size',
+                self.node.config.get('font_size', 18)),
+            axis_size=settings.get(
+                'axis_font_size',
+                self.node.config.get('font_size', 18)),
+            legend_size=settings.get(
+                'legend_font_size',
+                self.node.config.get('font_size', 18)),
+            bold=settings.get(
+                'global_bold',
+                self.node.config.get('font_bold', False)),
+            italic=settings.get(
+                'global_italic',
+                self.node.config.get('font_italic', False)),
+            color=settings.get(
+                'font_color',
+                self.node.config.get('font_color', '#000000')),
+            title_text=title_text,
+            axis_labels=axis_labels,
+        )
+
+    def _store_custom_title_text(self, plot_key, title_text):
+        """Persist one custom title text value into Element Bar Chart config.
+
+        Args:
+            plot_key (str): Stable custom-title identifier for a plot.
+            title_text (str): User-entered title text. Blank text removes the
+                custom override and restores default title behavior.
+
+        Returns:
+            None
+        """
+        custom_titles = dict(self._get_custom_title_map())
+        clean_text = (title_text or '').strip()
+        if clean_text:
+            custom_titles[plot_key] = clean_text
+        else:
+            custom_titles.pop(plot_key, None)
+        self.node.config['custom_titles'] = custom_titles
+
+    def _apply_custom_title_edit(self, plot_item, plot_key, title_text):
+        """Update live plot title text and persist it in node config.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` being edited.
+            plot_key (str): Stable custom-title identifier for that plot.
+            title_text (str): User-entered title text.
+
+        Returns:
+            None
+        """
+        self._store_custom_title_text(plot_key, title_text)
+        effective_title = self._effective_title_for_key(
+            plot_key, self._default_title_for_key(plot_key))
+        self._apply_title_text_to_plot(plot_item, effective_title)
+
+    def _configure_plot_title(self, plot_item, plot_key, default_title=''):
+        """Bind Element Bar Chart title behavior to one freshly drawn plot.
+
+        Args:
+            plot_item (Any): Freshly created ``pg.PlotItem``.
+            plot_key (str): Stable custom-title identifier for that plot.
+            default_title (str): Default title text for the plot when no custom
+                override exists.
+
+        Returns:
+            None
+        """
+        plot_item._title_editor_options = {
+            'text_only': True,
+            'title_apply_callback': (
+                lambda text, _plot_item=plot_item, _plot_key=plot_key:
+                self._apply_custom_title_edit(_plot_item, _plot_key, text)
+            ),
+        }
+        self._apply_title_text_to_plot(
+            plot_item, self._effective_title_for_key(plot_key, default_title))
+
+    def _sync_element_bar_group_color(self, items, color_hex):
+        """Persist shared bar-color edits into canonical element config state.
+
+        Args:
+            items (list[pg.BarGraphItem]): Edited bar items from the Plot
+                Settings dialog.
+            color_hex (str): Selected color for the edited element group.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Only presentation-layer color config is updated. Element keys remain
+            canonical raw identifiers and no scientific data is recalculated.
+        """
+        if not items:
+            return
+        raw_keys = {
+            getattr(item, '_raw_element_key', None)
+            for item in items
+            if getattr(item, '_color_identity_role', None) == 'element'
+        }
+        raw_keys.discard(None)
+        if not raw_keys:
+            return
+
+        element_colors = dict(self.node.config.get('element_colors', {}))
+        for raw_key in raw_keys:
+            element_colors[raw_key] = color_hex
+        self.node.config['element_colors'] = element_colors
+        self._update_element_legend_swatches(raw_keys, color_hex)
+
+    def _update_element_legend_swatches(self, raw_keys, color_hex):
+        """Refresh live legend swatches for element-colored bar-chart entries.
+
+        Args:
+            raw_keys (set[str]): Canonical raw element keys whose legend
+                swatches should be recolored.
+            color_hex (str): Selected color for those legend entries.
+
+        Returns:
+            None
+        """
+        plot_item = next(
+            (item for item in self.pw.scene().items() if isinstance(item, pg.PlotItem)),
+            None,
+        )
+        if plot_item is None:
+            return
+        legend = getattr(plot_item, 'legend', None)
+        if legend is None:
+            return
+
+        color = QColor(color_hex)
+        brush = pg.mkBrush(color.red(), color.green(), color.blue(), 215)
+        for sample_item, _label_item in getattr(legend, 'items', []):
+            swatch_item = _get_legend_sample_graphics_item(sample_item)
+            if getattr(swatch_item, '_color_identity_role', None) != 'element':
+                continue
+            if getattr(swatch_item, '_raw_element_key', None) not in raw_keys:
+                continue
+            try:
+                swatch_item.setOpts(brush=brush)
+                swatch_item.update()
+            except Exception:
+                pass
 
     def _download_figure(self):
         """Export bar chart as image or CSV via existing PyQtGraph export path."""
@@ -4328,6 +4766,16 @@ class ElementBarChartDisplayDialog(QDialog):
     # ── Refresh ─────────────────────────────
 
     def _refresh(self):
+        """Rebuild the Element Bar Chart canvas from node config and data.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Scientific/data extraction and display-mode logic remain unchanged.
+            Custom title text is reapplied during every rebuild using stable
+            plot identifiers stored in node config.
+        """
         try:
             parent_layout = self.pw.parent().layout()
             idx = parent_layout.indexOf(self.pw)
@@ -4373,7 +4821,10 @@ class ElementBarChartDisplayDialog(QDialog):
                 sn = self.node.input_data.get('sample_name') if self.node.input_data else None
                 y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_bar_chart(pi, plot_data, cfg, y_scale=y_scale, per_ml=per_ml)
+                self._configure_plot_title(
+                    pi, self._title_key_for_combined_plot('single'))
 
+            self._reapply_saved_plot_format_settings()
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
 
@@ -4383,10 +4834,12 @@ class ElementBarChartDisplayDialog(QDialog):
             traceback.print_exc()
 
     def _draw_subplots(self, plot_data, cfg):
-        """
+        """Draw one titled subplot per sample and reapply custom title text.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (Any): Multi-sample element-count data keyed by raw
+                sample name.
+            cfg (Any): Element Bar Chart config snapshot.
         """
         samples = list(plot_data.keys())
         n = len(samples)
@@ -4403,12 +4856,17 @@ class ElementBarChartDisplayDialog(QDialog):
                 y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_single_bar_chart(pi, sd, cfg, single_color=color,
                                         y_scale=y_scale, per_ml=per_ml)
+            self._configure_plot_title(
+                pi, self._title_key_for_sample_plot(sn),
+                default_title=get_display_name(sn, cfg))
 
     def _draw_side_by_side(self, plot_data, cfg):
-        """
+        """Draw horizontal sample subplots and reapply custom title text.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (Any): Multi-sample element-count data keyed by raw
+                sample name.
+            cfg (Any): Element Bar Chart config snapshot.
         """
         samples = list(plot_data.keys())
         per_ml = _per_ml_active(cfg, self.node.input_data)
@@ -4422,12 +4880,16 @@ class ElementBarChartDisplayDialog(QDialog):
                 _draw_single_bar_chart(pi, sd, cfg, single_color=color,
                                         show_y_label=(idx == 0),
                                         y_scale=y_scale, per_ml=per_ml)
+            self._configure_plot_title(
+                pi, self._title_key_for_sample_plot(sn),
+                default_title=get_display_name(sn, cfg))
 
     def _draw_grouped(self, plot_data, cfg):
-        """
+        """Draw the combined grouped-bars multi-sample view.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (Any): Multi-sample element-count data.
+            cfg (Any): Element Bar Chart config snapshot.
         """
         pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
@@ -4512,12 +4974,15 @@ class ElementBarChartDisplayDialog(QDialog):
         apply_font_to_pyqtgraph(pi, cfg)
         if per_ml and not log_y:
             _apply_sci_y_axis(pi, cfg)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot('grouped'))
 
     def _draw_stacked(self, plot_data, cfg):
-        """
+        """Draw the combined stacked-bars multi-sample view.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (Any): Multi-sample element-count data.
+            cfg (Any): Element Bar Chart config snapshot.
         """
         pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
@@ -4594,13 +5059,22 @@ class ElementBarChartDisplayDialog(QDialog):
         apply_font_to_pyqtgraph(pi, cfg)
         if per_ml and not log_y:
             _apply_sci_y_axis(pi, cfg)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot('stacked'))
 
     def _draw_by_sample(self, plot_data, cfg):
-        """X-axis = samples, one bar per element per sample, colors = elements.
+        """Draw the multi-sample element-colored grouped bar chart view.
+
+        X-axis = samples, one bar per element per sample, colors = elements.
         Respects sample_order for time-series use.
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
+
+        Preserved behavior:
+            Element ordering, counts, particles-per-mL scaling, and label
+            rendering are unchanged. Live bars and draggable legend swatches are
+            tagged with the same raw element key so color edits stay synced.
         """
         pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
@@ -4666,10 +5140,12 @@ class ElementBarChartDisplayDialog(QDialog):
                 brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
                 pen=pg.mkPen(color='w', width=0.5))
             bar.opts['_trace_name'] = label
+            _tag_element_color_item(bar, elem, label)
             pi.addItem(bar)
 
             swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
                                      brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
+            _tag_element_color_item(swatch, elem, label)
             legend.addItem(swatch, label)
 
             if show_vals:
@@ -4693,6 +5169,8 @@ class ElementBarChartDisplayDialog(QDialog):
         apply_font_to_pyqtgraph(pi, cfg)
         if per_ml and not log_y:
             _apply_sci_y_axis(pi, cfg)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot('by_sample'))
 
     def _update_stats(self, plot_data):
         """
@@ -4733,6 +5211,8 @@ class ElementBarChartPlotNode(QObject):
         'sample_colors': {},
         'sample_name_mappings': {},
         'sample_order': [],
+        'custom_titles': {},
+        'plot_format_settings': {},
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,

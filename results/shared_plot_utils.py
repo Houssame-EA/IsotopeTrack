@@ -452,40 +452,298 @@ def make_qfont(config: dict) -> QFont:
     return font
 
 
-def apply_font_to_pyqtgraph(plot_item, config: dict):
-    """
-    Apply font settings to a PyQtGraph PlotItem (axes, ticks, legend).
+def _resolve_text_style_fields(config: dict | None = None, *, family=None,
+                               size=None, bold=None, italic=None,
+                               color=None) -> dict:
+    """Resolve explicit text-style fields from config values and overrides.
 
     Args:
-        plot_item: pg.PlotItem
-        config: dict with font_family, font_size, font_bold, font_italic, font_color
+        config (dict | None): Optional config dictionary using the standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        dict: Normalized explicit text-style fields.
+    """
+    fc = get_font_config(config)
+    return {
+        'family': family if family is not None else fc['family'],
+        'size': int(size if size is not None else fc['size']),
+        'bold': bool(fc['bold'] if bold is None else bold),
+        'italic': bool(fc['italic'] if italic is None else italic),
+        'color': color if color is not None else fc['color'],
+    }
+
+
+def build_labelitem_style_kwargs(config: dict | None = None, *, family=None,
+                                 size=None, bold=None, italic=None,
+                                 color=None) -> dict:
+    """Build explicit ``LabelItem.setText`` style kwargs for PyQtGraph.
+
+    Args:
+        config (dict | None): Optional config dictionary using standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        dict: Keyword arguments accepted by ``pyqtgraph.LabelItem.setText``.
+    """
+    fields = _resolve_text_style_fields(
+        config, family=family, size=size, bold=bold, italic=italic,
+        color=color)
+    kwargs = {
+        'size': f'{fields["size"]}pt',
+        'color': fields['color'],
+        'bold': fields['bold'],
+        'italic': fields['italic'],
+    }
+    if fields['family']:
+        kwargs['family'] = fields['family']
+    return kwargs
+
+
+def build_axis_label_style_kwargs(config: dict | None = None, *, family=None,
+                                  size=None, bold=None, italic=None,
+                                  color=None) -> dict:
+    """Build explicit ``AxisItem.setLabel`` style kwargs for PyQtGraph.
+
+    Args:
+        config (dict | None): Optional config dictionary using standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        dict: Keyword arguments accepted by ``pyqtgraph.AxisItem.setLabel``.
+    """
+    fields = _resolve_text_style_fields(
+        config, family=family, size=size, bold=bold, italic=italic,
+        color=color)
+    family_css = str(fields['family']).replace('"', '\\"')
+    return {
+        'color': fields['color'],
+        'font-size': f'{fields["size"]}pt',
+        'font-family': f'"{family_css}"',
+        'font-weight': 'bold' if fields['bold'] else 'normal',
+        'font-style': 'italic' if fields['italic'] else 'normal',
+    }
+
+
+def apply_plot_title_style(plot_item, title_text: str,
+                           config: dict | None = None, *, family=None,
+                           size=None, bold=None, italic=None,
+                           color=None) -> None:
+    """Apply explicit title styling to a ``pg.PlotItem`` title label.
+
+    Args:
+        plot_item (Any): Target ``pg.PlotItem``.
+        title_text (str): Title text to render. Empty text clears the title.
+        config (dict | None): Optional config dictionary using standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        None
+    """
+    clean_title = (title_text or '').strip()
+    if not clean_title:
+        plot_item.setTitle('')
+        return
+    kwargs = build_labelitem_style_kwargs(
+        config, family=family, size=size, bold=bold, italic=italic,
+        color=color)
+    try:
+        plot_item.setTitle(clean_title, **kwargs)
+    except TypeError:
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs.pop('family', None)
+        plot_item.setTitle(clean_title, **fallback_kwargs)
+
+
+def apply_axis_label_style(plot_item, axis_name: str, text: str,
+                           units: str | None = None,
+                           config: dict | None = None, *, family=None,
+                           size=None, bold=None, italic=None,
+                           color=None) -> None:
+    """Apply explicit styling to one PyQtGraph axis label.
+
+    Args:
+        plot_item (Any): Target ``pg.PlotItem``.
+        axis_name (str): Axis identifier such as ``'bottom'`` or ``'left'``.
+        text (str): Axis label text.
+        units (str | None): Optional axis label units.
+        config (dict | None): Optional config dictionary using standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        None
+    """
+    kwargs = build_axis_label_style_kwargs(
+        config, family=family, size=size, bold=bold, italic=italic,
+        color=color)
+    if units:
+        plot_item.setLabel(axis_name, text, units=units, **kwargs)
+    else:
+        plot_item.setLabel(axis_name, text, **kwargs)
+
+
+def apply_legend_label_style(legend, config: dict | None = None, *,
+                             family=None, size=None, bold=None,
+                             italic=None, color=None) -> None:
+    """Apply explicit styling to every label inside a PyQtGraph legend.
+
+    Args:
+        legend (Any): Target ``pg.LegendItem`` or ``None``.
+        config (dict | None): Optional config dictionary using standard
+            ``font_*`` keys.
+        family (str | None): Optional font family override.
+        size (int | float | None): Optional font-size override in points.
+        bold (bool | None): Optional bold-state override.
+        italic (bool | None): Optional italic-state override.
+        color (str | None): Optional text-color override.
+
+    Returns:
+        None
+    """
+    if legend is None:
+        return
+    kwargs = build_labelitem_style_kwargs(
+        config, family=family, size=size, bold=bold, italic=italic,
+        color=color)
+    legend.setLabelTextSize(kwargs['size'])
+    legend.setLabelTextColor(QColor(kwargs['color']))
+    for _sample, label in getattr(legend, 'items', []):
+        if not hasattr(label, 'setText'):
+            continue
+        try:
+            label.setText(label.text, **kwargs)
+        except TypeError:
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs.pop('family', None)
+            label.setText(label.text, **fallback_kwargs)
+    try:
+        legend.update()
+    except Exception:
+        pass
+
+
+def apply_plot_item_text_styling(
+        plot_item, *, family: str, title_size: int, axis_size: int,
+        legend_size: int, bold: bool, italic: bool, color: str,
+        title_text: str | None = None, axis_labels: dict | None = None) -> None:
+    """Apply explicit text styling to title, axes, ticks, and legend.
+
+    Args:
+        plot_item (Any): Target ``pg.PlotItem``.
+        family (str): Font family for all text groups.
+        title_size (int): Title font size in points.
+        axis_size (int): Axis-label and tick-label font size in points.
+        legend_size (int): Legend-label font size in points.
+        bold (bool): Global bold state.
+        italic (bool): Global italic state.
+        color (str): Global text color.
+        title_text (str | None): Optional explicit title text. When ``None``,
+            the current live title text is preserved.
+        axis_labels (dict | None): Optional mapping keyed by axis name with
+            ``text`` and ``units`` values. When omitted, current live axis
+            label text/units are preserved.
+
+    Returns:
+        None
+    """
+    if title_text is None:
+        title_label = getattr(plot_item, 'titleLabel', None)
+        title_text = (
+            title_label.text.strip()
+            if title_label and getattr(title_label, 'text', '')
+            else ''
+        )
+    apply_plot_title_style(
+        plot_item, title_text, family=family, size=title_size, bold=bold,
+        italic=italic, color=color)
+
+    if axis_labels is None:
+        axis_labels = {}
+        for axis_name in ('bottom', 'left'):
+            axis = plot_item.getAxis(axis_name)
+            axis_labels[axis_name] = {
+                'text': getattr(axis, 'labelText', '') or '',
+                'units': getattr(axis, 'labelUnits', None) or None,
+            }
+
+    tick_font = QFont(family, axis_size)
+    tick_font.setBold(bold)
+    tick_font.setItalic(italic)
+    text_color = QColor(color)
+    for axis_name in ('bottom', 'left'):
+        spec = axis_labels.get(axis_name, {})
+        apply_axis_label_style(
+            plot_item, axis_name, spec.get('text', ''),
+            units=spec.get('units'), family=family, size=axis_size,
+            bold=bold, italic=italic, color=color)
+        axis = plot_item.getAxis(axis_name)
+        axis.setStyle(tickFont=tick_font, tickTextOffset=10, tickLength=10)
+        axis.setTextPen(text_color)
+        axis.setPen(QPen(text_color, 1))
+        axis.update()
+
+    apply_legend_label_style(
+        getattr(plot_item, 'legend', None), family=family, size=legend_size,
+        bold=bold, italic=italic, color=color)
+    try:
+        plot_item.update()
+    except Exception:
+        pass
+
+
+def apply_font_to_pyqtgraph(plot_item, config: dict):
+    """Apply config-driven text styling to a PyQtGraph plot item.
+
+    Args:
+        plot_item (Any): Target ``pg.PlotItem``.
+        config (dict): Font-style configuration containing the standard
+            ``font_*`` keys consumed by ``get_font_config``.
+
+    Returns:
+        None
+
+    Preserved behavior:
+        Tick labels continue to use the existing ``QFont`` path while title,
+        axis-label, and legend styling now flow through the explicit shared
+        helper path.
     """
     try:
         fc = get_font_config(config)
-        font = make_qfont(config)
-        color = QColor(fc['color'])
-
-        for axis_name in ('bottom', 'left'):
-            axis = plot_item.getAxis(axis_name)
-            axis.setStyle(tickFont=font, tickTextOffset=10, tickLength=10)
-            axis.setTextPen(color)
-            axis.setPen(QPen(color, 1))
-            axis.update()
-
-        legend = getattr(plot_item, 'legend', None)
-        if legend is not None:
-            try:
-                size_css = f'{fc["size"]}pt'
-                legend.setLabelTextSize(size_css)
-                legend.setLabelTextColor(color)
-                for sample, label in legend.items:
-                    if hasattr(label, 'setText'):
-                        label.setText(label.text, color=fc['color'],
-                                      size=size_css, bold=fc['bold'],
-                                      italic=fc['italic'])
-                legend.update()
-            except Exception as e:
-                print(f"Warning: legend font update failed: {e}")
+        apply_plot_item_text_styling(
+            plot_item,
+            family=fc['family'],
+            title_size=fc['size'],
+            axis_size=fc['size'],
+            legend_size=fc['size'],
+            bold=fc['bold'],
+            italic=fc['italic'],
+            color=fc['color'],
+        )
     except Exception as e:
         print(f"Error applying pyqtgraph font settings: {e}")
 
@@ -498,12 +756,8 @@ def set_axis_labels(plot_item, x_label: str, y_label: str, config: dict):
         y_label (str): The y label.
         config (dict): Configuration dictionary.
     """
-    fc = get_font_config(config)
-    weight = "bold" if fc['bold'] else "normal"
-    style = "italic" if fc['italic'] else "normal"
-    font_str = f'{style} {weight} {fc["size"]}pt {fc["family"]}'
-    plot_item.setLabel('bottom', x_label, color=fc['color'], font=font_str)
-    plot_item.setLabel('left', y_label, color=fc['color'], font=font_str)
+    apply_axis_label_style(plot_item, 'bottom', x_label, config=config)
+    apply_axis_label_style(plot_item, 'left', y_label, config=config)
 
 
 def _configure_mathtext_font(family: str) -> None:
