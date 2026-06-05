@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QApplication
 from mainwindow import MainWindow
 from tools.mass_fraction_calculator import CSVCompoundDatabase
+from widget.periodic_table_widget import PeriodicTableWidget
 
 
 class ProgressiveMainWindow(QObject):
@@ -218,12 +219,14 @@ class ProgressiveMainWindow(QObject):
         arguments: CliArguments = CliArguments.from_args_parser_namespace(parser.parse_args())
 
         main_window: MainWindow = self.main_window
-        main_window.log_status(f"Arguments : {arguments.__str__()}")  # TODO: DI
+        main_window.log_status(f"Arguments : {arguments}")  # TODO: DI
         if arguments.project_file:
             main_window.log_status(
                 f"Project loading via CLI")  # TODO: Change for a new type of log passed via dependency injection
             main_window.load_project(filepath=str(arguments.project_file))
             return
+
+        loaded_files = False
 
         if arguments.nu_files:
             main_window.log_status(f"Nu data loading via CLI")  # TODO: DI and add an indicator for discarded files
@@ -231,6 +234,7 @@ class ProgressiveMainWindow(QObject):
                 [str(path) for path in arguments.nu_files
                  if path.exists() and path.is_dir()]
             )
+            loaded_files = True
 
         if arguments.tofwerk_files:
             has_h5_extention = lambda path: ".h5" == path.suffix.lower()
@@ -240,12 +244,28 @@ class ProgressiveMainWindow(QObject):
                 [str(path) for path in arguments.tofwerk_files
                  if path.exists() and has_h5_extention(path)]
             )
+            loaded_files = True
 
-        # TODO: check si on peut utiliser le load du Periodic table
-        selected_isotopes = self.get_selected_isotopes(arguments.isotopes, arguments.presets)
-        if selected_isotopes:
-            main_window.log_status(f"Selecting {len(selected_isotopes)} isotope(s) via CLI")  # TODO: DI
-            main_window.handle_isotopes_selected(selected_isotopes)
+        periodic_table = main_window.periodic_table_widget
+        if loaded_files and isinstance(periodic_table, PeriodicTableWidget):
+            periodic_table.hide()
+            selected_isotopes_by_element = self.get_selected_isotopes(arguments.isotopes, arguments.presets)
+            if selected_isotopes_by_element:
+                # Tries to load the isotopes
+                selected_isotopes_count = sum([len(masses) for masses in selected_isotopes_by_element.values()])
+                main_window.log_status(f"Selecting {selected_isotopes_count} isotopes(s) via CLI")  # TODO: DI
+                updated_element_cout, not_loaded_elements = periodic_table.update_selection(
+                    selected_isotopes_by_element)
+
+                # Automatically confirms the loaded isotopes
+                main_window.log_status(f"Selected {updated_element_cout} / {selected_isotopes_count} isotopes. "
+                                       f"Missing elements/isotopes: {not_loaded_elements}")  # TODO: DI
+                periodic_table.confirm_selections()
+        else:
+            if not loaded_files:
+                main_window.log_status("No files were loaded.")  # TODO: DI
+            else:
+                main_window.log_status("No periodic table was loaded.")  # TODO: DI
 
     def get_selected_isotopes(self,
                               isotopes: list[str] | None,
