@@ -35,7 +35,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
     get_sample_color, get_display_name,
-    download_matplotlib_figure,
+    download_matplotlib_figure, pick_color_hex,
 )
 
 
@@ -583,9 +583,12 @@ class _ColorSwatch(QPushButton):
         self._update()
 
     def _update(self):
+        """Refresh the swatch preview without styling any parent dialog."""
         self.setStyleSheet(
-            f'background-color:{self._color};'
-            f'border:1px solid #888;border-radius:3px;')
+            "QPushButton {"
+            f"background-color:{self._color};"
+            "border:1px solid #888;border-radius:3px;"
+            "}")
 
     def color(self):
         """
@@ -595,22 +598,25 @@ class _ColorSwatch(QPushButton):
         return self._color
 
     def set_color(self, c):
-        """
+        """Store one validated triangle-preview color and refresh the swatch.
+
         Args:
-            c (Any): The c.
+            c (Any): Hex color string selected for this preview swatch.
         """
         self._color = c
         self._update()
 
     def mousePressEvent(self, event):
-        """
+        """Open the shared safe color picker for this swatch on left click.
+
         Args:
             event (Any): Qt event object.
         """
         if event.button() == Qt.LeftButton:
-            c = QColorDialog.getColor(QColor(self._color), self)
-            if c.isValid():
-                self.set_color(c.name())
+            picked = pick_color_hex(self._color, owner=self,
+                                    title="Select Color")
+            if picked:
+                self.set_color(picked)
         super().mousePressEvent(event)
 
 

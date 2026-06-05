@@ -15,6 +15,32 @@ from PySide6.QtCore import Qt
 import pyqtgraph as pg
 
 
+def pick_color_hex(initial_color: str, owner=None,
+                   title: str = "Select Color") -> str | None:
+    """Open a safely parented color dialog and return a validated hex color.
+
+    Args:
+        initial_color (str): Current color used to seed the picker.
+        owner (Any): Optional widget whose top-level window should own the
+            dialog. The helper intentionally avoids using a colorized swatch as
+            the direct dialog parent.
+        title (str): Dialog title shown by ``QColorDialog``.
+
+    Returns:
+        str | None: Selected ``#RRGGBB`` string when accepted, otherwise
+        ``None`` when the dialog is canceled.
+    """
+    initial = QColor(initial_color)
+    if not initial.isValid():
+        initial = QColor("#000000")
+
+    parent = owner.window() if owner is not None and hasattr(owner, 'window') else owner
+    picked = QColorDialog.getColor(initial, parent, title)
+    if not picked.isValid():
+        return None
+    return picked.name()
+
+
 # ─────────────────────────────────────────────
 # Draggable matplotlib canvas (shared by heatmap, single/multiple, etc.)
 # ─────────────────────────────────────────────
