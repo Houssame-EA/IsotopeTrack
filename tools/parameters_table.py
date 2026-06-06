@@ -540,7 +540,6 @@ class ParametersTableView(QTableView):
     def set_row_colors(self, row, bg=None, fg=None):
         self._model.set_row_colors(row, bg, fg)
 
-    # Compatibility shims
     def rowCount(self):
         return self._model.rowCount()
 

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QVBoxLayout, QWidget,
 )
 
-import theme as _theme_module   # import the module so we always get the live palette
+import tools.theme as _theme_module   # import the module so we always get the live palette
 
 
 class ElementGridPopup(QWidget):
