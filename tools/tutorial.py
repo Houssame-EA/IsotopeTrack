@@ -7,7 +7,7 @@ from PySide6.QtGui import QMovie, QPixmap
 from pathlib import Path
 import sys
 
-from theme import theme
+from tools.theme import theme
 
 
 def get_resource_path(relative_path):

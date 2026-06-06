@@ -13,7 +13,7 @@ from calibration_methods.te_common import (
     RETURN_BUTTON_STYLE,
     base_stylesheet, return_button_style,
 )
-from theme import theme
+from tools.theme import theme
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():

@@ -12,7 +12,7 @@ from calibration_methods.te_common import (
     weight_method_transport_rate,
     base_stylesheet, preview_styles,
 )
-from theme import theme
+from tools.theme import theme
 
 
 class InputMethodCalibration(QMainWindow):

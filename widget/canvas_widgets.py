@@ -62,7 +62,7 @@ from results.results_periodic import IsotopeChipSelector
 
 import qtawesome as qta
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -1002,7 +1002,7 @@ def _dialog_base_style():
     Returns:
         object: Result of the operation.
     """
-    from theme import theme as _app_theme
+    from tools.theme import theme as _app_theme
     p = _app_theme.palette
     return f"""
     QDialog {{

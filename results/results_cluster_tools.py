@@ -497,7 +497,7 @@ class Preprocessor:
     """
 
     def __init__(self, particle_data, elements, filter_zeros=True,
-                 tsne_random_state=42, n_components=2):
+                 tsne_random_state=42, n_components=2, min_type_count=1):
         """Initialise the cache and the fixed kept-row mask.
 
         Args:
@@ -506,10 +506,17 @@ class Preprocessor:
             filter_zeros (bool): Drop all-zero rows to match the host pipeline.
             tsne_random_state (int): Seed for reproducible t-SNE.
             n_components (int): Target dimensionality for PCA / t-SNE.
+            min_type_count (int): Minimum number of particles that must share an
+                elemental combination (the set of elements present) for that
+                combination to be kept. A particle is dropped when its
+                combination occurs fewer than ``min_type_count`` times across
+                the (zero-filtered) data. ``1`` disables the filter. This
+                mirrors the host pipeline's "Min. particles per type" control.
         """
         self.elements = list(elements)
         self.n_components = int(n_components)
         self.tsne_rs = tsne_random_state
+        self.min_type_count = max(1, int(min_type_count))
 
         counts = np.array([_row_for_particle(p, 'Counts', self.elements)
                            for p in particle_data], dtype=float)
@@ -519,6 +526,15 @@ class Preprocessor:
             self.keep_mask = np.any(counts > 0, axis=1)
         else:
             self.keep_mask = np.ones(len(counts), dtype=bool)
+
+        if self.min_type_count > 1 and counts.size and self.keep_mask.any():
+            from collections import Counter
+            kept_idx = np.where(self.keep_mask)[0]
+            signatures = [frozenset(np.where(counts[i] > 0)[0]) for i in kept_idx]
+            type_counts = Counter(signatures)
+            for i, sig in zip(kept_idx, signatures):
+                if type_counts[sig] < self.min_type_count:
+                    self.keep_mask[i] = False
 
         self._particles = [p for p, k in zip(particle_data, self.keep_mask) if k]
         self._raw_cache = {}
@@ -782,7 +798,7 @@ def run_sweep(particle_data, elements, components, *,
               data_types, scalings, dim_reductions,
               algo_selections, internal_metrics, external_metrics,
               n_components=2, other_flags=None, filter_zeros=True,
-              min_clusters=2, max_clusters=30,
+              min_type_count=1, min_clusters=2, max_clusters=30,
               som_runner=None, progress_cb=None, cancel_event=None):
     """Run the full pipeline grid and score every result against ground truth.
 
@@ -798,6 +814,9 @@ def run_sweep(particle_data, elements, components, *,
         other_flags (np.ndarray or None): Optional coincidence/outlier mask over
             the original particle rows.
         filter_zeros (bool): Drop all-zero rows.
+        min_type_count (int): Minimum particles sharing an elemental combination
+            for that combination to be kept (1 disables it). Mirrors the host's
+            "Min. particles per type" filter.
         min_clusters / max_clusters (int): Accept only partitions whose cluster
             count falls in this inclusive range.
         som_runner (callable or None): Optional SOM hook.
@@ -809,7 +828,7 @@ def run_sweep(particle_data, elements, components, *,
             optional ``'error'`` string.
     """
     pre = Preprocessor(particle_data, elements, filter_zeros=filter_zeros,
-                       n_components=n_components)
+                       n_components=n_components, min_type_count=min_type_count)
     if pre.n_rows < 2:
         return {'results': [], 'truth': {}, 'completed': 0, 'total': 0,
                 'cancelled': False, 'error': 'Insufficient data after filtering.'}
@@ -1253,6 +1272,7 @@ if _QT_OK:
             self._worker = None
             self._last = None
             self._last_ncomp = 2
+            self._last_min_type = 1
             self._ranked = []
             self._detail_pre = None
 
@@ -1351,6 +1371,21 @@ if _QT_OK:
             ncrow.addWidget(self.ncomp)
             ncrow.addStretch()
             dr_box.layout().addLayout(ncrow)
+            mtrow = QHBoxLayout()
+            mtrow.addWidget(QLabel("Min. particles per type:"))
+            self.min_type_count = QSpinBox()
+            self.min_type_count.setRange(1, 100000)
+            self.min_type_count.setValue(1)
+            self.min_type_count.setMaximumWidth(90)
+            self.min_type_count.setToolTip(
+                "Drop particles whose elemental combination (the set of "
+                "elements present) is shared by fewer than this many particles. "
+                "1 = keep everything. Same filter as the main clustering dialog "
+                "— e.g. set to 11 to remove combinations occurring 10 times or "
+                "fewer.")
+            mtrow.addWidget(self.min_type_count)
+            mtrow.addStretch()
+            dr_box.layout().addLayout(mtrow)
             self.kfilter_cb = QCheckBox("Filter by cluster count")
             self.kfilter_cb.setToolTip(
                 "Off (default): every algorithm keeps whatever number of "
@@ -1537,6 +1572,7 @@ if _QT_OK:
                 internal_metrics=[o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 external_metrics=external,
                 n_components=self.ncomp.value(),
+                min_type_count=self.min_type_count.value(),
                 min_clusters=min_c,
                 max_clusters=max_c,
                 som_runner=self._som_runner,
@@ -1583,6 +1619,7 @@ if _QT_OK:
                 if ok != QMessageBox.Yes:
                     return
             self._last_ncomp = kw['n_components']
+            self._last_min_type = kw['min_type_count']
             self.run_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
             self.progress.setVisible(True)
@@ -1747,7 +1784,8 @@ if _QT_OK:
                 if self._detail_pre is None:
                     self._detail_pre = Preprocessor(
                         self._get_particle_data(), self._get_elements(),
-                        n_components=self._last_ncomp)
+                        n_components=self._last_ncomp,
+                        min_type_count=self._last_min_type)
                 data = self._detail_pre.matrix(
                     result['data_type'], result['scaling'], result['dim_reduction'])
                 labels = run_algorithm(result['algorithm'], result['params'], data,
@@ -1998,12 +2036,14 @@ if _QT_OK:
                 'min_k': self.min_k.value(),
                 'max_k': self.max_k.value(),
                 'ncomp': self.ncomp.value(),
+                'min_type_count': self.min_type_count.value(),
                 'rank_by': self.rank_combo.currentText(),
                 'unknown': self.unknown_mode.isChecked(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
                 'last': self._last,
                 'last_ncomp': self._last_ncomp,
+                'last_min_type': self._last_min_type,
             }
 
         def _save_state(self):
@@ -2036,6 +2076,8 @@ if _QT_OK:
                     self.max_k.setValue(state['max_k'])
                 if state.get('ncomp'):
                     self.ncomp.setValue(state['ncomp'])
+                if state.get('min_type_count'):
+                    self.min_type_count.setValue(state['min_type_count'])
                 if state.get('rank_by'):
                     self._refresh_rank_combo()
                     self.rank_combo.setCurrentText(state['rank_by'])
@@ -2043,6 +2085,7 @@ if _QT_OK:
                     if n in self.algo_cards:
                         self.algo_cards[n].set_state(st)
                 self._last_ncomp = state.get('last_ncomp', 2)
+                self._last_min_type = state.get('last_min_type', 1)
                 self._last = state.get('last')
                 if self._last:
                     self._show_results(self._last)

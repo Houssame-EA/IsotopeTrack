@@ -17,7 +17,7 @@ from pathlib import Path
 from functools import reduce
 from math import gcd
 
-from theme import theme
+from tools.theme import theme
 
 logger = logging.getLogger(__name__)
 

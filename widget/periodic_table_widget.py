@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QGridLayout, QPushButton, QVBoxLayout,
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, Property, QPoint
 from PySide6.QtGui import QColor, QContextMenuEvent, QPainter, QLinearGradient
 
-from theme import theme
+from tools.theme import theme
 
 
 PRESET_LISTS = {

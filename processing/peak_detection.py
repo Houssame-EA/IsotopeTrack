@@ -295,9 +295,15 @@ def compound_poisson_lognormal_quantile_approximation(q: float, lam: float, mu: 
     k = k[1:]
     mus, sigmas = sum_iid_lognormals(k, np.log(1.0) - 0.5 * sigma ** 2, sigma)
     upper_q = lognormal_quantile(np.array([q0]), mus[-1], sigmas[-1])[0]
+
+    if not np.isfinite(upper_q):
+        upper_q = float(np.exp(mus[-1] + 8.0 * sigmas[-1]))
     xs = np.linspace(lam, upper_q, 10000)
     cdf = np.sum([w * lognormal_cdf(xs, m, s) for w, m, s in zip(weights, mus, sigmas)], axis=0)
-    return xs[np.argmax(cdf > q0)]
+    hits = np.flatnonzero(cdf > q0)
+    if hits.size == 0:         
+        return float(upper_q)
+    return float(xs[hits[0]])
 
 
 def compound_poisson_lognormal_quantile_approximation_fast(q: float, lam: float, mu: float, sigma: float) -> float:
@@ -326,10 +332,15 @@ def compound_poisson_lognormal_quantile_approximation_fast(q: float, lam: float,
     k = k[1:]
     mus, sigmas = sum_iid_lognormals(k, np.log(1.0) - 0.5 * sigma ** 2, sigma)
     upper_q = lognormal_quantile(np.array([q0]), mus[-1], sigmas[-1])[0]
+    if not np.isfinite(upper_q):
+        upper_q = float(np.exp(mus[-1] + 8.0 * sigmas[-1]))
     xs = np.linspace(lam, upper_q, 2000)
     cdf_matrix = np.column_stack([lognormal_cdf(xs, m, s) for m, s in zip(mus, sigmas)])
     cdf = cdf_matrix @ weights
-    return xs[np.argmax(cdf > q0)]
+    hits = np.flatnonzero(cdf > q0)
+    if hits.size == 0:          
+        return float(upper_q)
+    return float(xs[hits[0]])
 
 
 # ----------------------------------------------------------------------------------------------------------
@@ -1024,7 +1035,7 @@ class PeakDetection:
         if method == "CPLN table":
             return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma)
         elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma)
+            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
         else:
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
 

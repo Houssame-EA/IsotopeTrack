@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from widget.periodic_table_widget import PeriodicTableWidget
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 
 
 # ---------------------------------------------------------------------------

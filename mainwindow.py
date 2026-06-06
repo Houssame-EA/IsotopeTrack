@@ -30,10 +30,11 @@ from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
 from tools.signal_selector_dialog import SignalSelectorDialog
+import isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action
 import logging
 from widget.colors import element_colors
-from theme import (
+from tools.theme import (
     theme,
     main_window_qss,
     sidebar_qss,
@@ -446,6 +447,8 @@ class MainWindow(QMainWindow):
         self.pending_csv_processing = False
         self.current_data_source_type = None
         self._pending_csv_append_mode = False
+        self._isobaric_raw_backup = {}   
+        self.isobaric_applied = False 
         self.data_by_sample = {}
         self._exclusion_regions_by_sample = {}
         self.element_limits = {} 
@@ -626,8 +629,13 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
     #------------------------------------UI creation - main layout --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
-    
-    
+    def open_isobaric_correction(self):
+        if not self.selected_isotopes or not self.data_by_sample:
+            QMessageBox.warning(self, "Isobaric Correction", "Load data and select elements first.")
+            return
+        from widget.isobaric_correction_dialog import IsobaricCorrectionDialog
+        IsobaricCorrectionDialog(self).exec()
+        
     def create_central_widget(self):
         """
         Create and configure the central widget with main UI layout.
@@ -730,6 +738,122 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.sidebar_container)
         main_layout.addWidget(content_widget, stretch=1)
+        
+    
+    def compute_isobaric_corrections(self):
+        """Derive every applicable correction from self.selected_isotopes.
+ 
+        Reuses the periodic table's abundance data (get_element_by_symbol /
+        get_elements). A correction is 'enabled' only when a clean monitor of
+        the interferent is itself among the selected isotopes.
+        """
+        if not getattr(self, 'periodic_table_widget', None):
+            return []
+        if not getattr(self, 'selected_isotopes', None):
+            return []
+        return isobaric.build_all_corrections(
+            self.selected_isotopes,
+            self.periodic_table_widget.get_element_by_symbol,
+            self.periodic_table_widget.get_elements,
+        )
+ 
+    # ---- PREVIEW: compute IN vs OUT, change nothing ----
+    def preview_isobaric_correction(self, sample_name=None, corrections=None):
+        """Return per-channel before/after for the in/out plot. No mutation.
+ 
+        Returns a dict keyed by analyte mass:
+            { analyte_mass: {'raw': ndarray, 'corrected': ndarray,
+                             'equation': str, 'label': str} }
+        Empty dict means nothing to preview (no overlap, or monitor missing).
+        """
+        sample_name = sample_name or getattr(self, 'current_sample', None)
+        if sample_name is None or sample_name not in self.data_by_sample:
+            return {}
+ 
+        if corrections is None:
+            corrections = self.compute_isobaric_corrections()
+        corrections = [c for c in corrections if c.enabled]
+        if not corrections:
+            return {}
+ 
+        sample_data = self.data_by_sample[sample_name]
+        corrected_channels = isobaric.correct_sample_channels(
+            sample_data, corrections, self.find_closest_isotope)
+ 
+        eqs_by_channel = {}
+        labels_by_channel = {}
+        for c in corrections:
+            akey = self.find_closest_isotope(c.analyte_mass)
+            eqs_by_channel.setdefault(akey, []).append(c.equation_text())
+            labels_by_channel[akey] = c.analyte_label
+ 
+        preview = {}
+        for akey, corrected in corrected_channels.items():
+            preview[akey] = {
+                'raw': np.asarray(sample_data[akey], dtype=float),
+                'corrected': corrected,
+                'equation': "\n".join(eqs_by_channel.get(akey, [])),
+                'label': labels_by_channel.get(akey, str(akey)),
+            }
+        return preview
+ 
+    def apply_isobaric_correction(self, sample_names=None, corrections=None):
+        """Overwrite the working signal with the corrected signal.
+ 
+        Raw channels are stashed in self._isobaric_raw_backup so revert works.
+        Applies to all loaded samples by default so every sample is consistent.
+        Returns the number of channels changed.
+        """
+        if corrections is None:
+            corrections = self.compute_isobaric_corrections()
+        corrections = [c for c in corrections if c.enabled]
+        if not corrections:
+            return 0
+ 
+        if sample_names is None:
+            sample_names = list(self.data_by_sample.keys())
+ 
+        if not hasattr(self, '_isobaric_raw_backup'):
+            self._isobaric_raw_backup = {}
+ 
+        changed = 0
+        for sname in sample_names:
+            sample_data = self.data_by_sample.get(sname)
+            if not sample_data:
+                continue
+            corrected_channels = isobaric.correct_sample_channels(
+                sample_data, corrections, self.find_closest_isotope)
+            if not corrected_channels:
+                continue
+ 
+            backup = self._isobaric_raw_backup.setdefault(sname, {})
+            for akey, corrected in corrected_channels.items():
+                if akey not in backup:                 # keep the ORIGINAL raw
+                    backup[akey] = np.asarray(sample_data[akey], dtype=float).copy()
+                sample_data[akey] = corrected
+                changed += 1
+ 
+            if sname == getattr(self, 'current_sample', None):
+                self.data = sample_data
+ 
+        if changed:
+            self.isobaric_applied = True
+        return changed
+ 
+    # ---- REVERT: undo an apply, restore raw ----
+    def revert_isobaric_correction(self):
+        """Restore the raw signal everywhere a correction was applied."""
+        backup = getattr(self, '_isobaric_raw_backup', {})
+        for sname, channels in backup.items():
+            sample_data = self.data_by_sample.get(sname)
+            if not sample_data:
+                continue
+            for akey, raw in channels.items():
+                sample_data[akey] = raw
+            if sname == getattr(self, 'current_sample', None):
+                self.data = sample_data
+        self._isobaric_raw_backup = {}
+        self.isobaric_applied = False
         
     
     def create_sidebar(self):
@@ -895,6 +1019,9 @@ class MainWindow(QMainWindow):
                                    self.open_mass_fraction_calculator)
         dilution_action = _ma('fa6s.flask', "Dilution Factor",
                               self.open_dilution_factor_dialog)
+        
+        isobaric_action = _ma('fa6s.eraser', "Isobaric Correction", self.open_isobaric_correction)
+        tools_menu.addAction(isobaric_action)
 
         tools_menu.addAction(periodic_action)
         tools_menu.addAction(mass_fraction_action)
@@ -3185,6 +3312,7 @@ class MainWindow(QMainWindow):
     #------------------------------------sample management--------------------------------------------
     #----------------------------------------------------------------------------------------------------------
    
+    
     def on_sample_selected(self, item):
         """
         Handle sample selection from sample table.
@@ -3225,13 +3353,10 @@ class MainWindow(QMainWindow):
         
         self.load_or_initialize_parameters(sample_name)
         
-        if (sample_name in self.sample_parameters and 
-            self.sample_parameters[sample_name] and 
-            hasattr(self, 'sigma_spinbox')):
-            
-            first_element_key = next(iter(self.sample_parameters[sample_name]))
-            stored_sigma = self.sample_parameters[sample_name][first_element_key].get('sigma', 0.47)
-            self.sigma_spinbox.setValue(stored_sigma)
+        if hasattr(self, 'sigma_spinbox'):
+            self.sigma_spinbox.blockSignals(True)
+            self.sigma_spinbox.setValue(getattr(self, '_global_sigma', 0.55))
+            self.sigma_spinbox.blockSignals(False)
             
         if sample_name in self.data_by_sample:
             self.data = self.data_by_sample[sample_name]
@@ -4350,17 +4475,19 @@ class MainWindow(QMainWindow):
             sigma_spin.setDecimals(3)
             sigma_spin.setSingleStep(0.01)
             sigma_spin.setValue(element_sigma)
-            sigma_spin.setEnabled(per_isotope_mode)
+
+            sigma_spin.setEnabled(True)
             sigma_spin.setToolTip(
                 "Sigma for this isotope (Compound Poisson LogNormal).\n"
-                "Enabled only in Per-Isotope mode.\n"
-                "Edit directly or load from SIA distribution."
+                "Editable in any mode. Editing it overrides only this isotope\n"
+                "for the current sample; it does not change the global sigma.\n"
+                "Changing the global sigma re-applies to every isotope."
             )
-            if per_isotope_mode:
-                global_s = getattr(self, '_global_sigma', 0.55)
-                if abs(element_sigma - global_s) > 1e-4:
-                    _c = theme.palette.accent_soft
-                    sigma_spin.setStyleSheet(f"QDoubleSpinBox {{ background-color: {_c}; }}")
+
+            global_s = getattr(self, '_global_sigma', 0.55)
+            if abs(element_sigma - global_s) > 1e-4:
+                _c = theme.palette.accent_soft
+                sigma_spin.setStyleSheet(f"QDoubleSpinBox {{ background-color: {_c}; }}")
             self.parameters_table.setCellWidget(row, 3, sigma_spin)
 
             manual_threshold_spinbox = NoWheelSpinBox()
@@ -4563,14 +4690,10 @@ class MainWindow(QMainWindow):
                         'valley_ratio': 0.50,
                     }
         else:
-    
-            if self.sample_parameters[sample_name]:
-                first_element_key = next(iter(self.sample_parameters[sample_name]))
-                stored_sigma = self.sample_parameters[sample_name][first_element_key].get('sigma', 0.55)
-                if hasattr(self, 'sigma_spinbox'):
-                    self.sigma_spinbox.valueChanged.disconnect()
-                    self.sigma_spinbox.setValue(stored_sigma)
-                    self.sigma_spinbox.valueChanged.connect(self.on_sigma_changed)
+            if hasattr(self, 'sigma_spinbox'):
+                self.sigma_spinbox.blockSignals(True)
+                self.sigma_spinbox.setValue(getattr(self, '_global_sigma', 0.55))
+                self.sigma_spinbox.blockSignals(False)
         
         
     def save_current_parameters(self):
@@ -5057,7 +5180,7 @@ class MainWindow(QMainWindow):
             sigma_widget = self.parameters_table.cellWidget(row, 3)
             if sigma_widget is None:
                 continue
-            sigma_widget.setEnabled(per_isotope_mode)
+            sigma_widget.setEnabled(True)
             if not per_isotope_mode:
                 sigma_widget.blockSignals(True)
                 sigma_widget.setValue(self._global_sigma)
@@ -5116,12 +5239,12 @@ class MainWindow(QMainWindow):
             for isotope in isotopes:
                 element_key = f"{element}-{isotope:.4f}"
                 if self.get_formatted_label(element_key) == display_label:
-                    for sample_name in self.sample_parameters:
-                        el_params = self.sample_parameters[sample_name].get(element_key)
-                        if el_params is not None:
-                            el_params['sigma'] = value
-                            el_params['_sigma_from_sia'] = abs(value - global_s) > 1e-4
-                            self.mark_element_changed(sample_name, element_key)
+                    el_params = self.sample_parameters.get(
+                        self.current_sample, {}).get(element_key)
+                    if el_params is not None:
+                        el_params['sigma'] = value
+                        el_params['_sigma_from_sia'] = abs(value - global_s) > 1e-4
+                        self.mark_element_changed(self.current_sample, element_key)
 
                     sigma_widget = self.parameters_table.cellWidget(row, 3)
                     if sigma_widget is not None:
@@ -5462,7 +5585,7 @@ class MainWindow(QMainWindow):
 
     def find_particles(self, time, raw_signal, lambda_bkgd, threshold, 
             min_continuous_points=1, integration_method="Background",
-            split_method="1D Watershed", sigma=0.47, min_valley_ratio=0.50):
+            split_method="1D Watershed", sigma=0.55, min_valley_ratio=0.50):
         """
         Find individual particles in signal.
         

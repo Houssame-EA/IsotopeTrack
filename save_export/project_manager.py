@@ -336,13 +336,21 @@ Terminal=false
         mw.update_parameters_table()
 
         if hasattr(mw, '_global_sigma') and hasattr(mw, 'sigma_spinbox'):
+
+            mw.sigma_spinbox.blockSignals(True)
             mw.sigma_spinbox.setValue(mw._global_sigma)
+            mw.sigma_spinbox.blockSignals(False)
         sigma_mode = getattr(mw, '_sigma_mode', 'global')
         if hasattr(mw, 'sigma_global_radio') and hasattr(mw, 'sigma_per_isotope_radio'):
+
+            mw.sigma_global_radio.blockSignals(True)
+            mw.sigma_per_isotope_radio.blockSignals(True)
             if sigma_mode == 'per_isotope':
                 mw.sigma_per_isotope_radio.setChecked(True)
             else:
                 mw.sigma_global_radio.setChecked(True)
+            mw.sigma_global_radio.blockSignals(False)
+            mw.sigma_per_isotope_radio.blockSignals(False)
 
         self._migrate_sample_parameters()
 
@@ -889,7 +897,9 @@ Terminal=false
             None
         """
         if hasattr(self.main_window, 'sigma_spinbox'):
+            self.main_window.sigma_spinbox.blockSignals(True)
             self.main_window.sigma_spinbox.setValue(self.main_window._global_sigma)
+            self.main_window.sigma_spinbox.blockSignals(False)
         
         self.main_window._build_element_lookup_cache()
         

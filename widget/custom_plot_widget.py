@@ -12,7 +12,7 @@ import json
 import pandas as pd
 from pathlib import Path
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
 
 
 # ── Theme helpers for editor dialogs ─────────────────────────────────────────

@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                               QWidget, QLabel, QHBoxLayout, QComboBox, QDialogButtonBox,
                               QDialog, QListWidget, QCheckBox, QDoubleSpinBox, QListWidgetItem,
                               QGroupBox, QGridLayout, QSpinBox, QToolButton)
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 
 
 class CollapsibleSection(QWidget):
