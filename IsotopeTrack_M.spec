@@ -214,6 +214,8 @@ a = Analysis(
         'warnings',
         'gc',
         're',
+        'argparse',
+        'dataclasses',
 
         'mainwindow',
         'theme',
@@ -276,6 +278,7 @@ a = Analysis(
         'tools.splash_screen',
         'tools.tutorial',
         'tools.unit',
+        'tools.cli_utils',
 
         'widget',
         'widget.batch_parameters',
@@ -325,7 +328,7 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
+    argv_emulation=True,
     target_arch='arm64',
     codesign_identity=None,
     entitlements_file=None,

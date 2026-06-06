@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import random
 import sys
+from argparse import ArgumentParser
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,6 +38,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QWidget,
 )
+
+from tools.cli_utils import get_argument_parser
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +198,10 @@ class SplashScreen(QWidget):
 
     finished = Signal()
 
-    def __init__(
-        self,
-        logo_path: Optional[str] = None,
-        app_name: str = "IsotopeTrack",
-        version: str = "Version 1.0.7:Beta",
-    ):
+    def __init__(self,
+                 logo_path: Optional[str] = None,
+                 app_name: str = "IsotopeTrack",
+                 version: str = "Version 1.0.7:Beta"):
         """
         Args:
             logo_path (Optional[str]): The logo path.
@@ -608,11 +609,10 @@ class SplashScreen(QWidget):
 class SplashCoordinator(QObject):
     """Coordinates the splash screen with progressive main-window loading."""
 
-    def __init__(
-        self,
-        logo_path: Optional[str] = None,
-        main_window_class: Optional[type] = None,
-    ):
+    def __init__(self,
+                 logo_path: Optional[str] = None,
+                 main_window_class: Optional[type] = None,
+                 cli_parser: ArgumentParser = get_argument_parser()):
         """
         Args:
             logo_path (Optional[str]): The logo path.
@@ -624,6 +624,7 @@ class SplashCoordinator(QObject):
         self.main_window = None
         self.progressive_loader = None
         self.splash.finished.connect(self._on_splash_finished)
+        self.cli_parser = cli_parser
 
     def start(self) -> None:
         """
@@ -644,7 +645,7 @@ class SplashCoordinator(QObject):
             QTimer.singleShot(2000, self.splash.set_loading_complete)
             return
 
-        self.progressive_loader = ProgressiveMainWindow()
+        self.progressive_loader = ProgressiveMainWindow(self.cli_parser)
         self.progressive_loader.progress_updated.connect(self.splash.update_progress)
         self.progressive_loader.loading_complete.connect(self._on_loading_complete)
         QTimer.singleShot(100, self.progressive_loader.start_loading)

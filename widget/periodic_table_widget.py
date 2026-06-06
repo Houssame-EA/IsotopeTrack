@@ -1,11 +1,10 @@
-from PySide6.QtWidgets import (QWidget, QGridLayout, QPushButton, QVBoxLayout, 
-                             QLabel, QSizePolicy, QHBoxLayout, QTabWidget, QDialog, QApplication,
-                             QFrame, QFileDialog, QMessageBox, QComboBox)
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, Property, QPoint
-from PySide6.QtGui import QColor, QContextMenuEvent, QPainter, QLinearGradient
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint
+from PySide6.QtGui import QColor, QPainter, QLinearGradient
+from PySide6.QtWidgets import (QGridLayout, QPushButton, QVBoxLayout,
+                               QLabel, QSizePolicy, QHBoxLayout, QDialog, QApplication,
+                               QFrame, QFileDialog, QMessageBox, QComboBox)
 
 from tools.theme import theme
-
 
 PRESET_LISTS = {
     '71A': ['Ag', 'Al', 'As', 'B', 'Ba', 'Be', 'Ca', 'Cd', 'Ce', 'Co', 'Cr', 'Cs', 'Cu', 'Dy', 
@@ -789,7 +788,7 @@ class PeriodicTableWidget(QDialog):
         self.buttons = {}
         self.current_element = None
         self.selected_preset = None
-        self._elements_list = self._create_elements_data()  
+        self._elements_list = self.create_elements_data()
         self._elements_by_symbol = {e['symbol']: e for e in self._elements_list}  
         screen = QApplication.primaryScreen().geometry()
         if screen.width() < 1400 or screen.height() < 900:
@@ -1000,7 +999,8 @@ class PeriodicTableWidget(QDialog):
             }}
         """
 
-    def _create_elements_data(self):
+    @staticmethod
+    def create_elements_data():
         """
         Returns:
             list: Result of the operation.
@@ -1802,36 +1802,15 @@ class PeriodicTableWidget(QDialog):
                 if not loaded_selections:
                     QMessageBox.warning(self, "No Data", "No valid isotope selections found in file.")
                     return
-                
+
                 selections_by_element = {}
                 for symbol, mass in loaded_selections:
                     if symbol not in selections_by_element:
                         selections_by_element[symbol] = []
                     selections_by_element[symbol].append(mass)
-                
-                applied_count = 0
-                missing_elements = []
-                
-                for symbol, masses in selections_by_element.items():
-                    if symbol in self.buttons:
-                        button = self.buttons[symbol]
-                        if button.isotope_display and button.isEnabled():
-                            for mass in masses:
-                                identifier = (symbol, mass)
-                                button.isotope_display.selected_isotopes.add(identifier)
-                                if mass in button.isotope_display.mass_labels:
-                                    button.isotope_display.mass_labels[mass].setSelected(True)
-                                    applied_count += 1
-                                    
-                                    element = self.get_element_by_symbol(symbol)
-                                    if element:
-                                        isotope_data = next((iso for iso in element['isotopes'] 
-                                                        if isinstance(iso, dict) and iso['mass'] == mass), None)
-                                        abundance = isotope_data['abundance'] if isotope_data else 0
-                                        button.set_highlight(abundance, accumulate=True)
-                    else:
-                        missing_elements.append(symbol)
-                
+
+                applied_count, missing_elements = self.update_selection(selections_by_element)
+
                 success_msg = f"Successfully loaded {applied_count} isotope selections!"
                 if missing_elements:
                     success_msg += f"\n\nNote: The following elements were not found or available:\n{', '.join(missing_elements)}"
@@ -1841,6 +1820,49 @@ class PeriodicTableWidget(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load selections: {str(e)}")
 
+    def update_selection(self, selections_by_element: dict[str, list[float]]) -> tuple[int, list[str]]:
+        """
+        Updates the buttons with a batch selection of elements by masses.
+
+        It updates the selected isotopes on the periodic table.
+        Args:
+            selections_by_element: dictionary of elements and their associated selected masses.
+
+        Returns:
+            (int) Count of updated elements.
+            (list[str]) list of elements that weren't loaded.
+        """
+
+        applied_count = 0
+        missing_elements = []
+
+        for symbol, masses in selections_by_element.items():
+            if symbol not in self.buttons:
+                missing_elements.append(symbol)
+                continue
+
+            button = self.buttons[symbol]
+            if not button.isotope_display or not button.isEnabled():
+                missing_elements.append(symbol)
+                continue
+
+            for mass in masses:
+                identifier = (symbol, mass)
+                button.isotope_display.selected_isotopes.add(identifier)
+                if mass not in button.isotope_display.mass_labels:
+                    missing_elements.append(f"{symbol}:{mass}")
+                    continue
+                button.isotope_display.mass_labels[mass].setSelected(True)
+                applied_count += 1
+
+                element = self.get_element_by_symbol(symbol)
+                if element:
+                    isotope_data = next((iso for iso in element['isotopes']
+                                         if isinstance(iso, dict) and iso['mass'] == mass), None)
+                    abundance = isotope_data['abundance'] if isotope_data else 0
+                    button.set_highlight(abundance, accumulate=True)
+
+        return applied_count, missing_elements
 
     def initUI(self):
         """

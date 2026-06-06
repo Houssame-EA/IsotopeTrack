@@ -250,22 +250,24 @@ Terminal=false
             )
             return False
         
-    def load_project(self):
+    def load_project(self, filepath=None):
         """
         Load a previously saved project.
         
         Args:
-            None
-            
+            filepath: Filepath of the project. If None, user input will be taken via a file dialog
+
         Returns:
             bool: True if load was successful, False otherwise
         """
-        filepath, _ = QFileDialog.getOpenFileName(
-            self.main_window,
-            "Load Project",
-            "",
-            "IsotopeTrack Project (*.itproj)"
-        )
+        if not filepath:
+            filepath, _ = QFileDialog.getOpenFileName(
+                self.main_window,
+                "Load Project",
+                "",
+                "IsotopeTrack Project (*.itproj)"
+            )
+
         if not filepath:
             return False
 
