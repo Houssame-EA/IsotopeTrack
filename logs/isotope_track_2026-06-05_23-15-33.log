@@ -1,4 +1,0 @@
-2026-06-05 23:15:33,351  INFO      IsotopeTrack.MainWindow  mainwindow.__init__:407  MainWindow initialization starting
-2026-06-05 23:15:33,351  INFO      IsotopeTrack  .None:0  [USER ACTION] STARTUP: Application started
-2026-06-05 23:15:33,426  DEBUG     IsotopeTrack.MainWindow  mainwindow.update_parameters_table:4383  update_parameters_table: rebuilding (force=True)
-2026-06-05 23:15:33,488  INFO      IsotopeTrack.MainWindow  mainwindow.apply_theme:1316  Theme applied: dark

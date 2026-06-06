@@ -4,7 +4,7 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 
 #define AppName        "IsotopeTrack"
-#define AppVersion     "1.0.7"
+#define AppVersion     "1.0.8"
 #define AppPublisher   "IsotopeTrack"
 #define AppExeName     "IsotopeTrack.exe"
 #define SourceDir      "dist\IsotopeTrack"

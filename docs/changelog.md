@@ -4,6 +4,20 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.0.8 — 2026-06-06
+
+### New Features
+- CLI support — app can now be launched from terminal with arguments:
+  - Load project files directly
+  - Load Nu and TOFWERK data files
+  - Select isotopes and presets via command line
+  - See `tools/cli_utils.py` for details
+- Isobaric correction module (still in development)
+
+### Improvements
+- Improved Windows performance — replaced QTableWidget with QTableView in main window reducing lag significantly
+- Theme file moved to `tools/` for better organization
+
 ## v1.0.7 — 2026-06-01
 
 ### New Features

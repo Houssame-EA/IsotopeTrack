@@ -40,6 +40,7 @@ import numpy as np
 DEFAULT_MIN_OVERLAP_ABUNDANCE = 0.1
 
 def _nominal(mass: float) -> int:
+    """Return the nominal (integer) mass by rounding to the nearest integer."""
     return int(round(mass))
 
 
@@ -74,6 +75,7 @@ class IsobaricCorrection:
 
 
 def _isotopes(element_data: dict) -> List[dict]:
+    """Return the list of isotope dicts for an element, or an empty list if unavailable."""
     if not element_data:
         return []
     return [iso for iso in element_data.get('isotopes', []) if isinstance(iso, dict)]
@@ -89,6 +91,7 @@ def _abundance_at(element_data: dict, mass: float, tol: float = 0.3) -> float:
 
 
 def _isotope_dict_at(element_data: dict, mass: float) -> Optional[dict]:
+    """Return the isotope dict whose nominal mass matches *mass*, or None if not found."""
     target = _nominal(mass)
     for iso in _isotopes(element_data):
         if _nominal(iso.get('mass', 0.0)) == target:
@@ -315,8 +318,9 @@ def build_corrections_for_isotope(analyte_symbol: str,
             analyte_label=analyte_label,
             interferent_overlap_label=interferent['overlap_label'],
             monitor_label=monitor['label'],
-            note=("monitor not measured \u2014 select "
-                  f"{monitor['label']} to enable" if not monitor['available'] else ""),
+            note=(f"\u26a0 Monitor not in selection \u2014 "
+                  f"add {monitor['label']} to your isotope selection to enable this correction."
+                  if not monitor['available'] else ""),
         ))
     return corrections
 
@@ -324,7 +328,8 @@ def build_corrections_for_isotope(analyte_symbol: str,
 def build_all_corrections(selected_isotopes: Dict[str, List[float]],
                           get_element_by_symbol: Callable[[str], Optional[dict]],
                           get_elements: Callable[[], List[dict]],
-                          min_abundance: float = DEFAULT_MIN_OVERLAP_ABUNDANCE
+                          min_abundance: float = DEFAULT_MIN_OVERLAP_ABUNDANCE,
+                          monitor_pool: Optional[List[float]] = None,
                           ) -> List[IsobaricCorrection]:
     """Build every applicable correction from the app's selected_isotopes.
 
@@ -332,8 +337,14 @@ def build_all_corrections(selected_isotopes: Dict[str, List[float]],
     (exactly MainWindow.selected_isotopes). The measured masses double as the
     pool of candidate monitors, so a correction is only enabled when a clean
     monitor of the interferent is among the selected isotopes.
+
+    `monitor_pool`, if given, overrides the candidate-monitor search space.
+    Pass all measured data-channel masses here so that monitor isotopes the
+    user did not explicitly select are still usable for correction (they are
+    already in memory — no extra loading required).
     """
-    available = sorted({m for masses in selected_isotopes.values() for m in masses})
+    available = monitor_pool if monitor_pool is not None else \
+        sorted({m for masses in selected_isotopes.values() for m in masses})
     out: List[IsobaricCorrection] = []
     for symbol, masses in selected_isotopes.items():
         for mass in masses:
