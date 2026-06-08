@@ -45,3 +45,6 @@ Thumbs.db
 *.xlsx
 data/
 test_data/logs/
+
+_rth_no_pyarrow.py
+logs/

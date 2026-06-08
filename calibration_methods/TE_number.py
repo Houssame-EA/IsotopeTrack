@@ -28,7 +28,7 @@ from calibration_methods.te_common import (
     number_method_transport_rate,
     base_stylesheet, show_data_source_dialog,
 )
-from theme import theme
+from tools.theme import theme
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog

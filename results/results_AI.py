@@ -10,7 +10,7 @@ from PySide6.QtGui import QPixmap, QImage, QFont, QCursor, QColor, QKeySequence
 import requests, io, re, json, time, math, threading, base64, os, uuid
 from collections import Counter, defaultdict
 import numpy as np
-from theme import theme as global_theme
+from tools.theme import theme as global_theme
 
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_CHAT = f"{OLLAMA_BASE}/api/chat"
@@ -83,10 +83,10 @@ Theme.sync_with_global()
 # ── UI Preferences (font size, chart quality, etc.) ──────────────────────────
 
 _UI_PREFS = {
-    'font_size':       14,    # body text size in px (11–20)
-    'chart_dpi':       100,   # matplotlib DPI (72/100/150/200)
-    'show_timestamps': False, # show HH:MM on each message
-    'bubble_max_width':740,   # max bubble width in px
+    'font_size':       14,    
+    'chart_dpi':       100,  
+    'show_timestamps': False, 
+    'bubble_max_width':740,  
 }
 
 def _fs(delta=0):
@@ -472,7 +472,6 @@ def _format_exploration_feedback(text_out, tables, charts, err, turn, max_turns)
         return ''.join(parts)
 
     if text_out:
-        # Truncate very long stdout
         if len(text_out) > 3000:
             text_out = text_out[:3000] + "\n... [output truncated]"
         parts.append("STDOUT:\n" + text_out + "\n")
@@ -483,7 +482,6 @@ def _format_exploration_feedback(text_out, tables, charts, err, turn, max_turns)
         rows    = tbl.get('rows', [])
         parts.append(f"\nTABLE — {title}  ({len(rows)} rows)")
         parts.append("  " + " | ".join(headers))
-        # Include up to 30 rows so the model can see the data
         for r in rows[:30]:
             parts.append("  " + " | ".join(str(v) for v in r))
         if len(rows) > 30:
@@ -714,7 +712,6 @@ def _try_parse_table(text):
     """Try to parse printed text as a table. Returns (headers, rows) or None."""
     lines = [l for l in text.splitlines() if l.strip()]
     if len(lines) < 2: return None
-    # Detect separator line (dashes/equals)
     sep_idx = None
     for i, l in enumerate(lines):
         if re.match(r'^[\s\-=|]+$', l) and len(l.strip()) > 4:
@@ -724,7 +721,6 @@ def _try_parse_table(text):
     header_line = lines[header_idx]
     data_lines  = lines[data_start:]
     if not data_lines: return None
-    # Split by 2+ spaces
     def _split(line):
         return [c.strip() for c in re.split(r'  +|\t', line.strip()) if c.strip()]
     headers = _split(header_line)
@@ -735,7 +731,6 @@ def _try_parse_table(text):
         row = _split(l)
         if len(row) >= 2: rows.append(row)
     if not rows: return None
-    # Pad/trim rows to header width
     nc = len(headers)
     rows = [(r + [''] * nc)[:nc] for r in rows]
     return headers, rows
@@ -776,21 +771,17 @@ class StreamWorker(QThread):
         """Inject pending file/image attachments into the last user message."""
         if not self.attachments: return messages
         msgs = list(messages)
-        # Find last user message
         for i in range(len(msgs)-1, -1, -1):
             if msgs[i].get('role') == 'user':
                 original = msgs[i].get('content', '')
                 images  = [a for a in self.attachments if a['type'] == 'image']
                 texts   = [a for a in self.attachments if a['type'] == 'text']
-
-                # Prepend text file contents
                 prefix = ''
                 for a in texts:
                     prefix += f"\n[Attached file: {a['name']}]\n{a['content']}\n\n"
                 if prefix:
                     msgs[i] = dict(msgs[i]); msgs[i]['content'] = prefix + original
 
-                # Add images
                 if images:
                     msgs[i] = dict(msgs[i])
                     msgs[i]['images'] = [a['data'] for a in images]
@@ -941,7 +932,6 @@ class BackendDialog(QDialog):
         self._cfg = dict(current_cfg)
         lo = QVBoxLayout(self); lo.setSpacing(12)
 
-        # Backend selector
         hl = QHBoxLayout(); hl.addWidget(QLabel("Backend:"))
         self._backend = QComboBox()
         self._backend.addItems(["Ollama (local)", "MLX (local)", "Custom API"])
@@ -1024,7 +1014,6 @@ class BackendDialog(QDialog):
         lo.addWidget(btns)
 
         self._on_backend(self._backend.currentIndex())
-        # Auto-fetch models on open
         QTimer.singleShot(80, self._fetch_ollama_models)
 
     def _on_backend(self, idx):
@@ -1669,7 +1658,6 @@ class ExplorationBubble(QFrame):
                 lo.addWidget(t)
             except Exception: pass
 
-        # Charts
         for ch in charts:
             try:
                 lo.addWidget(ChartBubble(ch))
@@ -1812,7 +1800,6 @@ class InteractiveTableBubble(QFrame):
         self._table.horizontalHeader().sectionClicked.connect(self._on_col_click)
         self._stack.addWidget(self._table)
 
-        # Chart page
         self._chart_page = QFrame()
         cl = QVBoxLayout(self._chart_page); cl.setContentsMargins(8,8,8,8); cl.setSpacing(6)
         chart_ctrl = QHBoxLayout(); chart_ctrl.setSpacing(6)
@@ -1971,7 +1958,7 @@ class InteractiveTableBubble(QFrame):
             ax.set_ylabel(col_name, fontsize=fs, color=fg)
             ax.tick_params(colors=fg); ax.yaxis.grid(True, color=gc, linewidth=0.5)
             for s in ax.spines.values(): s.set_edgecolor(gc)
-        else:  # bar
+        else: 
             fig, ax = plt.subplots(figsize=(max(4, len(labels) * 0.4), 3.5), dpi=dpi)
             fig.patch.set_facecolor(bg); ax.set_facecolor(bg)
             ax.bar(range(len(labels)), values, color=cols, alpha=0.88)
@@ -1983,7 +1970,7 @@ class InteractiveTableBubble(QFrame):
             for s in ax.spines.values(): s.set_edgecolor(gc)
 
         fig.tight_layout(pad=1.0)
-        self._last_fig = fig   # keep for PNG save
+        self._last_fig = fig 
 
         for child in self._chart_canvas_frame.findChildren(FigureCanvasQTAgg):
             child.setParent(None); child.deleteLater()
@@ -2069,7 +2056,6 @@ class InteractiveTableBubble(QFrame):
             f"QTableWidget::item:selected{{background:{Theme.c('accent_surface')};color:{ac};}}"
             f"QTableWidget::item:hover{{background:{Theme.c('surface_hover')};}}")
         self._table.verticalHeader().setDefaultSectionSize(_fs() + 12)
-        # Chart type buttons
         for b, _ in self._type_btns: b.setStyleSheet(tog)
         smll2 = smll
         self._chart_save_btn.setStyleSheet(smll2)
@@ -2126,7 +2112,6 @@ class ChartBubble(QFrame):
                '#06B6D4','#F97316','#EC4899','#84CC16','#6B7280',
                '#A78BFA','#34D399','#FBBF24','#F87171','#60A5FA']
 
-    # Types available for user re-render (not histogram — keep that fixed)
     _SWITCH_TYPES = [('Bar', 'bar'), ('Barh', 'barh'), ('Pie', 'pie'), ('Line', 'line')]
 
     def __init__(self, chart_data):
@@ -2144,7 +2129,6 @@ class ChartBubble(QFrame):
         hl.addWidget(self._hdr_lbl)
         hl.addStretch()
 
-        # Type-switcher buttons (hidden for histogram — its shape is fixed)
         self._type_btns = []
         if self._orig_kind != 'histogram':
             for label, kind in self._SWITCH_TYPES:
@@ -2188,7 +2172,7 @@ class ChartBubble(QFrame):
             from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 
             dpi    = _UI_PREFS['chart_dpi']
-            mfs    = max(7, _fs() - 5)   # matplotlib font size scaled with UI
+            mfs    = max(7, _fs() - 5)  
             d      = self._data
             kind   = d.get('type', 'bar')
             labels = d.get('labels', [])
@@ -2259,7 +2243,7 @@ class ChartBubble(QFrame):
                 ax.tick_params(colors=fg); ax.yaxis.grid(True, color=gc, linewidth=0.5)
                 for s in ax.spines.values(): s.set_edgecolor(gc)
 
-            else:  # vertical bar (default)
+            else: 
                 w = max(4.5, min(len(labels) * 0.45, 12))
                 fig, ax = plt.subplots(figsize=(w, 4), dpi=dpi)
                 fig.patch.set_facecolor(bg); ax.set_facecolor(bg)
@@ -2319,8 +2303,8 @@ class AutoGrowTextEdit(QPlainTextEdit):
     char_changed = Signal(int)
 
     _MIN_H = 40
-    _MAX_H = 600          # generous ceiling so manual drag has room
-    _AUTO_MAX_H = 240     # auto-grow ceiling (same as before)
+    _MAX_H = 600          
+    _AUTO_MAX_H = 240   
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2329,7 +2313,7 @@ class AutoGrowTextEdit(QPlainTextEdit):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(self._MIN_H)
         self.setFrameShape(QFrame.NoFrame)
-        self._forced_h = None   # None → auto-grow; int → use this exact height
+        self._forced_h = None  
         self.textChanged.connect(self._on_changed)
 
     def set_forced_height(self, h):
@@ -2349,11 +2333,9 @@ class AutoGrowTextEdit(QPlainTextEdit):
         self._adjust()
 
     def _adjust(self):
-        # Manual height override takes priority
         if self._forced_h is not None:
             if self.height() != self._forced_h:
                 self.setFixedHeight(self._forced_h)
-            # Show scrollbar when content exceeds the locked height
             doc = self.document()
             vw = self.viewport().width()
             if vw > 10: doc.setTextWidth(vw)
@@ -2361,7 +2343,6 @@ class AutoGrowTextEdit(QPlainTextEdit):
             self.setVerticalScrollBarPolicy(
                 Qt.ScrollBarAsNeeded if h > self._forced_h else Qt.ScrollBarAlwaysOff)
             return
-        # Auto-grow path (original behaviour)
         doc = self.document()
         vw = self.viewport().width()
         if vw > 10:
@@ -2375,7 +2356,7 @@ class AutoGrowTextEdit(QPlainTextEdit):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._adjust()   # width changed → wrapped-line count may change
+        self._adjust()   
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -2397,8 +2378,8 @@ class ComposerResizeHandle(QFrame):
     """Thin horizontal bar at the top of the composer — drag it up to make the
     input taller, drag down to shrink. Emits delta_y on each drag step."""
 
-    delta_y = Signal(int)   # negative = drag up (taller input)
-    reset   = Signal()      # double-click → restore auto-grow
+    delta_y = Signal(int)   
+    reset   = Signal()     
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2431,7 +2412,6 @@ class ComposerResizeHandle(QFrame):
         super().mouseDoubleClickEvent(event)
 
     def apply_theme(self):
-        # Subtle pill in the middle as a visual affordance
         c1 = Theme.c('border'); c2 = Theme.c('text_tertiary')
         self.setStyleSheet(
             f"ComposerResizeHandle{{background:transparent;}}"
@@ -2439,7 +2419,6 @@ class ComposerResizeHandle(QFrame):
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        # Draw a small "grip" pill in the centre
         from PySide6.QtGui import QPainter
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
@@ -2457,7 +2436,7 @@ class ComposerResizeHandle(QFrame):
 class CustomizeDialog(QDialog):
     """Font size, chart quality, and display options."""
 
-    applied = Signal()   # emitted when Apply is clicked
+    applied = Signal() 
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2571,13 +2550,12 @@ class Conversation:
     def __init__(self, title="New chat"):
         self.id          = uuid.uuid4().hex[:12]
         self.title       = title
-        self.history     = []      # [{role, content}]
-        self.widgets     = []      # message-bubble widgets, in insertion order
-        self.draft_text  = ""      # user's typed text saved on switch
-        self.draft_files = []      # pending file dicts saved on switch
-        self._auto_title = True    # title was auto-generated; safe to overwrite
+        self.history     = []      
+        self.widgets     = []      
+        self.draft_text  = ""      
+        self.draft_files = []      
+        self._auto_title = True    
 
-        # Dedicated scroll area for this conversation
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -2592,8 +2570,8 @@ class Conversation:
 class ConversationListItem(QFrame):
     """Sidebar entry: clickable title row with a hover-revealed delete button."""
 
-    selected = Signal(str)   # emits conversation id when clicked
-    deleted  = Signal(str)   # emits id when × is clicked
+    selected = Signal(str)  
+    deleted  = Signal(str)  
 
     def __init__(self, conv_id, title, is_current=False):
         super().__init__()
@@ -2611,7 +2589,7 @@ class ConversationListItem(QFrame):
         self._x = QPushButton("✕"); self._x.setFixedSize(18, 18)
         self._x.setCursor(QCursor(Qt.PointingHandCursor))
         self._x.setToolTip("Delete this conversation")
-        self._x.setVisible(False)   # only shown on hover
+        self._x.setVisible(False)  
         self._x.clicked.connect(self._on_delete)
         lo.addWidget(self._x)
 
@@ -2634,7 +2612,6 @@ class ConversationListItem(QFrame):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
-        # Click on the row body (not on the × button) → select this conversation
         if event.button() == Qt.LeftButton and not self._x.geometry().contains(event.pos()):
             self.selected.emit(self.conv_id)
         super().mousePressEvent(event)
@@ -2725,7 +2702,6 @@ class AIChatDialog(QDialog):
         return self._cur.scroll
 
     def _build_ui(self):
-        # Top-level: horizontal layout with [Sidebar | Main content]
         root = QHBoxLayout(self); root.setContentsMargins(0,0,0,0); root.setSpacing(0)
 
         # ── Sidebar (conversation list) ───────────────────────────────────────
@@ -2744,7 +2720,6 @@ class AIChatDialog(QDialog):
         self._conv_hdr = QLabel("Conversations")
         sb.addWidget(self._conv_hdr)
 
-        # Scrollable list of conversation entries
         self._conv_list_sc = QScrollArea()
         self._conv_list_sc.setWidgetResizable(True)
         self._conv_list_sc.setFrameShape(QFrame.NoFrame)
@@ -2789,7 +2764,6 @@ class AIChatDialog(QDialog):
 
         # ── Chat area: QStackedWidget — one scroll area per conversation ─────
         self._chat_stack = QStackedWidget()
-        # Add the initial conversation's scroll area to the stack
         self._chat_stack.addWidget(self._conversations[0].scroll)
         main.addWidget(self._chat_stack, stretch=1)
 
@@ -2803,7 +2777,6 @@ class AIChatDialog(QDialog):
         outer = QFrame(); outer_l = QVBoxLayout(outer)
         outer_l.setContentsMargins(16, 8, 16, 10); outer_l.setSpacing(2)
 
-        # Drag handle — sits above the rounded composer box; drag to resize input
         self._resize_handle = ComposerResizeHandle()
         self._resize_handle.setToolTip("Drag to resize the input — double-click to reset")
         self._resize_handle.delta_y.connect(self._on_composer_resize)
@@ -2813,16 +2786,14 @@ class AIChatDialog(QDialog):
         self._composer = QFrame()
         comp_l = QVBoxLayout(self._composer); comp_l.setContentsMargins(8, 8, 8, 8); comp_l.setSpacing(6)
 
-        # Attachment preview row (hidden until something is attached)
         self._preview_row = QWidget()
         self._preview_lo = QHBoxLayout(self._preview_row)
         self._preview_lo.setContentsMargins(2, 2, 2, 2); self._preview_lo.setSpacing(6)
         self._preview_lo.addStretch()
         self._preview_row.setVisible(False)
         comp_l.addWidget(self._preview_row)
-        self._previews = []   # list of AttachmentPreview widgets
+        self._previews = []  
 
-        # Input row: [+]  [text]  [Stop/Send]
         in_row = QHBoxLayout(); in_row.setContentsMargins(0,0,0,0); in_row.setSpacing(8)
         self._attach_btn = QPushButton("+"); self._attach_btn.setFixedSize(38, 38)
         self._attach_btn.setToolTip("Attach image, PDF, or text file")
@@ -2844,7 +2815,6 @@ class AIChatDialog(QDialog):
         comp_l.addLayout(in_row)
         outer_l.addWidget(self._composer)
 
-        # Char counter beneath the composer
         self._counter = QLabel("0 chars")
         self._counter.setAlignment(Qt.AlignRight)
         self._input.char_changed.connect(self._update_counter)
@@ -2853,7 +2823,6 @@ class AIChatDialog(QDialog):
         main.addWidget(outer); self._inp_frame = outer
         root.addWidget(main_wrap, stretch=1)
 
-        # Back-compat shims (old code referenced these)
         self._attach_bar = self._preview_row
         self._attach_lbl = self._counter
 
@@ -2865,7 +2834,6 @@ class AIChatDialog(QDialog):
         QShortcut(QKeySequence("Escape"), self).activated.connect(
             lambda: self._do_stop() if self._worker else None)
 
-        # Add the initial conversation entry to the sidebar
         self._add_conv_list_item(self._conversations[0], is_current=True)
 
         self._apply_theme()
@@ -2902,7 +2870,7 @@ class AIChatDialog(QDialog):
 
     def _open_customize(self):
         d = CustomizeDialog(self)
-        d.applied.connect(self._apply_theme)  # live-apply on "Apply"
+        d.applied.connect(self._apply_theme) 
         d.exec()
 
     def _update_counter(self, n_chars):
@@ -2910,8 +2878,7 @@ class AIChatDialog(QDialog):
         self._counter.setText(f"{n_chars:,} chars  ~{tokens:,} tokens")
 
     def _clear_chat(self):
-        if self._worker: return   # don't clear while generating
-        # Remove all message widgets except keep the list intact
+        if self._worker: return  
         for w in list(self._widgets):
             w.setParent(None); w.deleteLater()
         self._widgets.clear()
@@ -2925,15 +2892,13 @@ class AIChatDialog(QDialog):
         item = ConversationListItem(conv.id, conv.title, is_current=is_current)
         item.selected.connect(self._switch_conversation)
         item.deleted.connect(self._delete_conversation)
-        # Insert above the trailing stretch
         self._conv_list_lo.insertWidget(self._conv_list_lo.count() - 1, item)
         self._conv_items[conv.id] = item
 
     def _new_conversation(self, switch_to=True):
         """Create a new conversation, add it to the stack and sidebar."""
         if self._worker:
-            return   # don't disrupt an in-flight stream
-        # Pick a unique title: "New chat", "New chat 2", "New chat 3", ...
+            return   
         existing_titles = {c.title for c in self._conversations}
         if "New chat" not in existing_titles:
             title = "New chat"
@@ -2948,8 +2913,6 @@ class AIChatDialog(QDialog):
         self._add_conv_list_item(conv, is_current=False)
         if switch_to:
             self._switch_conversation(conv.id)
-            # Add a welcome bubble so the new (otherwise empty) chat is
-            # visually distinct from whatever the previous one looked like
             self._add_ai(
                 "**New conversation.** Ask me anything about your data — "
                 "I'll keep this thread separate from the others.")
@@ -2958,8 +2921,7 @@ class AIChatDialog(QDialog):
         """Switch to the conversation with the given id. Saves the current draft
         (composer text + attachments) and restores the target's draft."""
         if self._worker:
-            return   # block switching during streaming
-        # Find target index
+            return  
         target_idx = None
         for i, c in enumerate(self._conversations):
             if c.id == conv_id:
@@ -2967,24 +2929,19 @@ class AIChatDialog(QDialog):
         if target_idx is None or target_idx == self._current_idx:
             return
 
-        # Save current composer state into the current conversation
         cur = self._cur
         cur.draft_text  = self._input.toPlainText()
         cur.draft_files = list(self._pending_files)
 
-        # Update current marker on old item
         old_item = self._conv_items.get(cur.id)
         if old_item: old_item.set_current(False)
 
-        # Switch indices + stack page
         self._current_idx = target_idx
         self._chat_stack.setCurrentWidget(self._cur.scroll)
 
-        # Update current marker on new item
         new_item = self._conv_items.get(self._cur.id)
         if new_item: new_item.set_current(True)
 
-        # Restore composer state from the new conversation
         self._clear_attachments()
         self._input.setPlainText(self._cur.draft_text or "")
         for entry in (self._cur.draft_files or []):
@@ -2993,7 +2950,6 @@ class AIChatDialog(QDialog):
             img_b64 = entry.get('data') if kind == 'image' else None
             self._add_preview(entry.get('name', '?'), kind, entry, image_b64=img_b64)
 
-        # Refresh suggestions and scroll to bottom of the now-visible chat
         self._update_sug(self.current_data)
         self._scrollb()
 
@@ -3008,7 +2964,6 @@ class AIChatDialog(QDialog):
                 idx = i; break
         if idx is None: return
 
-        # If this is the only conversation, just clear it instead of removing
         if len(self._conversations) == 1:
             self._clear_chat()
             return
@@ -3105,9 +3060,8 @@ class AIChatDialog(QDialog):
     def _add_preview(self, name, kind, entry, image_b64=None):
         """Show an inline preview chip inside the composer"""
         prev = AttachmentPreview(name, kind, image_b64=image_b64)
-        prev._entry = entry   # link back to the pending-files dict
+        prev._entry = entry  
         prev.removed.connect(self._remove_preview)
-        # insert before the trailing stretch
         self._preview_lo.insertWidget(self._preview_lo.count() - 1, prev)
         self._previews.append(prev)
         self._preview_row.setVisible(True)
@@ -3380,7 +3334,6 @@ class AIChatDialog(QDialog):
         self._cl.insertWidget(self._cl.count()-1, self._exp_session)
         self._scrollb()
 
-        # Lock UI similar to _send
         self._set_sidebar_enabled(False)
         self._input.setEnabled(False); self._sendb.setVisible(False)
         self._stop.setVisible(True);  self._attach_btn.setEnabled(False)
@@ -3406,8 +3359,6 @@ class AIChatDialog(QDialog):
         b = self._cfg.get('backend', '')
         max_t   = max(512, self._cfg.get('num_ctx', 8192) - 2000)
         trimmed = _trim_history(list(self._exp_messages), max_t)
-        # We collect the model's response in a buffer (no streaming bubble —
-        # the ExplorationBubble shows progress instead)
         self._exp_buf = []
         self._worker = StreamWorker(b, trimmed, self._exp_sys, self._cfg, [])
         self._worker.token_received.connect(self._on_exp_tok)
@@ -3647,7 +3598,6 @@ class AIChatDialog(QDialog):
             f"QScrollBar:vertical{{background:{Theme.c('scrollbar_bg')};width:8px;border-radius:4px;}}"
             f"QScrollBar::handle:vertical{{background:{Theme.c('scrollbar_handle')};min-height:30px;border-radius:4px;}}"
             f"QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0;}}")
-        # Sidebar (conversation list)
         if hasattr(self, '_sidebar'):
             self._sidebar.setStyleSheet(
                 f"QFrame{{background:{bg2};border-right:1px solid {bd};}}")

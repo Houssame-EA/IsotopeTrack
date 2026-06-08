@@ -12,13 +12,13 @@ import json
 import pandas as pd
 from pathlib import Path
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
+
 from results.shared_plot_utils import (
     apply_axis_label_style,
     apply_plot_item_text_styling,
     apply_plot_title_style,
 )
-
 
 # ── Theme helpers for editor dialogs ─────────────────────────────────────────
 

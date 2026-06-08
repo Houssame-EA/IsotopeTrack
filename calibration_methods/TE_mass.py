@@ -27,7 +27,7 @@ from calibration_methods.te_common import (
     particle_mass_from_diameter,
     base_stylesheet, show_data_source_dialog,
 )
-from theme import theme
+from tools.theme import theme
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes."""

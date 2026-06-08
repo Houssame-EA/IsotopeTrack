@@ -570,10 +570,10 @@ CLUSTER_COLORS = [
 
 # ── App theme integration ──────────────────────────────────────────────────────
 try:
-    from theme import theme as _app_theme
+    from tools.theme import theme as _app_theme
 except Exception: 
     try:
-        from ..theme import theme as _app_theme
+        from ..tools.theme import theme as _app_theme
     except Exception:
         _app_theme = None
 
@@ -2022,7 +2022,15 @@ def _draw_composition_strips(ax, char_for_algo, elements, cfg,
     rendered_elements = set()
     for (cid, _), y in zip(ordered, y_pos):
         cd = char_for_algo[cid]
-        pcts = cd.get('element_pcts') or {}
+
+        estats = cd.get('element_stats') or {}
+        raw = {e: float(estats.get(e, {}).get('mean', 0.0) or 0.0)
+               for e in sorted_elements}
+        raw_total = sum(v for v in raw.values() if v > 0)
+        if raw_total > 0:
+            pcts = {e: (v / raw_total * 100.0) for e, v in raw.items() if v > 0}
+        else:
+            pcts = cd.get('element_pcts') or {}
 
         ordered_pcts = [(e, pcts.get(e, 0.0)) for e in sorted_elements
                         if pcts.get(e, 0.0) > 0]
@@ -2058,10 +2066,9 @@ def _draw_composition_strips(ax, char_for_algo, elements, cfg,
     ax.set_xticklabels(['0%', '25%', '50%', '75%', '100%'], color=col)
     for lab in ax.get_xticklabels():
         lab.set_fontproperties(fp_tick)
-    ax.set_xlabel('Composition (% of cluster mass)',
+    dt_label = cfg.get('data_type_display', 'Counts')
+    ax.set_xlabel(f'Composition (% of cluster {dt_label.lower()})',
                   fontproperties=fp_lbl, color=col)
-    title = f'Cluster compositions — {algo_name}' if algo_name else 'Cluster compositions'
-    ax.set_title(title, fontproperties=fp_title, color=col, pad=10)
     for spine in ('top', 'right'):
         ax.spines[spine].set_visible(False)
     ax.grid(axis='x', alpha=0.25, linewidth=0.5, color=_plot_theme(cfg)['grid'])
@@ -2077,11 +2084,15 @@ def _draw_composition_strips(ax, char_for_algo, elements, cfg,
                                                     Renderer.MATHTEXT))
                    for e in legend_elems]
         ax.legend(handles=handles,
-                  loc='upper center',
-                  bbox_to_anchor=(0.5, -0.12),
-                  ncol=min(len(handles), 10),
+                  loc='lower center',
+                  bbox_to_anchor=(0.5, 1.0),
+                  ncol=min(len(handles), 12),
                   frameon=False,
-                  prop=fp_legend)
+                  prop=fp_legend,
+                  handlelength=1.0,
+                  handletextpad=0.5,
+                  columnspacing=1.2,
+                  borderaxespad=0.3)
 
 
 def _draw_sample_share_strip(ax, char_for_algo, sample_names, cfg,

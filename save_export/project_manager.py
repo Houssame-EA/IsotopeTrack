@@ -30,7 +30,7 @@ class ProjectManager:
             None
         """
         self.main_window = main_window
-        self.project_version = '1.0.6'
+        self.project_version = '1.0.8'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -177,7 +177,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.0.6
+Version=1.0.8
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -250,22 +250,24 @@ Terminal=false
             )
             return False
         
-    def load_project(self):
+    def load_project(self, filepath=None):
         """
         Load a previously saved project.
         
         Args:
-            None
-            
+            filepath: Filepath of the project. If None, user input will be taken via a file dialog
+
         Returns:
             bool: True if load was successful, False otherwise
         """
-        filepath, _ = QFileDialog.getOpenFileName(
-            self.main_window,
-            "Load Project",
-            "",
-            "IsotopeTrack Project (*.itproj)"
-        )
+        if not filepath:
+            filepath, _ = QFileDialog.getOpenFileName(
+                self.main_window,
+                "Load Project",
+                "",
+                "IsotopeTrack Project (*.itproj)"
+            )
+
         if not filepath:
             return False
 
@@ -336,13 +338,21 @@ Terminal=false
         mw.update_parameters_table()
 
         if hasattr(mw, '_global_sigma') and hasattr(mw, 'sigma_spinbox'):
+
+            mw.sigma_spinbox.blockSignals(True)
             mw.sigma_spinbox.setValue(mw._global_sigma)
+            mw.sigma_spinbox.blockSignals(False)
         sigma_mode = getattr(mw, '_sigma_mode', 'global')
         if hasattr(mw, 'sigma_global_radio') and hasattr(mw, 'sigma_per_isotope_radio'):
+
+            mw.sigma_global_radio.blockSignals(True)
+            mw.sigma_per_isotope_radio.blockSignals(True)
             if sigma_mode == 'per_isotope':
                 mw.sigma_per_isotope_radio.setChecked(True)
             else:
                 mw.sigma_global_radio.setChecked(True)
+            mw.sigma_global_radio.blockSignals(False)
+            mw.sigma_per_isotope_radio.blockSignals(False)
 
         self._migrate_sample_parameters()
 
@@ -460,7 +470,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.0.6',
+            'application_version': '1.0.8',
         }
     
     def _restore_project_data(self, project_data):
@@ -889,7 +899,9 @@ Terminal=false
             None
         """
         if hasattr(self.main_window, 'sigma_spinbox'):
+            self.main_window.sigma_spinbox.blockSignals(True)
             self.main_window.sigma_spinbox.setValue(self.main_window._global_sigma)
+            self.main_window.sigma_spinbox.blockSignals(False)
         
         self.main_window._build_element_lookup_cache()
         

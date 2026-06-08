@@ -9,7 +9,7 @@ import numpy as np
 import math
 import time
 
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
 
 

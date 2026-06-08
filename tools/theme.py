@@ -422,6 +422,24 @@ def main_window_qss(p: Palette) -> str:
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
             border: 1px solid {p.accent};
         }}
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 16px;
+            border-left: 1px solid {p.border};
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border;
+            subcontrol-position: bottom right;
+            width: 16px;
+            border-left: 1px solid {p.border};
+        }}
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+            width: 7px; height: 7px;
+        }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+            width: 7px; height: 7px;
+        }}
         QComboBox::drop-down {{ border: none; width: 20px; }}
         QComboBox QAbstractItemView {{
             background-color: {p.bg_secondary};

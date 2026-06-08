@@ -25,7 +25,7 @@ from calibration_methods.te_common import (
 )
 
 
-from theme import theme
+from tools.theme import theme
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -3518,7 +3518,7 @@ class IonicCalibrationWindow(QMainWindow):
         }
 
     def _compute_outlier_indices(self, y, y_fit, included_mask,
-                                 z_threshold=2.5):
+                                 z_threshold=1.5):
         """
         Flag included points whose standardized residual exceeds ``z_threshold``.
 

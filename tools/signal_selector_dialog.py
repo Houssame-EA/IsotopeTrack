@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor
 import pyqtgraph as pg
 import numpy as np
 
-from theme import theme
+from tools.theme import theme
 
 
 DEFAULT_SAMPLE_COLORS = [

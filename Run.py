@@ -1,5 +1,14 @@
 import sys
 import os
+from tools.cli_utils import get_argument_parser
+
+
+# Early parsing to avoid PySide6 import load time
+cli_parser = get_argument_parser()
+if __name__ == '__main__':
+    cli_parser.parse_args()
+
+
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from tools.splash_screen import SplashCoordinator
@@ -29,7 +38,7 @@ if __name__ == "__main__":
 
     app.setWindowIcon(QIcon(resource_path("images/isotrack_icon.ico")))
 
-    coordinator = SplashCoordinator(main_window_class=MainWindow)
+    coordinator = SplashCoordinator(main_window_class=MainWindow, cli_parser=cli_parser)
     coordinator.start()
 
     exit_code = app.exec()

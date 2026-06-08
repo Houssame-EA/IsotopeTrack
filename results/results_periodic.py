@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor, QPainter, QLinearGradient
 import json
 import math
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
 
 ELEMENT_CATEGORY_COLORS = {
     'alkali':          '#FF7043',

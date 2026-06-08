@@ -252,7 +252,7 @@ def show_advanced_dialog(parent, current: ExportUnits) -> ExportUnits | None:
         QComboBox, QSpinBox, QLabel, QDialogButtonBox, QPushButton,
     )
     from PySide6.QtCore import Qt
-    from theme import theme, dialog_qss
+    from tools.theme import theme, dialog_qss
 
     dlg = QDialog(parent)
     dlg.setWindowTitle("Advanced Export Options")

@@ -38,6 +38,8 @@ idna==3.11
 # ── Utilities ─────────────────────────────────────────────────────────────────
 python-dateutil==2.9.0.post0
 six==1.17.0
+pytz==2025.2
+tzdata==2025.2
 joblib==1.5.3
 threadpoolctl==3.6.0
 packaging==26.0

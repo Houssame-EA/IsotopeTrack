@@ -145,7 +145,7 @@ def _mode(palette=None) -> str:
     if palette is not None:
         return palette.name if hasattr(palette, "name") else str(palette)
     try:
-        from theme import ThemeManager
+        from tools.theme import ThemeManager
         return "dark" if ThemeManager().is_dark else "light"
     except Exception:
         return "dark"
@@ -580,7 +580,7 @@ class EnhancedLogWindow(QDialog):
         self._setup_ui()
 
         try:
-            from theme import ThemeManager
+            from tools.theme import ThemeManager
             ThemeManager().themeChanged.connect(self._on_theme_changed)
         except Exception:
             pass
@@ -795,7 +795,7 @@ class EnhancedLogWindow(QDialog):
             None
         """
         try:
-            from theme import ThemeManager
+            from tools.theme import ThemeManager
             ThemeManager().toggle()
         except Exception:
             pass

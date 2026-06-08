@@ -18,7 +18,7 @@ import loading.tofwerk_loading
 from processing.peak_detection import erfinv
 import csv
 
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
