@@ -1,21 +1,21 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QFrame,
-    QScrollArea, QWidget, QMenu, QDialogButtonBox, QMessageBox, QInputDialog, QColorDialog
+    QScrollArea, QWidget, QMenu, QDialogButtonBox, QMessageBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.figure import Figure
 import numpy as np
 import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_KEY_MAPPING,
+    FONT_FAMILIES, DATA_KEY_MAPPING,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_font_config, apply_font_to_matplotlib,
-    apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
+    apply_font_to_colorbar_standalone, get_display_name,
     download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
-    per_ml_factor, conc_meta_available, format_per_ml,
+    per_ml_factor, conc_meta_available, format_per_ml, single_sample_name,
 )
 
 from results.utils_sort import (
@@ -31,6 +31,32 @@ HEATMAP_DATA_TYPES = [
 ]
 
 DEGREE_SIGN = "\N{DEGREE SIGN}"
+HEATMAP_MULTI_DISPLAY_MODES = [
+    'Individual Subplots',
+    'Side by Side Subplots',
+    'Combined Heatmap',
+]
+
+
+def _normalize_heatmap_display_mode(display_mode: str) -> str:
+    """Normalize legacy Heatmap display-mode values to supported UI modes.
+
+    Args:
+        display_mode (str): Configured Heatmap display mode string.
+
+    Returns:
+        str: A supported Heatmap multi-sample display mode.
+
+    Preserved behavior:
+        This keeps old saved configs safe by mapping removed or unknown modes
+        to the non-lossy default ``Individual Subplots`` without changing any
+        heatmap values, aggregation, or color scaling.
+    """
+    if display_mode in HEATMAP_MULTI_DISPLAY_MODES:
+        return display_mode
+    if display_mode == 'Comparative View':
+        return 'Individual Subplots'
+    return 'Individual Subplots'
 
 
 class HeatmapSettingsDialog(QDialog):
@@ -84,10 +110,32 @@ class HeatmapSettingsDialog(QDialog):
         self.cell_lw_spin = None
         self._font_group = None
         self._export_grp = None
-        self._sample_btns = {}
+        self._sample_name_edits = None
         self._build()
 
+    def _sample_name_keys(self) -> list[str]:
+        """Return raw sample keys that can be renamed in Heatmap settings.
+
+        Returns:
+            list[str]: Canonical sample keys used for display-name overrides.
+
+        Preserved behavior:
+            Raw sample keys remain canonical. This helper only determines which
+            visible labels can receive display-only rename overrides.
+        """
+        if self._is_multi:
+            return list(self._sample_names)
+        single_name = single_sample_name(self._input_data)
+        return [single_name] if single_name else []
+
     def _build(self):
+        """Build scoped Heatmap settings controls for the current route.
+
+        Preserved behavior:
+            Format and quantity controls stay separated by scope so the Results
+            four-button contract remains intact and removed no-op controls do
+            not leave stale widget references behind.
+        """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -101,12 +149,10 @@ class HeatmapSettingsDialog(QDialog):
             g = QGroupBox("Multiple Sample Display")
             fl = QFormLayout(g)
             self.display_mode = QComboBox()
-            self.display_mode.addItems([
-                'Individual Subplots', 'Side by Side Subplots',
-                'Combined Heatmap', 'Comparative View'
-            ])
+            self.display_mode.addItems(HEATMAP_MULTI_DISPLAY_MODES)
             self.display_mode.setCurrentText(
-                self._config.get('display_mode', 'Individual Subplots'))
+                _normalize_heatmap_display_mode(
+                    self._config.get('display_mode', 'Individual Subplots')))
             fl.addRow("Display Mode:", self.display_mode)
             layout.addWidget(g)
 
@@ -251,25 +297,29 @@ class HeatmapSettingsDialog(QDialog):
             self._export_grp = ExportSettingsGroup(self._config)
             layout.addWidget(self._export_grp.build())
 
-            if self._is_multi:
-                g = QGroupBox("Sample Colors")
+            sample_name_keys = self._sample_name_keys()
+            if sample_name_keys:
+                g = QGroupBox("Sample Names")
                 sl_layout = QVBoxLayout(g)
-                colors = self._config.get('sample_colors', {})
-                for i, sn in enumerate(self._sample_names):
+                self._sample_name_edits = {}
+                mappings = dict(self._config.get('sample_name_mappings', {}))
+                for sample_name in sample_name_keys:
                     row = QHBoxLayout()
-                    lbl = QLabel(sn[:25] + "�" if len(sn) > 25 else sn)
+                    lbl = QLabel(sample_name[:25] + "…" if len(sample_name) > 25 else sample_name)
                     lbl.setFixedWidth(160)
                     row.addWidget(lbl)
-                    btn = QPushButton()
-                    btn.setFixedSize(30, 20)
-                    c = colors.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                    btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
-                    btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
-                    row.addWidget(btn)
+                    edit = QLineEdit(mappings.get(sample_name, sample_name))
+                    edit.setFixedWidth(220)
+                    row.addWidget(edit)
+                    reset = QPushButton("Reset")
+                    reset.setFixedHeight(22)
+                    reset.clicked.connect(lambda _, key=sample_name: self._sample_name_edits[key].setText(key))
+                    row.addWidget(reset)
                     row.addStretch()
-                    w = QWidget(); w.setLayout(row)
-                    sl_layout.addWidget(w)
-                    self._sample_btns[sn] = (btn, c)
+                    wrapper = QWidget()
+                    wrapper.setLayout(row)
+                    sl_layout.addWidget(wrapper)
+                    self._sample_name_edits[sample_name] = edit
                 layout.addWidget(g)
 
         layout.addStretch()
@@ -278,22 +328,17 @@ class HeatmapSettingsDialog(QDialog):
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
-    def _pick_color(self, name, btn):
-        """
-        Args:
-            name (Any): Name string.
-            btn (Any): The btn.
-        """
-        c = QColorDialog.getColor(QColor(self._sample_btns[name][1]), self)
-        if c.isValid():
-            btn.setStyleSheet(f"background-color:{c.name()}; border:1px solid black;")
-            b, _ = self._sample_btns[name]
-            self._sample_btns[name] = (b, c.name())
 
     def collect(self) -> dict:
-        """
+        """Collect Heatmap settings without touching removed or missing widgets.
+
         Returns:
-            dict: Result of the operation.
+            dict: Configuration updates for the active settings scope.
+
+        Preserved behavior:
+            This stays scope-safe so removing no-op controls such as Heatmap
+            sample colors does not leave stale widget accesses or `NoneType`
+            errors in format or quantity routes.
         """
         cfg = dict(self._config)
         cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
@@ -333,12 +378,18 @@ class HeatmapSettingsDialog(QDialog):
             cfg.update(self._export_grp.collect())
 
         if self._is_multi:
-            cfg['display_mode'] = self.display_mode.currentText() if self.display_mode else self._config.get('display_mode', 'Individual Subplots')
-            if self._sample_btns:
-                sc = {}
-                for sn, (btn, c) in self._sample_btns.items():
-                    sc[sn] = c
-                cfg['sample_colors'] = sc
+            cfg['display_mode'] = (
+                _normalize_heatmap_display_mode(self.display_mode.currentText())
+                if self.display_mode else
+                _normalize_heatmap_display_mode(self._config.get('display_mode', 'Individual Subplots'))
+            )
+        if self._sample_name_edits is not None:
+            mappings = {}
+            for sample_name, edit in self._sample_name_edits.items():
+                value = edit.text().strip()
+                if value and value != sample_name:
+                    mappings[sample_name] = value
+            cfg['sample_name_mappings'] = mappings
         return cfg
 
 
@@ -378,6 +429,29 @@ class HeatmapDisplayDialog(QDialog):
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
+
+    def _single_sample_name(self) -> str:
+        """Return the canonical single-sample key when one is available.
+
+        Returns:
+            str: Raw single-sample name, or an empty string when unavailable.
+        """
+        return single_sample_name(self.node.input_data)
+
+    def _single_sample_title(self, cfg: dict) -> str:
+        """Return the visible single-sample Heatmap title.
+
+        Args:
+            cfg (dict): Active Heatmap configuration.
+
+        Returns:
+            str: Title that includes the display sample name when a reliable
+                canonical single-sample key is available.
+        """
+        sample_name = self._single_sample_name()
+        if sample_name:
+            return f"{get_display_name(sample_name, cfg)} - Element Combinations"
+        return "Element Combinations"
 
     # ── UI ──────────────────────────────────
 
@@ -541,6 +615,13 @@ class HeatmapDisplayDialog(QDialog):
         download_matplotlib_figure(self.figure, self, "heatmap")
 
     def _refresh(self):
+        """Rebuild the Heatmap figure from current config and extracted data.
+
+        Preserved behavior:
+            Heatmap values, aggregation, normalization, and colormap handling
+            remain unchanged. This refresh only normalizes legacy display modes
+            and reapplies display-only sample names in rendered titles.
+        """
         try:
             cfg = self.node.config
 
@@ -564,11 +645,13 @@ class HeatmapDisplayDialog(QDialog):
             else:
                 cfg = self.node.config
                 if self._is_multi():
-                    dm = cfg.get('display_mode', 'Individual Subplots')
+                    dm = _normalize_heatmap_display_mode(
+                        cfg.get('display_mode', 'Individual Subplots'))
+                    cfg['display_mode'] = dm
                     self._draw_multi(data, cfg, dm)
                 else:
                     ax = self.figure.add_subplot(111)
-                    self._draw_heatmap(ax, data, cfg, "Element Combinations")
+                    self._draw_heatmap(ax, data, cfg, self._single_sample_title(cfg))
                     apply_font_to_matplotlib(ax, cfg)
 
             self.figure.tight_layout()
@@ -581,12 +664,19 @@ class HeatmapDisplayDialog(QDialog):
     # ── Multi-sample dispatch ───────────────
 
     def _draw_multi(self, data, cfg, display_mode):
-        """
+        """Draw the active multi-sample Heatmap layout.
+
         Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-            display_mode (Any): The display mode.
+            data (Any): Multi-sample Heatmap data keyed by raw sample name.
+            cfg (Any): Active Heatmap configuration.
+            display_mode (Any): Requested multi-sample display mode.
+
+        Preserved behavior:
+            This changes only panel layout and display-only sample titles.
+            Heatmap values, aggregation, color scaling, and colormap behavior
+            remain unchanged.
         """
+        display_mode = _normalize_heatmap_display_mode(display_mode)
         names = list(data.keys())
         n = len(names)
 
@@ -595,27 +685,21 @@ class HeatmapDisplayDialog(QDialog):
             rows = math.ceil(n / cols)
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(rows, cols, i + 1)
-                self._draw_heatmap(ax, data[sn], cfg, sn)
+                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
                 apply_font_to_matplotlib(ax, cfg)
 
         elif display_mode == 'Side by Side Subplots':
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(1, n, i + 1)
-                self._draw_heatmap(ax, data[sn], cfg, sn)
+                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
                 apply_font_to_matplotlib(ax, cfg)
 
-        elif display_mode == 'Combined Heatmap':
+        else:
             combined = self._combine_data(data)
             ax = self.figure.add_subplot(111)
             self._draw_heatmap(ax, combined, cfg,
                                f"Combined ({len(data)} samples)")
             apply_font_to_matplotlib(ax, cfg)
-
-        else:
-            for i, sn in enumerate(names[:2]):
-                ax = self.figure.add_subplot(1, 2, i + 1)
-                self._draw_heatmap(ax, data[sn], cfg, sn)
-                apply_font_to_matplotlib(ax, cfg)
 
     @staticmethod
     def _combine_data(data):
@@ -703,10 +787,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
             ``show_mass_numbers``, ``search_element``, ``highlight_matches``,
             ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
             ``cell_linewidth``.
-        title (str): Title drawn only when ``is_multi`` is True (matches the
-            original behaviour — single-sample callers set their own title).
-        is_multi (bool): Whether this is a multi-sample panel (controls the
-            title rendering, mirroring ``self._is_multi()``).
+        title (str): Title to render above the heatmap when provided.
+        is_multi (bool): Whether this is a multi-sample panel. This still
+            controls compatibility with existing multi-sample rendering paths,
+            but a non-empty title is now honored in single-sample mode too.
     """
     if not sample_data:
         ax.text(0.5, 0.5, 'No data', ha='center', va='center',
@@ -836,7 +920,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                            xmin=-0.15, xmax=0, clip_on=False)
                 ax.get_yticklabels()[i].set_weight('bold')
 
-    if is_multi and title:
+    if title:
         ax.set_title(title, fontsize=fc['size'] + 2, fontfamily=fc['family'],
                      fontweight=fw, fontstyle=fst, color=fc['color'], pad=20)
 
@@ -889,7 +973,7 @@ class HeatmapPlotNode(QObject):
         'show_mass_numbers': True, 'colorscale': 'YlGnBu',
         'show_numbers': True, 'show_colorbar': True,
         'display_mode': 'Individual Subplots',
-        'sample_colors': {},
+        'sample_name_mappings': {},
         'font_family': 'Times New Roman', 'font_size': 12,
         'font_bold': False, 'font_italic': False, 'font_color': '#000000',
         # ── Color range ──────────────────────────────────────────────────
