@@ -15,6 +15,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_matplotlib,
     apply_font_to_colorbar_standalone, get_display_name, get_sample_color,
     download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
+    per_ml_factor, conc_meta_available, format_per_ml,
 )
 
 from results.utils_sort import (
@@ -34,13 +35,15 @@ class HeatmapSettingsDialog(QDialog):
     """Scoped settings dialog for heatmap format/quantity configuration."""
 
     def __init__(self, config: dict, is_multi: bool,
-                 sample_names: list, parent=None, scope='all'):
+                 sample_names: list, parent=None, scope='all', input_data=None):
         """
         Args:
             config (dict): Configuration dictionary.
             is_multi (bool): The is multi.
             sample_names (list): The sample names.
             parent (Any): Parent widget or object.
+            input_data (dict | None): Node input payload used to detect whether
+                a transport rate is available for particles-per-mL output.
         """
         super().__init__(parent)
         if scope == 'format':
@@ -54,8 +57,10 @@ class HeatmapSettingsDialog(QDialog):
         self._is_multi = is_multi
         self._sample_names = sample_names
         self._scope = scope
+        self._input_data = input_data
         self.display_mode = None
         self.data_type = None
+        self.y_axis_unit = None
         self.search_edit = None
         self.highlight_cb = None
         self.filter_only_cb = None
@@ -111,6 +116,20 @@ class HeatmapSettingsDialog(QDialog):
             self.data_type.setCurrentText(
                 self._config.get('data_type_display', 'Counts'))
             vl.addWidget(self.data_type)
+            self.y_axis_unit = QComboBox()
+            self.y_axis_unit.addItem("Particle", "count")
+            self.y_axis_unit.addItem("Particle per mL", "per_ml")
+            _cu = self._config.get('y_axis_unit', 'count')
+            self.y_axis_unit.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+            if not conc_meta_available(getattr(self, '_input_data', None)):
+                _ix = self.y_axis_unit.findData('per_ml')
+                _it = self.y_axis_unit.model().item(_ix)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cu == 'per_ml':
+                    self.y_axis_unit.setCurrentIndex(0)
+            vl.addWidget(QLabel("Row count unit:"))
+            vl.addWidget(self.y_axis_unit)
             layout.addWidget(g)
 
             g = QGroupBox("Element Search & Filter")
@@ -275,6 +294,8 @@ class HeatmapSettingsDialog(QDialog):
         """
         cfg = dict(self._config)
         cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
+        if self.y_axis_unit is not None:
+            cfg['y_axis_unit'] = self.y_axis_unit.currentData()
         cfg['search_element'] = self.search_edit.text().strip() if self.search_edit else self._config.get('search_element', '')
         cfg['highlight_matches'] = self.highlight_cb.isChecked() if self.highlight_cb else self._config.get('highlight_matches', True)
         cfg['filter_combinations'] = self.filter_only_cb.isChecked() if self.filter_only_cb else self._config.get('filter_combinations', False)
@@ -488,21 +509,24 @@ class HeatmapDisplayDialog(QDialog):
 
     def _open_settings(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self)
+            self.node.config, self._is_multi(), self._sample_names(), self,
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_plot_format_settings(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self, scope='format')
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='format',
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         dlg = HeatmapSettingsDialog(
-            self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities')
+            self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities',
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -603,9 +627,11 @@ class HeatmapDisplayDialog(QDialog):
             for combo, d in sample_data.items():
                 if combo not in combined:
                     combined[combo] = {
-                        'count': 0, 'total_values': {}, 'particle_count': 0}
+                        'count': 0, 'total_values': {}, 'particle_count': 0,
+                        'pml': 0.0}
                 combined[combo]['count'] += d['count']
                 combined[combo]['particle_count'] += d['particle_count']
+                combined[combo]['pml'] += d.get('pml', 0.0)
                 for elem, vals in d['total_values'].items():
                     combined[combo].setdefault('total_values', {}).setdefault(elem, []).extend(vals)
         return combined
@@ -620,157 +646,12 @@ class HeatmapDisplayDialog(QDialog):
             cfg (Any): The cfg.
             title (Any): Window or dialog title.
         """
-        if not sample_data:
-            ax.text(0.5, 0.5, 'No data', ha='center', va='center',
-                    transform=ax.transAxes, color='gray')
-            return
-
-        dt = cfg.get('data_type_display', 'Counts')
-        search_text = cfg.get('search_element', '').strip()
-        highlight = cfg.get('highlight_matches', True)
-        filter_combos = cfg.get('filter_combinations', False)
-        start = cfg.get('start_range', 1)
-        end = cfg.get('end_range', 10)
-        min_p = cfg.get('min_particles', 1)
-        label_mode = cfg.get('label_mode')
-        if not label_mode:
-            label_mode = 'Mass + Symbol' if cfg.get('show_mass_numbers', True) else 'Symbol'
-        elif not cfg.get('show_mass_numbers', True) and label_mode != 'Atomic Notation':
-            label_mode = 'Symbol'
-        cscale = cfg.get('colorscale', 'YlGnBu')
-        show_nums = cfg.get('show_numbers', True)
-        show_cbar = cfg.get('show_colorbar', True)
-        log_scale = cfg.get('log_scale', False)
-        use_custom_range = cfg.get('use_custom_range', False)
-        vmin_cfg = cfg.get('vmin', None) if use_custom_range else None
-        vmax_cfg = cfg.get('vmax', None) if use_custom_range else None
-        x_rotation = cfg.get('x_rotation', 0)
-        ann_fs = cfg.get('annotation_fontsize', 0) or None
-        cell_lw = cfg.get('cell_linewidth', 0.5)
-        fc = get_font_config(cfg)
-
-        search_elems = []
-        if search_text:
-            search_elems = [e.strip() for e in search_text.replace(',', ' ').split() if e.strip()]
-
-        sorted_combos = sorted(sample_data.items(),
-                                key=lambda x: x[1]['particle_count'], reverse=True)
-
-        if search_elems and filter_combos:
-            sorted_combos = [(c, d) for c, d in sorted_combos
-                             if _combo_matches(c, search_elems)]
-
-        sorted_combos = [(c, d) for c, d in sorted_combos
-                         if d['particle_count'] >= min_p]
-
-        end = min(end, len(sorted_combos))
-        start = max(1, min(start, end))
-        selected = sorted_combos[start - 1:end]
-
-        if not selected:
-            ax.text(0.5, 0.5, 'No combinations match filters',
-                    ha='center', va='center', transform=ax.transAxes, color='gray')
-            return
-
-        all_elems = set()
-        for _, d in selected:
-            all_elems.update(d['total_values'].keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
-
-        labels = []
-        matrix = []
-        hl_rows = []
-
-        for combo, d in selected:
-            count = d['particle_count']
-            fmt = format_combination_label(combo, label_mode, Renderer.MATHTEXT, cfg)
-            labels.append(f"{fmt} ({count})")
-            hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
-
-            is_pct = dt.endswith('%')
-            total_sum = 0
-            if is_pct:
-                for vals in d['total_values'].values():
-                    if vals:
-                        total_sum += np.sum(vals)
-
-            row = []
-            for elem in all_elems:
-                vals = d['total_values'].get(elem, [])
-                if not vals:
-                    row.append(0)
-                elif is_pct:
-                    row.append((np.sum(vals) / total_sum * 100) if total_sum > 0 else 0)
-                else:
-                    row.append(np.mean(vals))
-            matrix.append(row)
-
-        matrix = np.nan_to_num(np.array(matrix), nan=0.0)
-
-        plot_matrix = matrix.copy()
-        if log_scale:
-            plot_matrix = np.log10(np.where(plot_matrix > 0, plot_matrix, np.nan))
-
-        imshow_kw = dict(cmap=cscale, aspect='auto', interpolation='nearest')
-        if use_custom_range:
-            imshow_kw['vmin'] = vmin_cfg
-            imshow_kw['vmax'] = vmax_cfg
-        im = ax.imshow(plot_matrix, **imshow_kw)
-
-        if cell_lw > 0:
-            ax.set_xticks(np.arange(len(all_elems) + 1) - 0.5, minor=True)
-            ax.set_yticks(np.arange(len(labels) + 1) - 0.5, minor=True)
-            ax.grid(which='minor', color='white', linewidth=cell_lw)
-            ax.tick_params(which='minor', length=0)
-
-        x_labels = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg) for e in all_elems]
-        ax.set_xticks(range(len(x_labels)))
-        ax.set_xticklabels(x_labels, rotation=x_rotation,
-                           ha='right' if x_rotation > 0 else 'center',
-                           fontsize=fc['size'], fontweight='bold' if fc['bold'] else 'normal')
-        ax.set_yticks(range(len(labels)))
-        ax.set_yticklabels(labels, fontsize=fc['size'],
-                           fontweight='bold' if fc['bold'] else 'normal')
-
-        if search_elems and highlight:
-            for i, hl in enumerate(hl_rows):
-                if hl:
-                    ax.axhline(y=i + 0.35, color='black', linewidth=2, alpha=0.9,
-                               xmin=-0.15, xmax=0, clip_on=False)
-                    ax.get_yticklabels()[i].set_weight('bold')
-
-        if self._is_multi():
-            ax.set_title(title, fontsize=fc['size'] + 2, fontweight='bold', pad=20)
-
-        if show_cbar:
-            cbar = self.figure.colorbar(im, ax=ax, shrink=0.8)
-            cbar_label = dt
-            if log_scale:
-                cbar_label = f"log10({dt})"
-            apply_font_to_colorbar_standalone(cbar, cfg, cbar_label)
-
-        eff_fs = ann_fs if ann_fs else fc['size']
-        if show_nums and plot_matrix.size < 1000:
-            is_pct = dt.endswith('%')
-            weight = 'bold' if fc['bold'] else 'normal'
-            mx = np.nanmax(plot_matrix) if not np.all(np.isnan(plot_matrix)) else 1
-            for i in range(len(labels)):
-                for j in range(len(all_elems)):
-                    v = plot_matrix[i, j]
-                    v_orig = matrix[i, j]
-                    if not np.isnan(v) and v_orig > 0:
-                        tc = 'white' if v > mx * 0.5 else 'black'
-                        if is_pct:
-                            txt = f'{v_orig:.1f}%'
-                        elif v_orig >= 1000:
-                            txt = f'{v_orig:.0f}'
-                        elif v_orig >= 1:
-                            txt = f'{v_orig:.1f}'
-                        else:
-                            txt = f'{v_orig:.2f}'
-                        ax.text(j, i, txt, ha='center', va='center',
-                                color=tc, fontsize=eff_fs,
-                                fontfamily=fc['family'], weight=weight)
+        # Delegate to the standalone module-level renderer so the Heatmap tab
+        # and the clustering Overview tab share one implementation.
+        draw_combinations_heatmap(
+            ax, self.figure, sample_data, cfg, title=title,
+            is_multi=self._is_multi(),
+        )
 
 
 def _combo_matches(combination: str, search_elements: list) -> bool:
@@ -795,6 +676,199 @@ def _combo_matches(combination: str, search_elements: list) -> bool:
     return True
 
 
+def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
+                             is_multi=False):
+    """Draw a combinations heatmap onto an arbitrary axes/figure.
+
+    This is the standalone, ``self``-free version of
+    ``HeatmapDisplayDialog._draw_heatmap``. It's used by other tabs (e.g. the
+    clustering Overview tab) that want the *exact same* heatmap rendering
+    without instantiating a HeatmapDisplayDialog.
+
+    Args:
+        ax: Target matplotlib Axes.
+        fig: The Figure that owns ``ax`` (needed to attach the colorbar).
+        sample_data (dict): ``{combination_label: {'particle_count': int,
+            'total_values': {element: [values...]}}}``. This is the shape the
+            Heatmap tab builds internally and the clustering Overview tab
+            synthesises from per-cluster characterisation.
+        cfg (dict): Display configuration. Honours the same keys as the
+            Heatmap tab: ``data_type_display``, ``colorscale``,
+            ``show_numbers``, ``show_colorbar``, ``log_scale``,
+            ``use_custom_range``/``vmin``/``vmax``, ``start_range``,
+            ``end_range``, ``min_particles``, ``label_mode``,
+            ``show_mass_numbers``, ``search_element``, ``highlight_matches``,
+            ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
+            ``cell_linewidth``.
+        title (str): Title drawn only when ``is_multi`` is True (matches the
+            original behaviour — single-sample callers set their own title).
+        is_multi (bool): Whether this is a multi-sample panel (controls the
+            title rendering, mirroring ``self._is_multi()``).
+    """
+    if not sample_data:
+        ax.text(0.5, 0.5, 'No data', ha='center', va='center',
+                transform=ax.transAxes, color='gray')
+        return
+
+    dt = cfg.get('data_type_display', 'Counts')
+    search_text = cfg.get('search_element', '').strip()
+    highlight = cfg.get('highlight_matches', True)
+    filter_combos = cfg.get('filter_combinations', False)
+    start = cfg.get('start_range', 1)
+    end = cfg.get('end_range', 10)
+    min_p = cfg.get('min_particles', 1)
+    label_mode = cfg.get('label_mode')
+    if not label_mode:
+        label_mode = ('Mass + Symbol' if cfg.get('show_mass_numbers', True)
+                      else 'Symbol')
+    elif not cfg.get('show_mass_numbers', True) and label_mode != 'Atomic Notation':
+        label_mode = 'Symbol'
+    cscale = cfg.get('colorscale', 'YlGnBu')
+    show_nums = cfg.get('show_numbers', True)
+    show_cbar = cfg.get('show_colorbar', True)
+    log_scale = cfg.get('log_scale', False)
+    use_custom_range = cfg.get('use_custom_range', False)
+    vmin_cfg = cfg.get('vmin', None) if use_custom_range else None
+    vmax_cfg = cfg.get('vmax', None) if use_custom_range else None
+    x_rotation = cfg.get('x_rotation', 0)
+    ann_fs = cfg.get('annotation_fontsize', 0) or None
+    cell_lw = cfg.get('cell_linewidth', 0.5)
+    fc = get_font_config(cfg)
+
+    search_elems = []
+    if search_text:
+        search_elems = [e.strip() for e in search_text.replace(',', ' ').split()
+                        if e.strip()]
+
+    sorted_combos = sorted(sample_data.items(),
+                           key=lambda x: x[1]['particle_count'], reverse=True)
+
+    if search_elems and filter_combos:
+        sorted_combos = [(c, d) for c, d in sorted_combos
+                         if _combo_matches(c, search_elems)]
+
+    sorted_combos = [(c, d) for c, d in sorted_combos
+                     if d['particle_count'] >= min_p]
+
+    end = min(end, len(sorted_combos))
+    start = max(1, min(start, end))
+    selected = sorted_combos[start - 1:end]
+
+    if not selected:
+        ax.text(0.5, 0.5, 'No combinations match filters',
+                ha='center', va='center', transform=ax.transAxes, color='gray')
+        return
+
+    all_elems = set()
+    for _, d in selected:
+        all_elems.update(d['total_values'].keys())
+    all_elems = sort_elements_by_mass(list(all_elems))
+
+    labels = []
+    matrix = []
+    hl_rows = []
+
+    for combo, d in selected:
+        count = d['particle_count']
+        fmt = format_combination_label(combo, label_mode, Renderer.MATHTEXT, cfg)
+        if cfg.get('y_axis_unit', 'count') == 'per_ml' and d.get('pml', 0.0) > 0:
+            labels.append(f"{fmt} ({format_per_ml(d['pml'], Renderer.MATHTEXT, cfg)})")
+        else:
+            labels.append(f"{fmt} ({count})")
+        hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
+
+        is_pct = dt.endswith('%')
+        total_sum = 0
+        if is_pct:
+            for vals in d['total_values'].values():
+                if vals:
+                    total_sum += np.sum(vals)
+
+        row = []
+        for elem in all_elems:
+            vals = d['total_values'].get(elem, [])
+            if not vals:
+                row.append(0)
+            elif is_pct:
+                row.append((np.sum(vals) / total_sum * 100) if total_sum > 0 else 0)
+            else:
+                row.append(np.mean(vals))
+        matrix.append(row)
+
+    matrix = np.nan_to_num(np.array(matrix), nan=0.0)
+
+    plot_matrix = matrix.copy()
+    if log_scale:
+        plot_matrix = np.log10(np.where(plot_matrix > 0, plot_matrix, np.nan))
+
+    imshow_kw = dict(cmap=cscale, aspect='auto', interpolation='nearest')
+    if use_custom_range:
+        imshow_kw['vmin'] = vmin_cfg
+        imshow_kw['vmax'] = vmax_cfg
+    im = ax.imshow(plot_matrix, **imshow_kw)
+
+    if cell_lw > 0:
+        ax.set_xticks(np.arange(len(all_elems) + 1) - 0.5, minor=True)
+        ax.set_yticks(np.arange(len(labels) + 1) - 0.5, minor=True)
+        ax.grid(which='minor', color='white', linewidth=cell_lw)
+        ax.tick_params(which='minor', length=0)
+
+    x_labels = [format_element_label(e, label_mode, Renderer.MATHTEXT, cfg)
+                for e in all_elems]
+    fw = 'bold' if fc['bold'] else 'normal'
+    fst = 'italic' if fc['italic'] else 'normal'
+    ax.set_xticks(range(len(x_labels)))
+    ax.set_xticklabels(x_labels, rotation=x_rotation,
+                       ha='right' if x_rotation > 0 else 'center',
+                       fontsize=fc['size'], fontfamily=fc['family'],
+                       fontweight=fw, fontstyle=fst, color=fc['color'])
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels, fontsize=fc['size'], fontfamily=fc['family'],
+                       fontweight=fw, fontstyle=fst, color=fc['color'])
+
+    if search_elems and highlight:
+        for i, hl in enumerate(hl_rows):
+            if hl:
+                ax.axhline(y=i + 0.35, color='black', linewidth=2, alpha=0.9,
+                           xmin=-0.15, xmax=0, clip_on=False)
+                ax.get_yticklabels()[i].set_weight('bold')
+
+    if is_multi and title:
+        ax.set_title(title, fontsize=fc['size'] + 2, fontfamily=fc['family'],
+                     fontweight=fw, fontstyle=fst, color=fc['color'], pad=20)
+
+    if show_cbar:
+        cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+        cbar_label = dt
+        if log_scale:
+            cbar_label = f"log10({dt})"
+        apply_font_to_colorbar_standalone(cbar, cfg, cbar_label)
+
+    eff_fs = ann_fs if ann_fs else fc['size']
+    if show_nums and plot_matrix.size < 1000:
+        is_pct = dt.endswith('%')
+        weight = 'bold' if fc['bold'] else 'normal'
+        mx = np.nanmax(plot_matrix) if not np.all(np.isnan(plot_matrix)) else 1
+        for i in range(len(labels)):
+            for j in range(len(all_elems)):
+                v = plot_matrix[i, j]
+                v_orig = matrix[i, j]
+                if not np.isnan(v) and v_orig > 0:
+                    tc = 'white' if v > mx * 0.5 else 'black'
+                    if is_pct:
+                        txt = f'{v_orig:.1f}%'
+                    elif v_orig >= 1000:
+                        txt = f'{v_orig:.0f}'
+                    elif v_orig >= 1:
+                        txt = f'{v_orig:.1f}'
+                    else:
+                        txt = f'{v_orig:.2f}'
+                    ax.text(j, i, txt, ha='center', va='center',
+                            color=tc, fontsize=eff_fs,
+                            fontfamily=fc['family'], weight=weight,
+                            style='italic' if fc['italic'] else 'normal')
+
+
 class HeatmapPlotNode(QObject):
     """Heatmap plot node with multiple sample support."""
 
@@ -803,6 +877,7 @@ class HeatmapPlotNode(QObject):
 
     DEFAULT_CONFIG = {
         'data_type_display': 'Counts',
+        'y_axis_unit': 'count',
         'search_element': '', 'highlight_matches': True,
         'filter_combinations': False,
         'start_range': 1, 'end_range': 10,
@@ -906,7 +981,9 @@ class HeatmapPlotNode(QObject):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        return _build_combinations(particles, data_key)
+        sname = self.input_data.get('sample_name', 'Sample')
+        return _build_combinations(particles, data_key,
+                                   per_ml_factor(self.input_data, sname))
 
     def _extract_multi(self, data_key):
         """
@@ -928,17 +1005,20 @@ class HeatmapPlotNode(QObject):
 
         result = {}
         for sn, plist in grouped.items():
-            combos = _build_combinations(plist, data_key)
+            combos = _build_combinations(plist, data_key,
+                                         per_ml_factor(self.input_data, sn))
             if combos:
                 result[sn] = combos
         return result or None
 
 
-def _build_combinations(particles, data_key):
+def _build_combinations(particles, data_key, pml_factor=0.0):
     """Build combination dict from a list of particle dicts.
     Args:
         particles (Any): The particles.
         data_key (Any): The data key.
+        pml_factor (float): Multiplier converting a particle count to
+            particles per mL for the sample these particles belong to.
     Returns:
         object: Result of the operation.
     """
@@ -963,9 +1043,11 @@ def _build_combinations(particles, data_key):
 
             key = ', '.join(sort_elements_by_mass(elems))
             if key not in combos:
-                combos[key] = {'count': 0, 'particle_count': 0, 'total_values': {}}
+                combos[key] = {'count': 0, 'particle_count': 0, 'pml': 0.0,
+                               'total_values': {}}
             combos[key]['count'] += 1
             combos[key]['particle_count'] += 1
+            combos[key]['pml'] += pml_factor
             for e, v in vals.items():
                 combos[key]['total_values'].setdefault(e, []).append(v)
 
@@ -974,7 +1056,3 @@ def _build_combinations(particles, data_key):
         print(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None
-
-
-
-

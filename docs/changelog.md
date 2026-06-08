@@ -4,6 +4,88 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.0.8 — 2026-06-06
+
+### New Features
+- CLI support — app can now be launched from terminal with arguments:
+  - Load project files directly
+  - Load Nu and TOFWERK data files
+  - Select isotopes and presets via command line
+  - See `tools/cli_utils.py` for details
+- Isobaric correction module (still in development)
+
+### Improvements
+- Improved Windows performance — replaced QTableWidget with QTableView in main window reducing lag significantly
+- Theme file moved to `tools/` for better organization
+
+## v1.0.7 — 2026-06-01
+
+### New Features
+- Cluster analysis added option to test all clustering methods at once
+
+### Improvements
+- Particle concentration per mL now reported in results figures
+- UI improvements in the main window
+
+## v1.0.7 — (dev)
+
+### New Features
+- Cluster analysis added option to test all clustering methods at once
+
+### Improvements
+- UI improvements in the mainwindow
+
+## v1.0.7 — 2026-05-31 (dev)
+
+### Improvements
+
+- Particle concentration per mL now reported in results figures
+
+## v1.0.6 — 2026-05-30
+New Features
+
+Version checker app now automatically checks for newer versions on startup
+Cluster analysis new metric scores added
+
+Improvements
+
+Updated main window UI
+Standardized Results plot dialogs with a four-button UI contract (Plot format settings, Configure plot quantities, Reset layout, Export figure) across: Ternary plots, Correlation Matrix, Concentration, Network, Pie Chart, Heatmap, Single/Multiple
+Cleaned right-click menus to avoid duplicating bottom-button actions while preserving quick toggles and isotope label controls
+
+Bug Fixes
+
+Fixed memory leaks across multiple modules
+Fixed errors and bugs in the AI results module
+Fixed mass method — users can now select a new isotope after an initial selection
+Fixed cluster visualisation bugs
+Fixed requirements
+
+
+## 2026-05-30 (dev)
+
+### New Features
+- Version checker app now automatically checks for newer versions on startup
+- Cluster analysis new metric scores added
+
+### Improvements
+- Updated main window UI
+- Fixed cluster visualisation bugs
+
+### Bug Fixes
+- Fixed requirements
+- Fixed memory leaks across multiple modules
+- Fixed errors and bugs in the AI results module
+
+##  2026-05-27
+### Bug Fixes
+- Fixed memory leaks across multiple modules
+- Fixed errors and bugs in the AI results module
+- Fixed mass method — users can now select a new isotope after an initial selection
+
+##  2026-05-22
+Standardizes several Results plot dialogs around the four-button UI contract:Plot format settingsConfigure plot quantitiesReset layoutExport figureAlso cleans right-click menus to avoid duplicating bottom-button actions, while preserving quick toggles and isotope label controls.Implemented the feature for:-Ternary plots-Correlation Matrix-Concentration-Network-Pie Chart-Heatmap-Single/MultipleMinor rendering bug with the x axis rotation option, easy fix and will be done.Manually tested migrated plots after merging latest dev:Network, Correlation Matrix, Concentration, Heatmap, Triangle, Single/Multiple, Pie chart.
+
 ## v1.0.5 — 2026-05-22
 
 ### Bug Fixes

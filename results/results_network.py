@@ -28,6 +28,8 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    format_per_ml,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -66,6 +68,7 @@ DEFAULT_CONFIG = {
     'node_radius':          0.06,
     'show_labels':          True,
     'show_edge_count':      True,
+    'y_axis_unit':          'count',
     'layout_radius_factor': 0.38,
     'label_mode':           'Symbol',
     'font_family':          'Times New Roman',
@@ -192,6 +195,7 @@ class NetworkSettingsDialog(QDialog):
         self.dtype_combo = None
         self.thresh_spin = None
         self.min_part = None
+        self.y_unit_combo = None
         self._pos_btn = None
         self._neg_btn = None
         self._node_btn = None
@@ -227,6 +231,19 @@ class NetworkSettingsDialog(QDialog):
             self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
             self.min_part.setValue(self._cfg.get('min_particles', 5))
             f1.addRow("Min Particles:", self.min_part)
+            self.y_unit_combo = QComboBox()
+            self.y_unit_combo.addItem("Particle", "count")
+            self.y_unit_combo.addItem("Particle per mL", "per_ml")
+            _cu = self._cfg.get('y_axis_unit', 'count')
+            self.y_unit_combo.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+            if not conc_meta_available(self._input_data):
+                _ix = self.y_unit_combo.findData('per_ml')
+                _it = self.y_unit_combo.model().item(_ix)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cu == 'per_ml':
+                    self.y_unit_combo.setCurrentIndex(0)
+            f1.addRow("Count Unit (n):", self.y_unit_combo)
             lay.addWidget(g1)
 
         if self._scope in ('all', 'format'):
@@ -289,6 +306,7 @@ class NetworkSettingsDialog(QDialog):
             'data_type_display':    self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
             'r_threshold':          self.thresh_spin.value() if self.thresh_spin else self._cfg.get('r_threshold', 0.3),
             'min_particles':        int(self.min_part.value()) if self.min_part else int(self._cfg.get('min_particles', 5)),
+            'y_axis_unit':          (self.y_unit_combo.currentData() if getattr(self, 'y_unit_combo', None) else self._cfg.get('y_axis_unit', 'count')),
             'positive_color':       self._pos_btn.color() if self._pos_btn else self._cfg.get('positive_color', '#EF4444'),
             'negative_color':       self._neg_btn.color() if self._neg_btn else self._cfg.get('negative_color', '#3B82F6'),
             'node_color':           self._node_btn.color() if self._node_btn else self._cfg.get('node_color', '#14B8A6'),
@@ -559,6 +577,7 @@ class NetworkDisplayDialog(QDialog):
                     va = 'top'
                 ax.text(lx, ly, fmt_el, ha=ha, va=va,
                         fontsize=fc['size'], color=fc['color'],
+                        fontfamily=fc['family'],
                         fontweight='bold' if fc['bold'] else 'normal',
                         fontstyle='italic' if fc['italic'] else 'normal', zorder=5)
 
@@ -566,22 +585,33 @@ class NetworkDisplayDialog(QDialog):
         if edges:
             subtitle_parts.append(f"mean|r|={mean_r:.2f}")
         if cfg.get('show_edge_count', True):
-            subtitle_parts.append(f"n={net_data.get('n_particles', 0)}")
+            if per_ml_active(cfg, self.node.input_data) and net_data.get('n_per_ml'):
+                subtitle_parts.append(f"n={format_per_ml(net_data.get('n_per_ml', 0), Renderer.MATHTEXT, cfg)} P/mL")
+            else:
+                subtitle_parts.append(f"n={net_data.get('n_particles', 0)}")
         subtitle = "  ·  ".join(subtitle_parts)
 
+        _fw = 'bold' if fc['bold'] else 'normal'
+        _fst = 'italic' if fc['italic'] else 'normal'
         if title:
             ax.set_title(f"{title}\n{subtitle}", fontsize=fc['size'],
-                         color=fc['color'], pad=6,
-                         fontweight='bold' if fc['bold'] else 'normal')
+                         color=fc['color'], pad=6, fontfamily=fc['family'],
+                         fontweight=_fw, fontstyle=_fst)
         else:
             ax.set_title(subtitle, fontsize=fc['size'],
-                         color=fc['color'], pad=6)
+                         color=fc['color'], pad=6, fontfamily=fc['family'],
+                         fontweight=_fw, fontstyle=_fst)
 
         import matplotlib.lines as mlines
+        from matplotlib.font_manager import FontProperties
+        leg_fp = FontProperties(family=fc['family'], size=max(6, fc['size'] - 2),
+                                weight=_fw, style=_fst)
         pos_line = mlines.Line2D([], [], color=pos_c, lw=2, label='r > 0')
         neg_line = mlines.Line2D([], [], color=neg_c, lw=2, label='r < 0')
-        ax.legend(handles=[pos_line, neg_line], loc='lower right',
-                  fontsize=max(6, fc['size'] - 2), framealpha=0.7)
+        leg = ax.legend(handles=[pos_line, neg_line], loc='lower right',
+                        prop=leg_fp, framealpha=0.7)
+        for txt in leg.get_texts():
+            txt.set_color(fc['color'])
 
 
 # ── Node ───────────────────────────────────────────────────────────────
@@ -687,10 +717,12 @@ class NetworkDiagramNode(QObject):
             return None
         edges  = _compute_edges(particles, elements, data_key, r_threshold, min_n)
         sname  = self.input_data.get('sample_name', 'Sample')
+        n_pml  = len(particles) * per_ml_factor(self.input_data, sname)
         return {
             'elements':    elements,
             'edges':       edges,
             'n_particles': len(particles),
+            'n_per_ml':    n_pml,
             'title':       f"{get_display_name(sname, self.config)}  (n={len(particles)})",
         }
 
@@ -719,7 +751,7 @@ class NetworkDiagramNode(QObject):
                 'elements':    elements,
                 'edges':       edges,
                 'n_particles': len(sp),
+                'n_per_ml':    len(sp) * per_ml_factor(self.input_data, sn),
                 'title':       f"{dn}  (n={len(sp)})",
             }
         return result if result else None
-

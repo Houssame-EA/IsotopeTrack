@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPalette
 import numpy as np
 
-from theme import theme
+from tools.theme import theme
 
 @dataclass(frozen=True)
 class InfoPalette:

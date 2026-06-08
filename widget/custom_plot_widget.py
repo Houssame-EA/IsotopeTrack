@@ -12,7 +12,7 @@ import json
 import pandas as pd
 from pathlib import Path
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
 
 
 # ── Theme helpers for editor dialogs ─────────────────────────────────────────
@@ -1000,14 +1000,22 @@ class BackgroundEditorDialog(QDialog):
 
 class PlotSettingsDialog(QDialog):
 
-    def __init__(self, plot_widget, parent=None):
+    def __init__(self, plot_widget, parent=None, show_apply: bool = True):
         """
         Args:
             plot_widget (Any): The plot widget.
             parent (Any): Parent widget or object.
+            show_apply (bool): When ``True`` (default), show the live ``Apply``
+                button for incremental preview-style edits. When ``False``, hide
+                that button so users confirm changes with one-shot ``OK``.
+
+        Preserved behavior:
+            Default remains ``show_apply=True`` so existing callers keep the
+            historical Apply/OK/Cancel workflow.
         """
         super().__init__(parent)
         self.plot_widget = plot_widget
+        self.show_apply = show_apply
         self.setWindowTitle("Plot Settings")
         self.setMinimumSize(620, 550)
         _install_theme_subscription(self)
@@ -1015,6 +1023,14 @@ class PlotSettingsDialog(QDialog):
         self._load_persistent()
 
     def _setup_ui(self):
+        """
+        Build PlotSettings tabs and bottom action buttons.
+
+        Preserved behavior:
+            ``OK`` always applies settings and closes via
+            ``_accept_and_apply``. ``Apply`` is included only when
+            ``self.show_apply`` is enabled.
+        """
         layout = QVBoxLayout(self)
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
@@ -1025,18 +1041,20 @@ class PlotSettingsDialog(QDialog):
 
         btn_layout = QHBoxLayout()
         self.reset_button = QPushButton("Reset to Defaults")
-        self.apply_button = QPushButton("Apply")
+        self.apply_button = QPushButton("Apply") if self.show_apply else None
         self.ok_button = QPushButton("OK")
         self.cancel_button = QPushButton("Cancel")
 
         btn_layout.addWidget(self.reset_button)
         btn_layout.addStretch()
-        btn_layout.addWidget(self.apply_button)
+        if self.apply_button is not None:
+            btn_layout.addWidget(self.apply_button)
         btn_layout.addWidget(self.ok_button)
         btn_layout.addWidget(self.cancel_button)
         layout.addLayout(btn_layout)
 
-        self.apply_button.clicked.connect(self._apply_settings)
+        if self.apply_button is not None:
+            self.apply_button.clicked.connect(self._apply_settings)
         self.ok_button.clicked.connect(self._accept_and_apply)
         self.cancel_button.clicked.connect(self.reject)
         self.reset_button.clicked.connect(self._reset_defaults)
@@ -1915,7 +1933,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         self._install_exclusion_context_menu()
 
     def setup_appearance(self):
-        self.setBackground('white')
         pi = self.getPlotItem()
         pi.showGrid(x=False, y=False)
         pi.hideButtons()
@@ -1923,36 +1940,90 @@ class EnhancedPlotWidget(pg.PlotWidget):
         pi.getAxis('bottom').setGrid(False)
         pi.getAxis('left').enableAutoSIPrefix(False)
 
-        axis_pen = QPen(QColor("#000000"), 1)
-        text_color = QColor("#000000")
         tick_font = QFont('Times New Roman', 20)
         tick_font.setBold(True)
 
         for axis in ['left', 'bottom']:
             ax = pi.getAxis(axis)
-            ax.setPen(axis_pen)
-            ax.setTextPen(text_color)
             ax.setFont(tick_font)
             ax.setStyle(tickFont=tick_font, tickTextOffset=10, tickLength=10)
 
-        self.setLabel('left', 'Intensity', units='counts', color="#000000",
+        self.setLabel('left', 'Intensity', units='counts',
                        font='bold 20pt Times New Roman')
-        self.setLabel('bottom', 'Time', units='s', color="#000000",
+        self.setLabel('bottom', 'Time', units='s',
                        font='bold 20pt Times New Roman')
 
         self.legend = self.addLegend(offset=(-30, 30))
-        self.legend.setLabelTextColor(text_color)
         self.legend.setLabelTextSize('16pt')
-        self.legend.setBrush(pg.mkBrush(255, 255, 255, 150))
-        self.legend.setPen(pg.mkPen(color="#000000", width=1, style=Qt.SolidLine, cosmetic=True, alpha=100))
+
+        self.apply_theme()
+        self._theme_disconnect = _app_theme.connect_theme(self.apply_theme)
+        self.destroyed.connect(lambda *_: self._theme_disconnect())
+
+    def apply_theme(self, *args):
+        """Repaint background and all foreground elements (axes, tick text,
+        labels, legend) from the active theme palette. Safe to call on init,
+        on theme toggle, and after every re-plot. ``plot_fg`` is white-ish in
+        dark mode and dark in light mode, so text reverses automatically."""
+        try:
+            p = _app_theme.palette
+            fg = QColor(p.plot_fg)
+            self.setBackground(p.plot_bg)
+        except RuntimeError:
+            disc = getattr(self, '_theme_disconnect', None)
+            if disc is not None:
+                disc()
+            return
+
+        pi = self.getPlotItem()
+        axis_pen = QPen(fg, 1)
+        for axis in ['left', 'bottom']:
+            ax = pi.getAxis(axis)
+            ax.setPen(axis_pen)
+            ax.setTextPen(fg)
+
+        defaults = {'left': ('Intensity', 'counts'), 'bottom': ('Time', 's')}
+        for name in ('left', 'bottom'):
+            ax = pi.getAxis(name)
+            if ax.labelText:
+                text = ax.labelText
+                units = ax.labelUnits or None
+            else:
+                text, units = defaults[name]
+            if units:
+                pi.setLabel(name, text, units=units, color=fg.name(),
+                            font='bold 20pt Times New Roman')
+            else:
+                pi.setLabel(name, text, color=fg.name(),
+                            font='bold 20pt Times New Roman')
+
+        legend = getattr(self, 'legend', None)
+        if legend is not None:
+            self._style_legend(legend)
+
+        for ln in ('vertical_line', 'horizontal_line'):
+            line = getattr(self, ln, None)
+            if line is not None:
+                line.setPen(pg.mkPen(fg, width=0.5))
+
+    def _style_legend(self, legend):
+        """Apply theme colors to a legend (text, background, border)."""
+        p = _app_theme.palette
+        fg = QColor(p.plot_fg)
+        bg = QColor(p.plot_bg)
+        legend.setLabelTextColor(fg)
+        legend.setBrush(pg.mkBrush(bg.red(), bg.green(), bg.blue(), 150))
+        legend.setPen(pg.mkPen(color=fg, width=1, style=Qt.SolidLine,
+                               cosmetic=True, alpha=120))
 
     def setup_interaction_features(self):
         self.setMouseEnabled(x=True, y=True)
         vb = self.getPlotItem().getViewBox()
         vb.setMouseMode(vb.RectMode)
         try:
-            self.vertical_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#000000", width=0.5))
-            self.horizontal_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("#000000", width=0.5))
+            _cross = QColor(_app_theme.palette.plot_fg)
+            self.vertical_line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(_cross, width=0.5))
+            self.horizontal_line = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen(_cross, width=0.5))
             self.addItem(self.vertical_line)
             self.addItem(self.horizontal_line)
             self.scene().sigMouseMoved.connect(self.mouse_moved)

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtCore import Qt, Signal
 
-from theme import theme, LIGHT
+from tools.theme import theme, LIGHT
 
 
 # ──────────────────────────────────────────────────────────────────────────────

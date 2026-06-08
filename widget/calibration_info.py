@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtCore import Qt
-from theme import theme
+from tools.theme import theme
 
 
 class CalibrationInfoDialog(QDialog):

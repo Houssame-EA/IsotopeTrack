@@ -33,6 +33,24 @@ class DataProcessThread(QThread):
         self.sample_name = sample_name  
         self.max_mass_diff = 0.5
 
+    def cleanup(self):
+        """
+        Disconnect all signals so this thread object can be garbage-collected.
+
+        Call this after the thread has finished (e.g. in the handler connected
+        to ``finished`` or ``error``) and before dropping the last reference::
+
+            thread.finished.connect(lambda *_: thread.cleanup())
+
+        Without this, the bound-method slots keep the thread (and its data
+        arrays) alive indefinitely.
+        """
+        for sig in (self.finished, self.error, self.progress):
+            try:
+                sig.disconnect()
+            except RuntimeError:
+                pass 
+
     @staticmethod
     def detect_data_format(folder_path):
         """
@@ -198,13 +216,18 @@ class DataProcessThread(QThread):
         dwell_time = acqtime * accumulations
 
         self.progress.emit(20)
+
+        def _read_progress(frac):
+            self.progress.emit(int(20 + frac * 40))
+
         masses, signals, run_info = loading.vitesse_loading.read_nu_directory(
             path=self.folder_path,
             max_integ_files=None,
             autoblank=True,
             cycle=None,
             segment=None,
-            raw=False
+            raw=False,
+            progress_callback=_read_progress,
         )
         
         self.progress.emit(60)
@@ -239,6 +262,8 @@ class DataProcessThread(QThread):
                 if label in selected_data.dtype.names:
                     selected_data_dict[target_mass] = selected_data[label].copy()
 
+        del selected_data  
+
         time_array = np.arange(len(signals)) * dwell_time
         
         return selected_data_dict, run_info, time_array, analysis_datetime
@@ -270,9 +295,14 @@ class DataProcessThread(QThread):
             print(f"Using first .h5 file in directory: {h5_file}")
         
         self.progress.emit(20)
-        
+
+        def _read_progress(frac):
+            self.progress.emit(int(20 + frac * 40))
+
         print(f"Reading TOFWERK data...")
-        data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_file)
+        data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(
+            h5_file, progress_callback=_read_progress
+        )
         
         print(f"\n--- TOFWERK DATA PROCESSING ---")
         print(f"Data shape: {data.shape}")
@@ -338,10 +368,12 @@ class DataProcessThread(QThread):
                         print(f"Using entire data array (single mass?)")
         
         print(f"Successfully extracted data for {len(selected_data_dict)} masses")
-        
+        n_timepoints = len(data)
+        del data 
+
         self.progress.emit(90)
         
-        time_array = np.arange(len(data)) * dwell_time
+        time_array = np.arange(n_timepoints) * dwell_time
         print(f"Time array length: {len(time_array)}, range: {time_array[0]:.6f} to {time_array[-1]:.6f}")
         
         run_info = {
@@ -388,3 +420,5 @@ class DataProcessThread(QThread):
             import traceback
             traceback.print_exc()
             self.error.emit(f"Processing error: {str(e)}")
+        finally:
+            self.cleanup()

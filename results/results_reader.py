@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QVBoxLayout, QWidget, QSplitter,
 )
 
-from theme import theme as _theme
+from tools.theme import theme as _theme
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Category metadata — icon + label only; colour comes from palette

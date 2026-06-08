@@ -9,7 +9,7 @@ import numpy as np
 import math
 import time
 
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
 
 
@@ -210,7 +210,6 @@ def export_data(main_window):
     scroll_layout.setSpacing(2)
 
     sample_checkboxes = {}
-    dilution_spinboxes = {}
 
     for sample_name in main_window.sample_to_folder_map.keys():
         row_widget = QWidget()
@@ -225,21 +224,32 @@ def export_data(main_window):
         row.addWidget(cb, 1)
         sample_checkboxes[sample_name] = cb
 
-        dilution_spinbox = QDoubleSpinBox()
-        dilution_spinbox.setRange(1.0, 1000000.0)
-        dilution_spinbox.setValue(1.0)
-        dilution_spinbox.setDecimals(3)
-        dilution_spinbox.setSuffix("x")
-        dilution_spinbox.setFixedWidth(100)
-        dilution_spinbox.setToolTip("Dilution factor for this sample")
-        row.addWidget(dilution_spinbox)
-        dilution_spinboxes[sample_name] = dilution_spinbox
-
         scroll_layout.addWidget(row_widget)
 
     scroll_layout.addStretch()
     scroll.setWidget(scroll_content)
     samples_layout.addWidget(scroll, 1)
+
+    dilution_btn = QPushButton("Set Dilution Factors\u2026")
+    dilution_btn.setToolTip(
+        "Open the per sample dilution factor editor. Corrected particles/mL "
+        "uses these factors.")
+
+    def _open_dilution_editor():
+        """
+        Open the shared dilution factor dialog from the export dialog.
+
+        Returns:
+            None
+        """
+        import tools.dilution_utils
+        samples = list(main_window.sample_to_folder_map.keys())
+        dlg = tools.dilution_utils.DilutionFactorDialog(main_window, samples)
+        dlg.exec()
+
+    dilution_btn.clicked.connect(_open_dilution_editor)
+    samples_layout.addWidget(dilution_btn)
+
     samples_group.setLayout(samples_layout)
     layout.addWidget(samples_group, 1)
 
@@ -320,7 +330,7 @@ def export_data(main_window):
 
     # -- function expects (keeps downstream code unchanged) --------------
     selected_samples = [s for s, cb in sample_checkboxes.items() if cb.isChecked()]
-    sample_dilutions = {s: dilution_spinboxes[s].value() for s in selected_samples}
+    sample_dilutions = {s: main_window.get_sample_dilution(s) for s in selected_samples}
 
     data_type = "particle" if particle_type_btn.isChecked() else "element"
     export_units = export_units_state["units"]
@@ -566,11 +576,7 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
             threshold_data = main_window.element_thresholds.get(sample_name, {})
             dilution_factor = sample_dilutions.get(sample_name, 1.0)
             
-            total_volume_ml = 0
-            if main_window.average_transport_rate > 0 and sample_name in main_window.time_array_by_sample:
-                time_array = main_window.time_array_by_sample[sample_name]
-                total_time = time_array[-1] - time_array[0]
-                total_volume_ml = (main_window.average_transport_rate * total_time) / 1000
+            total_volume_ml = main_window.effective_volume_ml(sample_name)
 
             for element_key, display_label, element, isotope, atomic_mass in all_elements:
                 particle_count = 0
@@ -1083,11 +1089,7 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
         particle_headers = ["Element", "Total Particles", "Particles/mL (Original)", "Particles/mL (Dilution Corrected)", "Dilution Factor", "Mass Fraction Used", "Molecular Weight (g/mol)"]
         f.write(",".join(particle_headers) + "\n")
 
-        total_volume_ml = 0
-        if main_window.average_transport_rate > 0 and sample_name in main_window.time_array_by_sample:
-            time_array = main_window.time_array_by_sample[sample_name]
-            total_time = time_array[-1] - time_array[0]
-            total_volume_ml = (main_window.average_transport_rate * total_time) / 1000
+        total_volume_ml = main_window.effective_volume_ml(sample_name)
 
         for element_key, display_label, element, isotope, atomic_mass in all_elements:
             particle_count = 0

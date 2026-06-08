@@ -209,7 +209,7 @@ class SingleMultipleElementHelper:
         if not combos:
             return None
         palette = default_colors if combo_type == 'single' else list(reversed(default_colors))
-        unit = "Particles/mL" if per_ml else "Particles"
+        unit = "P/mL" if per_ml else "P"
         labels, values, colors, keys = [], [], [], []
         for i, (combo, det, pct) in enumerate(combos):
             val = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, sample_info) if per_ml else det['count']
@@ -291,7 +291,7 @@ class SingleMultipleElementHelper:
         Returns:
             object: Result of the operation.
         """
-        unit = 'Particles/mL' if per_ml else 'Particles'
+        unit = 'P/mL' if per_ml else 'P'
         si = {'is_summed': False}
         calc = lambda c: SingleMultipleElementHelper.calc_per_ml(c, parent_window, dilution, si) if per_ml else c
         rows = []
@@ -1280,7 +1280,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             return
         cmap_name = cfg.get('colormap', 'YlGn')
         cmap = plt.cm.get_cmap(cmap_name)
-        unit = 'Particles/mL' if pml else 'Particles'
+        unit = 'P/mL' if pml else 'P'
         log = cfg.get('use_log_scale', True)
 
         for idx, (title, df_p, df_pct) in enumerate([
@@ -1334,7 +1334,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         cfg = self.node.config
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
-        unit = "Particles/mL" if pml else "Particles"
+        unit = "P/mL" if pml else "P"
         calc = lambda c: SingleMultipleElementHelper.calc_per_ml(c, self.parent_window, dil) if pml else c
 
         if self._multi:

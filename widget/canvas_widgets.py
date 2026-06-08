@@ -62,7 +62,7 @@ from results.results_periodic import IsotopeChipSelector
 
 import qtawesome as qta
 
-from theme import theme as _app_theme
+from tools.theme import theme as _app_theme
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -98,6 +98,52 @@ def _collect_main_windows():
     ]
     windows.sort(key=lambda w: getattr(w, 'window_number', 0))
     return windows
+
+
+def _sample_concentration_meta(window, sample_name):
+    """
+    Build the per sample concentration metadata for a source window.
+
+    Args:
+        window (Any): The owning main window exposing the concentration helpers.
+        sample_name (str): Sample identifier within that window.
+
+    Returns:
+        dict: Mapping with volume_ml, dilution_factor and te_available keys.
+    """
+    if window is None or not hasattr(window, 'effective_volume_ml'):
+        return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
+    try:
+        return {
+            'volume_ml': window.effective_volume_ml(sample_name),
+            'dilution_factor': window.get_sample_dilution(sample_name),
+            'te_available': window.has_transport_rate(),
+        }
+    except Exception:
+        return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
+
+
+def _combine_concentration_meta(metas):
+    """
+    Combine per member concentration metadata into a single entry.
+
+    Volumes add together, the dilution factor is taken from the first member,
+    and transport availability requires every member to provide it.
+
+    Args:
+        metas (list): List of per member metadata dicts.
+
+    Returns:
+        dict: Combined metadata with volume_ml, dilution_factor and te_available.
+    """
+    metas = [m for m in metas if m]
+    if not metas:
+        return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
+    return {
+        'volume_ml': sum(m.get('volume_ml', 0.0) for m in metas),
+        'dilution_factor': metas[0].get('dilution_factor', 1.0),
+        'te_available': all(m.get('te_available', False) for m in metas),
+    }
 
 
 class DS:
@@ -956,7 +1002,7 @@ def _dialog_base_style():
     Returns:
         object: Result of the operation.
     """
-    from theme import theme as _app_theme
+    from tools.theme import theme as _app_theme
     p = _app_theme.palette
     return f"""
     QDialog {{
@@ -1726,6 +1772,7 @@ class SampleSelectorNode(WorkflowNode):
         self.batch_particle_data = None
         self.batch_sample_data = None
         self.batch_available_isotopes = None
+        self.batch_concentration_meta = None
 
     def process_data(self, input_data):
         """
@@ -1740,6 +1787,7 @@ class SampleSelectorNode(WorkflowNode):
                 self.batch_particle_data = input_data.get('particle_data', [])
                 self.batch_sample_data = input_data.get('data', {})
                 self.batch_available_isotopes = input_data.get('available_isotopes', {})
+                self.batch_concentration_meta = input_data.get('concentration_meta', {})
 
     def get_output_data(self):
         """
@@ -1763,6 +1811,14 @@ class SampleSelectorNode(WorkflowNode):
             for k, v in sd.items():
                 if isinstance(v, dict):
                     all_dt[k] = v
+        members = (self.replicate_samples
+                   if self.sum_replicates and self.replicate_samples
+                   else [self.selected_sample])
+        if self.batch_particle_data is not None:
+            metas = [(self.batch_concentration_meta or {}).get(m) for m in members]
+        else:
+            metas = [_sample_concentration_meta(self.parent_window, m) for m in members]
+        conc_meta = _combine_concentration_meta(metas)
         return {
             'type': 'sample_data', 'sample_name': name,
             'data_types': all_dt, 'data': sd,
@@ -1770,6 +1826,7 @@ class SampleSelectorNode(WorkflowNode):
             'total_particles': len(particle_data), 'filtered_particles': len(filtered),
             'sum_replicates': self.sum_replicates,
             'replicate_samples': self.replicate_samples,
+            'concentration_meta': {name: conc_meta},
             'parent_window': self.parent_window,
         }
 
@@ -1890,6 +1947,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
         self.batch_particle_data = None
         self.batch_sample_data = None
         self.batch_available_isotopes = None
+        self.batch_concentration_meta = None
 
     def process_data(self, input_data):
         """
@@ -1904,6 +1962,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
                 self.batch_particle_data = input_data.get('particle_data', [])
                 self.batch_sample_data = input_data.get('data', {})
                 self.batch_available_isotopes = input_data.get('available_isotopes', {})
+                self.batch_concentration_meta = input_data.get('concentration_meta', {})
 
     def get_output_data(self):
         """
@@ -1954,6 +2013,24 @@ class MultipleSampleSelectorNode(WorkflowNode):
                         for el, val in dv.items():
                             adt[dt].setdefault(el, []).append(val)
 
+        if self.batch_particle_data is not None:
+            conc_src = lambda m: (self.batch_concentration_meta or {}).get(m)
+        else:
+            conc_src = lambda m: _sample_concentration_meta(self.parent_window, m)
+        name_members = {}
+        if self.sample_config:
+            for s in included:
+                c = self.sample_config.get(s, {'sum_group': '', 'custom_name': s})
+                g = c.get('sum_group', '')
+                name_members.setdefault(g or s, []).append(s)
+        else:
+            for s in included:
+                name_members.setdefault(s, []).append(s)
+        concentration_meta = {
+            nm: _combine_concentration_meta([conc_src(m) for m in mem])
+            for nm, mem in name_members.items()
+        }
+
         return {
             'type': 'multiple_sample_data', 'sample_names': names,
             'original_sample_names': list(included),
@@ -1962,6 +2039,7 @@ class MultipleSampleSelectorNode(WorkflowNode):
             'selected_isotopes': self.selected_isotopes,
             'total_particles': total, 'filtered_particles': len(combined),
             'sum_replicates': self.sum_replicates,
+            'concentration_meta': concentration_meta,
             'parent_window': self.parent_window,
         }
 
@@ -2084,6 +2162,7 @@ class BatchSampleSelectorNode(WorkflowNode):
         if not self.selected_windows:
             return None
         names, particles, data, isos = [], [], {}, {}
+        concentration_meta = {}
         for w in self.selected_windows:
             num = getattr(w, 'window_number', '?')
             fp = getattr(w, '_project_filepath', None)
@@ -2097,6 +2176,7 @@ class BatchSampleSelectorNode(WorkflowNode):
                     dn = f"{sn} [{lbl}]"
                     names.append(dn)
                     data[dn] = sd
+                    concentration_meta[dn] = _sample_concentration_meta(w, sn)
                     if hasattr(w, 'sample_particle_data'):
                         for p in w.sample_particle_data.get(sn, []):
                             pc = p.copy()
@@ -2108,6 +2188,7 @@ class BatchSampleSelectorNode(WorkflowNode):
             'type': 'batch_sample_list', 'sample_names': names,
             'particle_data': particles, 'data': data,
             'available_isotopes': {k: list(v) for k, v in isos.items()},
+            'concentration_meta': concentration_meta,
             'is_batch': True, 'source_windows': len(self.selected_windows),
             'parent_window': self.parent_window,
         }

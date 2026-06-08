@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor
 import pyqtgraph as pg
 import numpy as np
 
-from theme import theme
+from tools.theme import theme
 
 
 DEFAULT_SAMPLE_COLORS = [
@@ -855,16 +855,11 @@ class SignalSelectorDialog(QDialog):
 
         pw = self.main_window.plot_widget
         pw.clear()
-        pw.setBackground('w')
-        pw.showGrid(x=False, y=False, alpha=0.2)
+        pw.showGrid(x=False, y=False)
         pw.setLabel('left', 'Counts')
         pw.setLabel('bottom', 'Time (s)')
 
-        legend = pw.addLegend(
-            offset=(10, 10),
-            brush=pg.mkBrush(255, 255, 255, 150),
-            pen=pg.mkPen(200, 200, 200, 100),
-        )
+        legend = pw.addLegend(offset=(10, 10))
 
         multi_sample = len(selected_samples) > 1
         single_element = len(selected_elements) == 1
@@ -925,19 +920,16 @@ class SignalSelectorDialog(QDialog):
                         continue
                     end   = min(right_idx + 1, len(signal), len(time_array))
                     start = min(left_idx, end)
-                    # All integration window points (orange)
                     idxs = np.arange(start, end)
                     grp = integ_groups.setdefault(trace_color, {'times': [], 'heights': []})
                     grp['times'].extend(time_array[idxs].tolist())
                     grp['heights'].extend(signal[idxs].tolist())
-                    # Peak maximum point (green)
                     peak_local  = int(np.argmax(signal[start:end]))
                     peak_global = start + peak_local
                     pg_grp = peak_groups.setdefault(trace_color, {'times': [], 'heights': []})
                     pg_grp['times'].append(float(time_array[peak_global]))
                     pg_grp['heights'].append(float(signal[peak_global]))
 
-        # ── Orange: integrated points (toggleable, one legend entry) ──────────
         _first_integ = True
         for color, data in integ_groups.items():
             if not data['times']:
@@ -975,11 +967,13 @@ class SignalSelectorDialog(QDialog):
             pw.addItem(scat_pk)
             _first_peak = False
 
-        # Keep pw.legend in sync so PlotSettingsDialog can find it
         pw.legend = legend
 
         for sample, label in legend.items:
             label.setText(label.text, size='20pt')
+
+        if hasattr(pw, 'apply_theme'):
+            pw.apply_theme()
 
         pw.setMouseEnabled(x=True, y=True)
         pw.enableAutoRange()

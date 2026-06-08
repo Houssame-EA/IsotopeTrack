@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from widget.periodic_table_widget import PeriodicTableWidget
-from theme import theme, dialog_qss
+from tools.theme import theme, dialog_qss
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +126,17 @@ class CSVPreviewTableWidget(QTableWidget):
         self.setSelectionMode(QTableWidget.SingleSelection)
         self._apply_theme()
         theme.themeChanged.connect(self._apply_theme)
+
+    def cleanup(self):
+        """Disconnect the theme signal to allow this widget to be garbage-collected.
+
+        Call this from the parent dialog's closeEvent / accept / reject before
+        dropping the last reference to the widget.
+        """
+        try:
+            theme.themeChanged.disconnect(self._apply_theme)
+        except RuntimeError:
+            pass 
 
     def _apply_theme(self, *_):
         """
@@ -709,6 +720,16 @@ class FileStructureDialog(QDialog):
 
         if self.file_paths:
             self._load_file(self.file_paths[0])
+
+    def closeEvent(self, event):
+        """Disconnect theme signals before closing to allow garbage collection."""
+        try:
+            theme.themeChanged.disconnect(self._apply_theme)
+        except RuntimeError:
+            pass
+        if hasattr(self, 'preview_table'):
+            self.preview_table.cleanup()
+        super().closeEvent(event)
 
     @staticmethod
     def _load_periodic_table(parent) -> list:
@@ -1660,7 +1681,20 @@ class FileStructureDialog(QDialog):
 
     # -- Validation / config emission -----------------------------------
 
+    def _prune_stale_mappings(self):
+        """Remove mapping keys whose file_index is out of range for the current file list.
+
+        This guards against ghost entries that accumulate if files are ever
+        removed or if the dialog is reused with a different file list.
+        """
+        valid_indices = set(range(len(self.file_paths)))
+        stale = [k for k, v in self.column_mappings.items()
+                 if v.get('file_index') not in valid_indices]
+        for k in stale:
+            del self.column_mappings[k]
+
     def _validate_configuration(self):
+        self._prune_stale_mappings()
         current = sum(1 for v in self.column_mappings.values()
                       if v['file_index'] == self.current_file_index)
         total = len(self.column_mappings)
@@ -1673,6 +1707,7 @@ class FileStructureDialog(QDialog):
         Returns:
             dict: Result of the operation.
         """
+        import copy
         ftype_current = file_type_of(self.file_paths[self.current_file_index])
         config: dict[str, Any] = {
             'files': [],
@@ -1693,15 +1728,16 @@ class FileStructureDialog(QDialog):
                 'use_calculated_dwell': self.calc_dwell_radio.isChecked(),
                 'data_type': self.data_type_combo.currentText(),
             },
-            'mappings': self.column_mappings,
+            'mappings': copy.deepcopy(self.column_mappings),
         }
         for i, fp in enumerate(self.file_paths):
+            file_maps = copy.deepcopy({k: v for k, v in self.column_mappings.items()
+                                       if v['file_index'] == i})
             config['files'].append({
                 'path': fp,
                 'name': Path(fp).name,
                 'type': file_type_of(fp),
-                'mappings': {k: v for k, v in self.column_mappings.items()
-                             if v['file_index'] == i},
+                'mappings': file_maps,
             })
         return config
 

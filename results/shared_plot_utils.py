@@ -4,7 +4,7 @@ import math
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
-from PySide6.QtGui import QColor, QFont, QPen, QTextDocument
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen, QTextDocument
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QMessageBox, QMenu, QDialog,
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel,
@@ -134,6 +134,58 @@ class HtmlAxisItem(pg.AxisItem):
         pi = layout.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
     """
 
+    def generateDrawSpecs(self, p):
+        """Generate draw specs while recording the rendered width of HTML ticks.
+
+        pyqtgraph reserves the left-axis width from the widest tick label
+        measured as plain text, which over-counts HTML markup characters and
+        leaves a large empty gap. This records the true rendered width of any
+        HTML tick labels (via QTextDocument) so the reserved width can be
+        corrected in ``_updateMaxTextSize``.
+
+        Args:
+            p (QPainter): Painter supplied by pyqtgraph.
+
+        Returns:
+            tuple: The axisSpec, tickSpecs and textSpecs from the base class.
+        """
+        self._html_rendered_width = None
+        try:
+            tick_font = self.style.get('tickFont') or p.font()
+            length = max(1.0, float(self.geometry().height()))
+            levels = self.tickValues(self.range[0], self.range[1], length) \
+                if self.orientation in ('left', 'right') else []
+            max_w = 0.0
+            for _spacing, vals in levels:
+                for s in self.tickStrings(vals, self.autoSIPrefixScale * self.scale, _spacing):
+                    if isinstance(s, str) and '<' in s:
+                        doc = QTextDocument()
+                        doc.setDocumentMargin(0)
+                        doc.setDefaultFont(tick_font)
+                        doc.setHtml(s)
+                        doc.setTextWidth(-1)
+                        w = doc.idealWidth()
+                        max_w = max(max_w, w)
+            if max_w > 0:
+                self._html_rendered_width = max_w
+        except Exception:
+            self._html_rendered_width = None
+        return super().generateDrawSpecs(p)
+
+    def _updateMaxTextSize(self, x):
+        """Reserve axis space from the rendered HTML width when available.
+
+        Args:
+            x (int): Plain-text width measured by the base class.
+
+        Returns:
+            None
+        """
+        if (self.orientation in ('left', 'right')
+                and getattr(self, '_html_rendered_width', None)):
+            x = int(self._html_rendered_width) + 4
+        super()._updateMaxTextSize(x)
+
     def drawPicture(self, p, axisSpec, tickSpecs, textSpecs):
         p.setRenderHint(p.RenderHint.Antialiasing, False)
         p.setRenderHint(p.RenderHint.TextAntialiasing, True)
@@ -160,6 +212,7 @@ class HtmlAxisItem(pg.AxisItem):
                 continue
             if '<' in text:
                 doc = QTextDocument()
+                doc.setDocumentMargin(0)
                 doc.setDefaultFont(p.font())
                 doc.setDefaultStyleSheet(f'* {{ color: {text_color}; }}')
                 doc.setHtml(f'<center>{text}</center>')
@@ -776,6 +829,278 @@ def make_viridis_colormap():
         object: Result of the operation.
     """
     return pg.ColorMap(VIRIDIS_POSITIONS, VIRIDIS_COLORS)
+
+
+# ─────────────────────────────────────────────
+# Particles-per-mL concentration helpers (shared by all result modules)
+# ─────────────────────────────────────────────
+
+def conc_meta_available(input_data) -> bool:
+    """
+    Report whether any sample in the input carries a usable transport rate.
+
+    Args:
+        input_data (dict): Node input data dictionary.
+
+    Returns:
+        bool: True when at least one concentration metadata entry reports
+            te_available, otherwise False.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict):
+        return False
+    return any(bool(m and m.get('te_available')) for m in meta.values())
+
+
+def per_ml_factor(input_data, sample_name) -> float:
+    """
+    Return the multiplier that converts a particle count to particles per mL.
+
+    The factor is the sample dilution factor divided by its analyzed volume,
+    both taken from the concentration metadata attached by the source node.
+    When the requested sample name is not found but the metadata contains a
+    single entry, that entry is used; this covers single-sample plots whose
+    particles are not tagged with a matching source sample name.
+
+    Args:
+        input_data (dict): Node input data dictionary.
+        sample_name (str): Output sample name to look up.
+
+    Returns:
+        float: dilution_factor divided by volume_ml, or 0.0 when unavailable.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict) or not meta:
+        return 0.0
+    entry = meta.get(sample_name)
+    if not entry and len(meta) == 1:
+        entry = next(iter(meta.values()))
+    if not entry:
+        return 0.0
+    volume = entry.get('volume_ml', 0.0)
+    if not volume or volume <= 0:
+        return 0.0
+    return entry.get('dilution_factor', 1.0) / volume
+
+
+def single_sample_name(input_data):
+    """
+    Return the sample name for single-sample input data.
+
+    Args:
+        input_data (dict): Node input data dictionary.
+
+    Returns:
+        str: Sample name, or None when not single-sample input.
+    """
+    if input_data and input_data.get('type') == 'sample_data':
+        return input_data.get('sample_name')
+    return None
+
+
+def count_to_per_ml(count, input_data, sample_name) -> float:
+    """
+    Convert a particle count to particles per mL for a given sample.
+
+    Args:
+        count (float): Particle count to convert.
+        input_data (dict): Node input data dictionary.
+        sample_name (str): Output sample name to look up.
+
+    Returns:
+        float: Concentration in particles per mL, or 0.0 when unavailable.
+    """
+    return count * per_ml_factor(input_data, sample_name)
+
+
+def per_ml_active(cfg, input_data) -> bool:
+    """
+    Report whether the particles-per-mL unit should be used for drawing.
+
+    Args:
+        cfg (dict): Plot configuration.
+        input_data (dict): Node input data dictionary.
+
+    Returns:
+        bool: True when the unit is selected and a transport rate is available.
+    """
+    return cfg.get('y_axis_unit', 'count') == 'per_ml' and conc_meta_available(input_data)
+
+
+def format_per_ml(value, renderer: Renderer = Renderer.HTML,
+                  config: dict | None = None) -> str:
+    """
+    Format a particles-per-mL value as a mantissa times ten-to-a-power.
+
+    The exponent is raised by the target rendering engine using the same
+    font-aware mechanism as Atomic Notation element labels, so the label
+    renders in the user's selected font (and bold/italic) rather than the
+    engine default:
+
+        Renderer.MATHTEXT  →  $\\mathrm{5.00\\times10^{6}}$  (matplotlib)
+                              with mathtext font synced to config
+        Renderer.HTML      →  font-styled span with 5.00×10<sup>6</sup>  (Qt)
+
+    Args:
+        value (float): Concentration value.
+        renderer (Renderer): Target rendering engine (default: HTML).
+        config (dict | None): Font config dict. When provided, the label is
+            rendered in the configured family/weight/style; for MATHTEXT this
+            also syncs the mathtext font immediately.
+
+    Returns:
+        str: Formatted label ready to pass to the target renderer.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    if v == 0:
+        return "0"
+    exponent = int(np.floor(np.log10(abs(v))))
+    mantissa = v / (10 ** exponent)
+    if abs(mantissa) >= 9.995:
+        mantissa /= 10.0
+        exponent += 1
+
+    fc = get_font_config(config) if config else None
+
+    if renderer == Renderer.MATHTEXT:
+        if fc:
+            _configure_mathtext_font(fc['family'])
+            if fc.get('bold'):
+                cmd = r'\mathbf'
+            elif fc.get('italic'):
+                cmd = r'\mathit'
+            else:
+                cmd = r'\mathrm'
+        else:
+            cmd = r'\mathrm'
+        return f"${cmd}{{{mantissa:.2f}\\times10^{{{exponent}}}}}$"
+
+    body = f"{mantissa:.2f}×10<sup>{exponent}</sup>"
+    if fc:
+        styles = [f"font-family:'{fc['family']}'"]
+        if fc.get('bold'):
+            styles.append("font-weight:bold")
+        if fc.get('italic'):
+            styles.append("font-style:italic")
+        return f"<span style=\"{';'.join(styles)};\">{body}</span>"
+    return body
+
+
+def apply_sci_y_axis(plot_item, config: dict | None = None):
+    """
+    Render the left axis tick labels of a pyqtgraph plot as ten-to-a-power.
+
+    The existing left axis is reused, never swapped, to avoid breaking the
+    plot layout. When that axis is an HtmlAxisItem the exponent is raised with
+    Qt HTML (``10<sup>6</sup>``) in the configured font; otherwise a Unicode
+    superscript is used so the default axis still renders a power of ten.
+
+    Args:
+        plot_item (Any): Target pyqtgraph PlotItem.
+        config (dict | None): Font config dict applied to the tick labels.
+
+    Returns:
+        None
+    """
+    fc = get_font_config(config) if config else None
+
+    try:
+        axis = plot_item.getAxis('left')
+    except Exception:
+        return
+
+    is_html = isinstance(axis, HtmlAxisItem)
+
+    def _decompose(v):
+        exponent = int(np.floor(np.log10(abs(v))))
+        mantissa = v / (10 ** exponent)
+        if abs(mantissa) >= 9.995:
+            mantissa /= 10.0
+            exponent += 1
+        return mantissa, exponent
+
+    def _tick_strings_html(values, scale, spacing):
+        out = []
+        for v in values:
+            if v == 0:
+                out.append("0")
+                continue
+            mantissa, exponent = _decompose(v)
+            if abs(mantissa - 1.0) < 0.05:
+                out.append(f"10<sup>{exponent}</sup>")
+            else:
+                out.append(f"{mantissa:.1f}×10<sup>{exponent}</sup>")
+        return out
+
+    def _tick_strings_unicode(values, scale, spacing):
+        sup = str.maketrans("0123456789-", "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079\u207b")
+        out = []
+        for v in values:
+            if v == 0:
+                out.append("0")
+                continue
+            mantissa, exponent = _decompose(v)
+            exp_str = str(int(exponent)).translate(sup)
+            if abs(mantissa - 1.0) < 0.05:
+                out.append(f"10{exp_str}")
+            else:
+                out.append(f"{mantissa:.1f}\u00d710{exp_str}")
+        return out
+
+    try:
+        axis.enableAutoSIPrefix(False)
+
+        tick_font = None
+        if is_html:
+            fc_use = fc or get_font_config(None)
+            tick_font = QFont(fc_use['family'], int(fc_use['size']))
+            tick_font.setBold(bool(fc_use.get('bold')))
+            tick_font.setItalic(bool(fc_use.get('italic')))
+            axis.setStyle(tickFont=tick_font)
+        axis.tickStrings = _tick_strings_unicode
+
+        try:
+            measure_font = tick_font or axis.style.get('tickFont')
+            if measure_font is None:
+                measure_font = QFont()
+            fm = QFontMetricsF(measure_font)
+            r0, r1 = axis.range
+            length = max(1.0, float(axis.geometry().height() or 1.0))
+            levels = axis.tickValues(r0, r1, length)
+            scale = axis.autoSIPrefixScale * axis.scale
+            max_w = 0.0
+            for spacing, vals in levels:
+                for s in axis.tickStrings(vals, scale, spacing):
+                    if isinstance(s, str) and s:
+                        max_w = max(max_w, fm.horizontalAdvance(s))
+            if max_w > 0:
+                offset = axis.style['tickTextOffset'][0]
+                tick_len = max(0, axis.style['tickLength'])
+                reserved = int(max_w) + offset + tick_len + 6
+                if axis.label is not None and axis.label.isVisible():
+                    reserved += int(axis.label.boundingRect().height() * 0.8)
+                axis.setWidth(reserved)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def per_ml_unit_label(per_ml: bool, base: str = "Particle Count") -> str:
+    """
+    Return the appropriate y-axis label for the active unit.
+
+    Args:
+        per_ml (bool): Whether particles-per-mL is active.
+        base (str): Label used when counts are shown.
+
+    Returns:
+        str: Axis label text.
+    """
+    return "Particles/mL" if per_ml else base
 
 
 # ─────────────────────────────────────────────
@@ -1509,11 +1834,14 @@ def export_element_matrix_csv(df: pd.DataFrame, parent,
 def download_pyqtgraph_figure(plot_widget, parent,
                                default_name: str = 'figure',
                                csv_data=None,
-                               csv_columns: dict | None = None):
+                               csv_columns: dict | None = None,
+                               export_item=None):
     """
-    Export a PyQtGraph GraphicsLayoutWidget to PNG, SVG, PDF, or CSV.
+    Export a PyQtGraph graphics target to PNG, SVG, PDF, or CSV.
 
-    The FULL scene is captured (all subplots), not just a single PlotItem.
+    By default, the full widget scene is exported. When ``export_item`` is
+    supplied, export targets that specific subplot/item while reusing the same
+    export dialog and output options.
 
     Args:
         plot_widget:  pg.GraphicsLayoutWidget
@@ -1521,6 +1849,8 @@ def download_pyqtgraph_figure(plot_widget, parent,
         default_name: suggested filename stem (no extension)
         csv_data:     data to export when CSV is chosen (DataFrame, dict, etc.)
         csv_columns:  optional column rename mapping for CSV
+        export_item:  optional ``QGraphicsItem`` (e.g., ``pg.PlotItem``) to
+                      export instead of the full scene.
     """
     import pyqtgraph.exporters as exp
 
@@ -1564,13 +1894,44 @@ def download_pyqtgraph_figure(plot_widget, parent,
 
     try:
         scene = plot_widget.scene()
+        target = export_item if export_item is not None else scene
+        source_rect = None
+        if export_item is not None:
+            try:
+                from PySide6.QtCore import QRectF
+                rect = export_item.sceneBoundingRect()
+                if rect is not None and rect.isValid():
+                    pad_x = max(8.0, rect.width() * 0.03)
+                    pad_y = max(8.0, rect.height() * 0.03)
+                    source_rect = QRectF(
+                        rect.left() - pad_x,
+                        rect.top() - pad_y,
+                        rect.width() + 2 * pad_x,
+                        rect.height() + 2 * pad_y,
+                    )
+            except Exception:
+                source_rect = None
 
         if fmt == 'SVG':
-            exporter = exp.SVGExporter(scene)
+            exporter = exp.SVGExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
             exporter.export(path)
 
         elif fmt == 'PNG':
-            exporter = exp.ImageExporter(scene)
+            exporter = exp.ImageExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
 
             bg = cfg['background']
             if bg == 'Transparent':
@@ -1584,8 +1945,12 @@ def download_pyqtgraph_figure(plot_widget, parent,
                 exporter.parameters()['width']  = cfg['width']
                 exporter.parameters()['height'] = cfg['height']
             else:
-                exporter.parameters()['width']  = int(plot_widget.width()  * cfg['scale'])
-                exporter.parameters()['height'] = int(plot_widget.height() * cfg['scale'])
+                if source_rect is not None:
+                    exporter.parameters()['width'] = int(source_rect.width() * cfg['scale'])
+                    exporter.parameters()['height'] = int(source_rect.height() * cfg['scale'])
+                else:
+                    exporter.parameters()['width']  = int(plot_widget.width()  * cfg['scale'])
+                    exporter.parameters()['height'] = int(plot_widget.height() * cfg['scale'])
 
             exporter.export(path)
 
@@ -1594,10 +1959,21 @@ def download_pyqtgraph_figure(plot_widget, parent,
             from PySide6.QtGui import QPainter, QPixmap
             import tempfile, os
 
-            exporter = exp.ImageExporter(scene)
+            exporter = exp.ImageExporter(target)
+            if source_rect is not None:
+                try:
+                    params = exporter.parameters()
+                    if 'sourceRect' in params:
+                        params['sourceRect'] = source_rect
+                except Exception:
+                    pass
             exporter.parameters()['background'] = pg.mkColor('w')
-            exporter.parameters()['width']  = int(plot_widget.width()  * 3)
-            exporter.parameters()['height'] = int(plot_widget.height() * 3)
+            if source_rect is not None:
+                exporter.parameters()['width'] = int(source_rect.width() * 3)
+                exporter.parameters()['height'] = int(source_rect.height() * 3)
+            else:
+                exporter.parameters()['width']  = int(plot_widget.width()  * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
 
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 tmp_path = tmp.name

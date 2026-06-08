@@ -27,7 +27,7 @@ from calibration_methods.te_common import (
     particle_mass_from_diameter,
     base_stylesheet, show_data_source_dialog,
 )
-from theme import theme
+from tools.theme import theme
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes."""
@@ -108,73 +108,6 @@ class CollapsibleSection(QWidget):
     @property
     def is_expanded(self): return self._expanded
 
-
-class PeriodicTableDialog(QDialog):
-    element_selected = Signal(dict)
-    
-    def __init__(self, parent=None):
-        """
-        Initialize the Periodic Table Dialog for element selection.
-        
-        Args:
-            parent: Parent widget for this dialog
-        """
-        super().__init__(parent)
-        self.setWindowTitle("Select Element")
-        self.setModal(True)
- 
-        self.setStyleSheet(base_stylesheet(theme.palette))
-        
-        layout = QVBoxLayout(self)
-        
-        self.periodic_table = PeriodicTableWidget()
-        self.periodic_table.selection_confirmed.connect(self.on_selection_confirmed)
-        self.periodic_table.isotope_selected.connect(self.on_isotope_selected)
-        layout.addWidget(self.periodic_table)
-        
-        self.resize(800, 600)
-        
-        self.periodic_table.setEnabled(False)
-    
-    def on_selection_confirmed(self, selected_data):
-        """
-        Handle when user confirms their element selection.
-        
-        Args:
-            selected_data: Dictionary mapping element symbols to selected isotope masses
-        """
-        if selected_data:
-            element_symbol = next(iter(selected_data.keys()))
-            isotope_masses = selected_data[element_symbol]
-            
-            element = next((e for e in self.periodic_table.get_elements() 
-                          if e['symbol'] == element_symbol), None)
-            
-            if element and isotope_masses:
-                element['selected_isotope'] = isotope_masses[0]
-                self.element_selected.emit(element)
-                self.accept()
-    
-    def on_isotope_selected(self, symbol, mass, abundance):
-        """
-        Track individual isotope selections.
-        
-        Args:
-            symbol: Element symbol
-            mass: Isotope mass
-            abundance: Natural abundance percentage
-        """
-        pass
-    
-    def update_available_masses(self, masses):
-        """
-        Update the periodic table with available masses.
-        
-        Args:
-            masses: List of available mass values from loaded data
-        """
-        self.periodic_table.update_available_masses(masses)
-        self.periodic_table.setEnabled(True)
 
 class MassMethodWidget(QMainWindow):
     calibration_completed = Signal(str, float)
@@ -339,8 +272,7 @@ class MassMethodWidget(QMainWindow):
         self.setWindowTitle("Mass Method Calibration")
         self.setMinimumSize(1200, 900)
 
-        self.periodic_table_dialog = PeriodicTableDialog(self)
-        self.periodic_table_dialog.element_selected.connect(self.on_element_selected)
+        self.periodic_table_widget = None
         self.calibration_folder_paths = []
         self.calibration_results = {}
         self.ignore_concentration_item_changed = False
@@ -720,19 +652,28 @@ class MassMethodWidget(QMainWindow):
         
 
     def show_periodic_table(self):
-        """
-        Show the periodic table dialog for element selection.
+     
+        if not self.periodic_table_widget:
+            self.periodic_table_widget = PeriodicTableWidget()
+            self.periodic_table_widget.selection_confirmed.connect(
+                self._handle_selection_confirmed
+            )
+            if self.all_masses:
+                self.periodic_table_widget.update_available_masses(self.all_masses)
+
+        self.periodic_table_widget.show()
+        self.periodic_table_widget.raise_()
         
-        Updates available masses in the dialog if they have changed since last display.
-        """
-        if (self.all_masses and 
-            (not hasattr(self.periodic_table_dialog, 'all_masses') or 
-            self.periodic_table_dialog.all_masses != self.all_masses)):
-            
-            self.periodic_table_dialog.update_available_masses(self.all_masses)
-        
-        self.periodic_table_dialog.show()
-        self.periodic_table_dialog.raise_()
+    def _handle_selection_confirmed(self, selected_data):
+        if not selected_data:
+            return
+        element_symbol = next(iter(selected_data.keys()))
+        isotope_masses = selected_data[element_symbol]
+        element = next((e for e in self.periodic_table_widget.get_elements()
+                        if e['symbol'] == element_symbol), None)
+        if element and isotope_masses:
+            element['selected_isotope'] = isotope_masses[0]
+            self.on_element_selected(element)
     
     def update_folder_list(self):
         """

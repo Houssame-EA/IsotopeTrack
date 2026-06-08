@@ -17,10 +17,8 @@ from results.shared_plot_utils import (
     FontSettingsGroup, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
     format_element_label, LABEL_MODES, Renderer,
-)
-from results.shared_annotation import (
-    AnnotationManager, FloatingInspector, AnnotationShelfButton,
-    install_annotation_shortcuts,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    apply_sci_y_axis, HtmlAxisItem,
 )
 
 try:
@@ -49,16 +47,13 @@ MOLAR_DATA_KEY_MAP = {
 
 MR_DISPLAY_MODES = [
     'Overlaid (Different Colors)',
-    'Side by Side Subplots',
     'Individual Subplots',
-    'Combined with Legend',
 ]
 
-ZERO_HANDLING = [
-    'Skip particles with zero values',
-    'Replace zeros with threshold',
-    'Use log10 safe calculation',
-]
+_MR_DISPLAY_MODE_ALIASES = {
+    'Side by Side Subplots': 'Individual Subplots',
+    'Combined with Legend': 'Overlaid (Different Colors)',
+}
 
 SHADE_TYPES = [
     'None',
@@ -73,8 +68,6 @@ DEFAULT_CONFIG = {
     'data_type_display': 'Element Moles (fmol)',
     'numerator_element': '',
     'denominator_element': '',
-    'min_threshold': 0.001,
-    'zero_handling': ZERO_HANDLING[0],
     'filter_outliers': True,
     'outlier_percentile': 99.0,
     'bins': 50,
@@ -112,6 +105,7 @@ DEFAULT_CONFIG = {
     'sample_colors': {},
     'sample_name_mappings': {},
     'sample_order': [],
+    'y_axis_unit': 'count',
     'label_mode': 'Symbol',
     'font_family': 'Times New Roman',
     'font_size': 18,
@@ -147,29 +141,99 @@ def _xy_labels(cfg):
     num = format_element_label(num, lm)
     den = format_element_label(den, lm)
     xl = f"{num}/{den}"
-    yl = "Number of Particles"
+    yl = "Particles/mL" if cfg.get('y_axis_unit', 'count') == 'per_ml' else "Number of Particles"
     return xl, yl
+
+
+def _normalize_mr_display_mode(mode):
+    """Normalize legacy/redundant display-mode values for Molar Ratio.
+
+    Preserved behavior:
+        Older configs that stored ``Side by Side Subplots`` or
+        ``Combined with Legend`` remain loadable. They are mapped to the
+        supported user-facing modes without changing ratio calculations.
+    """
+    return _MR_DISPLAY_MODE_ALIASES.get(mode, mode)
 
 
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class MolarRatioSettingsDialog(QDialog):
-    """Full settings dialog opened from context menu."""
+    """Scope-aware settings dialog for Molar Ratio format or quantities."""
 
-    def __init__(self, cfg, input_data, available_elements, parent=None):
+    def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
         Args:
             cfg (Any): The cfg.
             input_data (Any): The input data.
             available_elements (Any): The available elements.
             parent (Any): Parent widget or object.
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+
+        Preserved behavior:
+            ``all`` keeps legacy combined settings support. Scoped routes are
+            used by the four-button UI so quantity and format edits are routed
+            predictably without changing ratio science.
         """
         super().__init__(parent)
-        self.setWindowTitle("Molar Ratio Analysis Settings")
+        if scope == 'format':
+            self.setWindowTitle("Molar ratio plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Molar ratio quantities configuration")
+        else:
+            self.setWindowTitle("Molar Ratio Analysis Settings")
         self.setMinimumWidth(480)
         self._cfg = dict(cfg)
         self._input_data = input_data
         self._elements = available_elements or []
+        self._scope = scope
+
+        self.num_combo = None
+        self.den_combo = None
+        self.label_mode = None
+        self.dtype_combo = None
+        self.mode_combo = None
+        self.y_unit_combo = None
+        self.bins_spin = None
+        self.outlier_cb = None
+        self.pct_spin = None
+        self.alpha_spin = None
+        self.borders_cb = None
+        self.curve_cb = None
+        self.stats_cb = None
+        self.box_cb = None
+        self.lx_cb = None
+        self.ly_cb = None
+        self.x_min = None
+        self.x_max = None
+        self.auto_x = None
+        self.y_min = None
+        self.y_max = None
+        self.auto_y = None
+        self._sample_edits = None
+        self._order_list = None
+        self._font_group = None
+        self.median_line_cb = None
+        self.mean_line_cb = None
+        self.mode_marker_cb = None
+        self._med_color = None
+        self._med_style = None
+        self._med_width = None
+        self._mean_color = None
+        self._mean_style = None
+        self._mean_width = None
+        self._mode_color = None
+        self._mode_style = None
+        self._mode_width = None
+        self.shade_combo = None
+        self._shade_color = None
+        self.shade_alpha_spin = None
+        self.ref_line_cb = None
+        self.ref_val_spin = None
+        self.ref_label_edit = None
+        self._ref_color = None
+        self._ref_style = None
+        self._ref_width = None
         self._build_ui()
 
     def _build_ui(self):
@@ -182,54 +246,69 @@ class MolarRatioSettingsDialog(QDialog):
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        g1 = QGroupBox("Element Selection for Ratio")
-        f1 = QFormLayout(g1)
-        self.num_combo = QComboBox(); self.den_combo = QComboBox()
-        if self._elements:
-            self.num_combo.addItems(self._elements)
-            self.den_combo.addItems(self._elements)
-            nc = self._cfg.get('numerator_element', '')
-            dc = self._cfg.get('denominator_element', '')
-            if nc in self._elements: self.num_combo.setCurrentText(nc)
-            if dc in self._elements: self.den_combo.setCurrentText(dc)
-            elif len(self._elements) > 1: self.den_combo.setCurrentIndex(1)
-        f1.addRow("Numerator:", self.num_combo)
-        f1.addRow("Denominator:", self.den_combo)
-        self.label_mode = QComboBox()
-        self.label_mode.addItems(LABEL_MODES)
-        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f1.addRow("Isotope Label:", self.label_mode)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Element Selection for Ratio")
+            f1 = QFormLayout(g1)
+            self.num_combo = QComboBox(); self.den_combo = QComboBox()
+            if self._elements:
+                self.num_combo.addItems(self._elements)
+                self.den_combo.addItems(self._elements)
+                nc = self._cfg.get('numerator_element', '')
+                dc = self._cfg.get('denominator_element', '')
+                if nc in self._elements:
+                    self.num_combo.setCurrentText(nc)
+                if dc in self._elements:
+                    self.den_combo.setCurrentText(dc)
+                elif len(self._elements) > 1:
+                    self.den_combo.setCurrentIndex(1)
+            f1.addRow("Numerator:", self.num_combo)
+            f1.addRow("Denominator:", self.den_combo)
+            lay.addWidget(g1)
 
-        g2 = QGroupBox("Molar Data Type")
-        f2 = QFormLayout(g2)
-        self.dtype_combo = QComboBox(); self.dtype_combo.addItems(MOLAR_DATA_TYPES)
-        self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', MOLAR_DATA_TYPES[0]))
-        f2.addRow("Type:", self.dtype_combo)
-        lay.addWidget(g2)
+        if self._scope in ('all', 'format'):
+            g1f = QGroupBox("Label Display")
+            f1f = QFormLayout(g1f)
+            self.label_mode = QComboBox()
+            self.label_mode.addItems(LABEL_MODES)
+            self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            f1f.addRow("Isotope Label:", self.label_mode)
+            lay.addWidget(g1f)
 
-        g3 = QGroupBox("Ratio Calculation")
-        f3 = QFormLayout(g3)
-        self.thresh_spin = QDoubleSpinBox(); self.thresh_spin.setRange(0.0, 1000.0)
-        self.thresh_spin.setDecimals(3); self.thresh_spin.setValue(self._cfg.get('min_threshold', 0.001))
-        f3.addRow("Min Threshold (fmol):", self.thresh_spin)
-        self.zero_combo = QComboBox(); self.zero_combo.addItems(ZERO_HANDLING)
-        self.zero_combo.setCurrentText(self._cfg.get('zero_handling', ZERO_HANDLING[0]))
-        f3.addRow("Zero Handling:", self.zero_combo)
-        self.outlier_cb = QCheckBox(); self.outlier_cb.setChecked(self._cfg.get('filter_outliers', True))
-        f3.addRow("Filter Outliers:", self.outlier_cb)
-        self.pct_spin = QDoubleSpinBox(); self.pct_spin.setRange(90.0, 99.9)
-        self.pct_spin.setDecimals(1); self.pct_spin.setValue(self._cfg.get('outlier_percentile', 99.0))
-        f3.addRow("Keep Below Percentile:", self.pct_spin)
-        lay.addWidget(g3)
+            self._font_group = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_group.build())
 
-        if _is_multi(self._input_data):
+        if self._scope in ('all', 'quantities'):
+            g2 = QGroupBox("Molar Data Type")
+            f2 = QFormLayout(g2)
+            self.dtype_combo = QComboBox(); self.dtype_combo.addItems(MOLAR_DATA_TYPES)
+            self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', MOLAR_DATA_TYPES[0]))
+            f2.addRow("Type:", self.dtype_combo)
+            lay.addWidget(g2)
+
+        if self._scope in ('all', 'quantities'):
+            g3 = QGroupBox("Ratio Calculation")
+            f3 = QFormLayout(g3)
+            note = QLabel("Zero/nonpositive/missing/invalid values are skipped by design.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#6B7280; font-size:11px;")
+            f3.addRow(note)
+            self.outlier_cb = QCheckBox(); self.outlier_cb.setChecked(self._cfg.get('filter_outliers', True))
+            f3.addRow("Filter Outliers:", self.outlier_cb)
+            self.pct_spin = QDoubleSpinBox(); self.pct_spin.setRange(90.0, 99.9)
+            self.pct_spin.setDecimals(1); self.pct_spin.setValue(self._cfg.get('outlier_percentile', 99.0))
+            f3.addRow("Keep Below Percentile:", self.pct_spin)
+            lay.addWidget(g3)
+
+        if _is_multi(self._input_data) and self._scope in ('all', 'quantities'):
             gm = QGroupBox("Multiple Sample Display")
             fm = QFormLayout(gm)
             self.mode_combo = QComboBox()
             self.mode_combo.addItems(MR_DISPLAY_MODES)
-            self.mode_combo.setCurrentText(
+            cur_mode = _normalize_mr_display_mode(
                 self._cfg.get('display_mode', MR_DISPLAY_MODES[0]))
+            if cur_mode not in MR_DISPLAY_MODES:
+                cur_mode = MR_DISPLAY_MODES[0]
+            self.mode_combo.setCurrentText(cur_mode)
             fm.addRow("Display Mode:", self.mode_combo)
             lay.addWidget(gm)
 
@@ -237,23 +316,46 @@ class MolarRatioSettingsDialog(QDialog):
         f4 = QFormLayout(g4)
         self.bins_spin = QSpinBox(); self.bins_spin.setRange(10, 200)
         self.bins_spin.setValue(self._cfg.get('bins', 50))
-        f4.addRow("Bins:", self.bins_spin)
+        if self._scope in ('all', 'quantities'):
+            f4.addRow("Bins:", self.bins_spin)
+        self.y_unit_combo = QComboBox()
+        self.y_unit_combo.addItem("Particle", "count")
+        self.y_unit_combo.addItem("Particle per mL", "per_ml")
+        _cur_u = self._cfg.get('y_axis_unit', 'count')
+        self.y_unit_combo.setCurrentIndex(1 if _cur_u == 'per_ml' else 0)
+        if self._scope in ('all', 'quantities'):
+            if not conc_meta_available(self._input_data):
+                _i = self.y_unit_combo.findData('per_ml')
+                _it = self.y_unit_combo.model().item(_i)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cur_u == 'per_ml':
+                    self.y_unit_combo.setCurrentIndex(0)
+            f4.addRow("Y Axis:", self.y_unit_combo)
         self.alpha_spin = QDoubleSpinBox(); self.alpha_spin.setRange(0.1, 1.0)
         self.alpha_spin.setDecimals(1); self.alpha_spin.setValue(self._cfg.get('alpha', 0.7))
-        f4.addRow("Transparency:", self.alpha_spin)
+        if self._scope in ('all', 'format'):
+            f4.addRow("Transparency:", self.alpha_spin)
         self.borders_cb = QCheckBox(); self.borders_cb.setChecked(self._cfg.get('bin_borders', True))
-        f4.addRow("Bin Borders:", self.borders_cb)
+        if self._scope in ('all', 'format'):
+            f4.addRow("Bin Borders:", self.borders_cb)
         self.curve_cb = QCheckBox(); self.curve_cb.setChecked(self._cfg.get('show_curve', True))
-        f4.addRow("Density Curve:", self.curve_cb)
         self.stats_cb = QCheckBox(); self.stats_cb.setChecked(self._cfg.get('show_stats', True))
-        f4.addRow("Statistics Box:", self.stats_cb)
         self.box_cb = QCheckBox(); self.box_cb.setChecked(self._cfg.get('show_box', True))
-        f4.addRow("Figure Box (frame):", self.box_cb)
+        if self._scope in ('all', 'quantities'):
+            # Quantity scope owns data-view toggles that are consumed by draw paths.
+            f4.addRow("Density Curve:", self.curve_cb)
+            f4.addRow("Statistics Box:", self.stats_cb)
+        if self._scope in ('all', 'format'):
+            # Format scope owns visual frame presentation controls.
+            f4.addRow("Figure Box (frame):", self.box_cb)
         self.lx_cb = QCheckBox(); self.lx_cb.setChecked(self._cfg.get('log_x', True))
-        f4.addRow("Log X:", self.lx_cb)
         self.ly_cb = QCheckBox(); self.ly_cb.setChecked(self._cfg.get('log_y', False))
-        f4.addRow("Log Y:", self.ly_cb)
-        lay.addWidget(g4)
+        if self._scope in ('all', 'quantities'):
+            f4.addRow("Log X:", self.lx_cb)
+            f4.addRow("Log Y:", self.ly_cb)
+        if f4.rowCount() > 0:
+            lay.addWidget(g4)
 
         g5 = QGroupBox("Axis Limits")
         f5 = QFormLayout(g5)
@@ -284,7 +386,8 @@ class MolarRatioSettingsDialog(QDialog):
         self.y_max.setEnabled(not self.auto_y.isChecked())
         yr.addWidget(self.y_min); yr.addWidget(QLabel("to")); yr.addWidget(self.y_max); yr.addWidget(self.auto_y)
         f5.addRow("Y Range:", yr)
-        lay.addWidget(g5)
+        if self._scope in ('all', 'quantities'):
+            lay.addWidget(g5)
 
         gs = QGroupBox("Statistical Overlays  (applied to all subplots)")
         fs = QFormLayout(gs)
@@ -371,7 +474,8 @@ class MolarRatioSettingsDialog(QDialog):
         shade_row.addWidget(self.shade_alpha_spin)
         shade_row.addStretch()
         fs.addRow("Shade Color / α:", shade_row)
-        lay.addWidget(gs)
+        if self._scope in ('all', 'format'):
+            lay.addWidget(gs)
 
         gr = QGroupBox("Reference Line")
         fr = QFormLayout(gr)
@@ -394,59 +498,62 @@ class MolarRatioSettingsDialog(QDialog):
             _line_row('ref_line_color', 'ref_line_style', 'ref_line_width',
                       ['#A32D2D', 'dash', 2])
         fr.addRow("Style:", r)
-        lay.addWidget(gr)
+        if self._scope in ('all', 'format'):
+            lay.addWidget(gr)
 
         if _is_multi(self._input_data):
             names = self._input_data.get('sample_names', [])
             if names:
-                g6 = QGroupBox("Sample Names")
-                v6 = QVBoxLayout(g6)
-                self._sample_edits = {}
-                nm = dict(self._cfg.get('sample_name_mappings', {}))
-                for sn in names:
-                    h = QHBoxLayout()
-                    h.addWidget(QLabel(sn[:20]))
-                    ed = QLineEdit(nm.get(sn, sn))
-                    ed.setFixedWidth(200)
-                    h.addWidget(ed)
-                    self._sample_edits[sn] = ed
-                    rst = QPushButton("\u21ba")
-                    rst.setFixedSize(22, 22)
-                    rst.clicked.connect(
-                        lambda _, o=sn: self._sample_edits[o].setText(o))
-                    h.addWidget(rst)
-                    h.addStretch()
-                    w = QWidget(); w.setLayout(h); v6.addWidget(w)
-                lay.addWidget(g6)
+                if self._scope in ('all', 'format'):
+                    g6 = QGroupBox("Sample Names")
+                    v6 = QVBoxLayout(g6)
+                    self._sample_edits = {}
+                    nm = dict(self._cfg.get('sample_name_mappings', {}))
+                    for sn in names:
+                        h = QHBoxLayout()
+                        h.addWidget(QLabel(sn[:20]))
+                        ed = QLineEdit(nm.get(sn, sn))
+                        ed.setFixedWidth(200)
+                        h.addWidget(ed)
+                        self._sample_edits[sn] = ed
+                        rst = QPushButton("\u21ba")
+                        rst.setFixedSize(22, 22)
+                        rst.clicked.connect(
+                            lambda _, o=sn: self._sample_edits[o].setText(o))
+                        h.addWidget(rst)
+                        h.addStretch()
+                        w = QWidget(); w.setLayout(h); v6.addWidget(w)
+                    lay.addWidget(g6)
 
-                g7 = QGroupBox("Sample Display Order")
-                v7 = QVBoxLayout(g7)
-                hint = QLabel(
-                    "Drag or use \u2191\u2193 to reorder \u2014 useful for time series.")
-                hint.setStyleSheet("color:#6B7280; font-size:10px;")
-                hint.setWordWrap(True)
-                v7.addWidget(hint)
-                from PySide6.QtWidgets import QAbstractItemView as _AIV
-                self._order_list = QListWidget()
-                self._order_list.setMaximumHeight(130)
-                self._order_list.setDragDropMode(_AIV.InternalMove)
-                cur_order = self._cfg.get('sample_order', [])
-                ordered = [s for s in cur_order if s in names]
-                ordered += [s for s in names if s not in ordered]
-                for s in ordered:
-                    self._order_list.addItem(s)
-                v7.addWidget(self._order_list)
-                btn_row = QHBoxLayout()
-                up_btn = QPushButton("\u2191  Up")
-                up_btn.setFixedWidth(72)
-                up_btn.clicked.connect(self._move_up)
-                dn_btn = QPushButton("\u2193  Down")
-                dn_btn.setFixedWidth(72)
-                dn_btn.clicked.connect(self._move_down)
-                btn_row.addWidget(up_btn); btn_row.addWidget(dn_btn)
-                btn_row.addStretch()
-                v7.addLayout(btn_row)
-                lay.addWidget(g7)
+                if self._scope in ('all', 'quantities'):
+                    g7 = QGroupBox("Sample Display Order")
+                    v7 = QVBoxLayout(g7)
+                    hint = QLabel(
+                        "Drag or use \u2191\u2193 to reorder \u2014 useful for time series.")
+                    hint.setStyleSheet("color:#6B7280; font-size:10px;")
+                    hint.setWordWrap(True)
+                    v7.addWidget(hint)
+                    from PySide6.QtWidgets import QAbstractItemView as _AIV
+                    self._order_list = QListWidget()
+                    self._order_list.setMaximumHeight(130)
+                    self._order_list.setDragDropMode(_AIV.InternalMove)
+                    cur_order = self._cfg.get('sample_order', [])
+                    ordered = [s for s in cur_order if s in names]
+                    ordered += [s for s in names if s not in ordered]
+                    for s in ordered:
+                        self._order_list.addItem(s)
+                    v7.addWidget(self._order_list)
+                    btn_row = QHBoxLayout()
+                    up_btn = QPushButton("\u2191  Up")
+                    up_btn.setFixedWidth(72)
+                    up_btn.clicked.connect(self._move_up)
+                    dn_btn = QPushButton("\u2193  Down")
+                    dn_btn.setFixedWidth(72)
+                    dn_btn.clicked.connect(self._move_down)
+                    btn_row.addWidget(up_btn); btn_row.addWidget(dn_btn)
+                    btn_row.addStretch()
+                    v7.addLayout(btn_row)
+                    lay.addWidget(g7)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -474,73 +581,105 @@ class MolarRatioSettingsDialog(QDialog):
 
     def collect(self):
         """
+        Collect config updates using strict scope-aware key groups.
+
+        Preserved behavior:
+            ``scope='quantities'`` only reads scientific/quantity controls and
+            never touches visual/quick-toggle widgets (e.g. median/mean/mode
+            line checkboxes), preventing deleted-Qt-object access in quantity
+            workflows. ``scope='format'`` collects presentation-only settings.
+            ``scope='all'`` remains supported for compatibility.
+
         Returns:
             object: Result of the operation.
         """
-        d = {
-            'numerator_element': self.num_combo.currentText(),
-            'denominator_element': self.den_combo.currentText(),
-            'data_type_display': self.dtype_combo.currentText(),
-            'label_mode': self.label_mode.currentText(),
-            'min_threshold': self.thresh_spin.value(),
-            'zero_handling': self.zero_combo.currentText(),
-            'filter_outliers': self.outlier_cb.isChecked(),
-            'outlier_percentile': self.pct_spin.value(),
-            'bins': self.bins_spin.value(),
-            'alpha': self.alpha_spin.value(),
-            'bin_borders': self.borders_cb.isChecked(),
-            'show_curve': self.curve_cb.isChecked(),
-            'show_stats': self.stats_cb.isChecked(),
-            'show_box': self.box_cb.isChecked(),
-            'show_median_line': self.median_line_cb.isChecked(),
-            'median_line_color': self._med_color[0],
-            'median_line_style': self._med_style.currentText(),
-            'median_line_width': self._med_width.value(),
-            'show_mean_line': self.mean_line_cb.isChecked(),
-            'mean_line_color': self._mean_color[0],
-            'mean_line_style': self._mean_style.currentText(),
-            'mean_line_width': self._mean_width.value(),
-            'show_mode_marker': self.mode_marker_cb.isChecked(),
-            'mode_line_color': self._mode_color[0],
-            'mode_line_style': self._mode_style.currentText(),
-            'mode_line_width': self._mode_width.value(),
-            'shade_type': self.shade_combo.currentText(),
-            'shade_color': self._shade_color,
-            'shade_alpha': self.shade_alpha_spin.value(),
-            'show_ref_line': self.ref_line_cb.isChecked(),
-            'ref_line_value': self.ref_val_spin.value(),
-            'ref_line_label': self.ref_label_edit.text().strip(),
-            'ref_line_color': self._ref_color[0],
-            'ref_line_style': self._ref_style.currentText(),
-            'ref_line_width': self._ref_width.value(),
-            'log_x': self.lx_cb.isChecked(),
-            'log_y': self.ly_cb.isChecked(),
-            'x_min': self.x_min.value(), 'x_max': self.x_max.value(),
-            'auto_x': self.auto_x.isChecked(),
-            'y_min': self.y_min.value(), 'y_max': self.y_max.value(),
-            'auto_y': self.auto_y.isChecked(),
-        }
-        if hasattr(self, 'mode_combo'):
-            d['display_mode'] = self.mode_combo.currentText()
-        if hasattr(self, '_sample_edits'):
-            d['sample_name_mappings'] = {
-                k: v.text() for k, v in self._sample_edits.items()}
-        if hasattr(self, '_order_list'):
-            d['sample_order'] = [
-                self._order_list.item(i).text()
-                for i in range(self._order_list.count())]
+        d = {}
+        in_quantities = self._scope in ('all', 'quantities')
+        in_format = self._scope in ('all', 'format')
+
+        if in_quantities:
+            if self.num_combo is not None:
+                d['numerator_element'] = self.num_combo.currentText()
+                d['denominator_element'] = self.den_combo.currentText()
+            if self.dtype_combo is not None:
+                d['data_type_display'] = self.dtype_combo.currentText()
+            if self.outlier_cb is not None:
+                d['filter_outliers'] = self.outlier_cb.isChecked()
+                d['outlier_percentile'] = self.pct_spin.value()
+            if self.bins_spin is not None:
+                d['bins'] = self.bins_spin.value()
+            if getattr(self, 'y_unit_combo', None) is not None:
+                d['y_axis_unit'] = self.y_unit_combo.currentData()
+            if self.curve_cb is not None:
+                d['show_curve'] = self.curve_cb.isChecked()
+                d['show_stats'] = self.stats_cb.isChecked()
+            if self.lx_cb is not None:
+                d['log_x'] = self.lx_cb.isChecked()
+                d['log_y'] = self.ly_cb.isChecked()
+            if self.x_min is not None:
+                d['x_min'] = self.x_min.value()
+                d['x_max'] = self.x_max.value()
+                d['auto_x'] = self.auto_x.isChecked()
+                d['y_min'] = self.y_min.value()
+                d['y_max'] = self.y_max.value()
+                d['auto_y'] = self.auto_y.isChecked()
+            if self.mode_combo is not None:
+                d['display_mode'] = _normalize_mr_display_mode(
+                    self.mode_combo.currentText())
+            if self._order_list is not None:
+                d['sample_order'] = [
+                    self._order_list.item(i).text()
+                    for i in range(self._order_list.count())]
+
+        if in_format:
+            if self.label_mode is not None:
+                d['label_mode'] = self.label_mode.currentText()
+            if self.alpha_spin is not None:
+                d['alpha'] = self.alpha_spin.value()
+            if self.borders_cb is not None:
+                d['bin_borders'] = self.borders_cb.isChecked()
+            if self.box_cb is not None:
+                d['show_box'] = self.box_cb.isChecked()
+            if self.median_line_cb is not None:
+                d['show_median_line'] = self.median_line_cb.isChecked()
+                d['median_line_color'] = self._med_color[0]
+                d['median_line_style'] = self._med_style.currentText()
+                d['median_line_width'] = self._med_width.value()
+                d['show_mean_line'] = self.mean_line_cb.isChecked()
+                d['mean_line_color'] = self._mean_color[0]
+                d['mean_line_style'] = self._mean_style.currentText()
+                d['mean_line_width'] = self._mean_width.value()
+                d['show_mode_marker'] = self.mode_marker_cb.isChecked()
+                d['mode_line_color'] = self._mode_color[0]
+                d['mode_line_style'] = self._mode_style.currentText()
+                d['mode_line_width'] = self._mode_width.value()
+                d['shade_type'] = self.shade_combo.currentText()
+                d['shade_color'] = self._shade_color
+                d['shade_alpha'] = self.shade_alpha_spin.value()
+                d['show_ref_line'] = self.ref_line_cb.isChecked()
+                d['ref_line_value'] = self.ref_val_spin.value()
+                d['ref_line_label'] = self.ref_label_edit.text().strip()
+                d['ref_line_color'] = self._ref_color[0]
+                d['ref_line_style'] = self._ref_style.currentText()
+                d['ref_line_width'] = self._ref_width.value()
+            if self._sample_edits is not None:
+                d['sample_name_mappings'] = {
+                    k: v.text() for k, v in self._sample_edits.items()}
+            if self._font_group is not None:
+                d.update(self._font_group.collect())
         return d
 
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
-def _draw_histogram_bars(plot_item, ratios, cfg, color):
+def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0):
     """Draw histogram bars for ratio values.
     Args:
         plot_item (Any): The plot item.
         ratios (Any): The ratios.
         cfg (Any): The cfg.
         color (Any): Colour value.
+        y_scale (float): Multiplier converting bin counts to particles per mL.
     Returns:
         tuple: Result of the operation.
     """
@@ -550,6 +689,7 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color):
 
     pr = np.log10(ratios) if log_x else ratios.copy()
     y, edges = np.histogram(pr, bins=bins)
+    y = y.astype(float) * y_scale
     if log_y:
         y = np.log10(y + 1)
 
@@ -593,14 +733,21 @@ def _add_density_curve(plot_item, values, cfg, edges, total):
 
 def _apply_box(plot_item, cfg):
     """Show or hide the figure frame (top + right axes = closed box).
+
+    The frame state is forced on every redraw so toggling ``show_box`` is
+    responsive in single and multi-sample views.
     Args:
         plot_item (Any): The plot item.
         cfg (Any): The cfg.
     """
-    show = cfg.get('show_box', True)
+    show = bool(cfg.get('show_box', True))
     plot_item.showAxis('top', show)
     plot_item.showAxis('right', show)
     if show:
+        plot_item.getAxis('top').setStyle(showValues=False)
+        plot_item.getAxis('right').setStyle(showValues=False)
+    else:
+        # Ensure hidden-frame state is explicit after any prior enabled state.
         plot_item.getAxis('top').setStyle(showValues=False)
         plot_item.getAxis('right').setStyle(showValues=False)
 
@@ -831,20 +978,21 @@ def _add_stats_text(plot_item, ratios, cfg):
         ti.setPos(0.02, 0.98)
 
 
-def _draw_ratio_plot(plot_item, ratios, cfg, color):
+def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0):
     """Draw a complete ratio histogram with overlays (applied to every subplot).
     Args:
         plot_item (Any): The plot item.
         ratios (Any): The ratios.
         cfg (Any): The cfg.
         color (Any): Colour value.
+        y_scale (float): Multiplier converting bin counts to particles per mL.
     """
     if ratios is None or len(ratios) == 0:
         return
-    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color)
+    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale)
 
     if cfg.get('show_curve', True) and len(ratios) > 5:
-        _add_density_curve(plot_item, pr, cfg, edges, len(ratios))
+        _add_density_curve(plot_item, pr, cfg, edges, len(ratios) * y_scale)
 
     _add_shaded_region(plot_item, pr, cfg)
     _add_stat_lines(plot_item, pr, cfg)
@@ -889,6 +1037,13 @@ class MolarRatioDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """Build plot area and standardized four-button action row.
+
+        Preserved behavior:
+            Annotation shelf/counter/hint UI is intentionally removed from
+            Molar Ratio so the dialog follows the same results-plot workflow
+            as other homogenized views.
+        """
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
 
@@ -902,10 +1057,6 @@ class MolarRatioDisplayDialog(QDialog):
         self._stats.setStyleSheet("color:#6B7280; font-size:11px; padding:2px 6px;")
         lay.addWidget(self._stats)
 
-        self.node.config.setdefault('annotations', [])
-
-        self.ann_mgr = AnnotationManager(self.node.config, parent=self)
-
         self._plot_container = QWidget()
         self._plot_container_layout = QVBoxLayout(self._plot_container)
         self._plot_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -917,121 +1068,75 @@ class MolarRatioDisplayDialog(QDialog):
         self.pw.customContextMenuRequested.connect(self._ctx_menu)
         self._plot_container_layout.addWidget(self.pw)
 
-        self._primary_plot_item = None
-
-        self.ann_inspector = FloatingInspector(self.ann_mgr, parent=self._plot_container)
-        self.ann_inspector.set_plot_accessor(
-            lambda: (self.pw, self._primary_plot_item))
-
         lay.addWidget(self._plot_container, stretch=1)
 
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(6, 0, 6, 0)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_reset = QPushButton("Reset layout")
+        btn_reset.clicked.connect(self._reset_layout)
+        btn_export = QPushButton("Export figure")
+        btn_export.clicked.connect(self._export_figure)
+        actions.addWidget(btn_fmt)
+        actions.addWidget(btn_qty)
+        actions.addWidget(btn_reset)
+        actions.addWidget(btn_export)
+        lay.addLayout(actions)
 
-        self._hint_lbl = QLabel("Use the annotation shelf (bottom-right) to add figure annotations")
-        self._hint_lbl.setStyleSheet(
-            "color: #999; font-size: 11px; font-style: italic;")
-        bottom.addWidget(self._hint_lbl)
-        bottom.addStretch(1)
-
-        self.ann_shelf = AnnotationShelfButton(self.ann_mgr)
-        bottom.addWidget(self.ann_shelf)
-
-        lay.addLayout(bottom)
-
-        self.ann_mgr.sig_annotations_changed.connect(self._refresh_hint)
-        self._refresh_hint()
-
-        install_annotation_shortcuts(self, self.ann_mgr)
-
-    def _refresh_hint(self):
-        """Show hint only when the plot has zero annotations."""
-        self._hint_lbl.setVisible(len(self.node.config.get('annotations', [])) == 0)
-
-
+        
     def _ctx_menu(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
+        """Show the minimal Molar Ratio right-click menu.
+
+        Preserved behavior:
+            Right-click contains only lightweight visual quick toggles and
+            isotope-label display mode. Quantity/edit/export actions are
+            intentionally routed through bottom buttons.
         """
         cfg = self.node.config
+        multi = _is_multi(self.node.input_data)
+        mode = _normalize_mr_display_mode(
+            cfg.get('display_mode', MR_DISPLAY_MODES[0])) if multi else None
+        stats_available = not (
+            multi and mode != 'Individual Subplots'
+        )
         menu = QMenu(self)
 
-        dm = menu.addMenu("Molar Data Type")
-        for dt in MOLAR_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
-
-        elems = self.node.extract_available_elements()
-        if elems:
-            nm = menu.addMenu("Numerator Element")
-            for e in elems:
-                a = nm.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('numerator_element', ''))
-                a.triggered.connect(lambda _, el=e: self._set('numerator_element', el))
-            dm2 = menu.addMenu("Denominator Element")
-            for e in elems:
-                a = dm2.addAction(e); a.setCheckable(True)
-                a.setChecked(e == cfg.get('denominator_element', ''))
-                a.triggered.connect(lambda _, el=e: self._set('denominator_element', el))
-
         tm = menu.addMenu("Quick Toggles")
-
         for key, label in [
             ('show_curve',  'Density Curve'),
-            ('show_stats',  'Statistics Box'),
-            ('log_x',       'Log X-axis'),
-            ('log_y',       'Log Y-axis'),
-            ('bin_borders', 'Bin Borders'),
             ('show_box',    'Figure Box (frame)'),
-        ]:
-            a = tm.addAction(label); a.setCheckable(True)
-            a.setChecked(cfg.get(key, False))
-            a.triggered.connect(lambda _, k=key: self._toggle(k))
-
-        tm.addSeparator()
-        sep1 = tm.addAction("── Stat Lines ──"); sep1.setEnabled(False)
-
-        for key, label in [
             ('show_ref_line',    'Reference Line'),
             ('show_median_line', 'Median Line'),
             ('show_mean_line',   'Mean Line'),
             ('show_mode_marker', 'Mode Marker'),
         ]:
-            a = tm.addAction(label); a.setCheckable(True)
+            a = tm.addAction(label)
+            a.setCheckable(True)
             a.setChecked(cfg.get(key, False))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
 
-        tm.addSeparator()
-        sep2 = tm.addAction("── Shaded Region ──"); sep2.setEnabled(False)
+        if stats_available:
+            stats_act = tm.addAction('Statistics Box')
+            stats_act.setCheckable(True)
+            stats_act.setChecked(cfg.get('show_stats', False))
+            stats_act.triggered.connect(lambda _, k='show_stats': self._toggle(k))
+        else:
+            stats_act = tm.addAction('Statistics Box (unavailable in overlaid mode)')
+            stats_act.setEnabled(False)
+            hint = "Statistics are available in individual subplot mode."
+            stats_act.setToolTip(hint)
+            stats_act.setStatusTip(hint)
 
-        shm = tm.addMenu("Shade Type")
-        for st in SHADE_TYPES:
-            a = shm.addAction(st); a.setCheckable(True)
-            a.setChecked(cfg.get('shade_type', 'None') == st)
-            a.triggered.connect(lambda _, v=st: self._set('shade_type', v))
+        lm = menu.addMenu("Isotope Label")
+        for label_mode in LABEL_MODES:
+            a = lm.addAction(label_mode)
+            a.setCheckable(True)
+            a.setChecked(cfg.get('label_mode', 'Symbol') == label_mode)
+            a.triggered.connect(lambda _, v=label_mode: self._set('label_mode', v))
 
-        zm = menu.addMenu("Zero Handling")
-        for z in ZERO_HANDLING:
-            a = zm.addAction(z); a.setCheckable(True)
-            a.setChecked(cfg.get('zero_handling') == z)
-            a.triggered.connect(lambda _, v=z: self._set('zero_handling', v))
-
-        if _is_multi(self.node.input_data):
-            mm = menu.addMenu("Display Mode")
-            for m in MR_DISPLAY_MODES:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
-
-        menu.addSeparator()
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Export Figure…").triggered.connect(
-            lambda: download_pyqtgraph_figure(self.pw, self, "molar_ratio_plot.png"))
-        if _CUSTOM_PLOT_AVAILABLE:
-            menu.addAction("\U0001f5bc  Plot Settings\u2026").triggered.connect(
-                self._open_plot_settings)
         menu.exec(self.pw.mapToGlobal(pos))
 
     # ── Helpers ──────────────────────────
@@ -1074,12 +1179,35 @@ class MolarRatioDisplayDialog(QDialog):
         self.node.config[key] = value
         self._refresh()
 
-    def _open_settings(self):
+    def _open_settings(self, scope='all', title_override=None):
+        """Open scoped Molar Ratio settings and apply on accept."""
         elems = self.node.extract_available_elements()
-        dlg = MolarRatioSettingsDialog(self.node.config, self.node.input_data, elems, self)
+        dlg = MolarRatioSettingsDialog(
+            self.node.config,
+            self.node.input_data,
+            elems,
+            self,
+            scope=scope,
+        )
+        if title_override:
+            dlg.setWindowTitle(title_override)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+
+    def _open_plot_format_settings(self):
+        """Open visual format settings for Molar Ratio presentation."""
+        self._open_settings(
+            scope='format',
+            title_override="Molar ratio plot format settings",
+        )
+
+    def _open_configure_plot_quantities(self):
+        """Open scientific quantity settings for ratio selection and filters."""
+        self._open_settings(
+            scope='quantities',
+            title_override="Molar ratio quantities configuration",
+        )
 
     def _open_plot_settings(self):
         if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None \
@@ -1093,12 +1221,50 @@ class MolarRatioDisplayDialog(QDialog):
         if pi is not None:
             _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
 
+    def _export_figure(self):
+        """Export the full Molar Ratio figure using existing helper options."""
+        download_pyqtgraph_figure(self.pw, self, "molar_ratio_plot.png")
+
+    def _disable_native_pyqtgraph_context_menu(self):
+        """Suppress native PyQtGraph menus only for this Molar Ratio dialog."""
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.setMenuEnabled(False)
+                except Exception:
+                    pass
+                try:
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.setMenuEnabled(False)
+                except Exception:
+                    pass
+
+    def _reset_layout(self):
+        """Reset view ranges only, preserving all ratio scientific settings."""
+        self.node.config['auto_x'] = True
+        self.node.config['auto_y'] = True
+        for item in self.pw.scene().items():
+            if isinstance(item, pg.PlotItem):
+                try:
+                    item.enableAutoRange(axis='xy', enable=True)
+                    vb = item.getViewBox()
+                    if vb is not None:
+                        vb.autoRange()
+                except Exception:
+                    pass
+        self._refresh()
+
 
     def _refresh(self):
-        try:
-            if hasattr(self, 'ann_mgr'):
-                self.ann_mgr._detach_all()
+        """Rebuild the ratio plot and show non-modal invalid-data explanations.
 
+        Preserved behavior:
+            Refresh always redraws from current node config and explicitly
+            suppresses native PyQtGraph menus for the newly created plot items.
+            Annotation shelf/attach behavior is intentionally removed.
+        """
+        try:
             self._plot_container_layout.removeWidget(self.pw)
             self.pw.deleteLater()
             self.pw = EnhancedGraphicsLayoutWidget()
@@ -1114,6 +1280,7 @@ class MolarRatioDisplayDialog(QDialog):
             self._ratio_lbl.setText(f"Ratio: {num} / {den}" if num and den else "Ratio: Select elements")
 
             plot_data = self.node.extract_plot_data()
+            reason = getattr(self.node, '_last_extract_reason', None)
 
             is_empty = (plot_data is None or
                         (isinstance(plot_data, dict) and
@@ -1121,54 +1288,53 @@ class MolarRatioDisplayDialog(QDialog):
                         (hasattr(plot_data, '__len__') and len(plot_data) == 0))
 
             if is_empty:
-                pi = self.pw.addPlot()
-                t = pg.TextItem("No molar ratio data available\nSelect two elements and connect data",
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
+                if reason == 'same_elements':
+                    msg = "Choose different numerator and denominator elements."
+                elif reason == 'no_valid_ratios':
+                    msg = "No valid ratios after skipping zero or invalid values."
+                else:
+                    msg = "No molar ratio data available\nSelect two elements and connect data"
+                t = pg.TextItem(msg,
                                 anchor=(0.5, 0.5), color='gray')
                 pi.addItem(t); t.setPos(0.5, 0.5)
                 pi.hideAxis('left'); pi.hideAxis('bottom')
                 self._stats.setText("")
-                self._primary_plot_item = pi
-                if hasattr(self, 'ann_mgr'):
-                    self.ann_mgr.attach_plot(pi)
-                if hasattr(self, 'ann_inspector'):
-                    self.ann_inspector.attach(pi)
+                self._disable_native_pyqtgraph_context_menu()
                 return
 
             multi = _is_multi(self.node.input_data)
-            primary_plot = None
             if multi:
-                mode = cfg.get('display_mode', MR_DISPLAY_MODES[0])
+                mode = _normalize_mr_display_mode(
+                    cfg.get('display_mode', MR_DISPLAY_MODES[0]))
+                cfg['display_mode'] = mode
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
-                    primary_plot = self.pw.getItem(0, 0)
-                elif mode == 'Side by Side Subplots':
-                    self._draw_side_by_side(plot_data, cfg)
-                    primary_plot = self.pw.getItem(0, 0)
                 else:
-                    pi = self.pw.addPlot()
+                    pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                     self._draw_overlaid(pi, plot_data, cfg)
                     apply_font_to_pyqtgraph(pi, cfg)
-                    primary_plot = pi
             else:
-                pi = self.pw.addPlot()
+                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 self._draw_single(pi, plot_data, cfg)
                 apply_font_to_pyqtgraph(pi, cfg)
-                primary_plot = pi
+
+            # Enforce figure-frame visibility across every subplot regardless
+            # of draw branch or panel data availability.
+            for item in self.pw.scene().items():
+                if isinstance(item, pg.PlotItem):
+                    _apply_box(item, cfg)
 
             self._update_stats(plot_data, multi)
-
-            self._primary_plot_item = primary_plot
-
-            if hasattr(self, 'ann_mgr') and primary_plot is not None:
-                self.ann_mgr.attach_plot(primary_plot)
-            if hasattr(self, 'ann_inspector'):
-                self.ann_inspector.attach(primary_plot)
+            self._disable_native_pyqtgraph_context_menu()
         except Exception as e:
             print(f"Error updating molar ratio: {e}")
             import traceback; traceback.print_exc()
 
     def _draw_single(self, pi, ratios, cfg):
         """
+        Draw single-sample ratio histogram and apply explicit axis log states.
+
         Args:
             pi (Any): The pi.
             ratios (Any): The ratios.
@@ -1176,20 +1342,25 @@ class MolarRatioDisplayDialog(QDialog):
         """
         sc = cfg.get('sample_colors', {})
         color = sc.get('single_sample', '#663399')
-        _draw_ratio_plot(pi, ratios, cfg, color)
+        per_ml = per_ml_active(cfg, self.node.input_data)
+        sn = single_sample_name(self.node.input_data)
+        y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+        _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
         xl, yl = _xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
         
-        if cfg.get('log_x', True):
-            pi.getAxis('bottom').setLogMode(True)
-        if cfg.get('log_y', False):
-            pi.getAxis('left').setLogMode(True)        
+        pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+        pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        if per_ml and not cfg.get('log_y', False):
+            apply_sci_y_axis(pi, cfg)
         if cfg.get('show_stats', True):
             pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
             _add_stats_text(pi, pr, cfg)
 
     def _draw_overlaid(self, pi, plot_data, cfg):
         """
+        Draw multi-sample overlaid ratios in one panel with explicit log states.
+
         Args:
             pi (Any): The pi.
             plot_data (Any): The plot data.
@@ -1198,13 +1369,15 @@ class MolarRatioDisplayDialog(QDialog):
         sc = cfg.get('sample_colors', {})
         legend_items = []
         all_pr = []
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
                 c = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c, y_scale)
                 legend_items.append((sn, c))
                 if cfg.get('show_curve', True) and len(ratios) > 5:
-                    _add_density_curve(pi, pr, cfg, edges, len(ratios))
+                    _add_density_curve(pi, pr, cfg, edges, len(ratios) * y_scale)
                 all_pr.append(pr)
         if all_pr:
             pooled = np.concatenate(all_pr)
@@ -1213,10 +1386,10 @@ class MolarRatioDisplayDialog(QDialog):
         _add_ref_line(pi, cfg)
         xl, yl = _xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
-        if cfg.get('log_x', True):
-            pi.getAxis('bottom').setLogMode(True)
-        if cfg.get('log_y', False):
-            pi.getAxis('left').setLogMode(True)
+        pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+        pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+        if per_ml and not cfg.get('log_y', False):
+            apply_sci_y_axis(pi, cfg)
         _apply_box(pi, cfg)
         if legend_items:
             legend = pi.addLegend()
@@ -1227,6 +1400,8 @@ class MolarRatioDisplayDialog(QDialog):
 
     def _draw_subplots(self, plot_data, cfg):
         """
+        Draw one subplot per sample and apply explicit log + stats behavior.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
@@ -1235,45 +1410,59 @@ class MolarRatioDisplayDialog(QDialog):
         cols = min(3, len(names))
         rows = math.ceil(len(names) / cols)
         sc = cfg.get('sample_colors', {})
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c)
+            pi = self.pw.addPlot(row=r, col=c,
+                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                _draw_ratio_plot(pi, ratios, cfg, color)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl, cfg)
                 
-                if cfg.get('log_x', True):
-                    pi.getAxis('bottom').setLogMode(True)
-                if cfg.get('log_y', False):
-                    pi.getAxis('left').setLogMode(True)                
+                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                if per_ml and not cfg.get('log_y', False):
+                    apply_sci_y_axis(pi, cfg)
+                if cfg.get('show_stats', True):
+                    pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
+                    _add_stats_text(pi, pr, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """
+        Draw side-by-side sample subplots with explicit log + stats behavior.
+
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
         names = list(plot_data.keys())
         sc = cfg.get('sample_colors', {})
+        per_ml = per_ml_active(cfg, self.node.input_data)
         for i, sn in enumerate(names):
-            pi = self.pw.addPlot(row=0, col=i)
+            pi = self.pw.addPlot(row=0, col=i,
+                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                _draw_ratio_plot(pi, ratios, cfg, color)
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
                 
-                if cfg.get('log_x', True):
-                    pi.getAxis('bottom').setLogMode(True)
-                if cfg.get('log_y', False):
-                    pi.getAxis('left').setLogMode(True)                
+                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                if per_ml and not cfg.get('log_y', False):
+                    apply_sci_y_axis(pi, cfg)
+                if cfg.get('show_stats', True):
+                    pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
+                    _add_stats_text(pi, pr, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _update_stats(self, plot_data, multi):
@@ -1311,6 +1500,7 @@ class MolarRatioPlotNode(QObject):
         self.output_channels = []
         self.config = dict(DEFAULT_CONFIG)
         self.input_data = None
+        self._last_extract_reason = None
 
     def set_position(self, pos):
         """
@@ -1354,14 +1544,24 @@ class MolarRatioPlotNode(QObject):
 
     def extract_plot_data(self):
         """
+        Compute ratio arrays for current numerator/denominator/data-type config.
+
+        Preserved behavior:
+            Old configs may still carry obsolete zero-handling keys; they are
+            ignored. Ratio extraction now uses one fixed scientific behavior:
+            skip zero/nonpositive/missing/NaN/non-finite components.
+
         Returns:
             None
         """
+        self._last_extract_reason = None
         if not self.input_data:
+            self._last_extract_reason = 'no_input'
             return None
         num = self.config.get('numerator_element', '')
         den = self.config.get('denominator_element', '')
         if not num or not den or num == den:
+            self._last_extract_reason = 'same_elements' if num == den else 'missing_elements'
             return None
         dk = MOLAR_DATA_KEY_MAP.get(self.config.get('data_type_display', MOLAR_DATA_TYPES[0]), 'element_moles_fmol')
         itype = self.input_data.get('type')
@@ -1373,6 +1573,14 @@ class MolarRatioPlotNode(QObject):
 
     def _compute_ratios(self, particles, dk, num, den):
         """
+        Compute positive finite ratios with fixed skip-invalid behavior.
+
+        Preserved behavior:
+            Legacy ``zero_handling`` / ``min_threshold`` config keys are
+            ignored for backward compatibility. This method now always skips
+            particles where numerator or denominator is missing, non-finite,
+            or nonpositive.
+
         Args:
             particles (Any): The particles.
             dk (Any): The dk.
@@ -1381,23 +1589,22 @@ class MolarRatioPlotNode(QObject):
         Returns:
             object: Result of the operation.
         """
-        mt = self.config.get('min_threshold', 0.001)
-        zh = self.config.get('zero_handling', ZERO_HANDLING[0])
+        # Obsolete zero-handling config keys are intentionally ignored.
+        # Fixed behavior: skip zero/nonpositive/missing/invalid components.
         ratios = []
         for p in particles:
             pd = p.get(dk, {})
-            nv = pd.get(num, 0)
-            dv = pd.get(den, 0)
-            if zh == ZERO_HANDLING[0]:
-                if nv <= 0 or dv <= 0 or np.isnan(nv) or np.isnan(dv):
-                    continue
-            else:
-                if nv <= 0 or np.isnan(nv): nv = mt
-                if dv <= 0 or np.isnan(dv): dv = mt
-            if dv > 0:
-                r = nv / dv
-                if r > 0 and np.isfinite(r):
-                    ratios.append(r)
+            nv = pd.get(num)
+            dv = pd.get(den)
+            if nv is None or dv is None:
+                continue
+            if not np.isfinite(nv) or not np.isfinite(dv):
+                continue
+            if nv <= 0 or dv <= 0:
+                continue
+            r = nv / dv
+            if r > 0 and np.isfinite(r):
+                ratios.append(r)
         if not ratios:
             return None
         if self.config.get('filter_outliers', True):
@@ -1418,7 +1625,11 @@ class MolarRatioPlotNode(QObject):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        return self._compute_ratios(particles, dk, num, den)
+        ratios = self._compute_ratios(particles, dk, num, den)
+        if ratios is None or len(ratios) == 0:
+            self._last_extract_reason = 'no_valid_ratios'
+            return None
+        return ratios
 
     def _extract_multi(self, dk, num, den):
         """
@@ -1443,4 +1654,6 @@ class MolarRatioPlotNode(QObject):
             r = self._compute_ratios(plist, dk, num, den)
             if r is not None and len(r) > 0:
                 result[sn] = r
+        if not result:
+            self._last_extract_reason = 'no_valid_ratios'
         return result if result else None

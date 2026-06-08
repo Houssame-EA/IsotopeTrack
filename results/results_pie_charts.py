@@ -22,10 +22,12 @@ from PySide6.QtWidgets import (
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
     LABEL_MODES, format_element_label, format_combination_label, Renderer,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    format_per_ml,
 )
 from results.utils_sort import sort_elements_by_mass
 
-# ── Constants ──────────────────────────────────────────────────────────
+
 
 PIE_CHART_TYPES = ['Element Distribution', 'Particle Count Distribution']
 PIE_DATA_TYPES = [
@@ -59,7 +61,7 @@ _LINE_STYLES = ['-', '--', '-.', ':']
 _LINE_NAMES  = ['Solid', 'Dashed', 'Dash-dot', 'Dotted']
 EXPORT_FORMATS = ['svg', 'pdf', 'png', 'eps']
 
-# ── Small helper ───────────────────────────────────────────────────────
+# â”€â”€ Small helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _is_multi(input_data):
     """
@@ -152,7 +154,7 @@ class PieStyleGroup:
         f.addRow("Centre Label:", self._center_text)
 
         self._start = QSpinBox()
-        self._start.setRange(0, 360); self._start.setSuffix("°")
+        self._start.setRange(0, 360); self._start.setSuffix("Â°")
         self._start.setValue(cfg.get('start_angle', 90))
         f.addRow("Start Angle:", self._start)
 
@@ -342,11 +344,11 @@ class MplPieCanvas(QWidget):
     """
     Matplotlib FigureCanvasQTAgg wrapped in a QWidget.
 
-    • Renders one or more pie / donut subplots in a grid.
-    • Every label annotation is individually draggable.
-    • Drag positions are saved back to cfg['label_positions'][key][label]
-      on mouse-button release – they persist across redraws.
-    • Right-click is forwarded to the parent dialog via a callback so the
+    â€¢ Renders one or more pie / donut subplots in a grid.
+    â€¢ Every label annotation is individually draggable.
+    â€¢ Drag positions are saved back to cfg['label_positions'][key][label]
+      on mouse-button release â€“ they persist across redraws.
+    â€¢ Right-click is forwarded to the parent dialog via a callback so the
       existing context-menu code works unchanged.
     """
 
@@ -381,7 +383,7 @@ class MplPieCanvas(QWidget):
         self.canvas.mpl_connect('motion_notify_event',  self._pie_drag_motion)
         self.canvas.mpl_connect('button_release_event', self._pie_drag_release)
 
-    # ── Public API ─────────────────────────────────────────────────────
+    # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def set_context_menu_callback(self, fn):
         """
@@ -392,9 +394,9 @@ class MplPieCanvas(QWidget):
 
     def render(self, subplots: list[dict]):
         """
-        subplots – list of dicts:
+        subplots â€“ list of dicts:
             labels : list[str]
-            sizes  : list[float]   (percentages, ≈ sum 100)
+            sizes  : list[float]   (percentages, â‰ˆ sum 100)
             texts  : list[str]     (annotation text per wedge)
             colors : list[str]     (hex colours)
             title  : str
@@ -437,7 +439,7 @@ class MplPieCanvas(QWidget):
         self.canvas.draw()
 
     def reset_label_positions(self, key: str | None = None):
-        """Clear saved drag positions – all subplots or one.
+        """Clear saved drag positions â€“ all subplots or one.
         Args:
             key (str | None): Dictionary or storage key.
         """
@@ -464,7 +466,7 @@ class MplPieCanvas(QWidget):
                 path, dpi=dpi, bbox_inches='tight',
                 facecolor=self.figure.get_facecolor())
 
-    # ── Internal ───────────────────────────────────────────────────────
+    # â”€â”€ Internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _fwd_ctx(self, pos):
         """
@@ -487,7 +489,7 @@ class MplPieCanvas(QWidget):
                 p = ann.get_position()
                 bucket[label] = (float(p[0]), float(p[1]))
 
-    # ── Pie-axes drag ──────────────────────────────────────────────────
+    # â”€â”€ Pie-axes drag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _pie_drag_press(self, event):
         """Start dragging an axes when the user clicks on its background.
@@ -545,12 +547,14 @@ class MplPieCanvas(QWidget):
         title    = sp['title']
         sp_key   = sp['key']
 
-        # ── Font ──────────────────────────────────────────────────────
+        # â”€â”€ Font â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         ff  = cfg.get('font_family', 'DejaVu Sans')
         fs  = int(cfg.get('font_size', 10))
         fc  = cfg.get('font_color', cfg.get('label_color', '#000000'))
+        fw  = 'bold' if cfg.get('font_bold', False) else 'normal'
+        fst = 'italic' if cfg.get('font_italic', False) else 'normal'
 
-        # ── Pie geometry ──────────────────────────────────────────────
+        # â”€â”€ Pie geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         donut     = cfg.get('donut', False)
         hole      = cfg.get('donut_hole_size', 0.4)
         start_ang = cfg.get('start_angle', 90)
@@ -578,9 +582,10 @@ class MplPieCanvas(QWidget):
         )
         wedges = result[0]
 
-        ax.set_title(title, fontsize=fs + 2, color=fc, fontfamily=ff, pad=8)
+        ax.set_title(title, fontsize=fs + 2, color=fc, fontfamily=ff,
+                     fontweight=fw, fontstyle=fst, pad=8)
 
-        # ── Draggable annotations ─────────────────────────────────────
+        # â”€â”€ Draggable annotations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         show_lines = cfg.get('show_connection_lines', True)
         line_color = cfg.get('connection_line_color', '#888888')
         line_style = cfg.get('connection_line_style', '-')
@@ -608,6 +613,7 @@ class MplPieCanvas(QWidget):
                 xytext=(lx, ly),
                 ha='center', va='center',
                 fontsize=fs, color=fc, fontfamily=ff,
+                fontweight=fw, fontstyle=fst,
                 arrowprops=dict(
                     arrowstyle='-',
                     color=line_color,
@@ -628,21 +634,27 @@ class MplPieCanvas(QWidget):
 
         self._anns[sp_key] = anns
 
-        # ── Legend ────────────────────────────────────────────────────
+        # â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if cfg.get('legend_show', False):
+            from matplotlib.font_manager import FontProperties
+            leg_fp = FontProperties(family=ff, size=max(6, fs - 2),
+                                    weight=fw, style=fst)
             handles = [mpatches.Patch(facecolor=c, label=l)
                        for c, l in zip(colors, labels)]
-            kw = dict(handles=handles, fontsize=max(6, fs - 2), framealpha=0.8)
+            kw = dict(handles=handles, prop=leg_fp, framealpha=0.8)
             if cfg.get('legend_outside', False):
-                ax.legend(loc='upper left', bbox_to_anchor=(1.0, 1.0), **kw)
+                leg = ax.legend(loc='upper left', bbox_to_anchor=(1.0, 1.0), **kw)
             else:
-                ax.legend(loc=cfg.get('legend_position', 'best'), **kw)
+                leg = ax.legend(loc=cfg.get('legend_position', 'best'), **kw)
+            for txt in leg.get_texts():
+                txt.set_color(fc)
 
-        # ── Donut centre label ────────────────────────────────────────
+        # â”€â”€ Donut centre label â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         centre = cfg.get('donut_center_text', '')
         if donut and centre:
             ax.text(0, 0, centre, ha='center', va='center',
-                    fontsize=fs, color=fc, fontfamily=ff, zorder=11)
+                    fontsize=fs, color=fc, fontfamily=ff,
+                    fontweight=fw, fontstyle=fst, zorder=11)
 
         ax.set_aspect('equal')
         ax.axis('off')
@@ -679,6 +691,7 @@ class PieChartSettingsDialog(QDialog):
 
         self._chart_type = None
         self._data_type = None
+        self._y_unit = None
         self._display_mode = None
         self._thresh = None
         self._filter_zeros = None
@@ -718,6 +731,23 @@ class PieChartSettingsDialog(QDialog):
             self._data_type.addItems(PIE_DATA_TYPES)
             self._data_type.setCurrentText(self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
             f1.addRow("Data Type:", self._data_type)
+            self._y_unit = QComboBox()
+            self._y_unit.addItem("Particle", "count")
+            self._y_unit.addItem("Particle per mL", "per_ml")
+            _cur_unit = self._cfg.get('y_axis_unit', 'count')
+            self._y_unit.setCurrentIndex(1 if _cur_unit == 'per_ml' else 0)
+            f1.addRow("Count Unit:", self._y_unit)
+            if not conc_meta_available(self._input_data):
+                _idx = self._y_unit.findData('per_ml')
+                _item = self._y_unit.model().item(_idx)
+                if _item is not None:
+                    _item.setEnabled(False)
+                if _cur_unit == 'per_ml':
+                    self._y_unit.setCurrentIndex(0)
+                _note = QLabel("Particle per mL requires Transport Rate calibration")
+                _note.setWordWrap(True)
+                _note.setStyleSheet("color: #6B7280; font-size: 10px;")
+                f1.addRow("", _note)
             lay.addWidget(g1)
 
             if _is_multi(self._input_data):
@@ -821,6 +851,8 @@ class PieChartSettingsDialog(QDialog):
             d['chart_type'] = self._chart_type.currentText()
         if self._data_type is not None:
             d['data_type_display'] = self._data_type.currentText()
+        if self._y_unit is not None:
+            d['y_axis_unit'] = self._y_unit.currentData()
         if self._thresh is not None:
             d['threshold'] = self._thresh.value()
         if self._filter_zeros is not None:
@@ -1039,28 +1071,40 @@ class PieChartDisplayDialog(QDialog):
 
             cfg = self.node.config
             subplots = []
+            per_ml = per_ml_active(cfg, self.node.input_data)
 
             if _is_multi(self.node.input_data):
                 mode = cfg.get('display_mode', PIE_DISPLAY_MODES[0])
                 if mode == 'Combined Distribution':
                     comb_data, comb_counts = {}, {}
-                    for sd in plot_data.values():
+                    for sn, sd in plot_data.items():
                         d, c = self._calc_single(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                         for k, v in d.items():
                             comb_data[k] = comb_data.get(k, 0) + v
                         for k, v in c.items():
-                            comb_counts[k] = comb_counts.get(k, 0) + v
+                            comb_counts[k] = comb_counts.get(k, 0) + v * factor
                     subplots.append(
-                        self._build_sp(comb_data, comb_counts, cfg, 'Combined', 'combined'))
+                        self._build_sp(comb_data, comb_counts, cfg, 'Combined', 'combined',
+                                       per_ml=per_ml))
                 else:
                     for sn, sd in plot_data.items():
                         d, cnt = self._calc_single(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                        if per_ml:
+                            cnt = {k: v * factor for k, v in cnt.items()}
                         subplots.append(
-                            self._build_sp(d, cnt, cfg, get_display_name(sn, cfg), sn))
+                            self._build_sp(d, cnt, cfg, get_display_name(sn, cfg), sn,
+                                           per_ml=per_ml))
             else:
                 d, cnt = self._calc_single(plot_data, cfg)
+                sn = single_sample_name(self.node.input_data)
+                factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                if per_ml:
+                    cnt = {k: v * factor for k, v in cnt.items()}
                 subplots.append(
-                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default'))
+                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default',
+                                   per_ml=per_ml))
 
             self.canvas_widget.render(subplots)
         except Exception:
@@ -1094,16 +1138,17 @@ class PieChartDisplayDialog(QDialog):
                     data_totals[col] = filt.sum()
         return data_totals, particle_counts
 
-    def _build_sp(self, data, orig_counts, cfg, title, key) -> dict:
+    def _build_sp(self, data, orig_counts, cfg, title, key, per_ml=False) -> dict:
         """
         Build one subplot payload consumed by ``MplPieCanvas.render``.
 
         Args:
             data (dict): Aggregated values by element/combo key.
-            orig_counts (dict): Raw particle counts by key for count labels.
+            orig_counts (dict): Raw particle counts (or particles/mL) by key.
             cfg (dict): Active display configuration.
             title (str): Subplot title.
             key (str): Unique key used for label-position persistence.
+            per_ml (bool): When True, count labels show particles/mL values.
 
         Returns:
             dict: Render payload with labels/sizes/text/colors/title/key.
@@ -1138,7 +1183,8 @@ class PieChartDisplayDialog(QDialog):
                 count = orig_counts.get(lbl, 0)
 
             parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'), Renderer.MATHTEXT, cfg)]
-            if cfg.get('show_counts', True):      parts.append(f"({count:,})")
+            if cfg.get('show_counts', True):
+                parts.append(f"({format_per_ml(count, Renderer.MATHTEXT, cfg)} P/mL)" if per_ml else f"({count:,})")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
 
@@ -1167,6 +1213,7 @@ class PieChartPlotNode(QObject):
         self.config = {
             'chart_type':            'Element Distribution',
             'data_type_display':     'Counts',
+            'y_axis_unit':           'count',
             'threshold':             1.0,
             'filter_zeros':          True,
             'display_mode':          'Individual Subplots',
@@ -1303,120 +1350,172 @@ class PieChartPlotNode(QObject):
 
 
 class ElementCompositionSettingsDialog(QDialog):
-    def __init__(self, cfg, input_data, available_combos, parent=None):
+    def __init__(self, cfg, input_data, available_combos, parent=None, scope='all'):
         """
+        Initialize Element Composition settings dialog with optional scope filtering.
+
         Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            available_combos (Any): The available combos.
-            parent (Any): Parent widget or object.
+            cfg (dict): Current plot configuration.
+            input_data (dict): Current node input payload.
+            available_combos (list[str]): Combination labels available for wedge styling.
+            parent (Any): Parent widget.
+            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+
+        Preserved behavior:
+            Existing config key semantics and scientific/rendering logic remain unchanged;
+            this only controls which settings groups are shown together.
         """
         super().__init__(parent)
-        self.setWindowTitle("Element Composition Settings")
+        if scope == 'format':
+            self.setWindowTitle("Element composition plot format settings")
+        elif scope == 'quantities':
+            self.setWindowTitle("Element composition plot quantities configuration")
+        else:
+            self.setWindowTitle("Element Composition Settings")
         self.setMinimumWidth(540)
-        self._cfg  = dict(cfg)
+        self._cfg = dict(cfg)
         self._input_data = input_data
         self._available_combos = available_combos
+        self._scope = scope
+
+        self._analysis = None
+        self._data_type = None
+        self._y_unit = None
+        self._label_mode = None
+        self._display_mode = None
+        self._p_thresh = None
+        self._pct_thresh = None
+        self._show_vals = None
+        self._show_counts = None
+        self._show_pct = None
+        self._show_epct = None
+        self._combo_color_btns: dict[str, _ColorBtn] = {}
+        self._combo_explode: dict[str, QDoubleSpinBox] = {}
+        self._pie_style = None
+        self._label_line = None
+        self._legend = None
+        self._export = None
+        self._font_grp = None
         self._build_ui()
 
     def _build_ui(self):
-        root   = QVBoxLayout(self)
+        """
+        Build settings controls for the selected scope.
+
+        Scope behavior:
+            - ``quantities`` includes analysis/data type, display mode, and thresholds.
+            - ``format`` includes isotope label/render toggles, wedge styling, pie style,
+              label lines, legend, export appearance, and font controls.
+
+        Preserved behavior:
+            Control meanings and downstream config keys are unchanged.
+        """
+        root = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner  = QWidget(); lay = QVBoxLayout(inner)
+        inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
 
-        # ── Analysis & Data Type ──────────────────────────────────────
-        g1 = QGroupBox("Analysis & Data Type"); f1 = QFormLayout(g1)
-        self._analysis = QComboBox()
-        self._analysis.addItems(COMP_ANALYSIS_TYPES)
-        self._analysis.setCurrentText(
-            self._cfg.get('analysis_type', COMP_ANALYSIS_TYPES[0]))
-        f1.addRow("Analysis:", self._analysis)
-        self._data_type = QComboBox()
-        self._data_type.addItems(PIE_DATA_TYPES)
-        self._data_type.setCurrentText(
-            self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
-        f1.addRow("Data Type:", self._data_type)
-        self._label_mode = QComboBox()
-        self._label_mode.addItems(LABEL_MODES)
-        self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-        f1.addRow("Isotope Label:", self._label_mode)
-        lay.addWidget(g1)
+        if self._scope in ('all', 'quantities'):
+            g1 = QGroupBox("Analysis & Data Type"); f1 = QFormLayout(g1)
+            self._analysis = QComboBox()
+            self._analysis.addItems(COMP_ANALYSIS_TYPES)
+            self._analysis.setCurrentText(
+                self._cfg.get('analysis_type', COMP_ANALYSIS_TYPES[0]))
+            f1.addRow("Analysis:", self._analysis)
+            self._data_type = QComboBox()
+            self._data_type.addItems(PIE_DATA_TYPES)
+            self._data_type.setCurrentText(
+                self._cfg.get('data_type_display', PIE_DATA_TYPES[0]))
+            f1.addRow("Data Type:", self._data_type)
+            self._y_unit = QComboBox()
+            self._y_unit.addItem("Particle", "count")
+            self._y_unit.addItem("Particle per mL", "per_ml")
+            _cu = self._cfg.get('y_axis_unit', 'count')
+            self._y_unit.setCurrentIndex(1 if _cu == 'per_ml' else 0)
+            if not conc_meta_available(getattr(self, '_input_data', None)):
+                _ix = self._y_unit.findData('per_ml')
+                _it = self._y_unit.model().item(_ix)
+                if _it is not None:
+                    _it.setEnabled(False)
+                if _cu == 'per_ml':
+                    self._y_unit.setCurrentIndex(0)
+            f1.addRow("Count Unit:", self._y_unit)
+            lay.addWidget(g1)
 
-        # ── Display Mode (multi only) ─────────────────────────────────
-        self._display_mode = None
-        if _is_multi(self._input_data):
-            g2 = QGroupBox("Multiple Sample Display"); f2 = QFormLayout(g2)
-            self._display_mode = QComboBox()
-            self._display_mode.addItems(
-                ['Individual Subplots', 'Side by Side Subplots',
-                 'Combined Analysis', 'Comparative View'])
-            self._display_mode.setCurrentText(
-                self._cfg.get('display_mode', 'Individual Subplots'))
-            f2.addRow("Mode:", self._display_mode)
-            lay.addWidget(g2)
+            if _is_multi(self._input_data):
+                g2 = QGroupBox("Multiple Sample Display"); f2 = QFormLayout(g2)
+                self._display_mode = QComboBox()
+                self._display_mode.addItems(
+                    ['Individual Subplots', 'Side by Side Subplots',
+                     'Combined Analysis', 'Comparative View'])
+                self._display_mode.setCurrentText(
+                    self._cfg.get('display_mode', 'Individual Subplots'))
+                f2.addRow("Mode:", self._display_mode)
+                lay.addWidget(g2)
 
-        # ── Thresholds & Labels ───────────────────────────────────────
-        g3 = QGroupBox("Thresholds & Labels"); f3 = QFormLayout(g3)
-        self._p_thresh = QSpinBox()
-        self._p_thresh.setRange(1, 10000)
-        self._p_thresh.setValue(self._cfg.get('particle_threshold', 10))
-        f3.addRow("Min Particles:", self._p_thresh)
-        self._pct_thresh = QDoubleSpinBox()
-        self._pct_thresh.setRange(0.0, 50.0); self._pct_thresh.setSuffix(" %")
-        self._pct_thresh.setValue(self._cfg.get('percentage_threshold', 1.0))
-        f3.addRow("Min Percentage:", self._pct_thresh)
-        self._show_vals   = QCheckBox("Show Data Values")
-        self._show_vals.setChecked(self._cfg.get('show_data_values', True))
-        self._show_counts = QCheckBox("Show Counts")
-        self._show_counts.setChecked(self._cfg.get('show_counts', True))
-        self._show_pct    = QCheckBox("Show Percentages")
-        self._show_pct.setChecked(self._cfg.get('show_percentages', True))
-        self._show_epct   = QCheckBox("Show Element % in Combos")
-        self._show_epct.setChecked(self._cfg.get('show_element_percentages', False))
-        for cb in (self._show_vals, self._show_counts, self._show_pct, self._show_epct):
-            f3.addRow("", cb)
-        lay.addWidget(g3)
+            g3 = QGroupBox("Thresholds"); f3 = QFormLayout(g3)
+            self._p_thresh = QSpinBox()
+            self._p_thresh.setRange(1, 10000)
+            self._p_thresh.setValue(self._cfg.get('particle_threshold', 10))
+            f3.addRow("Min Particles:", self._p_thresh)
+            self._pct_thresh = QDoubleSpinBox()
+            self._pct_thresh.setRange(0.0, 50.0); self._pct_thresh.setSuffix(" %")
+            self._pct_thresh.setValue(self._cfg.get('percentage_threshold', 1.0))
+            f3.addRow("Min Percentage:", self._pct_thresh)
+            lay.addWidget(g3)
 
-        # ── Combination Colours + Explode ─────────────────────────────
-        self._combo_color_btns: dict[str, _ColorBtn]     = {}
-        self._combo_explode:    dict[str, QDoubleSpinBox] = {}
-        if self._available_combos:
-            g4 = QGroupBox("Wedge Colours & Explode (Top 15)")
-            v4 = QVBoxLayout(g4)
-            cc    = self._cfg.get('combination_colors', {})
-            exp_d = self._cfg.get('explode', {})
-            hdr   = QHBoxLayout()
-            hdr.addWidget(QLabel("<b>Combination</b>"), 4)
-            hdr.addWidget(QLabel("<b>Colour</b>"),      1)
-            hdr.addWidget(QLabel("<b>Explode</b>"),     2)
-            v4.addLayout(hdr)
-            for i, combo in enumerate(self._available_combos[:15]):
-                row   = QHBoxLayout()
-                short = combo if len(combo) <= 28 else combo[:25] + "…"
-                row.addWidget(QLabel(short), 4)
-                btn = _ColorBtn(cc.get(combo, DEFAULT_COMBO_COLORS[i % len(DEFAULT_COMBO_COLORS)]))
-                self._combo_color_btns[combo] = btn
-                row.addWidget(btn, 1)
-                sb = QDoubleSpinBox()
-                sb.setRange(0.0, 0.30); sb.setSingleStep(0.02); sb.setDecimals(2)
-                sb.setValue(exp_d.get(combo, 0.0))
-                self._combo_explode[combo] = sb
-                row.addWidget(sb, 2)
-                w = QWidget(); w.setLayout(row); v4.addWidget(w)
-            lay.addWidget(g4)
+        if self._scope in ('all', 'format'):
+            gfmt = QGroupBox("Labels"); ffmt = QFormLayout(gfmt)
+            self._label_mode = QComboBox()
+            self._label_mode.addItems(LABEL_MODES)
+            self._label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+            ffmt.addRow("Isotope Label:", self._label_mode)
+            self._show_vals = QCheckBox("Show Data Values")
+            self._show_vals.setChecked(self._cfg.get('show_data_values', True))
+            self._show_counts = QCheckBox("Show Counts")
+            self._show_counts.setChecked(self._cfg.get('show_counts', True))
+            self._show_pct = QCheckBox("Show Percentages")
+            self._show_pct.setChecked(self._cfg.get('show_percentages', True))
+            self._show_epct = QCheckBox("Show Element % in Combos")
+            self._show_epct.setChecked(self._cfg.get('show_element_percentages', False))
+            for cb in (self._show_vals, self._show_counts, self._show_pct, self._show_epct):
+                ffmt.addRow("", cb)
+            lay.addWidget(gfmt)
 
-        # ── New shared groups ─────────────────────────────────────────
-        self._pie_style  = PieStyleGroup(self._cfg)
-        self._label_line = LabelLineGroup(self._cfg)
-        self._legend     = LegendGroup(self._cfg)
-        self._export     = ExportGroup(self._cfg)
-        for grp in (self._pie_style, self._label_line, self._legend, self._export):
-            lay.addWidget(grp.build())
+            if self._available_combos:
+                g4 = QGroupBox("Wedge Colours & Explode (Top 15)")
+                v4 = QVBoxLayout(g4)
+                cc = self._cfg.get('combination_colors', {})
+                exp_d = self._cfg.get('explode', {})
+                hdr = QHBoxLayout()
+                hdr.addWidget(QLabel("<b>Combination</b>"), 4)
+                hdr.addWidget(QLabel("<b>Colour</b>"), 1)
+                hdr.addWidget(QLabel("<b>Explode</b>"), 2)
+                v4.addLayout(hdr)
+                for i, combo in enumerate(self._available_combos[:15]):
+                    row = QHBoxLayout()
+                    short = combo if len(combo) <= 28 else combo[:25] + "…"
+                    row.addWidget(QLabel(short), 4)
+                    btn = _ColorBtn(cc.get(combo, DEFAULT_COMBO_COLORS[i % len(DEFAULT_COMBO_COLORS)]))
+                    self._combo_color_btns[combo] = btn
+                    row.addWidget(btn, 1)
+                    sb = QDoubleSpinBox()
+                    sb.setRange(0.0, 0.30); sb.setSingleStep(0.02); sb.setDecimals(2)
+                    sb.setValue(exp_d.get(combo, 0.0))
+                    self._combo_explode[combo] = sb
+                    row.addWidget(sb, 2)
+                    w = QWidget(); w.setLayout(row); v4.addWidget(w)
+                lay.addWidget(g4)
 
-        # ── Font ──────────────────────────────────────────────────────
-        self._font_grp = FontSettingsGroup(self._cfg)
-        lay.addWidget(self._font_grp.build())
+            self._pie_style = PieStyleGroup(self._cfg)
+            self._label_line = LabelLineGroup(self._cfg)
+            self._legend = LegendGroup(self._cfg)
+            self._export = ExportGroup(self._cfg)
+            for grp in (self._pie_style, self._label_line, self._legend, self._export):
+                lay.addWidget(grp.build())
+
+            self._font_grp = FontSettingsGroup(self._cfg)
+            lay.addWidget(self._font_grp.build())
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
@@ -1424,38 +1523,63 @@ class ElementCompositionSettingsDialog(QDialog):
 
     def collect(self) -> dict:
         """
+        Collect only settings for controls that exist in the active scope.
+
         Returns:
-            dict: Result of the operation.
+            dict: Config updates to merge into node configuration.
+
+        Preserved behavior:
+            Prevents scoped-dialog missing-widget errors and preserves existing values
+            outside the current scope when callers use ``config.update(...)``.
         """
-        d = {
-            'analysis_type':            self._analysis.currentText(),
-            'data_type_display':        self._data_type.currentText(),
-            'particle_threshold':       self._p_thresh.value(),
-            'percentage_threshold':     self._pct_thresh.value(),
-            'show_data_values':         self._show_vals.isChecked(),
-            'show_counts':              self._show_counts.isChecked(),
-            'show_percentages':         self._show_pct.isChecked(),
-            'show_element_percentages': self._show_epct.isChecked(),
-            'label_mode':               self._label_mode.currentText(),
-            'combination_colors':  {k: b.color() for k, b in self._combo_color_btns.items()},
-            'explode':             {k: sb.value() for k, sb in self._combo_explode.items()},
-        }
+        d = dict(self._cfg)
+        if self._analysis is not None:
+            d['analysis_type'] = self._analysis.currentText()
+        if self._data_type is not None:
+            d['data_type_display'] = self._data_type.currentText()
+        if self._y_unit is not None:
+            d['y_axis_unit'] = self._y_unit.currentData()
+        if self._p_thresh is not None:
+            d['particle_threshold'] = self._p_thresh.value()
+        if self._pct_thresh is not None:
+            d['percentage_threshold'] = self._pct_thresh.value()
+        if self._show_vals is not None:
+            d['show_data_values'] = self._show_vals.isChecked()
+        if self._show_counts is not None:
+            d['show_counts'] = self._show_counts.isChecked()
+        if self._show_pct is not None:
+            d['show_percentages'] = self._show_pct.isChecked()
+        if self._show_epct is not None:
+            d['show_element_percentages'] = self._show_epct.isChecked()
+        if self._label_mode is not None:
+            d['label_mode'] = self._label_mode.currentText()
+        if self._combo_color_btns:
+            d['combination_colors'] = {k: b.color() for k, b in self._combo_color_btns.items()}
+        if self._combo_explode:
+            d['explode'] = {k: sb.value() for k, sb in self._combo_explode.items()}
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
-        d.update(self._pie_style.collect())
-        d.update(self._label_line.collect())
-        d.update(self._legend.collect())
-        d.update(self._export.collect())
-        d.update(self._font_grp.collect())
+        if self._pie_style is not None:
+            d.update(self._pie_style.collect())
+        if self._label_line is not None:
+            d.update(self._label_line.collect())
+        if self._legend is not None:
+            d.update(self._legend.collect())
+        if self._export is not None:
+            d.update(self._export.collect())
+        if self._font_grp is not None:
+            d.update(self._font_grp.collect())
         return d
 
 
 class ElementCompositionDisplayDialog(QDialog):
     def __init__(self, node, parent_window=None):
         """
+        Initialize the Element Composition pie-chart display dialog.
+
         Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
+            node (Any): Plot node with config and data extraction methods.
+            parent_window (Any): Parent window reference.
         """
         super().__init__(parent_window)
         self.node = node
@@ -1466,6 +1590,12 @@ class ElementCompositionDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _build_ui(self):
+        """
+        Build display canvas and standardized bottom action buttons.
+
+        The four buttons route format settings, quantity configuration, label reset,
+        and figure export while preserving existing rendering behavior.
+        """
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
 
@@ -1474,55 +1604,49 @@ class ElementCompositionDisplayDialog(QDialog):
         lay.addWidget(self.canvas_widget)
 
         bb = QHBoxLayout(); bb.setContentsMargins(0, 4, 0, 0)
-        btn_s = QPushButton("⚙  Settings");     btn_s.clicked.connect(self._open_settings)
-        btn_r = QPushButton("↺  Reset Labels"); btn_r.clicked.connect(self._reset_labels)
-        btn_e = QPushButton("Export Figure…");      btn_e.clicked.connect(self._export)
-        bb.addWidget(btn_s); bb.addWidget(btn_r)
-        bb.addStretch(); bb.addWidget(btn_e)
+        btn_fmt = QPushButton("Plot format settings")
+        btn_fmt.clicked.connect(self._open_plot_format_settings)
+        btn_qty = QPushButton("Configure plot quantities")
+        btn_qty.clicked.connect(self._open_configure_plot_quantities)
+        btn_r = QPushButton("Reset layout")
+        btn_r.setToolTip("Resets dragged label positions to default.")
+        btn_r.clicked.connect(self._reset_layout)
+        btn_e = QPushButton("Export figure")
+        btn_e.clicked.connect(self._export)
+        bb.addWidget(btn_fmt)
+        bb.addWidget(btn_qty)
+        bb.addWidget(btn_r)
+        bb.addWidget(btn_e)
         lay.addLayout(bb)
 
     def _ctx_menu(self, global_pos):
         """
+        Show minimal right-click controls for quick visual toggles and isotope labels.
+
         Args:
-            global_pos (Any): The global pos.
+            global_pos (Any): Global screen position for menu placement.
+
+        Preserved behavior:
+            Quick visual controls remain available, while full configuration/reset/
+            export workflows are delegated to bottom buttons.
         """
-        cfg  = self.node.config
+        cfg = self.node.config
         menu = QMenu(self)
-
-        am = menu.addMenu("Analysis Type")
-        for ct in COMP_ANALYSIS_TYPES:
-            a = am.addAction(ct); a.setCheckable(True)
-            a.setChecked(cfg.get('analysis_type') == ct)
-            a.triggered.connect(lambda _, v=ct: self._set('analysis_type', v))
-
-        dm = menu.addMenu("Data Type")
-        for dt in PIE_DATA_TYPES:
-            a = dm.addAction(dt); a.setCheckable(True)
-            a.setChecked(cfg.get('data_type_display') == dt)
-            a.triggered.connect(lambda _, v=dt: self._set('data_type_display', v))
 
         tm = menu.addMenu("Quick Toggles")
         for key, lbl in [
-            ('show_data_values',      'Data Values'),
-            ('show_counts',           'Counts'),
-            ('show_percentages',      'Percentages'),
+            ('show_data_values', 'Data Values'),
+            ('show_counts', 'Counts'),
+            ('show_percentages', 'Percentages'),
             ('show_connection_lines', 'Connection Lines'),
-            ('donut',                 'Donut Mode'),
-            ('legend_show',           'Legend'),
-            ('shadow',                'Shadow'),
-            ('label_bbox',            'Label Box'),
+            ('donut', 'Donut Mode'),
+            ('legend_show', 'Legend'),
+            ('shadow', 'Shadow'),
+            ('label_bbox', 'Label Box'),
         ]:
             a = tm.addAction(lbl); a.setCheckable(True)
             a.setChecked(bool(cfg.get(key, False)))
             a.triggered.connect(lambda _, k=key: self._toggle(k))
-
-        if _is_multi(self.node.input_data):
-            mm = menu.addMenu("Display Mode")
-            for m in ['Individual Subplots', 'Side by Side Subplots',
-                      'Combined Analysis', 'Comparative View']:
-                a = mm.addAction(m); a.setCheckable(True)
-                a.setChecked(cfg.get('display_mode') == m)
-                a.triggered.connect(lambda _, v=m: self._set('display_mode', v))
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
@@ -1530,40 +1654,54 @@ class ElementCompositionDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        menu.addSeparator()
-        menu.addAction("Configure…").triggered.connect(self._open_settings)
-        menu.addAction("Reset Label Positions").triggered.connect(self._reset_labels)
-        menu.addAction("Export Figure…").triggered.connect(self._export)
         menu.exec(global_pos)
 
     def _toggle(self, key):
         """
+        Toggle a quick visual setting from the context menu.
+
         Args:
-            key (Any): Dictionary or storage key.
+            key (str): Config key representing a visual display toggle.
         """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
         """
+        Set a config value from right-click quick controls.
+
         Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
+            key (str): Config key to update.
+            value (Any): New value to set.
         """
         self.node.config[key] = value
         self._refresh()
 
     def _reset_labels(self):
+        """
+        Reset persisted dragged label positions for composition pie labels.
+
+        Preserved behavior:
+            This keeps the existing pie-label reset path and does not introduce a
+            different subplot-layout reset mechanism.
+        """
         self.canvas_widget.reset_label_positions()
         self._refresh()
 
+    def _reset_layout(self):
+        """Route standardized reset action to existing label-position reset behavior."""
+        self._reset_labels()
+
     def _export(self):
+        """Open the existing figure export workflow for composition pie charts."""
         self.canvas_widget.export_figure(self)
 
     def _get_actual_combos(self) -> list[str]:
         """
+        Collect combinations ordered by particle-count prominence.
+
         Returns:
-            list[str]: Result of the operation.
+            list[str]: Combination keys sorted descending by particle count.
         """
         plot_data = self.node.extract_plot_data()
         if not plot_data:
@@ -1579,44 +1717,93 @@ class ElementCompositionDisplayDialog(QDialog):
         return [k for k, _ in sorted(all_c.items(), key=lambda x: x[1], reverse=True)]
 
     def _open_settings(self):
+        """
+        Open the legacy all-in-one settings dialog for compatibility.
+
+        Preserved behavior:
+            Existing combined settings flow remains available internally; bottom
+            buttons use scoped dialogs.
+        """
         combos = self._get_actual_combos()
-        dlg    = ElementCompositionSettingsDialog(
+        dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
+    def _open_plot_format_settings(self):
+        """
+        Open format-scoped composition settings dialog.
+
+        This route handles visual/formatting controls only.
+        """
+        combos = self._get_actual_combos()
+        dlg = ElementCompositionSettingsDialog(
+            self.node.config, self.node.input_data, combos, self, scope='format')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
+    def _open_configure_plot_quantities(self):
+        """
+        Open quantities-scoped composition settings dialog.
+
+        This route handles scientific quantity/configuration controls only.
+        """
+        combos = self._get_actual_combos()
+        dlg = ElementCompositionSettingsDialog(
+            self.node.config, self.node.input_data, combos, self, scope='quantities')
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
+
     def _refresh(self):
+        """
+        Recompute subplot payloads and redraw the composition pie canvas.
+
+        Preserved behavior:
+            Analysis/data calculations and display-mode semantics remain unchanged.
+        """
         try:
             plot_data = self.node.extract_plot_data()
             if not plot_data:
                 self.canvas_widget.render([])
                 return
 
-            cfg      = self.node.config
+            cfg = self.node.config
             subplots = []
+            per_ml = per_ml_active(cfg, self.node.input_data)
 
             if _is_multi(self.node.input_data):
                 mode = cfg.get('display_mode', 'Individual Subplots')
                 if mode == 'Combined Analysis':
                     comb: dict = {}
-                    for sd in plot_data.values():
+                    comb_pml: dict = {}
+                    for sn, sd in plot_data.items():
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                         for k, v in sd.items():
                             if k not in comb:
                                 comb[k] = {'particle_count': 0, 'data_value': 0, 'elements': {}}
                             comb[k]['particle_count'] += v.get('particle_count', 0)
-                            comb[k]['data_value']     += v.get('data_value', 0)
+                            comb[k]['data_value'] += v.get('data_value', 0)
+                            comb_pml[k] = comb_pml.get(k, 0.0) + v.get('particle_count', 0) * factor
                     subplots.append(
-                        self._build_sp(self._calc_data(comb, cfg), cfg, 'Combined', 'combined'))
+                        self._build_sp(self._calc_data(comb, cfg), cfg, 'Combined', 'combined',
+                                       per_ml=per_ml, pml_map=comb_pml))
                 else:
                     for sn, sd in plot_data.items():
                         data = self._calc_data(sd, cfg)
+                        factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                         subplots.append(
-                            self._build_sp(data, cfg, get_display_name(sn, cfg), sn))
+                            self._build_sp(data, cfg, get_display_name(sn, cfg), sn,
+                                           per_ml=per_ml, pml_factor=factor))
             else:
                 data = self._calc_data(plot_data, cfg)
+                sn = single_sample_name(self.node.input_data)
+                factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
                 subplots.append(
-                    self._build_sp(data, cfg, 'Element Combinations', 'default'))
+                    self._build_sp(data, cfg, 'Element Combinations', 'default',
+                                   per_ml=per_ml, pml_factor=factor))
 
             self.canvas_widget.render(subplots)
         except Exception:
@@ -1624,95 +1811,119 @@ class ElementCompositionDisplayDialog(QDialog):
 
     def _calc_data(self, plot_data, cfg) -> dict:
         """
+        Compute analysis-specific composition buckets from raw plot data.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (dict): Combination-level data for one view/sample.
+            cfg (dict): Active plot configuration.
+
         Returns:
-            dict: Result of the operation.
+            dict: Filtered/aggregated composition data used for pie rendering.
+
+        Preserved behavior:
+            Scientific meaning of analysis types and thresholds is unchanged.
         """
-        at       = cfg.get('analysis_type', COMP_ANALYSIS_TYPES[0])
-        pt       = cfg.get('particle_threshold', 10)
+        at = cfg.get('analysis_type', COMP_ANALYSIS_TYPES[0])
+        pt = cfg.get('particle_threshold', 10)
         filtered = {k: v for k, v in plot_data.items()
                     if v.get('particle_count', 0) >= pt}
 
         if at == 'Single vs Multiple Elements':
             res = {
-                'Single Elements':   {'particle_count': 0, 'data_value': 0, 'elements': {}},
+                'Single Elements': {'particle_count': 0, 'data_value': 0, 'elements': {}},
                 'Multiple Elements': {'particle_count': 0, 'data_value': 0, 'elements': {}},
             }
             for k, v in filtered.items():
                 tgt = ('Single Elements' if len(k.split(',')) == 1
                        else 'Multiple Elements')
                 res[tgt]['particle_count'] += v.get('particle_count', 0)
-                res[tgt]['data_value']     += v.get('data_value', 0)
+                res[tgt]['data_value'] += v.get('data_value', 0)
             return {k: v for k, v in res.items() if v['particle_count'] > 0}
 
         return filtered
 
-    def _build_sp(self, data, cfg, title, key) -> dict:
+    def _build_sp(self, data, cfg, title, key, per_ml=False,
+                  pml_factor=0.0, pml_map=None) -> dict:
         """
+        Build one subplot payload consumed by ``MplPieCanvas.render``.
+
         Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-            title (Any): Window or dialog title.
-            key (Any): Dictionary or storage key.
+            data (dict): Composition data bucket.
+            cfg (dict): Active plot configuration.
+            title (str): Subplot title.
+            key (str): Unique key used for label-position persistence.
+
         Returns:
-            dict: Result of the operation.
+            dict: Render payload with labels/sizes/text/colors/title/key.
+
+        Preserved behavior:
+            Label text and percentages follow existing semantics, including isotope
+            label mode formatting and threshold handling.
         """
         empty = {'labels': [], 'sizes': [], 'texts': [],
                  'colors': [], 'title': title, 'key': key}
         if not data:
             return empty
-        dt      = cfg.get('data_type_display', 'Counts')
+        dt = cfg.get('data_type_display', 'Counts')
         val_key = 'particle_count' if dt == 'Counts' else 'data_value'
-        total   = sum(v.get(val_key, 0) for v in data.values())
+        total = sum(v.get(val_key, 0) for v in data.values())
         if total == 0:
             return empty
 
-        pcts   = {k: (v.get(val_key, 0) / total) * 100 for k, v in data.items()}
+        pcts = {k: (v.get(val_key, 0) / total) * 100 for k, v in data.items()}
         thresh = cfg.get('percentage_threshold', 1.0)
-        main   = {k: v for k, v in pcts.items() if v >= thresh}
+        main = {k: v for k, v in pcts.items() if v >= thresh}
         others = {k: v for k, v in pcts.items() if v < thresh}
         if others:
             main['Others'] = sum(others.values())
 
         sorted_c = sorted(main.items(), key=lambda x: x[1], reverse=True)
-        labels   = [x[0] for x in sorted_c]
-        sizes    = [x[1] for x in sorted_c]
-        cc       = cfg.get('combination_colors', {})
+        labels = [x[0] for x in sorted_c]
+        sizes = [x[1] for x in sorted_c]
+        cc = cfg.get('combination_colors', {})
 
         colors, texts = [], []
         for i, (lbl, sz) in enumerate(zip(labels, sizes)):
             if lbl == 'Others':
                 colors.append('#808080')
-                pc    = sum(data[k].get('particle_count', 0) for k in others)
-                dv    = sum(data[k].get('data_value', 0)     for k in others)
+                pc = sum(data[k].get('particle_count', 0) for k in others)
+                dv = sum(data[k].get('data_value', 0) for k in others)
                 elems = {}
             else:
                 colors.append(cc.get(lbl, DEFAULT_COMBO_COLORS[i % len(DEFAULT_COMBO_COLORS)]))
-                pc    = data[lbl].get('particle_count', 0) if lbl in data else 0
-                dv    = data[lbl].get('data_value', 0)    if lbl in data else 0
-                elems = data[lbl].get('elements', {})      if lbl in data else {}
+                pc = data[lbl].get('particle_count', 0) if lbl in data else 0
+                dv = data[lbl].get('data_value', 0) if lbl in data else 0
+                elems = data[lbl].get('elements', {}) if lbl in data else {}
 
-            mode  = cfg.get('label_mode', 'Symbol')
+            mode = cfg.get('label_mode', 'Symbol')
             parts = [format_combination_label(lbl, mode, Renderer.MATHTEXT, cfg)]
             if cfg.get('show_counts', True):
-                parts.append(f"({pc:,} particles)")
+                if per_ml:
+                    if pml_map is not None:
+                        pc_pml = sum(pml_map.get(k, 0.0) for k in others) if lbl == 'Others' else pml_map.get(lbl, 0.0)
+                    else:
+                        pc_pml = pc * pml_factor
+                    parts.append(f"({format_per_ml(pc_pml, Renderer.MATHTEXT, cfg)} P/mL)")
+                else:
+                    parts.append(f"({pc:,} particles)")
             if cfg.get('show_data_values', True) and dt != 'Counts':
                 unit = 'fg' if 'Mass' in dt else 'fmol' if 'Moles' in dt else ''
                 parts.append(f"[{dv:.2f} {unit}]".strip())
             if cfg.get('show_percentages', True):
                 parts.append(f"{sz:.1f}%")
             if cfg.get('show_element_percentages', False) and elems and len(elems) > 1:
-                etot = sum(elems.values())
-                if etot > 0:
-                    eparts = [f"{e}: {(v/etot)*100:.1f}%" for e, v in elems.items()]
-                    parts.append(f"({', '.join(eparts)})")
+                tot = sum(elems.values())
+                if tot > 0:
+                    e_txt = []
+                    for e, v in sorted(elems.items(), key=lambda x: x[1], reverse=True)[:3]:
+                        ep = (v / tot) * 100
+                        ef = format_element_label(e, mode, Renderer.MATHTEXT, cfg)
+                        e_txt.append(f"{ef}:{ep:.0f}%")
+                    parts.append(' | '.join(e_txt))
             texts.append('\n'.join(parts))
 
         return {'labels': labels, 'sizes': sizes, 'texts': texts,
                 'colors': colors, 'title': title, 'key': key}
-
 
 class ElementCompositionPlotNode(QObject):
     position_changed      = Signal(object)
@@ -1736,6 +1947,7 @@ class ElementCompositionPlotNode(QObject):
         self.config = {
             'analysis_type':             'Single vs Multiple Elements',
             'data_type_display':         'Counts',
+            'y_axis_unit':               'count',
             'particle_threshold':        10,
             'percentage_threshold':      1.0,
             'filter_zeros':              True,
@@ -1878,5 +2090,3 @@ class ElementCompositionPlotNode(QObject):
                 for e, v in elems.items():
                     sd[src][c_name]['elements'][e] = sd[src][c_name]['elements'].get(e, 0) + v
         return {k: v for k, v in sd.items() if v} or None
-
-

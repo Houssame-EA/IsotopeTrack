@@ -1,11 +1,28 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 sklearn_hidden = collect_submodules('sklearn')
 scipy_hidden   = collect_submodules('scipy')
 numba_hidden   = collect_submodules('numba')
+
+pandas_meta = []
+for _pkg in ('pytz', 'tzdata', 'pandas', 'numpy', 'python-dateutil', 'six'):
+    try:
+        pandas_meta += copy_metadata(_pkg)
+    except Exception:
+        print(f"WARNING: could not copy metadata for {_pkg} (is it installed?)")
+
+_rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
+with open(_rth, 'w') as _f:
+    _f.write(
+        "import sys, types\n"
+        "if 'pyarrow' not in sys.modules:\n"
+        "    m = types.ModuleType('pyarrow')\n"
+        "    m.__version__ = '0.0.0'\n"
+        "    sys.modules['pyarrow'] = m\n"
+    )
 
 data_files = []
 
@@ -28,7 +45,6 @@ if os.path.exists('data'):
 if os.path.exists('images/isotrack_icon.ico'):
     data_files.append(('images/isotrack_icon.ico', '.'))
 
-# ── CPLN quantile look-up table (used by processing/peak_detection.py) ───────
 if os.path.exists('processing/cpln_quantiles.npz'):
     data_files.append(('processing/cpln_quantiles.npz', 'processing'))
     print("Including cpln_quantiles.npz")
@@ -41,9 +57,10 @@ a = Analysis(
     ['Run.py'],
     pathex=[],
     binaries=[],
-    datas=data_files,
+    datas=data_files + pandas_meta,
     hiddenimports=[
-        # ── Qt / PySide6 ─────────────────────────────────────────────────────
+        'pytz',
+        'tzdata',
         'PySide6',
         'PySide6.QtCore',
         'PySide6.QtGui',
@@ -53,7 +70,6 @@ a = Analysis(
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
 
-        # ── PyQtGraph ─────────────────────────────────────────────────────────
         'pyqtgraph',
         'pyqtgraph.Qt',
         'pyqtgraph.graphicsItems',
@@ -68,13 +84,11 @@ a = Analysis(
         'pyqtgraph.exporters.ImageExporter',
         'pyqtgraph.exporters.SVGExporter',
 
-        # ── QtAwesome ─────────────────────────────────────────────────────────
         'qtawesome',
         'qtawesome.iconic_font',
         'qtawesome.animation',
         'qtawesome.icon_browser',
 
-        # ── NumPy ─────────────────────────────────────────────────────────────
         'numpy',
         'numpy.lib',
         'numpy.lib.recfunctions',
@@ -108,24 +122,23 @@ a = Analysis(
         'numpy._core._type_aliases',
         'numpy._core._ufunc_config',
 
-        # ── SciPy ─────────────────────────────────────────────────────────────
         *scipy_hidden,
 
-        # ── Numba / llvmlite ──────────────────────────────────────────────────
         *numba_hidden,
         'llvmlite',
         'llvmlite.binding',
 
-        # ── Poisson ───────────────────────────────────────────────────────────
         'poisson',
 
-        # ── Pandas ────────────────────────────────────────────────────────────
+        'lz4',
+        'lz4.frame',
+        'lz4.block',
+
         'pandas',
         'pandas.io.formats.excel',
         'pandas.io.common',
         'pandas.io.parsers.readers',
 
-        # ── Matplotlib ────────────────────────────────────────────────────────
         'matplotlib',
         'matplotlib.pyplot',
         'matplotlib.colors',
@@ -137,15 +150,12 @@ a = Analysis(
         'matplotlib.text',
         'matplotlib.font_manager',
 
-        # ── mpltern (ternary plots) ───────────────────────────────────────────
         'mpltern',
         'mpltern.ternary',
         'mpltern.ternary.axes',
 
-        # ── scikit-learn ──────────────────────────────────────────────────────
         *sklearn_hidden,
 
-        # ── h5py (Cython extensions must be listed explicitly) ────────────────
         'h5py',
         'h5py._conv',
         'h5py._proxy',
@@ -171,7 +181,6 @@ a = Analysis(
         'h5py.ipy_completer',
         'h5py.version',
 
-        # ── HTTP / network ────────────────────────────────────────────────────
         'requests',
         'requests.adapters',
         'requests.auth',
@@ -185,12 +194,10 @@ a = Analysis(
         'charset_normalizer',
         'idna',
 
-        # ── Concurrency ───────────────────────────────────────────────────────
         'concurrent.futures',
         'multiprocessing',
         'threading',
 
-        # ── Standard library ──────────────────────────────────────────────────
         'json',
         'pathlib',
         'collections',
@@ -206,12 +213,12 @@ a = Analysis(
         'warnings',
         'gc',
         're',
+        'argparse',
+        'dataclasses',
 
-        # ── Application root ──────────────────────────────────────────────────
         'mainwindow',
         'theme',
 
-        # ── calibration_methods/ ──────────────────────────────────────────────
         'calibration_methods',
         'calibration_methods.ionic_CAL',
         'calibration_methods.TE_input',
@@ -220,7 +227,6 @@ a = Analysis(
         'calibration_methods.TE',
         'calibration_methods.te_common',
 
-        # ── loading/ ─────────────────────────────────────────────────────────
         'loading',
         'loading.data_thread',
         'loading.import_csv_dialogs',
@@ -228,11 +234,9 @@ a = Analysis(
         'loading.tofwerk_loading',
         'loading.vitesse_loading',
 
-        # ── processing/ ───────────────────────────────────────────────────────
         'processing',
         'processing.peak_detection',
 
-        # ── results/ ─────────────────────────────────────────────────────────
         'results',
         'results.results_AI',
         'results.results_bar_charts',
@@ -254,15 +258,15 @@ a = Analysis(
         'results.shared_plot_utils',
         'results.utils_sort',
 
-        # ── save_export/ ──────────────────────────────────────────────────────
         'save_export',
         'save_export.export_utils',
         'save_export.fast_project_io',
         'save_export.ionic_session',
         'save_export.project_manager',
 
-        # ── tools/ ────────────────────────────────────────────────────────────
         'tools',
+        'tools.app_version',
+        'tools.update_checker',
         'tools.help_dialogs',
         'tools.Info_table',
         'tools.info_file',
@@ -273,8 +277,8 @@ a = Analysis(
         'tools.splash_screen',
         'tools.tutorial',
         'tools.unit',
+        'tools.cli_utils',
 
-        # ── widget/ ───────────────────────────────────────────────────────────
         'widget',
         'widget.batch_parameters',
         'widget.calibration_info',
@@ -289,7 +293,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[_rth],
     excludes=[
         'tkinter',
         'turtle',
@@ -323,7 +327,7 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
+    argv_emulation=True,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
@@ -340,5 +344,3 @@ coll = COLLECT(
     name='IsotopeTrack',
 )
 
-# NOTE: No BUNDLE block — macOS only (.app).
-# On Windows the output is: dist\IsotopeTrack\IsotopeTrack.exe

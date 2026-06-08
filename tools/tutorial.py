@@ -7,7 +7,7 @@ from PySide6.QtGui import QMovie, QPixmap
 from pathlib import Path
 import sys
 
-from theme import theme
+from tools.theme import theme
 
 
 def get_resource_path(relative_path):
@@ -276,7 +276,7 @@ class UserGuideDialog(QDialog):
         """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.0.5</h2>
+            <h2>IsotopeTrack v1.0.8</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 

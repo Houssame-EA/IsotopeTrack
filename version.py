@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 version.py — Update IsotopeTrack version across ALL files.
 
@@ -11,6 +10,12 @@ import re
 from pathlib import Path
 
 FILES = [
+    # ── tools/app_version.py — single source of truth for the running app ─────
+    ("tools/app_version.py", [
+        (r'__version__\s*=\s*"[\d\.]+"',
+         '__version__ = "{v}"'),
+    ]),
+
     # ── README.md ─────────────────────────────────────────────────────────────
     ("README.md", [
         (r"version-[\d\.]+\-blue\.svg",

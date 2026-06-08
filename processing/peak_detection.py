@@ -295,9 +295,15 @@ def compound_poisson_lognormal_quantile_approximation(q: float, lam: float, mu: 
     k = k[1:]
     mus, sigmas = sum_iid_lognormals(k, np.log(1.0) - 0.5 * sigma ** 2, sigma)
     upper_q = lognormal_quantile(np.array([q0]), mus[-1], sigmas[-1])[0]
+
+    if not np.isfinite(upper_q):
+        upper_q = float(np.exp(mus[-1] + 8.0 * sigmas[-1]))
     xs = np.linspace(lam, upper_q, 10000)
     cdf = np.sum([w * lognormal_cdf(xs, m, s) for w, m, s in zip(weights, mus, sigmas)], axis=0)
-    return xs[np.argmax(cdf > q0)]
+    hits = np.flatnonzero(cdf > q0)
+    if hits.size == 0:         
+        return float(upper_q)
+    return float(xs[hits[0]])
 
 
 def compound_poisson_lognormal_quantile_approximation_fast(q: float, lam: float, mu: float, sigma: float) -> float:
@@ -326,10 +332,15 @@ def compound_poisson_lognormal_quantile_approximation_fast(q: float, lam: float,
     k = k[1:]
     mus, sigmas = sum_iid_lognormals(k, np.log(1.0) - 0.5 * sigma ** 2, sigma)
     upper_q = lognormal_quantile(np.array([q0]), mus[-1], sigmas[-1])[0]
+    if not np.isfinite(upper_q):
+        upper_q = float(np.exp(mus[-1] + 8.0 * sigmas[-1]))
     xs = np.linspace(lam, upper_q, 2000)
     cdf_matrix = np.column_stack([lognormal_cdf(xs, m, s) for m, s in zip(mus, sigmas)])
     cdf = cdf_matrix @ weights
-    return xs[np.argmax(cdf > q0)]
+    hits = np.flatnonzero(cdf > q0)
+    if hits.size == 0:          
+        return float(upper_q)
+    return float(xs[hits[0]])
 
 
 # ----------------------------------------------------------------------------------------------------------
@@ -345,7 +356,7 @@ class CompoundPoissonLognormal:
     Fenton-Wilkinson approximation for summing log-normal distributions.
     """
 
-    def get_threshold(self, lambda_bkgd, alpha, sigma=0.47):
+    def get_threshold(self, lambda_bkgd, alpha, sigma=0.55):
         """
         Calculate compound Poisson threshold using log-normal approximation.
 
@@ -380,7 +391,7 @@ class CompoundPoissonLognormalOptimized:
     def __init__(self):
         self._threshold_cache = {}
 
-    def get_threshold(self, lambda_bkgd, alpha, sigma=0.47):
+    def get_threshold(self, lambda_bkgd, alpha, sigma=0.55):
         """
         Calculate compound Poisson threshold with caching.
 
@@ -523,7 +534,7 @@ class CompoundPoissonLognormaltable:
             print(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
                   f"— using fallback.")
 
-    def get_threshold(self, lambda_bkgd: float, alpha: float, sigma: float = 0.47) -> float:
+    def get_threshold(self, lambda_bkgd: float, alpha: float, sigma: float = 0.55) -> float:
         """
         Return the CPLN detection threshold.
 
@@ -655,6 +666,18 @@ class PeakDetection:
         self.compound_poisson_lognormal     = CompoundPoissonLognormalOptimized()
         self.compound_poisson_lognormal_lut = CompoundPoissonLognormaltable()
         self.incremental_enabled = True
+
+    def clear_threshold_cache(self) -> None:
+        """Reset the lru_cache on ``_cached_threshold_calculation``.
+
+        Call this between detection runs (e.g. when samples or parameters
+        change) so stale (lambda, method, alpha, isotope) combinations do not
+        accumulate across the session.  With ``maxsize=512`` the cache is
+        bounded, but explicit clearing ensures deterministic memory use.
+        """
+        self._cached_threshold_calculation.cache_clear()
+        self._cache_hits   = 0
+        self._cache_misses = 0
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------performance-----------------------------------------------------------
@@ -815,7 +838,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def calculate_iterative_threshold(self, signal, method, alpha=0.000001, max_iters=4,
-                                      manual_threshold=10.0, element_key=None, sigma=0.47,
+                                      manual_threshold=10.0, element_key=None, sigma=0.55,
                                       use_window_size=False, window_size=5000):
         """
         Calculate threshold using iterative background refinement with
@@ -966,7 +989,7 @@ class PeakDetection:
         local_bg = mean_signal / mean_mask
         return local_bg[:len(signal)]
 
-    def _calculate_array_threshold(self, lambda_bkgd_array, method, alpha, sigma=0.47):
+    def _calculate_array_threshold(self, lambda_bkgd_array, method, alpha, sigma=0.55):
         """
         Fast threshold calculation for moving window arrays.
         Adaptive interpolation grid size.
@@ -995,7 +1018,7 @@ class PeakDetection:
         else:
             return lambda_bkgd_array + 3.0 * np.sqrt(np.maximum(lambda_bkgd_array, 1))
 
-    def _calculate_single_threshold(self, lambda_bkgd, method, alpha, sigma=0.47):
+    def _calculate_single_threshold(self, lambda_bkgd, method, alpha, sigma=0.55):
         """
         Calculate threshold for a single background value.
         Dispatches to the appropriate method engine.
@@ -1012,11 +1035,11 @@ class PeakDetection:
         if method == "CPLN table":
             return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma)
         elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma)
+            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
         else:
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
 
-    @lru_cache(maxsize=10000)
+    @lru_cache(maxsize=512)
     def _cached_threshold_calculation(self, lambda_bkgd, method, alpha, isotope_key):
         """
         Cached threshold calculation for performance.
@@ -1031,9 +1054,9 @@ class PeakDetection:
             float: Calculated threshold
         """
         if method == "CPLN table":
-            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma=0.47)
+            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma=0.55)
         elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.47)
+            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
         else:
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
 
@@ -1072,7 +1095,7 @@ class PeakDetection:
                 max_iters = params.get('max_iterations', 4) if use_iterative else 0
                 alpha = params.get('alpha', 0.000001)
                 manual_threshold = params.get('manual_threshold', 10.0)
-                sigma = params.get('sigma', 0.47)
+                sigma = params.get('sigma', 0.55)
                 use_window_size = params.get('use_window_size', False)
                 window_size = params.get('window_size', 5000)
                 isotope_key = (isotope_mapping.get(element_key, element_key)
@@ -1163,7 +1186,7 @@ class PeakDetection:
 
     def split_peak_region(self, signal, start_idx, end_idx,
                           lambda_bkgd, threshold,
-                          split_method="1D Watershed", sigma=0.47,
+                          split_method="1D Watershed", sigma=0.55,
                           **kwargs):
         """
         Dispatcher: apply the chosen splitting method to a single peak region
@@ -1388,7 +1411,7 @@ class PeakDetection:
                             min_width=3, min_continuous_points=1,
                             integration_method="Background",
                             split_method="1D Watershed",
-                            sigma=0.47,
+                            sigma=0.55,
                             min_valley_ratio=0.50):
         """
         Threading-safe particle detection with configurable integration method
@@ -1473,7 +1496,7 @@ class PeakDetection:
                                   min_width=3, min_continuous_points=1,
                                   integration_method="Background",
                                   split_method="1D Watershed",
-                                  sigma=0.47,
+                                  sigma=0.55,
                                   min_valley_ratio=0.50):
         """
         Vectorized particle detection using NumPy with configurable integration
@@ -1551,7 +1574,7 @@ class PeakDetection:
                        min_width=3, min_continuous_points=1,
                        integration_method="Background",
                        split_method="1D Watershed",
-                       sigma=0.47,
+                       sigma=0.55,
                        min_valley_ratio=0.50):
         """Wrapper for safe particle detection.
         Args:
@@ -1631,7 +1654,7 @@ class PeakDetection:
                 threshold_data = batch_threshold_data[element_key]
                 integration_method = params.get('integration_method', 'Background')
                 split_method = params.get('split_method', '1D Watershed')
-                sigma = params.get('sigma', 0.47)
+                sigma = params.get('sigma', 0.55)
                 min_valley_ratio = params.get('valley_ratio', 0.50)
 
                 try:
@@ -1699,7 +1722,7 @@ class PeakDetection:
                                   method="CPLN table",
                                   manual_threshold=10.0, element_thresholds=None,
                                   current_sample=None,
-                                  sigma=0.47, iterative=True,
+                                  sigma=0.55, iterative=True,
                                   use_window_size=False, window_size=5000):
         """Detect peaks using Poisson-based methods with iterative calculation.
 
@@ -1712,7 +1735,7 @@ class PeakDetection:
             manual_threshold  (float):   Threshold value when method == "Manual"
             element_thresholds (dict):   Pre-calculated thresholds (unused here)
             current_sample    (str):     Current sample name (unused, kept for API compat)
-            sigma             (float):   Log-normal sigma for CPLN (default 0.47)
+            sigma             (float):   Log-normal sigma for CPLN (default 0.55)
             iterative         (bool):    Enable iterative background refinement (default True)
             use_window_size   (bool):    Use rolling-window background (default False)
             window_size       (int):     Window size for rolling background (default 5000)
@@ -1909,7 +1932,7 @@ class PeakDetection:
                     threshold_data = batch_threshold_data[element_key]
                     integration_method = params.get('integration_method', 'Background')
                     split_method = params.get('split_method', '1D Watershed')
-                    sigma = params.get('sigma', 0.47)
+                    sigma = params.get('sigma', 0.55)
                     min_valley_ratio = params.get('valley_ratio', 0.50)
 
                     try:
@@ -2352,7 +2375,11 @@ class PeakDetection:
                             QApplication.processEvents()
 
                     except Exception as e:
+       
                         print(f"Error processing {sample_name}: {str(e)}")
+                        del e 
+
+                del future_to_sample
 
             if original_sample in main_window.data_by_sample:
                 main_window.current_sample = original_sample
