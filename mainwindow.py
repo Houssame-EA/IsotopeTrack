@@ -7523,18 +7523,20 @@ class MainWindow(QMainWindow):
         return result
 
     @log_user_action('MENU', 'File -> Load Project')
-    def load_project(self):
+    def load_project(self, filepath: str | None=None):
         """
         Load project from file.
         
         Args:
             self: MainWindow instance
+            filepath: Filepath of the project. If None, the project manager will
+             take charge of it.
             
         Returns:
             bool: True if load was successful
         """
         self.user_action_logger.log_menu_action('File', 'Load Project')
-        result = self.project_manager.load_project()
+        result = self.project_manager.load_project(filepath=filepath)
         
         self.user_action_logger.log_file_operation(
             'Project Load',
