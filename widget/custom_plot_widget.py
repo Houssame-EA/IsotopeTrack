@@ -716,7 +716,15 @@ class AxisLabelEditorDialog(QDialog):
             self.color_button.setStyleSheet(_color_swatch_qss(c.name()))
 
     def _apply(self):
-        """Apply axis label text plus explicit styling to the target axis."""
+        """Apply axis label text plus explicit styling to the target axis.
+
+        Preserved behavior:
+            Existing plots still receive immediate live axis-label styling.
+            When a plot provides an optional axis-label callback through the
+            current ``PlotItem``, the callback persists axis-label content
+            separately from formatting without changing default behavior for
+            plots that do not opt in.
+        """
         family = self.font_combo.currentText()
         text = self.label_edit.text().strip()
         units = self.units_edit.text().strip() or None
@@ -736,6 +744,13 @@ class AxisLabelEditorDialog(QDialog):
         ax.setStyle(tickFont=tick_font, tickTextOffset=10, tickLength=10)
         ax.setTextPen(self.label_color)
         ax.setPen(QPen(self.label_color, 1))
+
+        axis_editor_options = getattr(
+            plot_item, '_axis_label_editor_options', {}) or {}
+        axis_option = axis_editor_options.get(self.axis_name, {}) or {}
+        axis_apply_callback = axis_option.get('axis_apply_callback')
+        if callable(axis_apply_callback):
+            axis_apply_callback(text, units)
 
         if not hasattr(self.plot_widget, 'custom_axis_labels'):
             self.plot_widget.custom_axis_labels = {}
@@ -843,7 +858,13 @@ class TitleEditorDialog(QDialog):
             self.color_button.setStyleSheet(_color_swatch_qss(c.name()))
 
     def _apply(self):
-        """Apply the edited title text, with optional style controls."""
+        """Apply the edited title text, with optional style controls.
+
+        Preserved behavior:
+            Plot-specific title callbacks may persist title content separately
+            from formatting. Styled title edits still apply their local visual
+            settings immediately after callback-based text persistence.
+        """
         text = self.title_edit.text().strip()
         if self.text_only:
             if callable(self.title_apply_callback):
@@ -856,6 +877,8 @@ class TitleEditorDialog(QDialog):
 
         family = self.font_combo.currentText()
         pi = self.plot_widget.getPlotItem()
+        if callable(self.title_apply_callback):
+            self.title_apply_callback(text)
         apply_plot_title_style(
             pi, text, family=family, size=self.size_spin.value(),
             bold=self.bold_check.isChecked(),

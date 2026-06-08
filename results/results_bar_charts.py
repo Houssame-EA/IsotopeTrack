@@ -763,6 +763,67 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
     return hooked
 
 
+def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
+    """Wire one Element Bar Chart legend row to a sample-visibility callback.
+
+    Args:
+        legend: ``pg.LegendItem`` that already received ``addItem(...)``.
+        raw_key (str): Canonical raw sample key represented by the legend row.
+        toggle_callback (Callable[[str], None] | None): Element-Bar-Chart-local
+            callback that toggles sample visibility and redraws.
+
+    Returns:
+        bool: ``True`` when at least one legend row object was hooked.
+
+    Preserved behavior:
+        This attaches only Element-Bar-Chart-local click behavior and keeps
+        visibility keyed by raw sample identifiers instead of display labels.
+    """
+    if legend is None or not raw_key or toggle_callback is None:
+        return False
+    try:
+        if not getattr(legend, 'items', None):
+            return False
+        sample_item, label_item = legend.items[-1]
+    except Exception:
+        return False
+
+    def _bind_click(target):
+        """Bind one legend-row graphics object to the sample toggle path."""
+        if target is None:
+            return False
+        try:
+            target._bar_raw_key = raw_key
+            target._bar_toggle_callback = toggle_callback
+            if getattr(target, '_bar_toggle_bound', False):
+                return True
+            orig_handler = getattr(target, 'mouseClickEvent', None)
+
+            def _wrapped_click(ev, _target=target, _orig=orig_handler):
+                if ev.button() == Qt.LeftButton:
+                    cb = getattr(_target, '_bar_toggle_callback', None)
+                    rk = getattr(_target, '_bar_raw_key', None)
+                    if cb is not None and rk:
+                        try:
+                            cb(rk)
+                            ev.accept()
+                            return
+                        except Exception:
+                            pass
+                if callable(_orig):
+                    _orig(ev)
+
+            target.mouseClickEvent = _wrapped_click
+            target._bar_toggle_bound = True
+            return True
+        except Exception:
+            return False
+
+    hooked = _bind_click(sample_item)
+    hooked = _bind_click(label_item) or hooked
+    return hooked
+
+
 def _get_element_color(element, index, cfg):
     """Get color for an element from config or defaults.
     Args:
@@ -2559,7 +2620,7 @@ class HistogramDisplayDialog(QDialog):
                     "Connect to Sample Selector\n"
                     "and run particle detection",
                     anchor=(0.5, 0.5), color='gray')
-                pi.addItem(t)
+                pi.addItem(t, ignoreBounds=True)
                 t.setPos(0.5, 0.5)
                 pi.hideAxis('left')
                 pi.hideAxis('bottom')
@@ -2771,7 +2832,7 @@ class HistogramDisplayDialog(QDialog):
                 else "No visible isotopes"
             )
             ti = pg.TextItem(msg, anchor=(0.5, 0.5), color='#9CA3AF')
-            pi.addItem(ti)
+            pi.addItem(ti, ignoreBounds=True)
             try:
                 vb = pi.getViewBox()
                 xr, yr = vb.viewRange()
@@ -3131,6 +3192,108 @@ class HistogramDecompositionDialog(QDialog):
                 except Exception:
                     pass
 
+    def _get_custom_title_map(self):
+        """Return the child-local custom title mapping for decomposed subplots.
+
+        Returns:
+            dict: Mutable mapping of raw isotope keys to custom display titles.
+
+        Preserved behavior:
+            Custom title text remains local to this child dialog and uses raw
+            isotope keys as canonical identifiers. Scientific labels and data
+            extraction semantics are unchanged.
+        """
+        custom_titles = self._cfg.get('custom_titles')
+        if not isinstance(custom_titles, dict):
+            custom_titles = {}
+            self._cfg['custom_titles'] = custom_titles
+        return custom_titles
+
+    def _default_title_for_element(self, raw_element_key):
+        """Return the default rendered title for one decomposed subplot.
+
+        Args:
+            raw_element_key (str): Canonical raw isotope/element key.
+
+        Returns:
+            str: Default subplot title generated from current label settings.
+        """
+        return _fmt_elem(raw_element_key, self._cfg)
+
+    def _effective_title_for_element(self, raw_element_key):
+        """Resolve the visible title text for one decomposed subplot.
+
+        Args:
+            raw_element_key (str): Canonical raw isotope/element key.
+
+        Returns:
+            str: Custom title text when stored, otherwise the default title.
+        """
+        custom_title = self._get_custom_title_map().get(raw_element_key)
+        if isinstance(custom_title, str) and custom_title.strip():
+            return custom_title.strip()
+        return self._default_title_for_element(raw_element_key)
+
+    def _store_custom_title_text(self, raw_element_key, title_text):
+        """Persist one custom decomposed-subplot title in child-local config.
+
+        Args:
+            raw_element_key (str): Canonical raw isotope/element key.
+            title_text (str): User-entered title text for the subplot.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Blank text removes the override so the subplot falls back to the
+            normal isotope display name on future redraws.
+        """
+        clean_text = (title_text or '').strip()
+        custom_titles = self._get_custom_title_map()
+        if clean_text:
+            custom_titles[raw_element_key] = clean_text
+        else:
+            custom_titles.pop(raw_element_key, None)
+
+    def _apply_custom_title_edit(self, plot_item, raw_element_key, title_text):
+        """Persist one edited title and update the live decomposed subplot.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` receiving the title edit.
+            raw_element_key (str): Canonical raw isotope/element key.
+            title_text (str): User-entered title text from the editor dialog.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This updates only display text. Title styling continues to be owned
+            by the existing live editor and histogram format settings.
+        """
+        self._store_custom_title_text(raw_element_key, title_text)
+        plot_item.setTitle(self._effective_title_for_element(raw_element_key))
+
+    def _configure_plot_title(self, plot_item, raw_element_key):
+        """Attach persistent title-edit behavior to one decomposed subplot.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` for the isotope subplot.
+            raw_element_key (str): Canonical raw isotope/element key.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Double-click title editing remains available through the shared
+            title editor, while custom title content now survives child redraws.
+        """
+        plot_item._title_editor_options = {
+            'title_apply_callback': (
+                lambda text, _plot_item=plot_item, _key=raw_element_key:
+                self._apply_custom_title_edit(_plot_item, _key, text)
+            ),
+        }
+
     def _refresh(self):
         """Rebuild and redraw one single-series subplot per isotope/element.
 
@@ -3166,7 +3329,7 @@ class HistogramDecompositionDialog(QDialog):
             t = pg.TextItem(
                 "No plottable isotope data available",
                 anchor=(0.5, 0.5), color='gray')
-            pi.addItem(t)
+            pi.addItem(t, ignoreBounds=True)
             t.setPos(0.5, 0.5)
             pi.hideAxis('left')
             pi.hideAxis('bottom')
@@ -3177,8 +3340,10 @@ class HistogramDecompositionDialog(QDialog):
         for idx_plot, (elem, vals) in enumerate(valid):
             if idx_plot > 0 and idx_plot % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=_fmt_elem(elem, self._cfg),
+            effective_title = self._effective_title_for_element(elem)
+            pi = self.pw.addPlot(title=effective_title,
                                  axisItems={'left': HtmlAxisItem('left')})
+            self._configure_plot_title(pi, elem)
             self._subplot_context_by_plotitem[pi] = {
                 'element': elem,
                 'title': _get_element_display_name(elem, self._cfg),
@@ -3211,13 +3376,15 @@ class HistogramDecompositionDialog(QDialog):
             calculations, value preparation, or histogram semantics. Note
             position is centered at x=0 when visible, otherwise centered at the
             visible x-range midpoint, and near the top of the visible y-range.
+            The note is excluded from autorange bounds so it cannot distort
+            decomposed histogram axes when rendered.
         """
         ti = pg.TextItem(
             "Density curve unavailable",
             anchor=(0.5, 0),
             color='#9CA3AF')
         ti.setZValue(50)
-        plot_item.addItem(ti)
+        plot_item.addItem(ti, ignoreBounds=True)
         try:
             vb = plot_item.getViewBox()
             rng = vb.viewRange()
@@ -3434,7 +3601,7 @@ class BarChartSettingsDialog(QDialog):
     """Scope-aware settings dialog for the element bar chart."""
 
     def __init__(self, config, is_multi, sample_names, parent=None, scope='all',
-                 te_available=False):
+                 te_available=False, available_elements=None):
         """
         Initialize bar-chart settings dialog with optional scope filtering.
 
@@ -3444,6 +3611,8 @@ class BarChartSettingsDialog(QDialog):
             sample_names (list[str]): Source sample names used for display controls.
             parent (Any): Parent widget.
             scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
+            available_elements (list[str] | None): Canonical raw element keys
+                currently available for Element Bar Chart color configuration.
 
         Preserved behavior:
             Existing config key semantics and rendering behavior are unchanged; this
@@ -3462,6 +3631,7 @@ class BarChartSettingsDialog(QDialog):
         self._samples = sample_names
         self._scope = scope
         self._te_available = bool(te_available)
+        self._available_elements = list(available_elements or [])
 
         self.display_mode = None
         self.show_values = None
@@ -3472,6 +3642,21 @@ class BarChartSettingsDialog(QDialog):
         self.min_count = None
         self._name_edits = None
         self._order_list = None
+        self.font_family = None
+        self.axis_font_size = None
+        self.title_font_size = None
+        self.legend_font_size = None
+        self.font_bold = None
+        self.font_italic = None
+        self.show_x_grid = None
+        self.show_y_grid = None
+        self.grid_alpha = None
+        self.font_color_btn = None
+        self.bg_color_btn = None
+        self._font_color = QColor("#000000")
+        self._bg_color = QColor("#FFFFFF")
+        self._elem_color_btns = {}
+        self._sample_color_btns = {}
 
         self._build_ui()
 
@@ -3504,16 +3689,7 @@ class BarChartSettingsDialog(QDialog):
             layout.addWidget(g)
 
         if self._scope in ('all', 'format'):
-            g = QGroupBox("Plot Format")
-            fl = QFormLayout(g)
-            self.show_values = QCheckBox()
-            self.show_values.setChecked(self._cfg.get('show_values', True))
-            fl.addRow("Show Values on Bars:", self.show_values)
-            self.label_mode = QComboBox()
-            self.label_mode.addItems(LABEL_MODES)
-            self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
-            fl.addRow("Isotope Label:", self.label_mode)
-            layout.addWidget(g)
+            self._build_format_groups(layout)
 
         if self._scope in ('all', 'quantities'):
             g = QGroupBox("Plot Quantities")
@@ -3609,6 +3785,257 @@ class BarChartSettingsDialog(QDialog):
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
+    def _build_format_groups(self, layout):
+        """Build the flat Element Bar Chart format controls.
+
+        Args:
+            layout (QVBoxLayout): Target vertical layout inside the dialog's
+                scroll container.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This dialog remains Element-Bar-Chart-specific and writes only
+            canonical bar-chart config keys instead of mutating live first-plot
+            traces through the shared tabbed Plot Settings dialog.
+        """
+        fmt = self._format_settings_seed()
+
+        g = QGroupBox("Text & Labels")
+        fl = QFormLayout(g)
+        self.font_family = QComboBox()
+        self.font_family.addItems(_get_system_font_families())
+        self.font_family.setCurrentText(
+            fmt.get('global_font_family', self._cfg.get('font_family', 'Times New Roman')))
+        self.font_family.setMaxVisibleItems(20)
+        self.axis_font_size = QSpinBox()
+        self.axis_font_size.setRange(6, 72)
+        self.axis_font_size.setValue(int(fmt.get('axis_font_size', self._cfg.get('font_size', 18))))
+        self.title_font_size = QSpinBox()
+        self.title_font_size.setRange(6, 72)
+        self.title_font_size.setValue(int(fmt.get('title_font_size', self._cfg.get('font_size', 18))))
+        self.legend_font_size = QSpinBox()
+        self.legend_font_size.setRange(6, 72)
+        self.legend_font_size.setValue(int(fmt.get('legend_font_size', self._cfg.get('font_size', 18))))
+        style_row = QHBoxLayout()
+        self.font_bold = QCheckBox("Bold")
+        self.font_bold.setChecked(bool(fmt.get('global_bold', self._cfg.get('font_bold', False))))
+        self.font_italic = QCheckBox("Italic")
+        self.font_italic.setChecked(bool(fmt.get('global_italic', self._cfg.get('font_italic', False))))
+        style_row.addWidget(self.font_bold)
+        style_row.addWidget(self.font_italic)
+        style_row.addStretch()
+        self._font_color = QColor(fmt.get('font_color', self._cfg.get('font_color', '#000000')))
+        self.font_color_btn = QPushButton()
+        self.font_color_btn.setFixedSize(70, 24)
+        self._style_swatch_button(self.font_color_btn, self._font_color)
+        self.font_color_btn.clicked.connect(self._pick_font_color)
+        self.show_values = QCheckBox()
+        self.show_values.setChecked(self._cfg.get('show_values', True))
+        self.label_mode = QComboBox()
+        self.label_mode.addItems(LABEL_MODES)
+        self.label_mode.setCurrentText(self._cfg.get('label_mode', 'Symbol'))
+        fl.addRow("Font Family:", self.font_family)
+        fl.addRow("Axis Font Size:", self.axis_font_size)
+        fl.addRow("Title Font Size:", self.title_font_size)
+        fl.addRow("Legend Font Size:", self.legend_font_size)
+        fl.addRow("Font Style:", style_row)
+        fl.addRow("Font Color:", self.font_color_btn)
+        fl.addRow("Isotope Label:", self.label_mode)
+        fl.addRow("Show Values on Bars:", self.show_values)
+        layout.addWidget(g)
+
+        g = QGroupBox("Grid & Background")
+        fl = QFormLayout(g)
+        self._bg_color = QColor(fmt.get('bg_color', '#FFFFFF'))
+        self.bg_color_btn = QPushButton()
+        self.bg_color_btn.setFixedSize(70, 24)
+        self._style_swatch_button(self.bg_color_btn, self._bg_color)
+        self.bg_color_btn.clicked.connect(self._pick_background_color)
+        self.show_x_grid = QCheckBox()
+        self.show_x_grid.setChecked(bool(fmt.get('show_x_grid', self._cfg.get('show_x_grid', False))))
+        self.show_y_grid = QCheckBox()
+        self.show_y_grid.setChecked(bool(fmt.get('show_y_grid', self._cfg.get('show_y_grid', False))))
+        self.grid_alpha = QDoubleSpinBox()
+        self.grid_alpha.setRange(0.05, 1.0)
+        self.grid_alpha.setDecimals(2)
+        self.grid_alpha.setSingleStep(0.05)
+        grid_alpha = float(fmt.get('grid_alpha', self._cfg.get('grid_alpha', 0.2)))
+        if grid_alpha > 1.0:
+            grid_alpha = grid_alpha / 255.0
+        self.grid_alpha.setValue(max(0.05, min(1.0, grid_alpha)))
+        fl.addRow("Background Color:", self.bg_color_btn)
+        fl.addRow("Show X Grid:", self.show_x_grid)
+        fl.addRow("Show Y Grid:", self.show_y_grid)
+        fl.addRow("Grid Alpha:", self.grid_alpha)
+        layout.addWidget(g)
+
+        if self._uses_element_colors_in_format_dialog():
+            g = QGroupBox("Element Colors")
+            vl = QVBoxLayout(g)
+            existing_colors = self._cfg.get('element_colors', {})
+            for i, element in enumerate(self._available_elements):
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.addWidget(QLabel(element))
+                btn = QPushButton()
+                btn.setFixedSize(70, 24)
+                color_hex = existing_colors.get(
+                    element, DEFAULT_ELEMENT_COLORS[i % len(DEFAULT_ELEMENT_COLORS)])
+                btn._color = QColor(color_hex)
+                self._style_swatch_button(btn, btn._color)
+                btn.clicked.connect(lambda _, e=element: self._pick_element_color(e))
+                row.addWidget(btn)
+                row.addStretch()
+                self._elem_color_btns[element] = btn
+                vl.addLayout(row)
+            if not self._available_elements:
+                vl.addWidget(QLabel("(No elements detected yet)"))
+            layout.addWidget(g)
+
+        if self._uses_sample_colors_in_format_dialog():
+            g = QGroupBox("Sample Colors")
+            vl = QVBoxLayout(g)
+            existing_sample_colors = self._cfg.get('sample_colors', {})
+            for i, sample_name in enumerate(self._samples):
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.addWidget(QLabel(sample_name[:24]))
+                btn = QPushButton()
+                btn.setFixedSize(70, 24)
+                color_hex = existing_sample_colors.get(
+                    sample_name, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                btn._color = QColor(color_hex)
+                self._style_swatch_button(btn, btn._color)
+                btn.clicked.connect(lambda _, sn=sample_name: self._pick_sample_color(sn))
+                row.addWidget(btn)
+                row.addStretch()
+                self._sample_color_btns[sample_name] = btn
+                vl.addLayout(row)
+            layout.addWidget(g)
+
+    def _uses_element_colors_in_format_dialog(self):
+        """Return whether the active bar-chart mode visibly uses element colors.
+
+        Returns:
+            bool: ``True`` when the flat format dialog should expose canonical
+                ``element_colors`` because the current bar mode renders bars
+                from that mapping.
+        """
+        if not self._multi:
+            return True
+        return self._cfg.get('display_mode', BAR_DISPLAY_MODES[0]) == \
+            'By Sample (Element Colors)'
+
+    def _uses_sample_colors_in_format_dialog(self):
+        """Return whether the active bar-chart mode visibly uses sample colors.
+
+        Returns:
+            bool: ``True`` when the flat format dialog should expose canonical
+                ``sample_colors`` because the current bar mode renders bars
+                from that mapping.
+        """
+        return bool(self._multi) and not self._uses_element_colors_in_format_dialog()
+
+    def _format_settings_seed(self):
+        """Return the current Element Bar Chart format-settings state.
+
+        Returns:
+            dict: Normalized mapping of text/grid/background settings.
+
+        Preserved behavior:
+            Existing shared-format state stored in ``plot_format_settings`` is
+            reused when present so prior title-format fixes continue to work.
+        """
+        settings = self._cfg.get('plot_format_settings')
+        if not isinstance(settings, dict):
+            settings = {}
+        return settings
+
+    @staticmethod
+    def _style_swatch_button(button, color):
+        """Apply a simple color-preview stylesheet to one swatch button.
+
+        Args:
+            button (QPushButton): Target swatch button.
+            color (QColor): Current selected color.
+
+        Returns:
+            None
+        """
+        button.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid black;")
+
+    def _pick_font_color(self):
+        """Select a canonical font color for Element Bar Chart text styling."""
+        from PySide6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self._font_color, self, "Font Color")
+        if color.isValid():
+            self._font_color = color
+            self._style_swatch_button(self.font_color_btn, color)
+
+    def _pick_background_color(self):
+        """Select the Element Bar Chart plot background color."""
+        from PySide6.QtWidgets import QColorDialog
+        color = QColorDialog.getColor(self._bg_color, self, "Background Color")
+        if color.isValid():
+            self._bg_color = color
+            self._style_swatch_button(self.bg_color_btn, color)
+
+    def _pick_element_color(self, element):
+        """Select one canonical per-element bar color.
+
+        Args:
+            element (str): Canonical raw element key to recolor.
+
+        Returns:
+            None
+        """
+        from PySide6.QtWidgets import QColorDialog
+        button = self._elem_color_btns.get(element)
+        if button is None:
+            return
+        color = QColorDialog.getColor(button._color, self, f"{element} Color")
+        if color.isValid():
+            button._color = color
+            self._style_swatch_button(button, color)
+
+    def _pick_sample_color(self, sample_name):
+        """Select one canonical per-sample bar color.
+
+        Args:
+            sample_name (str): Canonical raw sample key to recolor.
+
+        Returns:
+            None
+        """
+        from PySide6.QtWidgets import QColorDialog
+        button = self._sample_color_btns.get(sample_name)
+        if button is None:
+            return
+        color = QColorDialog.getColor(button._color, self, f"{sample_name} Color")
+        if color.isValid():
+            button._color = color
+            self._style_swatch_button(button, color)
+
+    @staticmethod
+    def _normalized_display_name(raw_name, edited_text):
+        """Normalize one display-name edit against its canonical raw key.
+
+        Args:
+            raw_name (str): Canonical raw sample key.
+            edited_text (str): User-entered visible label text.
+
+        Returns:
+            str | None: Clean display override, or ``None`` when the edit
+            should fall back to the raw default display name.
+        """
+        clean_text = (edited_text or '').strip()
+        if not clean_text or clean_text == raw_name:
+            return None
+        return clean_text
+
     def _move_up(self):
         """Move selected sample-order row up in quantities scope."""
         if self._order_list is None:
@@ -3650,17 +4077,60 @@ class BarChartSettingsDialog(QDialog):
             out['log_y'] = self.log_y.isChecked()
         if self.label_mode is not None:
             out['label_mode'] = self.label_mode.currentText()
+        if self.font_family is not None:
+            out['font_family'] = self.font_family.currentText()
+        if self.axis_font_size is not None:
+            out['font_size'] = self.axis_font_size.value()
+        if self.font_bold is not None:
+            out['font_bold'] = self.font_bold.isChecked()
+        if self.font_italic is not None:
+            out['font_italic'] = self.font_italic.isChecked()
+        if self.font_color_btn is not None:
+            out['font_color'] = self._font_color.name()
+        if self.show_x_grid is not None:
+            out['show_x_grid'] = self.show_x_grid.isChecked()
+        if self.show_y_grid is not None:
+            out['show_y_grid'] = self.show_y_grid.isChecked()
+        if self.grid_alpha is not None:
+            out['grid_alpha'] = self.grid_alpha.value()
         if self.min_count is not None:
             out['min_particle_count'] = self.min_count.value()
         if self._multi and self.display_mode is not None:
             out['display_mode'] = self.display_mode.currentText()
         if self._multi and self._name_edits is not None:
-            out['sample_name_mappings'] = {
-                sn: ne.text() for sn, ne in self._name_edits.items()}
+            sample_name_mappings = {}
+            for sample_name, name_edit in self._name_edits.items():
+                normalized = self._normalized_display_name(
+                    sample_name, name_edit.text())
+                if normalized is not None:
+                    sample_name_mappings[sample_name] = normalized
+            out['sample_name_mappings'] = sample_name_mappings
         if self._multi and self._order_list is not None:
             out['sample_order'] = [
                 self._order_list.item(i).text()
                 for i in range(self._order_list.count())]
+        if self._elem_color_btns:
+            out['element_colors'] = {
+                element: button._color.name()
+                for element, button in self._elem_color_btns.items()}
+        if self._sample_color_btns:
+            out['sample_colors'] = {
+                sample_name: button._color.name()
+                for sample_name, button in self._sample_color_btns.items()}
+        if self.font_family is not None:
+            out['plot_format_settings'] = {
+                'global_font_family': self.font_family.currentText(),
+                'axis_font_size': self.axis_font_size.value(),
+                'title_font_size': self.title_font_size.value(),
+                'legend_font_size': self.legend_font_size.value(),
+                'global_bold': self.font_bold.isChecked(),
+                'global_italic': self.font_italic.isChecked(),
+                'font_color': self._font_color.name(),
+                'bg_color': self._bg_color.name(),
+                'show_x_grid': self.show_x_grid.isChecked(),
+                'show_y_grid': self.show_y_grid.isChecked(),
+                'grid_alpha': self.grid_alpha.value(),
+            }
         return out
 
 def _prepare_values(values, data_type, log_x):
@@ -3862,10 +4332,16 @@ def _add_median_line(plot_item, values, cfg):
 
 def _add_stats_text(plot_item, plot_data, cfg):
     """Add statistics text box to histogram plot.
+
     Args:
         plot_item (Any): The plot item.
         plot_data (Any): The plot data.
         cfg (Any): The cfg.
+
+    Preserved behavior:
+        This is informational UI only. The visible statistics box remains
+        available when enabled, but it is excluded from autorange bounds so it
+        cannot influence histogram data scaling.
     """
     fc = get_font_config(cfg)
     dt = cfg.get('data_type_display', 'Counts')
@@ -3901,7 +4377,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
             color='#374151')
         ti.setFont(QFont(fc.get('family', 'Times New Roman'),
                           max(fc.get('size', 18) - 4, 7)))
-        plot_item.addItem(ti)
+        plot_item.addItem(ti, ignoreBounds=True)
         try:
             vb = plot_item.getViewBox()
             rng = vb.viewRange()
@@ -4033,7 +4509,7 @@ def _draw_single_histogram(
         _apply_sci_y_axis(plot_item, cfg)
     if visible_count == 0 and len(sorted_data) > 0:
         ti = pg.TextItem("No visible isotopes", anchor=(0.5, 0.5), color='#9CA3AF')
-        plot_item.addItem(ti)
+        plot_item.addItem(ti, ignoreBounds=True)
         try:
             vb = plot_item.getViewBox()
             xr, yr = vb.viewRange()
@@ -4159,6 +4635,7 @@ class ElementBarChartDisplayDialog(QDialog):
         super().__init__(parent_window)
         self.node = bar_node
         self.parent_window = parent_window
+        self._hidden_bar_samples = set()
         self.setWindowTitle("Element Particle Count Bar Chart")
         self.setMinimumSize(1000, 700)
 
@@ -4274,6 +4751,65 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node.config[key] = value
         self._refresh()
 
+    def _toggle_bar_sample_visibility(self, raw_sample_key):
+        """Toggle one raw sample's visibility in supported multi-sample modes.
+
+        Args:
+            raw_sample_key (str): Canonical raw sample key represented by the
+                clicked legend row.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This updates only render-layer visibility state for the current
+            Element Bar Chart dialog. Scientific data extraction, counts, and
+            grouping semantics remain unchanged.
+        """
+        if not raw_sample_key:
+            return
+        if raw_sample_key in self._hidden_bar_samples:
+            self._hidden_bar_samples.remove(raw_sample_key)
+        else:
+            self._hidden_bar_samples.add(raw_sample_key)
+        self._refresh()
+
+    @staticmethod
+    def _no_visible_samples_message():
+        """Return the standard empty-state message for fully hidden samples.
+
+        Returns:
+            str: User-visible guidance shown when no samples remain visible in
+                a mode that supports legend-based sample hiding.
+        """
+        return "No visible samples. Use the legend to show at least one sample."
+
+    def _add_no_visible_samples_message(self, plot_item):
+        """Render the standard no-visible-samples message on one plot item.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` receiving the empty-state
+                message.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            This is informational UI only and does not change scientific data,
+            bar heights, or extraction behavior.
+        """
+        ti = pg.TextItem(
+            self._no_visible_samples_message(),
+            anchor=(0.5, 0.5),
+            color='#9CA3AF')
+        plot_item.addItem(ti, ignoreBounds=True)
+        try:
+            vb = plot_item.getViewBox()
+            xr, yr = vb.viewRange()
+            ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
+        except Exception:
+            ti.setPos(0, 0)
+
     def _open_settings(self):
         """
         Open the legacy all-in-one settings dialog for compatibility.
@@ -4285,36 +4821,62 @@ class ElementBarChartDisplayDialog(QDialog):
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
-            te_available=_meta_te_available(self.node.input_data))
+            te_available=_meta_te_available(self.node.input_data),
+            available_elements=self._get_available_bar_elements())
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
 
     def _open_plot_format_settings(self):
         """
-        Open the rich PyQtGraph visual editor for bar-chart formatting.
+        Open the Element-Bar-Chart-specific flat format settings dialog.
 
         Preserved behavior:
-            This intentionally reuses the pre-migration PlotSettings workflow for
-            visual edits (fonts, grid/axis styling, trace/item appearance, and
-            related plot presentation controls) while keeping quantity controls in
-            the separate ``Configure plot quantities`` dialog. The format route
-            intentionally hides live ``Apply`` so users confirm changes through
-            one-shot ``OK``.
+            Quantity/data-selection controls remain in the separate
+            ``Configure plot quantities`` route. This format route writes only
+            canonical Element Bar Chart appearance config and redraws the full
+            chart so bars, legends, labels, and titles stay synchronized.
         """
-        self._open_plot_settings(
-            title_override="Element bar chart plot format settings",
-            show_apply=False)
+        dlg = BarChartSettingsDialog(
+            self.node.config, _is_multi(self.node.input_data),
+            _sample_names(self.node.input_data), self, scope='format',
+            te_available=_meta_te_available(self.node.input_data),
+            available_elements=self._get_available_bar_elements())
+        if dlg.exec() == QDialog.Accepted:
+            self.node.config.update(dlg.collect())
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
         """Open quantities-scoped bar chart settings dialog."""
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self, scope='quantities',
-            te_available=_meta_te_available(self.node.input_data))
+            te_available=_meta_te_available(self.node.input_data),
+            available_elements=self._get_available_bar_elements())
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+
+    def _get_available_bar_elements(self):
+        """Return canonical raw element keys currently available to the chart.
+
+        Returns:
+            list[str]: Sorted raw element keys present in current extracted bar
+            data across single-sample or multi-sample modes.
+
+        Preserved behavior:
+            This inspects already extracted plot data only. It does not change
+            selection, grouping, sorting semantics, or scientific extraction.
+        """
+        plot_data = self.node.extract_plot_data()
+        if not plot_data:
+            return []
+        if _is_multi(self.node.input_data):
+            keys = set()
+            for sample_data in plot_data.values():
+                keys.update(sample_data.keys())
+            return sort_elements_by_mass(list(keys))
+        return sort_elements_by_mass(list(plot_data.keys()))
 
     def _open_plot_settings(self, title_override=None, show_apply=True):
         """
@@ -4510,20 +5072,30 @@ class ElementBarChartDisplayDialog(QDialog):
         settings = self.node.config.get('plot_format_settings')
         if not isinstance(settings, dict) or not settings:
             return
+        bg_color = settings.get('bg_color')
+        if bg_color:
+            try:
+                self.pw.setBackground(bg_color)
+            except Exception:
+                pass
         for plot_item in self._plot_items():
             plot_item._persistent_dialog_settings = dict(settings)
             self._apply_plot_text_settings_to_plot_item(plot_item, settings)
 
     def _apply_plot_text_settings_to_plot_item(self, plot_item, settings):
-        """Apply explicit shared-format text styling to one plot item.
+        """Apply explicit saved-format styling to one plot item.
 
         Args:
             plot_item (Any): Target ``pg.PlotItem``.
-            settings (dict): Shared Plot Settings dialog state from
-                ``persistent_dialog_settings``.
+            settings (dict): Saved Element Bar Chart format state from
+                ``plot_format_settings`` / ``persistent_dialog_settings``.
 
         Returns:
             None
+
+        Preserved behavior:
+            Custom title text remains independent. This applies only appearance
+            settings such as text styling and grid visibility/alpha.
         """
         axis_labels = {}
         custom_axis_labels = getattr(plot_item, '_custom_axis_labels', {}) or {}
@@ -4568,6 +5140,13 @@ class ElementBarChartDisplayDialog(QDialog):
             title_text=title_text,
             axis_labels=axis_labels,
         )
+        show_x_grid = bool(settings.get('show_x_grid', False))
+        show_y_grid = bool(settings.get('show_y_grid', False))
+        grid_alpha = float(settings.get('grid_alpha', self.node.config.get('grid_alpha', 0.2)))
+        if grid_alpha > 1.0:
+            grid_alpha = grid_alpha / 255.0
+        grid_alpha = max(0.0, min(1.0, grid_alpha))
+        plot_item.showGrid(x=show_x_grid, y=show_y_grid, alpha=grid_alpha)
 
     def _store_custom_title_text(self, plot_key, title_text):
         """Persist one custom title text value into Element Bar Chart config.
@@ -4700,11 +5279,19 @@ class ElementBarChartDisplayDialog(QDialog):
         try:
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
+            active_mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
+            hidden_samples = (
+                set(self._hidden_bar_samples)
+                if active_mode in ('Grouped Bars', 'Stacked Bars')
+                else set()
+            )
 
             if plot_data:
                 rows = []
                 if _is_multi(self.node.input_data):
                     for sn, sd in plot_data.items():
+                        if sn in hidden_samples:
+                            continue
                         dname = get_display_name(sn, cfg)
                         for elem, count in sd.items():
                             rows.append({'Sample': dname, 'Element': elem, 'Particle Count': count})
@@ -4920,17 +5507,42 @@ class ElementBarChartDisplayDialog(QDialog):
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(all_elems), dtype=float)
-        n_samples = len(plot_data)
-        bar_w = 0.8 / max(n_samples, 1)
+        visible_samples = [
+            sample_name for sample_name in plot_data
+            if sample_name not in self._hidden_bar_samples
+        ]
+        n_visible_samples = len(visible_samples)
+        bar_w = 0.8 / max(n_visible_samples, 1)
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
         pi.legend = legend
 
         global_max = 0
+        visible_index = 0
         for i, (sn, sd) in enumerate(plot_data.items()):
+            sample_hidden = sn in self._hidden_bar_samples
             color = get_sample_color(sn, i, cfg)
             dname = get_display_name(sn, cfg)
+            co = QColor(color)
+            alpha = 55 if sample_hidden else 215
+            swatch = _ClickableLegendSwatch(
+                x=[0], height=[0], width=0,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                raw_key=sn,
+                toggle_callback=self._toggle_bar_sample_visibility,
+            )
+            legend_label = dname + (" (hidden)" if sample_hidden else "")
+            legend.addItem(swatch, legend_label)
+            _attach_bar_chart_legend_toggle(
+                legend,
+                raw_key=sn,
+                toggle_callback=self._toggle_bar_sample_visibility,
+            )
+
+            if sample_hidden:
+                continue
+
             y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
             heights = [sd.get(e, 0) * y_scale for e in all_elems]
             orig = list(heights)
@@ -4940,18 +5552,14 @@ class ElementBarChartDisplayDialog(QDialog):
             if cur_max > global_max:
                 global_max = cur_max
 
-            offsets = x + (i - n_samples / 2 + 0.5) * bar_w
-            co = QColor(color)
+            offsets = x + (visible_index - n_visible_samples / 2 + 0.5) * bar_w
+            visible_index += 1
             bar = pg.BarGraphItem(
                 x=offsets, height=heights, width=bar_w,
                 brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
                 pen=pg.mkPen(color='w', width=0.5))
             bar.opts['_trace_name'] = dname
             pi.addItem(bar)
-
-            swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                      brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
-            legend.addItem(swatch, dname)
 
             if show_vals:
                 for j, (xp, h, o) in enumerate(zip(offsets, heights, orig)):
@@ -4968,6 +5576,8 @@ class ElementBarChartDisplayDialog(QDialog):
 
         yl = 'Particles/mL' if per_ml else 'Particle Count'
         set_axis_labels(pi, 'Isotope Elements', yl, cfg)
+        if not visible_samples:
+            self._add_no_visible_samples_message(pi)
         
         if log_y:
             pi.getAxis('left').setLogMode(True)        
@@ -5013,14 +5623,38 @@ class ElementBarChartDisplayDialog(QDialog):
         x = np.arange(len(all_elems), dtype=float)
         bottom = np.zeros(len(all_elems))
         per_ml = _per_ml_active(cfg, self.node.input_data)
+        visible_samples = [
+            sample_name for sample_name in plot_data
+            if sample_name not in self._hidden_bar_samples
+        ]
 
         legend = pg.LegendItem(offset=(60, 10))
         legend.setParentItem(pi.graphicsItem())
         pi.legend = legend
 
         for i, (sn, sd) in enumerate(plot_data.items()):
+            sample_hidden = sn in self._hidden_bar_samples
             color = get_sample_color(sn, i, cfg)
             dname = get_display_name(sn, cfg)
+            co = QColor(color)
+            alpha = 55 if sample_hidden else 215
+            swatch = _ClickableLegendSwatch(
+                x=[0], height=[0], width=0,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                raw_key=sn,
+                toggle_callback=self._toggle_bar_sample_visibility,
+            )
+            legend_label = dname + (" (hidden)" if sample_hidden else "")
+            legend.addItem(swatch, legend_label)
+            _attach_bar_chart_legend_toggle(
+                legend,
+                raw_key=sn,
+                toggle_callback=self._toggle_bar_sample_visibility,
+            )
+
+            if sample_hidden:
+                continue
+
             y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
             heights = np.array([sd.get(e, 0) * y_scale for e in all_elems], dtype=float)
 
@@ -5032,7 +5666,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 h_plot = heights
                 b_plot = bottom
 
-            co = QColor(color)
             for j in range(len(x)):
                 bar = pg.BarGraphItem(
                     x=[x[j]], height=[h_plot[j]], width=0.7,
@@ -5042,9 +5675,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 bar.setPos(0, b_plot[j])
                 pi.addItem(bar)
 
-            swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                      brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
-            legend.addItem(swatch, dname)
             bottom += heights
 
         ax_bottom = pi.getAxis('bottom')
@@ -5053,6 +5683,8 @@ class ElementBarChartDisplayDialog(QDialog):
 
         yl = 'Particles/mL' if per_ml else 'Particle Count'
         set_axis_labels(pi, 'Isotope Elements', yl, cfg)
+        if not visible_samples:
+            self._add_no_visible_samples_message(pi)
         
         if log_y:
             pi.getAxis('left').setLogMode(True)        
