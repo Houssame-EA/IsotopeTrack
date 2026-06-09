@@ -961,6 +961,69 @@ def _spearman(a, b):
     return float((ar * br).sum() / denom)
 
 
+def borda_count_rank(results, metrics, registry=None):
+    """Rank results by Borda count across *metrics* (internal or external).
+
+    Each metric independently ranks all N configurations best-first
+    (direction from *registry*). Rank 1 earns N-1 points, rank N earns 0.
+    NaN values tie for last place and earn 0 points.  Tied finite values
+    receive averaged points.  Scores are summed; higher total = stronger
+    consensus winner.
+
+    Args:
+        results (list[dict]): Result rows from :func:`run_sweep`.
+        metrics (list[str]): Metric names to aggregate.
+        registry (dict or None): Lookup for ``'direction'`` key.
+            Defaults to merging METRIC_REGISTRY and EXTERNAL_METRICS.
+
+    Returns:
+        list[dict]: Copies of rows, each with ``'borda_score'`` added,
+                    sorted best-first (highest score first).
+    """
+    if registry is None:
+        registry = {**METRIC_REGISTRY, **EXTERNAL_METRICS}
+    n = len(results)
+    if n == 0 or not metrics:
+        return [dict(r) for r in results]
+
+    scores = np.zeros(n, dtype=float)
+
+    for metric in metrics:
+        direction = registry.get(metric, {}).get('direction', 'max')
+        vals = np.array(
+            [r.get(metric, float('nan')) for r in results], dtype=float)
+        finite_idx = np.where(np.isfinite(vals))[0]
+        n_fin = len(finite_idx)
+        if n_fin == 0:
+            continue
+
+        fin_vals = vals[finite_idx]
+        order = (np.argsort(-fin_vals, kind='stable')
+                 if direction == 'max'
+                 else np.argsort(fin_vals, kind='stable'))
+        ranked_vals = fin_vals[order]
+
+        # Assign Borda points with tie averaging
+        pts = np.zeros(n_fin, dtype=float)
+        i = 0
+        while i < n_fin:
+            j = i + 1
+            while j < n_fin and ranked_vals[j] == ranked_vals[i]:
+                j += 1
+            avg = float(np.mean([n_fin - 1 - p for p in range(i, j)]))
+            pts[i:j] = avg
+            i = j
+
+        for rank_pos, fin_pos in enumerate(order):
+            scores[finite_idx[fin_pos]] += pts[rank_pos]
+
+    out = [dict(r) for r in results]
+    for i, row in enumerate(out):
+        row['borda_score'] = float(scores[i])
+    out.sort(key=lambda r: -r['borda_score'])
+    return out
+
+
 def analyze_metric_trust(results, internal_metrics,
                          reference=PRIMARY_EXTERNAL_METRIC):
     """Report how well each internal index tracks the ground-truth reference.
@@ -1522,12 +1585,18 @@ if _QT_OK:
         def _refresh_rank_combo(self):
             """Populate the ranking dropdown with the metrics valid for the mode."""
             current = self.rank_combo.currentText()
+            intl_on = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
+            ext_on  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
             if self.unknown_mode.isChecked():
-                items = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
-                if not items:
-                    items = list(METRIC_REGISTRY.keys())
+                items = list(intl_on or METRIC_REGISTRY.keys())
+                if len(intl_on) >= 2:
+                    items = items + ['Borda (Internal)']
             else:
                 items = list(EXTERNAL_METRICS.keys())
+                if len(ext_on) >= 2:
+                    items = items + ['Borda (External)']
+                if len(intl_on) >= 2:
+                    items = items + ['Borda (Internal)']
             self.rank_combo.blockSignals(True)
             self.rank_combo.clear()
             self.rank_combo.addItems(items)
@@ -1677,10 +1746,22 @@ if _QT_OK:
                     f"Truth groups — {tsummary}")
                 return
             metric = self.rank_combo.currentText()
-            best = rank_results(results, metric)[0]
+            intl = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
+            ext  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
+            if metric == 'Borda (Internal)':
+                ranked = borda_count_rank(results, intl, METRIC_REGISTRY)
+                best = ranked[0]
+                score_str = f"Borda ∑ (int) = {best.get('borda_score', 0):.1f}"
+            elif metric == 'Borda (External)':
+                ranked = borda_count_rank(results, ext, EXTERNAL_METRICS)
+                best = ranked[0]
+                score_str = f"Borda ∑ (ext) = {best.get('borda_score', 0):.1f}"
+            else:
+                best = rank_results(results, metric)[0]
+                score_str = f"{metric} = {best.get(metric, float('nan')):.3f}"
             if payload.get('unknown'):
                 self.best_lbl.setText(
-                    f"<b>Best pipeline ({metric} = {best.get(metric, float('nan')):.3f}):</b> "
+                    f"<b>Best pipeline ({score_str}):</b> "
                     f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']} · "
                     f"{best['algorithm']} ({best['params_str']}) → "
                     f"{best['n_clusters']} clusters, {best['n_noise']} noise."
@@ -1690,7 +1771,7 @@ if _QT_OK:
             else:
                 n_truth = max(len(counts) - 1, 0)
                 self.best_lbl.setText(
-                    f"<b>Best pipeline ({metric} = {best.get(metric, float('nan')):.3f}):</b> "
+                    f"<b>Best pipeline ({score_str}):</b> "
                     f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']} · "
                     f"{best['algorithm']} ({best['params_str']}) → "
                     f"{best['n_clusters']} clusters, {best['n_noise']} noise "
@@ -1707,12 +1788,25 @@ if _QT_OK:
             """Fill the leaderboard, ranked by the chosen metric, best row lit."""
             if not self._last or not self._last.get('results'):
                 return
-            metric = self.rank_combo.currentText()
-            self._ranked = rank_results(self._last['results'], metric)
-            ext = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
+            metric  = self.rank_combo.currentText()
+            results = self._last['results']
+            ext  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
             intl = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
+
+            # Rank rows — Borda paths use consensus across all selected metrics
+            if metric == 'Borda (Internal)':
+                self._ranked = borda_count_rank(results, intl, METRIC_REGISTRY)
+                borda_col = 'Borda ∑ (int)'
+            elif metric == 'Borda (External)':
+                self._ranked = borda_count_rank(results, ext, EXTERNAL_METRICS)
+                borda_col = 'Borda ∑ (ext)'
+            else:
+                self._ranked = rank_results(results, metric)
+                borda_col = None
+
+            extra_cols = ([borda_col] if borda_col else [])
             cols = (['#', 'Algorithm', 'Data type', 'Scaling', 'Reduction',
-                     'Params', 'K', 'Noise'] + ext + intl)
+                     'Params', 'K', 'Noise'] + ext + intl + extra_cols)
             self.table.setSortingEnabled(False)
             self.table.setColumnCount(len(cols))
             self.table.setHorizontalHeaderLabels(cols)
@@ -1724,6 +1818,9 @@ if _QT_OK:
                 for m in ext + intl:
                     v = row.get(m, float('nan'))
                     vals.append('—' if v != v else f"{v:.3f}")
+                if borda_col:
+                    bs = row.get('borda_score', float('nan'))
+                    vals.append('—' if bs != bs else f"{bs:.1f}")
                 for c, val in enumerate(vals):
                     item = QTableWidgetItem(val)
                     if c == 0:
@@ -2152,7 +2249,11 @@ if _QT_OK:
                 node=getattr(host_dialog, 'node', None),
                 som_runner=make_host_som_runner(host_dialog),
             )
-            dlg.exec()
+            dlg.setWindowModality(Qt.NonModal)
+            dlg.setWindowFlags(dlg.windowFlags() | Qt.Window)
+            # Keep reference so dialog isn't garbage-collected after show()
+            host_dialog._custom_test_dialog = dlg
+            dlg.show()
 
         btn.clicked.connect(_open)
         try:

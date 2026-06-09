@@ -29,6 +29,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
     get_sample_color, get_display_name,
     download_matplotlib_figure, LABEL_MODES, format_combination_label, Renderer,
+    pick_color_hex,
 )
 from widget.colors import default_colors, colorheatmap
 
@@ -36,6 +37,7 @@ from widget.colors import default_colors, colorheatmap
 
 VIZ_TYPES = ['Pie Charts', 'Heatmaps']
 SM_DISPLAY_MODES = ['Individual Subplots', 'Side by Side Subplots', 'Combined View']
+DEGREE_SIGN = "\N{DEGREE SIGN}"
 
 DEFAULT_CONFIG = {
     'custom_title': 'Single vs Multiple Element Analysis',
@@ -348,8 +350,11 @@ class _ColorBtn(QPushButton):
         self._apply()
 
     def _apply(self):
+        """Refresh the swatch preview without styling any parent dialog."""
         self.setStyleSheet(
-            f'background-color:{self._color};border:1px solid #666;border-radius:2px;')
+            "QPushButton {"
+            f"background-color:{self._color};border:1px solid #666;border-radius:2px;"
+            "}")
 
     def color(self) -> str:
         """
@@ -359,21 +364,25 @@ class _ColorBtn(QPushButton):
         return self._color
 
     def set_color(self, c: str):
-        """
+        """Store one validated composition-preview color and refresh the swatch.
+
         Args:
-            c (str): The c.
+            c (str): Hex color string selected for this preview swatch.
         """
-        self._color = c; self._apply()
+        self._color = c
+        self._apply()
 
     def mousePressEvent(self, event):
-        """
+        """Open the shared safe color picker for this swatch on left click.
+
         Args:
             event (Any): Qt event object.
         """
         if event.button() == Qt.LeftButton:
-            picked = QColorDialog.getColor(QColor(self._color), self)
-            if picked.isValid():
-                self.set_color(picked.name())
+            picked = pick_color_hex(self._color, owner=self,
+                                    title="Select Color")
+            if picked:
+                self.set_color(picked)
         super().mousePressEvent(event)
 
 
@@ -418,7 +427,8 @@ class PieStyleGroup:
         f.addRow("Centre Label:", self._center_text)
 
         self._start = QSpinBox()
-        self._start.setRange(0, 360); self._start.setSuffix("°")
+        self._start.setRange(0, 360)
+        self._start.setSuffix(DEGREE_SIGN)
         self._start.setValue(cfg.get('start_angle', 90))
         f.addRow("Start Angle:", self._start)
 

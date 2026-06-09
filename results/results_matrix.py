@@ -65,6 +65,8 @@ MATRIX_DISPLAY_MODES = [
     'Difference Matrix',
 ]
 
+DEGREE_SIGN = "\N{DEGREE SIGN}"
+
 DEFAULT_CONFIG = {
     'data_type_display':  'Counts',
     'min_particles':      5,
@@ -238,7 +240,8 @@ class MatrixSettingsDialog(QDialog):
             f2.addRow("Isotope Label:", self.label_mode_combo)
             from PySide6.QtWidgets import QSpinBox as _QSpin
             self.x_rotation_spin = _QSpin()
-            self.x_rotation_spin.setRange(0, 90); self.x_rotation_spin.setSuffix("�")
+            self.x_rotation_spin.setRange(0, 90)
+            self.x_rotation_spin.setSuffix(DEGREE_SIGN)
             self.x_rotation_spin.setValue(self._cfg.get('x_rotation', 0))
             f2.addRow("X Label Rotation:", self.x_rotation_spin)
             lay.addWidget(g2)

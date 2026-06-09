@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
+    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
+    format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -341,16 +343,18 @@ class _ColorBtn(QPushButton):
         self._apply()
 
     def _apply(self):
-        """Refresh the local preview stylesheet for the swatch button."""
+        """Refresh the swatch preview without styling any parent dialog."""
         self.setStyleSheet(
-            f'background-color:{self._color};border:1px solid #666;border-radius:2px;')
+            "QPushButton {"
+            f"background-color:{self._color};border:1px solid #666;border-radius:2px;"
+            "}")
 
     def color(self):
-        """Return the currently selected swatch color as a hex string."""
+        """Return the currently selected network-preview color."""
         return self._color
 
     def mousePressEvent(self, event):
-        """Open a safe color dialog on left-click and update the swatch.
+        """Open the shared safe color picker for this swatch on left click.
 
         Args:
             event (QMouseEvent): Button press event from Qt.

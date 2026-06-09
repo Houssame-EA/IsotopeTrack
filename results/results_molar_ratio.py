@@ -18,7 +18,7 @@ from results.shared_plot_utils import (
     download_pyqtgraph_figure,
     format_element_label, LABEL_MODES, Renderer,
     per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
-    apply_sci_y_axis, HtmlAxisItem,
+    apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
 )
 
 try:
@@ -392,36 +392,58 @@ class MolarRatioSettingsDialog(QDialog):
         gs = QGroupBox("Statistical Overlays  (applied to all subplots)")
         fs = QFormLayout(gs)
 
-        def _line_row(color_key, style_key, width_key, defaults):
-            """
+        def _normalize_overlay_color(color_value, fallback):
+            """Return a valid overlay color string or the supplied fallback.
+
             Args:
-                color_key (Any): The color key.
-                style_key (Any): The style key.
-                width_key (Any): The width key.
-                defaults (Any): The defaults.
+                color_value (Any): Config value intended to represent a color.
+                fallback (str): Safe default color for this overlay row.
+
             Returns:
-                tuple: Result of the operation.
+                str: Valid hex/color string for the overlay preview and config.
+            """
+            if isinstance(color_value, str) and QColor(color_value).isValid():
+                return color_value
+            return fallback
+
+        def _line_row(color_key, style_key, width_key, defaults):
+            """Build one statistical-overlay row with isolated color/style/width state.
+
+            Args:
+                color_key (Any): Config key storing the overlay color string.
+                style_key (Any): Config key storing the overlay line style.
+                width_key (Any): Config key storing the overlay line width.
+                defaults (Any): Default ``[color, style, width]`` triple.
+
+            Returns:
+                tuple: Row layout, mutable color holder, style combo, and width
+                spinbox for the overlay.
             """
             row = QHBoxLayout()
-            color_holder = [self._cfg.get(color_key, defaults[0])]
+            color_holder = [_normalize_overlay_color(
+                self._cfg.get(color_key, defaults[0]), defaults[0])]
             btn = QPushButton(); btn.setFixedSize(26, 22)
             btn.setStyleSheet(f"background:{color_holder[0]};")
-            def _pick(h=color_holder, b=btn):
-                """
+            def _pick(*_args, holder=color_holder, button=btn):
+                """Pick one overlay color without letting button state replace it.
+
                 Args:
-                    h (Any): The h.
-                    b (Any): The b.
+                    *_args (Any): Ignored Qt signal payload such as ``checked``.
+                    holder (Any): One-item mutable color holder for this row.
+                    button (Any): Swatch button previewing the current color.
                 """
-                c = QColorDialog.getColor(QColor(h[0]), self)
-                if c.isValid():
-                    h[0] = c.name(); b.setStyleSheet(f"background:{h[0]};")
+                picked = pick_color_hex(holder[0], owner=self,
+                                        title="Overlay Color")
+                if picked:
+                    holder[0] = picked
+                    button.setStyleSheet(f"background:{holder[0]};")
             btn.clicked.connect(_pick)
             sc = QComboBox(); sc.addItems(['solid', 'dash', 'dot'])
             sc.setCurrentText(self._cfg.get(style_key, defaults[1]))
             sc.setFixedWidth(64)
             ws = QSpinBox(); ws.setRange(1, 5)
             ws.setValue(self._cfg.get(width_key, defaults[2]))
-            ws.setFixedWidth(44)
+            ws.setFixedWidth(68)
             row.addWidget(btn); row.addWidget(sc)
             row.addWidget(QLabel("w:")); row.addWidget(ws)
             row.addStretch()

@@ -28,7 +28,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_matplotlib,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
-    get_display_name, download_matplotlib_figure,
+    get_display_name, download_matplotlib_figure, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -85,6 +85,7 @@ DEFAULT_CONFIG = {
     'font_italic':        False,
     'font_color':         '#000000',
     'sample_colors':      {},
+    'mean_marker_colors': {},
     'sample_name_mappings': {},
     'bg_color':           '#FFFFFF',
     'export_format':      'svg',
@@ -185,6 +186,7 @@ class ConcentrationSettingsDialog(QDialog):
         self.label_mode_combo = None
         self._font_grp = None
         self._export_grp = None
+        self._mean_marker_colors = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -258,31 +260,72 @@ class ConcentrationSettingsDialog(QDialog):
 
             lay.addWidget(g2)
 
-            # Sample colors (multi)
+            # Point / mean colors
             self._sample_btns = {}
+            self._mean_btns = {}
             self._sample_edits = {}
             self._sample_colors = {}
+            self._mean_marker_colors = {}
+            names = []
             if _is_multi(self._input_data):
-                names = self._input_data.get('sample_names', [])
-                if names:
-                    g3 = QGroupBox("Sample Colors & Names")
-                    v3 = QVBoxLayout(g3)
-                    sc = dict(self._cfg.get('sample_colors', {}))
-                    nm = dict(self._cfg.get('sample_name_mappings', {}))
-                    for i, sn in enumerate(names):
-                        h = QHBoxLayout()
-                        ed = QLineEdit(nm.get(sn, sn)); ed.setFixedWidth(180)
-                        h.addWidget(ed); self._sample_edits[sn] = ed
-                        c = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
-                        sc[sn] = c
-                        btn = QPushButton(); btn.setFixedSize(26, 20)
-                        btn.setStyleSheet(f"background-color:{c}; border:1px solid black;")
-                        btn.clicked.connect(lambda _, s=sn, b=btn: self._pick_color(s, b))
-                        h.addWidget(btn); h.addStretch()
-                        w = QWidget(); w.setLayout(h); v3.addWidget(w)
-                        self._sample_btns[sn] = (btn, c)
-                    self._sample_colors = sc
-                    lay.addWidget(g3)
+                names = list(self._input_data.get('sample_names', []))
+            else:
+                single_name = self._input_data.get('sample_name') if self._input_data else None
+                if single_name:
+                    names = [single_name]
+            if names:
+                g3 = QGroupBox(
+                    "Sample Colors & Names" if _is_multi(self._input_data)
+                    else "Point & Mean Marker Colors"
+                )
+                v3 = QVBoxLayout(g3)
+                sc = dict(self._cfg.get('sample_colors', {}))
+                mc = dict(self._cfg.get('mean_marker_colors', {}))
+                nm = dict(self._cfg.get('sample_name_mappings', {}))
+                for i, sn in enumerate(names):
+                    h = QHBoxLayout()
+                    if _is_multi(self._input_data):
+                        ed = QLineEdit(nm.get(sn, sn))
+                        ed.setFixedWidth(180)
+                        h.addWidget(ed)
+                        self._sample_edits[sn] = ed
+                    else:
+                        lbl = QLabel(get_display_name(sn, self._cfg))
+                        lbl.setFixedWidth(180)
+                        h.addWidget(lbl)
+
+                    point_color = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
+                    mean_color = mc.get(sn, point_color)
+                    sc[sn] = point_color
+
+                    h.addWidget(QLabel("Point color:"))
+                    point_btn = QPushButton()
+                    point_btn.setFixedSize(26, 20)
+                    point_btn.setStyleSheet(
+                        f"background-color:{point_color}; border:1px solid black;")
+                    point_btn.clicked.connect(
+                        lambda _, s=sn, b=point_btn: self._pick_point_color(s, b))
+                    h.addWidget(point_btn)
+
+                    h.addWidget(QLabel("Mean marker color:"))
+                    mean_btn = QPushButton()
+                    mean_btn.setFixedSize(26, 20)
+                    mean_btn.setStyleSheet(
+                        f"background-color:{mean_color}; border:1px solid black;")
+                    mean_btn.clicked.connect(
+                        lambda _, s=sn, b=mean_btn: self._pick_mean_color(s, b))
+                    h.addWidget(mean_btn)
+                    h.addStretch()
+
+                    w = QWidget()
+                    w.setLayout(h)
+                    v3.addWidget(w)
+                    self._sample_btns[sn] = (point_btn, point_color)
+                    self._mean_btns[sn] = (mean_btn, mean_color)
+
+                self._sample_colors = sc
+                self._mean_marker_colors = mc
+                lay.addWidget(g3)
 
             self._font_grp = FontSettingsGroup(self._cfg)
             lay.addWidget(self._font_grp.build())
@@ -292,23 +335,44 @@ class ConcentrationSettingsDialog(QDialog):
         else:
             # ensure helpers exist even in quantities scope
             self._sample_btns = {}
+            self._mean_btns = {}
             self._sample_edits = {}
             self._sample_colors = {}
+            self._mean_marker_colors = {}
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
-    def _pick_color(self, sn, btn):
-        """
+    def _pick_point_color(self, sn, btn):
+        """Pick one per-sample individual-point color and refresh its preview.
+
         Args:
-            sn (Any): The sn.
-            btn (Any): The btn.
+            sn (Any): Canonical sample name key.
+            btn (Any): Swatch button previewing the current point color.
         """
-        c = QColorDialog.getColor(QColor(self._sample_colors.get(sn, '#3B82F6')), self)
-        if c.isValid():
-            self._sample_colors[sn] = c.name()
-            btn.setStyleSheet(f"background-color:{c.name()}; border:1px solid black;")
+        picked = pick_color_hex(self._sample_colors.get(sn, '#3B82F6'),
+                                owner=self, title="Point Color")
+        if picked:
+            self._sample_colors[sn] = picked
+            btn.setStyleSheet(
+                f"background-color:{picked}; border:1px solid black;")
+
+    def _pick_mean_color(self, sn, btn):
+        """Pick one per-sample mean-marker color and refresh its preview.
+
+        Args:
+            sn (Any): Canonical sample name key.
+            btn (Any): Swatch button previewing the current mean marker color.
+        """
+        initial = self._mean_marker_colors.get(
+            sn, self._sample_colors.get(sn, '#3B82F6'))
+        picked = pick_color_hex(initial, owner=self,
+                                title="Mean Marker Color")
+        if picked:
+            self._mean_marker_colors[sn] = picked
+            btn.setStyleSheet(
+                f"background-color:{picked}; border:1px solid black;")
 
     def collect(self) -> dict:
         """
@@ -334,6 +398,8 @@ class ConcentrationSettingsDialog(QDialog):
             d.update(self._export_grp.collect())
         if self._sample_colors:
             d['sample_colors'] = dict(self._sample_colors)
+        if self._mean_marker_colors:
+            d['mean_marker_colors'] = dict(self._mean_marker_colors)
         if self._sample_edits:
             d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
         return d
@@ -577,6 +643,7 @@ class ConcentrationDisplayDialog(QDialog):
             for gi, gn in enumerate(group_names):
                 gd     = groups[gn]
                 color  = gd['color']
+                mean_color = gd.get('mean_color', color)
                 vals   = [v for v in gd['values'].get(el, []) if v > 0]
                 agg_v  = gd['agg'].get(el, 0)
                 y_off  = offsets[gi]
@@ -593,7 +660,7 @@ class ConcentrationDisplayDialog(QDialog):
                     ax.scatter([agg_v], [yp + y_off],
                                s=circle_s,
                                facecolors='none',
-                               edgecolors=color,
+                               edgecolors=mean_color,
                                linewidths=2.0,
                                zorder=4)
 
@@ -645,13 +712,23 @@ class ConcentrationDisplayDialog(QDialog):
             handles = [
                 mlines.Line2D([], [], color=groups[gn]['color'],
                               marker='o', markersize=7, linestyle='none',
-                              markerfacecolor='none', markeredgewidth=2,
+                              markerfacecolor=groups[gn]['color'],
+                              markeredgecolor=groups[gn].get(
+                                  'mean_color', groups[gn]['color']),
+                              markeredgewidth=2,
                               label=get_display_name(gn, cfg))
                 for gn in group_names
             ]
+            legend_title = None
+            if any(
+                groups[gn].get('mean_color', groups[gn]['color']) != groups[gn]['color']
+                for gn in group_names
+            ):
+                legend_title = "Fill = points, outline = mean"
             ax.legend(handles=handles,
                       fontsize=max(7, fc['size'] - 1),
-                      loc='upper right', framealpha=0.8)
+                      loc='upper right', framealpha=0.8,
+                      title=legend_title)
 
         ax.grid(axis='x', linestyle='--', alpha=0.35, zorder=1)
         ax.set_axisbelow(True)
@@ -772,6 +849,7 @@ class ConcentrationComparisonNode(QObject):
             return None
         sname = self.input_data.get('sample_name', 'Sample')
         color = self.config.get('sample_colors', {}).get(sname, DEFAULT_GROUP_COLORS[0])
+        mean_color = self.config.get('mean_marker_colors', {}).get(sname, color)
 
         vals_by_el = {}
         agg_by_el  = {}
@@ -784,7 +862,12 @@ class ConcentrationComparisonNode(QObject):
         return {
             'elements': elements,
             'groups': {
-                sname: {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
+                sname: {
+                    'color': color,
+                    'mean_color': mean_color,
+                    'values': vals_by_el,
+                    'agg': agg_by_el,
+                }
             },
             'title':    f"{agg_method} — {sname}",
             'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
@@ -807,12 +890,14 @@ class ConcentrationComparisonNode(QObject):
             return None
 
         sc     = self.config.get('sample_colors', {})
+        mc     = self.config.get('mean_marker_colors', {})
         groups = {}
         for gi, sn in enumerate(names):
             sp = [p for p in particles if p.get('source_sample') == sn]
             if not sp:
                 continue
             color      = sc.get(sn, DEFAULT_GROUP_COLORS[gi % len(DEFAULT_GROUP_COLORS)])
+            mean_color = mc.get(sn, color)
             vals_by_el = {}
             agg_by_el  = {}
             for el in elements:
@@ -820,7 +905,12 @@ class ConcentrationComparisonNode(QObject):
                 vs = [v for v in vs if v > 0 and not (isinstance(v, float) and np.isnan(v))]
                 vals_by_el[el] = vs
                 agg_by_el[el]  = _agg(vs, agg_method)
-            groups[sn] = {'color': color, 'values': vals_by_el, 'agg': agg_by_el}
+            groups[sn] = {
+                'color': color,
+                'mean_color': mean_color,
+                'values': vals_by_el,
+                'agg': agg_by_el,
+            }
 
         if not groups:
             return None

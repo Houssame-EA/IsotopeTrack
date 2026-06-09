@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         self.sample_status = {} 
         self.animation = None
         self.animation_group = None
-        self.overlap_threshold_percentage = 50.0
+        self.overlap_threshold_percentage = 75.0
         self._global_sigma = 0.55
         self._sigma_mode   = 'global'
         self.sidebar_min_width = 150
@@ -4874,12 +4874,9 @@ class MainWindow(QMainWindow):
             for sample_name in self.sample_parameters:
                 for element_key in self.sample_parameters[sample_name]:
                     existing_sigma = self.sample_parameters[sample_name][element_key].get('sigma')
-                    
+                    # Only fill missing sigmas as fallback — never override stored values
                     if existing_sigma is None:
                         self.sample_parameters[sample_name][element_key]['sigma'] = current_sigma
-                    elif existing_sigma != current_sigma:
-                        self.sample_parameters[sample_name][element_key]['sigma'] = current_sigma
-                        self.mark_element_changed(sample_name, element_key)
 
         backups = {}
         exclusion_map = getattr(self, '_exclusion_regions_by_sample', {}) or {}

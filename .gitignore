@@ -43,7 +43,6 @@ Thumbs.db
 *.h5
 *.csv
 *.xlsx
-data/
 test_data/logs/
 
 _rth_no_pyarrow.py

@@ -1,0 +1,2700 @@
+[
+  {
+    "element": "Li",
+    "isotope_label": "Li 6",
+    "mass": 6.0151,
+    "abundance": 7.59,
+    "interferences": ""
+  },
+  {
+    "element": "Li",
+    "isotope_label": "Li 7",
+    "mass": 7.016,
+    "abundance": 92.41,
+    "interferences": ""
+  },
+  {
+    "element": "Be",
+    "isotope_label": "Be 9",
+    "mass": 9.0122,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Na",
+    "isotope_label": "Na 23",
+    "mass": 22.9898,
+    "abundance": 100.0,
+    "interferences": "LiO, Ti++, Ti++, Ca++"
+  },
+  {
+    "element": "Mg",
+    "isotope_label": "Mg 24",
+    "mass": 23.985,
+    "abundance": 78.99,
+    "interferences": "LiO, NaH, Ti++, Ti++, Ca++"
+  },
+  {
+    "element": "Mg",
+    "isotope_label": "Mg 25",
+    "mass": 24.9858,
+    "abundance": 10.0,
+    "interferences": "BeO, NaH, LiO, Ti++"
+  },
+  {
+    "element": "Mg",
+    "isotope_label": "Mg 26",
+    "mass": 25.9826,
+    "abundance": 11.01,
+    "interferences": "CN, BO, BeO"
+  },
+  {
+    "element": "Al",
+    "isotope_label": "Al 27",
+    "mass": 26.9815,
+    "abundance": 100.0,
+    "interferences": "BO, CN, BeO"
+  },
+  {
+    "element": "Si",
+    "isotope_label": "Si 28",
+    "mass": 27.9769,
+    "abundance": 92.2297,
+    "interferences": "CO, AlH, BO, N2"
+  },
+  {
+    "element": "Si",
+    "isotope_label": "Si 29",
+    "mass": 28.9765,
+    "abundance": 4.6832,
+    "interferences": "CO, BO, AlH, N2, SiH"
+  },
+  {
+    "element": "Si",
+    "isotope_label": "Si 30",
+    "mass": 29.9738,
+    "abundance": 3.0872,
+    "interferences": "CO, SiH, NO"
+  },
+  {
+    "element": "K",
+    "isotope_label": "K 39",
+    "mass": 38.9637,
+    "abundance": 93.2581,
+    "interferences": "ArH"
+  },
+  {
+    "element": "K",
+    "isotope_label": "K 40",
+    "mass": 39.974,
+    "abundance": 0.0117,
+    "interferences": "Ar, Ca, MgO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ar 38",
+        "monitor_nominal": 38,
+        "factor": 1575.954114
+      },
+      {
+        "monitor_label": "Ca 44",
+        "monitor_nominal": 44,
+        "factor": 46.472196
+      }
+    ]
+  },
+  {
+    "element": "K",
+    "isotope_label": "K 41",
+    "mass": 40.9618,
+    "abundance": 6.7302,
+    "interferences": "ArH, CaH, MgO"
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 40",
+    "mass": 39.9626,
+    "abundance": 96.941,
+    "interferences": "Ar, K, MgO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ar 38",
+        "monitor_nominal": 38,
+        "factor": 1575.954114
+      },
+      {
+        "monitor_label": "K 39",
+        "monitor_nominal": 39,
+        "factor": 0.000125
+      }
+    ]
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 42",
+    "mass": 41.9586,
+    "abundance": 0.647,
+    "interferences": "CNO, CaH, ArH, MgO, BO2, Sr++"
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 43",
+    "mass": 42.9588,
+    "abundance": 0.135,
+    "interferences": "MgO, AlO, BO2, CNO, CaH, Sr++, Sr++"
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 44",
+    "mass": 43.9555,
+    "abundance": 2.086,
+    "interferences": "BO2, MgO, CNO, CO2, SiO, CaH, AlO, Y++, Sr++"
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 46",
+    "mass": 45.9537,
+    "abundance": 0.004,
+    "interferences": "Ti, SiO, NO2, CO2, Zr++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ti 47",
+        "monitor_nominal": 47,
+        "factor": 1.108871
+      }
+    ]
+  },
+  {
+    "element": "Ca",
+    "isotope_label": "Ca 48",
+    "mass": 47.9524,
+    "abundance": 0.187,
+    "interferences": "Ti, PO, NO2, ArC, CCl, SO, Zr++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ti 47",
+        "monitor_nominal": 47,
+        "factor": 9.908602
+      }
+    ]
+  },
+  {
+    "element": "Sc",
+    "isotope_label": "Sc 45",
+    "mass": 44.9559,
+    "abundance": 100.0,
+    "interferences": "BO2, CaH, SiO, CO2, AlO, Zr++, Zr++"
+  },
+  {
+    "element": "Ti",
+    "isotope_label": "Ti 46",
+    "mass": 45.9526,
+    "abundance": 8.25,
+    "interferences": "Ca, SiO, NO2, CO2, Zr++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ca 44",
+        "monitor_nominal": 44,
+        "factor": 0.001918
+      }
+    ]
+  },
+  {
+    "element": "Ti",
+    "isotope_label": "Ti 47",
+    "mass": 46.9518,
+    "abundance": 7.44,
+    "interferences": "NO2, PO, SiO, CCl, Zr++"
+  },
+  {
+    "element": "Ti",
+    "isotope_label": "Ti 48",
+    "mass": 47.948,
+    "abundance": 73.72,
+    "interferences": "Ca, PO, NO2, ArC, CCl, SO, Zr++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ca 44",
+        "monitor_nominal": 44,
+        "factor": 0.089645
+      }
+    ]
+  },
+  {
+    "element": "Ti",
+    "isotope_label": "Ti 49",
+    "mass": 48.9479,
+    "abundance": 5.41,
+    "interferences": "CCl, PO, SO, CaH, HSO"
+  },
+  {
+    "element": "Ti",
+    "isotope_label": "Ti 50",
+    "mass": 49.9448,
+    "abundance": 5.18,
+    "interferences": "Cr, V, ArC, CCl, HSO, SO, ArN",
+    "correction_terms": [
+      {
+        "monitor_label": "Cr 52",
+        "monitor_nominal": 52,
+        "factor": 0.051856
+      },
+      {
+        "monitor_label": "V 51",
+        "monitor_nominal": 51,
+        "factor": 0.002506
+      }
+    ]
+  },
+  {
+    "element": "V",
+    "isotope_label": "V 50",
+    "mass": 49.9472,
+    "abundance": 0.25,
+    "interferences": "Cr, Ti, ArC, CCl, HSO, SO, ArN",
+    "correction_terms": [
+      {
+        "monitor_label": "Cr 52",
+        "monitor_nominal": 52,
+        "factor": 0.051856
+      },
+      {
+        "monitor_label": "Ti 47",
+        "monitor_nominal": 47,
+        "factor": 0.696237
+      }
+    ]
+  },
+  {
+    "element": "V",
+    "isotope_label": "V 51",
+    "mass": 50.944,
+    "abundance": 99.75,
+    "interferences": "ClO, HSO"
+  },
+  {
+    "element": "Cr",
+    "isotope_label": "Cr 50",
+    "mass": 49.9461,
+    "abundance": 4.345,
+    "interferences": "V, Ti, ArC, CCl, HSO, SO, ArN",
+    "correction_terms": [
+      {
+        "monitor_label": "V 51",
+        "monitor_nominal": 51,
+        "factor": 0.002506
+      },
+      {
+        "monitor_label": "Ti 47",
+        "monitor_nominal": 47,
+        "factor": 0.696237
+      }
+    ]
+  },
+  {
+    "element": "Cr",
+    "isotope_label": "Cr 52",
+    "mass": 51.9405,
+    "abundance": 83.789,
+    "interferences": "ArN, ClO, ArO, SO, ArC, HClO"
+  },
+  {
+    "element": "Cr",
+    "isotope_label": "Cr 53",
+    "mass": 52.9407,
+    "abundance": 9.501,
+    "interferences": "ArC, ClO, HSO, HClO"
+  },
+  {
+    "element": "Cr",
+    "isotope_label": "Cr 54",
+    "mass": 53.9389,
+    "abundance": 2.365,
+    "interferences": "Fe, ArN, HClO, ArO",
+    "correction_terms": [
+      {
+        "monitor_label": "Fe 56",
+        "monitor_nominal": 56,
+        "factor": 0.063703
+      }
+    ]
+  },
+  {
+    "element": "Mn",
+    "isotope_label": "Mn 55",
+    "mass": 54.9381,
+    "abundance": 100.0,
+    "interferences": "ArN, HClO, ClO"
+  },
+  {
+    "element": "Fe",
+    "isotope_label": "Fe 54",
+    "mass": 53.9396,
+    "abundance": 8.845,
+    "interferences": "Cr, ArN, HClO, ArO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cr 52",
+        "monitor_nominal": 52,
+        "factor": 0.028226
+      }
+    ]
+  },
+  {
+    "element": "Fe",
+    "isotope_label": "Fe 56",
+    "mass": 55.9349,
+    "abundance": 91.754,
+    "interferences": "HClO, ArO, CaO"
+  },
+  {
+    "element": "Fe",
+    "isotope_label": "Fe 57",
+    "mass": 56.9354,
+    "abundance": 2.119,
+    "interferences": "CaO, ArO"
+  },
+  {
+    "element": "Fe",
+    "isotope_label": "Fe 58",
+    "mass": 57.9333,
+    "abundance": 0.282,
+    "interferences": "Ni, ArO, CaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ni 60",
+        "monitor_nominal": 60,
+        "factor": 2.596066
+      }
+    ]
+  },
+  {
+    "element": "Co",
+    "isotope_label": "Co 59",
+    "mass": 58.9332,
+    "abundance": 100.0,
+    "interferences": "CaO"
+  },
+  {
+    "element": "Ni",
+    "isotope_label": "Ni 58",
+    "mass": 57.9353,
+    "abundance": 68.0769,
+    "interferences": "Fe, ArO, CaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Fe 56",
+        "monitor_nominal": 56,
+        "factor": 0.003073
+      }
+    ]
+  },
+  {
+    "element": "Ni",
+    "isotope_label": "Ni 60",
+    "mass": 59.9332,
+    "abundance": 26.2231,
+    "interferences": "CaO"
+  },
+  {
+    "element": "Ni",
+    "isotope_label": "Ni 61",
+    "mass": 60.931,
+    "abundance": 1.1399,
+    "interferences": ""
+  },
+  {
+    "element": "Ni",
+    "isotope_label": "Ni 62",
+    "mass": 61.9283,
+    "abundance": 3.6345,
+    "interferences": "TiO"
+  },
+  {
+    "element": "Ni",
+    "isotope_label": "Ni 64",
+    "mass": 63.928,
+    "abundance": 0.9256,
+    "interferences": "Zn, SO2, TiO, CaO, PO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Zn 66",
+        "monitor_nominal": 66,
+        "factor": 1.743011
+      }
+    ]
+  },
+  {
+    "element": "Cu",
+    "isotope_label": "Cu 63",
+    "mass": 62.9298,
+    "abundance": 69.17,
+    "interferences": "PO2, TiO"
+  },
+  {
+    "element": "Cu",
+    "isotope_label": "Cu 65",
+    "mass": 64.9278,
+    "abundance": 30.83,
+    "interferences": "PO2, SO2, TiO, Ba++"
+  },
+  {
+    "element": "Zn",
+    "isotope_label": "Zn 64",
+    "mass": 63.9291,
+    "abundance": 48.63,
+    "interferences": "Ni, SO2, TiO, CaO, PO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Ni 60",
+        "monitor_nominal": 60,
+        "factor": 0.035297
+      }
+    ]
+  },
+  {
+    "element": "Zn",
+    "isotope_label": "Zn 66",
+    "mass": 65.926,
+    "abundance": 27.9,
+    "interferences": "TiO, VO, SO2, Ba++"
+  },
+  {
+    "element": "Zn",
+    "isotope_label": "Zn 67",
+    "mass": 66.9271,
+    "abundance": 4.1,
+    "interferences": "ClO2, TiO, VO, ArP, Ba++, Ba++"
+  },
+  {
+    "element": "Zn",
+    "isotope_label": "Zn 68",
+    "mass": 67.9249,
+    "abundance": 18.75,
+    "interferences": "SO2, ClO2, VO, ArS, TiO, Ba++, Ce++, Ba++"
+  },
+  {
+    "element": "Zn",
+    "isotope_label": "Zn 70",
+    "mass": 69.9253,
+    "abundance": 0.62,
+    "interferences": "Ge, ArS, ClO2, Pr++, Ce++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ge 72",
+        "monitor_nominal": 72,
+        "factor": 0.756718
+      }
+    ]
+  },
+  {
+    "element": "Ga",
+    "isotope_label": "Ga 69",
+    "mass": 68.9257,
+    "abundance": 60.108,
+    "interferences": "ArP, ClO2, VO, La++, Ce++, Ba++, La++"
+  },
+  {
+    "element": "Ga",
+    "isotope_label": "Ga 71",
+    "mass": 70.9249,
+    "abundance": 39.892,
+    "interferences": "ArCl, ClO2, ArP, Ce++, Nd++, Nd++"
+  },
+  {
+    "element": "Ge",
+    "isotope_label": "Ge 70",
+    "mass": 69.9243,
+    "abundance": 20.84,
+    "interferences": "Zn, ArS, ClO2, Pr++, Ce++",
+    "correction_terms": [
+      {
+        "monitor_label": "Zn 66",
+        "monitor_nominal": 66,
+        "factor": 0.022222
+      }
+    ]
+  },
+  {
+    "element": "Ge",
+    "isotope_label": "Ge 72",
+    "mass": 71.9217,
+    "abundance": 27.54,
+    "interferences": "ArS, Nd++, Nd++, Sm++"
+  },
+  {
+    "element": "Ge",
+    "isotope_label": "Ge 73",
+    "mass": 72.9234,
+    "abundance": 7.73,
+    "interferences": "ArCl, ArS, Nd++, Sm++"
+  },
+  {
+    "element": "Ge",
+    "isotope_label": "Ge 74",
+    "mass": 73.9219,
+    "abundance": 36.28,
+    "interferences": "Se, ArS, Nd++, Sm++, Sm++",
+    "correction_terms": [
+      {
+        "monitor_label": "Se 77",
+        "monitor_nominal": 77,
+        "factor": 0.116645
+      }
+    ]
+  },
+  {
+    "element": "Ge",
+    "isotope_label": "Ge 76",
+    "mass": 75.9214,
+    "abundance": 7.61,
+    "interferences": "Se, Ar2, ArS, Sm++, Eu++, Gd++",
+    "correction_terms": [
+      {
+        "monitor_label": "Se 77",
+        "monitor_nominal": 77,
+        "factor": 1.228047
+      }
+    ]
+  },
+  {
+    "element": "As",
+    "isotope_label": "As 75",
+    "mass": 74.9216,
+    "abundance": 100.0,
+    "interferences": "ArCl, Sm++, Nd++, Eu++"
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 74",
+    "mass": 73.9225,
+    "abundance": 0.89,
+    "interferences": "Ge, ArS, Nd++, Sm++, Sm++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ge 72",
+        "monitor_nominal": 72,
+        "factor": 1.317357
+      }
+    ]
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 76",
+    "mass": 75.9192,
+    "abundance": 9.37,
+    "interferences": "Ge, Ar2, ArS, Sm++, Eu++, Gd++",
+    "correction_terms": [
+      {
+        "monitor_label": "Ge 72",
+        "monitor_nominal": 72,
+        "factor": 0.276325
+      }
+    ]
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 77",
+    "mass": 76.9199,
+    "abundance": 7.63,
+    "interferences": "ArCl, Ar2H, Gd++, Sm++, Gd++"
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 78",
+    "mass": 77.9173,
+    "abundance": 23.77,
+    "interferences": "Kr, Ar2, Gd++, Gd++, Dy++",
+    "correction_terms": [
+      {
+        "monitor_label": "Kr 83",
+        "monitor_nominal": 83,
+        "factor": 0.030461
+      }
+    ]
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 80",
+    "mass": 79.9165,
+    "abundance": 49.61,
+    "interferences": "Kr, Ar2, BrH, Gd++, Dy++, Dy++",
+    "correction_terms": [
+      {
+        "monitor_label": "Kr 83",
+        "monitor_nominal": 83,
+        "factor": 0.198433
+      }
+    ]
+  },
+  {
+    "element": "Se",
+    "isotope_label": "Se 82",
+    "mass": 81.9167,
+    "abundance": 8.73,
+    "interferences": "Kr, BrH, Ar2H, Ho++, Dy++, Er++",
+    "correction_terms": [
+      {
+        "monitor_label": "Kr 83",
+        "monitor_nominal": 83,
+        "factor": 1.007833
+      }
+    ]
+  },
+  {
+    "element": "Rb",
+    "isotope_label": "Rb 85",
+    "mass": 84.9117,
+    "abundance": 72.17,
+    "interferences": "Yb++, Yb++, Er++"
+  },
+  {
+    "element": "Rb",
+    "isotope_label": "Rb 87",
+    "mass": 86.9092,
+    "abundance": 27.83,
+    "interferences": "Sr, Lu++, Yb++",
+    "correction_terms": [
+      {
+        "monitor_label": "Sr 88",
+        "monitor_nominal": 88,
+        "factor": 0.084766
+      }
+    ]
+  },
+  {
+    "element": "Sr",
+    "isotope_label": "Sr 84",
+    "mass": 83.9134,
+    "abundance": 0.56,
+    "interferences": "Kr, Er++, Yb++, Tm++",
+    "correction_terms": [
+      {
+        "monitor_label": "Kr 83",
+        "monitor_nominal": 83,
+        "factor": 4.960836
+      }
+    ]
+  },
+  {
+    "element": "Sr",
+    "isotope_label": "Sr 86",
+    "mass": 85.9094,
+    "abundance": 9.86,
+    "interferences": "Kr, Yb++, Yb++",
+    "correction_terms": [
+      {
+        "monitor_label": "Kr 83",
+        "monitor_nominal": 83,
+        "factor": 1.505657
+      }
+    ]
+  },
+  {
+    "element": "Sr",
+    "isotope_label": "Sr 87",
+    "mass": 86.9089,
+    "abundance": 7.0,
+    "interferences": "Rb, Lu++, Yb++",
+    "correction_terms": [
+      {
+        "monitor_label": "Rb 85",
+        "monitor_nominal": 85,
+        "factor": 0.385617
+      }
+    ]
+  },
+  {
+    "element": "Sr",
+    "isotope_label": "Sr 88",
+    "mass": 87.9056,
+    "abundance": 82.58,
+    "interferences": "Yb++, Lu++"
+  },
+  {
+    "element": "Y",
+    "isotope_label": "Y 89",
+    "mass": 88.9054,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Zr",
+    "isotope_label": "Zr 90",
+    "mass": 89.9043,
+    "abundance": 51.45,
+    "interferences": ""
+  },
+  {
+    "element": "Zr",
+    "isotope_label": "Zr 91",
+    "mass": 90.9053,
+    "abundance": 11.22,
+    "interferences": "AsO"
+  },
+  {
+    "element": "Zr",
+    "isotope_label": "Zr 92",
+    "mass": 91.9046,
+    "abundance": 17.15,
+    "interferences": "Mo, AsO",
+    "correction_terms": [
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 0.932161
+      }
+    ]
+  },
+  {
+    "element": "Zr",
+    "isotope_label": "Zr 94",
+    "mass": 93.9061,
+    "abundance": 17.38,
+    "interferences": "Mo",
+    "correction_terms": [
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 0.58103
+      }
+    ]
+  },
+  {
+    "element": "Zr",
+    "isotope_label": "Zr 96",
+    "mass": 95.9082,
+    "abundance": 2.8,
+    "interferences": "Ru, Mo, BrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 0.324736
+      },
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 1.047739
+      }
+    ]
+  },
+  {
+    "element": "Nb",
+    "isotope_label": "Nb 93",
+    "mass": 92.906,
+    "abundance": 100.0,
+    "interferences": "AsO"
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 92",
+    "mass": 91.9063,
+    "abundance": 14.84,
+    "interferences": "Zr, AsO",
+    "correction_terms": [
+      {
+        "monitor_label": "Zr 90",
+        "monitor_nominal": 90,
+        "factor": 0.333333
+      }
+    ]
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 94",
+    "mass": 93.9047,
+    "abundance": 9.25,
+    "interferences": "Zr",
+    "correction_terms": [
+      {
+        "monitor_label": "Zr 90",
+        "monitor_nominal": 90,
+        "factor": 0.337804
+      }
+    ]
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 95",
+    "mass": 94.9058,
+    "abundance": 15.92,
+    "interferences": "BrO"
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 96",
+    "mass": 95.9046,
+    "abundance": 16.68,
+    "interferences": "Zr, Ru, BrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Zr 90",
+        "monitor_nominal": 90,
+        "factor": 0.054422
+      },
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 0.324736
+      }
+    ]
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 97",
+    "mass": 96.9058,
+    "abundance": 9.55,
+    "interferences": "BrO"
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 98",
+    "mass": 97.9055,
+    "abundance": 24.13,
+    "interferences": "Ru, BrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 0.109613
+      }
+    ]
+  },
+  {
+    "element": "Mo",
+    "isotope_label": "Mo 100",
+    "mass": 99.9076,
+    "abundance": 9.63,
+    "interferences": "Ru, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 0.73857
+      }
+    ]
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 96",
+    "mass": 95.9076,
+    "abundance": 5.54,
+    "interferences": "Zr, Mo, BrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Zr 90",
+        "monitor_nominal": 90,
+        "factor": 0.054422
+      },
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 1.047739
+      }
+    ]
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 98",
+    "mass": 97.9055,
+    "abundance": 1.87,
+    "interferences": "Mo, BrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 1.515704
+      }
+    ]
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 99",
+    "mass": 98.9061,
+    "abundance": 12.76,
+    "interferences": "BrO"
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 100",
+    "mass": 99.903,
+    "abundance": 12.6,
+    "interferences": "Mo, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Mo 95",
+        "monitor_nominal": 95,
+        "factor": 0.604899
+      }
+    ]
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 101",
+    "mass": 100.906,
+    "abundance": 17.06,
+    "interferences": ""
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 102",
+    "mass": 101.904,
+    "abundance": 31.55,
+    "interferences": "Pd, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pd 105",
+        "monitor_nominal": 105,
+        "factor": 0.045678
+      }
+    ]
+  },
+  {
+    "element": "Ru",
+    "isotope_label": "Ru 104",
+    "mass": 103.906,
+    "abundance": 18.62,
+    "interferences": "Pd, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pd 105",
+        "monitor_nominal": 105,
+        "factor": 0.49888
+      }
+    ]
+  },
+  {
+    "element": "Rh",
+    "isotope_label": "Rh 103",
+    "mass": 102.905,
+    "abundance": 100.0,
+    "interferences": "SrO"
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 102",
+    "mass": 101.905,
+    "abundance": 1.02,
+    "interferences": "Ru, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 1.849355
+      }
+    ]
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 104",
+    "mass": 103.904,
+    "abundance": 11.14,
+    "interferences": "Ru, SrO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ru 101",
+        "monitor_nominal": 101,
+        "factor": 1.091442
+      }
+    ]
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 105",
+    "mass": 104.905,
+    "abundance": 22.33,
+    "interferences": "SrO, YO"
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 106",
+    "mass": 105.903,
+    "abundance": 27.33,
+    "interferences": "Cd, SrO, ZrO, YO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 0.097656
+      }
+    ]
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 108",
+    "mass": 107.904,
+    "abundance": 26.46,
+    "interferences": "Cd, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 0.069531
+      }
+    ]
+  },
+  {
+    "element": "Pd",
+    "isotope_label": "Pd 110",
+    "mass": 109.905,
+    "abundance": 11.72,
+    "interferences": "Cd, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 0.975781
+      }
+    ]
+  },
+  {
+    "element": "Ag",
+    "isotope_label": "Ag 107",
+    "mass": 106.905,
+    "abundance": 51.839,
+    "interferences": "YO, ZrO"
+  },
+  {
+    "element": "Ag",
+    "isotope_label": "Ag 109",
+    "mass": 108.905,
+    "abundance": 48.161,
+    "interferences": "ZrO"
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 106",
+    "mass": 105.907,
+    "abundance": 1.25,
+    "interferences": "Pd, SrO, ZrO, YO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pd 105",
+        "monitor_nominal": 105,
+        "factor": 1.223914
+      }
+    ]
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 108",
+    "mass": 107.904,
+    "abundance": 0.89,
+    "interferences": "Pd, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pd 105",
+        "monitor_nominal": 105,
+        "factor": 1.184953
+      }
+    ]
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 110",
+    "mass": 109.903,
+    "abundance": 12.49,
+    "interferences": "Pd, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pd 105",
+        "monitor_nominal": 105,
+        "factor": 0.524854
+      }
+    ]
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 111",
+    "mass": 110.904,
+    "abundance": 12.8,
+    "interferences": "MoO"
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 112",
+    "mass": 111.903,
+    "abundance": 24.13,
+    "interferences": "Sn, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.04005
+      }
+    ]
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 113",
+    "mass": 112.905,
+    "abundance": 12.22,
+    "interferences": "In, MoO"
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 114",
+    "mass": 113.904,
+    "abundance": 28.73,
+    "interferences": "Sn, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.02725
+      }
+    ]
+  },
+  {
+    "element": "Cd",
+    "isotope_label": "Cd 116",
+    "mass": 115.905,
+    "abundance": 7.49,
+    "interferences": "Sn, MoO, Th++",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.60033
+      }
+    ]
+  },
+  {
+    "element": "In",
+    "isotope_label": "In 113",
+    "mass": 112.904,
+    "abundance": 4.29,
+    "interferences": "Cd, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 0.954688
+      }
+    ]
+  },
+  {
+    "element": "In",
+    "isotope_label": "In 115",
+    "mass": 114.904,
+    "abundance": 95.71,
+    "interferences": "Sn, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.014038
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 112",
+    "mass": 111.904,
+    "abundance": 0.97,
+    "interferences": "Cd, ZrO, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 1.885156
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 114",
+    "mass": 113.903,
+    "abundance": 0.66,
+    "interferences": "Cd, MoO",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 2.244531
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 115",
+    "mass": 114.903,
+    "abundance": 0.34,
+    "interferences": "In, MoO"
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 116",
+    "mass": 115.902,
+    "abundance": 14.54,
+    "interferences": "Cd, MoO, Th++",
+    "correction_terms": [
+      {
+        "monitor_label": "Cd 111",
+        "monitor_nominal": 111,
+        "factor": 0.585156
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 117",
+    "mass": 116.903,
+    "abundance": 7.68,
+    "interferences": "U++"
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 118",
+    "mass": 117.902,
+    "abundance": 24.22,
+    "interferences": "MoO, U++"
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 119",
+    "mass": 118.903,
+    "abundance": 8.59,
+    "interferences": "U++"
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 120",
+    "mass": 119.902,
+    "abundance": 32.58,
+    "interferences": "Te",
+    "correction_terms": [
+      {
+        "monitor_label": "Te 125",
+        "monitor_nominal": 125,
+        "factor": 0.01273
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 122",
+    "mass": 121.903,
+    "abundance": 4.63,
+    "interferences": "Te",
+    "correction_terms": [
+      {
+        "monitor_label": "Te 125",
+        "monitor_nominal": 125,
+        "factor": 0.360679
+      }
+    ]
+  },
+  {
+    "element": "Sn",
+    "isotope_label": "Sn 124",
+    "mass": 123.905,
+    "abundance": 5.79,
+    "interferences": "Xe, Te, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.003404
+      },
+      {
+        "monitor_label": "Te 125",
+        "monitor_nominal": 125,
+        "factor": 0.670438
+      }
+    ]
+  },
+  {
+    "element": "Sb",
+    "isotope_label": "Sb 121",
+    "mass": 120.904,
+    "abundance": 57.21,
+    "interferences": ""
+  },
+  {
+    "element": "Sb",
+    "isotope_label": "Sb 123",
+    "mass": 122.904,
+    "abundance": 42.79,
+    "interferences": "Te",
+    "correction_terms": [
+      {
+        "monitor_label": "Te 125",
+        "monitor_nominal": 125,
+        "factor": 0.125884
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 120",
+    "mass": 119.905,
+    "abundance": 0.09,
+    "interferences": "Sn",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 1.345169
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 122",
+    "mass": 121.903,
+    "abundance": 2.55,
+    "interferences": "Sn",
+    "correction_terms": [
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.191164
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 123",
+    "mass": 122.904,
+    "abundance": 0.89,
+    "interferences": "Sb",
+    "correction_terms": [
+      {
+        "monitor_label": "Sb 121",
+        "monitor_nominal": 121,
+        "factor": 0.747946
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 124",
+    "mass": 123.903,
+    "abundance": 4.74,
+    "interferences": "Xe, Sn, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.003404
+      },
+      {
+        "monitor_label": "Sn 118",
+        "monitor_nominal": 118,
+        "factor": 0.239059
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 125",
+    "mass": 124.904,
+    "abundance": 7.07,
+    "interferences": "MoO2"
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 126",
+    "mass": 125.903,
+    "abundance": 18.84,
+    "interferences": "Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.003404
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 128",
+    "mass": 127.905,
+    "abundance": 31.74,
+    "interferences": "Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.072617
+      }
+    ]
+  },
+  {
+    "element": "Te",
+    "isotope_label": "Te 130",
+    "mass": 129.907,
+    "abundance": 34.08,
+    "interferences": "Ba, Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Ba 137",
+        "monitor_nominal": 137,
+        "factor": 0.009437
+      },
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.154312
+      }
+    ]
+  },
+  {
+    "element": "Cs",
+    "isotope_label": "Cs 133",
+    "mass": 132.905,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 130",
+    "mass": 129.906,
+    "abundance": 0.106,
+    "interferences": "Te, Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Te 125",
+        "monitor_nominal": 125,
+        "factor": 4.820368
+      },
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.154312
+      }
+    ]
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 132",
+    "mass": 131.906,
+    "abundance": 0.101,
+    "interferences": "Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 1.01702
+      }
+    ]
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 134",
+    "mass": 133.904,
+    "abundance": 2.417,
+    "interferences": "Xe, MoO2",
+    "correction_terms": [
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.394856
+      }
+    ]
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 135",
+    "mass": 134.906,
+    "abundance": 6.592,
+    "interferences": ""
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 136",
+    "mass": 135.904,
+    "abundance": 7.854,
+    "interferences": "Ce, Xe",
+    "correction_terms": [
+      {
+        "monitor_label": "Ce 140",
+        "monitor_nominal": 140,
+        "factor": 0.002092
+      },
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.335477
+      }
+    ]
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 137",
+    "mass": 136.905,
+    "abundance": 11.232,
+    "interferences": ""
+  },
+  {
+    "element": "Ba",
+    "isotope_label": "Ba 138",
+    "mass": 137.905,
+    "abundance": 71.698,
+    "interferences": "La, Ce",
+    "correction_terms": [
+      {
+        "monitor_label": "La 139",
+        "monitor_nominal": 139,
+        "factor": 0.000901
+      },
+      {
+        "monitor_label": "Ce 140",
+        "monitor_nominal": 140,
+        "factor": 0.002838
+      }
+    ]
+  },
+  {
+    "element": "La",
+    "isotope_label": "La 138",
+    "mass": 137.907,
+    "abundance": 0.09,
+    "interferences": "Ba, Ce",
+    "correction_terms": [
+      {
+        "monitor_label": "Ba 137",
+        "monitor_nominal": 137,
+        "factor": 6.383369
+      },
+      {
+        "monitor_label": "Ce 140",
+        "monitor_nominal": 140,
+        "factor": 0.002838
+      }
+    ]
+  },
+  {
+    "element": "La",
+    "isotope_label": "La 139",
+    "mass": 138.906,
+    "abundance": 99.91,
+    "interferences": ""
+  },
+  {
+    "element": "Ce",
+    "isotope_label": "Ce 136",
+    "mass": 135.907,
+    "abundance": 0.185,
+    "interferences": "Ba, Xe",
+    "correction_terms": [
+      {
+        "monitor_label": "Ba 137",
+        "monitor_nominal": 137,
+        "factor": 0.699252
+      },
+      {
+        "monitor_label": "Xe 129",
+        "monitor_nominal": 129,
+        "factor": 0.335477
+      }
+    ]
+  },
+  {
+    "element": "Ce",
+    "isotope_label": "Ce 138",
+    "mass": 137.906,
+    "abundance": 0.251,
+    "interferences": "Ba, La",
+    "correction_terms": [
+      {
+        "monitor_label": "Ba 137",
+        "monitor_nominal": 137,
+        "factor": 6.383369
+      },
+      {
+        "monitor_label": "La 139",
+        "monitor_nominal": 139,
+        "factor": 0.000901
+      }
+    ]
+  },
+  {
+    "element": "Ce",
+    "isotope_label": "Ce 140",
+    "mass": 139.905,
+    "abundance": 88.45,
+    "interferences": ""
+  },
+  {
+    "element": "Ce",
+    "isotope_label": "Ce 142",
+    "mass": 141.909,
+    "abundance": 11.114,
+    "interferences": "Nd",
+    "correction_terms": [
+      {
+        "monitor_label": "Nd 146",
+        "monitor_nominal": 146,
+        "factor": 1.581395
+      }
+    ]
+  },
+  {
+    "element": "Pr",
+    "isotope_label": "Pr 141",
+    "mass": 140.907,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 142",
+    "mass": 141.908,
+    "abundance": 27.2,
+    "interferences": "Ce",
+    "correction_terms": [
+      {
+        "monitor_label": "Ce 140",
+        "monitor_nominal": 140,
+        "factor": 0.125653
+      }
+    ]
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 143",
+    "mass": 142.91,
+    "abundance": 12.2,
+    "interferences": ""
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 144",
+    "mass": 143.91,
+    "abundance": 23.8,
+    "interferences": "Sm",
+    "correction_terms": [
+      {
+        "monitor_label": "Sm 147",
+        "monitor_nominal": 147,
+        "factor": 0.204803
+      }
+    ]
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 145",
+    "mass": 144.912,
+    "abundance": 8.3,
+    "interferences": ""
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 146",
+    "mass": 145.913,
+    "abundance": 17.2,
+    "interferences": "BaO"
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 148",
+    "mass": 147.917,
+    "abundance": 5.7,
+    "interferences": "Sm, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sm 147",
+        "monitor_nominal": 147,
+        "factor": 0.749833
+      }
+    ]
+  },
+  {
+    "element": "Nd",
+    "isotope_label": "Nd 150",
+    "mass": 149.921,
+    "abundance": 5.6,
+    "interferences": "Sm, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sm 147",
+        "monitor_nominal": 147,
+        "factor": 0.492328
+      }
+    ]
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 144",
+    "mass": 143.912,
+    "abundance": 3.07,
+    "interferences": "Nd",
+    "correction_terms": [
+      {
+        "monitor_label": "Nd 146",
+        "monitor_nominal": 146,
+        "factor": 1.383721
+      }
+    ]
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 147",
+    "mass": 146.915,
+    "abundance": 14.99,
+    "interferences": ""
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 148",
+    "mass": 147.915,
+    "abundance": 11.24,
+    "interferences": "Nd, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Nd 146",
+        "monitor_nominal": 146,
+        "factor": 0.331395
+      }
+    ]
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 149",
+    "mass": 148.917,
+    "abundance": 13.82,
+    "interferences": ""
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 150",
+    "mass": 149.917,
+    "abundance": 7.38,
+    "interferences": "Nd, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Nd 146",
+        "monitor_nominal": 146,
+        "factor": 0.325581
+      }
+    ]
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 152",
+    "mass": 151.92,
+    "abundance": 26.75,
+    "interferences": "Gd, CeO, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Gd 157",
+        "monitor_nominal": 157,
+        "factor": 0.01278
+      }
+    ]
+  },
+  {
+    "element": "Sm",
+    "isotope_label": "Sm 154",
+    "mass": 153.922,
+    "abundance": 22.75,
+    "interferences": "Gd, CeO, BaO, LaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Gd 157",
+        "monitor_nominal": 157,
+        "factor": 0.139297
+      }
+    ]
+  },
+  {
+    "element": "Eu",
+    "isotope_label": "Eu",
+    "mass": 150.92,
+    "abundance": 47.81,
+    "interferences": "BaO"
+  },
+  {
+    "element": "Eu",
+    "isotope_label": "Eu",
+    "mass": 152.929,
+    "abundance": 52.19,
+    "interferences": "BaO"
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 152",
+    "mass": 151.92,
+    "abundance": 0.2,
+    "interferences": "Sm, CeO, BaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sm 147",
+        "monitor_nominal": 147,
+        "factor": 1.784523
+      }
+    ]
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 154",
+    "mass": 153.921,
+    "abundance": 2.18,
+    "interferences": "Sm, CeO, BaO, LaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Sm 147",
+        "monitor_nominal": 147,
+        "factor": 1.517678
+      }
+    ]
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 155",
+    "mass": 154.923,
+    "abundance": 14.8,
+    "interferences": "BaO, LaO"
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 156",
+    "mass": 155.922,
+    "abundance": 20.47,
+    "interferences": "Dy, CeO, BaO, LaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Dy 163",
+        "monitor_nominal": 163,
+        "factor": 0.00241
+      }
+    ]
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 157",
+    "mass": 156.934,
+    "abundance": 15.65,
+    "interferences": "LaO, CeO, PrO"
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 158",
+    "mass": 157.924,
+    "abundance": 24.84,
+    "interferences": "Dy, PrO, NdO, CeO",
+    "correction_terms": [
+      {
+        "monitor_label": "Dy 163",
+        "monitor_nominal": 163,
+        "factor": 0.004016
+      }
+    ]
+  },
+  {
+    "element": "Gd",
+    "isotope_label": "Gd 160",
+    "mass": 159.927,
+    "abundance": 21.86,
+    "interferences": "Dy, NdO, CeO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Dy 163",
+        "monitor_nominal": 163,
+        "factor": 0.093976
+      }
+    ]
+  },
+  {
+    "element": "Tb",
+    "isotope_label": "Tb 159",
+    "mass": 158.925,
+    "abundance": 100.0,
+    "interferences": "NdO, PrO"
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 156",
+    "mass": 155.924,
+    "abundance": 0.06,
+    "interferences": "Gd, CeO, BaO, LaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Gd 157",
+        "monitor_nominal": 157,
+        "factor": 1.307987
+      }
+    ]
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 158",
+    "mass": 157.924,
+    "abundance": 0.1,
+    "interferences": "Gd, PrO, NdO, CeO",
+    "correction_terms": [
+      {
+        "monitor_label": "Gd 157",
+        "monitor_nominal": 157,
+        "factor": 1.58722
+      }
+    ]
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 160",
+    "mass": 159.925,
+    "abundance": 2.34,
+    "interferences": "Gd, NdO, CeO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Gd 157",
+        "monitor_nominal": 157,
+        "factor": 1.396805
+      }
+    ]
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 161",
+    "mass": 160.927,
+    "abundance": 18.91,
+    "interferences": "NdO"
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 162",
+    "mass": 161.927,
+    "abundance": 25.51,
+    "interferences": "Er, NdO",
+    "correction_terms": [
+      {
+        "monitor_label": "Er 166",
+        "monitor_nominal": 166,
+        "factor": 0.004165
+      }
+    ]
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 163",
+    "mass": 162.925,
+    "abundance": 24.9,
+    "interferences": "SmO, NdO"
+  },
+  {
+    "element": "Dy",
+    "isotope_label": "Dy 164",
+    "mass": 163.929,
+    "abundance": 28.18,
+    "interferences": "Er, NdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Er 166",
+        "monitor_nominal": 166,
+        "factor": 0.047902
+      }
+    ]
+  },
+  {
+    "element": "Ho",
+    "isotope_label": "Ho 165",
+    "mass": 164.93,
+    "abundance": 100.0,
+    "interferences": "SmO"
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 162",
+    "mass": 161.929,
+    "abundance": 0.14,
+    "interferences": "Dy, NdO",
+    "correction_terms": [
+      {
+        "monitor_label": "Dy 163",
+        "monitor_nominal": 163,
+        "factor": 1.024498
+      }
+    ]
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 164",
+    "mass": 163.929,
+    "abundance": 1.61,
+    "interferences": "Dy, NdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Dy 163",
+        "monitor_nominal": 163,
+        "factor": 1.131727
+      }
+    ]
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 166",
+    "mass": 165.93,
+    "abundance": 33.61,
+    "interferences": "SmO, NdO"
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 167",
+    "mass": 166.932,
+    "abundance": 22.93,
+    "interferences": "EuO, SmO"
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 168",
+    "mass": 167.932,
+    "abundance": 26.78,
+    "interferences": "Yb, EuO, NdO, GdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Yb 172",
+        "monitor_nominal": 172,
+        "factor": 0.005955
+      }
+    ]
+  },
+  {
+    "element": "Er",
+    "isotope_label": "Er 170",
+    "mass": 169.935,
+    "abundance": 14.93,
+    "interferences": "Yb, EuO, GdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Yb 172",
+        "monitor_nominal": 172,
+        "factor": 0.139258
+      }
+    ]
+  },
+  {
+    "element": "Tm",
+    "isotope_label": "Tm 169",
+    "mass": 168.934,
+    "abundance": 100.0,
+    "interferences": "EuO"
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 168",
+    "mass": 167.934,
+    "abundance": 0.13,
+    "interferences": "Er, EuO, NdO, GdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Er 166",
+        "monitor_nominal": 166,
+        "factor": 0.796787
+      }
+    ]
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 170",
+    "mass": 169.935,
+    "abundance": 3.04,
+    "interferences": "Er, EuO, GdO, SmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Er 166",
+        "monitor_nominal": 166,
+        "factor": 0.444213
+      }
+    ]
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 171",
+    "mass": 170.937,
+    "abundance": 14.28,
+    "interferences": "GdO, EuO"
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 172",
+    "mass": 171.937,
+    "abundance": 21.83,
+    "interferences": "DyO, SmO, GdO"
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 173",
+    "mass": 172.938,
+    "abundance": 16.13,
+    "interferences": "GdO"
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 174",
+    "mass": 173.939,
+    "abundance": 31.83,
+    "interferences": "Hf, GdO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hf 178",
+        "monitor_nominal": 178,
+        "factor": 0.005865
+      }
+    ]
+  },
+  {
+    "element": "Yb",
+    "isotope_label": "Yb 176",
+    "mass": 175.943,
+    "abundance": 12.76,
+    "interferences": "Hf, Lu, GdO, TbO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hf 178",
+        "monitor_nominal": 178,
+        "factor": 0.192815
+      },
+      {
+        "monitor_label": "Lu 175",
+        "monitor_nominal": 175,
+        "factor": 0.026589
+      }
+    ]
+  },
+  {
+    "element": "Lu",
+    "isotope_label": "Lu 175",
+    "mass": 174.941,
+    "abundance": 97.41,
+    "interferences": "GdO, TbO"
+  },
+  {
+    "element": "Lu",
+    "isotope_label": "Lu 176",
+    "mass": 175.943,
+    "abundance": 2.59,
+    "interferences": "Hf, Yb, GdO, TbO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hf 178",
+        "monitor_nominal": 178,
+        "factor": 0.192815
+      },
+      {
+        "monitor_label": "Yb 172",
+        "monitor_nominal": 172,
+        "factor": 0.584517
+      }
+    ]
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 174",
+    "mass": 173.94,
+    "abundance": 0.16,
+    "interferences": "Yb, GdO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Yb 172",
+        "monitor_nominal": 172,
+        "factor": 1.458085
+      }
+    ]
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 176",
+    "mass": 175.942,
+    "abundance": 5.26,
+    "interferences": "Lu, Yb, GdO, TbO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Lu 175",
+        "monitor_nominal": 175,
+        "factor": 0.026589
+      },
+      {
+        "monitor_label": "Yb 172",
+        "monitor_nominal": 172,
+        "factor": 0.584517
+      }
+    ]
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 177",
+    "mass": 176.944,
+    "abundance": 18.6,
+    "interferences": "TbO, DyO"
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 178",
+    "mass": 177.944,
+    "abundance": 27.28,
+    "interferences": "ErO, DyO, GdO"
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 179",
+    "mass": 178.946,
+    "abundance": 13.62,
+    "interferences": "DyO"
+  },
+  {
+    "element": "Hf",
+    "isotope_label": "Hf 180",
+    "mass": 179.947,
+    "abundance": 35.08,
+    "interferences": "Ta, W, ErO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Ta 181",
+        "monitor_nominal": 181,
+        "factor": 0.00012
+      },
+      {
+        "monitor_label": "W 182",
+        "monitor_nominal": 182,
+        "factor": 0.004528
+      }
+    ]
+  },
+  {
+    "element": "Ta",
+    "isotope_label": "Ta 180",
+    "mass": 179.941,
+    "abundance": 0.012,
+    "interferences": "Hf, W, ErO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hf 178",
+        "monitor_nominal": 178,
+        "factor": 1.285924
+      },
+      {
+        "monitor_label": "W 182",
+        "monitor_nominal": 182,
+        "factor": 0.004528
+      }
+    ]
+  },
+  {
+    "element": "Ta",
+    "isotope_label": "Ta 181",
+    "mass": 180.948,
+    "abundance": 99.988,
+    "interferences": "HoO, DyO"
+  },
+  {
+    "element": "W",
+    "isotope_label": "W 180",
+    "mass": 179.947,
+    "abundance": 0.12,
+    "interferences": "Hf, Ta, ErO, DyO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hf 178",
+        "monitor_nominal": 178,
+        "factor": 1.285924
+      },
+      {
+        "monitor_label": "Ta 181",
+        "monitor_nominal": 181,
+        "factor": 0.00012
+      }
+    ]
+  },
+  {
+    "element": "W",
+    "isotope_label": "W 182",
+    "mass": 181.948,
+    "abundance": 26.5,
+    "interferences": "ErO, DyO, HoO"
+  },
+  {
+    "element": "W",
+    "isotope_label": "W 183",
+    "mass": 182.95,
+    "abundance": 14.31,
+    "interferences": "HoO, ErO"
+  },
+  {
+    "element": "W",
+    "isotope_label": "W 184",
+    "mass": 183.951,
+    "abundance": 30.64,
+    "interferences": "Os, ErO, YbO",
+    "correction_terms": [
+      {
+        "monitor_label": "Os 189",
+        "monitor_nominal": 189,
+        "factor": 0.001238
+      }
+    ]
+  },
+  {
+    "element": "W",
+    "isotope_label": "W 186",
+    "mass": 185.954,
+    "abundance": 28.43,
+    "interferences": "Os, YbO, ErO, TmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Os 189",
+        "monitor_nominal": 189,
+        "factor": 0.098452
+      }
+    ]
+  },
+  {
+    "element": "Re",
+    "isotope_label": "Re 185",
+    "mass": 184.953,
+    "abundance": 37.4,
+    "interferences": "ErO, TmO"
+  },
+  {
+    "element": "Re",
+    "isotope_label": "Re 187",
+    "mass": 186.956,
+    "abundance": 62.6,
+    "interferences": "Os, YbO, TmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Os 189",
+        "monitor_nominal": 189,
+        "factor": 0.121362
+      }
+    ]
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 184",
+    "mass": 183.953,
+    "abundance": 0.02,
+    "interferences": "W, ErO, YbO",
+    "correction_terms": [
+      {
+        "monitor_label": "W 182",
+        "monitor_nominal": 182,
+        "factor": 1.156226
+      }
+    ]
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 186",
+    "mass": 185.954,
+    "abundance": 1.59,
+    "interferences": "W, YbO, ErO, TmO",
+    "correction_terms": [
+      {
+        "monitor_label": "W 182",
+        "monitor_nominal": 182,
+        "factor": 1.07283
+      }
+    ]
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 187",
+    "mass": 186.956,
+    "abundance": 1.96,
+    "interferences": "Re, YbO, TmO",
+    "correction_terms": [
+      {
+        "monitor_label": "Re 185",
+        "monitor_nominal": 185,
+        "factor": 1.673797
+      }
+    ]
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 188",
+    "mass": 187.956,
+    "abundance": 13.24,
+    "interferences": "ErO, YbO"
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 189",
+    "mass": 188.959,
+    "abundance": 16.15,
+    "interferences": "YbO"
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 190",
+    "mass": 189.959,
+    "abundance": 26.26,
+    "interferences": "Pt, YbO, HfO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pt 195",
+        "monitor_nominal": 195,
+        "factor": 0.000414
+      }
+    ]
+  },
+  {
+    "element": "Os",
+    "isotope_label": "Os 192",
+    "mass": 191.962,
+    "abundance": 40.78,
+    "interferences": "Pt, HfO, LuO, YbO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pt 195",
+        "monitor_nominal": 195,
+        "factor": 0.023114
+      }
+    ]
+  },
+  {
+    "element": "Ir",
+    "isotope_label": "Ir 191",
+    "mass": 190.961,
+    "abundance": 37.961,
+    "interferences": "LuO, YbO"
+  },
+  {
+    "element": "Ir",
+    "isotope_label": "Ir 193",
+    "mass": 192.963,
+    "abundance": 192.963,
+    "interferences": "HfO, LuO"
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 190",
+    "mass": 189.96,
+    "abundance": 0.014,
+    "interferences": "Os, YbO, HfO",
+    "correction_terms": [
+      {
+        "monitor_label": "Os 189",
+        "monitor_nominal": 189,
+        "factor": 1.626006
+      }
+    ]
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 192",
+    "mass": 191.961,
+    "abundance": 0.782,
+    "interferences": "Os, HfO, LuO, YbO",
+    "correction_terms": [
+      {
+        "monitor_label": "Os 189",
+        "monitor_nominal": 189,
+        "factor": 2.525077
+      }
+    ]
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 194",
+    "mass": 193.963,
+    "abundance": 32.967,
+    "interferences": "HfO, YbO"
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 195",
+    "mass": 194.965,
+    "abundance": 33.832,
+    "interferences": "HfO"
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 196",
+    "mass": 195.965,
+    "abundance": 25.242,
+    "interferences": "Hg, HfO, WO, TaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hg 202",
+        "monitor_nominal": 202,
+        "factor": 0.005023
+      }
+    ]
+  },
+  {
+    "element": "Pt",
+    "isotope_label": "Pt 198",
+    "mass": 197.968,
+    "abundance": 7.163,
+    "interferences": "Hg, TaO, WO, HfO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hg 202",
+        "monitor_nominal": 202,
+        "factor": 0.333891
+      }
+    ]
+  },
+  {
+    "element": "Au",
+    "isotope_label": "Au 197",
+    "mass": 196.967,
+    "abundance": 100.0,
+    "interferences": "TaO, HfO"
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 196",
+    "mass": 195.965,
+    "abundance": 0.15,
+    "interferences": "Pt, HfO, WO, TaO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pt 195",
+        "monitor_nominal": 195,
+        "factor": 0.746098
+      }
+    ]
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 198",
+    "mass": 197.967,
+    "abundance": 9.97,
+    "interferences": "Pt, TaO, WO, HfO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pt 195",
+        "monitor_nominal": 195,
+        "factor": 0.211723
+      }
+    ]
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 199",
+    "mass": 198.968,
+    "abundance": 16.87,
+    "interferences": "TaO, WO"
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 200",
+    "mass": 199.968,
+    "abundance": 23.1,
+    "interferences": "WO"
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 201",
+    "mass": 200.97,
+    "abundance": 13.18,
+    "interferences": "WO"
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 202",
+    "mass": 201.971,
+    "abundance": 29.86,
+    "interferences": "WO"
+  },
+  {
+    "element": "Hg",
+    "isotope_label": "Hg 204",
+    "mass": 203.974,
+    "abundance": 6.87,
+    "interferences": "Pb, WO",
+    "correction_terms": [
+      {
+        "monitor_label": "Pb 208",
+        "monitor_nominal": 208,
+        "factor": 0.026718
+      }
+    ]
+  },
+  {
+    "element": "Tl",
+    "isotope_label": "Tl 203",
+    "mass": 202.972,
+    "abundance": 29.524,
+    "interferences": "WO"
+  },
+  {
+    "element": "Tl",
+    "isotope_label": "Tl 205",
+    "mass": 204.975,
+    "abundance": 70.2576,
+    "interferences": ""
+  },
+  {
+    "element": "Pb",
+    "isotope_label": "Pb 204",
+    "mass": 203.973,
+    "abundance": 1.4,
+    "interferences": "Hg, WO",
+    "correction_terms": [
+      {
+        "monitor_label": "Hg 202",
+        "monitor_nominal": 202,
+        "factor": 0.230074
+      }
+    ]
+  },
+  {
+    "element": "Pb",
+    "isotope_label": "Pb 206",
+    "mass": 205.975,
+    "abundance": 24.1,
+    "interferences": ""
+  },
+  {
+    "element": "Pb",
+    "isotope_label": "Pb 207",
+    "mass": 206.976,
+    "abundance": 22.1,
+    "interferences": ""
+  },
+  {
+    "element": "Pb",
+    "isotope_label": "Pb 208",
+    "mass": 207.977,
+    "abundance": 52.4,
+    "interferences": ""
+  },
+  {
+    "element": "Bi",
+    "isotope_label": "Bi 209",
+    "mass": 208.98,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Th",
+    "isotope_label": "Th 232",
+    "mass": 232.038,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "Pa",
+    "isotope_label": "Pa",
+    "mass": 231.036,
+    "abundance": 100.0,
+    "interferences": ""
+  },
+  {
+    "element": "U",
+    "isotope_label": "U 234",
+    "mass": 234.041,
+    "abundance": 0.0055,
+    "interferences": ""
+  },
+  {
+    "element": "U",
+    "isotope_label": "U 235",
+    "mass": 235.044,
+    "abundance": 0.72,
+    "interferences": ""
+  },
+  {
+    "element": "U",
+    "isotope_label": "U 238",
+    "mass": 238.05,
+    "abundance": 99.2745,
+    "interferences": ""
+  }
+]
