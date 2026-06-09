@@ -2134,7 +2134,7 @@ class PeakDetection:
     def process_multi_element_particles(self, all_particles, time_array, sample_detected_peaks,
                                         selected_isotopes, get_formatted_label_func,
                                         current_sample, element_thresholds, parameters_table,
-                                        min_overlap_percentage=50.0):
+                                        min_overlap_percentage=75.0):
         """Process and identify multi-element particles.
         Args:
             all_particles (Any): The all particles.
@@ -2268,7 +2268,7 @@ class PeakDetection:
 
         overlap_percent1 = (overlap_duration / duration1) * 100
         overlap_percent2 = (overlap_duration / duration2) * 100
-        return max(overlap_percent1, overlap_percent2) >= 50.0
+        return max(overlap_percent1, overlap_percent2) >= 75.0
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------main detection-------------------------------------------------------

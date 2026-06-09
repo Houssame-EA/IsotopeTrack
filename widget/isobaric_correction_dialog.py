@@ -16,6 +16,8 @@ from a button/menu via:
     IsobaricCorrectionDialog(self).exec()
 """
 
+import copy
+
 import numpy as np
 import pyqtgraph as pg
 
@@ -23,7 +25,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QHeaderView, QSplitter, QWidget, QComboBox,
-    QAbstractItemView, QMessageBox, QDoubleSpinBox,
+    QAbstractItemView, QMessageBox, QDoubleSpinBox, QButtonGroup, QRadioButton,
 )
 
 import isobaric_correction as isobaric
@@ -60,20 +62,26 @@ class IsobaricCorrectionDialog(QDialog):
         super().__init__(parent or main_window)
         self.mw = main_window
         self.setWindowTitle("Isobaric Correction")
-        self.setMinimumSize(900, 560)
+        self.setMinimumSize(960, 580)
 
-        self._corrections = []
-        self._custom_factors: dict = {} 
+        self._corrections = []            
+        self._table_corrections = []      
+        self._abundance_corrections = []  
+        self._custom_factors: dict = {}   
         self._build_ui()
         self._load_corrections()
         self._update_button_states()
 
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
     def _build_ui(self):
         """Build and lay out all widgets in the dialog.
 
-        Creates the intro label, sample selector, left correction table,
-        right preview plot, base-equation label, custom-R spinbox, active-
-        equation label, and the Apply / Revert / Close button row.
+        Creates the intro label, sample selector, source toggle, left correction
+        table, right preview plot, base-equation label, custom-R spinbox,
+        active-equation label, and the Apply / Revert / Close button row.
         """
         root = QVBoxLayout(self)
 
@@ -85,6 +93,7 @@ class IsobaricCorrectionDialog(QDialog):
         intro.setWordWrap(True)
         root.addWidget(intro)
 
+        # Sample selector
         sample_row = QHBoxLayout()
         sample_row.addWidget(QLabel("Preview sample:"))
         self.sample_combo = QComboBox()
@@ -98,18 +107,33 @@ class IsobaricCorrectionDialog(QDialog):
         sample_row.addStretch()
         root.addLayout(sample_row)
 
+        src_row = QHBoxLayout()
+        src_row.addWidget(QLabel("Correction source:"))
+        self._src_group = QButtonGroup(self)
+        self._radio_table = QRadioButton("Reference table (recommended)")
+        self._radio_abund = QRadioButton("Abundance ratio")
+        self._radio_table.setChecked(True)
+        self._src_group.addButton(self._radio_table, 0)
+        self._src_group.addButton(self._radio_abund, 1)
+        self._radio_table.toggled.connect(self._on_source_toggled)
+        src_row.addWidget(self._radio_table)
+        src_row.addWidget(self._radio_abund)
+        src_row.addStretch()
+        root.addLayout(src_row)
+
         splitter = QSplitter(Qt.Horizontal)
 
-        self.table = QTableWidget(0, 5)
+        # Left: corrections table (6 columns)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Analyte", "Interferent", "Monitor", "Factor R", "Status"])
+            ["Analyte", "Interferent", "Monitor", "Factor R", "Source", "Status"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
-        self.table.setMinimumWidth(380)
+        self.table.setMinimumWidth(440)
         splitter.addWidget(self.table)
 
         right = QWidget()
@@ -159,7 +183,6 @@ class IsobaricCorrectionDialog(QDialog):
         splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, stretch=1)
 
-
         btn_row = QHBoxLayout()
         self.status_label = QLabel("")
         btn_row.addWidget(self.status_label)
@@ -175,61 +198,118 @@ class IsobaricCorrectionDialog(QDialog):
         btn_row.addWidget(self.close_btn)
         root.addLayout(btn_row)
 
+    # ------------------------------------------------------------------
+    # Correction loading
+    # ------------------------------------------------------------------
 
     def _load_corrections(self):
-        """Compute isobaric corrections and populate the table.
+        """Compute both table-sourced and abundance-ratio corrections, then populate the table.
 
-        Uses all mass channels currently present in data_by_sample as the
-        monitor pool so that monitor isotopes measured by the instrument but
-        not explicitly selected by the user are still considered. If a monitor
-        is genuinely absent from the data the correction is marked disabled
-        with an actionable note telling the user which isotope to add.
+        Builds two independent correction lists:
+          - _table_corrections: from the empirical reference table (recommended)
+          - _abundance_corrections: from natural-abundance ratios (fallback)
+
+        The active list (_corrections) is whichever source the radio button
+        selects. The monitor pool for both is all measured data channels so
+        corrections are enabled without the user having to manually select
+        monitor isotopes.
         """
+        selected = getattr(self.mw, 'selected_isotopes', {})
+        ptw = getattr(self.mw, 'periodic_table_widget', None)
+        all_channels = sorted({
+            m
+            for sd in getattr(self.mw, 'data_by_sample', {}).values()
+            for m in sd.keys()
+        })
+
         try:
-            ptw = getattr(self.mw, 'periodic_table_widget', None)
-            if not ptw or not getattr(self.mw, 'selected_isotopes', None):
-                self._corrections = []
-            else:
-                # Use every measured data channel as the monitor pool so
-                # corrections are enabled even for monitor isotopes the user
-                # didn't explicitly select — data is already in memory.
-                all_channels = sorted({
-                    m
-                    for sd in getattr(self.mw, 'data_by_sample', {}).values()
-                    for m in sd.keys()
-                })
-                self._corrections = isobaric.build_all_corrections(
-                    self.mw.selected_isotopes,
+            self._table_corrections = isobaric.build_table_corrections(
+                selected,
+                available_masses=all_channels or None,
+            )
+        except Exception as e:
+            self._table_corrections = []
+            QMessageBox.warning(self, "Isobaric Correction",
+                                f"Could not load table corrections:\n{e}")
+
+        try:
+            if ptw and selected:
+                self._abundance_corrections = isobaric.build_all_corrections(
+                    selected,
                     ptw.get_element_by_symbol,
                     ptw.get_elements,
                     monitor_pool=all_channels or None,
                 )
+            else:
+                self._abundance_corrections = []
         except Exception as e:
-            self._corrections = []
+            self._abundance_corrections = []
             QMessageBox.warning(self, "Isobaric Correction",
-                                f"Could not compute corrections:\n{e}")
+                                f"Could not compute abundance corrections:\n{e}")
 
+        use_table = bool(self._table_corrections)
+        self._radio_table.blockSignals(True)
+        self._radio_abund.blockSignals(True)
+        self._radio_table.setChecked(use_table)
+        self._radio_abund.setChecked(not use_table)
+        self._radio_table.blockSignals(False)
+        self._radio_abund.blockSignals(False)
+
+        self._corrections = self._table_corrections if use_table else self._abundance_corrections
+        self._populate_table()
+
+    def _populate_table(self):
+        """Fill the correction table widget from the current _corrections list."""
+        self._custom_factors.clear()
         self.table.setRowCount(len(self._corrections))
         for r, c in enumerate(self._corrections):
-            status = "Ready" if c.enabled else (c.note or "Monitor not measured")
+            source_tag = "Table" if c.source == "table" else "~ab ratio"
+            status = "✓ Ready" if c.enabled else (c.note or "⚠ Monitor not in selection")
             cells = [c.analyte_label, c.interferent_symbol, c.monitor_label,
-                     f"{c.factor:.4f}", status]
+                     f"{c.factor:.6f}", source_tag, status]
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(str(text))
-                if not c.enabled:
-                    item.setForeground(Qt.gray)
+                item.setForeground(Qt.gray if not c.enabled else Qt.black)
                 self.table.setItem(r, col, item)
 
         if not self._corrections:
-            self.equation_label.setText(
-                "No isobaric overlaps among the selected isotopes.")
+            self.equation_label.setText("No isobaric overlaps among the selected isotopes.")
+            self.base_equation_label.setText("")
         elif self.table.rowCount():
             self.table.selectRow(0)
 
+    def _on_source_toggled(self, checked: bool):
+        """Switch the active correction list between table and abundance-ratio source.
+
+        Called when either radio button changes. Resets custom factor overrides
+        and repopulates the table from the newly selected source.
+
+        Args:
+            checked: True when the table radio button is selected (ignored;
+                     the active button is read directly from the button group).
+        """
+        if self._radio_table.isChecked():
+            self._corrections = self._table_corrections
+        else:
+            self._corrections = self._abundance_corrections
+        self._populate_table()
+        self._update_button_states()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _raw_base_for(self, sample):
-        """Current channels with any applied channels restored to raw, so the
-        preview is always true-raw vs true-corrected and never double-subtracts.
+        """Return channel data with any previously applied corrections restored to raw.
+
+        The preview is always true-raw vs true-corrected so it never
+        double-subtracts on top of an already-applied correction.
+
+        Args:
+            sample: Sample name key in data_by_sample.
+
+        Returns:
+            Dict mapping mass keys to signal arrays.
         """
         sample_data = getattr(self.mw, 'data_by_sample', {}).get(sample, {})
         base = dict(sample_data)
@@ -249,7 +329,6 @@ class IsobaricCorrectionDialog(QDialog):
         so the originals are never mutated. Used for both the preview plot and
         the Apply step.
         """
-        import copy
         result = []
         for i, c in enumerate(self._corrections):
             if not getattr(c, 'enabled', False):
@@ -259,6 +338,10 @@ class IsobaricCorrectionDialog(QDialog):
                 c.factor = self._custom_factors[i]
             result.append(c)
         return result
+
+    # ------------------------------------------------------------------
+    # Event handlers
+    # ------------------------------------------------------------------
 
     def _on_factor_changed(self, value: float):
         """Handle a change to the Custom R spinbox.
@@ -302,7 +385,11 @@ class IsobaricCorrectionDialog(QDialog):
         self._refresh_equation_and_preview(row_idx)
 
     def _refresh_equation_and_preview(self, row_idx: int):
-        """Re-draw plot and update active equation label for the given row."""
+        """Re-draw plot and update active equation label for the given row.
+
+        Args:
+            row_idx: Index into _corrections for the row being refreshed.
+        """
         corr = self._corrections[row_idx]
         custom_r = self._custom_factors.get(row_idx, corr.factor)
 
@@ -332,18 +419,15 @@ class IsobaricCorrectionDialog(QDialog):
             self.plot.plot(x, np.asarray(corrected, dtype=float),
                            pen=pg.mkPen(corr_pen, width=1), name="OUT (corrected)")
 
-        import copy
         active = copy.copy(corr)
         active.factor = custom_r
-        eqs = [active.equation_text()]
-        self.equation_label.setText("\n".join(eqs))
+        self.equation_label.setText(active.equation_text())
         self.plot.enableAutoRange()
-
 
     def _on_row_selected(self):
         """Update the preview plot and equation labels when a table row is selected.
 
-        Populates the base-equation label (always the auto-calculated formula),
+        Populates the base-equation label (always the source formula),
         sets the Custom R spinbox to the stored override or the base factor,
         then plots the raw (red) vs corrected (blue) signal for the selected
         analyte channel in the current preview sample.
@@ -358,8 +442,7 @@ class IsobaricCorrectionDialog(QDialog):
         self.base_equation_label.setText("Base: " + corr.equation_text())
 
         self.factor_spinbox.blockSignals(True)
-        self.factor_spinbox.setValue(
-            self._custom_factors.get(row_idx, corr.factor))
+        self.factor_spinbox.setValue(self._custom_factors.get(row_idx, corr.factor))
         self.factor_spinbox.setEnabled(corr.enabled)
         self.factor_spinbox.blockSignals(False)
         self.reset_factor_btn.setEnabled(row_idx in self._custom_factors)
@@ -463,7 +546,7 @@ class IsobaricCorrectionDialog(QDialog):
                 ("Ready to apply." if has_enabled else "No correctable overlaps."))
 
     def _refresh_main_plot(self):
-        """Redraw the main window's current trace so the change is visible."""
+        """Redraw the main window's current trace so the applied correction is visible."""
         try:
             row = self.mw.parameters_table.currentRow()
             if row is not None and row >= 0:

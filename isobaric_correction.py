@@ -32,6 +32,8 @@ Reused from the rest of the app (passed in, never duplicated here):
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -63,6 +65,7 @@ class IsobaricCorrection:
     interferent_overlap_label: str = ""
     monitor_label: str = ""
     note: str = ""
+    source: str = "abundance"   
 
     def equation_text(self) -> str:
         """Human-readable equation with the real numbers filled in."""
@@ -417,5 +420,126 @@ def correct_sample_channels(sample_data: Dict[float, np.ndarray],
         if clamp:
             np.clip(corrected, 0.0, None, out=corrected)
         out[analyte_key] = corrected
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Reference interference table (ICP-MS empirical correction equations)
+# ---------------------------------------------------------------------------
+
+_TABLE_CACHE: Optional[List[dict]] = None
+_TABLE_PATH = os.path.join(os.path.dirname(__file__), "data", "interference_corrections.json")
+
+
+def load_table_corrections(path: str = _TABLE_PATH) -> List[dict]:
+    """Load the empirical interference correction table from a JSON file.
+
+    The table is cached after the first load so repeated calls are free.
+    Each record has the keys: element, isotope_label, mass, abundance,
+    interferences, and optionally correction_terms — a list of
+    {'monitor_label', 'monitor_nominal', 'factor'} dicts derived from the
+    published ICP-MS interference correction equations.
+
+    Args:
+        path: Path to the JSON file. Defaults to data/interference_corrections.json
+              next to this module.
+
+    Returns:
+        List of isotope records. Empty list if the file is not found.
+    """
+    global _TABLE_CACHE
+    if _TABLE_CACHE is not None:
+        return _TABLE_CACHE
+    try:
+        with open(path, "r") as fh:
+            _TABLE_CACHE = json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError):
+        _TABLE_CACHE = []
+    return _TABLE_CACHE
+
+
+def lookup_table_entry(analyte_nominal: int,
+                       path: str = _TABLE_PATH) -> Optional[dict]:
+    """Return the table record for *analyte_nominal* mass, or None.
+
+    Matches by nominal (integer) mass across all isotopes in the table.
+    When multiple isotopes share a nominal mass the first match is returned.
+
+    Args:
+        analyte_nominal: Integer nominal mass of the analyte isotope.
+        path: Path forwarded to load_table_corrections if not yet loaded.
+
+    Returns:
+        The matching record dict, or None if not found.
+    """
+    for rec in load_table_corrections(path):
+        if int(round(rec['mass'])) == analyte_nominal:
+            return rec
+    return None
+
+
+def build_table_corrections(selected_isotopes: Dict[str, List[float]],
+                             available_masses: Optional[List[float]] = None,
+                             path: str = _TABLE_PATH,
+                             ) -> List[IsobaricCorrection]:
+    """Build IsobaricCorrection objects from the empirical reference table.
+
+    For every selected isotope that has an entry in the interference table, one
+    IsobaricCorrection is created per correction term (one term = one monitor
+    channel). Corrections are marked enabled when the monitor mass is present
+    in *available_masses*; disabled with an actionable note otherwise.
+
+    These table-sourced corrections carry source='table' so the dialog can
+    display them as recommended and show the empirical factor alongside the
+    abundance-ratio baseline.
+
+    Args:
+        selected_isotopes: Maps element symbol -> list of selected masses
+            (same structure as MainWindow.selected_isotopes).
+        available_masses: Channel masses actually present in the loaded data.
+            If None, all corrections are marked disabled.
+        path: Path forwarded to load_table_corrections.
+
+    Returns:
+        List of IsobaricCorrection objects sourced from the table.
+    """
+    pool = set(_nominal(m) for m in (available_masses or []))
+    out: List[IsobaricCorrection] = []
+
+    for symbol, masses in selected_isotopes.items():
+        for analyte_mass in masses:
+            rec = lookup_table_entry(_nominal(analyte_mass), path)
+            if not rec or not rec.get('correction_terms'):
+                continue
+
+            analyte_label = rec['isotope_label']
+
+            for term in rec['correction_terms']:
+                mon_nominal = term['monitor_nominal']
+                mon_label   = term['monitor_label']
+                factor      = term['factor']
+                available   = mon_nominal in pool
+
+                note = (
+                    f"Monitor not in selection — "
+                    f"add {mon_label} to your isotope selection to enable this correction."
+                    if not available else ""
+                )
+
+                out.append(IsobaricCorrection(
+                    analyte_symbol=symbol,
+                    analyte_mass=analyte_mass,
+                    interferent_symbol=mon_label.split()[0] if ' ' in mon_label else mon_label,
+                    interferent_overlap_mass=float(analyte_mass),
+                    monitor_mass=float(mon_nominal),
+                    factor=factor,
+                    enabled=available and factor > 0.0,
+                    analyte_label=analyte_label,
+                    interferent_overlap_label="",
+                    monitor_label=mon_label,
+                    note=note,
+                    source="table",
+                ))
 
     return out

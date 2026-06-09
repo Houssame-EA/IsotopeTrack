@@ -3162,6 +3162,9 @@ class ClusteringDisplayDialog(QDialog):
         self.parent_window = parent_window
         self.setWindowTitle("Clustering Analysis")
         self.setMinimumSize(1200, 800)
+        # Never block the main window — always show as a free-floating window
+        self.setWindowModality(Qt.NonModal)
+        self.setWindowFlags(self.windowFlags() | Qt.Window)
 
         self.eval_results = {}
         self.final_results = {}
@@ -6713,8 +6716,9 @@ class ClusteringPlotNode(QObject):
         Returns:
             bool: Result of the operation.
         """
-        dlg = ClusteringDisplayDialog(self, parent_window)
-        dlg.exec()
+        # Keep a reference so the dialog isn't garbage-collected after show()
+        self._active_dialog = ClusteringDisplayDialog(self, parent_window)
+        self._active_dialog.show()
         return True
 
     def process_data(self, input_data):
