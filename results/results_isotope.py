@@ -24,7 +24,7 @@ from results.shared_plot_utils import (
     get_sample_color, get_display_name,
     download_pyqtgraph_figure,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box, _add_hband,
-    _add_det_limit_h,
+    _add_det_limit_h, apply_plot_title_style, apply_axis_label_style,
 )
 
 try:
@@ -2216,6 +2216,252 @@ class IsotopicRatioDisplayDialog(QDialog):
             _PlotSettingsDialog(
                 _PlotWidgetAdapter(self.plot_widget, pi), self).exec()
 
+    def _get_custom_title_map(self):
+        """Return the canonical custom-title mapping for this ratio dialog.
+
+        Returns:
+            dict: Mutable mapping of stable raw plot keys to display-only
+                custom title overrides.
+        """
+        custom_titles = self.node.config.get('custom_titles')
+        if not isinstance(custom_titles, dict):
+            custom_titles = {}
+            self.node.config['custom_titles'] = custom_titles
+        return custom_titles
+
+    @staticmethod
+    def _title_key_for_combined_plot(is_multi):
+        """Return the stable custom-title key for a combined ratio plot.
+
+        Args:
+            is_multi (bool): Whether the current view is multi-sample.
+
+        Returns:
+            str: Stable raw key for the combined ratio plot title.
+        """
+        return 'combined:multi' if is_multi else 'combined:single'
+
+    @staticmethod
+    def _title_key_for_sample_plot(sample_name):
+        """Return the stable custom-title key for one sample ratio subplot.
+
+        Args:
+            sample_name (str): Canonical raw sample key.
+
+        Returns:
+            str: Stable raw key for the corresponding sample subplot title.
+        """
+        return f'sample:{sample_name}'
+
+    def _effective_title_for_key(self, plot_key, default_title=''):
+        """Resolve the effective title for one stable ratio plot key.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot.
+            default_title (str): Default title used when no override exists.
+
+        Returns:
+            str: Display title text that should be rendered.
+        """
+        custom_title = self._get_custom_title_map().get(plot_key)
+        if isinstance(custom_title, str):
+            stripped = custom_title.strip()
+            if stripped:
+                return stripped
+        return default_title or ''
+
+    def _apply_title_text_to_plot(self, plot_item, title_text):
+        """Apply a ratio plot title while preserving current title styling.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            title_text (str): Effective title text to render.
+
+        Returns:
+            None
+        """
+        apply_plot_title_style(plot_item, title_text, config=self.node.config)
+
+    def _store_custom_title_text(self, plot_key, title_text):
+        """Store or clear one display-only custom title override.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot.
+            title_text (str): User-entered display title text.
+
+        Returns:
+            None
+        """
+        clean_text = (title_text or '').strip()
+        custom_titles = dict(self._get_custom_title_map())
+        if clean_text:
+            custom_titles[plot_key] = clean_text
+        else:
+            custom_titles.pop(plot_key, None)
+        self.node.config['custom_titles'] = custom_titles
+
+    def _apply_custom_title_edit(self, plot_item, plot_key, title_text,
+                                 default_title=''):
+        """Persist one ratio custom title edit and reapply the effective title.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` whose title was edited.
+            plot_key (str): Stable raw key for the target plot.
+            title_text (str): User-entered display title text.
+            default_title (str): Default title used after clearing an override.
+
+        Returns:
+            None
+        """
+        self._store_custom_title_text(plot_key, title_text)
+        self._apply_title_text_to_plot(
+            plot_item, self._effective_title_for_key(plot_key, default_title))
+
+    def _configure_plot_title(self, plot_item, plot_key, default_title=''):
+        """Bind text-only title editing and render the effective ratio title.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            plot_key (str): Stable raw key for the target plot.
+            default_title (str): Default title used when no override exists.
+
+        Returns:
+            None
+        """
+        def _title_apply_callback(text, _plot_item=plot_item, _plot_key=plot_key,
+                                  _default_title=default_title):
+            """Persist one ratio title edit for the associated plot item."""
+            self._apply_custom_title_edit(
+                _plot_item, _plot_key, text, _default_title)
+
+        plot_item._title_editor_options = {
+            'text_only': True,
+            'title_apply_callback': _title_apply_callback,
+        }
+        self._apply_title_text_to_plot(
+            plot_item, self._effective_title_for_key(plot_key, default_title))
+
+    def _get_custom_axis_label_map(self):
+        """Return the canonical custom axis-label mapping for this ratio dialog.
+
+        Returns:
+            dict: Mutable mapping of stable raw plot keys to per-axis
+                display-only label overrides.
+        """
+        custom_axis_labels = self.node.config.get('custom_axis_labels')
+        if not isinstance(custom_axis_labels, dict):
+            custom_axis_labels = {}
+            self.node.config['custom_axis_labels'] = custom_axis_labels
+        return custom_axis_labels
+
+    def _effective_axis_labels_for_key(self, plot_key, default_axis_labels):
+        """Resolve effective bottom/left axis labels for one ratio plot key.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot.
+            default_axis_labels (dict): Default axis-label mapping with
+                ``bottom`` and ``left`` entries containing ``text`` and
+                optional ``units`` values.
+
+        Returns:
+            dict: Effective axis-label mapping for the target plot.
+        """
+        resolved = {
+            axis_name: {
+                'text': (info or {}).get('text', ''),
+                'units': (info or {}).get('units', None),
+            }
+            for axis_name, info in (default_axis_labels or {}).items()
+        }
+        stored = self._get_custom_axis_label_map().get(plot_key, {})
+        if not isinstance(stored, dict):
+            return resolved
+        for axis_name in ('bottom', 'left'):
+            axis_info = stored.get(axis_name, {})
+            if not isinstance(axis_info, dict):
+                continue
+            custom_text = (axis_info.get('text') or '').strip()
+            if custom_text:
+                resolved[axis_name] = {
+                    'text': custom_text,
+                    'units': axis_info.get('units', None),
+                }
+        return resolved
+
+    def _store_custom_axis_label(self, plot_key, axis_name, text, units):
+        """Store or clear one display-only custom ratio axis-label override.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot.
+            axis_name (str): Axis identifier such as ``'bottom'`` or
+                ``'left'``.
+            text (str): User-entered axis-label text.
+            units (str | None): Optional axis units from the editor.
+
+        Returns:
+            None
+        """
+        clean_text = (text or '').strip()
+        custom_axis_labels = dict(self._get_custom_axis_label_map())
+        plot_labels = dict(custom_axis_labels.get(plot_key, {}))
+        if clean_text:
+            plot_labels[axis_name] = {
+                'text': clean_text,
+                'units': units,
+            }
+        else:
+            plot_labels.pop(axis_name, None)
+        if plot_labels:
+            custom_axis_labels[plot_key] = plot_labels
+        else:
+            custom_axis_labels.pop(plot_key, None)
+        self.node.config['custom_axis_labels'] = custom_axis_labels
+
+    def _apply_effective_axis_labels(self, plot_item, plot_key,
+                                     default_axis_labels):
+        """Apply effective ratio axis labels and bind editor persistence hooks.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            plot_key (str): Stable raw key for the target plot.
+            default_axis_labels (dict): Default axis-label mapping with
+                ``bottom`` and ``left`` entries.
+
+        Returns:
+            None
+        """
+        effective_labels = self._effective_axis_labels_for_key(
+            plot_key, default_axis_labels)
+
+        def _make_axis_callback(axis_name):
+            """Build one ratio axis-label persistence callback."""
+            def _axis_apply_callback(text, units, _axis_name=axis_name):
+                """Persist one ratio axis-label content edit."""
+                self._store_custom_axis_label(
+                    plot_key, _axis_name, text, units)
+            return _axis_apply_callback
+
+        plot_item._axis_label_editor_options = {
+            'bottom': {'axis_apply_callback': _make_axis_callback('bottom')},
+            'left': {'axis_apply_callback': _make_axis_callback('left')},
+        }
+        plot_item._custom_axis_labels = {
+            axis_name: {
+                'text': axis_info.get('text', ''),
+                'units': axis_info.get('units', None),
+            }
+            for axis_name, axis_info in effective_labels.items()
+        }
+        for axis_name in ('bottom', 'left'):
+            axis_info = effective_labels.get(axis_name, {})
+            apply_axis_label_style(
+                plot_item,
+                axis_name,
+                axis_info.get('text', ''),
+                units=axis_info.get('units', None),
+                config=self.node.config,
+            )
+
     def _refresh(self):
         """Redraw the isotopic ratio plot from extracted source data and config.
 
@@ -2928,15 +3174,35 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         _apply_box(pi, cfg)
 
-    def _apply_labels_and_font(self, pi, cfg, x_label=None, y_label=None, sample_name=None):
-        """Apply labels, fonts, and explicit axis state to a plot item.
+    def _apply_labels_and_font(self, pi, cfg, plot_key, x_label=None, y_label=None,
+                               sample_name=None):
+        """Apply effective labels, fonts, and axis state to one ratio plot.
 
-        Log axis state and manual/auto ranges are set explicitly on every draw
-        path so visual state does not silently persist between refreshes.
+        Args:
+            pi (Any): Target ``pg.PlotItem``.
+            cfg (dict): Active ratio-plot configuration.
+            plot_key (str): Stable raw key for the target plot panel.
+            x_label (str | None): Optional default x-axis label override.
+            y_label (str | None): Optional default y-axis label override.
+            sample_name (str | None): Optional raw sample key used by default
+                label generation and correction-aware label text.
+
+        Returns:
+            None
+
+        Preserved behavior:
+            Log-axis state and manual/auto ranges are still set explicitly on
+            every draw path so visual state does not silently persist between
+            refreshes. This now also reapplies display-only custom axis-label
+            content before shared styling is applied.
         """
         if x_label is None or y_label is None:
             x_label, y_label = self._build_labels(cfg, sample_name)
-        set_axis_labels(pi, x_label, y_label, cfg)
+        default_axis_labels = {
+            'bottom': {'text': x_label, 'units': None},
+            'left': {'text': y_label, 'units': None},
+        }
+        self._apply_effective_axis_labels(pi, plot_key, default_axis_labels)
         apply_font_to_pyqtgraph(pi, cfg)
 
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
@@ -2983,7 +3249,11 @@ class IsotopicRatioDisplayDialog(QDialog):
         for item, name in legend_items:
             legend.addItem(item, name)
 
-        self._apply_labels_and_font(pi, cfg, sample_name=sample_key)
+        self._apply_labels_and_font(
+            pi, cfg, self._title_key_for_combined_plot(False),
+            sample_name=sample_key)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot(False), default_title='')
 
         if vmin is not None and vmax is not None:
             self._add_inset_colorbar(pi, cfg, vmin, vmax)
@@ -3031,7 +3301,10 @@ class IsotopicRatioDisplayDialog(QDialog):
             for item, name in legend_items:
                 legend.addItem(item, name)
 
-        self._apply_labels_and_font(pi, cfg)
+        self._apply_labels_and_font(
+            pi, cfg, self._title_key_for_combined_plot(True))
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot(True), default_title='')
 
         if has_color and global_vmin < global_vmax:
             self._add_inset_colorbar(pi, cfg, global_vmin, global_vmax)
@@ -3064,7 +3337,9 @@ class IsotopicRatioDisplayDialog(QDialog):
 
             color = get_sample_color(sn, idx, cfg)
             self._draw_single_on_plot(pi, sd['element_data'], cfg, color, sn)
-            pi.setTitle(get_display_name(sn, cfg))
+            self._configure_plot_title(
+                pi, self._title_key_for_sample_plot(sn),
+                default_title=get_display_name(sn, cfg))
 
     def _draw_side_by_side(self, plot_data, cfg):
         """
@@ -3082,7 +3357,9 @@ class IsotopicRatioDisplayDialog(QDialog):
             color = get_sample_color(sn, col_idx, cfg)
 
             self._draw_single_on_plot(pi, sd['element_data'], cfg, color, sn)
-            pi.setTitle(get_display_name(sn, cfg))
+            self._configure_plot_title(
+                pi, self._title_key_for_sample_plot(sn),
+                default_title=get_display_name(sn, cfg))
             if first_pi is None:
                 first_pi = pi
             else:
@@ -3115,7 +3392,9 @@ class IsotopicRatioDisplayDialog(QDialog):
         for item, name in legend_items:
             legend.addItem(item, name)
 
-        self._apply_labels_and_font(pi, cfg, sample_name=sample_name)
+        self._apply_labels_and_font(
+            pi, cfg, self._title_key_for_sample_plot(sample_name),
+            sample_name=sample_name)
         
         if vmin is not None and vmax is not None:
             self._add_inset_colorbar(pi, cfg, vmin, vmax)
@@ -3173,6 +3452,8 @@ class IsotopicRatioPlotNode(QObject):
         'det_limit_label': '',
         'sample_colors': {},
         'sample_name_mappings': {},
+        'custom_titles': {},
+        'custom_axis_labels': {},
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,

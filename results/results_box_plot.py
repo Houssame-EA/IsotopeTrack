@@ -26,9 +26,14 @@ from results.shared_plot_utils import (
     download_pyqtgraph_figure,
     format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
-    _add_hband, _add_det_limit_h,
+    _add_hband, _add_det_limit_h, apply_plot_title_style,
+    apply_axis_label_style,
 )
-from results.utils_sort import sort_elements_by_mass, sort_element_dict_by_mass
+from results.utils_sort import (
+    sort_elements_by_mass,
+    sort_element_dict_by_mass,
+    element_alphabetical_key,
+)
 
 try:
     from results.results_bar_charts import (
@@ -93,6 +98,13 @@ BOX_DISPLAY_MODES = [
     'Subplots by isotope',
 ]
 
+BOX_SORT_OPTIONS = [
+    'No Sorting',
+    'Ascending',
+    'Descending',
+    'Alphabetical',
+]
+
 DEFAULT_ELEMENT_COLORS = [
     '#663399', '#2E86AB', '#A23B72', '#F18F01', '#C73E1D',
     '#7209B7', '#F72585', '#4361EE', '#277DA1', '#F8961E',
@@ -132,6 +144,9 @@ DEFAULT_CONFIG = {
     'sample_colors': {},
     'sample_name_mappings': {},
     'sample_order': [],
+    'custom_titles': {},
+    'custom_axis_labels': {},
+    'sort_categories': 'No Sorting',
     'label_mode': 'Symbol',
     'min_particle_count': 0,
     'font_family': 'Times New Roman',
@@ -298,6 +313,106 @@ def _apply_boxplot_grid(plot_item, cfg):
     show_y = bool(cfg.get('show_y_grid', False))
     alpha = max(0.0, min(1.0, float(cfg.get('grid_alpha', 50)) / 255.0))
     plot_item.showGrid(x=show_x, y=show_y, alpha=alpha)
+
+
+def _sort_box_category_records(records, sort_mode):
+    """Return Box Plot display records in the requested display order.
+
+    Args:
+        records (list[dict]): Category display records containing at least
+            ``sort_key``, ``display_label``, and ``sort_metric`` fields. When
+            a record also carries a raw canonical isotope/element key in
+            ``raw_key``, alphabetical sorting uses that scientific key rather
+            than any rendered label text.
+        sort_mode (str): Sort mode such as ``'No Sorting'``,
+            ``'Ascending'``, ``'Descending'``, or ``'Alphabetical'``.
+
+    Returns:
+        list[dict]: Ordered category records for display only.
+
+    Preserved behavior:
+        This helper changes only rendered category order. It does not modify
+        the underlying values, group membership, or computed statistics.
+    """
+    items = list(records or [])
+    if sort_mode == 'Alphabetical':
+        def _alphabetical_record_key(item):
+            """Return the display-order key for Box Plot alphabetical sorting.
+
+            Element/isotope categories must follow the raw scientific key so
+            label mode changes such as ``Mass + Symbol`` or atomic notation do
+            not change ordering. Other category types fall back to the generic
+            stored sort key.
+            """
+            raw_key = item.get('raw_key')
+            if raw_key is not None:
+                return element_alphabetical_key(raw_key)
+            return str(item.get('sort_key', '')).lower()
+
+        return sorted(
+            items,
+            key=_alphabetical_record_key,
+        )
+    if sort_mode == 'Ascending':
+        return sorted(items, key=lambda item: float(item.get('sort_metric', 0.0)))
+    if sort_mode == 'Descending':
+        return sorted(
+            items,
+            key=lambda item: float(item.get('sort_metric', 0.0)),
+            reverse=True,
+        )
+    return items
+
+
+def _sort_box_sample_records(records, sort_mode):
+    """Return ``Subplots by isotope`` sample records in subplot display order.
+
+    Args:
+        records (list[dict]): Sample category records for one isotope subplot.
+            Each record should include the raw sample key, visible display
+            label, original subplot order, and optionally filtered plotted
+            values.
+        sort_mode (str): Active Box Plot sort mode.
+
+    Returns:
+        list[dict]: Ordered sample records for one isotope subplot.
+
+    Preserved behavior:
+        Sorting changes only the rendered x-axis/sample order inside the
+        current isotope subplot. Raw sample keys remain canonical for lookup,
+        and the filtered values used to compute box statistics are not changed.
+    """
+    items = list(records or [])
+    if sort_mode == 'No Sorting':
+        return sorted(items, key=lambda item: int(item.get('original_index', 0)))
+
+    if sort_mode == 'Alphabetical':
+        return sorted(
+            items,
+            key=lambda item: (
+                str(item.get('display_label', '')).casefold(),
+                str(item.get('raw_sample_name', '')).casefold(),
+                int(item.get('original_index', 0)),
+            ),
+        )
+
+    descending = (sort_mode == 'Descending')
+
+    def _sample_metric_key(item):
+        """Return a deterministic sort key for mean-based sample ordering."""
+        mean_value = item.get('sort_metric')
+        missing = mean_value is None
+        numeric = 0.0 if missing else float(mean_value)
+        ordered_value = -numeric if descending else numeric
+        return (
+            missing,
+            ordered_value,
+            str(item.get('display_label', '')).casefold(),
+            str(item.get('raw_sample_name', '')).casefold(),
+            int(item.get('original_index', 0)),
+        )
+
+    return sorted(items, key=_sample_metric_key)
 
 
 # ── Settings Dialog ────────────────────────────────────────────────────
@@ -1208,6 +1323,15 @@ class BoxPlotDisplayDialog(QDialog):
             a.setChecked(cfg.get('plot_shape') == s)
             a.triggered.connect(lambda _, v=s: self._set('plot_shape', v))
 
+        sort_menu = menu.addMenu("Sort Categories")
+        current_sort = cfg.get('sort_categories', BOX_SORT_OPTIONS[0])
+        for sort_mode in BOX_SORT_OPTIONS:
+            a = sort_menu.addAction(sort_mode)
+            a.setCheckable(True)
+            a.setChecked(sort_mode == current_sort)
+            a.triggered.connect(
+                lambda _, v=sort_mode: self._set('sort_categories', v))
+
         show_outliers = menu.addAction("Show Outliers")
         show_outliers.setCheckable(True)
         show_outliers.setChecked(cfg.get('show_outliers', True))
@@ -1415,6 +1539,279 @@ class BoxPlotDisplayDialog(QDialog):
                     pass
         self._refresh()
 
+    def _get_custom_title_map(self):
+        """Return the canonical custom-title mapping for this Box Plot dialog.
+
+        Returns:
+            dict: Mutable mapping of stable raw plot keys to display-only
+                custom title overrides.
+        """
+        custom_titles = self.node.config.get('custom_titles')
+        if not isinstance(custom_titles, dict):
+            custom_titles = {}
+            self.node.config['custom_titles'] = custom_titles
+        return custom_titles
+
+    @staticmethod
+    def _title_key_for_combined_plot(is_multi):
+        """Return the stable custom-title key for one combined Box Plot.
+
+        Args:
+            is_multi (bool): Whether the current Box Plot is multi-sample.
+
+        Returns:
+            str: Stable raw key for the combined plot title override.
+        """
+        return 'combined:multi' if is_multi else 'combined:single'
+
+    @staticmethod
+    def _title_key_for_sample_plot(sample_name):
+        """Return the stable custom-title key for one sample subplot.
+
+        Args:
+            sample_name (str): Canonical raw sample key.
+
+        Returns:
+            str: Stable raw key for the corresponding sample subplot.
+        """
+        return f'sample:{sample_name}'
+
+    @staticmethod
+    def _title_key_for_element_plot(raw_element_key):
+        """Return the stable custom-title key for one element subplot.
+
+        Args:
+            raw_element_key (str): Canonical raw element/isotope key.
+
+        Returns:
+            str: Stable raw key for the corresponding element subplot.
+        """
+        return f'element:{raw_element_key}'
+
+    def _effective_title_for_key(self, plot_key, default_title=''):
+        """Resolve the effective title for one Box Plot panel key.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot panel.
+            default_title (str): Default title used when no override exists.
+
+        Returns:
+            str: Display title text to render for the target plot panel.
+        """
+        custom_title = self._get_custom_title_map().get(plot_key)
+        if isinstance(custom_title, str):
+            stripped = custom_title.strip()
+            if stripped:
+                return stripped
+        return default_title or ''
+
+    def _apply_title_text_to_plot(self, plot_item, title_text):
+        """Apply a Box Plot title while preserving the current title styling.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            title_text (str): Effective title text to render.
+
+        Returns:
+            None
+        """
+        apply_plot_title_style(plot_item, title_text, config=self.node.config)
+
+    def _store_custom_title_text(self, plot_key, title_text):
+        """Store or clear one display-only Box Plot title override.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot panel.
+            title_text (str): User-entered display title text.
+
+        Returns:
+            None
+        """
+        clean_text = (title_text or '').strip()
+        custom_titles = dict(self._get_custom_title_map())
+        if clean_text:
+            custom_titles[plot_key] = clean_text
+        else:
+            custom_titles.pop(plot_key, None)
+        self.node.config['custom_titles'] = custom_titles
+
+    def _apply_custom_title_edit(self, plot_item, plot_key, title_text,
+                                 default_title=''):
+        """Persist one Box Plot title edit and reapply the effective title.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem`` whose title was edited.
+            plot_key (str): Stable raw key for the target plot panel.
+            title_text (str): User-entered display title text.
+            default_title (str): Default title used when the override is
+                cleared or blank.
+
+        Returns:
+            None
+        """
+        self._store_custom_title_text(plot_key, title_text)
+        self._apply_title_text_to_plot(
+            plot_item, self._effective_title_for_key(plot_key, default_title))
+
+    def _configure_plot_title(self, plot_item, plot_key, default_title=''):
+        """Bind text-only title editing and render the effective Box Plot title.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            plot_key (str): Stable raw key for the target plot panel.
+            default_title (str): Default title used when no override exists.
+
+        Returns:
+            None
+        """
+        def _title_apply_callback(text, _plot_item=plot_item, _plot_key=plot_key,
+                                  _default_title=default_title):
+            """Persist one Box Plot title edit for the associated plot item."""
+            self._apply_custom_title_edit(
+                _plot_item, _plot_key, text, _default_title)
+
+        plot_item._title_editor_options = {
+            'text_only': True,
+            'title_apply_callback': _title_apply_callback,
+        }
+        self._apply_title_text_to_plot(
+            plot_item, self._effective_title_for_key(plot_key, default_title))
+
+    def _get_custom_axis_label_map(self):
+        """Return the canonical custom axis-label mapping for this Box Plot.
+
+        Returns:
+            dict: Mutable mapping of stable raw plot keys to per-axis
+                display-only label overrides.
+        """
+        custom_axis_labels = self.node.config.get('custom_axis_labels')
+        if not isinstance(custom_axis_labels, dict):
+            custom_axis_labels = {}
+            self.node.config['custom_axis_labels'] = custom_axis_labels
+        return custom_axis_labels
+
+    def _effective_axis_labels_for_key(self, plot_key, default_axis_labels):
+        """Resolve effective bottom/left axis labels for one Box Plot key.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot panel.
+            default_axis_labels (dict): Default axis-label mapping with
+                ``bottom`` and ``left`` entries.
+
+        Returns:
+            dict: Effective axis-label mapping for the target plot panel.
+        """
+        resolved = {
+            axis_name: {
+                'text': (info or {}).get('text', ''),
+                'units': (info or {}).get('units', None),
+            }
+            for axis_name, info in (default_axis_labels or {}).items()
+        }
+        stored = self._get_custom_axis_label_map().get(plot_key, {})
+        if not isinstance(stored, dict):
+            return resolved
+        for axis_name in ('bottom', 'left'):
+            axis_info = stored.get(axis_name, {})
+            if not isinstance(axis_info, dict):
+                continue
+            custom_text = (axis_info.get('text') or '').strip()
+            if custom_text:
+                resolved[axis_name] = {
+                    'text': custom_text,
+                    'units': axis_info.get('units', None),
+                }
+        return resolved
+
+    def _store_custom_axis_label(self, plot_key, axis_name, text, units):
+        """Store or clear one display-only Box Plot axis-label override.
+
+        Args:
+            plot_key (str): Stable raw key for the target plot panel.
+            axis_name (str): Axis identifier such as ``'bottom'`` or
+                ``'left'``.
+            text (str): User-entered axis-label text.
+            units (str | None): Optional units text from the editor.
+
+        Returns:
+            None
+        """
+        clean_text = (text or '').strip()
+        custom_axis_labels = dict(self._get_custom_axis_label_map())
+        plot_labels = dict(custom_axis_labels.get(plot_key, {}))
+        if clean_text:
+            plot_labels[axis_name] = {
+                'text': clean_text,
+                'units': units,
+            }
+        else:
+            plot_labels.pop(axis_name, None)
+        if plot_labels:
+            custom_axis_labels[plot_key] = plot_labels
+        else:
+            custom_axis_labels.pop(plot_key, None)
+        self.node.config['custom_axis_labels'] = custom_axis_labels
+
+    def _apply_effective_axis_labels(self, plot_item, plot_key,
+                                     default_axis_labels):
+        """Apply effective Box Plot axis labels and persistence callbacks.
+
+        Args:
+            plot_item (Any): Target ``pg.PlotItem``.
+            plot_key (str): Stable raw key for the target plot panel.
+            default_axis_labels (dict): Default axis-label mapping with
+                ``bottom`` and ``left`` entries.
+
+        Returns:
+            None
+        """
+        effective_labels = self._effective_axis_labels_for_key(
+            plot_key, default_axis_labels)
+
+        def _make_axis_callback(axis_name):
+            """Build one Box Plot axis-label persistence callback."""
+            def _axis_apply_callback(text, units, _axis_name=axis_name):
+                """Persist one Box Plot axis-label content edit."""
+                self._store_custom_axis_label(
+                    plot_key, _axis_name, text, units)
+            return _axis_apply_callback
+
+        plot_item._axis_label_editor_options = {
+            'bottom': {'axis_apply_callback': _make_axis_callback('bottom')},
+            'left': {'axis_apply_callback': _make_axis_callback('left')},
+        }
+        plot_item._custom_axis_labels = {
+            axis_name: {
+                'text': axis_info.get('text', ''),
+                'units': axis_info.get('units', None),
+            }
+            for axis_name, axis_info in effective_labels.items()
+        }
+        for axis_name in ('bottom', 'left'):
+            axis_info = effective_labels.get(axis_name, {})
+            apply_axis_label_style(
+                plot_item,
+                axis_name,
+                axis_info.get('text', ''),
+                units=axis_info.get('units', None),
+                config=self.node.config,
+            )
+
+    @staticmethod
+    def _category_sort_mode(cfg):
+        """Return the active Box Plot category sort mode.
+
+        Args:
+            cfg (dict): Active Box Plot configuration.
+
+        Returns:
+            str: One of the supported Box Plot category sort modes.
+        """
+        sort_mode = cfg.get('sort_categories', BOX_SORT_OPTIONS[0])
+        if sort_mode not in BOX_SORT_OPTIONS:
+            return BOX_SORT_OPTIONS[0]
+        return sort_mode
+
 
     def _refresh(self):
         """Rebuild the Box Plot from extracted data and current config.
@@ -1480,39 +1877,63 @@ class BoxPlotDisplayDialog(QDialog):
         Returns:
             bool: ``True`` when at least one element distribution was drawn.
         """
-        sorted_data = sort_element_dict_by_mass(data)
         min_count = cfg.get('min_particle_count', 0)
-        xp, xl = [], []
-        x = 0
-        all_vals_flat = []
-        for idx, (el, vals) in enumerate(sorted_data.items()):
+        sort_mode = self._category_sort_mode(cfg)
+        sorted_data = sort_element_dict_by_mass(data)
+        category_records = []
+        for el, vals in sorted_data.items():
             if min_count > 0 and len(vals) < min_count:
                 continue
             fv = _filter_values(vals, cfg.get('data_type_display', 'Counts'),
                                 cfg.get('log_y'), cfg)
             if fv and len(fv) >= 2:
-                element_cfg = dict(cfg)
-                element_cfg.setdefault('element_colors', {})
-                element_cfg['element_colors'].setdefault(
-                    el, _element_color(el, idx, cfg))
-                _draw_single_element(pi, x, fv, None, el, element_cfg, False)
-                all_vals_flat.extend(fv)
-                xp.append(x)
-                xl.append(_fmt_elem(el, cfg))
-                x += 1
+                category_records.append({
+                    'raw_key': el,
+                    'display_label': _fmt_elem(el, cfg),
+                    'values': fv,
+                    'sort_key': el,
+                    'sort_metric': float(np.median(np.asarray(fv, dtype=float))),
+                })
+        category_records = _sort_box_category_records(category_records, sort_mode)
+        xp, xl = [], []
+        x = 0
+        all_vals_flat = []
+        stats_source = {}
+        for idx, record in enumerate(category_records):
+            el = record['raw_key']
+            fv = record['values']
+            element_cfg = dict(cfg)
+            element_cfg.setdefault('element_colors', {})
+            element_cfg['element_colors'].setdefault(
+                el, _element_color(el, idx, cfg))
+            _draw_single_element(pi, x, fv, None, el, element_cfg, False)
+            all_vals_flat.extend(fv)
+            xp.append(x)
+            xl.append(record['display_label'])
+            stats_source[el] = data.get(el, [])
+            x += 1
         if xp:
             pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
         else:
             _add_empty_panel_message(pi, "No valid data")
-        set_axis_labels(pi, "Elements", _y_label(cfg), cfg)
+        self._apply_effective_axis_labels(
+            pi,
+            self._title_key_for_combined_plot(False),
+            {
+                'bottom': {'text': "Elements", 'units': None},
+                'left': {'text': _y_label(cfg), 'units': None},
+            },
+        )
         if cfg.get('log_y'):
             pi.getAxis('left').setLogMode(True)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg['y_min'], cfg['y_max'])
         if cfg.get('show_stats', True) and xp:
-            _add_stats_text(pi, sorted_data, cfg)
+            _add_stats_text(pi, stats_source, cfg)
         _apply_box_overlays(pi, all_vals_flat, cfg)
         _apply_boxplot_grid(pi, cfg)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot(False), default_title='')
         return bool(xp)
     def _draw_combined(self, pi, plot_data, cfg):
         """Draw the dense multi-sample ``Side by Side`` combined layout.
@@ -1527,9 +1948,8 @@ class BoxPlotDisplayDialog(QDialog):
             cfg (Any): The cfg.
         """
         min_count = cfg.get('min_particle_count', 0)
-        xp, xl = [], []
-        x = 0
-        all_vals_flat = []
+        sort_mode = self._category_sort_mode(cfg)
+        category_records = []
         for sn, sdata in plot_data.items():
             if not sdata:
                 continue
@@ -1539,21 +1959,45 @@ class BoxPlotDisplayDialog(QDialog):
                 fv = _filter_values(vals, cfg.get('data_type_display'),
                                     cfg.get('log_y'), cfg)
                 if fv and len(fv) >= 2:
-                    _draw_single_element(pi, x, fv, sn, el, cfg, True)
-                    all_vals_flat.extend(fv)
                     dn = get_display_name(sn, cfg)
-                    xp.append(x)
-                    xl.append(f"{_fmt_elem(el, cfg)}\n({dn})")
-                    x += 1
+                    category_records.append({
+                        'sample_name': sn,
+                        'raw_key': el,
+                        'display_label': f"{_fmt_elem(el, cfg)}\n({dn})",
+                        'values': fv,
+                        'sort_key': f"{el}|{sn}",
+                        'sort_metric': float(np.median(np.asarray(fv, dtype=float))),
+                    })
+        category_records = _sort_box_category_records(category_records, sort_mode)
+        xp, xl = [], []
+        x = 0
+        all_vals_flat = []
+        for record in category_records:
+            _draw_single_element(
+                pi, x, record['values'], record['sample_name'],
+                record['raw_key'], cfg, True)
+            all_vals_flat.extend(record['values'])
+            xp.append(x)
+            xl.append(record['display_label'])
+            x += 1
         if xp:
             pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
-        set_axis_labels(pi, "Elements", _y_label(cfg), cfg)
+        self._apply_effective_axis_labels(
+            pi,
+            self._title_key_for_combined_plot(True),
+            {
+                'bottom': {'text': "Elements", 'units': None},
+                'left': {'text': _y_label(cfg), 'units': None},
+            },
+        )
         if cfg.get('log_y'):
             pi.getAxis('left').setLogMode(True)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg['y_min'], cfg['y_max'])
         _apply_box_overlays(pi, all_vals_flat, cfg)
         _apply_boxplot_grid(pi, cfg)
+        self._configure_plot_title(
+            pi, self._title_key_for_combined_plot(True), default_title='')
     def _draw_subplots(self, plot_data, cfg):
         """Draw ``Subplots by sample`` as one panel per sample.
 
@@ -1583,10 +2027,27 @@ class BoxPlotDisplayDialog(QDialog):
             sd = plot_data[sn]
             if sd:
                 self._draw_single_sample(pi, sort_element_dict_by_mass(sd), cfg)
+                self._apply_effective_axis_labels(
+                    pi,
+                    self._title_key_for_sample_plot(sn),
+                    {
+                        'bottom': {'text': "Elements", 'units': None},
+                        'left': {'text': _y_label(cfg), 'units': None},
+                    },
+                )
             else:
                 _add_empty_panel_message(pi, "No valid data")
-                set_axis_labels(pi, "Elements", _y_label(cfg), cfg)
-            pi.setTitle(get_display_name(sn, cfg))
+                self._apply_effective_axis_labels(
+                    pi,
+                    self._title_key_for_sample_plot(sn),
+                    {
+                        'bottom': {'text': "Elements", 'units': None},
+                        'left': {'text': _y_label(cfg), 'units': None},
+                    },
+                )
+            self._configure_plot_title(
+                pi, self._title_key_for_sample_plot(sn),
+                default_title=get_display_name(sn, cfg))
             if first_pi is None:
                 first_pi = pi
             elif cols > 1 and r == 0:
@@ -1599,17 +2060,18 @@ class BoxPlotDisplayDialog(QDialog):
         """Draw ``Subplots by isotope`` with one panel per element/isotope.
 
         This is the canonical isotope-subplot multi-sample layout and the
-        target of legacy grouped/by-sample alias values. Sample x-positions are
-        reserved globally across panels so the same sample appears at the same
-        x-coordinate for every isotope panel, with gaps left for missing data.
-        Axis/tick font, grid styling, and figure overlays (including frame)
-        are applied per subplot from config.
+        target of legacy grouped/by-sample alias values. Each subplot sorts its
+        own sample categories independently so one isotope can order sample
+        boxes differently from another without changing any extracted values or
+        computed statistics. Axis/tick font, grid styling, and figure overlays
+        (including frame) are applied per subplot from config.
 
         Args:
             plot_data (Any): The plot data.
             cfg (Any): The cfg.
         """
         min_count = cfg.get('min_particle_count', 0)
+        sort_mode = self._category_sort_mode(cfg)
         sample_order = cfg.get('sample_order', [])
         if sample_order:
             ordered_samples = [s for s in sample_order if s in plot_data]
@@ -1623,34 +2085,65 @@ class BoxPlotDisplayDialog(QDialog):
         all_elems = sort_elements_by_mass(list(all_elems))
         cols = min(3, len(all_elems))
         rows = math.ceil(len(all_elems) / cols)
-        sample_pos = {sn: idx for idx, sn in enumerate(ordered_samples)}
-        tick_pairs = [(sample_pos[sn], get_display_name(sn, cfg))
-                      for sn in ordered_samples]
         for i, el in enumerate(all_elems):
             r, c = divmod(i, cols)
             pi = self.pw.addPlot(row=r, col=c)
             drawn_any = False
             panel_values = []
-            for sn in ordered_samples:
-                sd = plot_data[sn]
-                if el in sd:
-                    vals = sd[el]
-                    if min_count > 0 and len(vals) < min_count:
-                        continue
-                    fv = _filter_values(vals, cfg.get('data_type_display'), cfg.get('log_y'), cfg)
-                    if fv and len(fv) >= 2:
-                        _draw_single_element(pi, sample_pos[sn], fv, sn, el, cfg, True)
-                        panel_values.extend(fv)
-                        drawn_any = True
+            sample_records = []
+            for original_index, sn in enumerate(ordered_samples):
+                sd = plot_data.get(sn, {})
+                vals = sd.get(el, [])
+                fv = None
+                if not (min_count > 0 and len(vals) < min_count):
+                    fv = _filter_values(
+                        vals,
+                        cfg.get('data_type_display'),
+                        cfg.get('log_y'),
+                        cfg,
+                    )
+                    if fv and len(fv) < 2:
+                        fv = None
+                sample_records.append({
+                    'raw_sample_name': sn,
+                    'display_label': get_display_name(sn, cfg),
+                    'original_index': original_index,
+                    'values': fv,
+                    'sort_metric': (
+                        float(np.mean(np.asarray(fv, dtype=float)))
+                        if fv else None
+                    ),
+                })
+
+            sorted_records = _sort_box_sample_records(sample_records, sort_mode)
+            tick_pairs = []
+            for x_pos, record in enumerate(sorted_records):
+                sn = record['raw_sample_name']
+                fv = record['values']
+                tick_pairs.append((x_pos, record['display_label']))
+                if fv:
+                    _draw_single_element(pi, x_pos, fv, sn, el, cfg, True)
+                    panel_values.extend(fv)
+                    drawn_any = True
             if tick_pairs:
                 pi.getAxis('bottom').setTicks([tick_pairs])
-            pi.setTitle(_fmt_elem(el, cfg))
+            self._configure_plot_title(
+                pi, self._title_key_for_element_plot(el),
+                default_title=_fmt_elem(el, cfg))
             self._subplot_context_by_plotitem[pi] = {
                 "mode": "Subplots by isotope",
                 "element": el,
-                "title": _fmt_elem(el, cfg),
+                "title": self._effective_title_for_key(
+                    self._title_key_for_element_plot(el), _fmt_elem(el, cfg)),
             }
-            set_axis_labels(pi, "Samples", _y_label(cfg), cfg)
+            self._apply_effective_axis_labels(
+                pi,
+                self._title_key_for_element_plot(el),
+                {
+                    'bottom': {'text': "Samples", 'units': None},
+                    'left': {'text': _y_label(cfg), 'units': None},
+                },
+            )
             if cfg.get('log_y'):
                 pi.getAxis('left').setLogMode(True)
             _apply_box_overlays(pi, panel_values, cfg)
@@ -1712,8 +2205,17 @@ class BoxPlotDisplayDialog(QDialog):
                     x += 1
             if xp:
                 pi.getAxis('bottom').setTicks([list(zip(xp, xl))])
-            pi.setTitle(_fmt_elem(el, cfg))
-            set_axis_labels(pi, "Sample", _y_label(cfg), cfg)
+            self._configure_plot_title(
+                pi, self._title_key_for_element_plot(el),
+                default_title=_fmt_elem(el, cfg))
+            self._apply_effective_axis_labels(
+                pi,
+                self._title_key_for_element_plot(el),
+                {
+                    'bottom': {'text': "Sample", 'units': None},
+                    'left': {'text': _y_label(cfg), 'units': None},
+                },
+            )
             if cfg.get('log_y'):
                 pi.getAxis('left').setLogMode(True)
             if not cfg.get('auto_y', True):

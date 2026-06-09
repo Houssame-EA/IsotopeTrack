@@ -23,7 +23,7 @@ from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
     LABEL_MODES, format_element_label, format_combination_label, Renderer,
     per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
-    format_per_ml,
+    format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 
@@ -60,6 +60,7 @@ LEGEND_POSITIONS = [
 _LINE_STYLES = ['-', '--', '-.', ':']
 _LINE_NAMES  = ['Solid', 'Dashed', 'Dash-dot', 'Dotted']
 EXPORT_FORMATS = ['svg', 'pdf', 'png', 'eps']
+DEGREE_SIGN = "\N{DEGREE SIGN}"
 
 # â”€â”€ Small helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -88,9 +89,12 @@ class _ColorBtn(QPushButton):
         self._apply()
 
     def _apply(self):
+        """Refresh the swatch preview without styling any parent dialog."""
         self.setStyleSheet(
-            f'background-color:{self._color};'
-            f'border:1px solid #666;border-radius:2px;'
+            "QPushButton {"
+            f"background-color:{self._color};"
+            "border:1px solid #666;border-radius:2px;"
+            "}"
         )
 
     def color(self) -> str:
@@ -101,22 +105,25 @@ class _ColorBtn(QPushButton):
         return self._color
 
     def set_color(self, c: str):
-        """
+        """Store one validated pie-preview color and refresh the swatch.
+
         Args:
-            c (str): The c.
+            c (str): Hex color string selected for this preview swatch.
         """
         self._color = c
         self._apply()
 
     def mousePressEvent(self, event):
-        """
+        """Open the shared safe color picker for this swatch on left click.
+
         Args:
             event (Any): Qt event object.
         """
         if event.button() == Qt.LeftButton:
-            picked = QColorDialog.getColor(QColor(self._color), self)
-            if picked.isValid():
-                self.set_color(picked.name())
+            picked = pick_color_hex(self._color, owner=self,
+                                    title="Select Color")
+            if picked:
+                self.set_color(picked)
         super().mousePressEvent(event)
 
 
@@ -154,7 +161,8 @@ class PieStyleGroup:
         f.addRow("Centre Label:", self._center_text)
 
         self._start = QSpinBox()
-        self._start.setRange(0, 360); self._start.setSuffix("Â°")
+        self._start.setRange(0, 360)
+        self._start.setSuffix(DEGREE_SIGN)
         self._start.setValue(cfg.get('start_angle', 90))
         f.addRow("Start Angle:", self._start)
 
