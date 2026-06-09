@@ -23,7 +23,7 @@ from results.shared_plot_utils import (
     create_single_color_scatter, create_color_mapped_scatter,
     add_trend_line, add_correlation_text, CustomColorBar,
     get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
+    download_pyqtgraph_figure, pick_color_hex,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
 )
 
@@ -74,11 +74,105 @@ class CorrelationSettingsDialog(QDialog):
         self._sample_names = sample_names
         self.display_mode = None
         self._sample_name_edits = None
+        self._sample_color_buttons = None
+        self._sample_colors = dict(self._config.get('sample_colors', {}))
+        self._single_sample_color = self._config.get('single_sample_color', '#3B82F6')
+        self._single_sample_color_btn = None
         self._format_groups = []
         self._quantity_groups = []
         self._build_ui()
 
     # ── UI construction ──────────────────────
+
+    def _sample_point_colors_available(self) -> bool:
+        """Return whether sample-owned colors currently drive scatter points.
+
+        Returns:
+            bool: ``True`` when Correlation is not using element-based
+                color-mapped points through the active ``Color by`` selection.
+
+        Preserved behavior:
+            This only gates format-settings controls. It does not change
+            plotted values, correlation math, or the existing color-mapped
+            scatter rendering path.
+        """
+        if self._config.get('mode', 'Simple Element Correlation') != 'Simple Element Correlation':
+            return True
+        return self._config.get('color_element', 'None') == 'None'
+
+    def _sample_point_color_unavailable_text(self) -> str:
+        """Return the explanatory note for disabled sample point colors.
+
+        Returns:
+            str: Short user-facing explanation shown when ``Color by`` owns
+                point appearance instead of per-sample colors.
+        """
+        color_element = self._config.get('color_element', 'None')
+        if color_element and color_element != 'None':
+            return (
+                "Sample point colors are unavailable because points are "
+                f"colored by the selected Color By element: {color_element}."
+            )
+        return "Sample point colors are unavailable for the current plot mode."
+
+    def _style_color_button(self, button: QPushButton, color: str) -> None:
+        """Apply a compact swatch preview to a Correlation color button.
+
+        Args:
+            button (QPushButton): Swatch button to update.
+            color (str): Hex color string to preview.
+        """
+        button.setStyleSheet(f"background:{color};")
+
+    def _sample_display_label(self, sample_name: str) -> str:
+        """Return the visible display label for one raw sample key.
+
+        Args:
+            sample_name (str): Raw canonical sample key.
+
+        Returns:
+            str: Current display label, falling back to the raw sample key.
+        """
+        return get_display_name(sample_name, self._config)
+
+    def _pick_single_sample_color(self) -> None:
+        """Pick the actual single-sample scatter point color."""
+        picked = pick_color_hex(
+            self._single_sample_color,
+            owner=self,
+            title="Point Color",
+        )
+        if picked:
+            self._single_sample_color = picked
+            if self._single_sample_color_btn is not None:
+                self._style_color_button(self._single_sample_color_btn, picked)
+
+    def _pick_sample_color(self, sample_name: str, button: QPushButton) -> None:
+        """Pick one canonical scatter color for a raw multi-sample key.
+
+        Args:
+            sample_name (str): Raw canonical sample key whose point color is
+                being edited.
+            button (QPushButton): Swatch button previewing the current color.
+        """
+        initial = self._sample_colors.get(sample_name, '#3B82F6')
+        picked = pick_color_hex(initial, owner=self, title="Sample Point Color")
+        if picked:
+            self._sample_colors[sample_name] = picked
+            self._style_color_button(button, picked)
+
+    def _reset_sample_color(self, sample_name: str, sample_index: int,
+                            button: QPushButton) -> None:
+        """Reset one sample color override back to palette fallback.
+
+        Args:
+            sample_name (str): Raw canonical sample key to clear.
+            sample_index (int): Stable palette index for this sample.
+            button (QPushButton): Swatch button to refresh after clearing.
+        """
+        self._sample_colors.pop(sample_name, None)
+        fallback = get_sample_color(sample_name, sample_index, {'sample_colors': {}})
+        self._style_color_button(button, fallback)
 
     def _build_ui(self):
         """
@@ -279,6 +373,60 @@ class CorrelationSettingsDialog(QDialog):
         fl.addRow("Figure box (frame):", self.show_box_cb)
         layout.addWidget(g)
         self._format_groups.append(g)
+
+        if self._is_multi:
+            g = QGroupBox("Sample Point Colors")
+            sl = QVBoxLayout(g)
+            if self._sample_point_colors_available():
+                self._sample_color_buttons = {}
+                for index, sn in enumerate(self._sample_names):
+                    row = QHBoxLayout()
+                    label = QLabel(self._sample_display_label(sn)[:28])
+                    label.setToolTip(f"Raw key: {sn}")
+                    row.addWidget(label)
+                    btn = QPushButton()
+                    btn.setFixedSize(26, 22)
+                    color = get_sample_color(sn, index, self._config)
+                    self._style_color_button(btn, color)
+                    btn.clicked.connect(
+                        lambda _, sample_name=sn, swatch=btn: self._pick_sample_color(sample_name, swatch))
+                    row.addWidget(btn)
+                    rst = QPushButton("Reset")
+                    rst.setFixedHeight(22)
+                    rst.clicked.connect(
+                        lambda _, sample_name=sn, sample_index=index, swatch=btn:
+                            self._reset_sample_color(sample_name, sample_index, swatch))
+                    row.addWidget(rst)
+                    row.addStretch()
+                    w = QWidget(); w.setLayout(row)
+                    sl.addWidget(w)
+                    self._sample_color_buttons[sn] = btn
+            else:
+                note = QLabel(self._sample_point_color_unavailable_text())
+                note.setWordWrap(True)
+                note.setStyleSheet("color:#6B7280;")
+                sl.addWidget(note)
+            layout.addWidget(g)
+            self._format_groups.append(g)
+        else:
+            g = QGroupBox("Point Color")
+            fl = QFormLayout(g)
+            if self._sample_point_colors_available():
+                row = QHBoxLayout()
+                self._single_sample_color_btn = QPushButton()
+                self._single_sample_color_btn.setFixedSize(26, 22)
+                self._style_color_button(self._single_sample_color_btn, self._single_sample_color)
+                self._single_sample_color_btn.clicked.connect(self._pick_single_sample_color)
+                row.addWidget(self._single_sample_color_btn)
+                row.addStretch()
+                fl.addRow("Scatter points:", row)
+            else:
+                note = QLabel(self._sample_point_color_unavailable_text())
+                note.setWordWrap(True)
+                note.setStyleSheet("color:#6B7280;")
+                fl.addRow(note)
+            layout.addWidget(g)
+            self._format_groups.append(g)
 
         g = QGroupBox("Font")
         fl = QFormLayout(g)
@@ -496,6 +644,11 @@ class CorrelationSettingsDialog(QDialog):
             cfg['ref_line_width'] = self._ref_width.value()
             cfg['marker_size'] = self.m_size.value()
             cfg['marker_alpha'] = self.m_alpha.value()
+            if self._is_multi and self._sample_color_buttons is not None:
+                cfg['sample_colors'] = dict(self._sample_colors)
+            if (not self._is_multi and self._single_sample_color_btn is not None
+                    and self._sample_point_colors_available()):
+                cfg['single_sample_color'] = self._single_sample_color
             cfg['font_family'] = self.font_family_combo.currentText()
             cfg['font_size'] = self.font_size_spin.value()
             cfg['font_color'] = self._font_color
