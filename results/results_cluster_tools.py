@@ -81,16 +81,37 @@ except Exception:
     }
     DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
 
-    def _apply_clr(matrix):
-        """Centred-log-ratio transform of a non-negative composition matrix."""
-        eps = 1e-10
-        X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
+    def _apply_clr(matrix, zero_replacement='additive'):
+        """Centred-log-ratio transform of a non-negative composition matrix.
+
+        Args:
+            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
+            zero_replacement (str): ``'additive'`` floors zeros at ``1e-10``
+                (legacy default); ``'multiplicative'`` uses
+                :func:`multiplicative_replacement`.
+
+        Returns:
+            np.ndarray: CLR-transformed matrix.
+        """
+        if zero_replacement == 'multiplicative':
+            X = multiplicative_replacement(matrix)
+        else:
+            eps = 1e-10
+            X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
         log_X = np.log(X)
         return log_X - log_X.mean(axis=1, keepdims=True)
 
-    def _apply_ilr(matrix):
-        """Isometric-log-ratio transform yielding ``p - 1`` coordinates."""
-        clr = _apply_clr(matrix)
+    def _apply_ilr(matrix, zero_replacement='additive'):
+        """Isometric-log-ratio transform yielding ``p - 1`` coordinates.
+
+        Args:
+            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
+            zero_replacement (str): Passed through to :func:`_apply_clr`.
+
+        Returns:
+            np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
+        """
+        clr = _apply_clr(matrix, zero_replacement=zero_replacement)
         p = clr.shape[1]
         if p < 2:
             return clr
@@ -103,12 +124,27 @@ except Exception:
         return clr @ V
 
     def _apply_robust_zscore(matrix):
-        """Median / MAD robust z-score normalisation, column-wise."""
+        """Robust per-column z-score using a consistent scale estimate.
+
+        Centres on the median and divides by ``1.4826 * MAD``, falling back to
+        the column standard deviation when the MAD vanishes and to unit scale for
+        constant columns, so sparse columns cannot be inflated by a near-zero
+        denominator.
+
+        Args:
+            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
+
+        Returns:
+            np.ndarray: Robust z-score normalised matrix.
+        """
         X = matrix.astype(np.float64)
         med = np.median(X, axis=0)
         mad = np.median(np.abs(X - med), axis=0)
-        mad = np.where(mad < 1e-10, 1e-10, mad)
-        return (X - med) / mad
+        scale = 1.4826 * mad
+        std = np.std(X, axis=0)
+        scale = np.where(scale > 1e-10, scale, std)
+        scale = np.where(scale > 1e-10, scale, 1.0)
+        return (X - med) / scale
 
     from sklearn.metrics import (
         silhouette_score, calinski_harabasz_score, davies_bouldin_score,
@@ -337,6 +373,88 @@ DEFAULT_DATA_TYPES = ['Counts']
 DEFAULT_SCALINGS = ['None']
 DEFAULT_DIM_REDUCTIONS = ['None']
 DEFAULT_ALGORITHMS = ['K-Means']
+
+
+def multiplicative_replacement(matrix, frac=0.65, threshold=None):
+    """Replace zeros in a non-negative composition matrix without distorting ratios.
+
+    Log-ratio transforms (CLR, ILR) are undefined at zero, and the common remedy
+    of substituting a tiny constant such as ``1e-10`` is statistically poor for
+    sparse, zero-inflated data: every zero is mapped to an almost identical, very
+    large negative log value, so the transformed coordinates encode the
+    presence/absence pattern at enormous magnitude and swamp genuine compositional
+    differences. This is acute for single-particle ICP-ToF-MS matrices, where most
+    particles carry signal in only one or a few element channels.
+
+    The multiplicative (a.k.a. simple) replacement strategy substitutes a small
+    positive value ``delta`` for each zero and then multiplicatively rescales the
+    non-zero parts of the same row so the row total is preserved, which keeps the
+    ratios between the observed (non-zero) parts unchanged — the property that
+    makes the replacement coherent for compositional data. ``delta`` is taken as a
+    fraction of a per-column detection floor: by default the smallest strictly
+    positive value seen in each column, which ties the imputed value to the
+    instrument's effective detection limit rather than to an arbitrary constant.
+
+    References:
+        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
+        "Dealing with zeros and missing values in compositional data sets using
+        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
+        doi:10.1023/A:1023866030544.
+        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
+        Hall, 1986.
+
+    Args:
+        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
+            row is treated as one composition.
+        frac (float): Fraction of the per-column detection floor used as the
+            imputed value ``delta``; ``0.65`` is the value recommended by
+            Martín-Fernández et al. (2003). Must lie in ``(0, 1)``.
+        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
+            detection floor. When ``None`` the smallest strictly positive entry
+            in each column is used, falling back to ``1.0`` for all-zero columns.
+
+    Returns:
+        np.ndarray: A float64 copy of ``matrix`` with zeros replaced and row
+            totals preserved. Rows that are entirely zero are filled with the per-column floor
+            ``delta`` so downstream log-ratios stay finite.
+    """
+    X = np.array(matrix, dtype=np.float64, copy=True)
+    if X.size == 0:
+        return X
+    n_parts = X.shape[1]
+    if threshold is None:
+        floor = np.full(n_parts, np.nan)
+        for j in range(n_parts):
+            col = X[:, j]
+            pos = col[col > 0]
+            floor[j] = pos.min() if pos.size else 1.0
+    else:
+        floor = np.asarray(threshold, dtype=np.float64)
+        if floor.ndim == 0:
+            floor = np.full(n_parts, float(floor))
+    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
+    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
+
+    totals = X.sum(axis=1)
+    out = X.copy()
+    for i in range(X.shape[0]):
+        row = X[i]
+        zero = row <= 0
+        if not zero.any():
+            continue
+        if totals[i] <= 0:
+            out[i] = delta
+            continue
+        imputed = delta[zero]
+        removed = imputed.sum()
+        scale = 1.0 - removed / totals[i]
+        if scale <= 0:
+            out[i] = row + (delta if zero.all() else 0.0)
+            out[i, zero] = delta[zero]
+            continue
+        out[i, ~zero] = row[~zero] * scale
+        out[i, zero] = imputed
+    return out
 
 
 def parse_components(text):
@@ -824,14 +942,19 @@ def run_sweep(particle_data, elements, components, *,
         cancel_event (threading.Event or None): Set to abort early.
 
     Returns:
-        dict: ``{'results', 'truth', 'completed', 'total', 'cancelled'}`` and an
-            optional ``'error'`` string.
+        dict: ``{'results', 'truth', 'completed', 'total', 'cancelled',
+            'failures', 'attempts'}`` and an optional ``'error'`` string.
+            ``'failures'`` lists every configuration that produced no usable
+            partition (with a ``'reason'``), and ``'attempts'`` maps each
+            algorithm to the number of fits attempted, so silent wipe-outs are
+            recoverable via :func:`summarize_sweep_failures`.
     """
     pre = Preprocessor(particle_data, elements, filter_zeros=filter_zeros,
                        n_components=n_components, min_type_count=min_type_count)
     if pre.n_rows < 2:
         return {'results': [], 'truth': {}, 'completed': 0, 'total': 0,
-                'cancelled': False, 'error': 'Insufficient data after filtering.'}
+                'cancelled': False, 'failures': [], 'attempts': {},
+                'error': 'Insufficient data after filtering.'}
 
     kept_other = None
     if other_flags is not None:
@@ -847,6 +970,8 @@ def run_sweep(particle_data, elements, components, *,
     total = count_combinations(pre_combos, algo_selections)
     done = 0
     results = []
+    failures = []
+    attempts = {a: 0 for a in algo_selections}
     cancelled = False
 
     for (dt, sc, dr) in pre_combos:
@@ -856,8 +981,14 @@ def run_sweep(particle_data, elements, components, *,
         try:
             data = pre.matrix(dt, sc, dr)
         except Exception:
-            done += sum(len(build_param_grid(a, s))
-                        for a, s in algo_selections.items())
+            for a, s in algo_selections.items():
+                n_grid = len(build_param_grid(a, s))
+                done += n_grid
+                attempts[a] += n_grid
+                for _ in range(n_grid):
+                    failures.append({'algorithm': a, 'data_type': dt,
+                                     'scaling': sc, 'dim_reduction': dr,
+                                     'reason': 'error'})
             if progress_cb:
                 progress_cb(done, total, f"{dt} / {sc} / {dr}: skipped")
             continue
@@ -871,15 +1002,22 @@ def run_sweep(particle_data, elements, components, *,
                 labels = run_algorithm(algo, params, data, som_runner=som_runner)
                 elapsed = time.perf_counter() - t0
                 done += 1
+                attempts[algo] += 1
                 if progress_cb and (done % 5 == 0 or done == total):
                     progress_cb(done, total, f"{algo} · {dt}/{sc}/{dr}")
                 if labels is None:
+                    failures.append({'algorithm': algo, 'data_type': dt,
+                                     'scaling': sc, 'dim_reduction': dr,
+                                     'reason': 'no_labels'})
                     continue
                 labels = np.asarray(labels)
                 valid = labels[labels >= 0]
                 n_clusters = int(len(np.unique(valid)))
                 n_noise = int(np.sum(labels < 0))
                 if n_clusters < min_clusters or n_clusters > max_clusters:
+                    failures.append({'algorithm': algo, 'data_type': dt,
+                                     'scaling': sc, 'dim_reduction': dr,
+                                     'reason': 'out_of_range'})
                     continue
 
                 row = {
@@ -918,7 +1056,8 @@ def run_sweep(particle_data, elements, components, *,
             break
 
     return {'results': results, 'truth': truth, 'completed': done,
-            'total': total, 'cancelled': cancelled}
+            'total': total, 'cancelled': cancelled,
+            'failures': failures, 'attempts': attempts}
 
 
 def rank_results(results, metric=PRIMARY_EXTERNAL_METRIC):
@@ -945,20 +1084,40 @@ def rank_results(results, metric=PRIMARY_EXTERNAL_METRIC):
 
 
 def _spearman(a, b):
-    """Return the Spearman rank correlation between two equal-length sequences."""
+    """Return the tie-corrected Spearman rank correlation of two sequences.
+
+    Spearman's rho is Pearson's correlation computed on the ranks of the two
+    inputs, measuring monotone (not merely linear) association. Across a
+    clustering sweep many configurations collapse to identical or near-identical
+    label assignments and therefore identical metric values, so ties are common;
+    the midrank (average-rank) treatment of ties is used so that tied values do
+    not bias the coefficient, as in the standard formulation. Non-finite pairs
+    are dropped pairwise before ranking, and fewer than three valid pairs yields
+    ``nan`` because the coefficient is then ill-determined.
+
+    References:
+        C. Spearman, "The proof and measurement of association between two
+        things," *Am. J. Psychol.* 15(1), 1904, 72-101, doi:10.2307/1412159.
+        M. G. Kendall, *Rank Correlation Methods*, 4th ed., Griffin, 1970
+        (midrank tie correction).
+
+    Args:
+        a (Sequence[float]): First sequence of values.
+        b (Sequence[float]): Second sequence of values, aligned to ``a``.
+
+    Returns:
+        float: Spearman rank correlation in ``[-1, 1]``, or ``nan`` when fewer
+            than three finite pairs remain or either ranked vector is constant.
+    """
+    from scipy.stats import spearmanr
+
     a = np.asarray(a, float)
     b = np.asarray(b, float)
     ok = np.isfinite(a) & np.isfinite(b)
     if ok.sum() < 3:
         return float('nan')
-    ar = np.argsort(np.argsort(a[ok])).astype(float)
-    br = np.argsort(np.argsort(b[ok])).astype(float)
-    ar -= ar.mean()
-    br -= br.mean()
-    denom = np.sqrt((ar ** 2).sum() * (br ** 2).sum())
-    if denom == 0:
-        return float('nan')
-    return float((ar * br).sum() / denom)
+    rho, _ = spearmanr(a[ok], b[ok])
+    return float(rho) if rho == rho else float('nan')
 
 
 def borda_count_rank(results, metrics, registry=None):
@@ -1003,7 +1162,6 @@ def borda_count_rank(results, metrics, registry=None):
                  else np.argsort(fin_vals, kind='stable'))
         ranked_vals = fin_vals[order]
 
-        # Assign Borda points with tie averaging
         pts = np.zeros(n_fin, dtype=float)
         i = 0
         while i < n_fin:
@@ -1061,6 +1219,159 @@ def analyze_metric_trust(results, internal_metrics,
         })
     out.sort(key=lambda d: (d['top_pick_ref'] != d['top_pick_ref'],
                             -(d['top_pick_ref'] if d['top_pick_ref'] == d['top_pick_ref'] else 0)))
+    return out
+
+
+def analyze_metric_trust_stratified(results, internal_metrics,
+                                    reference=PRIMARY_EXTERNAL_METRIC,
+                                    min_per_stratum=3):
+    """Validate each internal index against ground truth within fixed preprocessing.
+
+    :func:`analyze_metric_trust` correlates every internal index with the
+    external reference across the *entire* grid, but internal cluster-validity
+    indices are computed on whatever representation each pipeline produced — raw
+    counts, CLR coordinates, a PCA basis, a t-SNE embedding — and those values
+    are neither on a common scale nor measuring the same geometry. A high pooled
+    correlation can therefore reflect "this index is large on the representation
+    that happens to win" rather than "this index reliably ranks partitions." That
+    is a statement about representations, not about the metric's trustworthiness.
+
+    This function removes that confound by stratifying on the full preprocessing
+    triple ``(data_type, scaling, dim_reduction)`` and computing, within each
+    stratum, the Spearman correlation between the internal index and the external
+    reference. It reports, per metric, the sample-size-weighted mean correlation
+    across strata together with its spread, so an index that is consistently
+    aligned with the truth *given a fixed representation* is distinguishable from
+    one that only appears aligned because of representation effects. This is the
+    stratified, like-for-like comparison advocated for relative cluster-validity
+    studies by Vendramin, Campello & Hruschka and echoed in the comparative
+    protocols of Arbelaitz et al.
+
+    References:
+        L. Vendramin, R. J. G. B. Campello and E. R. Hruschka, "Relative
+        clustering validity criteria: a comparative overview," *Stat. Anal. Data
+        Min.* 3(4), 2010, 209-235, doi:10.1002/sam.10080.
+        O. Arbelaitz et al., "An extensive comparative study of cluster validity
+        indices," *Pattern Recognit.* 46(1), 2013, 243-256,
+        doi:10.1016/j.patcog.2012.07.021.
+
+    Args:
+        results (list[dict]): Result rows from :func:`run_sweep`.
+        internal_metrics (list[str]): Internal index names present in results.
+        reference (str): External metric to validate against.
+        min_per_stratum (int): Minimum finite pairs a stratum must contribute for
+            its correlation to count; smaller strata are skipped as unreliable.
+
+    Returns:
+        list[dict]: One entry per internal metric with keys ``'metric'``,
+            ``'weighted_spearman'`` (sample-weighted mean over strata),
+            ``'mean_spearman'`` (unweighted mean), ``'std_spearman'`` (spread
+            across strata), ``'n_strata'`` (strata that qualified) and
+            ``'per_stratum'`` (list of ``{'stratum', 'spearman', 'n'}``). Sorted
+            most-trustworthy first by weighted correlation, ``nan`` last.
+    """
+    strata = {}
+    for r in results:
+        key = (r.get('data_type'), r.get('scaling'), r.get('dim_reduction'))
+        strata.setdefault(key, []).append(r)
+
+    out = []
+    for m in internal_metrics:
+        spec = METRIC_REGISTRY.get(m, {})
+        sign = -1.0 if spec.get('direction', 'max') == 'min' else 1.0
+        per_stratum = []
+        rhos, weights = [], []
+        for key, rows in strata.items():
+            ref_vals = [r.get(reference, float('nan')) for r in rows]
+            int_vals = [r.get(m, float('nan')) for r in rows]
+            n_ok = int(np.sum(np.isfinite(ref_vals) & np.isfinite(int_vals)))
+            if n_ok < max(3, int(min_per_stratum)):
+                continue
+            rho = _spearman(int_vals, ref_vals)
+            if rho != rho:
+                continue
+            rho *= sign
+            per_stratum.append({
+                'stratum': '/'.join(str(p) for p in key),
+                'spearman': rho, 'n': n_ok,
+            })
+            rhos.append(rho)
+            weights.append(n_ok)
+        if rhos:
+            rhos_a = np.asarray(rhos, float)
+            w_a = np.asarray(weights, float)
+            weighted = float(np.sum(rhos_a * w_a) / np.sum(w_a))
+            mean = float(np.mean(rhos_a))
+            std = float(np.std(rhos_a)) if len(rhos_a) > 1 else 0.0
+        else:
+            weighted = mean = std = float('nan')
+        out.append({
+            'metric': m,
+            'weighted_spearman': weighted,
+            'mean_spearman': mean,
+            'std_spearman': std,
+            'n_strata': len(rhos),
+            'per_stratum': per_stratum,
+        })
+    out.sort(key=lambda d: (d['weighted_spearman'] != d['weighted_spearman'],
+                            -(d['weighted_spearman']
+                              if d['weighted_spearman'] == d['weighted_spearman']
+                              else 0.0)))
+    return out
+
+
+def summarize_sweep_failures(failures, total=None):
+    """Summarise where a sweep produced no usable partition, per algorithm.
+
+    :func:`run_sweep` wraps every fit in a broad guard and silently skips any
+    configuration that raised, returned no labels, or produced a cluster count
+    outside the accepted range. That robustness is desirable during a large grid
+    search, but it hides a failure mode that matters for interpretation: if every
+    Spectral-on-raw-counts fit died (a likely outcome, since an RBF affinity is
+    ill-conditioned on data spanning many orders of magnitude), the algorithm
+    looks like it merely "never won" rather than "could not run." This helper
+    rolls the per-configuration failure tally into a per-algorithm report so such
+    silent wipe-outs are visible and can be reported in the methods.
+
+    Args:
+        failures (list[dict]): Failure records from :func:`run_sweep`, each with
+            keys ``'algorithm'``, ``'data_type'``, ``'scaling'``,
+            ``'dim_reduction'`` and ``'reason'`` (``'error'``, ``'no_labels'`` or
+            ``'out_of_range'``).
+        total (dict or None): Optional ``{algorithm: attempted_fits}`` mapping so
+            the report can express failures as a fraction of attempts.
+
+    Returns:
+        list[dict]: One entry per algorithm with the failure count, a breakdown
+            by reason, the distinct preprocessing combinations affected and, when
+            ``total`` is supplied, the failure fraction. Sorted by descending
+            failure count.
+    """
+    by_algo = {}
+    for f in failures:
+        algo = f.get('algorithm', '?')
+        entry = by_algo.setdefault(algo, {
+            'algorithm': algo, 'n_failed': 0,
+            'reasons': {}, 'combos': set(),
+        })
+        entry['n_failed'] += 1
+        reason = f.get('reason', 'error')
+        entry['reasons'][reason] = entry['reasons'].get(reason, 0) + 1
+        entry['combos'].add((f.get('data_type'), f.get('scaling'),
+                             f.get('dim_reduction')))
+    out = []
+    for algo, entry in by_algo.items():
+        attempted = (total or {}).get(algo)
+        out.append({
+            'algorithm': algo,
+            'n_failed': entry['n_failed'],
+            'reasons': dict(entry['reasons']),
+            'n_combos_affected': len(entry['combos']),
+            'attempted': attempted,
+            'failure_fraction': (entry['n_failed'] / attempted
+                                 if attempted else float('nan')),
+        })
+    out.sort(key=lambda d: -d['n_failed'])
     return out
 
 
@@ -1793,7 +2104,6 @@ if _QT_OK:
             ext  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
             intl = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
 
-            # Rank rows — Borda paths use consensus across all selected metrics
             if metric == 'Borda (Internal)':
                 self._ranked = borda_count_rank(results, intl, METRIC_REGISTRY)
                 borda_col = 'Borda ∑ (int)'
@@ -2251,7 +2561,6 @@ if _QT_OK:
             )
             dlg.setWindowModality(Qt.NonModal)
             dlg.setWindowFlags(dlg.windowFlags() | Qt.Window)
-            # Keep reference so dialog isn't garbage-collected after show()
             host_dialog._custom_test_dialog = dlg
             dlg.show()
 
