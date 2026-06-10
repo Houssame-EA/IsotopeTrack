@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import (
     Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject,
-    QPropertyAnimation, QEasingCurve, QTimer, QSize, QTimeLine
+    QPropertyAnimation, QEasingCurve, QTimer, QSize, QTimeLine, QThread
 )
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath,
@@ -2305,6 +2305,41 @@ class BatchSampleSelectorDialog(QDialog):
         """
         return [cb.window_ref for cb in self.window_checkboxes if cb.isChecked()]
 
+class _CalculationWorker(QThread):
+    """Runs a node's ``get_output_data()`` off the GUI thread.
+
+    The Single- and Multi-Sample selector nodes filter and combine the raw
+    particle data when their selection is confirmed (the OK button). On large
+    datasets this can take a noticeable amount of time. Doing it here keeps the
+    canvas responsive instead of freezing while the calculation runs.
+
+    The ``finished_ok`` / ``failed`` signals are emitted from the worker thread
+    but, because the receiving node lives on the GUI thread, Qt delivers them
+    back on the GUI thread — so the slots are free to touch the scene/UI.
+    """
+
+    finished_ok = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, compute_fn, parent=None):
+        """
+        Args:
+            compute_fn (Any): Zero-arg callable that performs the calculation.
+            parent (Any): Parent QObject.
+        """
+        super().__init__(parent)
+        self._compute_fn = compute_fn
+
+    def run(self):
+        """Execute the calculation and report the result via a signal."""
+        try:
+            result = self._compute_fn()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            return
+        self.finished_ok.emit(result)
+
+
 class _StatusNodeMixin:
     """Adds status badge rendering to icon nodes."""
 
@@ -2321,6 +2356,82 @@ class _StatusNodeMixin:
             object: Result of the operation.
         """
         return DS.TEXT_SECONDARY
+
+    def _is_calc_busy(self):
+        """Return True while a background calculation is running.
+
+        Returns:
+            bool: Whether at least one worker thread is still active.
+        """
+        return bool(getattr(self, "_calc_workers", None))
+
+    def _run_calculation_async(self):
+        """Compute this node's output in a background thread, then push the
+        result to every connected sink.
+
+        Replaces the old synchronous loop (which called ``get_output_data()``
+        directly on the GUI thread) so the canvas stays responsive while the
+        calculation runs.
+        """
+        s = self.scene()
+        if not s:
+            return
+        has_sink = any(lk.source_node == self.workflow_node
+                       for lk in s.workflow_links)
+        if not has_sink:
+            return
+
+        if not hasattr(self, "_calc_workers"):
+            self._calc_workers = set()
+
+        worker = _CalculationWorker(self.workflow_node.get_output_data)
+        self._calc_workers.add(worker)
+        worker.finished_ok.connect(self._on_calc_done)
+        worker.failed.connect(self._on_calc_failed)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
+
+        self.update()
+        worker.start()
+
+    def _on_calc_done(self, result):
+        """Deliver the freshly computed output to every connected sink.
+
+        Runs back on the GUI thread, so calling ``process_data`` here is safe.
+
+        Args:
+            result (Any): The value returned by ``get_output_data()``.
+        """
+        s = self.scene()
+        if s:
+            for lk in s.workflow_links:
+                if lk.source_node == self.workflow_node:
+                    try:
+                        if hasattr(lk.sink_node, "process_data"):
+                            lk.sink_node.process_data(result)
+                    except Exception as exc:
+                        print(f"Data flow error: {exc}")
+        self.update()
+
+    def _on_calc_failed(self, message):
+        """Handle a failed background calculation.
+
+        Args:
+            message (str): Error text from the worker thread.
+        """
+        print(f"Calculation error: {message}")
+        self.update()
+
+    def _cleanup_worker(self, worker):
+        """Drop a finished worker so it can be garbage-collected.
+
+        Args:
+            worker (Any): The _CalculationWorker that just finished.
+        """
+        workers = getattr(self, "_calc_workers", None)
+        if workers is not None:
+            workers.discard(worker)
+        worker.deleteLater()
+        self.update()
 
 
 class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
@@ -2370,6 +2481,9 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
                 painter.setBrush(Qt.NoBrush)
                 painter.drawEllipse(self.boundingRect().center(), i * 2.2, i * 2.2)
 
+        if self._is_calc_busy():
+            badge, bc = "⏳", DS.WARNING
+
         self.paint_icon_node(
             painter, ("#6366F1", "#4338CA"),
             "fa6s.flask", "Sample",
@@ -2377,11 +2491,8 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         )
 
     def _trigger(self):
-        s = self.scene()
-        if s:
-            for lk in s.workflow_links:
-                if lk.source_node == self.workflow_node:
-                    s._trigger_data_flow(lk)
+        """Run the node calculation in a background thread on (re)configure."""
+        self._run_calculation_async()
 
     def configure_node(self):
         if self.parent_window:
@@ -2852,6 +2963,8 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             badge, bc = "⟳", DS.PURPLE
         else:
             badge, bc = "!", DS.ERROR
+        if self._is_calc_busy():
+            badge, bc = "⏳", DS.WARNING
         self.paint_icon_node(
             painter, ("#8B5CF6", "#6D28D9"),
             "fa6s.flask-vial", "Multi-Sample",
@@ -2859,11 +2972,8 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         )
 
     def _trigger(self):
-        s = self.scene()
-        if s:
-            for lk in s.workflow_links:
-                if lk.source_node == self.workflow_node:
-                    s._trigger_data_flow(lk)
+        """Run the node calculation in a background thread on (re)configure."""
+        self._run_calculation_async()
 
     def configure_node(self):
         if self.parent_window:
@@ -3123,6 +3233,9 @@ class AIAssistantNodeItem(NodeItem):
         if self.parent_window:
             self.workflow_node.configure(self.parent_window)
 
+_PENDING_DRAG_NODE_TYPE = None
+
+
 class DraggableNodeButton(QPushButton):
 
     def __init__(self, text, node_type, icon_name=None, color=None):
@@ -3183,7 +3296,12 @@ class DraggableNodeButton(QPushButton):
             px = self.grab()
             drag.setPixmap(px)
             drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
-            drag.exec_(Qt.CopyAction)
+            global _PENDING_DRAG_NODE_TYPE
+            _PENDING_DRAG_NODE_TYPE = self.node_type
+            try:
+                drag.exec_(Qt.CopyAction)
+            finally:
+                _PENDING_DRAG_NODE_TYPE = None
         super().mousePressEvent(event)
 
 class _CollapsibleGroup(QWidget):
@@ -3905,31 +4023,62 @@ class EnhancedCanvasView(QGraphicsView):
                 x += gs
             y += gs
 
+    def _drag_node_type(self, event):
+        """Return the node type carried by a drag/drop event, or None.
+
+        Reads it from the mime data when possible, and falls back to the
+        module-level holder set by the palette. The mime-data access is
+        guarded because PySide6 can hand back a wrapper of the wrong type
+        here; letting that raise inside the event handler leaves Qt's drag
+        state half-initialised ("drag leave received before drag enter").
+
+        Args:
+            event (Any): The drag or drop event.
+
+        Returns:
+            str | None: The dragged node type, or None if not a node drag.
+        """
+        md = event.mimeData()
+        has_text = getattr(md, "hasText", None)
+        if callable(has_text):
+            try:
+                if has_text():
+                    text = md.text()
+                    if text:
+                        return text
+            except (AttributeError, RuntimeError):
+                pass
+        return _PENDING_DRAG_NODE_TYPE
+
     def dragEnterEvent(self, event):
         """
         Args:
             event (Any): Qt event object.
         """
-        if event.mimeData().hasText():
+        if self._drag_node_type(event):
             event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def dragMoveEvent(self, event):
         """
         Args:
             event (Any): Qt event object.
         """
-        if event.mimeData().hasText():
+        if self._drag_node_type(event):
             event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def dropEvent(self, event):
         """
         Args:
             event (Any): Qt event object.
         """
-        if not event.mimeData().hasText():
+        ntype = self._drag_node_type(event)
+        if not ntype:
             event.ignore()
             return
-        ntype = event.mimeData().text()
         sp = self.mapToScene(event.pos())
         gs = DS.GRID_SIZE
         snapped = QPointF(round(sp.x() / gs) * gs, round(sp.y() / gs) * gs)
