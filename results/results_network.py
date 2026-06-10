@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QCheckBox, QGroupBox,
     QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
@@ -208,13 +208,200 @@ def _node_size_note_text(cfg):
     if not cfg.get('scale_node_size_by_amount', False):
         return ""
 
-    data_type = cfg.get('data_type_display', 'Counts')
+    data_type = cfg.get('data_type_display', 'Counts') ##why here are we passing in counts 11:25 am 10 jun 2026
     aggregation = _normalize_node_size_aggregation(
-        cfg.get('node_size_aggregation', 'Sum'))
+        cfg.get('node_size_aggregation', 'Sum')) ##and here why are we passing in sum automatically, could this cause 
+                                                 ## the lengend invariance? 11:26 10/06/2026
     return (
         f"Node size: log10-scaled by {data_type} ({aggregation}); "
-        "smallest valid = base radius; max = 3x"
+        f"smallest valid node has base radius; max radius = {_node_size_max_scale():g}x base"
     )
+
+
+def _node_size_max_scale():
+    """Return the current maximum node-radius scale for proportional sizing.
+
+    Returns:
+        float: Maximum allowed radius multiplier relative to the configured base
+            node radius.
+    """
+    return 4.0
+
+
+def _node_size_visual_legend_enabled(cfg):
+    """Return whether the figure should render the RHS node-size visual legend.
+
+    Args:
+        cfg (dict): Current plot configuration.
+
+    Returns:
+        bool: ``True`` when proportional node sizing is enabled.
+    """
+    return bool(cfg.get('scale_node_size_by_amount', False))
+
+
+def _node_size_amount_unit(data_type):
+    """Return a compact unit label for node-size amount text.
+
+    Args:
+        data_type (str): Current ``data_type_display`` label.
+
+    Returns:
+        str: Compact amount unit suffix for the selected data type.
+    """
+    if data_type == 'Counts':
+        return 'counts'
+    if '(fg)' in data_type:
+        return 'fg'
+    if '(fmol)' in data_type:
+        return 'fmol'
+    if '(nm)' in data_type:
+        return 'nm'
+    return ''
+
+
+def _format_node_size_amount(value, unit):
+    """Format a quantitative node-size amount label compactly for the RHS legend.
+
+    Args:
+        value (float | None): Numeric amount to format.
+        unit (str): Unit suffix to append when available.
+
+    Returns:
+        str: Compact value string such as ``1.23e4 counts`` or ``12.3 nm``.
+    """
+    if value is None or not np.isfinite(value):
+        return 'unavailable'
+
+    abs_value = abs(float(value))
+    if abs_value == 0:
+        text = '0'
+    elif abs_value >= 1e4 or abs_value < 1e-2:
+        text = f"{value:.2e}".replace('e+0', 'e').replace('e+', 'e').replace('e-0', 'e-')
+    elif abs_value >= 100:
+        text = f"{value:.0f}"
+    elif abs_value >= 10:
+        text = f"{value:.1f}"
+    else:
+        text = f"{value:.3g}"
+    return f"{text} {unit}".strip()
+
+
+def _collect_node_size_base_amounts(network_payloads):
+    """Collect per-network minimum valid node amounts used for proportional sizing.
+
+    Args:
+        network_payloads (dict | list[dict] | None): Extracted network payload for
+            single-sample or multi-sample display.
+
+    Returns:
+        list[float]: Per-sample minimum valid positive node amounts, preserving
+            the current subplot/sample ordering.
+    """
+    if not network_payloads:
+        return []
+
+    payload_list = []
+    if isinstance(network_payloads, dict) and 'elements' in network_payloads:
+        payload_list = [network_payloads]
+    elif isinstance(network_payloads, dict):
+        payload_list = list(network_payloads.values())
+
+    mins = []
+    for payload in payload_list:
+        node_amounts = payload.get('node_amounts', {}) if isinstance(payload, dict) else {}
+        valid_values = [
+            float(value) for value in node_amounts.values()
+            if np.isfinite(value) and value > 0
+        ]
+        if valid_values:
+            mins.append(min(valid_values))
+    return mins
+
+
+def _node_size_legend_scales(max_scale):
+    """Return example radius scales for the RHS node-size visual legend.
+
+    The preferred examples are ``1.0x``, ``1.5x``, and ``2.0x`` base radius.
+    When the current maximum radius scale is lower than one of those examples,
+    the returned values adapt safely to stay within the active cap.
+
+    Args:
+        max_scale (float): Active maximum proportional node-radius scale.
+
+    Returns:
+        list[float]: Ordered example radius multipliers for the visual legend.
+    """
+    max_scale = _node_size_max_scale()
+    preferred = [1.0, 1.5, 2.0]
+    if max_scale >= preferred[-1]:
+        return preferred
+
+    midpoint = 1.0 + max(0.0, max_scale - 1.0) / 2.0
+    scales = [1.0, midpoint, max_scale]
+    unique_scales = []
+    for scale in scales:
+        rounded = round(scale, 3)
+        if rounded not in unique_scales:
+            unique_scales.append(rounded)
+    return unique_scales
+
+
+def _node_size_legend_amount_ratio(radius_scale):
+    """Convert a radius scale into the corresponding relative amount ratio.
+
+    Args:
+        radius_scale (float): Radius multiplier relative to the base node radius.
+
+    Returns:
+        float: Relative amount ratio implied by the log10 scaling formula.
+    """
+    return 10 ** (radius_scale - 1.0)
+
+
+def _node_size_visual_legend_labels(scales):
+    """Build compact labels for RHS node-size legend example circles.
+
+    Args:
+        scales (list[float]): Radius multipliers relative to base node radius.
+
+    Returns:
+        list[str]: Compact legend labels describing radius and amount ratio.
+    """
+    labels = []
+    for scale in scales:
+        if abs(scale - 1.0) < 1e-9:
+            labels.append("1.0x radius / base amount")
+            continue
+        amount_ratio = _node_size_legend_amount_ratio(scale)
+        if amount_ratio >= 10:
+            amount_text = f"{amount_ratio:.0f}x amount"
+        else:
+            amount_text = f"{amount_ratio:.1f}x amount"
+        labels.append(f"{scale:.1f}x radius / {amount_text}")
+    return labels
+
+
+def _legend_base_amount_text(network_payloads, data_type):
+    """Build the quantitative base-amount line for the RHS node-size legend.
+
+    In multi-sample mode, the legend intentionally uses the first sample's
+    minimum valid node amount as the visual base reference so the legend has one
+    concrete anchor value instead of a range.
+
+    Args:
+        network_payloads (dict | list[dict] | None): Extracted network payload
+            for the current redraw.
+        data_type (str): Current ``data_type_display`` label.
+
+    Returns:
+        str: Compact base-amount description for the RHS legend.
+    """
+    base_amounts = _collect_node_size_base_amounts(network_payloads)
+    unit = _node_size_amount_unit(data_type)
+    if not base_amounts:
+        return "sample min: unavailable"
+    return f"sample min: {_format_node_size_amount(base_amounts[0], unit)}"
 
 
 def _top_annotation_layout(has_legend, has_node_size_note):
@@ -226,14 +413,16 @@ def _top_annotation_layout(has_legend, has_node_size_note):
 
     Returns:
         dict: Layout values for figure-level annotations, including top note
-            position, bottom legend anchor, and the ``tight_layout`` bounds that
-            reserve enough space above and below subplots.
+            position, bottom legend anchor, RHS visual legend slot, and the
+            ``tight_layout`` bounds that reserve enough space around subplots.
     """
     layout = {
         'legend_y': 0.035,
         'note_y': 0.975,
         'tight_top': 0.92,
         'tight_bottom': 0.08,
+        'tight_right': 1.00,
+        'rhs_axes': [0.80, 0.20, 0.18, 0.60],
     }
     if has_legend and has_node_size_note:
         layout['note_y'] = 0.975
@@ -252,7 +441,8 @@ def _compute_node_radii(elements, node_amounts, base_radius, enabled):
     When proportional sizing is disabled, or when no valid positive amounts are
     available, every element keeps the base radius. Otherwise each valid amount
     is scaled relative to the smallest positive finite value in that sample
-    using ``1 + log10(value / min_valid)`` and capped at ``3x`` the base radius.
+    using ``1 + log10(value / min_valid)`` and capped at the current maximum
+    radius scale.
 
     Args:
         elements (list[str]): Canonical element keys used by the network.
@@ -277,7 +467,7 @@ def _compute_node_radii(elements, node_amounts, base_radius, enabled):
         return base_radii
 
     min_valid = min(valid_values.values())
-    max_scale = 3.0
+    max_scale = _node_size_max_scale()
     radius_by_element = {}
     for element in elements:
         value = valid_values.get(element)
@@ -415,7 +605,7 @@ class NetworkSettingsDialog(QDialog):
         else:
             self.setWindowTitle("Network Diagram Settings")
         self.setMinimumWidth(480)
-        self._cfg = dict(cfg)
+        self._cfg = dict(cfg)  ## left off reading here 11:25 am jun 10 2026
         self._input_data = input_data
         self._scope = scope
         self.dtype_combo = None
@@ -652,11 +842,23 @@ class NetworkDisplayDialog(QDialog):
         """
         super().__init__(parent_window)
         self.node = node
+        self._initial_refresh_pending = True
         self.setWindowTitle("Element Correlation Network")
         self.setMinimumSize(1000, 700)
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
+
+    def showEvent(self, event):
+        """Schedule one post-show redraw so the first open uses settled geometry.
+
+        Args:
+            event (QShowEvent): Qt show event for the dialog.
+        """
+        super().showEvent(event)
+        if self._initial_refresh_pending:
+            self._initial_refresh_pending = False
+            QTimer.singleShot(0, self._refresh)
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -769,7 +971,13 @@ class NetworkDisplayDialog(QDialog):
     # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
-        """Rebuild the Matplotlib figure from current config and extracted data."""
+        """Rebuild the Matplotlib figure from current config and extracted data.
+
+        The refresh flow finalizes subplot layout before computing the RHS
+        node-size visual legend so legend marker sizes are derived from the
+        settled network axes transform on the first redraw, not only after a
+        second no-op dialog confirmation.
+        """
         try:
             cfg = self.node.config
             if cfg.get('use_custom_figsize', False):
@@ -779,6 +987,7 @@ class NetworkDisplayDialog(QDialog):
             self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
             data = self.node.extract_network_data()
+            reference_ax = None
             if not data:
                 ax = self.figure.add_subplot(111)
                 ax.text(0.5, 0.5, 'No data available\nConnect to a Sample Selector node.',
@@ -791,6 +1000,7 @@ class NetworkDisplayDialog(QDialog):
 
             if isinstance(data, dict) and 'elements' in data:
                 ax = self.figure.add_subplot(111)
+                reference_ax = ax
                 legend_signs = self._draw_network(ax, data, cfg)
                 self._info.setText(
                     f"{len(data['elements'])} elements · "
@@ -806,26 +1016,35 @@ class NetworkDisplayDialog(QDialog):
                 for idx, sn in enumerate(names):
                     nd = data[sn]
                     ax = self.figure.add_subplot(rows, cols, idx + 1)
+                    if reference_ax is None:
+                        reference_ax = ax
                     legend_signs.update(self._draw_network(ax, nd, cfg))
                     total_edges += len(nd['edges'])
                 self._info.setText(f"{n} groups · {total_edges} total edges")
 
             has_legend = bool(legend_signs)
             has_node_size_note = bool(_node_size_note_text(cfg))
+            has_rhs_node_size_legend = _node_size_visual_legend_enabled(cfg)
             top_layout = _top_annotation_layout(has_legend, has_node_size_note)
+            if has_rhs_node_size_legend:
+                top_layout['tight_right'] = 0.76
             if has_legend:
                 self._apply_shared_legend(cfg, legend_signs, top_layout)
             if has_node_size_note:
                 self._apply_node_size_note(cfg, top_layout)
-            if has_legend or has_node_size_note:
+            if has_legend or has_node_size_note or has_rhs_node_size_legend:
                 self.figure.tight_layout(rect=(
                     0.0,
                     top_layout['tight_bottom'],
-                    1.0,
+                    top_layout['tight_right'],
                     top_layout['tight_top'],
                 ))
             else:
                 self.figure.tight_layout()
+            if has_rhs_node_size_legend:
+                # Finalize subplot transforms before deriving display-space legend sizes.
+                self.canvas.draw()
+                self._apply_node_size_visual_legend(cfg, data, reference_ax, top_layout)
             self.canvas.draw()
             self.canvas.snapshot_positions()
 
@@ -1044,6 +1263,147 @@ class NetworkDisplayDialog(QDialog):
             fontweight='bold' if fc['bold'] else 'normal',
             fontstyle='italic' if fc['italic'] else 'normal',
         )
+        return True
+
+    def _measure_reference_node_diameter_points(self, cfg, reference_ax):
+        """Measure the plotted base node diameter in display points.
+
+        Args:
+            cfg (dict): Current plot configuration containing the base node
+                radius.
+            reference_ax (matplotlib.axes.Axes | None): A rendered network axes
+                used to measure the base node patch with the same transform as
+                the plotted graph.
+
+        Returns:
+            float: The visible outer diameter of a base-radius node in points,
+            including the white outline. A conservative fallback is returned if
+            the live measurement cannot be completed.
+        """
+        fallback_diameter_points = 2.0 * 18.0 * 72.0 / self.figure.dpi
+        if reference_ax is None:
+            return fallback_diameter_points
+
+        try:
+            renderer = self.figure.canvas.get_renderer()
+            if renderer is None:
+                return fallback_diameter_points
+
+            base_radius = float(cfg.get('node_radius', 0.06))
+            probe = Circle(
+                (0.0, 0.0),
+                base_radius,
+                color=cfg.get('node_color', '#14B8A6'),
+                linewidth=1.5,
+                edgecolor='white',
+                visible=False,
+            )
+            reference_ax.add_patch(probe)
+            try:
+                bbox = probe.get_window_extent(renderer)
+            finally:
+                probe.remove()
+
+            width_px = max(4.0, float(bbox.width))
+            return width_px * 72.0 / self.figure.dpi
+        except Exception:
+            return fallback_diameter_points
+
+    def _apply_node_size_visual_legend(self, cfg, network_payloads, reference_ax, top_layout):
+        """Draw a RHS visual legend showing example proportional node sizes.
+
+        Args:
+            cfg (dict): Current plot configuration.
+            network_payloads (dict | None): Current extracted network payload used
+                to compute per-sample node-size minima.
+            reference_ax (matplotlib.axes.Axes | None): A representative network
+                axes used to align the visual base radius with plotted node size.
+            top_layout (dict): Coordinated figure annotation layout values.
+
+        Returns:
+            bool: ``True`` when the RHS visual legend was drawn.
+        """
+        if not _node_size_visual_legend_enabled(cfg):
+            return False
+
+        legend_ax = self.figure.add_axes(top_layout['rhs_axes'])
+        legend_ax.set_axis_off()
+        legend_ax.set_xlim(0.0, 1.0)
+        legend_ax.set_ylim(0.0, 1.0)
+
+        fc = get_font_config(cfg)
+        data_type = cfg.get('data_type_display', 'Counts')
+        aggregation = _normalize_node_size_aggregation(
+            cfg.get('node_size_aggregation', 'Sum'))
+        title_text = (
+            "Node size\n"
+            f"{data_type} - {aggregation}"
+        )
+        legend_ax.text(
+            0.04, 0.98, title_text,
+            ha='left', va='top',
+            fontsize=max(6, fc['size'] - 1),
+            color=fc['color'],
+            fontfamily=fc['family'],
+            fontweight='bold' if fc['bold'] else 'normal',
+            fontstyle='italic' if fc['italic'] else 'normal',
+            transform=legend_ax.transAxes,
+        )
+        legend_ax.text(
+            0.04, 0.84, "log10 scale\nrelative to sample min",
+            ha='left', va='top',
+            fontsize=max(5, fc['size'] - 3),
+            color=fc['color'],
+            fontfamily=fc['family'],
+            fontweight='bold' if fc['bold'] else 'normal',
+            fontstyle='italic' if fc['italic'] else 'normal',
+            transform=legend_ax.transAxes,
+        )
+
+        scales = _node_size_legend_scales(_node_size_max_scale())
+        labels = _node_size_visual_legend_labels(scales)
+        min_text = _legend_base_amount_text(network_payloads, data_type)
+
+        legend_ax.text(
+            0.04, 0.72, min_text,
+            ha='left', va='top',
+            fontsize=max(5, fc['size'] - 3),
+            color=fc['color'],
+            fontfamily=fc['family'],
+            fontweight='bold' if fc['bold'] else 'normal',
+            fontstyle='italic' if fc['italic'] else 'normal',
+            transform=legend_ax.transAxes,
+        )
+
+        y_positions = [0.58, 0.40, 0.22][:len(scales)]
+        node_edge_width_points = 1.5
+        base_diameter_points = self._measure_reference_node_diameter_points(
+            cfg, reference_ax)
+        for y, scale, label in zip(y_positions, scales, labels):
+            marker_diameter_points = max(
+                4.0,
+                base_diameter_points * scale,
+            )
+            legend_ax.plot(
+                [0.18], [y],
+                marker='o',
+                linestyle='None',
+                markersize=marker_diameter_points,
+                markerfacecolor=cfg.get('node_color', '#14B8A6'),
+                markeredgecolor='white',
+                markeredgewidth=node_edge_width_points,
+                transform=legend_ax.transAxes,
+            )
+            legend_ax.text(
+                0.34, y, label,
+                ha='left', va='center',
+                fontsize=max(5, fc['size'] - 3),
+                color=fc['color'],
+                fontfamily=fc['family'],
+                fontweight='bold' if fc['bold'] else 'normal',
+                fontstyle='italic' if fc['italic'] else 'normal',
+                transform=legend_ax.transAxes,
+            )
         return True
 
 
