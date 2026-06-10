@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QCheckBox, QGroupBox,
     QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
@@ -208,12 +208,13 @@ def _node_size_note_text(cfg):
     if not cfg.get('scale_node_size_by_amount', False):
         return ""
 
-    data_type = cfg.get('data_type_display', 'Counts')
+    data_type = cfg.get('data_type_display', 'Counts') ##why here are we passing in counts 11:25 am 10 jun 2026
     aggregation = _normalize_node_size_aggregation(
-        cfg.get('node_size_aggregation', 'Sum'))
+        cfg.get('node_size_aggregation', 'Sum')) ##and here why are we passing in sum automatically, could this cause 
+                                                 ## the lengend invariance? 11:26 10/06/2026
     return (
         f"Node size: log10-scaled by {data_type} ({aggregation}); "
-        "smallest valid node has base radius; max radius = 4x base"
+        f"smallest valid node has base radius; max radius = {_node_size_max_scale():g}x base"
     )
 
 
@@ -294,7 +295,8 @@ def _collect_node_size_base_amounts(network_payloads):
             single-sample or multi-sample display.
 
     Returns:
-        list[float]: Sorted list of per-sample minimum valid positive node amounts.
+        list[float]: Per-sample minimum valid positive node amounts, preserving
+            the current subplot/sample ordering.
     """
     if not network_payloads:
         return []
@@ -314,7 +316,7 @@ def _collect_node_size_base_amounts(network_payloads):
         ]
         if valid_values:
             mins.append(min(valid_values))
-    return sorted(mins)
+    return mins
 
 
 def _node_size_legend_scales(max_scale):
@@ -380,6 +382,28 @@ def _node_size_visual_legend_labels(scales):
     return labels
 
 
+def _legend_base_amount_text(network_payloads, data_type):
+    """Build the quantitative base-amount line for the RHS node-size legend.
+
+    In multi-sample mode, the legend intentionally uses the first sample's
+    minimum valid node amount as the visual base reference so the legend has one
+    concrete anchor value instead of a range.
+
+    Args:
+        network_payloads (dict | list[dict] | None): Extracted network payload
+            for the current redraw.
+        data_type (str): Current ``data_type_display`` label.
+
+    Returns:
+        str: Compact base-amount description for the RHS legend.
+    """
+    base_amounts = _collect_node_size_base_amounts(network_payloads)
+    unit = _node_size_amount_unit(data_type)
+    if not base_amounts:
+        return "sample min: unavailable"
+    return f"sample min: {_format_node_size_amount(base_amounts[0], unit)}"
+
+
 def _top_annotation_layout(has_legend, has_node_size_note):
     """Return coordinated figure annotation positions and layout bounds.
 
@@ -417,7 +441,8 @@ def _compute_node_radii(elements, node_amounts, base_radius, enabled):
     When proportional sizing is disabled, or when no valid positive amounts are
     available, every element keeps the base radius. Otherwise each valid amount
     is scaled relative to the smallest positive finite value in that sample
-    using ``1 + log10(value / min_valid)`` and capped at ``3x`` the base radius.
+    using ``1 + log10(value / min_valid)`` and capped at the current maximum
+    radius scale.
 
     Args:
         elements (list[str]): Canonical element keys used by the network.
@@ -580,7 +605,7 @@ class NetworkSettingsDialog(QDialog):
         else:
             self.setWindowTitle("Network Diagram Settings")
         self.setMinimumWidth(480)
-        self._cfg = dict(cfg)
+        self._cfg = dict(cfg)  ## left off reading here 11:25 am jun 10 2026
         self._input_data = input_data
         self._scope = scope
         self.dtype_combo = None
@@ -817,11 +842,23 @@ class NetworkDisplayDialog(QDialog):
         """
         super().__init__(parent_window)
         self.node = node
+        self._initial_refresh_pending = True
         self.setWindowTitle("Element Correlation Network")
         self.setMinimumSize(1000, 700)
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
+
+    def showEvent(self, event):
+        """Schedule one post-show redraw so the first open uses settled geometry.
+
+        Args:
+            event (QShowEvent): Qt show event for the dialog.
+        """
+        super().showEvent(event)
+        if self._initial_refresh_pending:
+            self._initial_refresh_pending = False
+            QTimer.singleShot(0, self._refresh)
 
     def _build_ui(self):
         lay = QVBoxLayout(self)
@@ -934,7 +971,13 @@ class NetworkDisplayDialog(QDialog):
     # ── Refresh / draw ─────────────────────────────────────────────────
 
     def _refresh(self):
-        """Rebuild the Matplotlib figure from current config and extracted data."""
+        """Rebuild the Matplotlib figure from current config and extracted data.
+
+        The refresh flow finalizes subplot layout before computing the RHS
+        node-size visual legend so legend marker sizes are derived from the
+        settled network axes transform on the first redraw, not only after a
+        second no-op dialog confirmation.
+        """
         try:
             cfg = self.node.config
             if cfg.get('use_custom_figsize', False):
@@ -944,6 +987,7 @@ class NetworkDisplayDialog(QDialog):
             self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
             data = self.node.extract_network_data()
+            reference_ax = None
             if not data:
                 ax = self.figure.add_subplot(111)
                 ax.text(0.5, 0.5, 'No data available\nConnect to a Sample Selector node.',
@@ -956,6 +1000,7 @@ class NetworkDisplayDialog(QDialog):
 
             if isinstance(data, dict) and 'elements' in data:
                 ax = self.figure.add_subplot(111)
+                reference_ax = ax
                 legend_signs = self._draw_network(ax, data, cfg)
                 self._info.setText(
                     f"{len(data['elements'])} elements · "
@@ -971,6 +1016,8 @@ class NetworkDisplayDialog(QDialog):
                 for idx, sn in enumerate(names):
                     nd = data[sn]
                     ax = self.figure.add_subplot(rows, cols, idx + 1)
+                    if reference_ax is None:
+                        reference_ax = ax
                     legend_signs.update(self._draw_network(ax, nd, cfg))
                     total_edges += len(nd['edges'])
                 self._info.setText(f"{n} groups · {total_edges} total edges")
@@ -985,9 +1032,6 @@ class NetworkDisplayDialog(QDialog):
                 self._apply_shared_legend(cfg, legend_signs, top_layout)
             if has_node_size_note:
                 self._apply_node_size_note(cfg, top_layout)
-            if has_rhs_node_size_legend:
-                reference_ax = ax if 'ax' in locals() else None
-                self._apply_node_size_visual_legend(cfg, data, reference_ax, top_layout)
             if has_legend or has_node_size_note or has_rhs_node_size_legend:
                 self.figure.tight_layout(rect=(
                     0.0,
@@ -997,6 +1041,10 @@ class NetworkDisplayDialog(QDialog):
                 ))
             else:
                 self.figure.tight_layout()
+            if has_rhs_node_size_legend:
+                # Finalize subplot transforms before deriving display-space legend sizes.
+                self.canvas.draw()
+                self._apply_node_size_visual_legend(cfg, data, reference_ax, top_layout)
             self.canvas.draw()
             self.canvas.snapshot_positions()
 
@@ -1270,19 +1318,7 @@ class NetworkDisplayDialog(QDialog):
 
         scales = _node_size_legend_scales(_node_size_max_scale())
         labels = _node_size_visual_legend_labels(scales)
-        base_radius = cfg.get('node_radius', 0.06)
-        unit = _node_size_amount_unit(data_type)
-        base_amounts = _collect_node_size_base_amounts(network_payloads)
-        if len(base_amounts) == 1:
-            min_text = f"sample min: {_format_node_size_amount(base_amounts[0], unit)}"
-        elif len(base_amounts) > 1:
-            min_text = (
-                "sample min: "
-                f"{_format_node_size_amount(base_amounts[0], unit)}-"
-                f"{_format_node_size_amount(base_amounts[-1], unit)}"
-            )
-        else:
-            min_text = "sample min: unavailable"
+        min_text = _legend_base_amount_text(network_payloads, data_type)
 
         legend_ax.text(
             0.04, 0.72, min_text,
@@ -1295,36 +1331,29 @@ class NetworkDisplayDialog(QDialog):
             transform=legend_ax.transAxes,
         )
 
-        y_positions = [0.56, 0.38, 0.20][:len(scales)]
-        base_circle_radius = 0.055
+        y_positions = [0.58, 0.40, 0.22][:len(scales)]
+        base_radius_px = 18.0
         if reference_ax is not None:
             try:
-                reference_bbox = reference_ax.get_window_extent().transformed(
-                    self.figure.dpi_scale_trans.inverted())
-                ref_width_px = reference_bbox.width * self.figure.dpi
-                ref_data_width = abs(reference_ax.get_xlim()[1] - reference_ax.get_xlim()[0])
-                rhs_bbox = legend_ax.get_window_extent().transformed(
-                    self.figure.dpi_scale_trans.inverted())
-                rhs_width_px = rhs_bbox.width * self.figure.dpi
-                if ref_width_px > 0 and rhs_width_px > 0 and ref_data_width > 0:
-                    px_per_data = ref_width_px / ref_data_width
-                    base_radius_px = base_radius * px_per_data
-                    base_circle_radius = max(
-                        0.025,
-                        min(0.095, base_radius_px / rhs_width_px),
-                    )
+                base_radius = cfg.get('node_radius', 0.06)
+                p0 = reference_ax.transData.transform((0.0, 0.0))
+                p1 = reference_ax.transData.transform((base_radius, 0.0))
+                base_radius_px = max(4.0, abs(float(p1[0] - p0[0])))
             except Exception:
                 pass
+        base_radius_points = base_radius_px * 72.0 / self.figure.dpi
         for y, scale, label in zip(y_positions, scales, labels):
-            radius = base_circle_radius * scale
-            circle = Circle(
-                (0.18, y), radius,
+            marker_diameter_points = max(4.0, 2.0 * base_radius_points * scale)
+            legend_ax.plot(
+                [0.18], [y],
+                marker='o',
+                linestyle='None',
+                markersize=marker_diameter_points,
+                markerfacecolor=cfg.get('node_color', '#14B8A6'),
+                markeredgecolor='white',
+                markeredgewidth=1.2,
                 transform=legend_ax.transAxes,
-                facecolor=cfg.get('node_color', '#14B8A6'),
-                edgecolor='white',
-                linewidth=1.2,
             )
-            legend_ax.add_patch(circle)
             legend_ax.text(
                 0.34, y, label,
                 ha='left', va='center',
