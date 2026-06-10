@@ -1265,6 +1265,50 @@ class NetworkDisplayDialog(QDialog):
         )
         return True
 
+    def _measure_reference_node_diameter_points(self, cfg, reference_ax):
+        """Measure the plotted base node diameter in display points.
+
+        Args:
+            cfg (dict): Current plot configuration containing the base node
+                radius.
+            reference_ax (matplotlib.axes.Axes | None): A rendered network axes
+                used to measure the base node patch with the same transform as
+                the plotted graph.
+
+        Returns:
+            float: The visible outer diameter of a base-radius node in points,
+            including the white outline. A conservative fallback is returned if
+            the live measurement cannot be completed.
+        """
+        fallback_diameter_points = 2.0 * 18.0 * 72.0 / self.figure.dpi
+        if reference_ax is None:
+            return fallback_diameter_points
+
+        try:
+            renderer = self.figure.canvas.get_renderer()
+            if renderer is None:
+                return fallback_diameter_points
+
+            base_radius = float(cfg.get('node_radius', 0.06))
+            probe = Circle(
+                (0.0, 0.0),
+                base_radius,
+                color=cfg.get('node_color', '#14B8A6'),
+                linewidth=1.5,
+                edgecolor='white',
+                visible=False,
+            )
+            reference_ax.add_patch(probe)
+            try:
+                bbox = probe.get_window_extent(renderer)
+            finally:
+                probe.remove()
+
+            width_px = max(4.0, float(bbox.width))
+            return width_px * 72.0 / self.figure.dpi
+        except Exception:
+            return fallback_diameter_points
+
     def _apply_node_size_visual_legend(self, cfg, network_payloads, reference_ax, top_layout):
         """Draw a RHS visual legend showing example proportional node sizes.
 
@@ -1332,18 +1376,14 @@ class NetworkDisplayDialog(QDialog):
         )
 
         y_positions = [0.58, 0.40, 0.22][:len(scales)]
-        base_radius_px = 18.0
-        if reference_ax is not None:
-            try:
-                base_radius = cfg.get('node_radius', 0.06)
-                p0 = reference_ax.transData.transform((0.0, 0.0))
-                p1 = reference_ax.transData.transform((base_radius, 0.0))
-                base_radius_px = max(4.0, abs(float(p1[0] - p0[0])))
-            except Exception:
-                pass
-        base_radius_points = base_radius_px * 72.0 / self.figure.dpi
+        node_edge_width_points = 1.5
+        base_diameter_points = self._measure_reference_node_diameter_points(
+            cfg, reference_ax)
         for y, scale, label in zip(y_positions, scales, labels):
-            marker_diameter_points = max(4.0, 2.0 * base_radius_points * scale)
+            marker_diameter_points = max(
+                4.0,
+                base_diameter_points * scale,
+            )
             legend_ax.plot(
                 [0.18], [y],
                 marker='o',
@@ -1351,7 +1391,7 @@ class NetworkDisplayDialog(QDialog):
                 markersize=marker_diameter_points,
                 markerfacecolor=cfg.get('node_color', '#14B8A6'),
                 markeredgecolor='white',
-                markeredgewidth=1.2,
+                markeredgewidth=node_edge_width_points,
                 transform=legend_ax.transAxes,
             )
             legend_ax.text(
