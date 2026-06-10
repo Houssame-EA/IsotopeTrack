@@ -202,6 +202,40 @@ class MainWindow(QMainWindow):
         self.element_mass_map = {}
         self.detected_peaks = {}
         self.sample_status = {} 
+        # --- Saturation (FWHM-based) filter state ----------------------
+        _sat_settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        self.saturation_filter_enabled = False
+        try:
+            self.saturation_filter_ms = float(
+                _sat_settings.value("filters/saturation_fwhm_ms", 1.5))
+        except (TypeError, ValueError):
+            self.saturation_filter_ms = 1.5
+        self.saturation_highlight = _sat_settings.value(
+            "filters/saturation_highlight", True, type=bool)
+        try:
+            self.saturation_min_snr = float(
+                _sat_settings.value("filters/saturation_min_snr", 10.0))
+        except (TypeError, ValueError):
+            self.saturation_min_snr = 10.0
+        try:
+            self.saturation_flat_ratio = float(
+                _sat_settings.value("filters/saturation_flat_ratio", 0.5))
+        except (TypeError, ValueError):
+            self.saturation_flat_ratio = 0.5
+        try:
+            self.saturation_top_frac = float(
+                _sat_settings.value("filters/saturation_top_frac", 0.90))
+        except (TypeError, ValueError):
+            self.saturation_top_frac = 0.90
+        self.saturation_top_frac = min(0.99, max(0.50, self.saturation_top_frac))
+        # sample -> {(element, isotope): [particles removed by the filter]}
+        self.saturation_filtered_peaks = {}
+        # sample -> [multi-element particles removed by the filter]
+        self.saturation_filtered_multi = {}
+        # sample -> [(t0, t1), ...] merged saturated time windows
+        self.saturation_windows = {}
+        # sample -> total excluded time (s), for concentration correction
+        self.saturation_excluded_time_s = {}
         self.animation = None
         self.animation_group = None
         self.overlap_threshold_percentage = 75.0
@@ -1299,6 +1333,25 @@ class MainWindow(QMainWindow):
         self.detect_button.clicked.connect(self.detect_particles)
         
         button_layout.addWidget(self.detect_button)
+
+        self.saturation_filter_button = QPushButton()
+        self._primary_buttons.append((self.saturation_filter_button, 'fa6s.filter'))
+        self.saturation_filter_button.setCheckable(True)
+        self.saturation_filter_button.setToolTip(
+            "Exclude events recorded under non-linear detector response.\n"
+            "Detection is based on peak shape: when any isotope shows a wide,\n"
+            "flat-topped peak, that time window is excluded for ALL isotopes\n"
+            "(results, summary, exports), and the excluded time is subtracted\n"
+            "from the analysis time used for concentrations.\n\n"
+            "Left-click: toggle the filter on/off.\n"
+            "Right-click: customize the criteria and highlighting."
+        )
+        self.saturation_filter_button.toggled.connect(self.on_saturation_filter_toggled)
+        self.saturation_filter_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.saturation_filter_button.customContextMenuRequested.connect(
+            self.show_saturation_filter_menu)
+        button_layout.addWidget(self.saturation_filter_button)
+        self._update_saturation_button_text()
         main_layout.addLayout(button_layout)
         
         self.showing_all_signals = False
@@ -3320,7 +3373,11 @@ class MainWindow(QMainWindow):
                 ('sample_analysis_dates', self.sample_analysis_dates),
                 ('element_thresholds', self.element_thresholds),
                 ('sample_run_info', self.sample_run_info),
-                ('sample_method_info', self.sample_method_info)
+                ('sample_method_info', self.sample_method_info),
+                ('saturation_filtered_peaks', self.saturation_filtered_peaks),
+                ('saturation_filtered_multi', self.saturation_filtered_multi),
+                ('saturation_windows', self.saturation_windows),
+                ('saturation_excluded_time_s', self.saturation_excluded_time_s)
             ]
             
             removed_count = 0
@@ -3575,6 +3632,8 @@ class MainWindow(QMainWindow):
                         for threshold_key in thresholds_to_remove:
                             if threshold_key in self.element_thresholds[sample_name]:
                                 del self.element_thresholds[sample_name][threshold_key]
+                
+                self._on_isotopes_removed(removed_isotopes)
             
             if newly_added and self.folder_paths and not self.pending_csv_processing:
                 all_accessible, inaccessible_samples = self.verify_all_data_sources()
@@ -3794,6 +3853,8 @@ class MainWindow(QMainWindow):
                         for threshold_key in thresholds_to_remove:
                             if threshold_key in self.element_thresholds[sample_name]:
                                 del self.element_thresholds[sample_name][threshold_key]
+                
+                self._on_isotopes_removed(removed_isotopes)
             
             if newly_added and self.folder_paths and not self.pending_csv_processing:
                 all_accessible, inaccessible_samples = self.verify_all_data_sources()
@@ -5009,6 +5070,21 @@ class MainWindow(QMainWindow):
                         kept.append(p)
                 detected[key] = kept
 
+        if getattr(self, 'saturation_filter_enabled', False):
+            if self.current_sample:
+                self.saturation_filtered_peaks.pop(self.current_sample, None)
+                self.saturation_filtered_multi.pop(self.current_sample, None)
+                self.saturation_windows.pop(self.current_sample, None)
+                self.saturation_excluded_time_s.pop(self.current_sample, None)
+            n_sat = self.apply_saturation_filter()
+            if n_sat:
+                excl_ms = self.get_saturation_excluded_time() * 1000.0
+                self.status_label.setText(
+                    f"Non-linearity filter: {n_sat} particle event(s) excluded "
+                    f"(FWHM > {self.saturation_filter_ms:g} ms), "
+                    f"{excl_ms:.1f} ms removed from the analysis time")
+            self._refresh_after_saturation_change()
+
         return result
         
     def process_single_sample(self, sample_name):
@@ -5504,6 +5580,62 @@ class MainWindow(QMainWindow):
         self.summary_label.setText(summary_html)                                
    
     @log_user_action('CLICK', 'Opened results dialog')
+    def rebuild_particle_data(self, sample_name=None):
+        """
+        Rebuild the multi-element particle list of a sample from the
+        current per-isotope detection results.
+
+        The multi-element particle data shown in the Results dialog is a
+        cache derived from sample_detected_peaks at detection time. When
+        the per-isotope peaks change (for example after the detector
+        non-linearity filter excludes events), this cache becomes stale.
+        Calling this method regenerates it so the Results dialog and the
+        exports reflect the current, filtered particles.
+
+        Args:
+            sample_name (str): Sample to rebuild. Defaults to the
+                current sample.
+
+        Returns:
+            None
+        """
+        sname = sample_name or self.current_sample
+        if not sname or sname not in self.sample_detected_peaks:
+            return
+        time_array = self.time_array_by_sample.get(sname)
+        if time_array is None:
+            return
+
+        all_particles = []
+        sample_data = self.data_by_sample.get(sname, {})
+        for (element, isotope), particles in self.sample_detected_peaks[sname].items():
+            if not particles:
+                continue
+            isotope_key = self.find_closest_isotope(isotope)
+            if isotope_key and isotope_key in sample_data:
+                signal = sample_data[isotope_key]
+                all_particles.append({
+                    'element': element,
+                    'isotope': isotope,
+                    'signal': signal,
+                    'clusters': [(p['left_idx'], p['right_idx'])
+                                 for p in particles if p],
+                })
+
+        try:
+            rebuilt = self.peak_detector.process_multi_element_particles(
+                all_particles, time_array,
+                {sname: self.sample_detected_peaks[sname]},
+                self.selected_isotopes, self.get_formatted_label,
+                sname, {sname: self.element_thresholds.get(sname, {})},
+                self.parameters_table,
+                min_overlap_percentage=self.overlap_threshold_percentage)
+            self.sample_particle_data[sname] = rebuilt
+            if sname == self.current_sample:
+                self.multi_element_particles = rebuilt
+        except Exception as e:
+            self.logger.debug(f"Particle data rebuild failed for {sname}: {e}")
+
     def show_results(self):
         """
         Display particle detection results in canvas dialog.
@@ -5520,7 +5652,11 @@ class MainWindow(QMainWindow):
             return
         
         element_cache = self._build_element_conversion_cache()
-        
+
+        if getattr(self, 'saturation_filter_enabled', False):
+            for sample_name in list(self.sample_particle_data.keys()):
+                self.rebuild_particle_data(sample_name)
+
         all_samples_with_data = [sample for sample in self.sample_particle_data.keys() 
                                 if self.sample_particle_data[sample]]
         
@@ -5732,6 +5868,47 @@ class MainWindow(QMainWindow):
                     scatter_peak.setSize(ss.get('size', 9))
                     scatter_peak.setBrush(pg.mkBrush(QColor(ss['color'])))
                 self.plot_widget.addItem(scatter_peak)
+
+        # --- Saturation filter highlight ------------------------------
+        if (getattr(self, 'saturation_filter_enabled', False)
+                and getattr(self, 'saturation_highlight', True)):
+            f_key = None
+            if (getattr(self, 'current_element', None) is not None
+                    and getattr(self, 'current_isotope', None) is not None):
+                f_key = (self.current_element, self.current_isotope)
+            filtered = []
+            if f_key is not None:
+                filtered = (self.saturation_filtered_peaks
+                            .get(self.current_sample, {})
+                            .get(f_key, []))
+            if filtered:
+                fx, fy = [], []
+                for p in filtered:
+                    if p is None:
+                        continue
+                    left = int(p.get('left_idx', 0))
+                    right = int(p.get('right_idx', left))
+                    end = min(right + 1, len(signal), len(time_array))
+                    start = min(max(left, 0), end)
+                    if start >= end:
+                        continue
+                    peak_global = start + int(np.argmax(signal[start:end]))
+                    fx.append(float(time_array[peak_global]))
+                    fy.append(float(signal[peak_global]))
+                if fx:
+                    scatter_filt = pg.ScatterPlotItem(
+                        x=np.array(fx),
+                        y=np.array(fy),
+                        symbol='o',
+                        size=12,
+                        brush=pg.mkBrush(220, 20, 60, 255),
+                        pen=pg.mkPen('w', width=1),
+                        name='Non-linear (filtered)',
+                    )
+                    scatter_filt.setZValue(10)
+                    scatter_filt._role = 'saturation_filtered'
+                    scatter_filt._legend_representative = True
+                    self.plot_widget.addItem(scatter_filt)
         
         for sample, label in legend.items:
             label.setText(label.text, size='20pt')
@@ -7154,7 +7331,10 @@ class MainWindow(QMainWindow):
             element_key (str): Optional element key for element scope exclusions.
 
         Returns:
-            float: Effective analyzed volume in millilitres.
+            float: Effective analyzed volume in millilitres. Manual
+            exclusion regions and the time windows flagged by the
+            detector non-linearity filter are both subtracted exactly
+            inside tools.dilution_utils.
         """
         return tools.dilution_utils.effective_volume_ml(self, sample_name, element_key)
 
@@ -7542,6 +7722,666 @@ class MainWindow(QMainWindow):
         )
         return result
     
+    # ------------------------------------------------------------------
+    # Detector non-linearity (saturation) filter
+    # ------------------------------------------------------------------
+    def _update_saturation_button_text(self):
+        """
+        Refresh the non-linearity filter button caption with the current
+        state and FWHM threshold.
+
+        Returns:
+            None
+        """
+        if not hasattr(self, 'saturation_filter_button'):
+            return
+        state = "ON" if self.saturation_filter_enabled else "OFF"
+        self.saturation_filter_button.setText(
+            f"Non-linearity Filter: {state} (FWHM > {self.saturation_filter_ms:g} ms)")
+
+    def _particle_fwhm_s(self, particle, time_arr, signal=None):
+        """
+        Return the FWHM of a particle event in seconds.
+
+        The value computed during detection ('fwhm_s') is preferred. If
+        it is absent, the FWHM is recomputed from the signal above a
+        local background estimate. When neither is possible the method
+        returns 0.0 so the particle is never flagged from an unreliable
+        width estimate.
+
+        Args:
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+            signal (ndarray): Optional raw signal for recomputation.
+
+        Returns:
+            float: FWHM in seconds, or 0.0 when it cannot be determined.
+        """
+        fwhm = particle.get('fwhm_s')
+        if fwhm is not None:
+            try:
+                return float(fwhm)
+            except (TypeError, ValueError):
+                pass
+        try:
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            if signal is None or right <= left:
+                return 0.0
+            region = np.asarray(signal[left:right + 1], dtype=float)
+            apex = int(np.argmax(region))
+            edge = min(3, len(region))
+            bkgd = float(np.median(
+                np.concatenate((region[:edge], region[-edge:]))))
+            if region[apex] <= bkgd:
+                return 0.0
+            half = bkgd + 0.5 * (region[apex] - bkgd)
+            i = apex
+            while i > 0 and region[i - 1] > half:
+                i -= 1
+            j = apex
+            while j < len(region) - 1 and region[j + 1] > half:
+                j += 1
+            dwell = float(time_arr[1] - time_arr[0]) if n > 1 else 0.0
+            return float(time_arr[left + j] - time_arr[left + i]) + dwell
+        except Exception:
+            return 0.0
+
+    def _particle_apex_time(self, particle, time_arr):
+        """
+        Return the apex time of a particle event in seconds.
+
+        Args:
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+
+        Returns:
+            float: Apex time, or 0.0 when it cannot be determined.
+        """
+        t = particle.get('peak_time')
+        if t is not None:
+            try:
+                return float(t)
+            except (TypeError, ValueError):
+                pass
+        try:
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            return float(time_arr[(left + right) // 2])
+        except Exception:
+            return 0.0
+
+    def _particle_flat_ratio(self, particle, time_arr, signal):
+        """
+        Return the flat-top index of a peak: the width at the configured
+        top level (default 90 percent of max above local background)
+        divided by the FWHM.
+
+        A healthy single-particle transient narrows sharply toward the
+        apex (Gaussian reference at the 90 percent level: 0.39). A peak
+        recorded under non-linear detector response stays wide at the
+        top, pushing the ratio toward 1. The top width is measured
+        between the outermost crossings within the event, so a mid-peak
+        dip cannot hide the plateau.
+
+        Args:
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+            signal (ndarray): Raw signal of the isotope.
+
+        Returns:
+            float: Width ratio, or 0.0 when it cannot be computed.
+        """
+        try:
+            if signal is None:
+                return 0.0
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            if right <= left:
+                return 0.0
+            region = np.asarray(signal[left:right + 1], dtype=float)
+            apex_val = float(np.max(region))
+            edge = min(3, len(region))
+            bkgd = float(np.median(
+                np.concatenate((region[:edge], region[-edge:]))))
+            if apex_val <= bkgd:
+                return 0.0
+            dwell = float(time_arr[1] - time_arr[0]) if n > 1 else 0.0
+            frac = min(0.99, max(0.50, float(
+                getattr(self, 'saturation_top_frac', 0.90))))
+            lvl = bkgd + frac * (apex_val - bkgd)
+            idx = np.where(region >= lvl)[0]
+            if len(idx) == 0:
+                return 0.0
+            w_top = float(time_arr[left + idx[-1]]
+                          - time_arr[left + idx[0]]) + dwell
+            fwhm = self._particle_fwhm_s(particle, time_arr, signal)
+            return w_top / fwhm if fwhm > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _merge_time_windows(windows):
+        """
+        Merge overlapping time intervals into their sorted union.
+
+        Args:
+            windows (list): List of (t0, t1) tuples in seconds.
+
+        Returns:
+            list: Sorted, non-overlapping (t0, t1) tuples.
+        """
+        if not windows:
+            return []
+        windows = sorted(windows)
+        merged = [list(windows[0])]
+        for t0, t1 in windows[1:]:
+            if t0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], t1)
+            else:
+                merged.append([t0, t1])
+        return [(a, b) for a, b in merged]
+
+    def apply_saturation_filter(self, samples=None):
+        """
+        Particle-level filtering of detector non-linearity events,
+        re-evaluated from scratch for each sample.
+
+        The evaluation is a full re-assessment: previously filtered
+        particles are first merged back (entries whose isotope is no
+        longer selected are discarded), then two passes run. Pass 1
+        flags a time window for every peak, on any isotope, that is
+        large (SNR at or above the minimum), wide (FWHM above the
+        threshold) and flat-topped (top-width ratio at or above the
+        minimum). Pass 2 moves every particle whose apex falls inside a
+        flagged window, on all isotopes, plus every overlapping
+        multi-element particle, out of the results. Because each call
+        starts fresh, removing an isotope from the selection and
+        re-applying drops the windows that isotope was responsible for.
+
+        The union duration of the flagged windows is stored per sample
+        in self.saturation_excluded_time_s and is subtracted from the
+        analysis time when particle number concentrations are computed.
+
+        Args:
+            samples (list): Optional list of samples to evaluate.
+                Defaults to every sample with detection results.
+
+        Returns:
+            int: Number of particle events excluded after this call.
+        """
+        max_s = float(self.saturation_filter_ms) / 1000.0
+        target = samples if samples is not None else list(self.sample_detected_peaks.keys())
+        n_removed = 0
+
+        for sname in target:
+            detected = self.sample_detected_peaks.get(sname)
+            time_arr = self.time_array_by_sample.get(sname)
+            if detected is None or time_arr is None:
+                continue
+            time_arr = np.asarray(time_arr)
+            n = len(time_arr)
+            sample_data = self.data_by_sample.get(sname, {})
+
+            def _signal_for(key):
+                try:
+                    _el, iso = key
+                    ik = self.find_closest_isotope(iso)
+                    return sample_data.get(ik) if ik is not None else None
+                except Exception:
+                    return None
+
+            old_store = self.saturation_filtered_peaks.pop(sname, {})
+            for key, removed in old_store.items():
+                if key in detected and removed:
+                    merged = list(detected[key]) + list(removed)
+                    merged.sort(key=lambda p: p.get('left_idx', 0) if p else 0)
+                    detected[key] = merged
+            old_multi = self.saturation_filtered_multi.pop(sname, None)
+            if old_multi and sname == self.current_sample:
+                merged = list(getattr(self, 'multi_element_particles', [])) + list(old_multi)
+                merged.sort(key=lambda mp: mp.get('start_time', 0.0))
+                self.multi_element_particles = merged
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+
+            windows = []
+            for key, particles in detected.items():
+                sig = None
+                sig_loaded = False
+                for p in particles or []:
+                    if p is None:
+                        continue
+                    snr = p.get('SNR')
+                    if snr is not None and float(snr) < self.saturation_min_snr:
+                        continue
+                    if not sig_loaded:
+                        sig = _signal_for(key)
+                        sig_loaded = True
+                    if self._particle_fwhm_s(p, time_arr, sig) <= max_s:
+                        continue
+                    if (sig is not None and self.saturation_flat_ratio > 0
+                            and self._particle_flat_ratio(p, time_arr, sig)
+                            < self.saturation_flat_ratio):
+                        continue
+                    left = max(0, min(int(p.get('left_idx', 0)), n - 1))
+                    right = max(left, min(int(p.get('right_idx', left)), n - 1))
+                    windows.append((float(time_arr[left]),
+                                    float(time_arr[right])))
+            windows = self._merge_time_windows(windows)
+            self.saturation_windows[sname] = windows
+            self.saturation_excluded_time_s[sname] = float(
+                sum(t1 - t0 for t0, t1 in windows))
+            if not windows:
+                continue
+
+            store = self.saturation_filtered_peaks.setdefault(sname, {})
+            for key, particles in list(detected.items()):
+                if not particles:
+                    continue
+                kept, removed = [], []
+                for p in particles:
+                    if p is None:
+                        continue
+                    t_apex = self._particle_apex_time(p, time_arr)
+                    if any(t0 <= t_apex <= t1 for t0, t1 in windows):
+                        removed.append(p)
+                    else:
+                        kept.append(p)
+                if removed:
+                    detected[key] = kept
+                    store.setdefault(key, []).extend(removed)
+                    n_removed += len(removed)
+
+            if sname == self.current_sample and getattr(self, 'multi_element_particles', None):
+                kept, removed = [], []
+                for mp in self.multi_element_particles:
+                    try:
+                        s = float(mp.get('start_time', 0.0))
+                        e = float(mp.get('end_time', s))
+                    except (TypeError, ValueError):
+                        s = e = 0.0
+                    if any(s <= t1 and e >= t0 for t0, t1 in windows):
+                        removed.append(mp)
+                    else:
+                        kept.append(mp)
+                if removed:
+                    self.multi_element_particles = kept
+                    self.saturation_filtered_multi.setdefault(
+                        sname, []).extend(removed)
+                    n_removed += len(removed)
+
+        return n_removed
+
+    def restore_saturation_filtered(self, samples=None):
+        """
+        Merge previously filtered particles back into the detection
+        results in time order. Entries whose isotope is no longer
+        present in the detection results are discarded rather than
+        resurrected.
+
+        Args:
+            samples (list): Optional list of samples to restore.
+                Defaults to every sample with filtered particles.
+
+        Returns:
+            int: Number of particle events restored.
+        """
+        target = samples if samples is not None else list(self.saturation_filtered_peaks.keys())
+        n_restored = 0
+
+        for sname in list(target):
+            store = self.saturation_filtered_peaks.get(sname)
+            if not store:
+                continue
+            detected = self.sample_detected_peaks.setdefault(sname, {})
+            for key, removed in store.items():
+                if not removed or key not in detected:
+                    continue
+                merged = list(detected.get(key, [])) + list(removed)
+                merged.sort(key=lambda p: p.get('left_idx', 0) if p else 0)
+                detected[key] = merged
+                n_restored += len(removed)
+            self.saturation_filtered_peaks.pop(sname, None)
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+
+        for sname in (samples if samples is not None
+                      else list(self.saturation_filtered_multi.keys())):
+            removed = self.saturation_filtered_multi.pop(sname, None)
+            if not removed:
+                continue
+            n_restored += len(removed)
+            if sname == self.current_sample:
+                merged = list(getattr(self, 'multi_element_particles', [])) + list(removed)
+                merged.sort(key=lambda mp: mp.get('start_time', 0.0))
+                self.multi_element_particles = merged
+
+        if self.current_sample in self.sample_detected_peaks:
+            self.detected_peaks = self.sample_detected_peaks[self.current_sample]
+
+        return n_restored
+
+    def get_saturation_excluded_time(self, sample_name=None):
+        """
+        Return the total time excluded by the non-linearity filter for a
+        sample, in seconds. This duration is subtracted from the
+        analysis time when computing particle number concentrations so
+        the result stays unbiased.
+
+        Args:
+            sample_name (str): Sample identifier. Defaults to the
+                current sample.
+
+        Returns:
+            float: Excluded time in seconds, 0.0 when the filter is off.
+        """
+        sname = sample_name or self.current_sample
+        if not self.saturation_filter_enabled:
+            return 0.0
+        return float(self.saturation_excluded_time_s.get(sname, 0.0))
+
+    def _on_isotopes_removed(self, removed_isotopes):
+        """
+        Keep the non-linearity filter consistent after isotopes are
+        removed from the selection: stored filtered particles of the
+        removed isotopes are dropped, and the filter is re-evaluated so
+        windows that were flagged by a removed isotope disappear and the
+        particles of the remaining isotopes inside them are restored.
+
+        Args:
+            removed_isotopes (set): Set of (element, isotope) tuples.
+
+        Returns:
+            None
+        """
+        if not removed_isotopes:
+            return
+        for store in self.saturation_filtered_peaks.values():
+            for key in list(store.keys()):
+                if key in removed_isotopes:
+                    del store[key]
+        if self.saturation_filter_enabled:
+            n = self.apply_saturation_filter()
+            self.status_label.setText(
+                f"Non-linearity filter re-evaluated: {n} particle event(s) excluded")
+            self._refresh_after_saturation_change()
+
+    def _sync_saturation_filter_ui(self):
+        """
+        Synchronize the non-linearity filter button with the current
+        state, without re-triggering the filter. Used after a project is
+        loaded.
+
+        Returns:
+            None
+        """
+        if not hasattr(self, 'saturation_filter_button'):
+            return
+        self.saturation_filter_button.blockSignals(True)
+        self.saturation_filter_button.setChecked(bool(self.saturation_filter_enabled))
+        self.saturation_filter_button.blockSignals(False)
+        self._update_saturation_button_text()
+
+    def on_saturation_filter_toggled(self, checked):
+        """
+        Toggle the detector non-linearity filter on or off.
+
+        Args:
+            checked (bool): New button state.
+
+        Returns:
+            None
+        """
+        self.saturation_filter_enabled = bool(checked)
+        if checked:
+            n = self.apply_saturation_filter()
+            excl_ms = self.get_saturation_excluded_time() * 1000.0
+            msg = (f"Non-linearity filter ON (FWHM > {self.saturation_filter_ms:g} ms): "
+                   f"{n} particle event(s) excluded, "
+                   f"{excl_ms:.1f} ms removed from the analysis time")
+        else:
+            n = self.restore_saturation_filtered()
+            msg = f"Non-linearity filter OFF: {n} particle event(s) restored"
+        self.status_label.setText(msg)
+        self.user_action_logger.log_action(
+            'ANALYSIS', 'Non-linearity filter toggled',
+            {'enabled': self.saturation_filter_enabled,
+             'threshold_ms': self.saturation_filter_ms,
+             'affected_particles': n})
+        self._update_saturation_button_text()
+        self.unsaved_changes = True
+        self._refresh_after_saturation_change()
+
+    def show_saturation_filter_menu(self, pos):
+        """
+        Show the right-click menu of the non-linearity filter button.
+
+        Args:
+            pos (QPoint): Local position of the context menu request.
+
+        Returns:
+            None
+        """
+        menu = QMenu(self)
+
+        configure_action = QAction("Configure filter…", self)
+        configure_action.triggered.connect(self.configure_saturation_filter)
+        menu.addAction(configure_action)
+
+        highlight_action = QAction("Highlight filtered particles in plot", self)
+        highlight_action.setCheckable(True)
+        highlight_action.setChecked(self.saturation_highlight)
+
+        def _set_highlight(state):
+            self.saturation_highlight = bool(state)
+            QSettings("IsotopeTrack", "IsotopeTrack").setValue(
+                "filters/saturation_highlight", self.saturation_highlight)
+            self._refresh_after_saturation_change()
+
+        highlight_action.toggled.connect(_set_highlight)
+        menu.addAction(highlight_action)
+
+        menu.addSeparator()
+        n_filtered = sum(
+            len(plist)
+            for store in self.saturation_filtered_peaks.values()
+            for plist in store.values())
+        excl_ms = self.get_saturation_excluded_time() * 1000.0
+        info_action = QAction(
+            f"Excluded: {n_filtered} event(s), "
+            f"{excl_ms:.1f} ms of analysis time (current sample)", self)
+        info_action.setEnabled(False)
+        menu.addAction(info_action)
+
+        menu.exec(self.saturation_filter_button.mapToGlobal(pos))
+
+    def configure_saturation_filter(self):
+        """
+        Open the settings dialog of the non-linearity filter. The
+        criteria are the maximum peak FWHM, the minimum SNR, the
+        minimum flat-top width ratio and the level at which the top
+        width is measured. The filter is re-evaluated immediately when
+        it is enabled.
+
+        Returns:
+            None
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Detector Non-linearity Filter Settings")
+        layout = QVBoxLayout(dialog)
+
+        info = QLabel(
+            "Events recorded under non-linear detector response are\n"
+            "identified from the peak shape: the response stays wide at\n"
+            "the top instead of narrowing like a normal particle\n"
+            "transient. When any isotope shows such a peak, the whole\n"
+            "time window of the event is excluded for ALL isotopes, and\n"
+            "the excluded time is subtracted from the analysis time used\n"
+            "for particle number concentrations.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Maximum peak FWHM:"))
+        spin = QDoubleSpinBox()
+        spin.setRange(0.001, 100000.0)
+        spin.setDecimals(3)
+        spin.setSuffix(" ms")
+        spin.setValue(self.saturation_filter_ms)
+        row.addWidget(spin)
+        row.addStretch()
+        layout.addLayout(row)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Minimum peak SNR to flag:"))
+        snr_spin = QDoubleSpinBox()
+        snr_spin.setRange(1.0, 100000.0)
+        snr_spin.setDecimals(1)
+        snr_spin.setToolTip(
+            "Non-linearity events are large by definition. Peaks below\n"
+            "this signal-to-threshold ratio are never flagged, even if\n"
+            "their width estimate is noisy.")
+        snr_spin.setValue(self.saturation_min_snr)
+        row2.addWidget(snr_spin)
+        row2.addStretch()
+        layout.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Minimum flat-top ratio (W_top/FWHM):"))
+        flat_spin = QDoubleSpinBox()
+        flat_spin.setRange(0.0, 1.0)
+        flat_spin.setSingleStep(0.05)
+        flat_spin.setDecimals(2)
+        flat_spin.setToolTip(
+            "Healthy transients narrow sharply toward the apex (Gaussian\n"
+            "at the 90 percent level: 0.39); a non-linear response stays\n"
+            "wide at the top (ratio toward 1). Set to 0 to disable.")
+        flat_spin.setValue(self.saturation_flat_ratio)
+        row3.addWidget(flat_spin)
+        row3.addStretch()
+        layout.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        row4.addWidget(QLabel("Top width measured at (% of max):"))
+        frac_spin = QDoubleSpinBox()
+        frac_spin.setRange(50.0, 99.0)
+        frac_spin.setSingleStep(5.0)
+        frac_spin.setDecimals(0)
+        frac_spin.setSuffix(" %")
+        frac_spin.setToolTip(
+            "Level at which the top width is measured. 90 percent gives\n"
+            "the best shape discrimination at short dwell times; lower\n"
+            "levels make the ratio larger and noisier for narrow peaks\n"
+            "(Gaussian reference: 0.39 at 90, 0.57 at 80). Adjust the\n"
+            "flat-top ratio threshold accordingly if you change this.")
+        frac_spin.setValue(self.saturation_top_frac * 100.0)
+        row4.addWidget(frac_spin)
+        row4.addStretch()
+        layout.addLayout(row4)
+
+        highlight_cb = QCheckBox("Highlight filtered particles in the plot")
+        highlight_cb.setChecked(self.saturation_highlight)
+        layout.addWidget(highlight_cb)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        self.saturation_filter_ms = float(spin.value())
+        self.saturation_min_snr = float(snr_spin.value())
+        self.saturation_flat_ratio = float(flat_spin.value())
+        self.saturation_top_frac = float(frac_spin.value()) / 100.0
+        self.saturation_highlight = highlight_cb.isChecked()
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        settings.setValue("filters/saturation_fwhm_ms", self.saturation_filter_ms)
+        settings.setValue("filters/saturation_min_snr", self.saturation_min_snr)
+        settings.setValue("filters/saturation_flat_ratio", self.saturation_flat_ratio)
+        settings.setValue("filters/saturation_top_frac", self.saturation_top_frac)
+        settings.setValue("filters/saturation_highlight", self.saturation_highlight)
+
+        self.user_action_logger.log_action(
+            'ANALYSIS', 'Non-linearity filter configured',
+            {'threshold_ms': self.saturation_filter_ms,
+             'min_snr': self.saturation_min_snr,
+             'flat_ratio': self.saturation_flat_ratio,
+             'top_frac': self.saturation_top_frac,
+             'highlight': self.saturation_highlight})
+
+        if self.saturation_filter_enabled:
+            n = self.apply_saturation_filter()
+            self.status_label.setText(
+                f"Non-linearity filter updated (FWHM > {self.saturation_filter_ms:g} ms): "
+                f"{n} particle event(s) excluded")
+            self.unsaved_changes = True
+        self._update_saturation_button_text()
+        self._refresh_after_saturation_change()
+
+    def _refresh_after_saturation_change(self):
+        """
+        Refresh the plot, the results tables and the summary of the
+        currently displayed element after the non-linearity filter
+        changed.
+
+        Returns:
+            None
+        """
+        try:
+            if (self.current_element is not None and
+                    getattr(self, 'current_isotope', None) is not None and
+                    (self.current_element, self.current_isotope) in self.detected_peaks):
+                element_key = f"{self.current_element}-{self.current_isotope:.4f}"
+                isotope_key = self.find_closest_isotope(self.current_isotope)
+                if isotope_key is not None and isotope_key in self.data:
+                    signal = self.data[isotope_key]
+                    particles = self.detected_peaks[(self.current_element, self.current_isotope)]
+                    try:
+                        stored = self.element_thresholds[self.current_sample][element_key]
+                        lambda_bkgd = stored.get('background', 0)
+                        threshold = stored.get('threshold', 0)
+                    except KeyError:
+                        lambda_bkgd = 0
+                        threshold = 0
+                    view = None
+                    try:
+                        vr = self.plot_widget.viewRect()
+                        view = ([vr.left(), vr.right()], [vr.top(), vr.bottom()])
+                    except Exception:
+                        pass
+                    self.plot_results(element_key, signal, particles,
+                                      lambda_bkgd, threshold,
+                                      preserve_view_range=view)
+                    self.update_results_table(particles, signal,
+                                              self.current_element,
+                                              self.current_isotope)
+                    self.update_element_summary(self.current_element,
+                                                self.current_isotope,
+                                                particles)
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (element view) failed: {e}")
+
+        try:
+            self.rebuild_particle_data(self.current_sample)
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (particle data) failed: {e}")
+
+        try:
+            self.update_multi_element_table()
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (multi-element) failed: {e}")
+
     def export_data(self):
         """
         Export all data using external export utility.

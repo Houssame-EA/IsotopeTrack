@@ -3446,6 +3446,8 @@ class ClusteringDisplayDialog(QDialog):
         except Exception:
             pass
 
+        QTimer.singleShot(0, self._restore_saved_results)
+
     def _on_app_theme_changed(self, _name=None):
         """Re-theme the dialog and redraw figures when the app theme changes.
 
@@ -5929,6 +5931,8 @@ class ClusteringDisplayDialog(QDialog):
         across resamples. The toolbar button toggles to a Stop control that
         requests cooperative cancellation from the worker.
         """
+        if self.final_results:
+            self._persist_results_to_node()
         if getattr(self, '_bootstrap_worker', None) is not None \
                 and self._bootstrap_worker.isRunning():
             return
@@ -6048,6 +6052,8 @@ class ClusteringDisplayDialog(QDialog):
 
     def _cancel_bootstrap(self):
         """Request the running bootstrap worker to stop after the current pass."""
+        if self.final_results:
+            self._persist_results_to_node()
         worker = getattr(self, '_bootstrap_worker', None)
         if worker is not None and worker.isRunning():
             worker.cancel()
@@ -6349,6 +6355,126 @@ class ClusteringDisplayDialog(QDialog):
         except Exception:
             pass
 
+    def _persist_results_to_node(self, sel_k=None):
+        """
+        Store the full clustering state on the workflow node so it is
+        saved with the project and restored when the dialog is reopened,
+        without re-running the analysis.
+
+        Args:
+            sel_k (int): K used for the final clustering, when known.
+
+        Returns:
+            None
+        """
+        try:
+            self.node.saved_cluster_state = {
+                'final_results': self.final_results,
+                'characterisation': self.characterisation,
+                'eval_results': self.eval_results,
+                'optimal_k': self.optimal_k,
+                'optimal_algo': self.optimal_algo,
+                'optimal_per_metric': self.optimal_per_metric,
+                'optimal_algo_per_metric': self.optimal_algo_per_metric,
+                'selected_metric': self.selected_metric,
+                'bootstrap_results': self.bootstrap_results,
+                'bootstrap_stability': self.bootstrap_stability,
+                'per_sample_eval': self.per_sample_eval,
+                'per_sample_optk': self.per_sample_optk,
+                'data_matrix': self._data_matrix_cache,
+                'raw_matrix': self._raw_matrix,
+                'elements_cache': self._elements_cache,
+                'elements_filtered': self._elements_filtered,
+                'particle_samples': self._particle_samples,
+                'particle_indices': self._particle_indices,
+                'som_obj': self._som_obj,
+                'som_neuron_labels': self._som_neuron_labels,
+                'sel_k': sel_k,
+            }
+        except Exception:
+            pass
+
+    def _restore_saved_results(self):
+        """
+        Restore a previously saved clustering state from the workflow
+        node and redraw the result figures, so reopening the dialog or
+        loading a project shows the clustering without re-running it.
+
+        Returns:
+            None
+        """
+        st = getattr(self.node, 'saved_cluster_state', None)
+        if not st or not st.get('final_results'):
+            return
+        try:
+            self.final_results = st.get('final_results', {})
+            self.characterisation = st.get('characterisation', {})
+            self.eval_results = st.get('eval_results', {})
+            self.optimal_k = st.get('optimal_k')
+            self.optimal_algo = st.get('optimal_algo')
+            self.optimal_per_metric = st.get('optimal_per_metric', {})
+            self.optimal_algo_per_metric = st.get('optimal_algo_per_metric', {})
+            self.selected_metric = st.get('selected_metric')
+            self.bootstrap_results = st.get('bootstrap_results', {})
+            self.bootstrap_stability = st.get('bootstrap_stability', {})
+            self.per_sample_eval = st.get('per_sample_eval', {})
+            self.per_sample_optk = st.get('per_sample_optk', {})
+            self._data_matrix_cache = st.get('data_matrix')
+            self._raw_matrix = st.get('raw_matrix')
+            self._elements_cache = st.get('elements_cache', [])
+            self._elements_filtered = st.get('elements_filtered', [])
+            self._particle_samples = st.get('particle_samples')
+            self._particle_indices = st.get('particle_indices')
+            self._som_obj = st.get('som_obj')
+            self._som_neuron_labels = st.get('som_neuron_labels')
+
+            data = self._data_matrix_cache
+            if data is None:
+                return
+
+            _draw_clustering(self.cluster_fig, self.final_results, data,
+                             self.characterisation, self.node.config,
+                             input_data=self.node.input_data)
+            self.cluster_canvas.draw()
+
+            if self.eval_results:
+                try:
+                    self._refresh_eval_plot()
+                except Exception:
+                    pass
+
+            self.ov_algo.blockSignals(True)
+            self.ov_algo.clear()
+            for a in self.characterisation:
+                self.ov_algo.addItem(a)
+            if self.optimal_algo and self.optimal_algo in self.characterisation:
+                self.ov_algo.setCurrentText(self.optimal_algo)
+            self.ov_algo.blockSignals(False)
+            self._refresh_overview_elem_btn()
+            self._draw_overview()
+
+            self.export_btn.setEnabled(True)
+            sel_k = st.get('sel_k')
+            self.status.setText(
+                f"Restored clustering results — K={sel_k}" if sel_k
+                else "Restored clustering results")
+
+            if data.shape[1] >= 3:
+                self._draw_3d()
+
+            if ('SOM' in self.final_results and self._som_obj is not None
+                    and self._som_neuron_labels is not None):
+                som_labels = self.final_results['SOM'].get('labels')
+                if som_labels is not None:
+                    _draw_som_grid(self.som_fig, self._som_obj,
+                                   self._som_neuron_labels, som_labels,
+                                   self.node.config,
+                                   sample_labels=self._particle_samples,
+                                   input_data=self.node.input_data)
+                    self.som_canvas.draw()
+        except Exception:
+            self.status.setText("Could not restore saved clustering results")
+
     def _on_cluster_done(self, payload):
         """Finalise clustering results on the main thread and draw all figures.
 
@@ -6394,6 +6520,7 @@ class ClusteringDisplayDialog(QDialog):
             self.export_btn.setEnabled(True)
             self._set_progress(100.0)
             self.status.setText(f"Clustering complete — K={sel_k}")
+            self._persist_results_to_node(sel_k)
 
             if data.shape[1] >= 3:
                 self._draw_3d()

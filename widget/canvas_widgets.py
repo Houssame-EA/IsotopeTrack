@@ -3655,7 +3655,8 @@ class EnhancedCanvasScene(QGraphicsScene):
         new_wf = factory(self.parent_window)
         for attr in ('config', 'selected_sample', 'selected_isotopes',
                      'sum_replicates', 'replicate_samples',
-                     'selected_samples', 'sample_config'):
+                     'selected_samples', 'sample_config',
+                     'saved_cluster_state'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))

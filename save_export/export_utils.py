@@ -437,6 +437,44 @@ def export_data(main_window):
         print(f"Export error: {str(e)}")
         return False
 
+def export_saturation_filter_info(main_window, summary_file, selected_samples):
+    """
+    Write the detector non-linearity filter status to the summary
+    export: criteria in use and, per sample, the number of excluded
+    particle events and the analysis time removed. Concentrations in
+    this export are already computed on the corrected analysis time.
+
+    Args:
+        main_window: MainWindow instance.
+        summary_file: Open text file handle of the summary export.
+        selected_samples (list): Samples included in the export.
+
+    Returns:
+        None
+    """
+    enabled = getattr(main_window, 'saturation_filter_enabled', False)
+    summary_file.write("Detector Non-linearity Filter:\n")
+    summary_file.write(f"Status,{'ON' if enabled else 'OFF'}\n")
+    if enabled:
+        summary_file.write(
+            f"Max peak FWHM (ms),{getattr(main_window, 'saturation_filter_ms', 0):g}\n")
+        summary_file.write(
+            f"Min peak SNR,{getattr(main_window, 'saturation_min_snr', 0):g}\n")
+        summary_file.write(
+            f"Min flat-top ratio,{getattr(main_window, 'saturation_flat_ratio', 0):g}\n")
+        summary_file.write(
+            f"Top width level (% of max),{getattr(main_window, 'saturation_top_frac', 0.9) * 100:.0f}\n")
+        summary_file.write(
+            "Sample,Excluded Events,Excluded Time (ms),Analysis Time Correction Applied\n")
+        for sample_name in selected_samples:
+            store = getattr(main_window, 'saturation_filtered_peaks', {}).get(sample_name, {})
+            n_events = sum(len(plist) for plist in store.values())
+            excl_s = getattr(main_window, 'saturation_excluded_time_s', {}).get(sample_name, 0.0)
+            summary_file.write(
+                f"{sample_name},{n_events},{excl_s * 1000.0:.2f},Yes\n")
+    summary_file.write("\n")
+
+
 def export_mass_fraction_info(main_window, file_handle, selected_samples, data_type):
     """
     Export mass fraction configuration information with data type and molecular weights.
@@ -524,6 +562,8 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
     summary_file.write("-----------------------\n\n")
     
     export_mass_fraction_info(main_window, summary_file, selected_samples, data_type)
+    
+    export_saturation_filter_info(main_window, summary_file, selected_samples)
     
     summary_file.write("Dilution Factors Applied:\n")
     summary_file.write("Sample,Dilution Factor\n")
