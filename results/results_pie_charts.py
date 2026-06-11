@@ -815,19 +815,29 @@ class PieChartSettingsDialog(QDialog):
                     w = QWidget(); w.setLayout(row); v4.addWidget(w)
                 lay.addWidget(g4)
 
+            sample_names = []
             if _is_multi(self._input_data):
-                names = self._input_data.get('sample_names', [])
-                if names:
-                    g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
-                    nm = dict(self._cfg.get('sample_name_mappings', {}))
-                    for sn in names:
-                        row = QHBoxLayout()
-                        row.addWidget(QLabel(sn))
-                        ed = QLineEdit(nm.get(sn, sn))
-                        row.addWidget(ed)
-                        self._sample_edits[sn] = ed
-                        w = QWidget(); w.setLayout(row); v5.addWidget(w)
-                    lay.addWidget(g5)
+                sample_names = list(self._input_data.get('sample_names', []))
+            else:
+                sample_name = single_sample_name(self._input_data)
+                if sample_name:
+                    sample_names = [sample_name]
+            if sample_names:
+                g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
+                nm = dict(self._cfg.get('sample_name_mappings', {}))
+                for sn in sample_names:
+                    row = QHBoxLayout()
+                    row.addWidget(QLabel(sn))
+                    ed = QLineEdit(nm.get(sn, sn))
+                    row.addWidget(ed)
+                    self._sample_edits[sn] = ed
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sn: self._sample_edits[raw].setText(raw))
+                    row.addWidget(reset_btn)
+                    w = QWidget(); w.setLayout(row); v5.addWidget(w)
+                lay.addWidget(g5)
 
             self._pie_style = PieStyleGroup(self._cfg)
             self._label_line = LabelLineGroup(self._cfg)
@@ -878,7 +888,11 @@ class PieChartSettingsDialog(QDialog):
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
         if self._sample_edits:
-            d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         if self._pie_style is not None:
             d.update(self._pie_style.collect())
         if self._label_line is not None:
@@ -1110,8 +1124,9 @@ class PieChartDisplayDialog(QDialog):
                 factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                 if per_ml:
                     cnt = {k: v * factor for k, v in cnt.items()}
+                title = get_display_name(sn, cfg) if sn else 'Element Distribution'
                 subplots.append(
-                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default',
+                    self._build_sp(d, cnt, cfg, title, 'default',
                                    per_ml=per_ml))
 
             self.canvas_widget.render(subplots)
@@ -1397,6 +1412,7 @@ class ElementCompositionSettingsDialog(QDialog):
         self._show_counts = None
         self._show_pct = None
         self._show_epct = None
+        self._sample_edits: dict[str, QLineEdit] = {}
         self._combo_color_btns: dict[str, _ColorBtn] = {}
         self._combo_explode: dict[str, QDoubleSpinBox] = {}
         self._pie_style = None
@@ -1515,6 +1531,33 @@ class ElementCompositionSettingsDialog(QDialog):
                     w = QWidget(); w.setLayout(row); v4.addWidget(w)
                 lay.addWidget(g4)
 
+            sample_names = []
+            if _is_multi(self._input_data):
+                sample_names = list(self._input_data.get('sample_names', []))
+            else:
+                sample_name = single_sample_name(self._input_data)
+                if sample_name:
+                    sample_names = [sample_name]
+            if sample_names:
+                g5 = QGroupBox("Sample Names")
+                v5 = QVBoxLayout(g5)
+                mappings = dict(self._cfg.get('sample_name_mappings', {}))
+                for sample_name in sample_names:
+                    row = QHBoxLayout()
+                    row.addWidget(QLabel(sample_name))
+                    edit = QLineEdit(mappings.get(sample_name, sample_name))
+                    row.addWidget(edit)
+                    self._sample_edits[sample_name] = edit
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sample_name: self._sample_edits[raw].setText(raw))
+                    row.addWidget(reset_btn)
+                    w = QWidget()
+                    w.setLayout(row)
+                    v5.addWidget(w)
+                lay.addWidget(g5)
+
             self._pie_style = PieStyleGroup(self._cfg)
             self._label_line = LabelLineGroup(self._cfg)
             self._legend = LegendGroup(self._cfg)
@@ -1567,6 +1610,12 @@ class ElementCompositionSettingsDialog(QDialog):
             d['explode'] = {k: sb.value() for k, sb in self._combo_explode.items()}
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
+        if self._sample_edits:
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         if self._pie_style is not None:
             d.update(self._pie_style.collect())
         if self._label_line is not None:
@@ -1809,8 +1858,9 @@ class ElementCompositionDisplayDialog(QDialog):
                 data = self._calc_data(plot_data, cfg)
                 sn = single_sample_name(self.node.input_data)
                 factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
+                title = get_display_name(sn, cfg) if sn else 'Element Combinations'
                 subplots.append(
-                    self._build_sp(data, cfg, 'Element Combinations', 'default',
+                    self._build_sp(data, cfg, title, 'default',
                                    per_ml=per_ml, pml_factor=factor))
 
             self.canvas_widget.render(subplots)
@@ -1961,6 +2011,7 @@ class ElementCompositionPlotNode(QObject):
             'filter_zeros':              True,
             'display_mode':              'Individual Subplots',
             'combination_colors':        {},
+            'sample_name_mappings':      {},
             'show_data_values':          True,
             'show_counts':               True,
             'show_percentages':          True,

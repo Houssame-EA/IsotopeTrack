@@ -284,15 +284,15 @@ class ConcentrationSettingsDialog(QDialog):
                 nm = dict(self._cfg.get('sample_name_mappings', {}))
                 for i, sn in enumerate(names):
                     h = QHBoxLayout()
-                    if _is_multi(self._input_data):
-                        ed = QLineEdit(nm.get(sn, sn))
-                        ed.setFixedWidth(180)
-                        h.addWidget(ed)
-                        self._sample_edits[sn] = ed
-                    else:
-                        lbl = QLabel(get_display_name(sn, self._cfg))
-                        lbl.setFixedWidth(180)
-                        h.addWidget(lbl)
+                    ed = QLineEdit(nm.get(sn, sn))
+                    ed.setFixedWidth(180)
+                    h.addWidget(ed)
+                    self._sample_edits[sn] = ed
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sn: self._sample_edits[raw].setText(raw))
+                    h.addWidget(reset_btn)
 
                     point_color = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
                     mean_color = mc.get(sn, point_color)
@@ -401,7 +401,11 @@ class ConcentrationSettingsDialog(QDialog):
         if self._mean_marker_colors:
             d['mean_marker_colors'] = dict(self._mean_marker_colors)
         if self._sample_edits:
-            d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         return d
 
 
@@ -869,7 +873,7 @@ class ConcentrationComparisonNode(QObject):
                     'agg': agg_by_el,
                 }
             },
-            'title':    f"{agg_method} — {sname}",
+            'title':    f"{agg_method} — {get_display_name(sname, self.config)}",
             'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
             'unit':     unit,
         }
