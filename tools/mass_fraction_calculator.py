@@ -18,6 +18,7 @@ from pathlib import Path
 from functools import reduce
 from math import gcd
 
+from tools.np_shape import NanoParticleShapeWidget
 from tools.theme import theme
 
 logger = logging.getLogger(__name__)
@@ -796,8 +797,7 @@ class MassFractionCalculator(QDialog):
         MW = 3, 'Molecular Weight\n(g/mol)', QHeaderView.ResizeMode.Fixed, 140
         ELEM_DENS = 4, 'Element Density\n(g/cm³)', QHeaderView.ResizeMode.Fixed, 140
         COMP_DENS = 5, 'Compound Density\n(g/cm³)', QHeaderView.ResizeMode.Fixed, 160
-        NP_SHAPE = 6, 'Nano Particle\nShape', QHeaderView.ResizeMode.Fixed, 140
-        STRUCTURE = 7, 'Structure', QHeaderView.ResizeMode.Fixed, 110
+        STRUCTURE = 6, 'Structure', QHeaderView.ResizeMode.Fixed, 110
 
         def __init__(self, col_index: int,
                      title: str,
@@ -831,7 +831,6 @@ class MassFractionCalculator(QDialog):
                 a list of all titles
             """
             return [column.title for column in cls]
-
 
     def __init__(self, selected_isotopes: dict, periodic_table_widget, parent=None):
         """
@@ -1158,19 +1157,29 @@ class MassFractionCalculator(QDialog):
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal, parent=self)
 
         # ---- left panel: sample selection ----------------------------
         left_panel = self._build_sample_panel()
 
-        # ---- right panel: table + buttons ----------------------------
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        # ---- right panel: MFC + NP Shape + button panel ----------------------------
+        # Mass Fraction Calculator
+        mfc_widget = self._build_mass_fraction_calculator_widget()
+        # NP Shape
+        nps_widget = NanoParticleShapeWidget(self)
+        button_panel = self._build_dialog_control_buttons()
 
-        right_layout.addLayout(self._build_header())
-        self._build_table()
-        right_layout.addWidget(self.table)
-        right_layout.addLayout(self._build_buttons())
+        mfc_nps_splitter = QSplitter(Qt.Orientation.Vertical)
+        mfc_nps_splitter.addWidget(mfc_widget)
+        mfc_nps_splitter.addWidget(nps_widget)
+        mfc_nps_splitter.setStretchFactor(0, 1)
+        mfc_nps_splitter.setStretchFactor(1, 1)
+
+        right_panel = QWidget(splitter)
+        right_layout = QVBoxLayout()
+        right_panel.setLayout(right_layout)
+        right_layout.addWidget(mfc_nps_splitter)
+        right_layout.addWidget(button_panel)
 
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
@@ -1179,6 +1188,15 @@ class MassFractionCalculator(QDialog):
         splitter.setSizes([280, 1200])
 
         main_layout.addWidget(splitter)
+
+    def _build_mass_fraction_calculator_widget(self) -> QWidget:
+        mfc_panel = QWidget()
+        mfc_layout = QVBoxLayout(mfc_panel)
+
+        mfc_layout.addLayout(self._build_header())
+        self.table = self._build_table()
+        mfc_layout.addWidget(self.table)
+        return mfc_panel
 
     # -- sub-builders --------------------------------------------------
 
@@ -1238,8 +1256,9 @@ class MassFractionCalculator(QDialog):
         header = QHBoxLayout()
 
         title = QLabel("Mass Fraction Calculator")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
         header.addWidget(title)
+        self._add_mfc_controls_to_layout(header)
         header.addStretch()
 
         if self.csv_database.is_loaded:
@@ -1259,39 +1278,29 @@ class MassFractionCalculator(QDialog):
         return header
 
     def _build_table(self):
-        self.table = QTableWidget()
-        self.table.setColumnCount(len(self.CalculatorColumn))
-        self.table.setHorizontalHeaderLabels(self.CalculatorColumn.titles())
+        table = QTableWidget()
+        table.setColumnCount(len(self.CalculatorColumn))
+        table.setHorizontalHeaderLabels(self.CalculatorColumn.titles())
 
-        hdr = self.table.horizontalHeader()
-        # Build one by one the columns' headers based on `self.CalculatorColumn` values.
+        hdr = table.horizontalHeader()
+        # Build one by one the columns' headers based on `self.CalculatorColumn` enum.
         for column in self.CalculatorColumn:
             hdr.setSectionResizeMode(column.col_index, column.resize_mode)
-            if column.resize_mode == QHeaderView.ResizeMode.Fixed \
-                    and column.width:
-                self.table.setColumnWidth(column.col_index, column.width)
+            if (column.resize_mode == QHeaderView.ResizeMode.Fixed
+                    and column.width):
+                table.setColumnWidth(column.col_index, column.width)
 
-        self.table.setItemDelegateForColumn(
-            self.CalculatorColumn.COMP_DENS.col_index, _PositiveDoubleDelegate(self.table)
+        table.setItemDelegateForColumn(
+            self.CalculatorColumn.COMP_DENS.col_index, _PositiveDoubleDelegate(table)
         )
+        return table
 
-        #self.table.setItemDelegateForColumn(self.CalculatorColumn.NP_SHAPE.col_index, _NpSelectorDelegate(self.table)) # TODO add the class
-
-    def _build_buttons(self) -> QHBoxLayout:
+    def _build_dialog_control_buttons(self) -> QWidget:
         """
         Returns:
             QHBoxLayout: Result of the operation.
         """
         layout = QHBoxLayout()
-
-        reset_btn = QPushButton("Reset to Pure Elements")
-        reset_btn.clicked.connect(self._reset_to_default)
-        layout.addWidget(reset_btn)
-
-        calc_btn = QPushButton("Calculate All Mass Fractions")
-        calc_btn.clicked.connect(self._calculate_all)
-        layout.addWidget(calc_btn)
-
         layout.addStretch()
 
         apply_btn = QPushButton("Apply Changes")
@@ -1303,7 +1312,18 @@ class MassFractionCalculator(QDialog):
         cancel_btn.clicked.connect(self.reject)
         layout.addWidget(cancel_btn)
 
-        return layout
+        btn_panel = QWidget()
+        btn_panel.setLayout(layout)
+        return btn_panel
+
+    def _add_mfc_controls_to_layout(self, layout: QHBoxLayout):
+        reset_btn = QPushButton("Reset to Pure Elements")
+        reset_btn.clicked.connect(self._reset_to_default)
+        layout.addWidget(reset_btn)
+
+        calc_btn = QPushButton("Calculate All Mass Fractions")
+        calc_btn.clicked.connect(self._calculate_all)
+        layout.addWidget(calc_btn)
 
     def _populate_table(self):
         sorted_elems = []
@@ -1471,7 +1491,7 @@ class MassFractionCalculator(QDialog):
 
         # reduce counts
         counts = _reduce_counts(_parse_formula_to_counts(formula))
-        # If the counts are only tracking the 
+        # If the counts are only tracking the element
         if len(counts) <= 1:
             el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
             ed = self._element_data(el_item.text()) if el_item else None
