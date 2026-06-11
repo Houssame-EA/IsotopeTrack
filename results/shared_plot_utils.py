@@ -4,6 +4,7 @@ import math
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
+from matplotlib.patches import Rectangle
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen, QTextDocument
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QMessageBox, QMenu, QDialog,
@@ -75,12 +76,68 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_ax_pos0   = None
 
         self._auto_positions: dict = {}
+        self._mouse_mode = "Cursor"
+        self._zoom_ax = None
+        self._zoom_start_data = None
+        self._zoom_rect = None
+        self._zoom_background = None
+        self._view_limits_enabled = False
+        self._view_limits_snapshot = []
 
         self.mpl_connect('button_press_event',   self._drag_press)
         self.mpl_connect('motion_notify_event',  self._drag_motion)
         self.mpl_connect('button_release_event', self._drag_release)
 
     # ── Public API ─────────────────────────────────────────────────────
+
+    def set_mouse_mode(self, mode: str):
+        """Set the transient mouse interaction mode for this canvas.
+
+        Args:
+            mode (str): ``"Cursor"`` preserves existing drag behavior and
+                ``"Zoom"`` enables rectangle zoom on left-drag inside axes.
+        """
+        self._mouse_mode = "Zoom" if mode == "Zoom" else "Cursor"
+        if self._mouse_mode != "Zoom":
+            self._clear_zoom_state(draw=False)
+
+    def mouse_mode(self) -> str:
+        """Return the current transient mouse interaction mode."""
+        return self._mouse_mode
+
+    def enable_view_limit_tracking(self, enabled: bool):
+        """Opt this canvas into baseline axis-limit snapshot/restore support.
+
+        Args:
+            enabled (bool): ``True`` enables explicit limit snapshot/restore
+                helpers. ``False`` clears stored state and leaves shared reset
+                behavior unchanged for callers that do not opt in.
+        """
+        self._view_limits_enabled = bool(enabled)
+        if not self._view_limits_enabled:
+            self._view_limits_snapshot = []
+
+    def snapshot_view_limits(self):
+        """Capture current axis limits for later restoration.
+
+        This helper is inert unless the owning dialog explicitly enabled view
+        limit tracking.
+        """
+        if not self._view_limits_enabled:
+            return
+        self._view_limits_snapshot = [
+            {'xlim': ax.get_xlim(), 'ylim': ax.get_ylim()}
+            for ax in self.figure.get_axes()
+        ]
+
+    def restore_view_limits(self):
+        """Restore the last snapshotted axis limits when tracking is enabled."""
+        if not self._view_limits_enabled or not self._view_limits_snapshot:
+            return
+        for ax, limits in zip(self.figure.get_axes(), self._view_limits_snapshot):
+            ax.set_xlim(limits['xlim'])
+            ax.set_ylim(limits['ylim'])
+        self.draw_idle()
 
     def reset_layout(self):
         """Reset all axes to auto tight_layout positions."""
@@ -108,6 +165,9 @@ class MplDraggableCanvas(_FigureCanvasBase):
         Args:
             event (Any): Qt event object.
         """
+        if self._mouse_mode == "Zoom":
+            self._zoom_press(event)
+            return
         if event.button != 1 or event.inaxes is None:
             return
         for ann in event.inaxes.get_children():
@@ -126,6 +186,9 @@ class MplDraggableCanvas(_FigureCanvasBase):
         Args:
             event (Any): Qt event object.
         """
+        if self._mouse_mode == "Zoom":
+            self._zoom_motion(event)
+            return
         if self._drag_ax is None or event.x is None:
             return
         w_px, h_px = self.figure.get_size_inches() * self.figure.dpi
@@ -140,11 +203,115 @@ class MplDraggableCanvas(_FigureCanvasBase):
         Args:
             event (Any): Qt event object.
         """
+        if self._mouse_mode == "Zoom":
+            self._zoom_release(event)
+            return
         if event.button == 2:
             self.reset_layout()
         self._drag_ax       = None
         self._drag_start_px = None
         self._drag_ax_pos0  = None
+
+    def _zoom_press(self, event):
+        """Start a rectangle zoom drag when zoom mode is active."""
+        if event.button != 1 or event.inaxes is None:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        self._clear_zoom_state(draw=False)
+        self._zoom_ax = event.inaxes
+        self._zoom_start_data = (event.xdata, event.ydata)
+        self._zoom_rect = Rectangle(
+            (event.xdata, event.ydata), 0.0, 0.0,
+            fill=False, edgecolor="#2563EB", linewidth=1.2,
+            linestyle="--", zorder=1000, animated=True,
+        )
+        self._zoom_ax.add_patch(self._zoom_rect)
+        self.draw()
+        try:
+            self._zoom_background = self.copy_from_bbox(self._zoom_ax.bbox)
+        except Exception:
+            self._zoom_background = None
+
+    def _zoom_motion(self, event):
+        """Update the active rectangle zoom overlay while dragging."""
+        if self._zoom_ax is None or self._zoom_rect is None:
+            return
+        if event.inaxes is not self._zoom_ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        x0, y0 = self._zoom_start_data
+        x1, y1 = event.xdata, event.ydata
+        self._zoom_rect.set_x(min(x0, x1))
+        self._zoom_rect.set_y(min(y0, y1))
+        self._zoom_rect.set_width(abs(x1 - x0))
+        self._zoom_rect.set_height(abs(y1 - y0))
+        if self._zoom_background is not None:
+            try:
+                self.restore_region(self._zoom_background)
+                self._zoom_ax.draw_artist(self._zoom_rect)
+                self.blit(self._zoom_ax.bbox)
+                return
+            except Exception:
+                self._zoom_background = None
+        self.draw_idle()
+
+    def _zoom_release(self, event):
+        """Apply or cancel a rectangle zoom selection on mouse release."""
+        if self._zoom_ax is None or self._zoom_start_data is None:
+            return
+        if event.button != 1:
+            self._clear_zoom_state()
+            return
+        if event.inaxes is not self._zoom_ax or event.xdata is None or event.ydata is None:
+            self._clear_zoom_state()
+            return
+
+        x0, y0 = self._zoom_start_data
+        x1, y1 = event.xdata, event.ydata
+        cur_xlim = self._zoom_ax.get_xlim()
+        cur_ylim = self._zoom_ax.get_ylim()
+        x_span = abs(cur_xlim[1] - cur_xlim[0])
+        y_span = abs(cur_ylim[1] - cur_ylim[0])
+        if abs(x1 - x0) <= max(1e-12, x_span * 0.01) or abs(y1 - y0) <= max(1e-12, y_span * 0.01):
+            self._clear_zoom_state()
+            return
+
+        x_low, x_high = sorted((x0, x1))
+        y_low, y_high = sorted((y0, y1))
+
+        if self._zoom_ax.get_xscale() == 'log' and (x_low <= 0 or x_high <= 0):
+            self._clear_zoom_state()
+            return
+        if self._zoom_ax.get_yscale() == 'log' and (y_low <= 0 or y_high <= 0):
+            self._clear_zoom_state()
+            return
+
+        if cur_xlim[0] <= cur_xlim[1]:
+            self._zoom_ax.set_xlim(x_low, x_high)
+        else:
+            self._zoom_ax.set_xlim(x_high, x_low)
+        if cur_ylim[0] <= cur_ylim[1]:
+            self._zoom_ax.set_ylim(y_low, y_high)
+        else:
+            self._zoom_ax.set_ylim(y_high, y_low)
+        self._clear_zoom_state(draw=False)
+        self.draw_idle()
+
+    def _clear_zoom_state(self, draw: bool = True):
+        """Remove any temporary zoom overlay and clear in-progress state."""
+        if self._zoom_rect is not None:
+            try:
+                self._zoom_rect.remove()
+            except Exception:
+                pass
+        self._zoom_rect = None
+        self._zoom_ax = None
+        self._zoom_start_data = None
+        self._zoom_background = None
+        if draw:
+            self.draw_idle()
 
 
 

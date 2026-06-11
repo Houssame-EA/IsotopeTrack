@@ -438,6 +438,7 @@ class ConcentrationDisplayDialog(QDialog):
 
         self.figure = Figure(figsize=(12, 8), dpi=120, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.enable_view_limit_tracking(True)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._ctx_menu)
         lay.addWidget(self.canvas, stretch=1)
@@ -495,6 +496,14 @@ class ConcentrationDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        mm = menu.addMenu("Mouse mode")
+        current_mouse_mode = self.canvas.mouse_mode()
+        for mode in ("Cursor", "Zoom"):
+            action = mm.addAction(mode)
+            action.setCheckable(True)
+            action.setChecked(current_mouse_mode == mode)
+            action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
         menu.exec(QCursor.pos())
     def _toggle(self, key):
         """
@@ -513,8 +522,14 @@ class ConcentrationDisplayDialog(QDialog):
         self.node.config[key] = value
         self._refresh()
 
+    def _set_mouse_mode(self, mode: str):
+        """Update the transient Concentration mouse interaction mode."""
+        self.canvas.set_mouse_mode(mode)
+
     def _reset_layout(self):
+        """Reset subplot layout and restore the baseline Concentration view limits."""
         self.canvas.reset_layout()
+        self.canvas.restore_view_limits()
 
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "concentration_comparison")
@@ -575,6 +590,7 @@ class ConcentrationDisplayDialog(QDialog):
             self.figure.tight_layout()
             self.canvas.draw()
             self.canvas.snapshot_positions()
+            self.canvas.snapshot_view_limits()
 
         except Exception as e:
             print(f"Error refreshing concentration plot: {e}")
