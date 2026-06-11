@@ -458,6 +458,11 @@ Terminal=false
             'current_sample': self.main_window.current_sample,
             
             'csv_config': getattr(self.main_window, 'csv_config', None),
+            'saturation_filter_enabled': getattr(self.main_window, 'saturation_filter_enabled', False),
+            'saturation_filtered_peaks': getattr(self.main_window, 'saturation_filtered_peaks', {}),
+            'saturation_filtered_multi': getattr(self.main_window, 'saturation_filtered_multi', {}),
+            'saturation_windows': getattr(self.main_window, 'saturation_windows', {}),
+            'saturation_excluded_time_s': getattr(self.main_window, 'saturation_excluded_time_s', {}),
             'pending_csv_processing': getattr(self.main_window, 'pending_csv_processing', False),
             
             'element_parameter_hashes': getattr(self.main_window, 'element_parameter_hashes', {}),
@@ -517,6 +522,13 @@ Terminal=false
         self.main_window._exclusion_regions_by_sample = project_data.get('_exclusion_regions_by_sample', {})
         self.main_window.sample_status = project_data.get('sample_status', {})
         self.main_window.multi_element_particles = project_data.get('multi_element_particles', [])
+        self.main_window.saturation_filter_enabled = project_data.get('saturation_filter_enabled', False)
+        self.main_window.saturation_filtered_peaks = project_data.get('saturation_filtered_peaks', {})
+        self.main_window.saturation_filtered_multi = project_data.get('saturation_filtered_multi', {})
+        self.main_window.saturation_windows = project_data.get('saturation_windows', {})
+        self.main_window.saturation_excluded_time_s = project_data.get('saturation_excluded_time_s', {})
+        if hasattr(self.main_window, '_sync_saturation_filter_ui'):
+            self.main_window._sync_saturation_filter_ui()
         self.main_window.detection_states = project_data.get('detection_states', {})
         
         needs_initial_detection_list = project_data.get('needs_initial_detection', [])
@@ -656,7 +668,8 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config',
-            'config', '_has_input', '_has_output', 'input_channels', 'output_channels'
+            'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
+            'saved_cluster_state'
         ]
         
         for attr in config_attributes:
@@ -664,6 +677,12 @@ Terminal=false
                 value = getattr(node, attr)
                 if isinstance(value, set):
                     value = list(value)
+                if attr == 'saved_cluster_state' and value:
+                    try:
+                        import pickle
+                        pickle.dumps(value)
+                    except Exception:
+                        continue
                 node_data[attr] = value
     
     def _deserialize_canvas_state(self, canvas_state):
@@ -810,7 +829,8 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config',
-            'config', '_has_input', '_has_output', 'input_channels', 'output_channels'
+            'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
+            'saved_cluster_state'
         ]
         
         for attr in config_attributes:
@@ -846,6 +866,13 @@ Terminal=false
         self.main_window.needs_initial_detection = set()
         
         self.main_window.multi_element_particles = []
+        self.main_window.saturation_filter_enabled = False
+        self.main_window.saturation_filtered_peaks = {}
+        self.main_window.saturation_filtered_multi = {}
+        self.main_window.saturation_windows = {}
+        self.main_window.saturation_excluded_time_s = {}
+        if hasattr(self.main_window, '_sync_saturation_filter_ui'):
+            self.main_window._sync_saturation_filter_ui()
         self.main_window.folder_paths = []
         
         self.main_window._formatted_label_cache = {}

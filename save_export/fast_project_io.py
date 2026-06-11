@@ -266,6 +266,11 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sidebar_visible': getattr(mw, 'sidebar_visible', True),
         'csv_config': getattr(mw, 'csv_config', None),
         'pending_csv_processing': getattr(mw, 'pending_csv_processing', False),
+        'saturation_filter_enabled': getattr(mw, 'saturation_filter_enabled', False),
+        'saturation_filtered_peaks': getattr(mw, 'saturation_filtered_peaks', {}),
+        'saturation_filtered_multi': getattr(mw, 'saturation_filtered_multi', {}),
+        'saturation_windows': getattr(mw, 'saturation_windows', {}),
+        'saturation_excluded_time_s': getattr(mw, 'saturation_excluded_time_s', {}),
     }
 
     if hasattr(mw, 'canvas_results_dialog') and mw.canvas_results_dialog is not None:
@@ -505,11 +510,17 @@ def _restore_metadata(mw, metadata):
         'multi_element_particles',
         'sidebar_width', 'sidebar_visible',
         'csv_config', 'pending_csv_processing',
+        'saturation_filter_enabled', 'saturation_filtered_peaks',
+        'saturation_filtered_multi', 'saturation_windows',
+        'saturation_excluded_time_s',
     ]
     
     for attr in simple_attrs:
         if attr in metadata:
             setattr(mw, attr, metadata[attr])
+
+    if hasattr(mw, '_sync_saturation_filter_ui'):
+        mw._sync_saturation_filter_ui()
 
     if not hasattr(mw, '_sigma_mode') or mw._sigma_mode is None:
         mw._sigma_mode = 'global'

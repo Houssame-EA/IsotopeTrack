@@ -4,11 +4,22 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.0.10 — (dev)
+
+### New Features (in development)
+- Filter non-linear particles
+- Isobaric correction module
+
+### Improvements
+- Added legend to network results figure
+- Cluster results now saved with project
+
 ## v1.0.9 — 2026-06-09
 
 ### Bug Fixes
 - Fixed bugs with table parameters
 - Fixed bugs in results figures
+
 
 ## v1.0.8 — 2026-06-06
 

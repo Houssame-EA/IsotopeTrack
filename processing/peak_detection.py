@@ -1392,6 +1392,43 @@ class PeakDetection:
                        if not np.isscalar(threshold) else float(threshold))
         snr = max_height / peak_thresh if peak_thresh > 0 else 0.0
 
+        # --- FWHM (above local background, interpolated crossings) ----
+        bkgd_at_peak = (float(lambda_bkgd[peak_global_idx])
+                        if not np.isscalar(lambda_bkgd) else float(lambda_bkgd))
+        fwhm_s = 0.0
+        height_above_bkgd = max_height - bkgd_at_peak
+        if height_above_bkgd > 0:
+            half_level = bkgd_at_peak + 0.5 * height_above_bkgd
+            n_pts = len(raw_region)
+            # left half-max crossing (interpolated)
+            i = peak_local_idx
+            while i > 0 and raw_region[i - 1] > half_level:
+                i -= 1
+            if i == 0:
+                t_left = float(time[start_idx])
+            else:
+                y0, y1 = raw_region[i - 1], raw_region[i]
+                frac = (half_level - y0) / (y1 - y0) if y1 != y0 else 0.0
+                t0 = float(time[start_idx + i - 1])
+                t1 = float(time[start_idx + i])
+                t_left = t0 + frac * (t1 - t0)
+            # right half-max crossing (interpolated)
+            j = peak_local_idx
+            while j < n_pts - 1 and raw_region[j + 1] > half_level:
+                j += 1
+            if j == n_pts - 1:
+                t_right = float(time[start_idx + j])
+            else:
+                y0, y1 = raw_region[j], raw_region[j + 1]
+                frac = (y0 - half_level) / (y0 - y1) if y0 != y1 else 0.0
+                t0 = float(time[start_idx + j])
+                t1 = float(time[start_idx + j + 1])
+                t_right = t0 + frac * (t1 - t0)
+            fwhm_s = max(0.0, t_right - t_left)
+            if fwhm_s == 0.0 and len(time) > 1:
+                # single-point peak: assign one dwell period
+                fwhm_s = float(time[1] - time[0])
+
         return {
             'peak_time': time[peak_global_idx],
             'max_height': max_height,
@@ -1401,6 +1438,7 @@ class PeakDetection:
             'right_idx': end_idx,
             'peak_valid': snr >= 3,
             'integration_method': integration_method,
+            'fwhm_s': fwhm_s,
         }
 
     # ----------------------------------------------------------------------------------------------------------

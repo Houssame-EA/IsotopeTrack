@@ -137,7 +137,10 @@ def effective_acquisition_time(window, sample_name, element_key=None):
 
     Excluded time regions visible for the sample are subtracted from the full
     acquisition span. Sample scope exclusions always apply; element scope
-    exclusions apply only when element_key matches the stored region.
+    exclusions apply only when element_key matches the stored region. When the
+    detector non-linearity filter is enabled, its flagged time windows are
+    also subtracted; any portion of a window already inside a manual
+    exclusion region is not subtracted twice.
 
     Args:
         window (Any): Owning window exposing time arrays and exclusion regions.
@@ -158,6 +161,7 @@ def effective_acquisition_time(window, sample_name, element_key=None):
     t_min = float(time_array[0])
     t_max = float(time_array[-1])
     total_time = t_max - t_min
+    exclusion_bounds = []
     if hasattr(window, '_visible_exclusion_entries_for'):
         for entry in window._visible_exclusion_entries_for(sample_name, element_key):
             bounds = entry.get('bounds')
@@ -167,6 +171,17 @@ def effective_acquisition_time(window, sample_name, element_key=None):
             x1 = min(float(bounds[1]), t_max)
             if x1 > x0:
                 total_time -= (x1 - x0)
+                exclusion_bounds.append((x0, x1))
+    if getattr(window, 'saturation_filter_enabled', False):
+        for w0, w1 in getattr(window, 'saturation_windows', {}).get(sample_name, []):
+            w0 = max(float(w0), t_min)
+            w1 = min(float(w1), t_max)
+            if w1 <= w0:
+                continue
+            overlap = 0.0
+            for x0, x1 in exclusion_bounds:
+                overlap += max(0.0, min(w1, x1) - max(w0, x0))
+            total_time -= max(0.0, (w1 - w0) - overlap)
     return max(total_time, 0.0)
 
 
