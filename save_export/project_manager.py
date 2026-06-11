@@ -445,7 +445,7 @@ Terminal=false
             'sample_densities': getattr(self.main_window, 'sample_densities', {}),
             'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}), 
             
-            'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 50.0),
+            'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 75.0),
             '_global_sigma': getattr(self.main_window, '_global_sigma', 0.55),
             '_sigma_mode': getattr(self.main_window, '_sigma_mode', 'global'),
             '_exclusion_regions_by_sample': getattr(self.main_window, '_exclusion_regions_by_sample', {}),
@@ -516,7 +516,7 @@ Terminal=false
         self.main_window.sample_densities = project_data.get('sample_densities', {})
         self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})  
         
-        self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 50.0)
+        self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 75.0)
         self.main_window._global_sigma = project_data.get('_global_sigma', 0.55)
         self.main_window._sigma_mode = project_data.get('_sigma_mode', 'global')
         self.main_window._exclusion_regions_by_sample = project_data.get('_exclusion_regions_by_sample', {})
@@ -667,7 +667,7 @@ Terminal=false
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
-            'sample_config',
+            'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
@@ -705,6 +705,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
+                ParticleFilterNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -742,6 +743,7 @@ Terminal=false
             "batch_sample_selector": BatchSampleSelectorNode,
             "sample_selector": SampleSelectorNode,
             "multiple_sample_selector": MultipleSampleSelectorNode,
+            "particle_filter": ParticleFilterNode,
             
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
@@ -828,7 +830,7 @@ Terminal=false
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
-            'sample_config',
+            'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]

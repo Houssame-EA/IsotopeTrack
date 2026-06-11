@@ -59,6 +59,8 @@ from results.results_network import (
     NetworkDisplayDialog, NetworkDiagramNode)
 from results.results_dashboard import DashboardDisplayDialog, DashboardNode
 from results.results_periodic import IsotopeChipSelector
+from tools.particle_filter import (
+    ParticleFilterNode, build_particle_filter_node_item)
 
 import qtawesome as qta
 
@@ -3289,17 +3291,17 @@ class DraggableNodeButton(QPushButton):
                 ual.log_action('CLICK',
                                f'Dragged node from palette: {self.text().strip()}',
                                {'node_type': self.node_type})
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setText(self.node_type)
-            drag.setMimeData(mime)
+            self._drag = QDrag(self)
+            self._mime = QMimeData()
+            self._mime.setText(self.node_type)
+            self._drag.setMimeData(self._mime)
             px = self.grab()
-            drag.setPixmap(px)
-            drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
+            self._drag.setPixmap(px)
+            self._drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
             global _PENDING_DRAG_NODE_TYPE
             _PENDING_DRAG_NODE_TYPE = self.node_type
             try:
-                drag.exec_(Qt.CopyAction)
+                self._drag.exec_(Qt.CopyAction)
             finally:
                 _PENDING_DRAG_NODE_TYPE = None
         super().mousePressEvent(event)
@@ -3405,6 +3407,7 @@ class NodePalette(QWidget):
             ("Single Sample",    "sample_selector",          'fa6s.flask',           DS.INDIGO),
             ("Multiple Sample",  "multiple_sample_selector", 'fa6s.flask-vial',          DS.PURPLE),
             ("Batch Windows",    "batch_sample_selector",    'fa6s.window-restore',  DS.TEAL),
+            ("Particle Filter",  "particle_filter",          'fa6s.filter',          DS.TEAL),
         ]:
             b = DraggableNodeButton(txt, ntype, icon, color)
             dg.addWidget(b)
@@ -3656,6 +3659,7 @@ class EnhancedCanvasScene(QGraphicsScene):
         for attr in ('config', 'selected_sample', 'selected_isotopes',
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
+                     'sample_filters', 'selected_sources', 'merged_name',
                      'saved_cluster_state'):
             if hasattr(wf, attr):
                 try:
@@ -4101,10 +4105,14 @@ class EnhancedCanvasView(QGraphicsView):
         super().keyPressEvent(event)
 
 
+ParticleFilterNodeItem = build_particle_filter_node_item()
+
+
 _NODE_FACTORIES = {
     "sample_selector":              SampleSelectorNode,
     "multiple_sample_selector":     MultipleSampleSelectorNode,
     "batch_sample_selector":        BatchSampleSelectorNode,
+    "particle_filter":              ParticleFilterNode,
     "histogram_plot":               HistogramPlotNode,
     "element_bar_chart_plot":       ElementBarChartPlotNode,
     "correlation_plot":             CorrelationPlotNode,
@@ -4128,6 +4136,7 @@ _NODE_ITEM_MAP = {
     "sample_selector":              SampleSelectorNodeItem,
     "multiple_sample_selector":     MultipleSampleSelectorNodeItem,
     "batch_sample_selector":        BatchSampleSelectorNodeItem,
+    "particle_filter":              ParticleFilterNodeItem,
     "histogram_plot":               HistogramPlotNodeItem,
     "element_bar_chart_plot":       ElementBarChartPlotNodeItem,
     "correlation_plot":             CorrelationPlotNodeItem,
@@ -4256,14 +4265,11 @@ class CanvasResultsDialog(QDialog):
             QPushButton:hover {{ background: {DS.ACCENT_HOVER}; }}
         """)
         back.clicked.connect(_close_and_log)
-    
-        # The Insights button is inserted between the separator and Clear All.
-        # We create it after the splitter so we can pass the splitter reference.
-        # Use a placeholder slot that will be replaced below.
+
         self._insights_placeholder = QPushButton("✦  Insights")
         self._insights_placeholder.setFixedHeight(30)
         self._insights_placeholder.setStyleSheet(self._tool_btn_style())
-        hl.addWidget(self._insights_placeholder)   # temporary
+        hl.addWidget(self._insights_placeholder)  
     
         hl.addWidget(clr)
         hl.addWidget(back)

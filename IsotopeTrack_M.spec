@@ -42,8 +42,14 @@ if os.path.exists('data'):
                 data_files.append((data_path, 'data'))
                 print(f"Including data file: {data_file}")
 
+if os.path.exists('data/interference_corrections.json'):
+    data_files.append(('data/interference_corrections.json', '.'))
+
 if os.path.exists('images/isotrack_icon.ico'):
     data_files.append(('images/isotrack_icon.ico', '.'))
+
+if os.path.exists('data/materials_trimmed.csv.gz'):
+    data_files.append(('data/materials_trimmed.csv.gz', '.'))
 
 if os.path.exists('processing/cpln_quantiles.npz'):
     data_files.append(('processing/cpln_quantiles.npz', 'processing'))
@@ -218,7 +224,6 @@ a = Analysis(
         'dataclasses',
 
         'mainwindow',
-        'theme',
 
         'calibration_methods',
         'calibration_methods.ionic_CAL',
@@ -243,12 +248,14 @@ a = Analysis(
         'results.results_bar_charts',
         'results.results_box_plot',
         'results.results_cluster',
+        'results.cluster_tools.py',
         'results.results_concentration',
         'results.results_correlation',
         'results.results_dashboard',
         'results.results_heatmap',
         'results.results_isotope',
         'results.results_matrix',
+        'results.results_reader.py',
         'results.results_molar_ratio',
         'results.results_network',
         'results.results_periodic',
@@ -267,6 +274,11 @@ a = Analysis(
 
         'tools',
         'tools.app_version',
+        'tools.dilution_utils.py',
+        'tools.parameters_table.py',
+        'tools.theme.py',
+        'tools.particle_filter.py',
+        'tools.element_picker.py',
         'tools.update_checker',
         'tools.help_dialogs',
         'tools.Info_table',
@@ -276,6 +288,7 @@ a = Analysis(
         'tools.progressive_main_window',
         'tools.signal_selector_dialog',
         'tools.splash_screen',
+        'tools.isobaric_correction.py',
         'tools.tutorial',
         'tools.unit',
         'tools.cli_utils',
@@ -283,6 +296,7 @@ a = Analysis(
         'widget',
         'widget.batch_parameters',
         'widget.calibration_info',
+        'widget.isobaric_correction_dialog.py',
         'widget.canvas_widgets',
         'widget.colors',
         'widget.custom_plot_widget',

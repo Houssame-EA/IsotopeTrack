@@ -34,7 +34,7 @@ from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
 from tools.signal_selector_dialog import SignalSelectorDialog
-import isobaric_correction as isobaric
+import tools.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action
 import logging
 from widget.colors import element_colors
@@ -202,7 +202,6 @@ class MainWindow(QMainWindow):
         self.element_mass_map = {}
         self.detected_peaks = {}
         self.sample_status = {} 
-        # --- Saturation (FWHM-based) filter state ----------------------
         _sat_settings = QSettings("IsotopeTrack", "IsotopeTrack")
         self.saturation_filter_enabled = False
         try:
@@ -228,13 +227,9 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             self.saturation_top_frac = 0.90
         self.saturation_top_frac = min(0.99, max(0.50, self.saturation_top_frac))
-        # sample -> {(element, isotope): [particles removed by the filter]}
         self.saturation_filtered_peaks = {}
-        # sample -> [multi-element particles removed by the filter]
         self.saturation_filtered_multi = {}
-        # sample -> [(t0, t1), ...] merged saturated time windows
         self.saturation_windows = {}
-        # sample -> total excluded time (s), for concentration correction
         self.saturation_excluded_time_s = {}
         self.animation = None
         self.animation_group = None
@@ -282,6 +277,7 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager(self)
         self.detection_states = {}  
         self.needs_initial_detection = set() 
+        self._results_attention = False
         self.peak_detector = PeakDetection()  
         self.sample_method_info = {}
         self.sample_to_folder_map = {}
@@ -446,11 +442,25 @@ class MainWindow(QMainWindow):
     #------------------------------------UI creation - main layout --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
     def open_isobaric_correction(self):
+        """Open the isobaric correction dialog, reusing a single instance.
+
+        The dialog is created once and kept on self._isobaric_dialog, then
+        refreshed on every subsequent open. Recreating it each time crashes
+        on close: Python garbage-collects the dialog inside the menu-action
+        handler and the pyqtgraph PlotWidget's QGraphicsScene teardown
+        double-frees under PySide6 (segfault in Shiboken::Object::destroy).
+        """
         if not self.selected_isotopes or not self.data_by_sample:
             QMessageBox.warning(self, "Isobaric Correction", "Load data and select elements first.")
             return
         from widget.isobaric_correction_dialog import IsobaricCorrectionDialog
-        IsobaricCorrectionDialog(self).exec()
+        dlg = getattr(self, '_isobaric_dialog', None)
+        if dlg is None:
+            dlg = IsobaricCorrectionDialog(self)
+            self._isobaric_dialog = dlg
+        else:
+            dlg.reload()
+        dlg.exec()
         
     def create_central_widget(self):
         """
@@ -558,19 +568,24 @@ class MainWindow(QMainWindow):
     
     def compute_isobaric_corrections(self):
         """Derive every applicable correction from self.selected_isotopes.
- 
-        Reuses the periodic table's abundance data (get_element_by_symbol /
-        get_elements). A correction is 'enabled' only when a clean monitor of
-        the interferent is itself among the selected isotopes.
+
+        Overlaps come from the reference table
+        (data/interference_corrections.json) — the known list of isobaric
+        interferences — with any persisted user overrides (custom R factor or
+        monitor isotope) applied on top. A correction is 'enabled' only when
+        its monitor channel is among the measured data channels.
         """
-        if not getattr(self, 'periodic_table_widget', None):
-            return []
         if not getattr(self, 'selected_isotopes', None):
             return []
-        return isobaric.build_all_corrections(
+        all_channels = sorted({
+            m
+            for sd in getattr(self, 'data_by_sample', {}).values()
+            for m in sd.keys()
+        })
+        return isobaric.build_table_corrections(
             self.selected_isotopes,
-            self.periodic_table_widget.get_element_by_symbol,
-            self.periodic_table_widget.get_elements,
+            available_masses=all_channels or None,
+            overrides=isobaric.load_overrides(),
         )
  
     # ---- PREVIEW: compute IN vs OUT, change nothing ----
@@ -655,12 +670,22 @@ class MainWindow(QMainWindow):
  
         if changed:
             self.isobaric_applied = True
+            if self._invalidate_particle_detection(sample_names):
+                self.status_label.setText(
+                    "Isobaric correction applied — previous peak detection "
+                    "results were cleared. Run Detect Peaks again.")
         return changed
- 
+
     # ---- REVERT: undo an apply, restore raw ----
     def revert_isobaric_correction(self):
-        """Restore the raw signal everywhere a correction was applied."""
+        """Restore the raw signal everywhere a correction was applied.
+
+        Stale particle-detection results (computed on the corrected signal)
+        are cleared as well, so the plot and result tables never show peaks
+        that no longer match the visible signal.
+        """
         backup = getattr(self, '_isobaric_raw_backup', {})
+        reverted_samples = list(backup.keys())
         for sname, channels in backup.items():
             sample_data = self.data_by_sample.get(sname)
             if not sample_data:
@@ -671,8 +696,109 @@ class MainWindow(QMainWindow):
                 self.data = sample_data
         self._isobaric_raw_backup = {}
         self.isobaric_applied = False
+        if reverted_samples and self._invalidate_particle_detection(reverted_samples):
+            self.status_label.setText(
+                "Isobaric correction reverted — previous peak detection "
+                "results were cleared. Run Detect Peaks again.")
+
+    def _invalidate_particle_detection(self, sample_names=None):
+        """Clear stale particle-detection results after the signal changed.
+
+        Applying or reverting an isobaric correction rewrites the working
+        signal, so particles detected on the previous signal (positions,
+        heights, integrated counts) no longer match what is plotted. This
+        clears every stored detection product for the affected samples and
+        refreshes the current display so no stale peaks remain visible.
+
+        Args:
+            sample_names: Samples whose results to clear. Defaults to all
+                loaded samples.
+
+        Returns:
+            bool: True when at least one sample actually had results.
+        """
+        if sample_names is None:
+            sample_names = list(self.data_by_sample.keys())
+
+        had_results = False
+        for sname in sample_names:
+            if self.sample_detected_peaks.get(sname):
+                had_results = True
+            self.sample_detected_peaks.pop(sname, None)
+            self.sample_results_data.pop(sname, None)
+            self.sample_particle_data.pop(sname, None)
+            self.detection_states.pop(sname, None)
+            self.saturation_filtered_peaks.pop(sname, None)
+            self.saturation_filtered_multi.pop(sname, None)
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+            if hasattr(self, 'needs_initial_detection'):
+                self.needs_initial_detection.add(sname)
+
+        if getattr(self, 'current_sample', None) in sample_names:
+            self.detected_peaks = {}
+            self.multi_element_particles = []
+            try:
+                self.results_table.setRowCount(0)
+            except Exception:
+                pass
+            try:
+                self.update_sample_table()
+            except Exception:
+                pass
+        if had_results:
+            self._mark_results_changed()
+        return had_results
         
     
+    def _set_results_attention(self, on):
+        """Highlight or un-highlight the sidebar Results button.
+
+        When the working signal is modified in a way that invalidates the
+        currently stored particle results, the Results button is given an
+        accent-colored fill so the user immediately sees that fresh results
+        are waiting to be viewed. The highlight is cleared once the user
+        opens the results.
+
+        Args:
+            on (bool): True to apply the attention highlight, False to
+                restore the button's default sidebar styling.
+
+        Returns:
+            None
+        """
+        self._results_attention = bool(on)
+        if not hasattr(self, 'results_button'):
+            return
+        p = theme.palette
+        if on:
+            self.results_button.setStyleSheet(
+                f"QPushButton{{background:{p.accent};color:{p.text_inverse};"
+                f"border:1px solid {p.accent};font-weight:700;}}"
+                f"QPushButton:hover{{background:{p.accent};"
+                f"border-color:{p.accent};}}"
+            )
+            self.results_button.setToolTip(
+                "Something changed — click Results to update the results "
+                "in the canvas.")
+        else:
+            self.results_button.setStyleSheet("")
+            self.results_button.setToolTip("")
+
+    def _mark_results_changed(self):
+        """Flag that the stored results are now out of date.
+
+        Called from every place that mutates data feeding into the
+        results (particle detection, the non-linearity filter, particle
+        rebuilds, calibration changes, isobaric corrections). The Results
+        button is highlighted so the user knows fresh results are waiting
+        and that opening Results will update the canvas.
+
+        Returns:
+            None
+        """
+        self._set_results_attention(True)
+
     def create_sidebar(self):
         """
         Create sidebar with calibration and sample management tools.
@@ -748,9 +874,11 @@ class MainWindow(QMainWindow):
         samples_layout.addWidget(elements_button)
 
         results_button = QPushButton("Results")
+        self.results_button = results_button
         self._sidebar_icon_buttons.append((results_button, 'fa6s.table-list'))
         results_button.clicked.connect(self.show_results)
         samples_layout.addWidget(results_button)
+        self._set_results_attention(self._results_attention)
 
         export_button = QPushButton("Export")
         self._sidebar_icon_buttons.append((export_button, 'fa6s.file-export'))
@@ -1006,6 +1134,8 @@ class MainWindow(QMainWindow):
 
         for btn, icon_name in getattr(self, '_sidebar_icon_buttons', []):
             btn.setIcon(qta.icon(icon_name, color=p.text_on_sidebar))
+
+        self._set_results_attention(getattr(self, '_results_attention', False))
 
         if hasattr(self, 'toggle_button'):
             arrow_icon = 'fa6s.arrow-left' if self.sidebar_visible else 'fa6s.arrow-right'
@@ -2189,6 +2319,39 @@ class MainWindow(QMainWindow):
                 self.select_csv_files()
             else:
                 self.select_tofwerk_files()
+    
+    def expand_nu_replicate_folders(self, selected_paths):
+        """
+        Expand selected folders into Nu run folders, descending into replicate subfolders.
+
+        For each selected path, if the folder contains a run.info file directly it is
+        kept as is. If it does not, the folder is treated as a parent and each immediate
+        subfolder that contains a run.info file is added as a separate Nu run folder.
+        Parent folders without any run.info-containing subfolder are returned unchanged
+        so existing validation and error handling still applies.
+
+        Args:
+            selected_paths (list): List of folder paths chosen by the user
+
+        Returns:
+            list: Expanded list of folder paths, each pointing to a Nu run folder
+        """
+        expanded_paths = []
+        for selected in selected_paths:
+            path = Path(selected)
+            if (path / "run.info").exists():
+                expanded_paths.append(str(path))
+                continue
+            replicate_paths = []
+            if path.is_dir():
+                for child in sorted(path.iterdir()):
+                    if child.is_dir() and (child / "run.info").exists():
+                        replicate_paths.append(str(child))
+            if replicate_paths:
+                expanded_paths.extend(replicate_paths)
+            else:
+                expanded_paths.append(str(path))
+        return expanded_paths
                 
     def get_unique_sample_name(self, base_name):
         """
@@ -2245,6 +2408,7 @@ class MainWindow(QMainWindow):
                     'OPEN',
                     ', '.join(selected_paths[:3]) + ('…' if len(selected_paths) > 3 else ''),
                     {'folder_count': len(selected_paths)})
+                selected_paths = self.expand_nu_replicate_folders(selected_paths)
                 self.process_folders(selected_paths)
                 
         except Exception as e:
@@ -3783,6 +3947,8 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error in handle_isotopes_selected: {str(e)}")
             self.progress_bar.setVisible(False)
             
+        if (newly_added or removed_isotopes) and not is_project_loading:
+            self._mark_results_changed()
         self.unsaved_changes = True
             
     def handle_isotopes_selection_from_calibration(self, selected_isotopes):
@@ -4006,6 +4172,8 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error in handle_isotopes_selection_from_calibration: {str(e)}")
             self.progress_bar.setVisible(False)
             
+        if (newly_added or removed_isotopes) and not is_project_loading:
+            self._mark_results_changed()
         self.unsaved_changes = True
                                             
     def find_closest_isotope(self, target_mass):
@@ -5085,6 +5253,7 @@ class MainWindow(QMainWindow):
                     f"{excl_ms:.1f} ms removed from the analysis time")
             self._refresh_after_saturation_change()
 
+        self._mark_results_changed()
         return result
         
     def process_single_sample(self, sample_name):
@@ -5633,6 +5802,7 @@ class MainWindow(QMainWindow):
             self.sample_particle_data[sname] = rebuilt
             if sname == self.current_sample:
                 self.multi_element_particles = rebuilt
+            self._mark_results_changed()
         except Exception as e:
             self.logger.debug(f"Particle data rebuild failed for {sname}: {e}")
 
@@ -5700,6 +5870,7 @@ class MainWindow(QMainWindow):
         self.canvas_results_dialog.raise_() 
         self.canvas_results_dialog.activateWindow()
         self.maybe_prompt_dilution()
+        self._set_results_attention(False)
         
     
                 
@@ -6743,6 +6914,7 @@ class MainWindow(QMainWindow):
             parent.average_transport_rate = dialog.average_transport_rate
             parent.update_calibration_display()
             parent.update_calculations()
+            parent._mark_results_changed()
 
     def handle_calibration_result(self, method, calibration_data):
         """
@@ -6814,6 +6986,7 @@ class MainWindow(QMainWindow):
                                         self.logger.error(f"Error calculating limits for {element_key}: {str(e)}")
 
         self.update_calibration_display()   
+        self._mark_results_changed()
     
     def open_ionic_calibration(self):
         """
@@ -6993,6 +7166,7 @@ class MainWindow(QMainWindow):
         self.isotope_method_preferences = preferences
         
         self.update_calibration_display()
+        self._mark_results_changed()
         
     def calculate_mass_limits(self):
         """
@@ -7188,6 +7362,7 @@ class MainWindow(QMainWindow):
             
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
         
+        self._mark_results_changed()
         self.unsaved_changes = True
             
     def get_molecular_weight(self, element_key, sample_name=None):
@@ -7371,6 +7546,7 @@ class MainWindow(QMainWindow):
             None
         """
         tools.dilution_utils.open_dilution_factor_dialog(self)
+        self._mark_results_changed()
 
     def maybe_prompt_dilution(self):
         """
