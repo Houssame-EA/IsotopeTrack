@@ -56,7 +56,83 @@ COLORMAPS = [
 ]
 
 
-def setup_ternary_axes(ax, element_labels, config):
+def _full_triangle_viewport() -> dict:
+    """Return the default full ternary viewport."""
+    return {'a_min': 0.0, 'b_min': 0.0, 'c_min': 0.0}
+
+
+def _validate_triangle_viewport(viewport: dict | None) -> dict:
+    """Return a sanitized valid ternary viewport or the full viewport.
+
+    Args:
+        viewport (dict | None): Lower-bound ternary viewport candidate.
+
+    Returns:
+        dict: Validated viewport with ``a_min``, ``b_min``, and ``c_min``.
+    """
+    if not isinstance(viewport, dict):
+        return _full_triangle_viewport()
+    try:
+        a_min = max(0.0, float(viewport.get('a_min', 0.0)))
+        b_min = max(0.0, float(viewport.get('b_min', 0.0)))
+        c_min = max(0.0, float(viewport.get('c_min', 0.0)))
+    except Exception:
+        return _full_triangle_viewport()
+    if a_min + b_min + c_min >= 1.0:
+        return _full_triangle_viewport()
+    return {'a_min': a_min, 'b_min': b_min, 'c_min': c_min}
+
+
+def _is_full_triangle_viewport(viewport: dict, tol: float = 1e-12) -> bool:
+    """Return whether the viewport matches the full simplex within tolerance."""
+    vp = _validate_triangle_viewport(viewport)
+    return (
+        abs(vp['a_min']) <= tol and
+        abs(vp['b_min']) <= tol and
+        abs(vp['c_min']) <= tol
+    )
+
+
+def _viewport_remaining(viewport: dict) -> float:
+    """Return the remaining simplex width for a lower-bound ternary viewport."""
+    vp = _validate_triangle_viewport(viewport)
+    return 1.0 - (vp['a_min'] + vp['b_min'] + vp['c_min'])
+
+
+def _point_in_triangle_viewport(a: float, b: float, c: float,
+                                viewport: dict, tol: float = 1e-9) -> bool:
+    """Return whether a ternary point lies inside the viewport."""
+    vp = _validate_triangle_viewport(viewport)
+    return (
+        a >= vp['a_min'] - tol and
+        b >= vp['b_min'] - tol and
+        c >= vp['c_min'] - tol
+    )
+
+
+def _remap_point_to_triangle_viewport(a: float, b: float, c: float,
+                                      viewport: dict) -> tuple[float, float, float]:
+    """Map original ternary fractions into local viewport fractions."""
+    vp = _validate_triangle_viewport(viewport)
+    remaining = _viewport_remaining(vp)
+    if remaining <= 0:
+        return a, b, c
+    a_local = (a - vp['a_min']) / remaining
+    b_local = (b - vp['b_min']) / remaining
+    c_local = (c - vp['c_min']) / remaining
+    return a_local, b_local, c_local
+
+
+def _viewport_tick_labels(viewport: dict, component_key: str,
+                          ticks: list[float]) -> list[str]:
+    """Return original-composition percentage labels for local ternary ticks."""
+    vp = _validate_triangle_viewport(viewport)
+    remaining = _viewport_remaining(vp)
+    base = vp.get(component_key, 0.0)
+    return [f'{int(round((base + tick * remaining) * 100))}%' for tick in ticks]
+
+
+def setup_ternary_axes(ax, element_labels, config, viewport=None):
     """
     Configure mpltern axes with labels, grid, and font settings.
 
@@ -69,11 +145,13 @@ def setup_ternary_axes(ax, element_labels, config):
         ax:             mpltern axes (projection='ternary')
         element_labels: [elem_a, elem_b, elem_c]
         config:         node config dict
+        viewport:       optional lower-bound ternary viewport dict
     """
     fp   = make_font_properties(config)
     fc   = get_font_config(config)
     mode = config.get('label_mode', 'Symbol')
     fmt  = [format_element_label(e, mode, Renderer.MATHTEXT, config) for e in element_labels]
+    viewport = _validate_triangle_viewport(viewport)
 
     ax.set_llabel(fmt[0], fontproperties=fp, color=fc['color'])
     ax.set_rlabel(fmt[1], fontproperties=fp, color=fc['color'])
@@ -82,10 +160,14 @@ def setup_ternary_axes(ax, element_labels, config):
     if config.get('show_grid', True):
         ax.grid(True, alpha=0.3)
         ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        tick_labels = [f'{int(t * 100)}%' for t in ticks]
-        for axis in (ax.taxis, ax.laxis, ax.raxis):
+        axis_specs = (
+            (ax.taxis, 'c_min'),
+            (ax.laxis, 'a_min'),
+            (ax.raxis, 'b_min'),
+        )
+        for axis, component_key in axis_specs:
             axis.set_ticks(ticks)
-            axis.set_ticklabels(tick_labels)
+            axis.set_ticklabels(_viewport_tick_labels(viewport, component_key, ticks))
             for lbl in axis.get_ticklabels():
                 lbl.set_fontproperties(fp)
                 lbl.set_color(fc['color'])
@@ -992,6 +1074,7 @@ class TriangleDisplayDialog(QDialog):
         self.parent_window = parent_window
         self.setWindowTitle("Ternary Composition Analysis")
         self.setMinimumSize(1000, 750)
+        self._triangle_viewport = _full_triangle_viewport()
 
         self._setup_ui()
         self._refresh()
@@ -1015,6 +1098,24 @@ class TriangleDisplayDialog(QDialog):
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
+
+    def _single_sample_triangle_zoom_supported(self) -> bool:
+        """Return whether ternary zoom is currently supported for single-sample view.
+
+        The generic shared rectangle zoom is scientifically invalid for a single
+        ternary simplex because it crops Cartesian projection space without
+        redrawing ternary ticks/grid for a true sub-simplex viewport.
+        """
+        return False
+
+    def _apply_test_triangle_viewport(self):
+        """Apply a temporary single-sample ternary viewport for manual QA."""
+        self._triangle_viewport = _validate_triangle_viewport({
+            'a_min': 0.20,
+            'b_min': 0.10,
+            'c_min': 0.10,
+        })
+        self._refresh()
 
     def _available_elements(self) -> list:
         """
@@ -1109,11 +1210,28 @@ class TriangleDisplayDialog(QDialog):
 
         mm = menu.addMenu("Mouse mode")
         current_mouse_mode = self.canvas.mouse_mode()
+        zoom_supported = self._is_multi() or self._single_sample_triangle_zoom_supported()
         for mode in ("Cursor", "Zoom"):
             action = mm.addAction(mode)
             action.setCheckable(True)
             action.setChecked(current_mouse_mode == mode)
-            action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+            if mode == "Zoom" and not zoom_supported:
+                action.setChecked(False)
+                action.setEnabled(False)
+                action.setText("Zoom (unavailable for single-sample ternary)")
+                reason = (
+                    "Single-sample ternary zoom is disabled until a true "
+                    "ternary-aware viewport is implemented."
+                )
+                action.setStatusTip(reason)
+                action.setToolTip(reason)
+            else:
+                action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
+        if not self._is_multi():
+            menu.addSeparator()
+            menu.addAction("Apply test ternary viewport").triggered.connect(
+                self._apply_test_triangle_viewport)
 
         menu.exec(QCursor.pos())
     def _add_toggle(self, menu, label, key):
@@ -1148,6 +1266,9 @@ class TriangleDisplayDialog(QDialog):
 
     def _set_mouse_mode(self, mode: str):
         """Update the transient Triangle mouse interaction mode."""
+        if mode == "Zoom" and not (self._is_multi() or self._single_sample_triangle_zoom_supported()):
+            self.canvas.set_mouse_mode("Cursor")
+            return
         self.canvas.set_mouse_mode(mode)
 
     def _add_annotation(self):
@@ -1204,8 +1325,11 @@ class TriangleDisplayDialog(QDialog):
 
     def _reset_layout(self):
         """Reset subplot layout/view positions; same behavior as prior reset action."""
+        self._triangle_viewport = _full_triangle_viewport()
         self.canvas.reset_layout()
-        self.canvas.restore_view_limits()
+        if self._is_multi():
+            self.canvas.restore_view_limits()
+        self._refresh()
 
     def _export_figure(self):
         """Open the existing figure export workflow for the ternary figure."""
@@ -1224,6 +1348,9 @@ class TriangleDisplayDialog(QDialog):
             self.figure.patch.set_facecolor(cfg.get('bg_color', '#FFFFFF'))
 
             plot_data = self.node.extract_plot_data()
+
+            if not self._is_multi() and self.canvas.mouse_mode() == "Zoom":
+                self.canvas.set_mouse_mode("Cursor")
 
             if not plot_data:
                 ax = self.figure.add_subplot(111)
@@ -1251,12 +1378,14 @@ class TriangleDisplayDialog(QDialog):
                 else:
                     self._draw_overlaid(plot_data, cfg)
                 for ax in self.figure.get_axes():
-                    self._draw_annotations(ax, cfg)
+                    self._draw_annotations(ax, cfg, _full_triangle_viewport())
             else:
                 ax = self.figure.add_subplot(111, projection='ternary')
-                self._draw_sample(ax, plot_data, cfg, "Ternary Plot")
+                self._draw_sample(
+                    ax, plot_data, cfg, "Ternary Plot",
+                    viewport=self._triangle_viewport)
                 apply_font_to_ternary(ax, cfg)
-                self._draw_annotations(ax, cfg)
+                self._draw_annotations(ax, cfg, self._triangle_viewport)
 
             self._update_stats(plot_data)
 
@@ -1272,7 +1401,7 @@ class TriangleDisplayDialog(QDialog):
 
     # ── Annotation rendering ─────────────────
 
-    def _draw_annotations(self, ax, cfg):
+    def _draw_annotations(self, ax, cfg, viewport=None):
         """Render all custom annotations onto a ternary axes.
 
         Text annotations are placed in axes-fraction space (draggable).
@@ -1285,6 +1414,7 @@ class TriangleDisplayDialog(QDialog):
         anns = cfg.get('annotations', [])
         if not anns:
             return
+        viewport = _validate_triangle_viewport(viewport)
 
         fc_cfg = get_font_config(cfg)
 
@@ -1314,8 +1444,13 @@ class TriangleDisplayDialog(QDialog):
                 s = t + l + r
                 if s > 0:
                     t, l, r = t/s, l/s, r/s
+                a_val, b_val, c_val = l, r, t
+                if not _point_in_triangle_viewport(a_val, b_val, c_val, viewport):
+                    continue
+                a_local, b_local, c_local = _remap_point_to_triangle_viewport(
+                    a_val, b_val, c_val, viewport)
                 try:
-                    ax.scatter([t], [l], [r],
+                    ax.scatter([c_local], [a_local], [b_local],
                                marker=ann.get('marker', 'o'),
                                s=ann.get('marker_size', 80),
                                c=[ann.get('marker_color', '#3B82F6')],
@@ -1411,7 +1546,7 @@ class TriangleDisplayDialog(QDialog):
             self.stats_label.setText("  ·  ".join(parts))
 
 
-    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None):
+    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None):
         """
         Draw a ternary scatter or hexbin for one sample.
 
@@ -1421,6 +1556,7 @@ class TriangleDisplayDialog(QDialog):
             cfg:          config dict
             title:        plot title string
             sample_color: if provided, all markers use this color (for overlaid mode)
+            viewport:     optional lower-bound ternary viewport for single-sample redraw
         """
         if not sample_data:
             return
@@ -1428,11 +1564,30 @@ class TriangleDisplayDialog(QDialog):
         ea = cfg.get('element_a', 'A')
         eb = cfg.get('element_b', 'B')
         ec = cfg.get('element_c', 'C')
-        setup_ternary_axes(ax, [ea, eb, ec], cfg)
+        viewport = _validate_triangle_viewport(viewport)
+        setup_ternary_axes(ax, [ea, eb, ec], cfg, viewport)
 
-        a_vals = np.array([p['a'] for p in sample_data])
-        b_vals = np.array([p['b'] for p in sample_data])
-        c_vals = np.array([p['c'] for p in sample_data])
+        visible_points = []
+        for point in sample_data:
+            a_val = point['a']
+            b_val = point['b']
+            c_val = point['c']
+            if not _point_in_triangle_viewport(a_val, b_val, c_val, viewport):
+                continue
+            a_local, b_local, c_local = _remap_point_to_triangle_viewport(
+                a_val, b_val, c_val, viewport)
+            visible_point = dict(point)
+            visible_point['a_local'] = a_local
+            visible_point['b_local'] = b_local
+            visible_point['c_local'] = c_local
+            visible_points.append(visible_point)
+
+        if not visible_points:
+            return
+
+        a_vals = np.array([p['a_local'] for p in visible_points])
+        b_vals = np.array([p['b_local'] for p in visible_points])
+        c_vals = np.array([p['c_local'] for p in visible_points])
 
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
@@ -1444,7 +1599,7 @@ class TriangleDisplayDialog(QDialog):
             color_elem = cfg.get('color_element', '')
 
             if color_elem and not sample_color:
-                color_vals = np.array([p.get('color_val', 0) for p in sample_data])
+                color_vals = np.array([p.get('color_val', 0) for p in visible_points])
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, c=color_vals, cmap=cmap,
@@ -1478,18 +1633,20 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, cfg.get('colorbar_label', 'Density'))
 
-        self._draw_average(ax, sample_data, cfg, title)
+        self._draw_average(ax, visible_points, cfg, title, viewport)
 
-    def _draw_average(self, ax, sample_data, cfg, sample_name):
+    def _draw_average(self, ax, sample_data, cfg, sample_name, viewport=None):
         """Draw average point with optional stats text and confidence ellipse.
         Args:
             ax (Any): The ax.
             sample_data (Any): The sample data.
             cfg (Any): The cfg.
             sample_name (Any): The sample name.
+            viewport (Any): Optional lower-bound ternary viewport.
         """
         if not cfg.get('show_average_point', True) or not sample_data:
             return
+        viewport = _validate_triangle_viewport(viewport)
 
         if cfg.get('average_only_with_all_elements', True):
             data = [p for p in sample_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
@@ -1505,6 +1662,10 @@ class TriangleDisplayDialog(QDialog):
 
         ma, mb, mc = a_vals.mean(), b_vals.mean(), c_vals.mean()
         sa, sb, sc = a_vals.std(), b_vals.std(), c_vals.std()
+        if not _point_in_triangle_viewport(ma, mb, mc, viewport):
+            return
+        ma_local, mb_local, mc_local = _remap_point_to_triangle_viewport(
+            ma, mb, mc, viewport)
 
         avg_color = cfg.get('average_point_color', '#FF0000')
         avg_size = cfg.get('average_point_size', 100)
@@ -1514,7 +1675,7 @@ class TriangleDisplayDialog(QDialog):
         suffix = f" ({n_filt}/{n_total})" if n_filt < n_total else ""
 
         ax.scatter(
-            [mb], [mc], [ma],
+            [mb_local], [mc_local], [ma_local],
             s=avg_size, marker='*', color=avg_color,
             edgecolors='black', linewidth=1.5, zorder=10,
             label=f'Average{" (" + sample_name + ")" if sample_name else ""}{suffix}')
@@ -1529,8 +1690,8 @@ class TriangleDisplayDialog(QDialog):
                     f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
                     f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
 
-            tx = mb + 0.15
-            ty = mc + 0.01
+            tx = min(mb_local + 0.15, 0.98)
+            ty = min(mc_local + 0.01, 0.98)
             tz = max(1.0 - tx - ty, 0.01)
             ax.text(tx, ty, tz, text,
                     fontproperties=fp, color='black',
@@ -1538,7 +1699,8 @@ class TriangleDisplayDialog(QDialog):
                               alpha=0.85, edgecolor='gray'),
                     ha='left', va='bottom', zorder=11)
 
-        if cfg.get('show_confidence_ellipse', False) and len(data) >= 3:
+        if (_is_full_triangle_viewport(viewport)
+                and cfg.get('show_confidence_ellipse', False) and len(data) >= 3):
             params = confidence_ellipse_params(b_vals, c_vals, n_std=2.0)
             if params:
                 ellipse = Ellipse(
