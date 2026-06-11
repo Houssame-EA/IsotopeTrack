@@ -1038,6 +1038,7 @@ class TriangleDisplayDialog(QDialog):
 
         self.figure = Figure(figsize=(14, 10), dpi=140, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.enable_view_limit_tracking(True)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._show_context_menu)
         main_layout.addWidget(self.canvas, stretch=1)
@@ -1106,6 +1107,14 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        mm = menu.addMenu("Mouse mode")
+        current_mouse_mode = self.canvas.mouse_mode()
+        for mode in ("Cursor", "Zoom"):
+            action = mm.addAction(mode)
+            action.setCheckable(True)
+            action.setChecked(current_mouse_mode == mode)
+            action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
         menu.exec(QCursor.pos())
     def _add_toggle(self, menu, label, key):
         """
@@ -1136,6 +1145,10 @@ class TriangleDisplayDialog(QDialog):
         """
         self.node.config[key] = value
         self._refresh()
+
+    def _set_mouse_mode(self, mode: str):
+        """Update the transient Triangle mouse interaction mode."""
+        self.canvas.set_mouse_mode(mode)
 
     def _add_annotation(self):
         """Open annotation creator; preserves existing annotation data model/behavior."""
@@ -1192,6 +1205,7 @@ class TriangleDisplayDialog(QDialog):
     def _reset_layout(self):
         """Reset subplot layout/view positions; same behavior as prior reset action."""
         self.canvas.reset_layout()
+        self.canvas.restore_view_limits()
 
     def _export_figure(self):
         """Open the existing figure export workflow for the ternary figure."""
@@ -1249,6 +1263,7 @@ class TriangleDisplayDialog(QDialog):
             self.figure.tight_layout()
             self.canvas.draw()
             self.canvas.snapshot_positions()
+            self.canvas.snapshot_view_limits()
 
         except Exception as e:
             print(f"Error updating ternary display: {e}")
@@ -1337,6 +1352,8 @@ class TriangleDisplayDialog(QDialog):
         Args:
             event (Any): Qt event object.
         """
+        if self.canvas.mouse_mode() == "Zoom":
+            return
         try:
             anns = self.node.config.get('annotations', [])
             changed = False
