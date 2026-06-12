@@ -1,26 +1,20 @@
 from PySide6.QtWidgets import (
     QDialog, QMenu, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QGraphicsView, QGraphicsScene,
-    QGraphicsItem, QGraphicsProxyWidget, QLabel, QTableWidget,
-    QComboBox, QListWidget, QListWidgetItem, QCheckBox,
-    QFrame, QScrollArea, QSplitter, QGroupBox, QTableWidgetItem,
-    QGraphicsWidget, QGraphicsEllipseItem, QApplication, QMainWindow,
-    QDialogButtonBox, QFormLayout, QSpinBox, QDoubleSpinBox, QTabWidget,
-    QLineEdit, QAbstractItemView, QTextEdit, QToolTip, QGraphicsDropShadowEffect,
-    QGraphicsOpacityEffect, QSlider, QToolButton, QSizePolicy, QHeaderView,
-    QMessageBox, QInputDialog, QGraphicsRectItem
+    QGraphicsItem, QLabel, QCheckBox,
+    QFrame, QScrollArea, QSplitter, QGraphicsWidget,
+    QGraphicsEllipseItem, QApplication, QDialogButtonBox, QLineEdit, QToolTip,
+    QSizePolicy
 )
 from PySide6.QtCore import (
     Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject,
-    QPropertyAnimation, QEasingCurve, QTimer, QSize, QTimeLine, QThread
+    QTimer, QSize, QThread
 )
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath,
     QLinearGradient, QFont, QPainterPathStroker, QRadialGradient,QFontMetrics,
-    QShortcut, QKeySequence, QIcon, QTransform, QCursor, QFontDatabase,
-    QWheelEvent, QConicalGradient
+    QShortcut, QKeySequence, QIcon, QTransform, QCursor, QWheelEvent
 )
-import math
 import numpy as np
 from collections import deque
 from pathlib import Path
@@ -43,7 +37,7 @@ from results.results_correlation import CorrelationPlotDisplayDialog, Correlatio
 from results.results_isotope import IsotopicRatioDisplayDialog, IsotopicRatioPlotNode
 from results.results_cluster import ClusteringDisplayDialog, ClusteringPlotNode
 from results.results_triangle import TriangleDisplayDialog, TrianglePlotNode
-from results.results_AI import AIAssistantNode, AIChatDialog
+from results.results_AI import AIAssistantNode
 from results.results_box_plot import BoxPlotDisplayDialog, BoxPlotNode
 from results.results_molar_ratio import MolarRatioDisplayDialog, MolarRatioPlotNode
 from results.results_single_multiple import (
@@ -312,7 +306,6 @@ class WorkflowNode(QObject):
         Args:
             parent_window (Any): The parent window.
         """
-        pass
 
 class AnchorPointSignals(QObject):
     position_changed = Signal(QPointF)
@@ -846,7 +839,6 @@ class LinkItem(QGraphicsWidget):
             try: self.source_anchor.position_changed.disconnect(self.__update_curve)
             except:
                 _itk_log.exception("Handled exception in set_source_anchor")
-                pass
         self.source_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
@@ -861,7 +853,6 @@ class LinkItem(QGraphicsWidget):
             try: self.sink_anchor.position_changed.disconnect(self.__update_curve)
             except:
                 _itk_log.exception("Handled exception in set_sink_anchor")
-                pass
         self.sink_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
@@ -3678,7 +3669,6 @@ class EnhancedCanvasScene(QGraphicsScene):
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
                 except:
                     _itk_log.exception("Handled exception in duplicate_node")
-                    pass
         pos = ni.pos() + QPointF(DS.NODE_W + 30, 20)
         _, item = self.add_node(new_wf, pos)
         ual = _ual()
@@ -3929,14 +3919,12 @@ class EnhancedCanvasView(QGraphicsView):
             self._apply_view_theme()
         except RuntimeError:
             _itk_log.exception("Handled exception in _safe_apply_view_theme")
-            pass
 
     def _view_disconnect_theme(self):
         try:
             _app_theme.themeChanged.disconnect(self._view_theme_handler)
         except Exception:
             _itk_log.exception("Handled exception in _view_disconnect_theme")
-            pass
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence.Delete, self).activated.connect(
@@ -4069,7 +4057,6 @@ class EnhancedCanvasView(QGraphicsView):
                         return text
             except (AttributeError, RuntimeError):
                 _itk_log.exception("Handled exception in _drag_node_type")
-                pass
         return _PENDING_DRAG_NODE_TYPE
 
     def dragEnterEvent(self, event):

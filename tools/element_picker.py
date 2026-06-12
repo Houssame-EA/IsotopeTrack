@@ -250,7 +250,6 @@ class ElementPicker(QWidget):
                 y = btn_global.y() - popup.height() - 4
         except Exception:
             _itk_log.exception("Handled exception in _open_popup")
-            pass
         popup.move(x, y)
         popup.show()
         self._current_popup = popup

@@ -1433,7 +1433,7 @@ try:
         QComboBox, QTabWidget, QMessageBox, QFileDialog, QAbstractItemView,
     )
     from PySide6.QtCore import Qt, Signal, QThread
-    from PySide6.QtGui import QColor, QFont
+    from PySide6.QtGui import QColor
     _QT_OK = True
 except Exception:
     _itk_log.exception("Handled exception in <module>")
@@ -2319,7 +2319,6 @@ if _QT_OK:
                 self.node.configuration_changed.emit()
             except Exception:
                 _itk_log.exception("Handled exception in _apply_config")
-                pass
 
         def _prepare_host_for_cluster(self, result):
             """Set the host's K and enable Cluster/Bootstrap without evaluation.
@@ -2476,7 +2475,6 @@ if _QT_OK:
                     self.node._cluster_test_state = self._collect_state()
                 except Exception:
                     _itk_log.exception("Handled exception in _save_state")
-                    pass
 
         def _restore_state(self):
             """Restore setup and results from the node, if any were saved."""
@@ -2515,7 +2513,6 @@ if _QT_OK:
                     self._show_results(self._last)
             except Exception:
                 _itk_log.exception("Handled exception in _restore_state")
-                pass
 
         def _set_axis(self, boxes, values):
             """Check exactly the boxes whose option appears in ``values``."""
@@ -2539,7 +2536,6 @@ if _QT_OK:
                     self.node._cluster_test_state = None
                 except Exception:
                     _itk_log.exception("Handled exception in _clear_data")
-                    pass
             self.table.setRowCount(0)
             self.detail_table.setRowCount(0)
             self.trust_table.setRowCount(0)
@@ -2570,7 +2566,6 @@ if _QT_OK:
             btn.setStyleSheet(host_dialog._btn_style("#2D839A"))
         except Exception:
             _itk_log.exception("Handled exception in attach_to_dialog")
-            pass
 
         def _open():
             """Open the custom-test dialog wired to the host's data and SOM."""
@@ -2593,5 +2588,4 @@ if _QT_OK:
                 lay.insertWidget(max(idx, 0), btn)
         except Exception:
             _itk_log.exception("Handled exception in attach_to_dialog")
-            pass
         return btn

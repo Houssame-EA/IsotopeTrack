@@ -1305,7 +1305,6 @@ class ParticleFilterNode(QObject):
                         out.append(lk.get_data())
             except Exception:
                 _itk_log.exception("Handled exception in _pull_upstream_all")
-                pass
         if not out and self.input_data is not None:
             out = [self.input_data]
         return [u for u in out if u]

@@ -1,8 +1,7 @@
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QMessageBox, QFileDialog,
+    QDialog, QVBoxLayout, QLabel,
 )
 from PySide6.QtCore import QObject, Signal, QPointF, Qt
-from PySide6.QtGui import QFont
 
 import json
 import numpy as np
@@ -11,7 +10,6 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_dashboard")
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWebChannel import QWebChannel
     HAS_WEBENGINE = True
 except ImportError:
     _itk_log.debug("Handled exception in <module>")

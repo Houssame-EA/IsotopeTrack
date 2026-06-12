@@ -10,7 +10,6 @@ import traceback
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
@@ -188,6 +187,10 @@ class EnhancedQtLogHandler(logging.Handler):
         """
         try:
             self._signaller.log_record.emit(_build_entry(record))
+        except RuntimeError:
+            # Qt signal source already deleted (app teardown) — drop the GUI
+            # echo silently; file/console handlers still receive the record.
+            pass
         except Exception:
             self.handleError(record)
 
@@ -586,7 +589,6 @@ class EnhancedLogWindow(QDialog):
             ThemeManager().themeChanged.connect(self._on_theme_changed)
         except Exception:
             _itk_log.exception("Handled exception in __init__")
-            pass
 
         self._flush_timer = QTimer(self)
         self._flush_timer.timeout.connect(self._flush_pending)
@@ -802,7 +804,6 @@ class EnhancedLogWindow(QDialog):
             ThemeManager().toggle()
         except Exception:
             _itk_log.exception("Handled exception in _toggle_theme")
-            pass
 
     def apply_theme(self, palette=None) -> None:
         """
@@ -1628,7 +1629,6 @@ class EnhancedLoggingManager:
                 files.pop(0).unlink(missing_ok=True)
         except Exception:
             _itk_log.exception("Handled exception in _prune_old_logs")
-            pass
 
     # -- public API ────────────────────────────────────────────────────
 

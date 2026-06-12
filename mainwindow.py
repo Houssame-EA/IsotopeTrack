@@ -3,14 +3,11 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,QRadioButton,
-                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox,
-                            QLayout, QFrame, QGridLayout)
+                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox)
 from tools.parameters_table import (ParametersTableView,
-                               COL_ELEMENT, COL_INCLUDE, COL_METHOD, COL_SIGMA,
-                               COL_THRESHOLD, COL_MIN_CONT, COL_ALPHA, COL_ITERATIVE,
-                               COL_WINDOW, COL_INTEG, COL_SPLIT, COL_VALLEY)
+                               COL_SIGMA)
 from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
-                            QRect, QEvent, QEventLoop, QSettings, Signal)
+                            QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
@@ -86,7 +83,7 @@ def element_chip_qss(p) -> str:
     )
 
 
-from tools.element_picker import ElementGridPopup, ElementPicker
+from tools.element_picker import ElementPicker
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
@@ -749,12 +746,10 @@ class MainWindow(QMainWindow):
                 self.results_table.setRowCount(0)
             except Exception:
                 _itk_log.exception("Handled exception in _invalidate_particle_detection")
-                pass
             try:
                 self.update_sample_table()
             except Exception:
                 _itk_log.exception("Handled exception in _invalidate_particle_detection")
-                pass
         if had_results:
             self._mark_results_changed()
         return had_results
@@ -1748,7 +1743,6 @@ class MainWindow(QMainWindow):
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
                 _itk_log.exception("Handled exception in toggle_sidebar")
-                pass
             self.animation_group = None
 
         opening = not self.sidebar_visible
@@ -1834,7 +1828,6 @@ class MainWindow(QMainWindow):
                 "ui/sidebar_width", self.sidebar_width)
         except Exception:
             _itk_log.exception("Handled exception in _sidebar_grip_release")
-            pass
         event.accept()
 
     def on_animation_finished(self):
@@ -1862,7 +1855,6 @@ class MainWindow(QMainWindow):
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
                 _itk_log.exception("Handled exception in on_animation_finished")
-                pass
             self.animation_group = None
         
     def toggle_info(self):
@@ -2219,7 +2211,6 @@ class MainWindow(QMainWindow):
                     thread.error.disconnect()
                 except (RuntimeError, TypeError):
                     _itk_log.exception("Handled exception in _load_selected_isotopes_for_new_samples")
-                    pass
                 thread.deleteLater()
             except Exception as e:
                 self.logger.error(
@@ -2497,7 +2488,7 @@ class MainWindow(QMainWindow):
         Returns:
             bool: True if user wants to reconnect, False to cancel
         """
-        from PySide6.QtWidgets import QMessageBox, QTextEdit, QVBoxLayout, QDialog, QPushButton
+        from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QDialog, QPushButton
         
         dialog = QDialog(self)
         dialog.setWindowTitle("Data Sources Not Accessible")
@@ -2792,7 +2783,6 @@ class MainWindow(QMainWindow):
                     self.csv_thread.error.disconnect()
                 except (RuntimeError, TypeError):
                     _itk_log.exception("Handled exception in process_csv_files_with_isotopes")
-                    pass
                 self.csv_thread.deleteLater()
                 self.csv_thread = None
             
@@ -3366,7 +3356,9 @@ class MainWindow(QMainWindow):
             self.restore_results_tables(sample_name)
             
             if hasattr(self, 'showing_all_signals') and self.showing_all_signals:
-                self.plot_all_signals()
+                # Legacy inline multi-signal view was removed; the
+                # Multi-Signal View button now opens SignalSelectorDialog.
+                pass
             else:
                 if currently_selected_element and currently_selected_isotope:
                     found_row = -1
@@ -3917,7 +3909,6 @@ class MainWindow(QMainWindow):
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
                                 _itk_log.exception("Handled exception in handle_isotopes_selected")
-                                pass
                             thread.deleteLater()
                                 
                         except Exception as e:
@@ -4143,7 +4134,6 @@ class MainWindow(QMainWindow):
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
                                 _itk_log.exception("Handled exception in handle_isotopes_selection_from_calibration")
-                                pass
                             thread.deleteLater()
                                 
                         except Exception as e:
@@ -4577,7 +4567,6 @@ class MainWindow(QMainWindow):
 
     def update_parameter_ranges(self, row, method):
         """No-op: enabled states are now derived by the delegate from model data."""
-        pass
 
     def get_element_parameters(self, row):
         """Get detection parameters from model row (replaces cellWidget reads)."""
@@ -4698,7 +4687,6 @@ class MainWindow(QMainWindow):
                     current_y_range = [view_rect.top(), view_rect.bottom()]
                 except:
                     _itk_log.exception("Handled exception in parameters_table_clicked")
-                    pass
                     
             element_item = self.parameters_table.item(row, 0)
             if element_item:
@@ -4775,11 +4763,9 @@ class MainWindow(QMainWindow):
                 
     def toggle_manual_threshold_input(self, row, method):
         """No-op: threshold cell enabled state is derived by the delegate from method."""
-        pass
 
     def toggle_window_size_parameters(self, row, state):
         """No-op: window size enabled state is derived by the delegate from use_window_size."""
-        pass
         
     def open_batch_parameters_dialog(self):
         """
@@ -5042,7 +5028,6 @@ class MainWindow(QMainWindow):
                 self._on_exclusion_regions_changed)
         except Exception:
             _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-            pass
         try:
             self.plot_widget.set_exclusion_regions(visible)
         finally:
@@ -5051,7 +5036,6 @@ class MainWindow(QMainWindow):
                     self._on_exclusion_regions_changed)
             except Exception:
                 _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-                pass
 
     def _on_exclusion_regions_changed(self):
         """Sync the plot's current bands back into the bookkeeping store.
@@ -6623,7 +6607,6 @@ class MainWindow(QMainWindow):
                                     threshold_val = thresholds.get('threshold', 0)
                             except:
                                 _itk_log.exception("Handled exception in highlight_multi_element_particle")
-                                pass
                             
                             element_data[display_label] = {
                                 'signal': view_section,
@@ -6789,7 +6772,6 @@ class MainWindow(QMainWindow):
                                         )
                             except Exception as e:
                                 _itk_log.exception("Handled exception in highlight_multi_element_particle")
-                                pass
                                 
                         found = True
                         break
@@ -6865,7 +6847,6 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1500, lambda: self.plot_widget.removeItem(highlight_region))
         except:
             _itk_log.exception("Handled exception in highlight_multi_element_particle")
-            pass
                     
     def show_signal_selector(self):
         """
@@ -7624,7 +7605,6 @@ class MainWindow(QMainWindow):
         Returns:
             None
         """
-        pass
     
     def _calculate_mass_data_optimized(self, particles, element_cache, progress=None, process_all_samples=False):
         """
@@ -7996,7 +7976,6 @@ class MainWindow(QMainWindow):
                 return float(fwhm)
             except (TypeError, ValueError):
                 _itk_log.exception("Handled exception in _particle_fwhm_s")
-                pass
         try:
             n = len(time_arr)
             left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
@@ -8040,7 +8019,6 @@ class MainWindow(QMainWindow):
                 return float(t)
             except (TypeError, ValueError):
                 _itk_log.exception("Handled exception in _particle_apex_time")
-                pass
         try:
             n = len(time_arr)
             left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
@@ -8601,7 +8579,6 @@ class MainWindow(QMainWindow):
                         view = ([vr.left(), vr.right()], [vr.top(), vr.bottom()])
                     except Exception:
                         _itk_log.exception("Handled exception in _refresh_after_saturation_change")
-                        pass
                     self.plot_results(element_key, signal, particles,
                                       lambda_bkgd, threshold,
                                       preserve_view_range=view)
@@ -8676,14 +8653,12 @@ class MainWindow(QMainWindow):
             theme.themeChanged.disconnect(self.apply_theme)
         except (RuntimeError, TypeError):
             _itk_log.exception("Handled exception in closeEvent")
-            pass 
 
         if hasattr(self, '_theme_follow_system_slot'):
             try:
                 theme.themeChanged.disconnect(self._theme_follow_system_slot)
             except (RuntimeError, TypeError):
                 _itk_log.exception("Handled exception in closeEvent")
-                pass
 
 
         if getattr(self, 'periodic_table_widget', None) is not None:
@@ -8714,7 +8689,6 @@ class MainWindow(QMainWindow):
                 app.main_windows.remove(self)
             except ValueError:
                 _itk_log.exception("Handled exception in closeEvent")
-                pass
         
         if not getattr(app, 'main_windows', []):
             app.quit()
@@ -8923,7 +8897,7 @@ if __name__ == "__main__":
     """
     from PySide6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets
+    from PySide6 import QtWebEngineWidgets  # noqa: F401  (PyInstaller bundling)
     app = QApplication(sys.argv)
     theme.sync_with_system()       
     main_window = MainWindow()

@@ -10,7 +10,6 @@ from calibration_methods.TE_input import InputMethodCalibration
 from calibration_methods.TE_number import NumberMethodWidget
 from calibration_methods.TE_mass import MassMethodWidget
 from calibration_methods.te_common import (
-    RETURN_BUTTON_STYLE,
     base_stylesheet, return_button_style,
 )
 from tools.theme import theme

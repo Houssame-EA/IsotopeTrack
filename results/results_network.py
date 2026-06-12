@@ -26,8 +26,6 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
-    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
-    format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging
@@ -134,7 +132,6 @@ def _compute_edges(particles, elements, data_key, r_threshold, min_n):
                         edges.append((i, j, r))
                 except Exception:
                     _itk_log.exception("Handled exception in _compute_edges")
-                    pass
     return edges
 
 

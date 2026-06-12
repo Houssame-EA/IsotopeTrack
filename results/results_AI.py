@@ -1,12 +1,12 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QFrame, QSplitter, QTextEdit, QProgressBar, QMessageBox, QComboBox,
-    QScrollArea, QWidget, QDialogButtonBox, QFileDialog, QSizePolicy, QCheckBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QApplication, QAbstractItemView,
-    QStackedWidget, QPlainTextEdit, QSlider, QSpinBox,
+    QFrame, QTextEdit, QProgressBar, QComboBox, QScrollArea, QWidget,
+    QDialogButtonBox, QFileDialog, QSizePolicy, QCheckBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QApplication, QAbstractItemView, QStackedWidget, QPlainTextEdit,
+    QSlider, QSpinBox,
 )
-from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt, QSize
-from PySide6.QtGui import QPixmap, QImage, QFont, QCursor, QColor, QKeySequence
+from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt
+from PySide6.QtGui import QPixmap, QFont, QCursor, QColor, QKeySequence
 import requests, io, re, json, time, math, threading, base64, os, uuid
 from collections import Counter, defaultdict
 import numpy as np
@@ -337,7 +337,6 @@ show_table(['Element','N','% total','Diam mean','Diam median','Diam p95','Mass m
             if d > 0: durations_ms.append(d)
         except:
             _itk_log.exception("Handled exception in _build_system_prompt")
-            pass
 
     total_masses = _extract_total_values(particles, 'total_element_mass_fg')
 
@@ -670,7 +669,6 @@ def _execute_query_code(code, particles, dc):
         from scipy import stats; ns['stats'] = stats
     except:
         _itk_log.exception("Handled exception in _execute_query_code")
-        pass
 
     out = io.StringIO(); err = [None]
     def _run():
@@ -774,7 +772,6 @@ class StreamWorker(QThread):
             try: self._resp.close()
             except:
                 _itk_log.exception("Handled exception in stop")
-                pass
 
     def run(self):
         if   self.backend == 'mlx':    self._run_mlx()
@@ -1692,14 +1689,12 @@ class ExplorationBubble(QFrame):
                 lo.addWidget(t)
             except Exception:
                 _itk_log.exception("Handled exception in _build_step_widget")
-                pass
 
         for ch in charts:
             try:
                 lo.addWidget(ChartBubble(ch))
             except Exception:
                 _itk_log.exception("Handled exception in _build_step_widget")
-                pass
 
         f.setStyleSheet(
             f"QFrame{{background:{Theme.c('bg_secondary')};"
@@ -1808,7 +1803,6 @@ class InteractiveTableBubble(QFrame):
                 self._stats_col.addItem(h)
             except:
                 _itk_log.exception("Handled exception in __init__")
-                pass
         sl.addWidget(self._stats_col)
         self._stats_lbl = QLabel("")
         self._stats_lbl.setWordWrap(False)
@@ -1920,7 +1914,6 @@ class InteractiveTableBubble(QFrame):
                 try: vals.append(float(str(r[col_idx]).replace(",","").replace("%","")))
                 except:
                     _itk_log.exception("Handled exception in _refresh_stats")
-                    pass
         if not vals:
             self._stats_lbl.setText("No numeric data"); return
         a = np.array(vals)
@@ -1971,7 +1964,6 @@ class InteractiveTableBubble(QFrame):
                 labels.append(str(r[0])); values.append(v)
             except:
                 _itk_log.exception("Handled exception in _draw_chart")
-                pass
         if not values: return
 
         kind = self._chart_kind
@@ -3314,7 +3306,6 @@ class AIChatDialog(QDialog):
         try: self._worker.stop()
         except Exception:
             _itk_log.exception("Handled exception in _do_stop")
-            pass
         self._think.setVisible(False); self._stop.setVisible(False)
         self._sendb.setVisible(True); self._speed.setVisible(False)
         if self._sb:
@@ -3323,7 +3314,6 @@ class AIChatDialog(QDialog):
                 self._sb.finalise()
             except Exception:
                 _itk_log.exception("Handled exception in _do_stop")
-                pass
             self._sb = None
         try:
             self._worker.token_received.disconnect()
@@ -3332,7 +3322,6 @@ class AIChatDialog(QDialog):
             self._worker.error_occurred.disconnect()
         except Exception:
             _itk_log.exception("Handled exception in _do_stop")
-            pass
         self._worker = None
         if getattr(self, '_exp_mode', False):
             if getattr(self, '_exp_session', None):

@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from PySide6.QtCore import QSettings
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.unit")

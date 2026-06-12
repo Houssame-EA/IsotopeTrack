@@ -99,7 +99,6 @@ class BatchElementParametersDialog(QDialog):
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
             _itk_log.exception("Handled exception in closeEvent")
-            pass
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #

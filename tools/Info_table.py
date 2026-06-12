@@ -1,13 +1,7 @@
-from PySide6.QtWidgets import (QVBoxLayout, QWidget, QLabel, QHBoxLayout, QScrollArea,
-                               QDialog, QTableWidget, QTableWidgetItem, QCheckBox, 
-                               QComboBox, QPushButton, QGroupBox, QHeaderView, 
-                               QTabWidget, QProgressBar, QFrame, QSpinBox, QTextEdit,
-                               QSplitter, QGridLayout, QFileDialog, QMessageBox)
-from PySide6.QtCore import Qt, Slot, QEvent
-from PySide6.QtGui import QColor, QBrush, QFont, QCursor
+from PySide6.QtWidgets import (QVBoxLayout, QWidget, QLabel, QHBoxLayout, QScrollArea)
+from PySide6.QtCore import Qt, QEvent
+from PySide6.QtGui import QCursor
 import numpy as np
-import json
-from pathlib import Path
 from scipy.stats import chi2
 
 

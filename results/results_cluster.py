@@ -2,11 +2,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QFrame, QScrollArea, QWidget, QMenu, QTabWidget,
-    QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QProgressBar, QStackedWidget, QSlider,
+    QDialogButtonBox, QMessageBox, QProgressBar, QStackedWidget,
+    QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -51,16 +51,16 @@ from scipy.cluster.hierarchy import (
 )
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_font_properties,
-    apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
-    FontSettingsGroup,
-    download_matplotlib_figure,
-    format_element_label, Renderer,
-    per_ml_active, per_ml_factor, conc_meta_available, format_per_ml,
+    DEFAULT_SAMPLE_COLORS, get_font_config,
+    make_font_properties, FontSettingsGroup,
+    download_matplotlib_figure, format_element_label,
+    Renderer,
+    per_ml_active,
+    per_ml_factor, conc_meta_available,
+    format_per_ml,
 )
 from results.utils_sort import (
-    extract_mass_and_element, sort_elements_by_mass,
+    sort_elements_by_mass,
 )
 from results.results_heatmap import draw_combinations_heatmap
 
@@ -83,7 +83,6 @@ class _SafeFigureCanvas(FigureCanvas):
             super().showEvent(event)
         except AttributeError:
             _itk_log.exception("Handled exception in showEvent")
-            pass
 
     def resizeEvent(self, event):
         """
@@ -94,7 +93,6 @@ class _SafeFigureCanvas(FigureCanvas):
             super().resizeEvent(event)
         except AttributeError:
             _itk_log.exception("Handled exception in resizeEvent")
-            pass
 
 
 ALGORITHMS = [
@@ -731,7 +729,6 @@ def _current_plot_palette():
             return _palette_to_plot(_app_theme.palette)
         except Exception:
             _itk_log.exception("Handled exception in _current_plot_palette")
-            pass
     return _palette_to_plot(None)
 
 ALGO_LINE_STYLES = {
@@ -1360,7 +1357,6 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
                      ha='right', va='bottom', fontproperties=qe_fp, color=col)
         except Exception:
             _itk_log.exception("Handled exception in _draw_som_grid")
-            pass
 
     fig.tight_layout(pad=1.4)
 
@@ -3457,14 +3453,12 @@ class ClusteringDisplayDialog(QDialog):
                 _app_theme.themeChanged.connect(self._on_app_theme_changed)
             except Exception:
                 _itk_log.exception("Handled exception in __init__")
-                pass
 
         try:
             from results.results_cluster_tools import attach_to_dialog
             attach_to_dialog(self)
         except Exception:
             _itk_log.exception("Handled exception in __init__")
-            pass
 
         QTimer.singleShot(0, self._restore_saved_results)
 
@@ -3495,7 +3489,6 @@ class ClusteringDisplayDialog(QDialog):
                 self._draw_overview()
         except Exception:
             _itk_log.exception("Handled exception in _on_app_theme_changed")
-            pass
 
     def _apply_theme(self):
         """Apply the active palette to the whole dialog as one stylesheet.
@@ -3624,17 +3617,16 @@ class ClusteringDisplayDialog(QDialog):
                     canvas.draw_idle()
                 except Exception:
                     _itk_log.exception("Handled exception in _apply_theme")
-                    pass
 
 
 
     def _is_multi(self):
         """
         Returns:
-            object: Result of the operation.
+            bool: True if the node input contains multiple-sample data.
         """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _update_color_by_visibility(self):
         """Hide the Color-by picker for single-sample input."""
@@ -3688,7 +3680,6 @@ class ClusteringDisplayDialog(QDialog):
                     self._draw_3d()
         except Exception:
             _itk_log.exception("Handled exception in _on_color_by_changed")
-            pass
 
 
     def _build_ui(self):
@@ -4780,7 +4771,6 @@ class ClusteringDisplayDialog(QDialog):
                 ax.set_box_aspect(None, zoom=1.2)
             except Exception:
                 _itk_log.exception("Handled exception in _draw_3d_into")
-                pass
             labels_arr  = result.get('labels')
             if labels_arr is None:
                 continue
@@ -5153,7 +5143,6 @@ class ClusteringDisplayDialog(QDialog):
             ax_right.set_ylim(ax_left.get_ylim())
         except Exception:
             _itk_log.exception("Handled exception in _draw_overview_into")
-            pass
 
         target_fig.tight_layout(pad=1.2)
 
@@ -5715,7 +5704,6 @@ class ClusteringDisplayDialog(QDialog):
                                 res[mk].append(sv)
                         except Exception:
                             _itk_log.exception("Handled exception in _evaluate_data")
-                            pass
                 step += 1
                 if progress_cb is not None:
                     progress_cb(step / total_steps)
@@ -6013,7 +6001,6 @@ class ClusteringDisplayDialog(QDialog):
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
             _itk_log.exception("Handled exception in _run_bootstrap")
-            pass
         self.bs_btn.clicked.connect(self._cancel_bootstrap)
 
         self.progress.setVisible(True)
@@ -6076,7 +6063,6 @@ class ClusteringDisplayDialog(QDialog):
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
             _itk_log.exception("Handled exception in _on_bootstrap_thread_finished")
-            pass
         self.bs_btn.setText("↻ Bootstrap K")
         self.bs_btn.setStyleSheet(self._btn_style('#7C3AED'))
         self.bs_btn.clicked.connect(self._run_bootstrap)
@@ -6389,7 +6375,6 @@ class ClusteringDisplayDialog(QDialog):
             self.som_canvas.draw()
         except Exception:
             _itk_log.exception("Handled exception in _on_som_snapshot")
-            pass
 
     def _persist_results_to_node(self, sel_k=None):
         """
@@ -6429,7 +6414,6 @@ class ClusteringDisplayDialog(QDialog):
             }
         except Exception:
             _itk_log.exception("Handled exception in _persist_results_to_node")
-            pass
 
     def _restore_saved_results(self):
         """
@@ -6479,7 +6463,6 @@ class ClusteringDisplayDialog(QDialog):
                     self._refresh_eval_plot()
                 except Exception:
                     _itk_log.exception("Handled exception in _restore_saved_results")
-                    pass
 
             self.ov_algo.blockSignals(True)
             self.ov_algo.clear()

@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                QLabel, QFileDialog, QMessageBox,
                                QRadioButton, QButtonGroup, QComboBox,
-                               QCheckBox, QSplitter, QWidget)
+                               QCheckBox, QWidget)
 from PySide6.QtCore import Qt, QThread, QObject, Signal, Slot
 from PySide6.QtGui import QFont, QPen, QColor
 import pyqtgraph as pg
@@ -611,7 +611,6 @@ class SingleIonDistributionManager(QObject):
                         font='bold 20pt Times New Roman')
         except Exception:
             _itk_log.exception("Handled exception in _restyle_plot_widget")
-            pass
 
     def _register_dialog(self, dialog):
         """Track a dialog so it gets restyled on theme change.
@@ -935,7 +934,6 @@ class SingleIonDistributionManager(QObject):
                     sig.disconnect()
                 except RuntimeError:
                     _itk_log.exception("Handled exception in _on_thread_cleanup")
-                    pass  
 
         self.sia_thread = None
         self.sia_worker = None
@@ -1437,7 +1435,6 @@ class SingleIonDistributionManager(QObject):
                         pen=pg.mkPen(color=QColor(100, 149, 237), width=2, style=Qt.DashLine))
             except Exception:
                 _itk_log.exception("Handled exception in _update_sia_plot")
-                pass
 
             ov_txt = pg.TextItem(
                 anchor=(1, 0),
@@ -1679,7 +1676,6 @@ class SingleIonDistributionManager(QObject):
                 return q
         except Exception:
             _itk_log.exception("Handled exception in _calc_quantile")
-            pass
 
         try:
             cw  = np.cumsum(weights)
@@ -1690,7 +1686,6 @@ class SingleIonDistributionManager(QObject):
                 return q
         except Exception:
             _itk_log.exception("Handled exception in _calc_quantile")
-            pass
 
         return None
 
@@ -1759,7 +1754,6 @@ class SingleIonDistributionManager(QObject):
                     normality_label = f"±2 SD (Shapiro p={sw_p:.3f})"
             except Exception:
                 _itk_log.exception("Handled exception in _update_sigma_comparison_plot")
-                pass
 
         # ── reference lines ───────────────────────────────────────────────
         for pos, style, col, w in [
@@ -2279,13 +2273,11 @@ class SingleIonDistributionManager(QObject):
                     sig.disconnect()
                 except RuntimeError:
                     _itk_log.exception("Handled exception in cleanup")
-                    pass
 
         try:
             theme.themeChanged.disconnect(self._on_theme_changed)
         except RuntimeError:
             _itk_log.exception("Handled exception in cleanup")
-            pass
 
         self.sia_thread     = None
         self.sia_worker     = None

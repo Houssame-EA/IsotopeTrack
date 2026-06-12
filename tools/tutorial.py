@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QVBoxLayout, QPushButton,
-    QLabel, QScrollArea, QWidget, QHBoxLayout, QSizePolicy,
+    QLabel, QScrollArea, QWidget,
 )
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QMovie, QPixmap
+from PySide6.QtGui import QMovie
 from pathlib import Path
 import sys
 
@@ -267,7 +267,6 @@ class UserGuideDialog(QDialog):
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
             _itk_log.exception("Handled exception in closeEvent")
-            pass
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #

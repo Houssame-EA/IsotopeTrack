@@ -3,13 +3,12 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 import pyqtgraph as pg
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QGridLayout,
-                               QLabel, QComboBox, QMessageBox, QFileDialog, QTabWidget,
-                               QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
-                               QDoubleSpinBox, QGroupBox, QFormLayout, QDialog, QMenu,
-                               QListView, QAbstractItemView, QTreeView, QSpinBox, QApplication, QScrollArea, QListWidget,QRadioButton,
-                               QMainWindow, QFrame, QProgressBar, QSplitter, QProgressDialog, QLineEdit)
-from PySide6.QtGui import QFont, QColor, QIcon, QDoubleValidator
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
+                               QMessageBox, QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+                               QCheckBox, QDoubleSpinBox, QGroupBox, QDialog,
+                               QMenu, QListView, QAbstractItemView, QTreeView, QSpinBox,
+                               QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter,QProgressDialog)
+from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -19,13 +18,13 @@ from processing.peak_detection import PeakDetection
 
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PLOT_STYLES, HISTOGRAM_COLORS,
+    PLOT_STYLES, HISTOGRAM_COLORS,
     NumericDelegate,
-    create_scrollable_container, export_table_to_csv,
-    populate_detection_row, read_detection_row, apply_global_method,
-    plot_detection_results, highlight_particle, snr_to_color,
-    particle_mass_from_diameter,
-    base_stylesheet, show_data_source_dialog,
+    export_table_to_csv, populate_detection_row,
+    read_detection_row, apply_global_method, plot_detection_results,
+    highlight_particle, snr_to_color, particle_mass_from_diameter,
+    base_stylesheet,
+    show_data_source_dialog,
 )
 from tools.theme import theme
 import logging
@@ -196,7 +195,6 @@ class MassMethodWidget(QMainWindow):
                     w.setBackground(p.plot_bg)
                 except Exception:
                     _itk_log.exception("Handled exception in apply_theme")
-                    pass
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -1032,7 +1030,6 @@ class MassMethodWidget(QMainWindow):
                     self._on_exclusion_regions_changed)
             except Exception:
                 _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-                pass
             self.plot_widget.set_exclusion_regions(regions)
         finally:
             try:
@@ -1040,7 +1037,6 @@ class MassMethodWidget(QMainWindow):
                     self._on_exclusion_regions_changed)
             except Exception:
                 _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-                pass
 
     # ── Exclusion region helpers — ionic calibration plot ────────────────
 
@@ -1133,7 +1129,6 @@ class MassMethodWidget(QMainWindow):
                 self._rebuild_plot_exclusion_regions()
             except Exception:
                 _itk_log.exception("Handled exception in on_detection_params_selection_changed")
-                pass
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
 
@@ -2524,7 +2519,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV structure configuration dialog and initiates import.
         """
-        from loading.import_csv_dialogs import show_csv_structure_dialog, CSVDataProcessThread
+        from loading.import_csv_dialogs import show_csv_structure_dialog
         
         config = show_csv_structure_dialog(file_paths, self)
         

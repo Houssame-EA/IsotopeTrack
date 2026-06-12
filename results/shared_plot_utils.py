@@ -6,10 +6,10 @@ import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen, QTextDocument
 from PySide6.QtWidgets import (
-    QColorDialog, QFileDialog, QMessageBox, QMenu, QDialog,
-    QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QLabel,
-    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QWidget, QDialogButtonBox
+    QColorDialog, QFileDialog, QMessageBox, QDialog, QVBoxLayout,
+    QHBoxLayout, QFormLayout, QGroupBox, QLabel, QComboBox,
+    QSpinBox, QCheckBox, QPushButton, QLineEdit, QWidget,
+    QDialogButtonBox
 )
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
@@ -90,7 +90,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
             self.figure.tight_layout()
         except Exception:
             _itk_log.exception("Handled exception in reset_layout")
-            pass
         self._auto_positions.clear()
         self.draw_idle()
 
@@ -120,7 +119,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
                     return
             except Exception:
                 _itk_log.exception("Handled exception in _drag_press")
-                pass
         self._drag_ax       = event.inaxes
         self._drag_start_px = (event.x, event.y)
         self._drag_ax_pos0  = event.inaxes.get_position()
@@ -686,7 +684,6 @@ def apply_legend_label_style(legend, config: dict | None = None, *,
         legend.update()
     except Exception:
         _itk_log.exception("Handled exception in apply_legend_label_style")
-        pass
 
 
 def apply_plot_item_text_styling(
@@ -756,7 +753,6 @@ def apply_plot_item_text_styling(
         plot_item.update()
     except Exception:
         _itk_log.exception("Handled exception in apply_plot_item_text_styling")
-        pass
 
 
 def apply_font_to_pyqtgraph(plot_item, config: dict):
@@ -825,7 +821,6 @@ def _configure_mathtext_font(family: str) -> None:
         mpl.rcParams['mathtext.bf'] = f'{family}:bold'
     except Exception:
         _itk_log.exception("Handled exception in _configure_mathtext_font")
-        pass
 
 
 def apply_font_to_matplotlib(ax, config: dict):
@@ -1092,7 +1087,6 @@ def evaluate_equation_array(equation: str, df: pd.DataFrame) -> np.ndarray:
             results[idx] = evaluate_equation(equation, row.to_dict())
         except Exception:
             _itk_log.exception("Handled exception in evaluate_equation_array")
-            pass
     return results
 
 
@@ -1390,10 +1384,8 @@ def apply_sci_y_axis(plot_item, config: dict | None = None):
                 axis.setWidth(reserved)
         except Exception:
             _itk_log.exception("Handled exception in apply_sci_y_axis")
-            pass
     except Exception:
         _itk_log.exception("Handled exception in apply_sci_y_axis")
-        pass
 
 
 def per_ml_unit_label(per_ml: bool, base: str = "Particle Count") -> str:
@@ -1606,7 +1598,6 @@ class CustomColorBar:
                 self.plot_item.removeItem(item)
             except Exception:
                 _itk_log.exception("Handled exception in remove")
-                pass
         self.items.clear()
 
 
@@ -2234,7 +2225,6 @@ def download_pyqtgraph_figure(plot_widget, parent,
                         params['sourceRect'] = source_rect
                 except Exception:
                     _itk_log.exception("Handled exception in download_pyqtgraph_figure")
-                    pass
             exporter.export(path)
 
         elif fmt == 'PNG':
@@ -2246,7 +2236,6 @@ def download_pyqtgraph_figure(plot_widget, parent,
                         params['sourceRect'] = source_rect
                 except Exception:
                     _itk_log.exception("Handled exception in download_pyqtgraph_figure")
-                    pass
 
             bg = cfg['background']
             if bg == 'Transparent':
@@ -2282,7 +2271,6 @@ def download_pyqtgraph_figure(plot_widget, parent,
                         params['sourceRect'] = source_rect
                 except Exception:
                     _itk_log.exception("Handled exception in download_pyqtgraph_figure")
-                    pass
             exporter.parameters()['background'] = pg.mkColor('w')
             if source_rect is not None:
                 exporter.parameters()['width'] = int(source_rect.width() * 3)
@@ -2983,7 +2971,6 @@ def build_quick_toggles_menu(parent_menu, cfg: dict,
     Returns:
         The QMenu for Quick Toggles (so caller can connect signals).
     """
-    from PySide6.QtWidgets import QMenu as _QMenu
     tm = parent_menu.addMenu('Quick Toggles')
 
     def _add(menu, label, key, default=False):

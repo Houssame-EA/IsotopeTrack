@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QPushButton, QVBoxLayout, QLabel, QTableWidget, QDialog, QCheckBox,
-    QTableWidgetItem, QTabWidget, QHBoxLayout, QLineEdit, QGroupBox,
-    QHeaderView, QFrame, QWidget
+    QTableWidgetItem, QTabWidget, QHBoxLayout, QLineEdit, QHeaderView,
+    QWidget
 )
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtCore import Qt
@@ -56,7 +56,6 @@ class CalibrationInfoDialog(QDialog):
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
             _itk_log.exception("Handled exception in closeEvent")
-            pass
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
@@ -353,7 +352,6 @@ class CalibrationInfoDialog(QDialog):
                                 return key
         except Exception:
             _itk_log.exception("Handled exception in find_matching_threshold_key")
-            pass
         return None
 
     def find_matching_limit_key(self, formatted_isotope, element_limits):
@@ -383,7 +381,6 @@ class CalibrationInfoDialog(QDialog):
                                 return key
         except Exception:
             _itk_log.exception("Handled exception in find_matching_limit_key")
-            pass
         return None
 
     # ------------------------------------------------------------------ #

@@ -2,13 +2,13 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QApplication, QGroupBox,
-    QMainWindow, QFrame
+    QMainWindow
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PREVIEW_STYLES, create_scrollable_container,
+    create_scrollable_container,
     weight_method_transport_rate,
     base_stylesheet, preview_styles,
 )

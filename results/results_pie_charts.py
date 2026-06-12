@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import re
 import traceback
 
 import numpy as np
@@ -11,19 +10,18 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-    QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLabel, QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy,
-    QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QMenu, QPushButton, QScrollArea, QSizePolicy, QSpinBox,
+    QVBoxLayout, QWidget,
 )
 
 from results.shared_plot_utils import (
-    DEFAULT_SAMPLE_COLORS, FontSettingsGroup, get_display_name,
-    LABEL_MODES, format_element_label, format_combination_label, Renderer,
-    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
-    format_per_ml, pick_color_hex,
+    FontSettingsGroup, get_display_name, LABEL_MODES,
+    format_element_label, format_combination_label, Renderer, per_ml_active,
+    per_ml_factor, conc_meta_available, single_sample_name, format_per_ml,
+    pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging
@@ -516,7 +514,6 @@ class MplPieCanvas(QWidget):
                         return
                 except Exception:
                     _itk_log.exception("Handled exception in _pie_drag_press")
-                    pass
         self._drag_ax       = event.inaxes
         self._drag_start_px = (event.x, event.y)
         self._drag_ax_pos0  = event.inaxes.get_position()
@@ -641,7 +638,6 @@ class MplPieCanvas(QWidget):
                 ann.draggable(True)
             except AttributeError:
                 _itk_log.exception("Handled exception in _draw_one")
-                pass
             anns[label] = ann
 
         self._anns[sp_key] = anns

@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
     QApplication, QDialog, QTabWidget, QVBoxLayout, QPushButton,
-    QMainWindow, QLabel, QScrollArea, QWidget, QHBoxLayout,
-    QSlider, QSpinBox, QComboBox, QGridLayout, QGroupBox,
-    QCheckBox, QDoubleSpinBox, QSizePolicy, QFrame,
+    QLabel, QScrollArea, QWidget, QHBoxLayout, QSlider,
+    QSpinBox, QComboBox, QGridLayout, QGroupBox, QCheckBox,
+    QDoubleSpinBox, QFrame,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
@@ -879,7 +879,6 @@ class InteractiveEquationVisualizer(QWidget):
                 p.addItem(fit_text)
             except Exception:
                 _itk_log.exception("Handled exception in _draw_histogram")
-                pass
 
         p.addLegend(offset=(10, 10))
 
@@ -2880,7 +2879,6 @@ class CalibrationMethodsDialog(QDialog):
                 return lbl
         except Exception:
             _itk_log.exception("Handled exception in _img")
-            pass
         return QLabel(f"<i style='color:red'>Image not found: {path}</i>")
 
     def _scroll(self, *widgets):
@@ -3202,7 +3200,6 @@ class AboutDialog(QDialog):
                 logo.setText("")
         except Exception:
             _itk_log.exception("Handled exception in __init__")
-            pass
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(

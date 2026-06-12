@@ -8,25 +8,23 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
-    QDialogButtonBox, QMessageBox, QFileDialog, QListWidget,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QDialogButtonBox,
+    QListWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QPen, QFont, QAction
+from PySide6.QtGui import QColor
 import pyqtgraph as pg
 import numpy as np
 import math
 from scipy.stats import gaussian_kde
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    FontSettingsGroup, get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
-    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
-    _add_hband, _add_det_limit_h, apply_plot_title_style,
+    DEFAULT_SAMPLE_COLORS, apply_font_to_pyqtgraph,
+    FontSettingsGroup, get_display_name, download_pyqtgraph_figure, format_element_label,
+    LABEL_MODES, Renderer, HtmlAxisItem,
+    SHADE_TYPES,
+    _apply_box, _add_hband, _add_det_limit_h, apply_plot_title_style,
     apply_axis_label_style,
 )
 from results.utils_sort import (
@@ -1028,7 +1026,6 @@ def _draw_half_violin_box(plot_item, x, values, color, alpha, width, cfg):
             fillLevel=x, brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha // 2)))
     except Exception:
         _itk_log.exception("Handled exception in _draw_half_violin_box")
-        pass
 
     q1, med, q3 = np.percentile(values, [25, 50, 75])
     box = pg.QtWidgets.QGraphicsRectItem(x, q1, width/2, q3 - q1)
@@ -1304,7 +1301,6 @@ class BoxPlotDisplayDialog(QDialog):
                         break
             except Exception:
                 _itk_log.exception("Handled exception in _ctx_menu")
-                pass
         menu = QMenu(self)
 
         tm = menu.addMenu("Quick Toggles")
@@ -1524,14 +1520,12 @@ class BoxPlotDisplayDialog(QDialog):
                     item.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
 
     def _reset_layout(self):
         """Reset Box Plot view ranges to auto layout without changing data.
@@ -1550,7 +1544,6 @@ class BoxPlotDisplayDialog(QDialog):
                         vb.autoRange()
                 except Exception:
                     _itk_log.exception("Handled exception in _reset_layout")
-                    pass
         self._refresh()
 
     def _get_custom_title_map(self):

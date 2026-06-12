@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QFrame,
-    QScrollArea, QWidget, QMenu, QDialogButtonBox, QMessageBox, QInputDialog
+    QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QScrollArea,
+    QWidget, QMenu, QDialogButtonBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QCursor
@@ -10,12 +10,12 @@ import numpy as np
 import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DATA_KEY_MAPPING,
-    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    get_font_config, apply_font_to_matplotlib,
-    apply_font_to_colorbar_standalone, get_display_name,
-    download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
-    per_ml_factor, conc_meta_available, format_per_ml, single_sample_name,
+    DATA_KEY_MAPPING, FontSettingsGroup,
+    ExportSettingsGroup, MplDraggableCanvas, get_font_config,
+    apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
+    get_display_name, download_matplotlib_figure,
+    LABEL_MODES, format_element_label, format_combination_label, Renderer, per_ml_factor,
+    conc_meta_available, format_per_ml, single_sample_name,
 )
 
 from results.utils_sort import (
@@ -420,8 +420,8 @@ class HeatmapDisplayDialog(QDialog):
         Returns:
             bool: Result of the operation.
         """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
         """

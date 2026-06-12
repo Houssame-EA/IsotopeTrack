@@ -10,12 +10,11 @@ import pandas as pd
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-    QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-    QProgressDialog, QPushButton, QRadioButton, QButtonGroup, QSizePolicy,
-    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
-    QToolButton, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMenu, QMessageBox, QPushButton, QRadioButton, QButtonGroup,
+    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -139,7 +138,6 @@ class CSVPreviewTableWidget(QTableWidget):
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
             _itk_log.exception("Handled exception in cleanup")
-            pass 
 
     def _apply_theme(self, *_):
         """
@@ -391,7 +389,6 @@ class IsotopePickerDialog(QDialog):
             self.setStyleSheet(dialog_qss(theme.palette))
         except Exception:
             _itk_log.exception("Handled exception in __init__")
-            pass
 
     def _populate(self):
         self.list.clear()
@@ -574,7 +571,7 @@ class DataProcessThread(QThread):
             object: Result of the operation.
         """
         try:
-            import openpyxl
+            pass
         except ImportError:
             raise ImportError(
                 "openpyxl is required for Excel files. "
@@ -735,7 +732,6 @@ class FileStructureDialog(QDialog):
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
             _itk_log.exception("Handled exception in closeEvent")
-            pass
         if hasattr(self, 'preview_table'):
             self.preview_table.cleanup()
         super().closeEvent(event)
@@ -1129,7 +1125,6 @@ class FileStructureDialog(QDialog):
                 self._refresh_file_info()
             except Exception:
                 _itk_log.exception("Handled exception in _load_file")
-                pass
 
     def _update_settings_visibility(self, ftype: str):
         """Enable the settings relevant to the current file type.

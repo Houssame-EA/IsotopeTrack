@@ -323,7 +323,6 @@ class IsobaricCorrectionDialog(QDialog):
             isobaric.save_overrides(self._overrides)
         except Exception:
             _itk_log.exception("Handled exception in _persist_entry")
-            pass
 
     def _raw_base_for(self, sample):
         """Return channel data with any previously applied corrections restored to raw.
@@ -567,4 +566,3 @@ class IsobaricCorrectionDialog(QDialog):
                 self.mw.parameters_table_clicked(row, 0)
         except Exception:
             _itk_log.exception("Handled exception in _refresh_main_plot")
-            pass

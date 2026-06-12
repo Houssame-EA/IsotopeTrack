@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 from PySide6.QtCore import (Qt, QAbstractTableModel, QModelIndex, QRect,
                              QEvent, Signal)
-from PySide6.QtGui import QBrush, QColor, QPainter, QPalette
+from PySide6.QtGui import QBrush, QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
     QHeaderView, QHBoxLayout, QSpinBox, QStyle, QStyleOptionButton,

@@ -2,10 +2,9 @@
 from dataclasses import dataclass
 from PySide6.QtWidgets import (
     QMenu, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-    QWidget, QFrame, QPushButton, QSizePolicy, QSpacerItem, QGridLayout
+    QWidget, QFrame
 )
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
-from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPalette
+from PySide6.QtCore import Qt
 import numpy as np
 
 from tools.theme import theme

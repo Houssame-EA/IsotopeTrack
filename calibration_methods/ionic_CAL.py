@@ -4,24 +4,21 @@ import numpy as np
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-                               QFileDialog, QMessageBox, QDialog, QListWidget, QListWidgetItem,
-                               QListView, QAbstractItemView, QTreeView, QComboBox, QLabel,
-                               QScrollArea, QSplitter, QGroupBox, QMenu, QTabWidget,
-                               QToolBar, QStatusBar, QMainWindow, QFrame, QToolButton, QRadioButton, QDoubleSpinBox,
-                               QLineEdit, QCheckBox, QProgressDialog)
-from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEvent
-from PySide6.QtGui import QIcon, QKeySequence, QFont, QColor, QBrush, QPalette, QDoubleValidator, QAction, QShortcut
+                               QFileDialog, QMessageBox, QDialog, QListView, QAbstractItemView,
+                               QTreeView, QComboBox, QLabel, QSplitter, QGroupBox,
+                               QMenu, QTabWidget, QToolBar, QStatusBar, QMainWindow,
+                               QFrame, QRadioButton, QDoubleSpinBox, QCheckBox, QProgressDialog)
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QKeySequence, QFont, QColor, QBrush, QAction, QShortcut
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import BasicPlotWidget, CalibrationPlotWidget, EnhancedPlotWidget
+from widget.custom_plot_widget import CalibrationPlotWidget, EnhancedPlotWidget
 import os
-import pandas as pd
 import qtawesome as qta
 import loading.tofwerk_loading
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, NumericDelegate, RETURN_BUTTON_STYLE,
-    base_stylesheet, return_button_style,
+    NumericDelegate, return_button_style,
 )
 
 
@@ -584,11 +581,10 @@ class IonicCalibrationWindow(QMainWindow):
                 widget.setLabel(axis, label, color=fg)
         except Exception:
             _itk_log.exception("Handled exception in _refresh_plot_label_colors")
-            pass
 
     def _refresh_results_table_colors(self):
         """When the theme changes, any existing background QBrush() values
-        on results-table items are stale.  Re-run display_results() to
+        on results-table items are stale.  Re-run update_results_table() to
         re-paint them with the new palette, if the data is available.
         """
         if not hasattr(self, "results_table"):
@@ -596,10 +592,9 @@ class IonicCalibrationWindow(QMainWindow):
 
         try:
             if getattr(self, "calibration_results", None):
-                self.display_results()
+                self.update_results_table()
         except Exception:
             _itk_log.exception("Handled exception in _refresh_results_table_colors")
-            pass
 
     def setup_toolbar(self):
         """
@@ -1821,7 +1816,6 @@ class IonicCalibrationWindow(QMainWindow):
                     return folder, isotope_key
             except (IndexError, AttributeError):
                 _itk_log.exception("Handled exception in _current_time_plot_context")
-                pass
         s_idx = self.sample_combo.currentIndex()
         i_idx = self.plot_isotope_combo.currentIndex()
         if s_idx >= 0 and i_idx >= 0 and s_idx < len(self.folder_paths):
@@ -2559,7 +2553,6 @@ class IonicCalibrationWindow(QMainWindow):
                 
         except Exception:
             _itk_log.exception("Handled exception in parse_header_for_element_isotope_and_unit")
-            pass
         return None
 
     def plot_count_vs_time(self, selected_row=None, selected_col=None):
@@ -3289,7 +3282,6 @@ class IonicCalibrationWindow(QMainWindow):
         Args:
             element: Selected element data
         """
-        pass
 
     def _fit_zero(self, x, y):
         """
@@ -3854,7 +3846,6 @@ class IonicCalibrationWindow(QMainWindow):
                 self.update_sensitivity_table()
             except Exception:
                 _itk_log.exception("Handled exception in on_manual_slope_changed")
-                pass
 
         element, mass = isotope_key.split('-')
         self.display_calibration(element, float(mass))
@@ -4296,7 +4287,7 @@ class IonicCalibrationWindow(QMainWindow):
         """
         try:
             try:
-                from loading.import_csv_dialogs import show_csv_structure_dialog
+                pass
             except ImportError:
                 QMessageBox.critical(self, "Import Error", 
                     "Data file import functionality is not available. Please ensure the import_csv_dialogs.py file is present.")

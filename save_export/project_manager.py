@@ -6,10 +6,10 @@ import platform
 import os
 import subprocess
 from pathlib import Path
-from PySide6.QtWidgets import QMessageBox, QFileDialog, QProgressDialog, QApplication
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtWidgets import QMessageBox, QFileDialog, QApplication
+from PySide6.QtCore import QPointF
 from save_export.fast_project_io import (
-    save_project_v2, load_project_auto, detect_format, estimate_project_size
+    save_project_v2, load_project_auto
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
@@ -97,7 +97,6 @@ class ProjectManager:
                         return True
             except ImportError:
                 _itk_log.debug("Handled exception in _set_icon_macos")
-                pass
             
             applescript = f'''
             use framework "Foundation"
@@ -161,7 +160,6 @@ class ProjectManager:
                 ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
             except:
                 _itk_log.exception("Handled exception in _set_icon_windows")
-                pass
             
             return True
             

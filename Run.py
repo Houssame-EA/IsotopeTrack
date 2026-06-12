@@ -50,5 +50,4 @@ if __name__ == "__main__":
             w.close()
         except Exception:
             _itk_log.exception("Handled exception in <module>")
-            pass
     app.main_windows.clear()

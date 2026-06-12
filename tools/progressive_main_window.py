@@ -241,7 +241,6 @@ class ProgressiveMainWindow(QObject):
         Returns:
             None
         """
-        pass
 
     def get_main_window(self):
         """

@@ -48,18 +48,15 @@ import copy
 import uuid
 from typing import Optional, Callable
 
-import numpy as np
 
-from PySide6.QtCore import Qt, QObject, Signal, QPointF, QRectF
+from PySide6.QtCore import Qt, QObject, Signal, QPointF
 from PySide6.QtGui import (
-    QColor, QPen, QBrush, QPainterPath, QFont, QKeySequence, QShortcut,
-    QCursor, QPainter, QTransform,
+    QColor, QPen, QBrush, QKeySequence, QShortcut, QCursor,
 )
 from PySide6.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QFormLayout, QLabel, QLineEdit,
-    QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox, QPushButton, QColorDialog,
-    QFrame, QToolButton, QToolBar, QListWidget, QListWidgetItem, QScrollArea,
-    QGroupBox, QSizePolicy, QMenu, QGraphicsItem,
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QLineEdit, QSpinBox,
+    QDoubleSpinBox, QComboBox, QCheckBox, QPushButton, QColorDialog, QFrame,
+    QToolButton, QMenu, QGraphicsItem,
 )
 
 import pyqtgraph as pg
@@ -364,7 +361,6 @@ class BaseAnnotation(QObject):
                     self._plot_item.removeItem(it)
                 except Exception:
                     _itk_log.exception("Handled exception in detach")
-                    pass
         self.item = None
         self.extras.clear()
         self._plot_item = None
@@ -397,11 +393,9 @@ class BaseAnnotation(QObject):
 
     def _hookup(self):
         """Wire pyqtgraph signals to sig_clicked / sig_drag_finished."""
-        pass
 
     def _apply_selection_style(self):
         """Visual change when selected vs. unselected."""
-        pass
 
     # ── helpers ─────────────────────────────────────
 
@@ -622,7 +616,6 @@ class VBandAnnotation(BaseAnnotation):
                 line.setPen(edge_pen)
         except Exception:
             _itk_log.exception("Handled exception in _sync_from_data")
-            pass
 
         label = d.get('label', '')
         if label:
@@ -723,7 +716,6 @@ class RectAnnotation(BaseAnnotation):
                     h.setPos(cx, cy)
                 except Exception:
                     _itk_log.exception("Handled exception in _sync_from_data")
-                    pass
 
     def _hookup(self):
         try:
@@ -731,13 +723,11 @@ class RectAnnotation(BaseAnnotation):
                 lambda *a: self.sig_clicked.emit(self.data['id']))
         except Exception:
             _itk_log.exception("Handled exception in _hookup")
-            pass
         try:
             self._fill_item.sigClicked.connect(
                 lambda *a: self.sig_clicked.emit(self.data['id']))
         except Exception:
             _itk_log.exception("Handled exception in _hookup")
-            pass
 
     def _apply_selection_style(self):
         self.item.setPen(self._pen())
@@ -772,7 +762,6 @@ class RectAnnotation(BaseAnnotation):
                 self._handle_corners.append(which)
             except Exception:
                 _itk_log.exception("Handled exception in _ensure_handles")
-                pass
 
     def _remove_handles(self):
         for h in self._handle_items:
@@ -780,7 +769,6 @@ class RectAnnotation(BaseAnnotation):
                 self._plot_item.removeItem(h)
             except Exception:
                 _itk_log.exception("Handled exception in _remove_handles")
-                pass
         self._handle_items = []
         self._handle_corners = []
 
@@ -896,7 +884,6 @@ class _SceneMouseEventFilter(QObject):
                 event.setAccepted(True)
         except Exception:
             _itk_log.exception("Handled exception in eventFilter")
-            pass
         return False
 
 
@@ -954,13 +941,11 @@ class AnnotationManager(QObject):
                         scene.sigMouseClicked.disconnect(self._on_scene_clicked)
                     except (RuntimeError, TypeError):
                         _itk_log.exception("Handled exception in attach_plot")
-                        pass
                     if self._scene_filter is not None:
                         try:
                             scene.removeEventFilter(self._scene_filter)
                         except (RuntimeError, TypeError):
                             _itk_log.exception("Handled exception in attach_plot")
-                            pass
                 scene.sigMouseClicked.connect(self._on_scene_clicked)
 
                 self._scene_filter = _SceneMouseEventFilter(self)
@@ -969,7 +954,6 @@ class AnnotationManager(QObject):
                 self._connected_scene = scene
         except Exception:
             _itk_log.exception("Handled exception in attach_plot")
-            pass
         if self._selected_id and self._selected_id in self._wrappers:
             self._wrappers[self._selected_id].set_selected(True)
 
@@ -1063,7 +1047,6 @@ class AnnotationManager(QObject):
                 ev.accept()
             except Exception:
                 _itk_log.exception("Handled exception in _on_scene_clicked")
-                pass
             return
 
         if hit_id is not None:
@@ -1075,7 +1058,6 @@ class AnnotationManager(QObject):
             ev.accept()
         except Exception:
             _itk_log.exception("Handled exception in _on_scene_clicked")
-            pass
 
     # ── CRUD + undo ─────────────────────────────────
 
@@ -1519,7 +1501,6 @@ class FloatingInspector(QFrame):
                 self._viewbox.sigRangeChanged.disconnect(self._reposition)
             except (RuntimeError, TypeError):
                 _itk_log.exception("Handled exception in attach")
-                pass
             self._viewbox = None
         self._plot_item = plot_item
         if plot_item is not None:

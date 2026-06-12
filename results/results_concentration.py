@@ -13,22 +13,21 @@ Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.figure import Figure
 import matplotlib.ticker as mticker
 import numpy as np
-import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_matplotlib,
-    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label, Renderer,
-    get_display_name, download_matplotlib_figure, pick_color_hex,
+    FontSettingsGroup, ExportSettingsGroup,
+    MplDraggableCanvas, LABEL_MODES, format_element_label,
+    Renderer, get_display_name, download_matplotlib_figure,
+    pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging

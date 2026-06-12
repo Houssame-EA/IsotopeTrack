@@ -1,16 +1,13 @@
 import csv
 import numpy as np
 import pyqtgraph as pg
-from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QGroupBox,
-    QMainWindow, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QFileDialog, QComboBox, QLabel, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QProgressDialog, QApplication, QAbstractItemView, QStyledItemDelegate,
+    QWidget, QVBoxLayout, QScrollArea, QFrame, QTableWidgetItem, QMessageBox,
+    QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox, QStyledItemDelegate,
     QLineEdit
 )
 from PySide6.QtGui import QColor, QDoubleValidator
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 
 from tools.theme import theme, LIGHT
 import logging

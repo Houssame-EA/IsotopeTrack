@@ -33,7 +33,6 @@ def _detect_system_theme() -> str:
                 return "light"
     except (AttributeError, ImportError):
         _itk_log.exception("Handled exception in _detect_system_theme")
-        pass
 
     # ── Method 2: macOS ─────────────────────────────────────────────────────
     if sys.platform == "darwin":
@@ -46,7 +45,6 @@ def _detect_system_theme() -> str:
             return "dark" if "dark" in result.stdout.lower() else "light"
         except Exception:
             _itk_log.exception("Handled exception in _detect_system_theme")
-            pass
 
     # ── Method 3: Windows registry ──────────────────────────────────────────
     if sys.platform == "win32":
@@ -61,7 +59,6 @@ def _detect_system_theme() -> str:
             return "light" if val == 1 else "dark"
         except Exception:
             _itk_log.exception("Handled exception in _detect_system_theme")
-            pass
 
     return "light"  
 
@@ -281,7 +278,6 @@ class ThemeManager(QObject):
             hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         except (AttributeError, TypeError, RuntimeError):
             _itk_log.exception("Handled exception in sync_with_system")
-            pass  
 
     def _on_system_scheme_changed(self) -> None:
         """Qt slot: called automatically when the OS changes dark/light mode."""

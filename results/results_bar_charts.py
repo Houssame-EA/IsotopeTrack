@@ -5,14 +5,12 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QMessageBox, QListWidget, QListWidgetItem,
-    QAbstractItemView, QInputDialog
+    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor, QFont
+from PySide6.QtGui import QColor, QFont
 import pyqtgraph as pg
 import numpy as np
-import math
 from scipy import stats
 from scipy.stats import gaussian_kde
 import logging
@@ -44,13 +42,12 @@ from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style,
-    FontSettingsGroup,
-    get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
-    SHADE_TYPES, _QT_LINE, _apply_box,
-    _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
-    format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
+    get_sample_color,
+    get_display_name, download_pyqtgraph_figure,
+    format_element_label,
+    LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
+    _apply_box, _add_shaded_region_hist, _add_stat_lines_hist,
+    _add_det_limit_v, _add_det_limit_h, format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
 )
 try:
     from widget.custom_plot_widget import (
@@ -351,14 +348,12 @@ class _PlotWidgetAdapter:
             self._glw.setBackground(color)
         except Exception:
             _itk_log.exception("Handled exception in setBackground")
-            pass
 
     def repaint(self):
         try:
             self._glw.repaint()
         except Exception:
             _itk_log.exception("Handled exception in repaint")
-            pass
 
     def notify_bar_group_color_changed(self, items, color_hex):
         """Forward shared bar-color edits to a plot-specific sync callback.
@@ -377,7 +372,6 @@ class _PlotWidgetAdapter:
                 callback(items, color_hex)
             except Exception:
                 _itk_log.exception("Handled exception in notify_bar_group_color_changed")
-                pass
 
     def parent(self):
         """
@@ -429,7 +423,6 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         return item
                 except Exception:
                     _itk_log.exception("Handled exception in _plot_item_at")
-                    pass
         return None
 
     def _adapter_for(self, plot_item):
@@ -562,7 +555,6 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         return item
         except Exception:
             _itk_log.exception("Handled exception in _bar_at")
-            pass
         return None
 
     # ── Double-click ─────────────────────────────────────────────────
@@ -637,7 +629,6 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         event.accept(); return
                 except Exception:
                     _itk_log.exception("Handled exception in mouseDoubleClickEvent")
-                    pass
 
             scat = self._closest_scatter(pi, scene_pos)
             if scat is not None:
@@ -714,7 +705,6 @@ class _ClickableLegendSwatch(pg.BarGraphItem):
                 return
             except Exception:
                 _itk_log.exception("Handled exception in mouseClickEvent")
-                pass
         super().mouseClickEvent(ev)
 
 
@@ -767,7 +757,6 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
                             return
                         except Exception:
                             _itk_log.exception("Handled exception in _wrapped_click")
-                            pass
                 if callable(_orig):
                     _orig(ev)
 
@@ -831,7 +820,6 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
                             return
                         except Exception:
                             _itk_log.exception("Handled exception in _wrapped_click")
-                            pass
                 if callable(_orig):
                     _orig(ev)
 
@@ -2178,10 +2166,8 @@ class HistogramDisplayDialog(QDialog):
                             return item
                     except Exception:
                         _itk_log.exception("Handled exception in _plot_item_at")
-                        pass
         except Exception:
             _itk_log.exception("Handled exception in _plot_item_at")
-            pass
         return None
 
     def _get_hist_display_mode(self):
@@ -2527,7 +2513,6 @@ class HistogramDisplayDialog(QDialog):
                     dlg.setWindowTitle(title_override)
                 except Exception:
                     _itk_log.exception("Handled exception in _open_plot_settings")
-                    pass
             dlg.exec()
 
     def _download_figure(self):
@@ -2586,14 +2571,12 @@ class HistogramDisplayDialog(QDialog):
                     item.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
 
     def _reset_layout(self):
         """
@@ -2614,7 +2597,6 @@ class HistogramDisplayDialog(QDialog):
                         vb.autoRange()
                 except Exception:
                     _itk_log.exception("Handled exception in _reset_layout")
-                    pass
         self._refresh()
 
 
@@ -3035,10 +3017,8 @@ class HistogramDecompositionDialog(QDialog):
                             return item
                     except Exception:
                         _itk_log.exception("Handled exception in _plot_item_at")
-                        pass
         except Exception:
             _itk_log.exception("Handled exception in _plot_item_at")
-            pass
         return None
 
     @staticmethod
@@ -3158,7 +3138,6 @@ class HistogramDecompositionDialog(QDialog):
                         vb.autoRange()
                 except Exception:
                     _itk_log.exception("Handled exception in _reset_layout")
-                    pass
         self._refresh()
 
     def _download_figure(self):
@@ -3221,14 +3200,12 @@ class HistogramDecompositionDialog(QDialog):
                     item.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
 
     def _get_custom_title_map(self):
         """Return the child-local custom title mapping for decomposed subplots.
@@ -4955,7 +4932,6 @@ class ElementBarChartDisplayDialog(QDialog):
                     dlg.setWindowTitle(title_override)
                 except Exception:
                     _itk_log.exception("Handled exception in _open_plot_settings")
-                    pass
             try:
                 result = dlg.exec()
                 if result == QDialog.Accepted:
@@ -4965,7 +4941,6 @@ class ElementBarChartDisplayDialog(QDialog):
                     delattr(pi, '_bar_group_color_sync_callback')
                 except Exception:
                     _itk_log.exception("Handled exception in _open_plot_settings")
-                    pass
 
     def _plot_items(self):
         """Return all current PyQtGraph plot items in the dialog canvas.
@@ -5124,7 +5099,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 self.pw.setBackground(bg_color)
             except Exception:
                 _itk_log.exception("Handled exception in _reapply_saved_plot_format_settings")
-                pass
         for plot_item in self._plot_items():
             plot_item._persistent_dialog_settings = dict(settings)
             self._apply_plot_text_settings_to_plot_item(plot_item, settings)
@@ -5318,7 +5292,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 swatch_item.update()
             except Exception:
                 _itk_log.exception("Handled exception in _update_element_legend_swatches")
-                pass
 
     def _download_figure(self):
         """Export bar chart as image or CSV via existing PyQtGraph export path."""
@@ -5376,14 +5349,12 @@ class ElementBarChartDisplayDialog(QDialog):
                     item.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
-                    pass
 
     def _reset_layout(self):
         """
@@ -5401,7 +5372,6 @@ class ElementBarChartDisplayDialog(QDialog):
                         vb.autoRange()
                 except Exception:
                     _itk_log.exception("Handled exception in _reset_layout")
-                    pass
     # ── Refresh ─────────────────────────────
 
     def _refresh(self):

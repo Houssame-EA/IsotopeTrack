@@ -52,7 +52,6 @@ class DataProcessThread(QThread):
                 sig.disconnect()
             except RuntimeError:
                 _itk_log.exception("Handled exception in cleanup")
-                pass 
 
     @staticmethod
     def detect_data_format(folder_path):

@@ -167,7 +167,6 @@ def integrate_tof_data(
                 progress_callback(end / max(1, n_samples))
             except Exception:
                 _itk_log.exception("Handled exception in integrate_tof_data")
-                pass
     chunk = None  
 
     scale_factor = float(
@@ -223,7 +222,6 @@ def read_tofwerk_file(
             progress_callback(1.0)
         except Exception:
             _itk_log.exception("Handled exception in read_tofwerk_file")
-            pass
 
     names = [x.decode() for x in info["label"]]
    

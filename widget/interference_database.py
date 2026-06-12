@@ -20,8 +20,7 @@ References:
     Balcaen et al., Anal. Chim. Acta 894, 7-19 (2015)
 """
 
-import numpy as np
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, Optional, Set
 
 
 # ---------------------------------------------------------------------------

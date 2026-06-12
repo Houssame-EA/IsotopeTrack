@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QGroupBox,
-                              QCheckBox, QRadioButton, QScrollArea, QWidget,
-                              QDialogButtonBox, QFileDialog, QMessageBox,
-                              QHBoxLayout, QLabel, QDoubleSpinBox, QFrame,
-                              QPushButton, QButtonGroup, QSizePolicy)
+                              QCheckBox, QScrollArea, QWidget, QDialogButtonBox,
+                              QFileDialog, QMessageBox, QHBoxLayout,
+                              QLabel, QFrame, QPushButton, QButtonGroup,
+                              QSizePolicy)
 from PySide6.QtCore import Qt
 import time
 import numpy as np

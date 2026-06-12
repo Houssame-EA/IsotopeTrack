@@ -35,16 +35,15 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSpinBox,
-    QVBoxLayout, QWidget, QDialogButtonBox,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QDialogButtonBox,
 )
 
 from results.shared_plot_utils import (
-    DEFAULT_SAMPLE_COLORS, FontSettingsGroup, Renderer, LABEL_MODES,
-    build_element_matrix, format_element_label, get_display_name,
-    get_sample_color, DownloadConfigDialog, export_csv,
-    make_font_properties,
+    FontSettingsGroup, Renderer, LABEL_MODES, build_element_matrix,
+    format_element_label, get_display_name, get_sample_color,
+    DownloadConfigDialog, make_font_properties,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging

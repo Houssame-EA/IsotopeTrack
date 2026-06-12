@@ -50,7 +50,7 @@ except ImportError:
 
 try:
     from scipy.ndimage import uniform_filter1d
-    from scipy.interpolate import interp1d, RegularGridInterpolator
+    from scipy.interpolate import RegularGridInterpolator
     SCIPY_AVAILABLE = True
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
@@ -2280,7 +2280,8 @@ class PeakDetection:
         all_ranges.sort(key=lambda x: x['start_time'])
 
         for range_data in all_ranges:
-            if not multi_element_particles or not self.is_overlapping(range_data, multi_element_particles[-1]):
+            if not multi_element_particles or not self.is_overlapping(
+                    range_data, multi_element_particles[-1], min_overlap_percentage):
                 multi_element_particles.append({
                     'start_time': range_data['start_time'],
                     'end_time': range_data['end_time'],
@@ -2297,13 +2298,15 @@ class PeakDetection:
 
         return multi_element_particles
 
-    def is_overlapping(self, particle, multi_particle):
-        """Check if particles overlap by at least 50 percent.
+    def is_overlapping(self, particle, multi_particle, min_overlap_percentage=75.0):
+        """Check if particles overlap by at least `min_overlap_percentage` percent.
         Args:
             particle (Any): The particle.
             multi_particle (Any): The multi particle.
+            min_overlap_percentage (float): Minimum overlap (as a percentage of
+                either particle's duration) required to merge the two.
         Returns:
-            object: Result of the operation.
+            bool: True if the time ranges overlap sufficiently.
         """
         start1, end1 = particle['start_time'], particle['end_time']
         start2, end2 = multi_particle['start_time'], multi_particle['end_time']
@@ -2323,7 +2326,7 @@ class PeakDetection:
 
         overlap_percent1 = (overlap_duration / duration1) * 100
         overlap_percent2 = (overlap_duration / duration2) * 100
-        return max(overlap_percent1, overlap_percent2) >= 75.0
+        return max(overlap_percent1, overlap_percent2) >= min_overlap_percentage
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------main detection-------------------------------------------------------

@@ -3,7 +3,6 @@ import json
 import pickle
 import gzip
 import zipfile
-import tempfile
 import time
 import logging
 from pathlib import Path
@@ -88,7 +87,6 @@ def _particles_to_columnar(particles):
                             has_data = True
                         except (TypeError, ValueError):
                             _itk_log.exception("Handled exception in _particles_to_columnar")
-                            pass
         if has_data:
             element_arrays[dict_key] = mat
 
@@ -606,7 +604,6 @@ def detect_format(filepath):
                     return 2
         except zipfile.BadZipFile:
             _itk_log.exception("Handled exception in detect_format")
-            pass
     
     if magic[:2] == FORMAT_V1_GZIP_MAGIC:
         return 1
@@ -617,7 +614,6 @@ def detect_format(filepath):
         return 1
     except Exception:
         _itk_log.exception("Handled exception in detect_format")
-        pass
     
     raise ValueError(f"Unrecognized project file format: {filepath}")
 
@@ -659,7 +655,6 @@ def estimate_project_size(mw):
     Returns:
         dict: Size estimates with keys 'arrays_mb', 'particles_mb', 'metadata_mb', 'total_mb'
     """
-    import sys
     
     arrays_bytes = 0
     for sample_name, sample_data in mw.data_by_sample.items():

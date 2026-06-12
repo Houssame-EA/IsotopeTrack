@@ -8,27 +8,24 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QLineEdit, QFrame, QWidget, QMenu, QScrollArea,
-    QDialogButtonBox, QMessageBox, QFileDialog, QTabWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QLineEdit, QWidget, QMenu, QScrollArea, QDialogButtonBox, QMessageBox,
+    QFileDialog, QTabWidget, QTableWidget, QTableWidgetItem,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_font_properties, apply_font_to_matplotlib,
-    FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
-    get_sample_color, get_display_name,
-    download_matplotlib_figure, LABEL_MODES, format_combination_label, Renderer,
+    make_font_properties, apply_font_to_matplotlib,
+    FontSettingsGroup, LegendGroup, ExportSettingsGroup,
+    MplDraggableCanvas, get_display_name, download_matplotlib_figure, LABEL_MODES,
+    format_combination_label, Renderer,
     pick_color_hex,
 )
 from widget.colors import default_colors, colorheatmap
@@ -768,7 +765,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
             self.canvas.mpl_connect('button_release_event', self._persist_positions)
         except AttributeError:
             _itk_log.exception("Handled exception in _build_ui")
-            pass
         viz_lay.addWidget(self.canvas, stretch=1)
 
         tb = QHBoxLayout()
@@ -1245,7 +1241,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 ann.draggable(True)
             except AttributeError:
                 _itk_log.exception("Handled exception in _pie_one")
-                pass
             anns[combo_key] = ann
 
         if sp_key:

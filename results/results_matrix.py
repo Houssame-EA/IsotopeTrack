@@ -11,23 +11,20 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QDoubleSpinBox, QCheckBox, QGroupBox,
     QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea,
-    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QCursor
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 import numpy as np
 import math
 from scipy.stats import pearsonr
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_matplotlib,
-    apply_font_to_colorbar_standalone,
-    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label, Renderer,
-    get_display_name, download_matplotlib_figure,
+    apply_font_to_colorbar_standalone, FontSettingsGroup,
+    ExportSettingsGroup,
+    MplDraggableCanvas, LABEL_MODES, format_element_label,
+    Renderer, get_display_name, download_matplotlib_figure,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging
@@ -146,7 +143,6 @@ def _compute_correlation_matrix(particles, elements, data_key):
                     p_mat[i, j] = p
                 except Exception:
                     _itk_log.exception("Handled exception in _compute_correlation_matrix")
-                    pass
     return mat, p_mat
 
 

@@ -1,7 +1,6 @@
 """Loading data from Nu Instruments."""
 import json
 import logging
-from math import gamma
 from pathlib import Path
 from typing import BinaryIO, Generator
 
@@ -186,7 +185,6 @@ def collect_nu_integ_data(
                 progress_callback((file_pos + 1) / total)
             except Exception:
                 _itk_log.exception("Handled exception in collect_nu_integ_data")
-                pass
     return integs
 
 
@@ -455,7 +453,6 @@ def read_nu_directory(
                 progress_callback(frac * 0.85)
             except Exception:
                 _itk_log.exception("Handled exception in _integ_progress")
-                pass
 
     integs = collect_nu_integ_data(
         path, integ_index, cyc_number=cycle, seg_number=segment,
@@ -471,7 +468,6 @@ def read_nu_directory(
             progress_callback(0.93)
         except Exception:
             _itk_log.exception("Handled exception in read_nu_directory")
-            pass
 
     if not raw:
         signals /= run_info["AverageSingleIonArea"]
@@ -494,7 +490,6 @@ def read_nu_directory(
             progress_callback(1.0)
         except Exception:
             _itk_log.exception("Handled exception in read_nu_directory")
-            pass
 
     return masses, signals, run_info
 

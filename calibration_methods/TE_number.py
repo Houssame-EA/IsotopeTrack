@@ -1,17 +1,14 @@
 import numpy as np
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                               QLabel, QLineEdit, QComboBox, QMessageBox, QFileDialog,
-                               QTableWidget, QTableWidgetItem, QSplitter, QHeaderView,
-                               QDoubleSpinBox, QGroupBox, QFormLayout, QSpinBox,
-                               QMainWindow, QScrollArea, QApplication, QTabWidget,
-                               QCheckBox, QDialog, QFrame, QProgressBar, QGridLayout,
-                               QListView, QTreeView, QAbstractItemView, QProgressDialog,
-                               QRadioButton, QListWidget)
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QIcon, QColor
+                               QLabel, QComboBox, QMessageBox, QFileDialog, QTableWidget,
+                               QTableWidgetItem, QSplitter, QHeaderView, QDoubleSpinBox,
+                               QGroupBox, QSpinBox, QMainWindow, QScrollArea,
+                               QApplication, QCheckBox, QDialog, QFrame,
+                               QListView, QTreeView, QAbstractItemView, QProgressDialog)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from widget.periodic_table_widget import PeriodicTableWidget
 import loading.vitesse_loading
-import pyqtgraph as pg
 from widget.numeric_table import NumericTableWidgetItem
 from widget.custom_plot_widget import EnhancedPlotWidget
 from processing.peak_detection import PeakDetection
@@ -21,12 +18,12 @@ from loading.data_thread import DataProcessThread
 
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PLOT_STYLES,
-    create_scrollable_container, export_table_to_csv,
-    populate_detection_row, read_detection_row, apply_global_method,
-    plot_detection_results, highlight_particle, snr_to_color,
-    number_method_transport_rate,
-    base_stylesheet, show_data_source_dialog,
+    PLOT_STYLES,
+    export_table_to_csv, populate_detection_row,
+    read_detection_row, apply_global_method, plot_detection_results,
+    highlight_particle, snr_to_color, number_method_transport_rate,
+    base_stylesheet,
+    show_data_source_dialog,
 )
 from tools.theme import theme
 import logging
@@ -245,7 +242,6 @@ class NumberMethodWidget(QMainWindow):
                     w.setBackground(p.plot_bg)
                 except Exception:
                     _itk_log.exception("Handled exception in apply_theme")
-                    pass
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -1520,7 +1516,6 @@ class NumberMethodWidget(QMainWindow):
                     self._on_exclusion_regions_changed)
             except Exception:
                 _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-                pass
             self.plot_widget.set_exclusion_regions(regions)
         finally:
             try:
@@ -1528,7 +1523,6 @@ class NumberMethodWidget(QMainWindow):
                     self._on_exclusion_regions_changed)
             except Exception:
                 _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
-                pass
 
     def on_detection_params_selection_changed(self):
         """
@@ -1575,7 +1569,6 @@ class NumberMethodWidget(QMainWindow):
                 self._rebuild_plot_exclusion_regions()
             except Exception:
                 _itk_log.exception("Handled exception in on_detection_params_selection_changed")
-                pass
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
             _itk_log.error(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")

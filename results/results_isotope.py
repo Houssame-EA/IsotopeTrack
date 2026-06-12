@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
     QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QHeaderView, QTabWidget, QGraphicsWidget, QApplication, QListWidget,
+    QHeaderView, QTabWidget, QApplication, QListWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QRectF
 from PySide6.QtGui import QColor, QCursor, QLinearGradient, QBrush
@@ -16,15 +16,14 @@ import pandas as pd
 from results.utils_sort import extract_mass_and_element
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    LABEL_MODES, format_element_label, Renderer,
-    FontSettingsGroup,
-    apply_saturation_filter, build_element_matrix,
-    get_sample_color, get_display_name,
+    FONT_FAMILIES, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, apply_font_to_pyqtgraph,
+    LABEL_MODES, format_element_label, Renderer, apply_saturation_filter,
+    build_element_matrix, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
-    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box, _add_hband,
-    _add_det_limit_h, apply_plot_title_style, apply_axis_label_style,
+    SHADE_TYPES, apply_outlier_filter,
+    _apply_box, _add_hband,
+    _add_det_limit_h,
+    apply_plot_title_style, apply_axis_label_style,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
@@ -382,7 +381,6 @@ def get_correction_factor(config: dict) -> float:
                 return (m_num / m_den) ** f
             except (ValueError, ZeroDivisionError):
                 _itk_log.exception("Handled exception in get_correction_factor")
-                pass
         return 1.0
 
     return 1.0
@@ -909,7 +907,6 @@ class IsotopeSettingsDialog(QDialog):
         self._shade_color_btn = QPushButton()
         self._shade_color_btn.setFixedSize(26, 22)
         self._shade_color_btn.setStyleSheet(f"background:{self._shade_color};")
-        from PySide6.QtWidgets import QColorDialog as _QCD
         self._shade_color_btn.clicked.connect(
             lambda: self._pick_color('_shade_color', self._shade_color_btn))
         self._shade_alpha = QDoubleSpinBox()
@@ -1489,7 +1486,6 @@ class IsotopeSettingsDialog(QDialog):
                 self._rep_plot.scene().removeItem(self._cf_vb)
             except Exception:
                 _itk_log.exception("Handled exception in _compute_replicate_ratios")
-                pass
             self._cf_vb = None
 
         x = np.arange(len(ratios))
@@ -1876,8 +1872,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         Returns:
             bool: Result of the operation.
         """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
         """
@@ -1964,7 +1960,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                 self.node.config['natural_ratio'] = a1 / a2
         except Exception:
             _itk_log.exception("Handled exception in _auto_calc_natural")
-            pass
 
     def _auto_calc_standard(self):
         """
@@ -2030,7 +2025,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                 self.node.config['standard_ratio'] = s1 / s2
         except Exception:
             _itk_log.exception("Handled exception in _auto_calc_standard")
-            pass
 
     def _show_context_menu(self, pos):
         """Show the minimal custom right-click menu for quick visual toggles.
@@ -2552,7 +2546,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                     item.vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _suppress_native_pg_context_menu")
-                    pass
 
     def _iter_samples_in_display_order(self, plot_data, cfg):
         """Yield sample items in configured display order when provided.
@@ -2829,7 +2822,6 @@ class IsotopicRatioDisplayDialog(QDialog):
                 corrected[mask] = ratios[mask] * cf
             except (ValueError, ZeroDivisionError):
                 _itk_log.exception("Handled exception in _correct_per_replicate")
-                pass
 
         return corrected
 

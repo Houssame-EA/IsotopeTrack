@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QMessageBox, QColorDialog, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
@@ -25,17 +25,17 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
 import numpy as np
 import math
-import mpltern
+import mpltern  # noqa: F401  (side effect: registers ternary projection)
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    TERNARY_DATA_TYPE_OPTIONS, TERNARY_DATA_KEY_MAPPING,
-    get_font_config, make_font_properties,
-    apply_font_to_ternary, apply_font_to_colorbar_standalone,
-    FontSettingsGroup, LegendGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label, Renderer,
-    get_sample_color, get_display_name,
-    download_matplotlib_figure, pick_color_hex,
+    DEFAULT_SAMPLE_COLORS, TERNARY_DATA_TYPE_OPTIONS,
+    TERNARY_DATA_KEY_MAPPING, get_font_config,
+    make_font_properties, apply_font_to_ternary,
+    apply_font_to_colorbar_standalone, FontSettingsGroup,
+    LegendGroup, ExportSettingsGroup, MplDraggableCanvas, LABEL_MODES,
+    format_element_label, Renderer, get_sample_color,
+    get_display_name, download_matplotlib_figure,
+    pick_color_hex,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_triangle")
@@ -1007,8 +1007,8 @@ class TriangleDisplayDialog(QDialog):
         Returns:
             bool: Result of the operation.
         """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
         """
@@ -1314,7 +1314,6 @@ class TriangleDisplayDialog(QDialog):
                                zorder=18)
                 except Exception:
                     _itk_log.exception("Handled exception in _draw_annotations")
-                    pass
 
             # ── Text (axes-fraction position, draggable) ────────────────
             if ann_type in ('Text', 'Marker + Text') and txt:
@@ -1336,7 +1335,6 @@ class TriangleDisplayDialog(QDialog):
                     text_art.draggable(True, use_blit=True)
                 except Exception:
                     _itk_log.exception("Handled exception in _draw_annotations")
-                    pass
 
     def _save_ann_positions(self, event=None):
         """Called on mouse button release — persist dragged text positions back to config.
@@ -1363,12 +1361,10 @@ class TriangleDisplayDialog(QDialog):
                             changed = True
                     except Exception:
                         _itk_log.exception("Handled exception in _save_ann_positions")
-                        pass
             if changed:
                 self.node.config['annotations'] = anns
         except Exception:
             _itk_log.exception("Handled exception in _save_ann_positions")
-            pass
 
     def _update_stats(self, plot_data):
         """Update the bottom statistics label.

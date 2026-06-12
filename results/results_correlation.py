@@ -1,30 +1,26 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
-    QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QWidgetAction,
-    QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QColorDialog, QListWidget,
+    QLineEdit, QScrollArea, QWidget, QMenu, QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QAction, QCursor
+from PySide6.QtGui import QColor, QCursor
 import pyqtgraph as pg
 import numpy as np
-import math
 import re
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    LABEL_MODES, format_label_text_tokens, Renderer,
-    FontSettingsGroup, build_axis_labels,
-    apply_saturation_filter, apply_zero_filter, apply_log_transform,
-    evaluate_equation, evaluate_equation_array, build_element_matrix,
-    compute_correlation_matrix, find_top_correlations,
-    create_single_color_scatter, create_color_mapped_scatter,
-    add_trend_line, add_correlation_text, CustomColorBar,
+    FONT_FAMILIES, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
+    apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
+    Renderer, build_axis_labels, apply_saturation_filter,
+    apply_zero_filter, apply_log_transform,
+    evaluate_equation_array, build_element_matrix, find_top_correlations,
+    create_single_color_scatter, create_color_mapped_scatter, add_trend_line,
+    add_correlation_text, CustomColorBar,
     get_sample_color, get_display_name,
-    download_pyqtgraph_figure, pick_color_hex,
-    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
+    download_pyqtgraph_figure, pick_color_hex, _QT_LINE,
+    _apply_box,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
@@ -794,8 +790,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         Returns:
             bool: Result of the operation.
         """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
         """
@@ -840,7 +836,6 @@ class CorrelationPlotDisplayDialog(QDialog):
                     return list(pd['element_data'].columns)
         except Exception:
             _itk_log.exception("Handled exception in _available_elements")
-            pass
         sel = (self.node.input_data or {}).get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
@@ -1129,168 +1124,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         # Annotation actions were intentionally removed in Correlation Phase 1.
         return []
 
-        actions = []
-        cfg = self.node.config
-        mgr = self.ann_mgr
-
-        x, y = self._current_xy_arrays()
-
-        if x is not None and len(x) >= 3:
-            x_lo, x_hi = float(np.min(x)), float(np.max(x))
-            y_lo, y_hi = float(np.min(y)), float(np.max(y))
-            x_span = max(x_hi - x_lo, 1e-9)
-            y_span = max(y_hi - y_lo, 1e-9)
-
-            both_linear = not cfg.get('log_x') and not cfg.get('log_y')
-            both_log = cfg.get('log_x') and cfg.get('log_y')
-            ranges_overlap = not (x_hi < y_lo or y_hi < x_lo)
-            if (both_linear or both_log) and ranges_overlap:
-                lo = max(x_lo, y_lo)
-                hi = min(x_hi, y_hi)
-                if hi > lo:
-                    def _one_to_one(a=lo, b=hi):
-                        """
-                        Args:
-                            a (Any): The a.
-                            b (Any): The b.
-                        """
-                        mgr.add_new('text', b, b)
-                        last = self.node.config['annotations'][-1]
-                        last['text'] = 'y = x'
-                        last['color'] = '#444441'
-                        last['box'] = False
-                        last['arrow_to'] = [a, a]
-                        mgr._raw_update(last['id'], last)
-                    actions.append(('Reference line  y = x', _one_to_one))
-
-            try:
-                mx = float(np.mean(x))
-                my = float(np.mean(y))
-
-                def _mean_x(val=mx):
-                    """
-                    Args:
-                        val (Any): The val.
-                    """
-                    mgr.add_new('vline', val, 0)
-                    last = self.node.config['annotations'][-1]
-                    last['label'] = f"mean x: {val:.3g}"
-                    last['color'] = '#0F6E56'
-                    mgr._raw_update(last['id'], last)
-                actions.append(('Mark mean x', _mean_x))
-
-                def _mean_y(val=my):
-                    """
-                    Args:
-                        val (Any): The val.
-                    """
-                    mgr.add_new('hline', 0, val)
-                    last = self.node.config['annotations'][-1]
-                    last['label'] = f"mean y: {val:.3g}"
-                    last['color'] = '#0F6E56'
-                    mgr._raw_update(last['id'], last)
-                actions.append(('Mark mean y', _mean_y))
-            except Exception as e:
-                _itk_log.exception("Handled exception in _build_smart_actions")
-                _itk_log.error(f"[smart] mark means failed: {e}")
-
-            try:
-                sx = float(np.std(x)); sy = float(np.std(y))
-                mx = float(np.mean(x)); my = float(np.mean(y))
-                if sx > 0 and sy > 0:
-                    cx1 = max(mx - sx, x_lo)
-                    cx2 = min(mx + sx, x_hi)
-                    cy1 = max(my - sy, y_lo)
-                    cy2 = min(my + sy, y_hi)
-                    if cx2 > cx1 and cy2 > cy1:
-                        def _core_box(x1=cx1, x2=cx2, y1=cy1, y2=cy2):
-                            """
-                            Args:
-                                x1 (Any): The x1.
-                                x2 (Any): The x2.
-                                y1 (Any): The y1.
-                                y2 (Any): The y2.
-                            """
-                            mgr.add_new('rect', (x1 + x2) / 2, (y1 + y2) / 2)
-                            last = self.node.config['annotations'][-1]
-                            last['x1'] = x1; last['x2'] = x2
-                            last['y1'] = y1; last['y2'] = y2
-                            last['label'] = '1σ core'
-                            last['color'] = '#534AB7'
-                            last['filled'] = False
-                            mgr._raw_update(last['id'], last)
-                        actions.append(('Highlight 1σ core region', _core_box))
-            except Exception as e:
-                _itk_log.exception("Handled exception in _build_smart_actions")
-                _itk_log.error(f"[smart] core box failed: {e}")
-
-            try:
-                r = float(np.corrcoef(x, y)[0, 1])
-                if np.isfinite(r):
-                    tx = x_lo + 0.05 * x_span
-                    ty = y_lo + 0.92 * y_span
-
-                    def _r_label(xx=tx, yy=ty, rv=r):
-                        """
-                        Args:
-                            xx (Any): The xx.
-                            yy (Any): The yy.
-                            rv (Any): The rv.
-                        """
-                        mgr.add_new('text', xx, yy)
-                        last = self.node.config['annotations'][-1]
-                        last['text'] = f"r = {rv:.3f}"
-                        last['color'] = '#185FA5'
-                        mgr._raw_update(last['id'], last)
-                    actions.append(('Label Pearson r', _r_label))
-            except Exception as e:
-                _itk_log.exception("Handled exception in _build_smart_actions")
-                _itk_log.error(f"[smart] r label failed: {e}")
-
-            try:
-                if len(x) >= 3:
-                    slope, intercept = np.polyfit(x, y, 1)
-                    y_pred = slope * x + intercept
-                    residual_sd = float(np.std(y - y_pred))
-                    if np.isfinite(residual_sd) and residual_sd > 0:
-                        x_end_lo = x_lo
-                        x_end_hi = x_hi
-                        y_line_lo = slope * x_end_lo + intercept
-                        y_line_hi = slope * x_end_hi + intercept
-
-                        def _sd_band(xe1=x_end_lo, xe2=x_end_hi,
-                                      yl1=y_line_lo, yl2=y_line_hi,
-                                      sd=residual_sd, sl=slope):
-                            """
-                            Args:
-                                xe1 (Any): The xe1.
-                                xe2 (Any): The xe2.
-                                yl1 (Any): The yl1.
-                                yl2 (Any): The yl2.
-                                sd (Any): The sd.
-                                sl (Any): The sl.
-                            """
-                            x_mid = (xe1 + xe2) / 2
-                            y_mid = sl * x_mid + (yl1 - sl * xe1)
-                            mgr.add_new('rect', x_mid, y_mid)
-                            last = self.node.config['annotations'][-1]
-                            last['x1'] = xe1
-                            last['x2'] = xe2
-                            last['y1'] = y_mid - sd
-                            last['y2'] = y_mid + sd
-                            last['label'] = f'trend ± SD ({sd:.3g})'
-                            last['color'] = '#BA7517'
-                            last['filled'] = True
-                            last['alpha'] = 0.18
-                            last['width'] = 1
-                            mgr._raw_update(last['id'], last)
-                        actions.append(('Shade ±SD around trend', _sd_band))
-            except Exception as e:
-                _itk_log.exception("Handled exception in _build_smart_actions")
-                _itk_log.error(f"[smart] trend band failed: {e}")
-
-        return actions
-
     # ── Auto-detect ─────────────────────────
 
     def _auto_detect_correlations(self):
@@ -1347,7 +1180,6 @@ class CorrelationPlotDisplayDialog(QDialog):
                 cb.remove()
             except Exception:
                 _itk_log.exception("Handled exception in _cleanup_color_bars")
-                pass
         self.active_color_bars.clear()
 
     def _suppress_native_plot_menus(self):
@@ -1358,14 +1190,12 @@ class CorrelationPlotDisplayDialog(QDialog):
                     item.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _suppress_native_plot_menus")
-                    pass
                 vb = item.getViewBox()
                 if vb is not None:
                     try:
                         vb.setMenuEnabled(False)
                     except Exception:
                         _itk_log.exception("Handled exception in _suppress_native_plot_menus")
-                        pass
 
     def _refresh(self):
         """Redraw Correlation plots from current config without changing math semantics."""
@@ -1598,7 +1428,6 @@ class CorrelationPlotDisplayDialog(QDialog):
                                 txt.setPos(x_pos, y_pos)
                 except Exception:
                     _itk_log.exception("Handled exception in _plot_scatter")
-                    pass
             else:
                 add_correlation_text(pi, x, y, cfg)
 

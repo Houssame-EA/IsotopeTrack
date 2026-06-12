@@ -1,10 +1,8 @@
 from PySide6.QtWidgets import (QWidget, QGridLayout, QPushButton, QVBoxLayout, 
-                             QLabel, QSizePolicy, QHBoxLayout, QDialog, QApplication,
-                             QFrame, QScrollArea, QLineEdit)
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, Property, QPoint
+                             QLabel, QSizePolicy, QHBoxLayout, QApplication, QFrame,
+                             QScrollArea)
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QPoint
 from PySide6.QtGui import QColor, QPainter, QLinearGradient
-import json
-import math
 
 from tools.theme import theme as _app_theme
 import logging
@@ -841,14 +839,12 @@ class CompactPeriodicTableWidget(QWidget):
             _app_theme.themeChanged.disconnect(self._pt_theme_handler)
         except Exception:
             _itk_log.exception("Handled exception in _pt_disconnect_theme")
-            pass
 
     def _safe_apply_theme_bg(self):
         try:
             self._apply_theme_bg()
         except RuntimeError:
             _itk_log.exception("Handled exception in _safe_apply_theme_bg")
-            pass
 
     def _apply_theme_bg(self):
         p = _app_theme.palette
@@ -1823,14 +1819,12 @@ class IsotopeChipSelector(QWidget):
             _app_theme.themeChanged.disconnect(self._chip_theme_handler)
         except Exception:
             _itk_log.exception("Handled exception in _chip_disconnect_theme")
-            pass
 
     def _safe_restyle(self):
         try:
             self._restyle_all()
         except RuntimeError:
             _itk_log.exception("Handled exception in _safe_restyle")
-            pass
 
     # ── build ──────────────────────────────────────────────────────────────
     def _setup(self):
