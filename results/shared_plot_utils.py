@@ -94,11 +94,19 @@ class MplDraggableCanvas(_FigureCanvasBase):
         """Set the transient mouse interaction mode for this canvas.
 
         Args:
-            mode (str): ``"Cursor"`` preserves existing drag behavior and
-                ``"Zoom"`` enables rectangle zoom on left-drag inside axes.
+            mode (str): ``"Cursor"`` enables subplot drag. ``"Zoom"``
+                enables rectangle zoom on left-drag. ``"TernaryZoom"``
+                suppresses all shared drag handling so an external owner
+                (e.g. TriangleDisplayDialog) can manage mouse events
+                directly.
         """
-        self._mouse_mode = "Zoom" if mode == "Zoom" else "Cursor"
-        if self._mouse_mode != "Zoom":
+        if mode == "Zoom":
+            self._mouse_mode = "Zoom"
+        elif mode == "TernaryZoom":
+            self._mouse_mode = "TernaryZoom"
+            self._clear_zoom_state(draw=False)
+        else:
+            self._mouse_mode = "Cursor"
             self._clear_zoom_state(draw=False)
 
     def mouse_mode(self) -> str:
@@ -168,6 +176,8 @@ class MplDraggableCanvas(_FigureCanvasBase):
         if self._mouse_mode == "Zoom":
             self._zoom_press(event)
             return
+        if self._mouse_mode == "TernaryZoom":
+            return
         if event.button != 1 or event.inaxes is None:
             return
         for ann in event.inaxes.get_children():
@@ -189,6 +199,8 @@ class MplDraggableCanvas(_FigureCanvasBase):
         if self._mouse_mode == "Zoom":
             self._zoom_motion(event)
             return
+        if self._mouse_mode == "TernaryZoom":
+            return
         if self._drag_ax is None or event.x is None:
             return
         w_px, h_px = self.figure.get_size_inches() * self.figure.dpi
@@ -205,6 +217,8 @@ class MplDraggableCanvas(_FigureCanvasBase):
         """
         if self._mouse_mode == "Zoom":
             self._zoom_release(event)
+            return
+        if self._mouse_mode == "TernaryZoom":
             return
         if event.button == 2:
             self.reset_layout()

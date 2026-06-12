@@ -23,6 +23,7 @@ from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
+from matplotlib.lines import Line2D
 import numpy as np
 import math
 import mpltern
@@ -1076,6 +1077,13 @@ class TriangleDisplayDialog(QDialog):
         self.setMinimumSize(1000, 750)
         self._triangle_viewport = _full_triangle_viewport()
 
+        self._ternary_zoom_active    = False
+        self._ternary_zoom_press     = None
+        self._ternary_zoom_cids      = []
+        self._ternary_zoom_rubberband = None
+        self._ternary_zoom_bg = None   # blit background captured on press
+        self._ternary_zoom_ax = None   # axes reference held during drag
+
         self._setup_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
@@ -1105,8 +1113,9 @@ class TriangleDisplayDialog(QDialog):
         The generic shared rectangle zoom is scientifically invalid for a single
         ternary simplex because it crops Cartesian projection space without
         redrawing ternary ticks/grid for a true sub-simplex viewport.
+        The ternary-aware viewport zoom is implemented via custom handlers.
         """
-        return False
+        return True
 
     def _apply_test_triangle_viewport(self):
         """Apply a temporary single-sample ternary viewport for manual QA."""
@@ -1115,6 +1124,248 @@ class TriangleDisplayDialog(QDialog):
             'b_min': 0.10,
             'c_min': 0.10,
         })
+        self._refresh()
+
+    def _triangle_viewport_summary(self) -> str:
+        """Return a short human-readable summary of the active single-sample viewport."""
+        vp = _validate_triangle_viewport(self._triangle_viewport)
+        if _is_full_triangle_viewport(vp):
+            return "Full viewport"
+        return (
+            f"Viewport: A >= {vp['a_min'] * 100:.0f}%, "
+            f"B >= {vp['b_min'] * 100:.0f}%, "
+            f"C >= {vp['c_min'] * 100:.0f}%"
+        )
+
+    def _enable_ternary_zoom(self):
+        """Activate ternary zoom: connect our mouse handlers.
+        Canvas stays in Cursor so shared Cartesian zoom never fires.
+        """
+        if self._ternary_zoom_active:
+            return
+        self._ternary_zoom_active = True
+        cid_p = self.canvas.mpl_connect(
+            'button_press_event',   self._ternary_zoom_on_press)
+        cid_m = self.canvas.mpl_connect(
+            'motion_notify_event',  self._ternary_zoom_on_motion)
+        cid_r = self.canvas.mpl_connect(
+            'button_release_event', self._ternary_zoom_on_release)
+        self._ternary_zoom_cids = [cid_p, cid_m, cid_r]
+
+    def _disable_ternary_zoom(self):
+        """Deactivate ternary zoom: disconnect handlers, clear rubber-band."""
+        self._ternary_zoom_active = False
+        self._ternary_zoom_press  = None
+        for cid in self._ternary_zoom_cids:
+            self.canvas.mpl_disconnect(cid)
+        self._ternary_zoom_cids = []
+        self._ternary_zoom_clear_rubberband(redraw=False)
+
+    def _ternary_zoom_clear_rubberband(self, redraw: bool = True):
+        """Remove rubber-band artist and clear all blit state.
+
+        Args:
+            redraw: whether to call draw_idle after removal.
+        """
+        if self._ternary_zoom_rubberband is not None:
+            try:
+                self._ternary_zoom_rubberband.remove()
+            except Exception:
+                pass
+            self._ternary_zoom_rubberband = None
+        self._ternary_zoom_bg = None
+        self._ternary_zoom_ax = None
+        if redraw:
+            self.canvas.draw_idle()
+
+    @staticmethod
+    def _ternary_xdata_to_abc(xdata: float, ydata: float) -> tuple:
+        """Convert mpltern Cartesian projection coords to ternary (a, b, c).
+
+        mpltern 1.0.4 corner positions in data space (confirmed by probe):
+            T corner (t=1, l=0, r=0): ( 0.0,      1.0)
+            L corner (t=0, l=1, r=0): (-1/sqrt3,  0.0)
+            R corner (t=0, l=0, r=1): (+1/sqrt3,  0.0)
+
+        Projection for any (t, l, r) with t+l+r=1:
+            x = (r - l) / sqrt(3)
+            y = t
+
+        With scatter(b, c, a) mapping t=b, l=c, r=a:
+            x = (a - c) / sqrt(3)
+            y = b
+
+        Inverse:
+            b = ydata
+            a = (1 - ydata + xdata * sqrt(3)) / 2
+            c = (1 - ydata - xdata * sqrt(3)) / 2
+
+        Returns:
+            tuple: (a, b, c) floats; caller validates all >= 0.
+        """
+        b = ydata
+        a = (1.0 - ydata + xdata * math.sqrt(3.0)) / 2.0
+        c = (1.0 - ydata - xdata * math.sqrt(3.0)) / 2.0
+        return a, b, c
+
+    @staticmethod
+    def _ternary_abc_to_xdata(a: float, b: float, c: float) -> tuple:
+        """Convert ternary (a, b, c) to mpltern Cartesian (xdata, ydata).
+
+        Forward of _ternary_xdata_to_abc. See that method for derivation.
+            xdata = (a - c) / sqrt(3)
+            ydata = b
+        """
+        return (a - c) / math.sqrt(3.0), b
+
+    def _ternary_main_edge_px(self, ax) -> float:
+        """Return the pixel length of the main triangle edge.
+
+        Uses the bottom edge from L corner (-1/sqrt3, 0) to
+        R corner (+1/sqrt3, 0) in mpltern's Cartesian data space.
+        Edge length = 2/sqrt3 in data units.
+
+        Args:
+            ax: the active mpltern axes after draw.
+
+        Returns:
+            float: edge length in pixels (at least 1.0).
+        """
+        s = 1.0 / math.sqrt(3.0)
+        pt_l = ax.transData.transform([-s, 0.0])
+        pt_r = ax.transData.transform([ s, 0.0])
+        return max(float(np.linalg.norm(pt_r - pt_l)), 1.0)
+
+    def _ternary_zoom_on_press(self, event):
+        """Record anchor vertex and capture blit background."""
+        if not self._ternary_zoom_active:
+            return
+        if event.button != 1:
+            if self._ternary_zoom_press is not None:
+                self._ternary_zoom_press = None
+                self._ternary_zoom_clear_rubberband()
+            return
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
+            return
+        a, b, c = self._ternary_xdata_to_abc(event.xdata, event.ydata)
+        if a < -0.01 or b < -0.01 or c < -0.01:
+            return
+
+        self._ternary_zoom_press = event
+        self._ternary_zoom_ax    = event.inaxes
+
+        # Create animated Line2D at a degenerate zero-area triangle.
+        # animated=True means canvas.draw() skips it, so the captured
+        # background will not contain the rubber band.
+        xp, yp = self._ternary_abc_to_xdata(a, b, c)
+        line = Line2D([xp, xp, xp, xp], [yp, yp, yp, yp],
+                      color='black', linewidth=1.5, linestyle='--',
+                      zorder=100, animated=True)
+        self._ternary_zoom_ax.add_line(line)
+        self._ternary_zoom_rubberband = line
+
+        # Full draw (rubber band excluded by animated=True), then capture.
+        self.canvas.draw()
+        try:
+            self._ternary_zoom_bg = self.canvas.copy_from_bbox(
+                self._ternary_zoom_ax.bbox)
+        except Exception:
+            self._ternary_zoom_bg = None
+
+    def _ternary_zoom_on_motion(self, event):
+        """Update rubber-band triangle in-place using blitting."""
+        if not self._ternary_zoom_active or self._ternary_zoom_press is None:
+            return
+        if event.inaxes is None or event.xdata is None:
+            return
+        if self._ternary_zoom_rubberband is None:
+            return
+
+        press     = self._ternary_zoom_press
+        ax        = self._ternary_zoom_ax
+        drag_px   = math.sqrt((event.x - press.x)**2 + (event.y - press.y)**2)
+        edge_px   = self._ternary_main_edge_px(ax)
+        remaining = drag_px / edge_px
+
+        a1, b1, c1   = self._ternary_xdata_to_abc(press.xdata, press.ydata)
+        dominant_idx = int(np.argmax([a1, b1, c1]))
+        vals         = [a1, b1, c1]
+        dominant_val = vals[dominant_idx]
+
+        if remaining <= 0 or remaining >= dominant_val:
+            return
+
+        mins = list(vals)
+        mins[dominant_idx] = dominant_val - remaining
+        a_min, b_min, c_min = mins[0], mins[1], mins[2]
+
+        corners_abc = [
+            (1.0 - b_min - c_min, b_min,               c_min              ),
+            (a_min,               1.0 - a_min - c_min,  c_min              ),
+            (a_min,               b_min,                1.0 - a_min - b_min),
+        ]
+        xs, ys = [], []
+        for (ca, cb, cc) in corners_abc:
+            xd, yd = self._ternary_abc_to_xdata(ca, cb, cc)
+            xs.append(xd)
+            ys.append(yd)
+        xs.append(xs[0])
+        ys.append(ys[0])
+
+        self._ternary_zoom_rubberband.set_xdata(xs)
+        self._ternary_zoom_rubberband.set_ydata(ys)
+
+        if self._ternary_zoom_bg is not None:
+            try:
+                self.canvas.restore_region(self._ternary_zoom_bg)
+                ax.draw_artist(self._ternary_zoom_rubberband)
+                self.canvas.blit(ax.bbox)
+                return
+            except Exception:
+                self._ternary_zoom_bg = None
+        self.canvas.draw_idle()
+
+    def _ternary_zoom_on_release(self, event):
+        """On left release, compute final viewport and apply it."""
+        if not self._ternary_zoom_active or self._ternary_zoom_press is None:
+            return
+        if event.button != 1:
+            return
+
+        press = self._ternary_zoom_press
+        self._ternary_zoom_press = None
+        self._ternary_zoom_clear_rubberband(redraw=False)
+
+        if event.inaxes is None or event.xdata is None:
+            return
+
+        ax        = event.inaxes
+        drag_px   = math.sqrt((event.x - press.x)**2 + (event.y - press.y)**2)
+        edge_px   = self._ternary_main_edge_px(ax)
+        remaining = drag_px / edge_px
+
+        a1, b1, c1   = self._ternary_xdata_to_abc(press.xdata, press.ydata)
+        dominant_idx = int(np.argmax([a1, b1, c1]))
+        vals         = [a1, b1, c1]
+        dominant_val = vals[dominant_idx]
+
+        MIN_REMAINING = 0.05
+        if remaining < MIN_REMAINING or remaining >= dominant_val:
+            return
+
+        mins = list(vals)
+        mins[dominant_idx] = dominant_val - remaining
+
+        viewport = {
+            'a_min': max(0.0, mins[0]),
+            'b_min': max(0.0, mins[1]),
+            'c_min': max(0.0, mins[2]),
+        }
+
+        if not _validate_triangle_viewport(viewport):
+            return
+
+        self._triangle_viewport = viewport
         self._refresh()
 
     def _available_elements(self) -> list:
@@ -1209,7 +1460,10 @@ class TriangleDisplayDialog(QDialog):
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
         mm = menu.addMenu("Mouse mode")
-        current_mouse_mode = self.canvas.mouse_mode()
+        if not self._is_multi() and self._ternary_zoom_active:
+            current_mouse_mode = "Zoom"
+        else:
+            current_mouse_mode = self.canvas.mouse_mode()
         zoom_supported = self._is_multi() or self._single_sample_triangle_zoom_supported()
         for mode in ("Cursor", "Zoom"):
             action = mm.addAction(mode)
@@ -1265,10 +1519,17 @@ class TriangleDisplayDialog(QDialog):
         self._refresh()
 
     def _set_mouse_mode(self, mode: str):
-        """Update the transient Triangle mouse interaction mode."""
-        if mode == "Zoom" and not (self._is_multi() or self._single_sample_triangle_zoom_supported()):
-            self.canvas.set_mouse_mode("Cursor")
+        """Update Triangle mouse interaction mode.
+
+        For single-sample Zoom, keeps the canvas in Cursor mode and
+        activates our own ternary zoom handlers instead of the shared
+        Cartesian zoom path, which is scientifically invalid for mpltern.
+        """
+        if mode == "Zoom" and not self._is_multi():
+            self.canvas.set_mouse_mode("TernaryZoom")
+            self._enable_ternary_zoom()
             return
+        self._disable_ternary_zoom()
         self.canvas.set_mouse_mode(mode)
 
     def _add_annotation(self):
@@ -1349,9 +1610,6 @@ class TriangleDisplayDialog(QDialog):
 
             plot_data = self.node.extract_plot_data()
 
-            if not self._is_multi() and self.canvas.mouse_mode() == "Zoom":
-                self.canvas.set_mouse_mode("Cursor")
-
             if not plot_data:
                 ax = self.figure.add_subplot(111)
                 ax.text(0.5, 0.5,
@@ -1381,8 +1639,11 @@ class TriangleDisplayDialog(QDialog):
                     self._draw_annotations(ax, cfg, _full_triangle_viewport())
             else:
                 ax = self.figure.add_subplot(111, projection='ternary')
+                title = "Ternary Plot"
+                if not _is_full_triangle_viewport(self._triangle_viewport):
+                    title = f"{title} ({self._triangle_viewport_summary()})"
                 self._draw_sample(
-                    ax, plot_data, cfg, "Ternary Plot",
+                    ax, plot_data, cfg, title,
                     viewport=self._triangle_viewport)
                 apply_font_to_ternary(ax, cfg)
                 self._draw_annotations(ax, cfg, self._triangle_viewport)
@@ -1487,7 +1748,7 @@ class TriangleDisplayDialog(QDialog):
         Args:
             event (Any): Qt event object.
         """
-        if self.canvas.mouse_mode() == "Zoom":
+        if self.canvas.mouse_mode() == "Zoom" or self._ternary_zoom_active:
             return
         try:
             anns = self.node.config.get('annotations', [])
@@ -1543,6 +1804,8 @@ class TriangleDisplayDialog(QDialog):
                 if n_all < total:
                     parts.append(f"{n_all:,} with all 3 elements")
 
+            if not _is_full_triangle_viewport(self._triangle_viewport):
+                parts.append(self._triangle_viewport_summary())
             self.stats_label.setText("  ·  ".join(parts))
 
 
@@ -1583,6 +1846,13 @@ class TriangleDisplayDialog(QDialog):
             visible_points.append(visible_point)
 
         if not visible_points:
+            ax.text(
+                0.5, 0.5,
+                "No points in current viewport",
+                transform=ax.transAxes,
+                ha='center', va='center',
+                color='#6B7280', fontsize=11,
+            )
             return
 
         a_vals = np.array([p['a_local'] for p in visible_points])
