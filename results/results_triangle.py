@@ -1180,43 +1180,44 @@ class TriangleDisplayDialog(QDialog):
 
     @staticmethod
     def _ternary_xdata_to_abc(xdata: float, ydata: float) -> tuple:
-        """Convert mpltern Cartesian projection coords to ternary (a, b, c).
+        """Convert mpltern Cartesian projection coords to visual ternary (a, b, c).
 
         mpltern 1.0.4 corner positions in data space (confirmed by probe):
-            T corner (t=1, l=0, r=0): ( 0.0,      1.0)
-            L corner (t=0, l=1, r=0): (-1/sqrt3,  0.0)
-            R corner (t=0, l=0, r=1): (+1/sqrt3,  0.0)
+            T corner (t=1): ( 0.0,      1.0)  → physical top
+            L corner (l=1): (-1/sqrt3,  0.0)  → physical bottom-left
+            R corner (r=1): (+1/sqrt3,  0.0)  → physical bottom-right
 
-        Projection for any (t, l, r) with t+l+r=1:
-            x = (r - l) / sqrt(3)
-            y = t
+        The scatter call scatter(b, c, a) maps data elements to physical
+        corners in a way that disagrees with the axis labels. The entire
+        viewport engine (axis_specs, filtering, tick labels) operates in
+        visual/label space where:
+            a = Ag → visual bottom-left (L corner)
+            b = V  → visual bottom-right (R corner)
+            c = Cr → visual top (T corner)
 
-        With scatter(b, c, a) mapping t=b, l=c, r=a:
-            x = (a - c) / sqrt(3)
-            y = b
-
-        Inverse:
-            b = ydata
-            a = (1 - ydata + xdata * sqrt(3)) / 2
-            c = (1 - ydata - xdata * sqrt(3)) / 2
+        Correct inverse for visual (a, b, c) from physical (xdata, ydata):
+            a = (1 - ydata - xdata * sqrt(3)) / 2    (Ag, bottom-left)
+            b = (1 - ydata + xdata * sqrt(3)) / 2    (V,  bottom-right)
+            c = ydata                                  (Cr, top)
 
         Returns:
-            tuple: (a, b, c) floats; caller validates all >= 0.
+            tuple: visual (a, b, c) floats; caller validates all >= 0.
         """
-        b = ydata
-        a = (1.0 - ydata + xdata * math.sqrt(3.0)) / 2.0
-        c = (1.0 - ydata - xdata * math.sqrt(3.0)) / 2.0
+        a = (1.0 - ydata - xdata * math.sqrt(3.0)) / 2.0
+        b = (1.0 - ydata + xdata * math.sqrt(3.0)) / 2.0
+        c = ydata
         return a, b, c
 
     @staticmethod
     def _ternary_abc_to_xdata(a: float, b: float, c: float) -> tuple:
-        """Convert ternary (a, b, c) to mpltern Cartesian (xdata, ydata).
+        """Convert visual ternary (a, b, c) to mpltern Cartesian (xdata, ydata).
 
         Forward of _ternary_xdata_to_abc. See that method for derivation.
-            xdata = (a - c) / sqrt(3)
-            ydata = b
+        Visual convention: a=Ag=bottom-left, b=V=bottom-right, c=Cr=top.
+            xdata = (b - a) / sqrt(3)
+            ydata = c
         """
-        return (a - c) / math.sqrt(3.0), b
+        return (b - a) / math.sqrt(3.0), c
 
     def _ternary_main_edge_px(self, ax) -> float:
         """Return the pixel length of the main triangle edge.
