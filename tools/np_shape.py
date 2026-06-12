@@ -160,7 +160,7 @@ class NanoParticleShapeModel(QAbstractTableModel):
             if shape is None:
                 return ""
 
-            match index.column():
+            match index.column(): # TODO: Reduce hard coding
                 case 0:
                     return shape.get_formula()
                 case 1:
@@ -169,7 +169,7 @@ class NanoParticleShapeModel(QAbstractTableModel):
                     if column < len(self.columns_info):
                         raise NotImplementedError(f"There's no implementation for column # {column}")
                     return ""
-        if role == Qt.ItemDataRole.EditRole:
+        if role == Qt.ItemDataRole.EditRole: # TODO: stop using that
             # returns the entire shape because the editor is a model.
             return self.nps_service.get_shape(index.row())
         return None
@@ -205,7 +205,7 @@ class NanoParticleShapeModel(QAbstractTableModel):
     def addData(self, nps: NanoParticleShape):
         insert_index = self.rowCount()
         index = self.index(insert_index, 0)  # TODO: Is this okay?
-        self.beginInsertRows(index, insert_index, insert_index + 1)
+        self.beginInsertRows(index, insert_index, insert_index)
 
         print("Row inserted")
         self.nps_service.update_shape(insert_index, nps)
@@ -245,7 +245,7 @@ class ShellNPSEditor(QWidget):
 
 class NPSEditor(QDialog):
     """The NPS Editor is the editor for a specific"""
-    nps_changed = Signal(NanoParticleShape)
+    accept_with_nps = Signal(NanoParticleShape)
 
     def __init__(self, index: QModelIndex | None, model: QAbstractItemModel, parent: QWidget | Any):
         super().__init__(parent=parent)
@@ -255,27 +255,29 @@ class NPSEditor(QDialog):
                     else self.get_default_shape())  # TODO: Make this flexible for None NPS
         self.current_form_widget = None
 
-        self.nps_changed.connect(self._setup_form)
+        self.accept_with_nps.connect(self.accept)
 
         self._setup_ui()
-        self._setup_form(self.nps)
 
     def _setup_ui(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
         layout.addWidget(self._setup_header())
+        self._setup_form(self.nps)
 
     def _setup_header(self):
         header = QWidget()
         header_layout = QHBoxLayout()
         header.setLayout(header_layout)
 
+        # Setting up the dropdown with all NanoParticleShape available
         self.nps_combo_box = QComboBox(parent=header)
         header_layout.addWidget(self.nps_combo_box)
         self.nps_combo_box.currentIndexChanged.connect(self.change_current_form_widget)
 
         for index, sub_class in enumerate(NanoParticleShape.__subclasses__()):
             if sub_class == type(self.nps):
+                # Uses the pre-existing nps to get user's entries
                 self.nps_combo_box.addItem(self.nps.get_shape(), self.nps)
                 self.nps_combo_box.setCurrentIndex(index)
                 continue
@@ -286,26 +288,31 @@ class NPSEditor(QDialog):
         title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
         header_layout.addWidget(title)
 
+        accept_button = QPushButton("Accept Changes")
+        accept_button.clicked.connect(lambda: self.accept_with_nps.emit(self.nps))
+        header_layout.addWidget(accept_button)
+
         return header
 
     def _setup_form(self, nps):
         layout = self.layout()
 
-        if self.current_form_widget is not None:
+        if isinstance(self.current_form_widget, QWidget):
+            print("Widget removed")
             layout.removeWidget(self.current_form_widget)
+            self.current_form_widget.hide()
+            self.current_form_widget.deleteLater()
+            self.current_form_widget = None
 
         match nps:
             case ShellNPS():
                 print("Form for ShellNPS")
-                layout.addWidget(ShellNPSEditor(nps))
+                self.current_form_widget = ShellNPSEditor(nps)
+                layout.addWidget(self.current_form_widget)
             case ShpereNPS():
-                print("Form for RodNPS")
+                print("Form for Shperes")
             case obj:
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
-
-        if isinstance(nps, ShellNPS):
-            pass
-
 
     @property
     def nps(self):
@@ -314,19 +321,18 @@ class NPSEditor(QDialog):
     @nps.setter
     def nps(self, nps: NanoParticleShape):
         self._nps = nps
-        self.nps_changed.emit(self._nps)
 
     def get_default_shape(self):
-        return ShellNPS()  # TODO: Could we add parameters???
+        return ShellNPS()  # TODO: Could we add a setting for that
 
     def change_current_form_widget(self, index: int):
-        nps = self.nps_combo_box.itemData(index)
-        print(nps)
+        self.nps = self.nps_combo_box.itemData(index)
+        self._setup_form(self.nps)
+        print(self.nps)
 
 
 class QTableViewKeyEvents(QTableView):
     """QTableView that has basic direct model control"""
-    DB_CLICK_DEBOUNCE_MS = 1000  # TODO: Trouver un autre nom
     on_double_left_click = Signal(QModelIndex)
 
     def __init__(self, *args, **kwargs):
@@ -432,20 +438,26 @@ class NanoParticleShapeWidget(QWidget):
         return header
 
     def open_nps_editor_edit(self, index: QModelIndex):
+        print("Editor edit")
+        print(index)
         self.nps_editor = self._create_and_open_nps_editor(index)
-        self.nps_editor.accepted.connect(
+        self.nps_editor.accept_with_nps.connect(
             lambda nps: self.modify_nps(nps, index)
         )
 
     def modify_nps(self, nps: NanoParticleShape, index: QModelIndex):
+        print("Modify nps")
         self.nps_model.setData(index, nps)
+        self.nps_editor = None
 
     def open_nps_editor_new(self):
         self.nps_editor = self._create_and_open_nps_editor()
-        self.nps_editor.accepted.connect(self.new_nps)
+        self.nps_editor.accept_with_nps.connect(self.new_nps)
 
     def new_nps(self, nps: NanoParticleShape):
+        print("New nps")
         self.nps_model.addData(nps)
+        self.nps_editor = None
 
     def _create_and_open_nps_editor(self, index: QModelIndex | None = None):
         """
