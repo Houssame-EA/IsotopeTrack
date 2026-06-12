@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                               QDialog, QListWidget, QCheckBox, QDoubleSpinBox, QListWidgetItem,
                               QGroupBox, QGridLayout, QSpinBox, QToolButton)
 from tools.theme import theme, dialog_qss
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.batch_parameters")
 
 
 class CollapsibleSection(QWidget):
@@ -96,6 +98,7 @@ class BatchElementParametersDialog(QDialog):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in closeEvent")
             pass
         super().closeEvent(event)
 

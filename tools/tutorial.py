@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.tutorial")
 
 
 def get_resource_path(relative_path):
@@ -20,6 +22,7 @@ def get_resource_path(relative_path):
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
+        _itk_log.exception("Handled exception in get_resource_path")
         base_path = Path(__file__).parent.parent
     return base_path / relative_path
 
@@ -263,6 +266,7 @@ class UserGuideDialog(QDialog):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in closeEvent")
             pass
         super().closeEvent(event)
 

@@ -9,6 +9,8 @@ from tools.cli_utils import get_selected_isotopes, CliArguments
 from tools.logging_utils import logging_manager
 from tools.mass_fraction_calculator import CSVCompoundDatabase
 from widget.periodic_table_widget import PeriodicTableWidget
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.progressive_main_window")
 
 
 class ProgressiveMainWindow(QObject):
@@ -81,6 +83,7 @@ class ProgressiveMainWindow(QObject):
                 QTimer.singleShot(100, self.process_next_step)
 
             except Exception as e:
+                _itk_log.exception("Handled exception in process_next_step")
                 self.progress_updated.emit(100, f"Error: {str(e)}")
                 self.loading_complete.emit()
         else:
@@ -266,6 +269,7 @@ class ProgressiveMainWindow(QObject):
             setattr(self.main_window, "_cached_csv_database", db)
             QApplication.processEvents()
         except Exception as e:
+            _itk_log.exception("Handled exception in step_preload_mass_fraction_db")
             print(f"[ProgressiveMainWindow] CSV preload skipped: {e}")
             QApplication.processEvents()
 

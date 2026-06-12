@@ -26,6 +26,8 @@ from calibration_methods.te_common import (
 
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -37,6 +39,7 @@ def _ual():
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
     except Exception:
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 
@@ -576,9 +579,11 @@ class IonicCalibrationWindow(QMainWindow):
                 try:
                     label = widget.getAxis(axis).label.toPlainText()
                 except Exception:
+                    _itk_log.exception("Handled exception in _refresh_plot_label_colors")
                     label = ""
                 widget.setLabel(axis, label, color=fg)
         except Exception:
+            _itk_log.exception("Handled exception in _refresh_plot_label_colors")
             pass
 
     def _refresh_results_table_colors(self):
@@ -593,6 +598,7 @@ class IonicCalibrationWindow(QMainWindow):
             if getattr(self, "calibration_results", None):
                 self.display_results()
         except Exception:
+            _itk_log.exception("Handled exception in _refresh_results_table_colors")
             pass
 
     def setup_toolbar(self):
@@ -1322,6 +1328,7 @@ class IonicCalibrationWindow(QMainWindow):
                     return str(concentration_value)
                     
                 except ValueError:
+                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         number_matches = re.findall(r'\b(\d+(?:\.\d+)?)\b', sample_name_lower)
@@ -1334,6 +1341,7 @@ class IonicCalibrationWindow(QMainWindow):
                     if value in common_concentrations or (0.01 <= value <= 10000):
                         return str(value)
                 except ValueError:
+                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         return "-1"
@@ -1812,6 +1820,7 @@ class IonicCalibrationWindow(QMainWindow):
                 if folder and isotope_key:
                     return folder, isotope_key
             except (IndexError, AttributeError):
+                _itk_log.exception("Handled exception in _current_time_plot_context")
                 pass
         s_idx = self.sample_combo.currentIndex()
         i_idx = self.plot_isotope_combo.currentIndex()
@@ -1919,6 +1928,7 @@ class IonicCalibrationWindow(QMainWindow):
             self._restore_time_exclusions(folder, isotope_key)
             
         except Exception as e:
+            _itk_log.exception("Handled exception in update_time_plot")
             print(f"Error updating time plot: {str(e)}")
             self.statusBar.showMessage(f"Error updating plot: {str(e)}", 3000)
 
@@ -2253,6 +2263,7 @@ class IonicCalibrationWindow(QMainWindow):
                 self.sample_combo.addItem(sample_name, folder)
                 
             except Exception:
+                _itk_log.exception("Handled exception in update_sample_combo")
                 self.sample_combo.addItem(Path(folder).name, folder)
 
     def table_key_press_event(self, event):
@@ -2396,6 +2407,7 @@ class IonicCalibrationWindow(QMainWindow):
                                     self.table.setItem(row_idx, col_idx, 
                                                     QTableWidgetItem(str(value)))
                                 except ValueError:
+                                    _itk_log.exception("Handled exception in paste_cells")
                                     continue
         finally:
             self.ignore_item_changed = False
@@ -2429,6 +2441,7 @@ class IonicCalibrationWindow(QMainWindow):
                     run_info = json.load(fp)
                 sample_name = run_info.get("SampleName", Path(folder).name)
             except:
+                _itk_log.exception("Handled exception in update_table_rows")
                 sample_name = Path(folder).name
                 
             item = QTableWidgetItem(sample_name)
@@ -2545,6 +2558,7 @@ class IonicCalibrationWindow(QMainWindow):
                 return parts[0], float(parts[1]), unit
                 
         except Exception:
+            _itk_log.exception("Handled exception in parse_header_for_element_isotope_and_unit")
             pass
         return None
 
@@ -2619,6 +2633,7 @@ class IonicCalibrationWindow(QMainWindow):
                 else:
                     self.count_vs_time_widget.setTitle("Count vs Time - Invalid column selection")
             except Exception as e:
+                _itk_log.exception("Handled exception in plot_count_vs_time")
                 print(f"Error plotting count vs time: {str(e)}")
                 self.count_vs_time_widget.setTitle("Count vs Time - Error in plotting")
         else:
@@ -2697,6 +2712,7 @@ class IonicCalibrationWindow(QMainWindow):
                     try:
                         displayed_conc = float(value)
                     except ValueError:
+                        _itk_log.exception("Handled exception in calculate_calibration")
                         continue
                     
                     if displayed_conc != -1:
@@ -3140,6 +3156,7 @@ class IonicCalibrationWindow(QMainWindow):
                             new_value = self.convert_concentration(old_value, old_unit, new_unit)
                             self.table.setItem(row, col, QTableWidgetItem(f"{new_value:.4g}"))
                         except ValueError:
+                            _itk_log.exception("Handled exception in update_concentration_unit")
                             continue
         finally:
             self.ignore_item_changed = False
@@ -3836,6 +3853,7 @@ class IonicCalibrationWindow(QMainWindow):
             try:
                 self.update_sensitivity_table()
             except Exception:
+                _itk_log.exception("Handled exception in on_manual_slope_changed")
                 pass
 
         element, mass = isotope_key.split('-')

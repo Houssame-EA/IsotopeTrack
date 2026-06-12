@@ -11,6 +11,8 @@ from PySide6.QtCore import Qt, QPointF
 from save_export.fast_project_io import (
     save_project_v2, load_project_auto, detect_format, estimate_project_size
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
 
 
 class ProjectManager:
@@ -64,6 +66,7 @@ class ProjectManager:
             else:  
                 return self._set_icon_linux(file_path)
         except Exception as e:
+            _itk_log.exception("Handled exception in _set_file_icon_cross_platform")
             print(f"Error setting file icon: {str(e)}")
             return False
     
@@ -93,6 +96,7 @@ class ProjectManager:
                     if success:
                         return True
             except ImportError:
+                _itk_log.debug("Handled exception in _set_icon_macos")
                 pass
             
             applescript = f'''
@@ -122,6 +126,7 @@ class ProjectManager:
             return result.returncode == 0
             
         except Exception as e:
+            _itk_log.exception("Handled exception in _set_icon_macos")
             print(f"macOS icon setting error: {str(e)}")
             return False
     
@@ -155,11 +160,13 @@ class ProjectManager:
                 SHCNF_IDLIST = 0x0000
                 ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
             except:
+                _itk_log.exception("Handled exception in _set_icon_windows")
                 pass
             
             return True
             
         except Exception as e:
+            _itk_log.exception("Handled exception in _set_icon_windows")
             print(f"Windows icon setting error: {str(e)}")
             return False
     
@@ -191,6 +198,7 @@ Terminal=false
             return True
             
         except Exception as e:
+            _itk_log.exception("Handled exception in _set_icon_linux")
             print(f"Linux icon setting error: {str(e)}")
             return False
     
@@ -369,6 +377,7 @@ Terminal=false
             try:
                 self._deserialize_canvas_state(canvas_state)
             except Exception as e:
+                _itk_log.exception("Handled exception in _finalize_load")
                 print(f"Warning: Could not restore canvas workflow: {e}")
             finally:
                 mw._pending_canvas_workflow = None
@@ -589,6 +598,7 @@ Terminal=false
         try:
             from widget.canvas_widgets import StickyNoteItem
         except ImportError:
+            _itk_log.debug("Handled exception in _serialize_canvas_state")
             StickyNoteItem = None
         
         canvas_state = {
@@ -682,6 +692,7 @@ Terminal=false
                         import pickle
                         pickle.dumps(value)
                     except Exception:
+                        _itk_log.exception("Handled exception in _serialize_node_config")
                         continue
                 node_data[attr] = value
     
@@ -806,6 +817,7 @@ Terminal=false
                 note.resize(w, h)
                 scene.addItem(note)
             except Exception as e:
+                _itk_log.exception("Handled exception in _deserialize_canvas_state")
                 print(f"Warning: Could not restore sticky note: {e}")
 
         saved_zoom = canvas_state.get('zoom', None)
@@ -814,6 +826,7 @@ Terminal=false
                 canvas_view = self.main_window.canvas_results_dialog.canvas
                 canvas_view.set_zoom(saved_zoom)
             except Exception as e:
+                _itk_log.exception("Handled exception in _deserialize_canvas_state")
                 print(f"Warning: Could not restore canvas zoom: {e}")
     
     def _deserialize_node_config(self, workflow_node, node_data):
@@ -994,6 +1007,7 @@ Terminal=false
             return True
             
         except (ValueError, AttributeError):
+            _itk_log.exception("Handled exception in _check_version_compatibility")
             return True
     
     def get_project_info(self, file_path):
@@ -1020,5 +1034,6 @@ Terminal=false
                 'file_size_mb': Path(file_path).stat().st_size / (1024 * 1024)
             }
         except Exception as e:
+            _itk_log.exception("Handled exception in get_project_info")
             print(f"Error reading project info: {str(e)}")
             return None

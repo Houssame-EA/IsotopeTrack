@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+_itk_log = logging.getLogger("IsotopeTrack.save_export.fast_project_io")
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ def _particles_to_columnar(particles):
                             mat[i, label_to_idx[lbl]] = float(val)
                             has_data = True
                         except (TypeError, ValueError):
+                            _itk_log.exception("Handled exception in _particles_to_columnar")
                             pass
         if has_data:
             element_arrays[dict_key] = mat
@@ -603,6 +605,7 @@ def detect_format(filepath):
                 if '__format__' in zf.namelist():
                     return 2
         except zipfile.BadZipFile:
+            _itk_log.exception("Handled exception in detect_format")
             pass
     
     if magic[:2] == FORMAT_V1_GZIP_MAGIC:
@@ -613,6 +616,7 @@ def detect_format(filepath):
             f.read(1)
         return 1
     except Exception:
+        _itk_log.exception("Handled exception in detect_format")
         pass
     
     raise ValueError(f"Unrecognized project file format: {filepath}")

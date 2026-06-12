@@ -37,6 +37,8 @@ from results.shared_plot_utils import (
     get_sample_color, get_display_name,
     download_matplotlib_figure, pick_color_hex,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_triangle")
 
 
 DISPLAY_MODES = [
@@ -128,6 +130,7 @@ def confidence_ellipse_params(data_x, data_y, n_std=2.0):
             'width': w, 'height': h, 'angle_deg': angle,
         }
     except Exception:
+        _itk_log.exception("Handled exception in confidence_ellipse_params")
         return None
 
 
@@ -1251,6 +1254,7 @@ class TriangleDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error updating ternary display: {e}")
             import traceback
             traceback.print_exc()
@@ -1309,6 +1313,7 @@ class TriangleDisplayDialog(QDialog):
                                linewidths=ann.get('marker_edge_width', 1.5),
                                zorder=18)
                 except Exception:
+                    _itk_log.exception("Handled exception in _draw_annotations")
                     pass
 
             # ── Text (axes-fraction position, draggable) ────────────────
@@ -1330,6 +1335,7 @@ class TriangleDisplayDialog(QDialog):
                     text_art._ann_idx = idx
                     text_art.draggable(True, use_blit=True)
                 except Exception:
+                    _itk_log.exception("Handled exception in _draw_annotations")
                     pass
 
     def _save_ann_positions(self, event=None):
@@ -1356,10 +1362,12 @@ class TriangleDisplayDialog(QDialog):
                             ann['y_frac'] = round(float(y), 4)
                             changed = True
                     except Exception:
+                        _itk_log.exception("Handled exception in _save_ann_positions")
                         pass
             if changed:
                 self.node.config['annotations'] = anns
         except Exception:
+            _itk_log.exception("Handled exception in _save_ann_positions")
             pass
 
     def _update_stats(self, plot_data):
@@ -1817,6 +1825,7 @@ class TrianglePlotNode(QObject):
                             or va < 0 or vb < 0 or vc < 0):
                         continue
                 except TypeError:
+                    _itk_log.exception("Handled exception in _extract_particles")
                     continue
 
             total = va + vb + vc

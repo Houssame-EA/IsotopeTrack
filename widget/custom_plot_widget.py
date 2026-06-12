@@ -19,6 +19,8 @@ from results.shared_plot_utils import (
     apply_plot_item_text_styling,
     apply_plot_title_style,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.custom_plot_widget")
 
 # ── Theme helpers for editor dialogs ─────────────────────────────────────────
 
@@ -340,6 +342,7 @@ def _install_theme_subscription(dialog):
         try:
             dialog.setStyleSheet(_editor_dialog_qss())
         except RuntimeError:
+            _itk_log.exception("Handled exception in _reapply")
             pass
 
     _app_theme.themeChanged.connect(_reapply)
@@ -352,6 +355,7 @@ def _install_theme_subscription(dialog):
         try:
             _app_theme.themeChanged.disconnect(_reapply)
         except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in _close")
             pass
         original_close(event)
     dialog.closeEvent = _close
@@ -522,6 +526,7 @@ class TraceEditorDialog(QDialog):
                             label_item.setText(new_name)
                             break
                 except Exception:
+                    _itk_log.exception("Handled exception in _apply")
                     pass
 
         # ── Persist so Detect Peaks re-draw reapplies these settings ───
@@ -571,6 +576,7 @@ class ScatterEditorDialog(QDialog):
         try:
             self.current_color = pg.mkBrush(opts.get('brush', 'r')).color()
         except Exception:
+            _itk_log.exception("Handled exception in _setup_ui")
             self.current_color = QColor(255, 0, 0)
 
         self.color_button = QPushButton()
@@ -973,12 +979,14 @@ class LegendEditorDialog(QDialog):
             legend.setLabelTextSize(sz)
             legend.setLabelTextColor(self.text_color)
         except Exception:
+            _itk_log.exception("Handled exception in _apply")
             pass
         legend.setBrush(pg.mkBrush(255, 255, 255, self.bg_alpha.value()))
         try:
             for s, l in legend.items:
                 l.setText(l.text, size=sz, color=self.text_color.name())
         except Exception:
+            _itk_log.exception("Handled exception in _apply")
             pass
         self.accept()
 
@@ -1278,6 +1286,7 @@ class PlotSettingsDialog(QDialog):
                    (hasattr(w, '__len__') and len(w) and max(w) == 0):
                     continue
             except Exception:
+                _itk_log.exception("Handled exception in _populate_traces")
                 pass
             name = item.opts.get('_trace_name',
                                   item.opts.get('name', f'Bar {idx}'))
@@ -1357,6 +1366,7 @@ class PlotSettingsDialog(QDialog):
             try:
                 itm.update()
             except Exception:
+                _itk_log.exception("Handled exception in apply_c")
                 pass
             nn = name_e.text().strip()
             if nn:
@@ -1371,6 +1381,7 @@ class PlotSettingsDialog(QDialog):
                             if s.item is itm:
                                 l.setText(nn); break
                     except Exception:
+                        _itk_log.exception("Handled exception in apply_c")
                         pass
             # ── Persist so Detect Peaks re-draw reapplies these settings ──
             trace_name = itm.opts.get('name') or ''
@@ -1386,6 +1397,7 @@ class PlotSettingsDialog(QDialog):
                 self.plot_widget.getPlotItem().update()
                 self.plot_widget.repaint()
             except Exception:
+                _itk_log.exception("Handled exception in apply_c")
                 pass
         ab.clicked.connect(apply_c)
         rl.addWidget(ab)
@@ -1406,7 +1418,9 @@ class PlotSettingsDialog(QDialog):
         rl.addWidget(QLabel("⬤")); rl.addWidget(QLabel(item_name))
 
         try: color = pg.mkBrush(item.opts.get('brush','r')).color()
-        except: color = QColor(255,0,0)
+        except:
+            _itk_log.exception("Handled exception in _scatter_row")
+            color = QColor(255,0,0)
 
         cb = QPushButton(); cb.setFixedSize(30,25); cb._color = color
         cb.setStyleSheet(_color_swatch_qss(color.name()))
@@ -1461,6 +1475,7 @@ class PlotSettingsDialog(QDialog):
                 self.plot_widget.getPlotItem().update()
                 self.plot_widget.repaint()
             except Exception:
+                _itk_log.exception("Handled exception in apply_s")
                 pass
         ab.clicked.connect(apply_s)
         rl.addWidget(ab)
@@ -1491,6 +1506,7 @@ class PlotSettingsDialog(QDialog):
         try:
             color = pg.mkBrush(items[0].opts.get('brush', 'b')).color()
         except Exception:
+            _itk_log.exception("Handled exception in _bar_row")
             color = QColor(100, 120, 220)
 
         cb = QPushButton()
@@ -1539,17 +1555,20 @@ class PlotSettingsDialog(QDialog):
                     itm.setOpts(brush=new_brush, pen=new_pen)
                     itm.update()
                 except Exception:
+                    _itk_log.exception("Handled exception in apply_b")
                     pass
             if hasattr(self.plot_widget, 'notify_bar_group_color_changed'):
                 try:
                     self.plot_widget.notify_bar_group_color_changed(
                         list(itms), c.name())
                 except Exception:
+                    _itk_log.exception("Handled exception in apply_b")
                     pass
             try:
                 self.plot_widget.getPlotItem().update()
                 self.plot_widget.repaint()
             except Exception:
+                _itk_log.exception("Handled exception in apply_b")
                 pass
 
         ab.clicked.connect(apply_b)
@@ -1591,6 +1610,7 @@ class PlotSettingsDialog(QDialog):
                     else:
                         legend.removeItem(item)
                 except Exception:
+                    _itk_log.exception("Handled exception in _toggle_particle_scatter")
                     pass
 
         # Persist state so the checkbox is consistent when dialog reopens
@@ -1601,11 +1621,13 @@ class PlotSettingsDialog(QDialog):
             try:
                 legend.updateSize()
             except Exception:
+                _itk_log.exception("Handled exception in _toggle_particle_scatter")
                 pass
 
         try:
             self.plot_widget.repaint()
         except Exception:
+            _itk_log.exception("Handled exception in _toggle_particle_scatter")
             pass
 
     # ── Helpers ───────────────────────────────────────────────────────────
@@ -1649,6 +1671,7 @@ class PlotSettingsDialog(QDialog):
                 self.grid_alpha.setValue(s.get('grid_alpha',50))
                 self.grid_style.setCurrentText(s.get('grid_style','Solid'))
             except Exception as e:
+                _itk_log.exception("Handled exception in _load_persistent")
                 print(f"Error loading settings: {e}")
 
     def _save_persistent(self):
@@ -1868,14 +1891,17 @@ class ExclusionRegion(pg.LinearRegionItem):
                 try:
                     line.setPen(new_pen)
                 except Exception:
+                    _itk_log.exception("Handled exception in set_scope")
                     pass
             self.update()
         except Exception:
+            _itk_log.exception("Handled exception in set_scope")
             pass
         if self._owner is not None:
             try:
                 self._owner._emit_exclusion_changed()
             except Exception:
+                _itk_log.exception("Handled exception in set_scope")
                 pass
 
     # ── Right-click menu ─────────────────────────────────────────────
@@ -1890,6 +1916,7 @@ class ExclusionRegion(pg.LinearRegionItem):
                 self._show_context_menu(ev)
                 return
         except Exception:
+            _itk_log.exception("Handled exception in mouseClickEvent")
             pass
         super().mouseClickEvent(ev)
 
@@ -1920,6 +1947,7 @@ class ExclusionRegion(pg.LinearRegionItem):
             sp = ev.screenPos()
             gp = QPoint(int(sp.x()), int(sp.y()))
         except Exception:
+            _itk_log.exception("Handled exception in _show_context_menu")
             from PySide6.QtGui import QCursor
             gp = QCursor.pos()
 
@@ -1944,6 +1972,7 @@ class ExclusionRegion(pg.LinearRegionItem):
         try:
             dlg.setStyleSheet(_editor_dialog_qss())
         except Exception:
+            _itk_log.exception("Handled exception in _edit_bounds_dialog")
             pass
 
         form = QFormLayout()
@@ -1961,6 +1990,7 @@ class ExclusionRegion(pg.LinearRegionItem):
             ok_btn.setStyleSheet(_editor_ok_button_qss())
             cancel_btn.setStyleSheet(_editor_cancel_button_qss())
         except Exception:
+            _itk_log.exception("Handled exception in _edit_bounds_dialog")
             pass
         ok_btn.clicked.connect(dlg.accept)
         cancel_btn.clicked.connect(dlg.reject)
@@ -2038,6 +2068,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             fg = QColor(p.plot_fg)
             self.setBackground(p.plot_bg)
         except RuntimeError:
+            _itk_log.exception("Handled exception in apply_theme")
             disc = getattr(self, '_theme_disconnect', None)
             if disc is not None:
                 disc()
@@ -2096,6 +2127,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self.addItem(self.horizontal_line)
             self.scene().sigMouseMoved.connect(self.mouse_moved)
         except Exception as e:
+            _itk_log.exception("Handled exception in setup_interaction_features")
             print(f"Warning: Could not setup crosshair: {e}")
         self._install_autorange_button()
 
@@ -2171,6 +2203,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
 
             menu.aboutToShow.connect(self._capture_context_menu_position)
         except Exception as e:
+            _itk_log.exception("Handled exception in _install_exclusion_context_menu")
             print(f"Warning: Could not install exclusion context menu: {e}")
 
     def _capture_context_menu_position(self):
@@ -2183,6 +2216,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             data_pos = vb.mapSceneToView(scene_pos)
             self._last_context_menu_x = float(data_pos.x())
         except Exception:
+            _itk_log.exception("Handled exception in _capture_context_menu_position")
             self._last_context_menu_x = None
 
     def _add_exclusion_region_at_cursor(self, scope='element'):
@@ -2206,6 +2240,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self.add_exclusion_region(cx - span / 2.0, cx + span / 2.0,
                                       scope=scope)
         except Exception as e:
+            _itk_log.exception("Handled exception in _add_exclusion_region_at_cursor")
             print(f"Warning: Could not add exclusion region: {e}")
 
     def add_exclusion_region(self, x_min, x_max, scope='element'):
@@ -2234,6 +2269,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self._emit_exclusion_changed()
             return region
         except Exception as e:
+            _itk_log.exception("Handled exception in add_exclusion_region")
             print(f"Warning: add_exclusion_region failed: {e}")
             return None
 
@@ -2248,9 +2284,11 @@ class EnhancedPlotWidget(pg.PlotWidget):
             try:
                 self.removeItem(region)
             except Exception:
+                _itk_log.exception("Handled exception in remove_exclusion_region")
                 pass
             self._emit_exclusion_changed()
         except Exception as e:
+            _itk_log.exception("Handled exception in remove_exclusion_region")
             print(f"Warning: remove_exclusion_region failed: {e}")
 
     def clear_exclusion_regions(self):
@@ -2261,6 +2299,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             try:
                 self.removeItem(region)
             except Exception:
+                _itk_log.exception("Handled exception in clear_exclusion_regions")
                 pass
         self._excluded_regions.clear()
         self._emit_exclusion_changed()
@@ -2280,6 +2319,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                 lo, hi = sorted(r.getRegion())
                 out.append((float(lo), float(hi), r.scope()))
             except Exception:
+                _itk_log.exception("Handled exception in get_exclusion_regions")
                 continue
         return out
 
@@ -2348,6 +2388,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             try:
                 self.exclusionRegionsChanged.emit()
             except Exception:
+                _itk_log.exception("Handled exception in _emit_exclusion_changed")
                 pass
 
     # ── Override clear() so exclusion bands + crosshair survive ──────────
@@ -2359,9 +2400,11 @@ class EnhancedPlotWidget(pg.PlotWidget):
                     region.sigRegionChangeFinished.disconnect(
                         self._on_region_edited)
                 except Exception:
+                    _itk_log.exception("Handled exception in clear")
                     pass
                 self.removeItem(region)
             except Exception:
+                _itk_log.exception("Handled exception in clear")
                 pass
 
         super().clear()
@@ -2372,6 +2415,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             if hasattr(self, 'horizontal_line') and self.horizontal_line is not None:
                 self.addItem(self.horizontal_line)
         except Exception:
+            _itk_log.exception("Handled exception in clear")
             pass
 
         self._suppress_exclusion_signal = True
@@ -2382,6 +2426,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                     region.sigRegionChangeFinished.connect(
                         self._on_region_edited)
                 except Exception:
+                    _itk_log.exception("Handled exception in clear")
                     pass
         finally:
             self._suppress_exclusion_signal = False
@@ -2419,6 +2464,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                         event.accept()
                         return
             except Exception:
+                _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                 pass
 
             tl = pi.titleLabel
@@ -2444,6 +2490,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                         LegendEditorDialog(self, self.parent()).exec()
                         event.accept(); return
                 except Exception:
+                    _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                     pass
 
             scat = self._find_closest_scatter(scene_pos)
@@ -2460,6 +2507,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             event.accept()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in mouseDoubleClickEvent")
             print(f"Warning: Double-click handler error: {e}")
             super().mouseDoubleClickEvent(event)
 
@@ -2495,8 +2543,11 @@ class EnhancedPlotWidget(pg.PlotWidget):
                 xd = np.array([p[0] for p in pts])
                 yd = np.array([p[1] for p in pts])
             except (IndexError, TypeError):
+                _itk_log.exception("Handled exception in _find_closest_scatter")
                 try: xd = pts['x']; yd = pts['y']
-                except: continue
+                except:
+                    _itk_log.exception("Handled exception in _find_closest_scatter")
+                    continue
             dx = (xd - mx) / xr; dy = (yd - my) / yr
             dists = np.sqrt(dx**2 + dy**2)
             mi = np.argmin(dists); md = dists[mi]
@@ -2567,6 +2618,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                 self.getPlotItem().setYRange(my - (my - yr[0]) * zf, my + (yr[1] - my) * zf, padding=0)
             event.accept()
         except Exception as e:
+            _itk_log.exception("Handled exception in wheelEvent")
             print(f"Warning: wheel zoom error: {e}")
 
     def update_plot(self, time_array, data):
@@ -2587,7 +2639,9 @@ class EnhancedPlotWidget(pg.PlotWidget):
                 if len(signals) == 0 or len(time_array) == 0: continue
                 signals = np.nan_to_num(signals, nan=0.0)
                 try: signals_smooth = self.smooth_data(signals)
-                except: signals_smooth = signals
+                except:
+                    _itk_log.exception("Handled exception in update_plot")
+                    signals_smooth = signals
                 ml = min(len(time_array), len(signals_smooth))
                 tap = time_array[:ml]; ss = signals_smooth[:ml]
                 pen = pg.mkPen(color=color, width=1, style=Qt.SolidLine)
@@ -2597,6 +2651,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                     pi = pg.PlotDataItem(tap, ss, pen=pen, name=f'Mass {mass}', antialias=True)
                     self.addItem(pi); self.data_items[mass] = pi
             except Exception as e:
+                _itk_log.exception("Handled exception in update_plot")
                 print(f"Warning: Error plotting mass {mass}: {e}")
         if self.original_range is None:
             self.original_range = self.viewRange()
@@ -2610,13 +2665,16 @@ class EnhancedPlotWidget(pg.PlotWidget):
             if self.sceneBoundingRect().contains(pos):
                 mp = self.getPlotItem().vb.mapSceneToView(pos)
                 self.vertical_line.setPos(mp.x()); self.horizontal_line.setPos(mp.y())
-        except: pass
+        except:
+            _itk_log.exception("Handled exception in mouse_moved")
+            pass
 
     def clear_plot(self):
         try:
             for item in self.data_items.values(): self.removeItem(item)
             self.data_items.clear(); self.original_range = None
         except Exception as e:
+            _itk_log.exception("Handled exception in clear_plot")
             print(f"Warning: Error clearing plot: {e}")
 
 
@@ -3018,6 +3076,7 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
             dy = (y_max - y_min) * 0.02
             self._equation_text.setPos(x_min + dx, y_max - dy)
         except Exception:
+            _itk_log.exception("Handled exception in _reposition_equation")
             pass
 
     # ── Click & hover handlers ──────────────────────────────────────────
@@ -3039,6 +3098,7 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
         try:
             idx = int(raw)
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in _on_scatter_clicked")
             return
         self._pending_click_index = idx
         self._click_timer.start(self._DOUBLE_CLICK_MS)
@@ -3119,6 +3179,7 @@ class BarEditorDialog(QDialog):
         try:
             self._meta['bar_item'].setOpts(brush=pg.mkBrush(self._fill_color))
         except Exception:
+            _itk_log.exception("Handled exception in _apply")
             pass
         self.accept()
 
@@ -3203,11 +3264,13 @@ class MzBarPlotWidget(pg.PlotWidget):
                         BarEditorDialog(meta, self.parent()).exec()
                         event.accept(); return
             except Exception:
+                _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                 pass
 
             BackgroundEditorDialog(self, self.parent()).exec()
             event.accept()
 
         except Exception as exc:
+            _itk_log.exception("Handled exception in mouseDoubleClickEvent")
             print(f"Warning: MzBarPlotWidget double-click error: {exc}")
             super().mouseDoubleClickEvent(event)

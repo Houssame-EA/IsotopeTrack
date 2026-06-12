@@ -63,6 +63,8 @@ from PySide6.QtWidgets import (
 )
 
 import pyqtgraph as pg
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.shared_annotation")
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -361,6 +363,7 @@ class BaseAnnotation(QObject):
                 try:
                     self._plot_item.removeItem(it)
                 except Exception:
+                    _itk_log.exception("Handled exception in detach")
                     pass
         self.item = None
         self.extras.clear()
@@ -469,6 +472,7 @@ class TextAnnotation(BaseAnnotation):
                 self._arrow.setPen(pg.mkPen(color, width=1.5))
                 self._arrow.setVisible(True)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _sync_from_data")
                 self._arrow.setVisible(False)
         else:
             self._arrow.setVisible(False)
@@ -617,6 +621,7 @@ class VBandAnnotation(BaseAnnotation):
             for line in self.item.lines:
                 line.setPen(edge_pen)
         except Exception:
+            _itk_log.exception("Handled exception in _sync_from_data")
             pass
 
         label = d.get('label', '')
@@ -717,6 +722,7 @@ class RectAnnotation(BaseAnnotation):
                 try:
                     h.setPos(cx, cy)
                 except Exception:
+                    _itk_log.exception("Handled exception in _sync_from_data")
                     pass
 
     def _hookup(self):
@@ -724,11 +730,13 @@ class RectAnnotation(BaseAnnotation):
             self.item.sigClicked.connect(
                 lambda *a: self.sig_clicked.emit(self.data['id']))
         except Exception:
+            _itk_log.exception("Handled exception in _hookup")
             pass
         try:
             self._fill_item.sigClicked.connect(
                 lambda *a: self.sig_clicked.emit(self.data['id']))
         except Exception:
+            _itk_log.exception("Handled exception in _hookup")
             pass
 
     def _apply_selection_style(self):
@@ -763,6 +771,7 @@ class RectAnnotation(BaseAnnotation):
                 self._handle_items.append(h)
                 self._handle_corners.append(which)
             except Exception:
+                _itk_log.exception("Handled exception in _ensure_handles")
                 pass
 
     def _remove_handles(self):
@@ -770,6 +779,7 @@ class RectAnnotation(BaseAnnotation):
             try:
                 self._plot_item.removeItem(h)
             except Exception:
+                _itk_log.exception("Handled exception in _remove_handles")
                 pass
         self._handle_items = []
         self._handle_corners = []
@@ -785,6 +795,7 @@ class RectAnnotation(BaseAnnotation):
             pos = handle.pos()
             hx, hy = float(pos.x()), float(pos.y())
         except Exception:
+            _itk_log.exception("Handled exception in _on_handle_done")
             return
         x1, y1 = float(new['x1']), float(new['y1'])
         x2, y2 = float(new['x2']), float(new['y2'])
@@ -884,6 +895,7 @@ class _SceneMouseEventFilter(QObject):
             if event.type() in _SceneMouseEventFilter._MOUSE_EVENT_TYPES:
                 event.setAccepted(True)
         except Exception:
+            _itk_log.exception("Handled exception in eventFilter")
             pass
         return False
 
@@ -941,11 +953,13 @@ class AnnotationManager(QObject):
                     try:
                         scene.sigMouseClicked.disconnect(self._on_scene_clicked)
                     except (RuntimeError, TypeError):
+                        _itk_log.exception("Handled exception in attach_plot")
                         pass
                     if self._scene_filter is not None:
                         try:
                             scene.removeEventFilter(self._scene_filter)
                         except (RuntimeError, TypeError):
+                            _itk_log.exception("Handled exception in attach_plot")
                             pass
                 scene.sigMouseClicked.connect(self._on_scene_clicked)
 
@@ -954,6 +968,7 @@ class AnnotationManager(QObject):
 
                 self._connected_scene = scene
         except Exception:
+            _itk_log.exception("Handled exception in attach_plot")
             pass
         if self._selected_id and self._selected_id in self._wrappers:
             self._wrappers[self._selected_id].set_selected(True)
@@ -975,6 +990,7 @@ class AnnotationManager(QObject):
             w.attach(self._plot_item)
             self._wrappers[data['id']] = w
         except Exception as e:
+            _itk_log.exception("Handled exception in _build_wrapper")
             print(f"[annotations] failed to build {data.get('type')}: {e}")
 
     # ── insert mode ─────────────────────────────────
@@ -1039,12 +1055,14 @@ class AnnotationManager(QObject):
                 data_pt = vb.mapSceneToView(scene_pos)
                 self.add_new(self._insert_type, float(data_pt.x()), float(data_pt.y()))
             except Exception as e:
+                _itk_log.exception("Handled exception in _on_scene_clicked")
                 print(f"[annotations] insert failed: {e}")
             finally:
                 self._insert_type = None
             try:
                 ev.accept()
             except Exception:
+                _itk_log.exception("Handled exception in _on_scene_clicked")
                 pass
             return
 
@@ -1056,6 +1074,7 @@ class AnnotationManager(QObject):
         try:
             ev.accept()
         except Exception:
+            _itk_log.exception("Handled exception in _on_scene_clicked")
             pass
 
     # ── CRUD + undo ─────────────────────────────────
@@ -1309,6 +1328,7 @@ def _anchor_for(data: dict, viewbox) -> tuple[float, float]:
     try:
         xr, yr = viewbox.viewRange()
     except Exception:
+        _itk_log.exception("Handled exception in _anchor_for")
         xr, yr = (0, 1), (0, 1)
     if t == 'text':
         return float(data.get('x', 0)), float(data.get('y', 0))
@@ -1498,6 +1518,7 @@ class FloatingInspector(QFrame):
             try:
                 self._viewbox.sigRangeChanged.disconnect(self._reposition)
             except (RuntimeError, TypeError):
+                _itk_log.exception("Handled exception in attach")
                 pass
             self._viewbox = None
         self._plot_item = plot_item
@@ -1569,6 +1590,7 @@ class FloatingInspector(QFrame):
             scene_pt = vb.mapViewToScene(QPointF(x, y))
             widget_pt = pw.mapFromScene(scene_pt)
         except Exception:
+            _itk_log.exception("Handled exception in _reposition")
             return
 
         gap_x = 24 if data.get('type') in ('vline', 'vband') else self.OFFSET_X

@@ -7,6 +7,8 @@ import json
 import math
 
 from tools.theme import theme as _app_theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_periodic")
 
 ELEMENT_CATEGORY_COLORS = {
     'alkali':          '#FF7043',
@@ -317,13 +319,21 @@ class CompactIsotopeDisplay(QFrame):
         try:
             _app_theme.themeChanged.disconnect(self._theme_handler)
         except Exception:
-            pass
+            # Already disconnected or signal source gone — expected during teardown
+            _itk_log.debug("Theme handler already disconnected")
 
     def _safe_apply_theme(self):
+        import shiboken6
+        if not shiboken6.isValid(self):
+            # C++ widget already deleted — unsubscribe so this never fires again
+            self._disconnect_theme()
+            return
         try:
             self._apply_theme_style()
         except RuntimeError:
-            pass
+            # Deleted between the check and the call — unsubscribe quietly
+            self._disconnect_theme()
+            _itk_log.debug("Theme handler removed for deleted widget")
 
     def _apply_theme_style(self):
         p = _app_theme.palette
@@ -830,12 +840,14 @@ class CompactPeriodicTableWidget(QWidget):
         try:
             _app_theme.themeChanged.disconnect(self._pt_theme_handler)
         except Exception:
+            _itk_log.exception("Handled exception in _pt_disconnect_theme")
             pass
 
     def _safe_apply_theme_bg(self):
         try:
             self._apply_theme_bg()
         except RuntimeError:
+            _itk_log.exception("Handled exception in _safe_apply_theme_bg")
             pass
 
     def _apply_theme_bg(self):
@@ -1810,12 +1822,14 @@ class IsotopeChipSelector(QWidget):
         try:
             _app_theme.themeChanged.disconnect(self._chip_theme_handler)
         except Exception:
+            _itk_log.exception("Handled exception in _chip_disconnect_theme")
             pass
 
     def _safe_restyle(self):
         try:
             self._restyle_all()
         except RuntimeError:
+            _itk_log.exception("Handled exception in _safe_restyle")
             pass
 
     # ── build ──────────────────────────────────────────────────────────────

@@ -1,4 +1,6 @@
 from PySide6.QtWidgets import QTableWidgetItem
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.numeric_table")
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -26,4 +28,5 @@ class NumericTableWidgetItem(QTableWidgetItem):
             
             return self_value < other_value
         except ValueError:
+            _itk_log.exception("Handled exception in __lt__")
             return self.text() < other.text()

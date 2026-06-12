@@ -13,6 +13,8 @@ from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtCore import Qt, Signal
 
 from tools.theme import theme, LIGHT
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -798,6 +800,7 @@ def read_detection_row(table, row):
             "alpha": alpha_w.value(),
         }
     except Exception as exc:
+        _itk_log.exception("Handled exception in read_detection_row")
         print(f"Warning: falling back to defaults for row {row}: {exc}")
         return dict(DEFAULT_DETECTION_PARAMS)
 

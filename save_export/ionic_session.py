@@ -3,6 +3,8 @@ import csv
 import numpy as np
 from typing import Dict, Any
 from pathlib import Path
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.ionic_session")
 
 class NumpyEncoder(json.JSONEncoder):
     """
@@ -181,6 +183,7 @@ def extract_5sec_summary_stats(ionic_window) -> Dict[str, Any]:
                     }
         
     except Exception as e:
+        _itk_log.exception("Handled exception in extract_5sec_summary_stats")
         print(f"Error extracting summary statistics: {str(e)}")
         return {}
     
@@ -239,6 +242,7 @@ def save_summary_csv(base_file_path: str, summary_stats: Dict[str, Any]) -> None
             print(f"Saved summary statistics: {summary_csv_path}")
         
     except Exception as e:
+        _itk_log.exception("Handled exception in save_summary_csv")
         print(f"Error saving summary statistics: {str(e)}")
 
 def load_session_from_csv(file_path: str) -> Dict[str, Any]:
@@ -308,5 +312,6 @@ def load_summary_stats_from_csv(base_file_path: str) -> Dict[str, Any]:
         return summary_data
         
     except Exception as e:
+        _itk_log.exception("Handled exception in load_summary_stats_from_csv")
         print(f"Error loading summary statistics: {str(e)}")
         return {}

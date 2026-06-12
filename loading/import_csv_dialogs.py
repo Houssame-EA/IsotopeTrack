@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
 
 from widget.periodic_table_widget import PeriodicTableWidget
 from tools.theme import theme, dialog_qss
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.loading.import_csv_dialogs")
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +138,7 @@ class CSVPreviewTableWidget(QTableWidget):
         try:
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
+            _itk_log.exception("Handled exception in cleanup")
             pass 
 
     def _apply_theme(self, *_):
@@ -387,6 +390,7 @@ class IsotopePickerDialog(QDialog):
         try:
             self.setStyleSheet(dialog_qss(theme.palette))
         except Exception:
+            _itk_log.exception("Handled exception in __init__")
             pass
 
     def _populate(self):
@@ -490,11 +494,13 @@ class DataProcessThread(QThread):
                             sample_data.get('datetime', ''),
                         )
                 except Exception as e:
+                    _itk_log.exception("Handled exception in run")
                     self.error.emit(
                         f"Error processing file {file_config['name']}: {e}")
                     continue
             self.progress.emit(100)
         except Exception as e:
+            _itk_log.exception("Handled exception in run")
             self.error.emit(f"Data processing error: {e}")
 
     # -- per-file pipeline ------------------------------------------------
@@ -532,6 +538,7 @@ class DataProcessThread(QThread):
                 'datetime': '',
             }
         except Exception as e:
+            _itk_log.exception("Handled exception in process_file")
             self.error.emit(f"Error processing {file_path}: {e}")
             return None
 
@@ -589,6 +596,7 @@ class DataProcessThread(QThread):
         try:
             df = pd.read_excel(file_path, **read_args)
         except Exception:
+            _itk_log.exception("Handled exception in _load_excel")
             df = pd.read_excel(file_path, header=None, engine='openpyxl')
 
         stop = find_first_stopping_row(df)
@@ -726,6 +734,7 @@ class FileStructureDialog(QDialog):
         try:
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
+            _itk_log.exception("Handled exception in closeEvent")
             pass
         if hasattr(self, 'preview_table'):
             self.preview_table.cleanup()
@@ -750,6 +759,7 @@ class FileStructureDialog(QDialog):
                 if data:
                     return data
             except Exception:
+                _itk_log.exception("Handled exception in _load_periodic_table")
                 continue
         return []
 
@@ -1107,6 +1117,7 @@ class FileStructureDialog(QDialog):
             self._validate_configuration()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _load_file")
             error_msg = f"Error loading {Path(file_path).name}: {e}"
             print(error_msg)
             self.current_df = pd.DataFrame({
@@ -1117,6 +1128,7 @@ class FileStructureDialog(QDialog):
                 self._refresh_preview()
                 self._refresh_file_info()
             except Exception:
+                _itk_log.exception("Handled exception in _load_file")
                 pass
 
     def _update_settings_visibility(self, ftype: str):
@@ -1146,6 +1158,7 @@ class FileStructureDialog(QDialog):
                     self.sheet_combo.addItem(name)
                 wb.close()
             except Exception:
+                _itk_log.exception("Handled exception in _populate_sheet_list")
                 self.sheet_combo.addItem("Sheet1")
         finally:
             self.sheet_combo.blockSignals(False)
@@ -1175,6 +1188,7 @@ class FileStructureDialog(QDialog):
         try:
             df = pd.read_csv(file_path, **read_args)
         except UnicodeDecodeError:
+            _itk_log.exception("Handled exception in _load_delimited_preview")
             read_args['encoding'] = 'utf-8'
             read_args['encoding_errors'] = 'replace'
             df = pd.read_csv(file_path, **read_args)
@@ -1202,6 +1216,7 @@ class FileStructureDialog(QDialog):
         try:
             df = pd.read_excel(file_path, **read_args)
         except Exception:
+            _itk_log.exception("Handled exception in _load_excel_preview")
             df = pd.read_excel(file_path, header=None, engine='openpyxl',
                                nrows=LOAD_SAMPLE_ROWS)
         stop = find_first_stopping_row(df)
@@ -1502,6 +1517,7 @@ class FileStructureDialog(QDialog):
         try:
             mass = float(mass_str)
         except ValueError:
+            _itk_log.exception("Handled exception in _detect_isotope_from_name")
             return None
         element = element.capitalize()
 
@@ -1578,6 +1594,7 @@ class FileStructureDialog(QDialog):
             try:
                 target_cols = self._read_columns_only(self.file_paths[tgt])
             except Exception as e:
+                _itk_log.exception("Handled exception in _perform_apply_to_all")
                 print(f"Cannot read columns of {self.file_paths[tgt]}: {e}")
                 continue
 
@@ -1646,6 +1663,7 @@ class FileStructureDialog(QDialog):
                                  nrows=0,
                                  skiprows=range(skip) if skip > 0 else None)
             except UnicodeDecodeError:
+                _itk_log.exception("Handled exception in _read_columns_only")
                 df = pd.read_csv(file_path, delimiter=delim, encoding='utf-8',
                                  encoding_errors='replace', nrows=0,
                                  skiprows=range(skip) if skip > 0 else None)
@@ -1677,6 +1695,7 @@ class FileStructureDialog(QDialog):
             if self.file_paths:
                 self._load_file(self.file_paths[self.current_file_index])
         except Exception as e:
+            _itk_log.exception("Handled exception in _do_reload")
             print(f"Reload failed: {e}")
 
     # -- Validation / config emission -----------------------------------

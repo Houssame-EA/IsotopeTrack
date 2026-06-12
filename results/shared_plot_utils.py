@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.shared_plot_utils")
 
 
 def pick_color_hex(initial_color: str, owner=None,
@@ -87,6 +89,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
         try:
             self.figure.tight_layout()
         except Exception:
+            _itk_log.exception("Handled exception in reset_layout")
             pass
         self._auto_positions.clear()
         self.draw_idle()
@@ -116,6 +119,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
                 if hit and hasattr(ann, 'draggable'):
                     return
             except Exception:
+                _itk_log.exception("Handled exception in _drag_press")
                 pass
         self._drag_ax       = event.inaxes
         self._drag_start_px = (event.x, event.y)
@@ -195,6 +199,7 @@ class HtmlAxisItem(pg.AxisItem):
             if max_w > 0:
                 self._html_rendered_width = max_w
         except Exception:
+            _itk_log.exception("Handled exception in generateDrawSpecs")
             self._html_rendered_width = None
         return super().generateDrawSpecs(p)
 
@@ -604,6 +609,7 @@ def apply_plot_title_style(plot_item, title_text: str,
     try:
         plot_item.setTitle(clean_title, **kwargs)
     except TypeError:
+        _itk_log.exception("Handled exception in apply_plot_title_style")
         fallback_kwargs = dict(kwargs)
         fallback_kwargs.pop('family', None)
         plot_item.setTitle(clean_title, **fallback_kwargs)
@@ -672,12 +678,14 @@ def apply_legend_label_style(legend, config: dict | None = None, *,
         try:
             label.setText(label.text, **kwargs)
         except TypeError:
+            _itk_log.exception("Handled exception in apply_legend_label_style")
             fallback_kwargs = dict(kwargs)
             fallback_kwargs.pop('family', None)
             label.setText(label.text, **fallback_kwargs)
     try:
         legend.update()
     except Exception:
+        _itk_log.exception("Handled exception in apply_legend_label_style")
         pass
 
 
@@ -747,6 +755,7 @@ def apply_plot_item_text_styling(
     try:
         plot_item.update()
     except Exception:
+        _itk_log.exception("Handled exception in apply_plot_item_text_styling")
         pass
 
 
@@ -779,6 +788,7 @@ def apply_font_to_pyqtgraph(plot_item, config: dict):
             color=fc['color'],
         )
     except Exception as e:
+        _itk_log.exception("Handled exception in apply_font_to_pyqtgraph")
         print(f"Error applying pyqtgraph font settings: {e}")
 
 
@@ -814,6 +824,7 @@ def _configure_mathtext_font(family: str) -> None:
         mpl.rcParams['mathtext.it'] = f'{family}:italic'
         mpl.rcParams['mathtext.bf'] = f'{family}:bold'
     except Exception:
+        _itk_log.exception("Handled exception in _configure_mathtext_font")
         pass
 
 
@@ -851,6 +862,7 @@ def apply_font_to_matplotlib(ax, config: dict):
                 if cbar is not None:
                     _apply_font_to_colorbar(cbar, fc)
     except Exception as e:
+        _itk_log.exception("Handled exception in apply_font_to_matplotlib")
         print(f"Error applying matplotlib font settings: {e}")
 
 
@@ -912,6 +924,7 @@ def apply_font_to_ternary(ax, config: dict):
         if title:
             ax.set_title(title, fontproperties=fp, color=fc['color'])
     except Exception as e:
+        _itk_log.exception("Handled exception in apply_font_to_ternary")
         print(f"Error applying ternary font settings: {e}")
 
 
@@ -1057,6 +1070,7 @@ def evaluate_equation(equation: str, element_data: dict) -> float:
             raise ValueError("Result is NaN or infinite")
         return result
     except ZeroDivisionError:
+        _itk_log.exception("Handled exception in evaluate_equation")
         return float('nan')
     except Exception as e:
         raise ValueError(f"Invalid expression: {e}")
@@ -1077,6 +1091,7 @@ def evaluate_equation_array(equation: str, df: pd.DataFrame) -> np.ndarray:
         try:
             results[idx] = evaluate_equation(equation, row.to_dict())
         except Exception:
+            _itk_log.exception("Handled exception in evaluate_equation_array")
             pass
     return results
 
@@ -1242,6 +1257,7 @@ def format_per_ml(value, renderer: Renderer = Renderer.HTML,
     try:
         v = float(value)
     except (TypeError, ValueError):
+        _itk_log.exception("Handled exception in format_per_ml")
         return "0"
     if v == 0:
         return "0"
@@ -1298,6 +1314,7 @@ def apply_sci_y_axis(plot_item, config: dict | None = None):
     try:
         axis = plot_item.getAxis('left')
     except Exception:
+        _itk_log.exception("Handled exception in apply_sci_y_axis")
         return
 
     is_html = isinstance(axis, HtmlAxisItem)
@@ -1372,8 +1389,10 @@ def apply_sci_y_axis(plot_item, config: dict | None = None):
                     reserved += int(axis.label.boundingRect().height() * 0.8)
                 axis.setWidth(reserved)
         except Exception:
+            _itk_log.exception("Handled exception in apply_sci_y_axis")
             pass
     except Exception:
+        _itk_log.exception("Handled exception in apply_sci_y_axis")
         pass
 
 
@@ -1576,6 +1595,7 @@ class CustomColorBar:
 
             return self.items
         except Exception as e:
+            _itk_log.exception("Handled exception in create")
             print(f"Error creating color bar: {e}")
             return []
 
@@ -1585,6 +1605,7 @@ class CustomColorBar:
             try:
                 self.plot_item.removeItem(item)
             except Exception:
+                _itk_log.exception("Handled exception in remove")
                 pass
         self.items.clear()
 
@@ -1673,6 +1694,7 @@ def create_color_mapped_scatter(plot_item, x, y, color_values, config,
 
         return scatter
     except Exception as e:
+        _itk_log.exception("Handled exception in create_color_mapped_scatter")
         print(f"Error creating color-mapped scatter: {e}")
         return create_single_color_scatter(plot_item, x, y, config, base_color)
 
@@ -1694,6 +1716,7 @@ def add_trend_line(plot_item, x, y, color):
                 x=xt, y=p(xt),
                 pen=pg.mkPen(color=color, style=Qt.DashLine, width=2)))
     except Exception as e:
+        _itk_log.exception("Handled exception in add_trend_line")
         print(f"Error adding trend line: {e}")
 
 
@@ -1715,6 +1738,7 @@ def add_correlation_text(plot_item, x, y, config):
             ti.setPos(vr[0][0] + 0.05 * (vr[0][1] - vr[0][0]),
                       vr[1][0] + 0.95 * (vr[1][1] - vr[1][0]))
     except Exception as e:
+        _itk_log.exception("Handled exception in add_correlation_text")
         print(f"Error adding correlation text: {e}")
 
 
@@ -2198,6 +2222,7 @@ def download_pyqtgraph_figure(plot_widget, parent,
                         rect.height() + 2 * pad_y,
                     )
             except Exception:
+                _itk_log.exception("Handled exception in download_pyqtgraph_figure")
                 source_rect = None
 
         if fmt == 'SVG':
@@ -2208,6 +2233,7 @@ def download_pyqtgraph_figure(plot_widget, parent,
                     if 'sourceRect' in params:
                         params['sourceRect'] = source_rect
                 except Exception:
+                    _itk_log.exception("Handled exception in download_pyqtgraph_figure")
                     pass
             exporter.export(path)
 
@@ -2219,6 +2245,7 @@ def download_pyqtgraph_figure(plot_widget, parent,
                     if 'sourceRect' in params:
                         params['sourceRect'] = source_rect
                 except Exception:
+                    _itk_log.exception("Handled exception in download_pyqtgraph_figure")
                     pass
 
             bg = cfg['background']
@@ -2254,6 +2281,7 @@ def download_pyqtgraph_figure(plot_widget, parent,
                     if 'sourceRect' in params:
                         params['sourceRect'] = source_rect
                 except Exception:
+                    _itk_log.exception("Handled exception in download_pyqtgraph_figure")
                     pass
             exporter.parameters()['background'] = pg.mkColor('w')
             if source_rect is not None:
@@ -2854,6 +2882,7 @@ def _add_stat_lines_hist(plot_item, values: np.ndarray, cfg: dict):
                            'anchors': [(0, 1), (0, 1)]},
             ))
         except Exception as e:
+            _itk_log.exception("Handled exception in _add_stat_lines_hist")
             print(f'[mode marker] {e}')
 
 

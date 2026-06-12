@@ -66,6 +66,7 @@ from tools.theme import (
     table_header_label_qss,
     html_table_css,
 )
+_itk_log = logging.getLogger("IsotopeTrack.mainwindow")
 
 
 def element_chip_qss(p) -> str:
@@ -90,6 +91,7 @@ from tools.element_picker import ElementGridPopup, ElementPicker
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
     CSVDataProcessThread = None
     show_csv_structure_dialog = None
@@ -208,6 +210,7 @@ class MainWindow(QMainWindow):
             self.saturation_filter_ms = float(
                 _sat_settings.value("filters/saturation_fwhm_ms", 1.5))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             self.saturation_filter_ms = 1.5
         self.saturation_highlight = _sat_settings.value(
             "filters/saturation_highlight", True, type=bool)
@@ -215,16 +218,19 @@ class MainWindow(QMainWindow):
             self.saturation_min_snr = float(
                 _sat_settings.value("filters/saturation_min_snr", 10.0))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             self.saturation_min_snr = 10.0
         try:
             self.saturation_flat_ratio = float(
                 _sat_settings.value("filters/saturation_flat_ratio", 0.5))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             self.saturation_flat_ratio = 0.5
         try:
             self.saturation_top_frac = float(
                 _sat_settings.value("filters/saturation_top_frac", 0.90))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             self.saturation_top_frac = 0.90
         self.saturation_top_frac = min(0.99, max(0.50, self.saturation_top_frac))
         self.saturation_filtered_peaks = {}
@@ -242,6 +248,7 @@ class MainWindow(QMainWindow):
             _saved_w = int(QSettings("IsotopeTrack", "IsotopeTrack")
                            .value("ui/sidebar_width", 200))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             _saved_w = 200
         self.sidebar_width = max(self.sidebar_min_width,
                                  min(self.sidebar_max_width, _saved_w))
@@ -741,10 +748,12 @@ class MainWindow(QMainWindow):
             try:
                 self.results_table.setRowCount(0)
             except Exception:
+                _itk_log.exception("Handled exception in _invalidate_particle_detection")
                 pass
             try:
                 self.update_sample_table()
             except Exception:
+                _itk_log.exception("Handled exception in _invalidate_particle_detection")
                 pass
         if had_results:
             self._mark_results_changed()
@@ -1738,6 +1747,7 @@ class MainWindow(QMainWindow):
                 self.animation_group.stop()
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
+                _itk_log.exception("Handled exception in toggle_sidebar")
                 pass
             self.animation_group = None
 
@@ -1823,6 +1833,7 @@ class MainWindow(QMainWindow):
             QSettings("IsotopeTrack", "IsotopeTrack").setValue(
                 "ui/sidebar_width", self.sidebar_width)
         except Exception:
+            _itk_log.exception("Handled exception in _sidebar_grip_release")
             pass
         event.accept()
 
@@ -1850,6 +1861,7 @@ class MainWindow(QMainWindow):
             try:
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
+                _itk_log.exception("Handled exception in on_animation_finished")
                 pass
             self.animation_group = None
         
@@ -2018,6 +2030,7 @@ class MainWindow(QMainWindow):
                 if masses is not None and len(masses) > 0:
                     return np.asarray(masses, dtype=float)
             except Exception:
+                _itk_log.exception("Handled exception in _probe_masses")
                 continue
         return None
 
@@ -2205,6 +2218,7 @@ class MainWindow(QMainWindow):
                     thread.finished.disconnect()
                     thread.error.disconnect()
                 except (RuntimeError, TypeError):
+                    _itk_log.exception("Handled exception in _load_selected_isotopes_for_new_samples")
                     pass
                 thread.deleteLater()
             except Exception as e:
@@ -2436,6 +2450,7 @@ class MainWindow(QMainWindow):
                     list(path_obj.iterdir())
                     return True
                 except (PermissionError, OSError):
+                    _itk_log.exception("Handled exception in check_data_source_accessible")
                     return False
             
             elif path_obj.is_file():
@@ -2444,6 +2459,7 @@ class MainWindow(QMainWindow):
                         f.read(1)  
                     return True
                 except (PermissionError, OSError, IOError):
+                    _itk_log.exception("Handled exception in check_data_source_accessible")
                     return False
             
             return False
@@ -2775,6 +2791,7 @@ class MainWindow(QMainWindow):
                     self.csv_thread.finished.disconnect()
                     self.csv_thread.error.disconnect()
                 except (RuntimeError, TypeError):
+                    _itk_log.exception("Handled exception in process_csv_files_with_isotopes")
                     pass
                 self.csv_thread.deleteLater()
                 self.csv_thread = None
@@ -3052,6 +3069,7 @@ class MainWindow(QMainWindow):
                                 method_info = json.load(fp)
                                 self.sample_method_info[sample_name] = method_info
                     except Exception as e:
+                        _itk_log.exception("Handled exception in handle_thread_finished")
                         print(f"Could not load method info for {sample_name}: {str(e)}")
 
             if analysis_datetime:
@@ -3898,6 +3916,7 @@ class MainWindow(QMainWindow):
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
+                                _itk_log.exception("Handled exception in handle_isotopes_selected")
                                 pass
                             thread.deleteLater()
                                 
@@ -4123,6 +4142,7 @@ class MainWindow(QMainWindow):
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
+                                _itk_log.exception("Handled exception in handle_isotopes_selection_from_calibration")
                                 pass
                             thread.deleteLater()
                                 
@@ -4355,6 +4375,7 @@ class MainWindow(QMainWindow):
                 len(getattr(self, 'detected_peaks', {}) or {}),
             )
         except Exception:
+            _itk_log.exception("Handled exception in update_parameters_table")
             signature = None
 
         if signature is not None:
@@ -4676,6 +4697,7 @@ class MainWindow(QMainWindow):
                     current_x_range = [view_rect.left(), view_rect.right()]
                     current_y_range = [view_rect.top(), view_rect.bottom()]
                 except:
+                    _itk_log.exception("Handled exception in parameters_table_clicked")
                     pass
                     
             element_item = self.parameters_table.item(row, 0)
@@ -4706,6 +4728,7 @@ class MainWindow(QMainWindow):
                                 lambda_bkgd = stored_values.get('background', 0)
                                 threshold = stored_values.get('threshold', 0)
                             except KeyError:
+                                _itk_log.exception("Handled exception in parameters_table_clicked")
                                 lambda_bkgd = 0
                                 threshold = 0
                             
@@ -4739,6 +4762,7 @@ class MainWindow(QMainWindow):
                                     self.plot_widget.setXRange(current_x_range[0], current_x_range[1], padding=0)
                                     self.plot_widget.setYRange(current_y_range[1], current_y_range[0], padding=0)
                                 except:
+                                    _itk_log.exception("Handled exception in parameters_table_clicked")
                                     self.plot_widget.enableAutoRange()
                             else:
                                 self.plot_widget.enableAutoRange()
@@ -4976,6 +5000,7 @@ class MainWindow(QMainWindow):
         try:
             return f"{el}-{iso:.4f}"
         except Exception:
+            _itk_log.exception("Handled exception in _current_element_key")
             return None
 
     def _visible_exclusion_entries_for(self, sample_name, element_key):
@@ -5016,6 +5041,7 @@ class MainWindow(QMainWindow):
             self.plot_widget.exclusionRegionsChanged.disconnect(
                 self._on_exclusion_regions_changed)
         except Exception:
+            _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
             pass
         try:
             self.plot_widget.set_exclusion_regions(visible)
@@ -5024,6 +5050,7 @@ class MainWindow(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.connect(
                     self._on_exclusion_regions_changed)
             except Exception:
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
                 pass
 
     def _on_exclusion_regions_changed(self):
@@ -5122,6 +5149,7 @@ class MainWindow(QMainWindow):
                 _el, iso_str = element_key.rsplit('-', 1)
                 iso = float(iso_str)
             except Exception:
+                _itk_log.exception("Handled exception in _element_key_to_isotope_key")
                 return None
             return self.find_closest_isotope(iso)
 
@@ -5218,6 +5246,7 @@ class MainWindow(QMainWindow):
                     el, iso = key
                     ek_here = f"{el}-{iso:.4f}"
                 except Exception:
+                    _itk_log.exception("Handled exception in detect_particles")
                     ek_here = None
                 bands = list(sample_bands)
                 if ek_here:
@@ -5252,6 +5281,9 @@ class MainWindow(QMainWindow):
                     f"(FWHM > {self.saturation_filter_ms:g} ms), "
                     f"{excl_ms:.1f} ms removed from the analysis time")
             self._refresh_after_saturation_change()
+        else:
+            for sname in self._exclusion_regions_by_sample:        
+                self.rebuild_particle_data(sname)                  
 
         self._mark_results_changed()
         return result
@@ -5359,19 +5391,41 @@ class MainWindow(QMainWindow):
     def get_parameter_hash(self, sample_name, element_key):
         """
         Generate hash of current parameters for change detection.
-        
+
+        The exclusion regions that apply to this element are part of the
+        hash: a sample-scope band affects every element of the sample,
+        an element-scope band only its own element. Adding, moving or
+        removing a region therefore marks the affected elements as
+        changed, so the next Detect Peaks re-runs for them instead of
+        being skipped by the incremental detector — newly excluded
+        particles are dropped and particles of removed regions come back.
+
         Args:
             self: MainWindow instance
             sample_name (str): Sample name
             element_key (str): Element identifier
-            
+
         Returns:
             str: MD5 hash of parameters
         """
         import hashlib
-        
+
         params = self.sample_parameters.get(sample_name, {}).get(element_key, {})
-        param_str = str(sorted(params.items()))
+        regions = []
+        entries = (getattr(self, '_exclusion_regions_by_sample', {}) or {}).get(
+            sample_name, [])
+        for e in entries:
+            scope = e.get('scope')
+            if scope == 'sample' or e.get('element_key') == element_key:
+                try:
+                    bounds = tuple(round(float(b), 6)
+                                   for b in e.get('bounds', ()))
+                except (TypeError, ValueError):
+                    _itk_log.exception("Handled exception in get_parameter_hash")
+                    bounds = tuple(e.get('bounds', ()))
+                regions.append((scope, e.get('element_key'), bounds))
+        param_str = str(sorted(params.items())) + str(
+            sorted(regions, key=str))
         return hashlib.md5(param_str.encode()).hexdigest()
 
     #----------------------------------------------------------------------------------------------------------
@@ -5867,7 +5921,7 @@ class MainWindow(QMainWindow):
         if self.canvas_results_dialog is None:
             self.canvas_results_dialog = CanvasResultsDialog(self)
         self.canvas_results_dialog.showMaximized()
-        self.canvas_results_dialog.raise_() 
+        self.canvas_results_dialog.raise_()
         self.canvas_results_dialog.activateWindow()
         self.maybe_prompt_dilution()
         self._set_results_attention(False)
@@ -6568,6 +6622,7 @@ class MainWindow(QMainWindow):
                                     background_val = thresholds.get('background', 0)
                                     threshold_val = thresholds.get('threshold', 0)
                             except:
+                                _itk_log.exception("Handled exception in highlight_multi_element_particle")
                                 pass
                             
                             element_data[display_label] = {
@@ -6733,6 +6788,7 @@ class MainWindow(QMainWindow):
                                             alpha=0.6
                                         )
                             except Exception as e:
+                                _itk_log.exception("Handled exception in highlight_multi_element_particle")
                                 pass
                                 
                         found = True
@@ -6808,6 +6864,7 @@ class MainWindow(QMainWindow):
             
             QTimer.singleShot(1500, lambda: self.plot_widget.removeItem(highlight_region))
         except:
+            _itk_log.exception("Handled exception in highlight_multi_element_particle")
             pass
                     
     def show_signal_selector(self):
@@ -7938,6 +7995,7 @@ class MainWindow(QMainWindow):
             try:
                 return float(fwhm)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _particle_fwhm_s")
                 pass
         try:
             n = len(time_arr)
@@ -7962,6 +8020,7 @@ class MainWindow(QMainWindow):
             dwell = float(time_arr[1] - time_arr[0]) if n > 1 else 0.0
             return float(time_arr[left + j] - time_arr[left + i]) + dwell
         except Exception:
+            _itk_log.exception("Handled exception in _particle_fwhm_s")
             return 0.0
 
     def _particle_apex_time(self, particle, time_arr):
@@ -7980,6 +8039,7 @@ class MainWindow(QMainWindow):
             try:
                 return float(t)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _particle_apex_time")
                 pass
         try:
             n = len(time_arr)
@@ -7987,6 +8047,7 @@ class MainWindow(QMainWindow):
             right = max(left, min(int(particle.get('right_idx', left)), n - 1))
             return float(time_arr[(left + right) // 2])
         except Exception:
+            _itk_log.exception("Handled exception in _particle_apex_time")
             return 0.0
 
     def _particle_flat_ratio(self, particle, time_arr, signal):
@@ -8037,6 +8098,7 @@ class MainWindow(QMainWindow):
             fwhm = self._particle_fwhm_s(particle, time_arr, signal)
             return w_top / fwhm if fwhm > 0 else 0.0
         except Exception:
+            _itk_log.exception("Handled exception in _particle_flat_ratio")
             return 0.0
 
     @staticmethod
@@ -8108,6 +8170,7 @@ class MainWindow(QMainWindow):
                     ik = self.find_closest_isotope(iso)
                     return sample_data.get(ik) if ik is not None else None
                 except Exception:
+                    _itk_log.exception("Handled exception in _signal_for")
                     return None
 
             old_store = self.saturation_filtered_peaks.pop(sname, {})
@@ -8179,6 +8242,7 @@ class MainWindow(QMainWindow):
                         s = float(mp.get('start_time', 0.0))
                         e = float(mp.get('end_time', s))
                     except (TypeError, ValueError):
+                        _itk_log.exception("Handled exception in apply_saturation_filter")
                         s = e = 0.0
                     if any(s <= t1 and e >= t0 for t0, t1 in windows):
                         removed.append(mp)
@@ -8528,6 +8592,7 @@ class MainWindow(QMainWindow):
                         lambda_bkgd = stored.get('background', 0)
                         threshold = stored.get('threshold', 0)
                     except KeyError:
+                        _itk_log.exception("Handled exception in _refresh_after_saturation_change")
                         lambda_bkgd = 0
                         threshold = 0
                     view = None
@@ -8535,6 +8600,7 @@ class MainWindow(QMainWindow):
                         vr = self.plot_widget.viewRect()
                         view = ([vr.left(), vr.right()], [vr.top(), vr.bottom()])
                     except Exception:
+                        _itk_log.exception("Handled exception in _refresh_after_saturation_change")
                         pass
                     self.plot_results(element_key, signal, particles,
                                       lambda_bkgd, threshold,
@@ -8609,12 +8675,14 @@ class MainWindow(QMainWindow):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (RuntimeError, TypeError):
+            _itk_log.exception("Handled exception in closeEvent")
             pass 
 
         if hasattr(self, '_theme_follow_system_slot'):
             try:
                 theme.themeChanged.disconnect(self._theme_follow_system_slot)
             except (RuntimeError, TypeError):
+                _itk_log.exception("Handled exception in closeEvent")
                 pass
 
 
@@ -8645,6 +8713,7 @@ class MainWindow(QMainWindow):
             try:
                 app.main_windows.remove(self)
             except ValueError:
+                _itk_log.exception("Handled exception in closeEvent")
                 pass
         
         if not getattr(app, 'main_windows', []):

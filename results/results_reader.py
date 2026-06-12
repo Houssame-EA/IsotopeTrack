@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from tools.theme import theme as _theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_reader")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Category metadata — icon + label only; colour comes from palette
@@ -54,6 +56,7 @@ def _safe_float(v) -> float | None:
         f = float(v)
         return f if (f > 0 and not math.isnan(f)) else None
     except Exception:
+        _itk_log.exception("Handled exception in _safe_float")
         return None
 
 
@@ -200,6 +203,7 @@ class _AnalysisWorker(QThread):
                     if abs(r3) > abs(best_r3):
                         best_r3, best_el3 = r3, el3
                 except Exception:
+                    _itk_log.exception("Handled exception in run")
                     continue
 
             cfg: dict = {
@@ -449,6 +453,7 @@ def _get_data_context(scene) -> dict:
                 if isinstance(d, dict):
                     candidates.append(d)
             except Exception as exc:
+                _itk_log.exception("Handled exception in _get_data_context")
                 print(f"[Insights] get_output_data failed on '{getattr(node,'title',node)}': {exc}")
         raw = getattr(node, "input_data", None)
         if isinstance(raw, dict):
@@ -821,6 +826,7 @@ class SmartInsightsPanel(QWidget):
         try:
             from widget.canvas_widgets import _NODE_FACTORIES
         except ImportError:
+            _itk_log.debug("Handled exception in _add_suggestion")
             print("[Insights] Could not import _NODE_FACTORIES")
             return
 

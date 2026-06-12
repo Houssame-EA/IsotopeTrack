@@ -13,6 +13,8 @@ from calibration_methods.te_common import (
     base_stylesheet, preview_styles,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_input")
 
 
 class InputMethodCalibration(QMainWindow):
@@ -285,6 +287,7 @@ class InputMethodCalibration(QMainWindow):
                 f"Calculated transport rate: {rate:.6f} μL/s", "success"
             )
         except ValueError as exc:
+            _itk_log.exception("Handled exception in _update_preview")
             msg = str(exc)
             if "fill in" in msg.lower():
                 self._set_preview(

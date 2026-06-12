@@ -84,6 +84,9 @@ Export a **summary file** (all samples and elements, statistics, concentrations,
 - Each element column must include mass number + element symbol (e.g., `107Ag`, `56Fe`)
 - Data must be provided in counts
 
+### Example Data
+Example datasets for trying out IsotopeTrack (ionic calibration sets, transport efficiency standards, and multi-element nanoparticle samples) are available as zip files in the [example-data release](https://github.com/Houssame-EA/IsotopeTrack/releases/tag/example-data). Download, unzip, and import via **File → Import Data**.
+
 ---
 
 ## Detection Methods

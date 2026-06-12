@@ -6,12 +6,15 @@ from PySide6.QtGui import QFont
 
 import json
 import numpy as np
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_dashboard")
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWebChannel import QWebChannel
     HAS_WEBENGINE = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     HAS_WEBENGINE = False
 
 
@@ -26,6 +29,7 @@ def _safe_positive(v):
         v = float(v)
         return v > 0 and not np.isnan(v)
     except:
+        _itk_log.exception("Handled exception in _safe_positive")
         return False
 
 

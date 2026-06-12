@@ -47,6 +47,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.isobaric_correction")
 
 def _nominal(mass: float) -> int:
     """Return the nominal (integer) mass by rounding to the nearest integer."""
@@ -305,6 +307,7 @@ def validate_expression(expr: str,
     try:
         _, names = _walk_expression(expr)
     except ValueError as e:
+        _itk_log.exception("Handled exception in validate_expression")
         return False, str(e), []
     nominals = sorted({_channel_nominal_from_name(n) for n in names})
     if available_nominals is not None:
@@ -589,6 +592,7 @@ def load_overrides(path: str = _OVERRIDES_PATH) -> Dict[str, dict]:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError):
+        _itk_log.exception("Handled exception in load_overrides")
         return {}
 
 
@@ -651,6 +655,7 @@ def load_table_corrections(path: str = _TABLE_PATH) -> List[dict]:
         with open(path, "r") as fh:
             _TABLE_CACHE = json.load(fh)
     except (FileNotFoundError, json.JSONDecodeError):
+        _itk_log.exception("Handled exception in load_table_corrections")
         _TABLE_CACHE = []
     return _TABLE_CACHE
 

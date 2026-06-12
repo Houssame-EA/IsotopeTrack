@@ -4,6 +4,8 @@ import json
 import numpy as np
 import loading.vitesse_loading
 import loading.tofwerk_loading
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.loading.data_thread")
 
 class DataProcessThread(QThread):
     """
@@ -49,6 +51,7 @@ class DataProcessThread(QThread):
             try:
                 sig.disconnect()
             except RuntimeError:
+                _itk_log.exception("Handled exception in cleanup")
                 pass 
 
     @staticmethod
@@ -155,6 +158,7 @@ class DataProcessThread(QThread):
                         print(f"Mass values (first 10): {masses[:10]}")
                         print(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
                     except Exception as e:
+                        _itk_log.exception("Handled exception in get_masses_only")
                         print(f"Failed to extract masses from labels: {e}")
                         return None
                 
@@ -163,6 +167,7 @@ class DataProcessThread(QThread):
                 return masses
                 
         except Exception as e:
+            _itk_log.exception("Handled exception in get_masses_only")
             print(f"Error getting masses: {str(e)}")
             import traceback
             traceback.print_exc()
@@ -416,6 +421,7 @@ class DataProcessThread(QThread):
             self.finished.emit(selected_data_dict, run_info, time_array, self.sample_name, analysis_datetime)
 
         except Exception as e:
+            _itk_log.exception("Handled exception in run")
             print(f"Error processing {self.sample_name}: {str(e)}")
             import traceback
             traceback.print_exc()

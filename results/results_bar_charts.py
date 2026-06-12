@@ -15,6 +15,8 @@ import numpy as np
 import math
 from scipy import stats
 from scipy.stats import gaussian_kde
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_bar_charts")
 
 
 def _ensure_project_root_on_sys_path():
@@ -57,6 +59,7 @@ try:
     )
     _CUSTOM_PLOT_AVAILABLE = True
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     _PlotSettingsDialog = None
     _get_system_font_families = lambda: FONT_FAMILIES[:]
     _CUSTOM_PLOT_AVAILABLE = False
@@ -347,12 +350,14 @@ class _PlotWidgetAdapter:
         try:
             self._glw.setBackground(color)
         except Exception:
+            _itk_log.exception("Handled exception in setBackground")
             pass
 
     def repaint(self):
         try:
             self._glw.repaint()
         except Exception:
+            _itk_log.exception("Handled exception in repaint")
             pass
 
     def notify_bar_group_color_changed(self, items, color_hex):
@@ -371,6 +376,7 @@ class _PlotWidgetAdapter:
             try:
                 callback(items, color_hex)
             except Exception:
+                _itk_log.exception("Handled exception in notify_bar_group_color_changed")
                 pass
 
     def parent(self):
@@ -381,6 +387,7 @@ class _PlotWidgetAdapter:
         try:
             return self._glw.parent()
         except Exception:
+            _itk_log.exception("Handled exception in parent")
             return None
 
 
@@ -421,6 +428,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     if rect.contains(scene_pos):
                         return item
                 except Exception:
+                    _itk_log.exception("Handled exception in _plot_item_at")
                     pass
         return None
 
@@ -464,9 +472,11 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     xd = np.array([p[0] for p in pts])
                     yd = np.array([p[1] for p in pts])
                 except (IndexError, TypeError):
+                    _itk_log.exception("Handled exception in _closest_scatter")
                     try:
                         xd = pts['x']; yd = pts['y']
                     except Exception:
+                        _itk_log.exception("Handled exception in _closest_scatter")
                         continue
                 dx = (xd - mx) / xr; dy = (yd - my) / yr
                 dists = np.sqrt(dx**2 + dy**2)
@@ -475,6 +485,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     best_d = md; best = item
             return best
         except Exception:
+            _itk_log.exception("Handled exception in _closest_scatter")
             return None
 
     def _closest_curve(self, pi, scene_pos, threshold_px=15):
@@ -514,6 +525,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     best_d = md; best = item
             return best
         except Exception:
+            _itk_log.exception("Handled exception in _closest_curve")
             return None
 
     def _bar_at(self, pi, scene_pos):
@@ -549,6 +561,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                             and y_lo <= cy <= y_hi):
                         return item
         except Exception:
+            _itk_log.exception("Handled exception in _bar_at")
             pass
         return None
 
@@ -623,6 +636,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         LegendEditorDialog(adapter, dlg_parent).exec()
                         event.accept(); return
                 except Exception:
+                    _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                     pass
 
             scat = self._closest_scatter(pi, scene_pos)
@@ -642,6 +656,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     cur = pg.mkBrush(
                         bar_item.opts.get('brush', 'b')).color()
                 except Exception:
+                    _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                     cur = QColor(100, 120, 220)
                 new_c = QColorDialog.getColor(cur, self, "Bar Color")
                 if new_c.isValid():
@@ -657,6 +672,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             event.accept()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in mouseDoubleClickEvent")
             print(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
             import traceback; traceback.print_exc()
             super().mouseDoubleClickEvent(event)
@@ -697,6 +713,7 @@ class _ClickableLegendSwatch(pg.BarGraphItem):
                 ev.accept()
                 return
             except Exception:
+                _itk_log.exception("Handled exception in mouseClickEvent")
                 pass
         super().mouseClickEvent(ev)
 
@@ -725,6 +742,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
             return False
         sample_item, label_item = legend.items[-1]
     except Exception:
+        _itk_log.exception("Handled exception in _attach_histogram_legend_toggle")
         return False
 
     def _bind_click(target):
@@ -748,6 +766,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
                             ev.accept()
                             return
                         except Exception:
+                            _itk_log.exception("Handled exception in _wrapped_click")
                             pass
                 if callable(_orig):
                     _orig(ev)
@@ -756,6 +775,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
             target._hist_toggle_bound = True
             return True
         except Exception:
+            _itk_log.exception("Handled exception in _bind_click")
             return False
 
     hooked = _bind_click(sample_item)
@@ -786,6 +806,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
             return False
         sample_item, label_item = legend.items[-1]
     except Exception:
+        _itk_log.exception("Handled exception in _attach_bar_chart_legend_toggle")
         return False
 
     def _bind_click(target):
@@ -809,6 +830,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
                             ev.accept()
                             return
                         except Exception:
+                            _itk_log.exception("Handled exception in _wrapped_click")
                             pass
                 if callable(_orig):
                     _orig(ev)
@@ -817,6 +839,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
             target._bar_toggle_bound = True
             return True
         except Exception:
+            _itk_log.exception("Handled exception in _bind_click")
             return False
 
     hooked = _bind_click(sample_item)
@@ -2154,8 +2177,10 @@ class HistogramDisplayDialog(QDialog):
                         if rect.contains(scene_pos):
                             return item
                     except Exception:
+                        _itk_log.exception("Handled exception in _plot_item_at")
                         pass
         except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
             pass
         return None
 
@@ -2419,6 +2444,7 @@ class HistogramDisplayDialog(QDialog):
                 elems.update(p.get(dk, {}).keys())
             return sorted(elems)
         except Exception:
+            _itk_log.exception("Handled exception in _get_available_elements")
             return []
 
     def _open_settings(self, title_override=None):
@@ -2500,6 +2526,7 @@ class HistogramDisplayDialog(QDialog):
                 try:
                     dlg.setWindowTitle(title_override)
                 except Exception:
+                    _itk_log.exception("Handled exception in _open_plot_settings")
                     pass
             dlg.exec()
 
@@ -2535,6 +2562,7 @@ class HistogramDisplayDialog(QDialog):
                 if rows:
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
+            _itk_log.exception("Handled exception in _download_figure")
             print(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
@@ -2557,12 +2585,14 @@ class HistogramDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
 
     def _reset_layout(self):
@@ -2583,6 +2613,7 @@ class HistogramDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
+                    _itk_log.exception("Handled exception in _reset_layout")
                     pass
         self._refresh()
 
@@ -2659,6 +2690,7 @@ class HistogramDisplayDialog(QDialog):
             self._update_stats(plot_data)
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error updating histogram: {e}")
             import traceback
             traceback.print_exc()
@@ -2838,6 +2870,7 @@ class HistogramDisplayDialog(QDialog):
                 xr, yr = vb.viewRange()
                 ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
             except Exception:
+                _itk_log.exception("Handled exception in _draw_overlaid")
                 ti.setPos(0, 0)
 
         xl, yl = _get_xy_labels(cfg)
@@ -3001,8 +3034,10 @@ class HistogramDecompositionDialog(QDialog):
                         if rect.contains(scene_pos):
                             return item
                     except Exception:
+                        _itk_log.exception("Handled exception in _plot_item_at")
                         pass
         except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
             pass
         return None
 
@@ -3122,6 +3157,7 @@ class HistogramDecompositionDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
+                    _itk_log.exception("Handled exception in _reset_layout")
                     pass
         self._refresh()
 
@@ -3184,12 +3220,14 @@ class HistogramDecompositionDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
 
     def _get_custom_title_map(self):
@@ -3400,6 +3438,7 @@ class HistogramDecompositionDialog(QDialog):
                 y_pos,
             )
         except Exception:
+            _itk_log.exception("Handled exception in _add_density_unavailable_note")
             ti.setPos(0, 0)
 
 
@@ -4265,6 +4304,7 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
             pen=pg.mkPen(color=curve_color, width=2.5)))
         return True
     except Exception as e:
+        _itk_log.exception("Handled exception in _add_density_curve")
         print(f"Density curve error: {e}")
         return False
 
@@ -4327,6 +4367,7 @@ def _add_median_line(plot_item, values, cfg):
         y_top = rng[1][1] if rng[1][1] > 0 else 10
         ti.setPos(median + (rng[0][1] - rng[0][0]) * 0.01, y_top * 0.92)
     except Exception:
+        _itk_log.exception("Handled exception in _add_median_line")
         ti.setPos(median, 0)
 
 
@@ -4384,6 +4425,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
             ti.setPos(rng[0][0] + (rng[0][1] - rng[0][0]) * 0.02,
                       rng[1][1] * 0.98)
         except Exception:
+            _itk_log.exception("Handled exception in _add_stats_text")
             ti.setPos(0, 0)
 
 
@@ -4515,6 +4557,7 @@ def _draw_single_histogram(
             xr, yr = vb.viewRange()
             ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
         except Exception:
+            _itk_log.exception("Handled exception in _draw_single_histogram")
             ti.setPos(0, 0)
     return sorted_data
 
@@ -4808,6 +4851,7 @@ class ElementBarChartDisplayDialog(QDialog):
             xr, yr = vb.viewRange()
             ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
         except Exception:
+            _itk_log.exception("Handled exception in _add_no_visible_samples_message")
             ti.setPos(0, 0)
 
     def _open_settings(self):
@@ -4910,6 +4954,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     dlg.setWindowTitle(title_override)
                 except Exception:
+                    _itk_log.exception("Handled exception in _open_plot_settings")
                     pass
             try:
                 result = dlg.exec()
@@ -4919,6 +4964,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     delattr(pi, '_bar_group_color_sync_callback')
                 except Exception:
+                    _itk_log.exception("Handled exception in _open_plot_settings")
                     pass
 
     def _plot_items(self):
@@ -5077,6 +5123,7 @@ class ElementBarChartDisplayDialog(QDialog):
             try:
                 self.pw.setBackground(bg_color)
             except Exception:
+                _itk_log.exception("Handled exception in _reapply_saved_plot_format_settings")
                 pass
         for plot_item in self._plot_items():
             plot_item._persistent_dialog_settings = dict(settings)
@@ -5270,6 +5317,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 swatch_item.setOpts(brush=brush)
                 swatch_item.update()
             except Exception:
+                _itk_log.exception("Handled exception in _update_element_legend_swatches")
                 pass
 
     def _download_figure(self):
@@ -5301,6 +5349,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 if rows:
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
+            _itk_log.exception("Handled exception in _download_figure")
             print(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
@@ -5326,12 +5375,14 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
 
     def _reset_layout(self):
@@ -5349,6 +5400,7 @@ class ElementBarChartDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
+                    _itk_log.exception("Handled exception in _reset_layout")
                     pass
     # ── Refresh ─────────────────────────────
 
@@ -5416,6 +5468,7 @@ class ElementBarChartDisplayDialog(QDialog):
             self._update_stats(plot_data)
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error updating bar chart: {e}")
             import traceback
             traceback.print_exc()

@@ -31,6 +31,8 @@ from results.shared_plot_utils import (
     get_display_name, download_matplotlib_figure, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_concentration")
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -573,6 +575,7 @@ class ConcentrationDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error refreshing concentration plot: {e}")
             import traceback; traceback.print_exc()
 

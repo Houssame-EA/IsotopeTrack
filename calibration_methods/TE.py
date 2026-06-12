@@ -14,6 +14,8 @@ from calibration_methods.te_common import (
     base_stylesheet, return_button_style,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -25,6 +27,7 @@ def _ual():
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
     except Exception:
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 _METHOD_SIGNAL_MAP = {

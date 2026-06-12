@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     download_pyqtgraph_figure, pick_color_hex,
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
 
 try:
     from results.results_bar_charts import (
@@ -35,9 +37,11 @@ try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
         _CUSTOM_PLOT_AVAILABLE = True
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _PlotSettingsDialog = None
         _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
@@ -835,6 +839,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 elif 'element_data' in pd:
                     return list(pd['element_data'].columns)
         except Exception:
+            _itk_log.exception("Handled exception in _available_elements")
             pass
         sel = (self.node.input_data or {}).get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
@@ -1076,6 +1081,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             data_pt = vb.mapSceneToView(scene_pt)
             return float(data_pt.x()), float(data_pt.y())
         except Exception:
+            _itk_log.exception("Handled exception in _click_to_data_coords")
             return 0.0, 0.0
 
     def _current_xy_arrays(self):
@@ -1086,6 +1092,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         try:
             plot_data = self.node.extract_plot_data()
         except Exception:
+            _itk_log.exception("Handled exception in _current_xy_arrays")
             return None, None
         if not plot_data:
             return None, None
@@ -1184,6 +1191,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     mgr._raw_update(last['id'], last)
                 actions.append(('Mark mean y', _mean_y))
             except Exception as e:
+                _itk_log.exception("Handled exception in _build_smart_actions")
                 print(f"[smart] mark means failed: {e}")
 
             try:
@@ -1213,6 +1221,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                             mgr._raw_update(last['id'], last)
                         actions.append(('Highlight 1σ core region', _core_box))
             except Exception as e:
+                _itk_log.exception("Handled exception in _build_smart_actions")
                 print(f"[smart] core box failed: {e}")
 
             try:
@@ -1235,6 +1244,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                         mgr._raw_update(last['id'], last)
                     actions.append(('Label Pearson r', _r_label))
             except Exception as e:
+                _itk_log.exception("Handled exception in _build_smart_actions")
                 print(f"[smart] r label failed: {e}")
 
             try:
@@ -1276,6 +1286,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                             mgr._raw_update(last['id'], last)
                         actions.append(('Shade ±SD around trend', _sd_band))
             except Exception as e:
+                _itk_log.exception("Handled exception in _build_smart_actions")
                 print(f"[smart] trend band failed: {e}")
 
         return actions
@@ -1335,6 +1346,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             try:
                 cb.remove()
             except Exception:
+                _itk_log.exception("Handled exception in _cleanup_color_bars")
                 pass
         self.active_color_bars.clear()
 
@@ -1345,12 +1357,14 @@ class CorrelationPlotDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _suppress_native_plot_menus")
                     pass
                 vb = item.getViewBox()
                 if vb is not None:
                     try:
                         vb.setMenuEnabled(False)
                     except Exception:
+                        _itk_log.exception("Handled exception in _suppress_native_plot_menus")
                         pass
 
     def _refresh(self):
@@ -1409,6 +1423,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._suppress_native_plot_menus()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error refreshing correlation display: {e}")
             import traceback; traceback.print_exc()
 
@@ -1547,6 +1562,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     fill.setZValue(-5)
                     pi.addItem(fill)
                 except Exception as e:
+                    _itk_log.exception("Handled exception in _plot_scatter")
                     print(f'[SD envelope] {e}')
 
         if cfg.get('show_correlation', True) and len(x) > 1:
@@ -1581,6 +1597,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                                 pi.addItem(txt)
                                 txt.setPos(x_pos, y_pos)
                 except Exception:
+                    _itk_log.exception("Handled exception in _plot_scatter")
                     pass
             else:
                 add_correlation_text(pi, x, y, cfg)
@@ -1607,6 +1624,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 lbl_item.setPos(float(xr[-1]), float(yr[-1]))
                 pi.addItem(lbl_item)
             except Exception as e:
+                _itk_log.exception("Handled exception in _plot_scatter")
                 print(f'[ref line] {e}')
 
         _apply_box(pi, cfg)
@@ -1768,6 +1786,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             y_mid = vr[1][0] + 0.5 * (vr[1][1] - vr[1][0])
             ti.setPos(x_mid, y_mid)
         except Exception:
+            _itk_log.exception("Handled exception in _add_no_valid_data_message")
             ti.setPos(0.5, 0.5)
 
 

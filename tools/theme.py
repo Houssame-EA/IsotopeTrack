@@ -1,6 +1,8 @@
 import sys
 from dataclasses import dataclass
 from PySide6.QtCore import QObject, Signal, QSettings
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.theme")
 
 
 # --------------------------------------------------------------------------- #
@@ -30,6 +32,7 @@ def _detect_system_theme() -> str:
             if scheme == Qt.ColorScheme.Light:
                 return "light"
     except (AttributeError, ImportError):
+        _itk_log.exception("Handled exception in _detect_system_theme")
         pass
 
     # ── Method 2: macOS ─────────────────────────────────────────────────────
@@ -42,6 +45,7 @@ def _detect_system_theme() -> str:
             )
             return "dark" if "dark" in result.stdout.lower() else "light"
         except Exception:
+            _itk_log.exception("Handled exception in _detect_system_theme")
             pass
 
     # ── Method 3: Windows registry ──────────────────────────────────────────
@@ -56,6 +60,7 @@ def _detect_system_theme() -> str:
             winreg.CloseKey(key)
             return "light" if val == 1 else "dark"
         except Exception:
+            _itk_log.exception("Handled exception in _detect_system_theme")
             pass
 
     return "light"  
@@ -236,6 +241,7 @@ class ThemeManager(QObject):
                 detected = _detect_system_theme()
                 self._palette = DARK if detected == "dark" else LIGHT
             except Exception:
+                _itk_log.exception("Handled exception in __init__")
                 self._palette = LIGHT
         else:
             self._follow_system = False
@@ -274,6 +280,7 @@ class ThemeManager(QObject):
             hints = QGuiApplication.instance().styleHints()
             hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         except (AttributeError, TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in sync_with_system")
             pass  
 
     def _on_system_scheme_changed(self) -> None:
@@ -346,7 +353,9 @@ class ThemeManager(QObject):
             try:
                 self.themeChanged.disconnect(slot)
             except (RuntimeError, SystemError, TypeError):
-                pass
+                # Slot's widget already deleted or already disconnected —
+                # expected during teardown, not an error
+                _itk_log.debug("Theme slot already disconnected")
 
         return _disconnect
 

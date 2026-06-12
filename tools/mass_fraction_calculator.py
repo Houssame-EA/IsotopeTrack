@@ -18,6 +18,7 @@ from functools import reduce
 from math import gcd
 
 from tools.theme import theme
+_itk_log = logging.getLogger("IsotopeTrack.tools.mass_fraction_calculator")
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ def _safe_int(s: str, *, default: int = 1) -> int:
     try:
         return max(int(round(float(s))), 0) or default
     except (ValueError, TypeError):
+        _itk_log.exception("Handled exception in _safe_int")
         return default
 
 
@@ -771,6 +773,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
             if val < 0:
                 raise ValueError
         except ValueError:
+            _itk_log.exception("Handled exception in setModelData")
             return
         model.setData(index, f"{val:.6f}", Qt.EditRole)
 
@@ -821,6 +824,7 @@ class MassFractionCalculator(QDialog):
                 try:
                     parent._cached_csv_database = self.csv_database
                 except AttributeError:
+                    _itk_log.exception("Handled exception in __init__")
                     pass
 
         self.periodic_table_data = (
@@ -854,6 +858,7 @@ class MassFractionCalculator(QDialog):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in closeEvent")
             pass
         super().closeEvent(event)
 
@@ -1544,6 +1549,7 @@ class MassFractionCalculator(QDialog):
                     try:
                         state[key][element] = float(cell.text())
                     except ValueError:
+                        _itk_log.exception("Handled exception in _save_state")
                         pass
 
         self.parent_window._mass_fraction_calculator_state = state
@@ -1630,12 +1636,14 @@ class MassFractionCalculator(QDialog):
             try:
                 self.mass_fractions[element] = float(mf_cell.text()) if mf_cell else 1.0
             except ValueError:
+                _itk_log.exception("Handled exception in _apply_mass_fractions")
                 self.mass_fractions[element] = 1.0
 
             if mw_cell:
                 try:
                     self.molecular_weights[element] = float(mw_cell.text())
                 except ValueError:
+                    _itk_log.exception("Handled exception in _apply_mass_fractions")
                     pass
 
             if cd_cell:
@@ -1644,6 +1652,7 @@ class MassFractionCalculator(QDialog):
                     if val > 0:
                         self.densities[element] = val
                 except ValueError:
+                    _itk_log.exception("Handled exception in _apply_mass_fractions")
                     pass
 
         self._save_state()

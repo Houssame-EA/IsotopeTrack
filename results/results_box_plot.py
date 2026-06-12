@@ -34,6 +34,8 @@ from results.utils_sort import (
     sort_element_dict_by_mass,
     element_alphabetical_key,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_box_plot")
 
 try:
     from results.results_bar_charts import (
@@ -43,9 +45,11 @@ try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
         _CUSTOM_PLOT_AVAILABLE = True
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _PlotSettingsDialog = None
         _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
@@ -953,6 +957,7 @@ def _draw_violin(plot_item, x, values, color, alpha, width, cfg):
                 x=[x], y=[np.mean(values)], pen=pg.mkPen('white', width=2),
                 brush=pg.mkBrush('red'), size=8, symbol='d'))
     except Exception:
+        _itk_log.exception("Handled exception in _draw_violin")
         _draw_box(plot_item, x, values, color, alpha, width, cfg)
 
 
@@ -1022,6 +1027,7 @@ def _draw_half_violin_box(plot_item, x, values, color, alpha, width, cfg):
         plot_item.addItem(pg.PlotDataItem(x=x - nd, y=yv, pen=pg.mkPen(color, width=2),
             fillLevel=x, brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha // 2)))
     except Exception:
+        _itk_log.exception("Handled exception in _draw_half_violin_box")
         pass
 
     q1, med, q3 = np.percentile(values, [25, 50, 75])
@@ -1199,6 +1205,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
         txt.setPos(vb[0][0] + 0.02*(vb[0][1]-vb[0][0]),
                    vb[1][0] + 0.98*(vb[1][1]-vb[1][0]))
     except Exception:
+        _itk_log.exception("Handled exception in _add_stats_text")
         txt.setPos(0.02, 0.98)
 
 
@@ -1289,12 +1296,14 @@ class BoxPlotDisplayDialog(QDialog):
                     try:
                         rect = pi.mapRectToScene(pi.boundingRect())
                     except Exception:
+                        _itk_log.exception("Handled exception in _ctx_menu")
                         continue
                     if rect.contains(scene_pos):
                         clicked_plot = pi
                         subplot_ctx = ctx
                         break
             except Exception:
+                _itk_log.exception("Handled exception in _ctx_menu")
                 pass
         menu = QMenu(self)
 
@@ -1366,12 +1375,14 @@ class BoxPlotDisplayDialog(QDialog):
         try:
             scene_pos = self.pw.mapToScene(pos)
         except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
             return None
         for item in self.pw.scene().items():
             if isinstance(item, pg.PlotItem):
                 try:
                     rect = item.mapRectToScene(item.boundingRect())
                 except Exception:
+                    _itk_log.exception("Handled exception in _plot_item_at")
                     continue
                 if rect is not None and rect.contains(scene_pos):
                     return item
@@ -1512,12 +1523,14 @@ class BoxPlotDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                     pass
 
     def _reset_layout(self):
@@ -1536,6 +1549,7 @@ class BoxPlotDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
+                    _itk_log.exception("Handled exception in _reset_layout")
                     pass
         self._refresh()
 
@@ -1860,6 +1874,7 @@ class BoxPlotDisplayDialog(QDialog):
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data, multi)
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error updating distribution plot: {e}")
             import traceback; traceback.print_exc()
     def _draw_single_sample(self, pi, data, cfg):

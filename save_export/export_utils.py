@@ -11,6 +11,8 @@ import time
 
 from tools.theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
 
 
@@ -394,6 +396,7 @@ def export_data(main_window):
                 successful_exports += 1
                 
             except Exception as e:
+                _itk_log.exception("Handled exception in export_data")
                 failed_exports.append(("Summary file", str(e)))
                 print(f"Error creating summary file: {str(e)}")
 
@@ -415,6 +418,7 @@ def export_data(main_window):
                     successful_exports += 1
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in export_data")
                     failed_exports.append((sample_name, str(e)))
                     print(f"Error exporting {sample_name}: {str(e)}")
                     continue
@@ -803,6 +807,7 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
             mean_diameter_data.append(mean_diameter_row)
                                     
         except Exception as e:
+            _itk_log.exception("Handled exception in export_summary_file_with_mass_fractions")
             print(f"Error processing {sample_name} for summary: {str(e)}")
             continue
     

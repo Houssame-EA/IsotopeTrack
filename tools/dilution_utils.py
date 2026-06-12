@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget,
     QPushButton, QDoubleSpinBox, QMessageBox, QCheckBox, QGraphicsOpacityEffect,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.dilution_utils")
 
 
 def normalize_factor(value, minimum=1.0):
@@ -20,6 +22,7 @@ def normalize_factor(value, minimum=1.0):
     try:
         result = float(value)
     except (TypeError, ValueError):
+        _itk_log.exception("Handled exception in normalize_factor")
         return minimum
     return result if result >= minimum else minimum
 
@@ -82,6 +85,7 @@ def detect_dilution_from_name(name):
     try:
         value = float(matches[-1])
     except ValueError:
+        _itk_log.exception("Handled exception in detect_dilution_from_name")
         return None
     return value if value >= 1.0 else None
 
@@ -110,6 +114,7 @@ def detect_dilution_for_sample(window, sample_name):
             from pathlib import Path
             stem = Path(str(source)).name
         except Exception:
+            _itk_log.exception("Handled exception in detect_dilution_for_sample")
             stem = str(source)
         detected = detect_dilution_from_name(stem)
         if detected is not None:

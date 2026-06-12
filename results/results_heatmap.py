@@ -22,6 +22,8 @@ from results.utils_sort import (
     sort_elements_by_mass
 )
 from widget.colors import colorheatmap
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_heatmap")
 
 
 HEATMAP_DATA_TYPES = [
@@ -658,6 +660,7 @@ class HeatmapDisplayDialog(QDialog):
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
 
@@ -1140,6 +1143,7 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
 
         return combos or None
     except Exception as e:
+        _itk_log.exception("Handled exception in _build_combinations")
         print(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None

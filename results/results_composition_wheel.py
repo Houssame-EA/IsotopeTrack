@@ -47,12 +47,15 @@ from results.shared_plot_utils import (
     make_font_properties,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_composition_wheel")
 
 
 try:
     import pyqtgraph.opengl as gl
     _HAVE_GL = True
 except Exception:                                   # pragma: no cover
+    _itk_log.exception("Handled exception in <module>")
     _HAVE_GL = False
 
 
@@ -419,6 +422,7 @@ def fp_or_none(cfg):
     try:
         return make_font_properties(cfg)
     except Exception:
+        _itk_log.exception("Handled exception in fp_or_none")
         return None
 
 

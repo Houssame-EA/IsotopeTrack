@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (
 )
 
 from tools.cli_utils import get_argument_parser
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.splash_screen")
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +643,7 @@ class SplashCoordinator(QObject):
         try:
             from tools.progressive_main_window import ProgressiveMainWindow
         except ImportError:
+            _itk_log.debug("Handled exception in start")
             self.splash.update_progress(100, "Ready!")
             QTimer.singleShot(2000, self.splash.set_loading_complete)
             return

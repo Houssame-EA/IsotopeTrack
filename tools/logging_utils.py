@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 import qtawesome as qta
+_itk_log = logging.getLogger("IsotopeTrack.tools.logging_utils")
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +149,7 @@ def _mode(palette=None) -> str:
         from tools.theme import ThemeManager
         return "dark" if ThemeManager().is_dark else "light"
     except Exception:
+        _itk_log.exception("Handled exception in _mode")
         return "dark"
 
 
@@ -583,6 +585,7 @@ class EnhancedLogWindow(QDialog):
             from tools.theme import ThemeManager
             ThemeManager().themeChanged.connect(self._on_theme_changed)
         except Exception:
+            _itk_log.exception("Handled exception in __init__")
             pass
 
         self._flush_timer = QTimer(self)
@@ -798,6 +801,7 @@ class EnhancedLogWindow(QDialog):
             from tools.theme import ThemeManager
             ThemeManager().toggle()
         except Exception:
+            _itk_log.exception("Handled exception in _toggle_theme")
             pass
 
     def apply_theme(self, palette=None) -> None:
@@ -1559,12 +1563,14 @@ class EnhancedLoggingManager:
             ))
             self._logger.addHandler(fh)
         except Exception as exc:
+            _itk_log.exception("Handled exception in _setup_logging")
             print(f"[logging_utils] Could not create rotating log file: {exc}")
 
         jsonl_path = LOG_DIR / f"isotope_track_{stamp}.jsonl"
         try:
             self._logger.addHandler(JsonlFileHandler(jsonl_path))
         except Exception as exc:
+            _itk_log.exception("Handled exception in _setup_logging")
             print(f"[logging_utils] Could not create JSONL log file: {exc}")
 
         self._buffer_handler = _BufferHandler(self._pre_window_buffer)
@@ -1621,6 +1627,7 @@ class EnhancedLoggingManager:
             while len(files) > keep * 2:
                 files.pop(0).unlink(missing_ok=True)
         except Exception:
+            _itk_log.exception("Handled exception in _prune_old_logs")
             pass
 
     # -- public API ────────────────────────────────────────────────────

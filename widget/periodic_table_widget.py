@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (QGridLayout, QPushButton, QVBoxLayout,
                                QFrame, QFileDialog, QMessageBox, QComboBox)
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.periodic_table_widget")
 
 PRESET_LISTS = {
     '71A': ['Ag', 'Al', 'As', 'B', 'Ba', 'Be', 'Ca', 'Cd', 'Ce', 'Co', 'Cr', 'Cs', 'Cu', 'Dy', 
@@ -1789,6 +1791,7 @@ class PeriodicTableWidget(QDialog):
                                 mass = float(mass_str.strip())
                                 loaded_selections.append((symbol, mass))
                             except ValueError:
+                                _itk_log.exception("Handled exception in load_selections")
                                 invalid_lines.append(f"Line {line_num}: {line}")
                         else:
                             invalid_lines.append(f"Line {line_num}: {line}")

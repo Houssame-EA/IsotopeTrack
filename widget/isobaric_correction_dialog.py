@@ -31,10 +31,13 @@ from PySide6.QtWidgets import (
 )
 
 import tools.isobaric_correction as isobaric
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.isobaric_correction_dialog")
 
 try:
     from tools.theme import theme as _theme
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     _theme = None
 
 
@@ -319,6 +322,7 @@ class IsobaricCorrectionDialog(QDialog):
         try:
             isobaric.save_overrides(self._overrides)
         except Exception:
+            _itk_log.exception("Handled exception in _persist_entry")
             pass
 
     def _raw_base_for(self, sample):
@@ -510,6 +514,7 @@ class IsobaricCorrectionDialog(QDialog):
             effective = self._effective_corrections()
             changed = self.mw.apply_isobaric_correction(corrections=effective)
         except TypeError:
+            _itk_log.exception("Handled exception in _on_apply")
             changed = self.mw.apply_isobaric_correction()
         except Exception as e:
             QMessageBox.critical(self, "Isobaric Correction", f"Apply failed:\n{e}")
@@ -561,4 +566,5 @@ class IsobaricCorrectionDialog(QDialog):
             if row is not None and row >= 0:
                 self.mw.parameters_table_clicked(row, 0)
         except Exception:
+            _itk_log.exception("Handled exception in _refresh_main_plot")
             pass

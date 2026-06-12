@@ -9,6 +9,8 @@ from PySide6.QtGui import QFont, QColor, QPainter, QPen, QBrush, QPalette
 import numpy as np
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.info_file")
 
 @dataclass(frozen=True)
 class InfoPalette:
@@ -537,6 +539,7 @@ class FileInfoDialog(QDialog):
             self._build_run_info_card()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _build_content")
             err = QLabel(f"Error loading information:\n{e}")
             err.setAlignment(Qt.AlignCenter)
             err.setStyleSheet(f"color: {ip.disabled}; font-size: 13px; padding: 40px;")

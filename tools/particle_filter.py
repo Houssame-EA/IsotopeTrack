@@ -31,6 +31,8 @@ from PySide6.QtGui import QPen, QColor
 
 from tools.theme import theme as _app_theme
 from results.results_periodic import IsotopeChipSelector
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.particle_filter")
 
 _FILTERABLE_TYPES = ('sample_data', 'single_sample_data',
                      'multiple_sample_data')
@@ -46,6 +48,7 @@ def _ual():
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
     except Exception:
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 
@@ -192,6 +195,7 @@ def detected_labels(particle, thr_unit, thr_values):
             if not (v is not None and v > 0):
                 continue
         except TypeError:
+            _itk_log.exception("Handled exception in detected_labels")
             continue
         t = thr_values.get(lbl)
         if t:
@@ -202,6 +206,7 @@ def detected_labels(particle, thr_unit, thr_values):
             try:
                 ref = float(ref)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in detected_labels")
                 continue
             if math.isnan(ref) or ref < t:
                 continue
@@ -586,6 +591,7 @@ class ParticleFilterDialog(QDialog):
             _tmp.deleteLater()
             return elem_data
         except Exception:
+            _itk_log.exception("Handled exception in _load_elem_data")
             return []
 
     @staticmethod
@@ -942,6 +948,7 @@ class ParticleFilterDialog(QDialog):
             try:
                 key = (iso.get('symbol'), round(float(iso.get('mass', 0)), 4))
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _load_pane")
                 continue
             if key not in self._label_by_pair:
                 self._label_by_pair[key] = iso['label']
@@ -1054,6 +1061,7 @@ class ParticleFilterDialog(QDialog):
             try:
                 lbl = self._label_by_pair.get((sym, round(float(mass), 4)))
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _selected_isotopes")
                 lbl = None
             if lbl:
                 out.append({'symbol': sym, 'mass': mass, 'label': lbl})
@@ -1296,6 +1304,7 @@ class ParticleFilterNode(QObject):
                     if lk.sink_node is self:
                         out.append(lk.get_data())
             except Exception:
+                _itk_log.exception("Handled exception in _pull_upstream_all")
                 pass
         if not out and self.input_data is not None:
             out = [self.input_data]

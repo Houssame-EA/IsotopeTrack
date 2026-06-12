@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_pie_charts")
 
 
 
@@ -513,6 +515,7 @@ class MplPieCanvas(QWidget):
                     if hit:
                         return
                 except Exception:
+                    _itk_log.exception("Handled exception in _pie_drag_press")
                     pass
         self._drag_ax       = event.inaxes
         self._drag_start_px = (event.x, event.y)
@@ -637,6 +640,7 @@ class MplPieCanvas(QWidget):
             try:
                 ann.draggable(True)
             except AttributeError:
+                _itk_log.exception("Handled exception in _draw_one")
                 pass
             anns[label] = ann
 
@@ -1116,6 +1120,7 @@ class PieChartDisplayDialog(QDialog):
 
             self.canvas_widget.render(subplots)
         except Exception:
+            _itk_log.exception("Handled exception in _refresh")
             traceback.print_exc()
 
     def _calc_single(self, sample_data, cfg):
@@ -1815,6 +1820,7 @@ class ElementCompositionDisplayDialog(QDialog):
 
             self.canvas_widget.render(subplots)
         except Exception:
+            _itk_log.exception("Handled exception in _refresh")
             traceback.print_exc()
 
     def _calc_data(self, plot_data, cfg) -> dict:

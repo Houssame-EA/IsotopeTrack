@@ -19,6 +19,8 @@ from processing.peak_detection import erfinv
 import csv
 
 from tools.theme import theme, dialog_qss
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.loading.SIA_manager")
 
 
 # ─── Constants ────────────────────────────────────────────────────────────────
@@ -158,6 +160,7 @@ class SIAWorker(QObject):
                 self.error.emit(f"Unknown file type: {file_type}")
 
         except Exception as e:
+            _itk_log.exception("Handled exception in process_sia_data")
             self.error.emit(f"Error processing single-ion distribution: {e}")
             print(f"SIAWorker error:\n{traceback.format_exc()}")
 
@@ -266,6 +269,7 @@ class SIAWorker(QObject):
                     "TotalAcquisitions"   : data.shape[0],
                 }
         except Exception as e:
+            _itk_log.exception("Handled exception in _process_tofwerk")
             self.error.emit(f"Error reading TOFWERK file: {e}")
             return
 
@@ -367,6 +371,7 @@ class SIAWorker(QObject):
                     'num_points'  : int(len(pos)),
                 }
             except Exception as e:
+                _itk_log.exception("Handled exception in _build_result")
                 print(f"Warning: failed to process mass {masses[i]}: {e}")
 
         sample_name = run_info.get("SampleName", Path(data_path).name)
@@ -518,6 +523,7 @@ class SingleIonDistributionManager(QObject):
                     f"color: {theme.palette.text_primary};"
                 )
             except RuntimeError:
+                _itk_log.exception("Handled exception in _on_theme_changed")
                 self.view_toggle = None
 
         alive = []
@@ -536,6 +542,7 @@ class SingleIonDistributionManager(QObject):
                     self._restyle_plot_widget(pw)
                 alive.append(dlg)
             except RuntimeError:
+                _itk_log.exception("Handled exception in _on_theme_changed")
                 continue
         self._live_dialogs = alive
 
@@ -603,6 +610,7 @@ class SingleIonDistributionManager(QObject):
             pw.setLabel('bottom', bottom_lbl, color=p.plot_fg,
                         font='bold 20pt Times New Roman')
         except Exception:
+            _itk_log.exception("Handled exception in _restyle_plot_widget")
             pass
 
     def _register_dialog(self, dialog):
@@ -795,6 +803,7 @@ class SingleIonDistributionManager(QObject):
             self.sia_thread.start()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _start_sia_processing")
             self._reset_processing_state()
             msg = f"Error starting SIA thread: {e}"
             self.main_window.status_label.setText(msg)
@@ -878,6 +887,7 @@ class SingleIonDistributionManager(QObject):
                     f"σ = {info['calculated_sigma']:.3f}"
                 )
         except Exception as e:
+            _itk_log.exception("Handled exception in _on_finished")
             msg = f"Error processing SIA results: {e}"
             self.main_window.status_label.setText(msg)
             self._themed_msgbox('critical', self.main_window, "Results Error", msg)
@@ -924,6 +934,7 @@ class SingleIonDistributionManager(QObject):
                 try:
                     sig.disconnect()
                 except RuntimeError:
+                    _itk_log.exception("Handled exception in _on_thread_cleanup")
                     pass  
 
         self.sia_thread = None
@@ -1425,6 +1436,7 @@ class SingleIonDistributionManager(QObject):
                 pw.plot(x_ov, y_ov,
                         pen=pg.mkPen(color=QColor(100, 149, 237), width=2, style=Qt.DashLine))
             except Exception:
+                _itk_log.exception("Handled exception in _update_sia_plot")
                 pass
 
             ov_txt = pg.TextItem(
@@ -1451,6 +1463,7 @@ class SingleIonDistributionManager(QObject):
             y_fit  = lognormal_pdf_scipy(x_fit, mu_ion, calc_sigma)
             pw.plot(x_fit, y_fit, pen=pg.mkPen(color='r', width=2.5))
         except Exception as e:
+            _itk_log.exception("Handled exception in _update_sia_plot")
             print(f"Lognormal fit failed: {e}")
 
         q_val = self._calc_quantile(mean_signal, calc_sigma, avg_sia,
@@ -1572,6 +1585,7 @@ class SingleIonDistributionManager(QObject):
             pw.setYRange(lo * 0.9, hi * 1.1)
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _update_qq_plot")
             t = pg.TextItem(anchor=(0.5, 0.5),
                             html=self._annot(f'Q-Q plot unavailable: {e}'))
             t.setPos(0.5, 0.5)
@@ -1664,6 +1678,7 @@ class SingleIonDistributionManager(QObject):
             if np.isfinite(q) and q > 0:
                 return q
         except Exception:
+            _itk_log.exception("Handled exception in _calc_quantile")
             pass
 
         try:
@@ -1674,6 +1689,7 @@ class SingleIonDistributionManager(QObject):
             if np.isfinite(q) and q > 0:
                 return q
         except Exception:
+            _itk_log.exception("Handled exception in _calc_quantile")
             pass
 
         return None
@@ -1742,6 +1758,7 @@ class SingleIonDistributionManager(QObject):
                 else:
                     normality_label = f"±2 SD (Shapiro p={sw_p:.3f})"
             except Exception:
+                _itk_log.exception("Handled exception in _update_sigma_comparison_plot")
                 pass
 
         # ── reference lines ───────────────────────────────────────────────
@@ -1873,6 +1890,7 @@ class SingleIonDistributionManager(QObject):
                     self.mass_selector.setCurrentIndex(i)
                     break
         except Exception as e:
+            _itk_log.exception("Handled exception in _on_sigma_scatter_clicked")
             print(f"Sigma scatter click handler error: {e}")
 
     # ── export functionality ──────────────────────────────────────────────────
@@ -1922,6 +1940,7 @@ class SingleIonDistributionManager(QObject):
 
             self._themed_msgbox('information', parent, "Export Complete", f"Per-mass sigma data exported to:\n{path}")
         except Exception as e:
+            _itk_log.exception("Handled exception in _export_per_mass_csv")
             self._themed_msgbox('critical', parent, "Export Error", f"Failed to export CSV: {e}")
 
     def _export_plot(self, pw: pg.PlotWidget, parent: QWidget):
@@ -1955,6 +1974,7 @@ class SingleIonDistributionManager(QObject):
             exporter.export(path)
             self._themed_msgbox('information', parent, "Export Complete", f"Plot exported to:\n{path}")
         except Exception as e:
+            _itk_log.exception("Handled exception in _export_plot")
             self._themed_msgbox('critical', parent, "Export Error", f"Failed to export plot: {e}")
 
     # ── per-mass sigma assignment ─────────────────────────────────────────────
@@ -1999,6 +2019,7 @@ class SingleIonDistributionManager(QObject):
                 try:
                     target_mass = float(el_name.split('-')[1])
                 except (ValueError, IndexError):
+                    _itk_log.exception("Handled exception in _assign_per_mass_sigma")
                     target_mass = None
 
                 if target_mass is None:
@@ -2257,11 +2278,13 @@ class SingleIonDistributionManager(QObject):
                 try:
                     sig.disconnect()
                 except RuntimeError:
+                    _itk_log.exception("Handled exception in cleanup")
                     pass
 
         try:
             theme.themeChanged.disconnect(self._on_theme_changed)
         except RuntimeError:
+            _itk_log.exception("Handled exception in cleanup")
             pass
 
         self.sia_thread     = None

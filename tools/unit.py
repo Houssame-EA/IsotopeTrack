@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 from PySide6.QtCore import QSettings
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.unit")
 
 
 # --------------------------------------------------------------------------- #
@@ -91,6 +93,7 @@ class ExportUnits:
         try:
             v = float(value)
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in _format")
             return "0"
         if self.number_format == "scientific":
             return f"{v:.{decimals}e}"
@@ -157,6 +160,7 @@ class ExportUnits:
             if diameter_nm != diameter_nm:
                 return "0"
         except Exception:
+            _itk_log.exception("Handled exception in fmt_diameter_or_zero")
             return "0"
         return self.fmt_diameter(diameter_nm)
 
@@ -204,6 +208,7 @@ def load_units() -> ExportUnits:
             v = int(s.value(_KEY_PREFIX + key, default))
             return max(lo, min(hi, v))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in _get_int")
             return default
 
     return ExportUnits(

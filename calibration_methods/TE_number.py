@@ -29,10 +29,13 @@ from calibration_methods.te_common import (
     base_stylesheet, show_data_source_dialog,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_number")
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
     CSVDataProcessThread = None
     show_csv_structure_dialog = None
@@ -241,6 +244,7 @@ class NumberMethodWidget(QMainWindow):
                 try:
                     w.setBackground(p.plot_bg)
                 except Exception:
+                    _itk_log.exception("Handled exception in apply_theme")
                     pass
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
@@ -475,6 +479,7 @@ class NumberMethodWidget(QMainWindow):
             self.plot_widget.exclusionRegionsChanged.connect(
                 self._on_exclusion_regions_changed)
         except Exception as e:
+            _itk_log.exception("Handled exception in _build_plot")
             print(f"Could not connect exclusionRegionsChanged: {e}")
 
         parent_layout.addWidget(plot_group)
@@ -668,6 +673,7 @@ class NumberMethodWidget(QMainWindow):
                         masses = DataProcessThread.get_masses_only(str(h5_path))
                         all_masses_from_files.extend(masses)
                     except Exception as mass_error:
+                        _itk_log.exception("Handled exception in handle_tofwerk_import")
                         print(f"Warning: Could not get masses from {h5_path}: {mass_error}")
                         masses = []
                     
@@ -683,6 +689,7 @@ class NumberMethodWidget(QMainWindow):
                     valid_files.append(h5_path)
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in handle_tofwerk_import")
                     sample_name = h5_file.stem
                     self.folder_data[h5_path] = {
                         'status': f'Error: {str(e)}',
@@ -840,6 +847,7 @@ class NumberMethodWidget(QMainWindow):
                         masses = DataProcessThread.get_masses_only(str(folder_path))
                         all_masses_from_folders.extend(masses)
                     except Exception as mass_error:
+                        _itk_log.exception("Handled exception in handle_folder_import")
                         print(f"Warning: Could not get masses from {folder_path}: {mass_error}")
                         masses = []
                     
@@ -854,6 +862,7 @@ class NumberMethodWidget(QMainWindow):
                     valid_folders.append(folder_path)
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in handle_folder_import")
                     sample_name = Path(folder_path).name
                     self.folder_data[folder_path] = {
                         'status': f'Error: {str(e)}',
@@ -1089,6 +1098,7 @@ class NumberMethodWidget(QMainWindow):
                 print(f"All CSV files processed successfully ({processed_files} samples)")
                 
         except Exception as e:
+            _itk_log.exception("Handled exception in handle_csv_finished")
             print(f"Error processing CSV data for {sample_name}: {str(e)}")
 
     def handle_csv_error(self, error_message):
@@ -1215,9 +1225,11 @@ class NumberMethodWidget(QMainWindow):
                                 self.all_masses = sorted(list(set(masses)))
                                 break
                         except Exception as e:
+                            _itk_log.exception("Handled exception in show_periodic_table")
                             print(f"Could not get masses from {folder_path}: {e}")
                             continue
             except Exception as e:
+                _itk_log.exception("Handled exception in show_periodic_table")
                 print(f"Error getting masses for periodic table: {e}")
         
         if not self.all_masses or len(self.all_masses) == 0:
@@ -1478,6 +1490,7 @@ class NumberMethodWidget(QMainWindow):
         try:
             plot_regions = self.plot_widget.get_exclusion_regions()
         except Exception as e:
+            _itk_log.exception("Handled exception in _on_exclusion_regions_changed")
             print(f"get_exclusion_regions failed: {e}")
             return
 
@@ -1506,6 +1519,7 @@ class NumberMethodWidget(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.disconnect(
                     self._on_exclusion_regions_changed)
             except Exception:
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
                 pass
             self.plot_widget.set_exclusion_regions(regions)
         finally:
@@ -1513,6 +1527,7 @@ class NumberMethodWidget(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.connect(
                     self._on_exclusion_regions_changed)
             except Exception:
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
                 pass
 
     def on_detection_params_selection_changed(self):
@@ -1559,6 +1574,7 @@ class NumberMethodWidget(QMainWindow):
             try:
                 self._rebuild_plot_exclusion_regions()
             except Exception:
+                _itk_log.exception("Handled exception in on_detection_params_selection_changed")
                 pass
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
@@ -2158,12 +2174,14 @@ class NumberMethodWidget(QMainWindow):
                     })
                 
             except Exception as e:
+                _itk_log.exception("Handled exception in calculate_transport_rates")
                 result_row = self.calibration_results_table.rowCount()
                 self.calibration_results_table.insertRow(result_row)
                 
                 try:
                     sample_name = self.calibration_data_table.item(row, 0).text()
                 except:
+                    _itk_log.exception("Handled exception in calculate_transport_rates")
                     sample_name = f"Sample {row+1}"
                 
                 self.calibration_results_table.setItem(result_row, 0, QTableWidgetItem(sample_name))

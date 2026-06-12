@@ -8,6 +8,7 @@ from typing import BinaryIO, Generator
 import numpy as np
 import numpy.lib.recfunctions as rfn
 from scipy.special import gammainc
+_itk_log = logging.getLogger("IsotopeTrack.loading.vitesse_loading")
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,7 @@ def collect_nu_integ_data(
             try:
                 progress_callback((file_pos + 1) / total)
             except Exception:
+                _itk_log.exception("Handled exception in collect_nu_integ_data")
                 pass
     return integs
 
@@ -452,6 +454,7 @@ def read_nu_directory(
             try:
                 progress_callback(frac * 0.85)
             except Exception:
+                _itk_log.exception("Handled exception in _integ_progress")
                 pass
 
     integs = collect_nu_integ_data(
@@ -467,6 +470,7 @@ def read_nu_directory(
         try:
             progress_callback(0.93)
         except Exception:
+            _itk_log.exception("Handled exception in read_nu_directory")
             pass
 
     if not raw:
@@ -489,6 +493,7 @@ def read_nu_directory(
         try:
             progress_callback(1.0)
         except Exception:
+            _itk_log.exception("Handled exception in read_nu_directory")
             pass
 
     return masses, signals, run_info

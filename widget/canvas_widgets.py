@@ -65,6 +65,8 @@ from tools.particle_filter import (
 import qtawesome as qta
 
 from tools.theme import theme as _app_theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -76,6 +78,7 @@ def _ual():
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
     except Exception:
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 def _collect_main_windows():
@@ -122,6 +125,7 @@ def _sample_concentration_meta(window, sample_name):
             'te_available': window.has_transport_rate(),
         }
     except Exception:
+        _itk_log.exception("Handled exception in _sample_concentration_meta")
         return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
 
 
@@ -504,6 +508,7 @@ class NodeItem(QGraphicsWidget):
                 px = ico.pixmap(QSize(icon_size, icon_size))
                 self._icon_cache[cache_key] = px
             except Exception:
+                _itk_log.exception("Handled exception in paint_icon_node")
                 self._icon_cache[cache_key] = None
 
         px = self._icon_cache.get(cache_key)
@@ -839,7 +844,9 @@ class LinkItem(QGraphicsWidget):
         """
         if self.source_anchor:
             try: self.source_anchor.position_changed.disconnect(self.__update_curve)
-            except: pass
+            except:
+                _itk_log.exception("Handled exception in set_source_anchor")
+                pass
         self.source_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
@@ -852,7 +859,9 @@ class LinkItem(QGraphicsWidget):
         """
         if self.sink_anchor:
             try: self.sink_anchor.position_changed.disconnect(self.__update_curve)
-            except: pass
+            except:
+                _itk_log.exception("Handled exception in set_sink_anchor")
+                pass
         self.sink_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
@@ -903,6 +912,7 @@ class LinkItem(QGraphicsWidget):
             pen.setCapStyle(Qt.RoundCap)
             self.curve_item.set_pen(pen)
         except Exception as e:
+            _itk_log.exception("Handled exception in __update_curve")
             print(f"Link update error: {e}")
 
     def boundingRect(self):
@@ -2337,6 +2347,7 @@ class _CalculationWorker(QThread):
         try:
             result = self._compute_fn()
         except Exception as exc:
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
             return
         self.finished_ok.emit(result)
@@ -2411,6 +2422,7 @@ class _StatusNodeMixin:
                         if hasattr(lk.sink_node, "process_data"):
                             lk.sink_node.process_data(result)
                     except Exception as exc:
+                        _itk_log.exception("Handled exception in _on_calc_done")
                         print(f"Data flow error: {exc}")
         self.update()
 
@@ -3665,6 +3677,7 @@ class EnhancedCanvasScene(QGraphicsScene):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
                 except:
+                    _itk_log.exception("Handled exception in duplicate_node")
                     pass
         pos = ni.pos() + QPointF(DS.NODE_W + 30, 20)
         _, item = self.add_node(new_wf, pos)
@@ -3762,6 +3775,7 @@ class EnhancedCanvasScene(QGraphicsScene):
             if hasattr(wl.sink_node, 'process_data'):
                 wl.sink_node.process_data(data)
         except Exception as e:
+            _itk_log.exception("Handled exception in _trigger_data_flow")
             print(f"Data flow error: {e}")
 
     def contextMenuEvent(self, event):
@@ -3914,12 +3928,14 @@ class EnhancedCanvasView(QGraphicsView):
         try:
             self._apply_view_theme()
         except RuntimeError:
+            _itk_log.exception("Handled exception in _safe_apply_view_theme")
             pass
 
     def _view_disconnect_theme(self):
         try:
             _app_theme.themeChanged.disconnect(self._view_theme_handler)
         except Exception:
+            _itk_log.exception("Handled exception in _view_disconnect_theme")
             pass
 
     def _setup_shortcuts(self):
@@ -4052,6 +4068,7 @@ class EnhancedCanvasView(QGraphicsView):
                     if text:
                         return text
             except (AttributeError, RuntimeError):
+                _itk_log.exception("Handled exception in _drag_node_type")
                 pass
         return _PENDING_DRAG_NODE_TYPE
 

@@ -14,6 +14,8 @@ from scipy import stats as sp_stats
 from widget.custom_plot_widget import EnhancedPlotWidget
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.help_dialogs")
 
 
 
@@ -29,6 +31,7 @@ def get_resource_path(relative_path):
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
+        _itk_log.exception("Handled exception in get_resource_path")
         base_path = Path(__file__).parent.parent
     return base_path / relative_path
 
@@ -107,6 +110,7 @@ except ImportError:
                 cdf = cdf_matrix @ weights
                 return float(xs[np.argmax(cdf > q0)])
             except Exception:
+                _itk_log.exception("Handled exception in get_threshold")
                 return lambda_bkgd + 3.0 * np.sqrt(max(lambda_bkgd, 1))
 
 
@@ -874,6 +878,7 @@ class InteractiveEquationVisualizer(QWidget):
                                 float(np.max(y_fit)) * 0.9)
                 p.addItem(fit_text)
             except Exception:
+                _itk_log.exception("Handled exception in _draw_histogram")
                 pass
 
         p.addLegend(offset=(10, 10))
@@ -1813,6 +1818,7 @@ class HelpManager:
         try:
             from tools.tutorial import UserGuideDialog
         except ImportError:
+            _itk_log.debug("Handled exception in show_user_guide")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self.parent, "User Guide",
@@ -2011,6 +2017,7 @@ def _lut_load():
         return (data["lambdas"], data["sigmas"],
                 data["ys"],     data["quantiles"])
     except Exception as e:
+        _itk_log.exception("Handled exception in _lut_load")
         print(f"[LUT] Could not load cpln_quantiles.npz: {e}")
         return None
 
@@ -2872,6 +2879,7 @@ class CalibrationMethodsDialog(QDialog):
                 lbl.setAlignment(Qt.AlignCenter)
                 return lbl
         except Exception:
+            _itk_log.exception("Handled exception in _img")
             pass
         return QLabel(f"<i style='color:red'>Image not found: {path}</i>")
 
@@ -3193,6 +3201,7 @@ class AboutDialog(QDialog):
                 logo.setPixmap(pm.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 logo.setText("")
         except Exception:
+            _itk_log.exception("Handled exception in __init__")
             pass
         lay.addWidget(logo)
  

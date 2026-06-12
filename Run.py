@@ -1,6 +1,8 @@
 import sys
 import os
 from tools.cli_utils import get_argument_parser
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.Run")
 
 
 # Early parsing to avoid PySide6 import load time
@@ -47,5 +49,6 @@ if __name__ == "__main__":
         try:
             w.close()
         except Exception:
+            _itk_log.exception("Handled exception in <module>")
             pass
     app.main_windows.clear()

@@ -25,7 +25,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Install macOS-only dependencies
         run: pip install pyobjc-core pyobjc-framework-Cocoa
@@ -70,7 +70,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Build .exe with PyInstaller
         run: pyinstaller --noconfirm --clean IsotopeTrack_W.spec

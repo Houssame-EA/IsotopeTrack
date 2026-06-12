@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtCore import Qt
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.calibration_info")
 
 
 class CalibrationInfoDialog(QDialog):
@@ -53,6 +55,7 @@ class CalibrationInfoDialog(QDialog):
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
+            _itk_log.exception("Handled exception in closeEvent")
             pass
         super().closeEvent(event)
 
@@ -308,6 +311,7 @@ class CalibrationInfoDialog(QDialog):
                 return f"{rounded_mass}{element}"
             return element_key
         except (ValueError, TypeError):
+            _itk_log.exception("Handled exception in format_isotope_label")
             return element_key
 
     def get_mass_number_for_sorting(self, formatted_label):
@@ -324,6 +328,7 @@ class CalibrationInfoDialog(QDialog):
                 return int(match.group(1))
             return 999
         except Exception:
+            _itk_log.exception("Handled exception in get_mass_number_for_sorting")
             return 999
 
     def find_matching_threshold_key(self, formatted_isotope, element_thresholds):
@@ -347,6 +352,7 @@ class CalibrationInfoDialog(QDialog):
                             if key_mass_rounded == int(mass_num):
                                 return key
         except Exception:
+            _itk_log.exception("Handled exception in find_matching_threshold_key")
             pass
         return None
 
@@ -376,6 +382,7 @@ class CalibrationInfoDialog(QDialog):
                             if key_mass_rounded == int(mass_num):
                                 return key
         except Exception:
+            _itk_log.exception("Handled exception in find_matching_limit_key")
             pass
         return None
 
@@ -760,6 +767,7 @@ class CalibrationInfoDialog(QDialog):
         try:
             return self.create_item(f"{float(value):.2e}", False)
         except (ValueError, TypeError):
+            _itk_log.exception("Handled exception in create_scientific_item")
             return self.create_item("—", False)
 
     def create_decimal_item(self, value, decimals=2):
@@ -775,6 +783,7 @@ class CalibrationInfoDialog(QDialog):
         try:
             return self.create_item(f"{float(value):.{decimals}f}", False)
         except (ValueError, TypeError):
+            _itk_log.exception("Handled exception in create_decimal_item")
             return self.create_item("—", False)
 
     def create_quality_item(self, r_squared):
@@ -837,6 +846,7 @@ class CalibrationInfoDialog(QDialog):
                     try:
                         show_row = float(r_squared_item.text()) > 0.9
                     except ValueError:
+                        _itk_log.exception("Handled exception in filter_ionic_table")
                         show_row = False
                 else:
                     show_row = False

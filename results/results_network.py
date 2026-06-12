@@ -30,6 +30,8 @@ from results.shared_plot_utils import (
     format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_network")
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -131,6 +133,7 @@ def _compute_edges(particles, elements, data_key, r_threshold, min_n):
                     if abs(r) >= r_threshold:
                         edges.append((i, j, r))
                 except Exception:
+                    _itk_log.exception("Handled exception in _compute_edges")
                     pass
     return edges
 
@@ -165,6 +168,7 @@ def _compute_node_amounts(particles, elements, data_key, aggregation="Sum"):
             try:
                 numeric_value = float(value)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _compute_node_amounts")
                 numeric_value = 0.0
             if mode == "Sum":
                 if np.isfinite(numeric_value):
@@ -1049,6 +1053,7 @@ class NetworkDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error refreshing network diagram: {e}")
             import traceback; traceback.print_exc()
 
@@ -1307,6 +1312,7 @@ class NetworkDisplayDialog(QDialog):
             width_px = max(4.0, float(bbox.width))
             return width_px * 72.0 / self.figure.dpi
         except Exception:
+            _itk_log.exception("Handled exception in _measure_reference_node_diameter_points")
             return fallback_diameter_points
 
     def _apply_node_size_visual_legend(self, cfg, network_payloads, reference_ax, top_layout):

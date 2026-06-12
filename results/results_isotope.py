@@ -1,4 +1,4 @@
-﻿from PySide6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
@@ -26,6 +26,8 @@ from results.shared_plot_utils import (
     SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box, _add_hband,
     _add_det_limit_h, apply_plot_title_style, apply_axis_label_style,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
 
 try:
     from results.results_bar_charts import (
@@ -35,9 +37,11 @@ try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
         _CUSTOM_PLOT_AVAILABLE = True
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _PlotSettingsDialog = None
         _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
@@ -256,6 +260,7 @@ def compute_exponential_correction(
         correction_factor = (m_num / m_den) ** f
         return r_measured * correction_factor
     except (ValueError, ZeroDivisionError):
+        _itk_log.exception("Handled exception in compute_exponential_correction")
         return r_measured
 
 
@@ -376,6 +381,7 @@ def get_correction_factor(config: dict) -> float:
                 f = math.log(rc / rm) / math.log(m_rn / m_rd)
                 return (m_num / m_den) ** f
             except (ValueError, ZeroDivisionError):
+                _itk_log.exception("Handled exception in get_correction_factor")
                 pass
         return 1.0
 
@@ -419,6 +425,7 @@ def build_equation_text(config: dict, sample_name: str = None) -> str:
             else:
                 cf = 1.0
         except (ValueError, ZeroDivisionError):
+            _itk_log.exception("Handled exception in build_equation_text")
             p_val = 0
             cf = 1.0
 
@@ -1481,6 +1488,7 @@ class IsotopeSettingsDialog(QDialog):
             try:
                 self._rep_plot.scene().removeItem(self._cf_vb)
             except Exception:
+                _itk_log.exception("Handled exception in _compute_replicate_ratios")
                 pass
             self._cf_vb = None
 
@@ -1558,6 +1566,7 @@ class IsotopeSettingsDialog(QDialog):
                         cf = (m_i / m_j) ** p
                         cf_values.append(cf)
                     except (ValueError, ZeroDivisionError):
+                        _itk_log.exception("Handled exception in _compute_replicate_ratios")
                         cf_values.append(np.nan)
                 else:
                     cf_values.append(np.nan)
@@ -1954,6 +1963,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             if a1 and a2 and a1 > 0 and a2 > 0:
                 self.node.config['natural_ratio'] = a1 / a2
         except Exception:
+            _itk_log.exception("Handled exception in _auto_calc_natural")
             pass
 
     def _auto_calc_standard(self):
@@ -2019,6 +2029,7 @@ class IsotopicRatioDisplayDialog(QDialog):
             if s1 and s2 and s1 > 0 and s2 > 0:
                 self.node.config['standard_ratio'] = s1 / s2
         except Exception:
+            _itk_log.exception("Handled exception in _auto_calc_standard")
             pass
 
     def _show_context_menu(self, pos):
@@ -2496,6 +2507,7 @@ class IsotopicRatioDisplayDialog(QDialog):
                     c for c in plot_data['element_data'].columns
                     if not c.startswith('_')]
         except Exception:
+            _itk_log.exception("Handled exception in _refresh")
             self._cached_elements = []
 
         cfg = self.node.config
@@ -2539,6 +2551,7 @@ class IsotopicRatioDisplayDialog(QDialog):
                 try:
                     item.vb.setMenuEnabled(False)
                 except Exception:
+                    _itk_log.exception("Handled exception in _suppress_native_pg_context_menu")
                     pass
 
     def _iter_samples_in_display_order(self, plot_data, cfg):
@@ -2815,6 +2828,7 @@ class IsotopicRatioDisplayDialog(QDialog):
                 cf = (m_i / m_j) ** p
                 corrected[mask] = ratios[mask] * cf
             except (ValueError, ZeroDivisionError):
+                _itk_log.exception("Handled exception in _correct_per_replicate")
                 pass
 
         return corrected

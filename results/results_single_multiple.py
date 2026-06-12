@@ -32,6 +32,8 @@ from results.shared_plot_utils import (
     pick_color_hex,
 )
 from widget.colors import default_colors, colorheatmap
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_single_multiple")
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -190,6 +192,7 @@ class SingleMultipleElementHelper:
                 return (count / vol * dilution) if vol > 0 else count
             return count
         except Exception:
+            _itk_log.exception("Handled exception in calc_per_ml")
             return count
 
     @staticmethod
@@ -764,6 +767,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
         try:
             self.canvas.mpl_connect('button_release_event', self._persist_positions)
         except AttributeError:
+            _itk_log.exception("Handled exception in _build_ui")
             pass
         viz_lay.addWidget(self.canvas, stretch=1)
 
@@ -980,6 +984,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
+            _itk_log.exception("Handled exception in _refresh")
             print(f"Error updating SM display: {e}")
             import traceback; traceback.print_exc()
 
@@ -1239,6 +1244,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             try:
                 ann.draggable(True)
             except AttributeError:
+                _itk_log.exception("Handled exception in _pie_one")
                 pass
             anns[combo_key] = ann
 
@@ -1381,6 +1387,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
                     self.table.setItem(i, j, item)
             self.table.resizeColumnsToContents()
         except Exception as e:
+            _itk_log.exception("Handled exception in _update_table")
             print(f"Table update error: {e}")
 
 
