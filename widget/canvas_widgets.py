@@ -837,7 +837,7 @@ class LinkItem(QGraphicsWidget):
         """
         if self.source_anchor:
             try: self.source_anchor.position_changed.disconnect(self.__update_curve)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in set_source_anchor")
         self.source_anchor = anchor
         if anchor:
@@ -851,7 +851,7 @@ class LinkItem(QGraphicsWidget):
         """
         if self.sink_anchor:
             try: self.sink_anchor.position_changed.disconnect(self.__update_curve)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in set_sink_anchor")
         self.sink_anchor = anchor
         if anchor:
@@ -3667,7 +3667,7 @@ class EnhancedCanvasScene(QGraphicsScene):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in duplicate_node")
         pos = ni.pos() + QPointF(DS.NODE_W + 30, 20)
         _, item = self.add_node(new_wf, pos)

@@ -158,7 +158,7 @@ class ProjectManager:
                 SHCNE_ASSOCCHANGED = 0x08000000
                 SHCNF_IDLIST = 0x0000
                 ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _set_icon_windows")
             
             return True

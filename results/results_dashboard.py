@@ -26,7 +26,7 @@ def _safe_positive(v):
     try:
         v = float(v)
         return v > 0 and not np.isnan(v)
-    except:
+    except Exception:
         _itk_log.exception("Handled exception in _safe_positive")
         return False
 

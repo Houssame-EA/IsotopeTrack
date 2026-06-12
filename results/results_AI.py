@@ -100,7 +100,7 @@ def _fs(delta=0):
 
 def _safe_positive(v):
     try: v = float(v); return v > 0 and not np.isnan(v)
-    except:
+    except Exception:
         _itk_log.exception("Handled exception in _safe_positive")
         return False
 
@@ -111,7 +111,7 @@ def _extract_element_values(particles, field='elements'):
         if not isinstance(d, dict): continue
         for el, v in d.items():
             try: v = float(v)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _extract_element_values")
                 continue
             if v > 0 and not np.isnan(v): result.setdefault(el, []).append(v)
@@ -335,7 +335,7 @@ show_table(['Element','N','% total','Diam mean','Diam median','Diam p95','Mass m
         try:
             d = (float(p['end_time']) - float(p['start_time'])) * 1000
             if d > 0: durations_ms.append(d)
-        except:
+        except Exception:
             _itk_log.exception("Handled exception in _build_system_prompt")
 
     total_masses = _extract_total_values(particles, 'total_element_mass_fg')
@@ -667,7 +667,7 @@ def _execute_query_code(code, particles, dc):
     }
     try:
         from scipy import stats; ns['stats'] = stats
-    except:
+    except Exception:
         _itk_log.exception("Handled exception in _execute_query_code")
 
     out = io.StringIO(); err = [None]
@@ -770,7 +770,7 @@ class StreamWorker(QThread):
         self._cancelled.set()
         if self._resp:
             try: self._resp.close()
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in stop")
 
     def run(self):
@@ -852,7 +852,7 @@ class StreamWorker(QThread):
             if self._cancelled.is_set(): break
             if not line: continue
             try: chunk = json.loads(line)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _stream_ndjson")
                 continue
             content = chunk.get('message', {}).get('content', '')
@@ -895,7 +895,7 @@ class StreamWorker(QThread):
             ds = line[6:]
             if ds.strip() == '[DONE]': break
             try: ev = json.loads(ds)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _stream_sse")
                 continue
             content = ev.get('choices', [{}])[0].get('delta', {}).get('content', '')
@@ -924,7 +924,7 @@ class StreamWorker(QThread):
                 timeout=300, stream=True)
             if self._resp.status_code != 200:
                 try: detail = self._resp.json().get('error',{}).get('message','')
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in _run_custom_api")
                     detail = ''
                 self.error_occurred.emit(f"API HTTP {self._resp.status_code}: {detail}"); return
@@ -1063,7 +1063,7 @@ class BackendDialog(QDialog):
                     self._ollama_status.setText("⚠ No models found — run: ollama pull <model>")
             else:
                 self._ollama_status.setText(f"✗ Ollama returned HTTP {r.status_code}")
-        except:
+        except Exception:
             _itk_log.exception("Handled exception in _fetch_ollama_models")
             self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
 
@@ -1095,7 +1095,7 @@ class BackendDialog(QDialog):
                     self._custom_status.setText(f"✓ Connected — {len(models)} models")
                     if models and not self._custom_model.text():
                         self._custom_model.setText(models[0])
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in _test_custom")
                     self._custom_status.setText("✓ Connected")
             elif r.status_code in (401, 403):
@@ -1745,7 +1745,7 @@ class _NumericItem(QTableWidgetItem):
     def __lt__(self, other):
         def _num(s):
             try: return float(s.replace(',','').replace('%',''))
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _num")
                 return None
         a, b = _num(self.text()), _num(other.text())
@@ -1801,7 +1801,7 @@ class InteractiveTableBubble(QFrame):
                 [float(str(v).replace(",","").replace("%","")) for v in vals[:10]]
                 self._numeric_cols.append((i, h))
                 self._stats_col.addItem(h)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in __init__")
         sl.addWidget(self._stats_col)
         self._stats_lbl = QLabel("")
@@ -1912,7 +1912,7 @@ class InteractiveTableBubble(QFrame):
         for r in self._all_rows:
             if col_idx < len(r):
                 try: vals.append(float(str(r[col_idx]).replace(",","").replace("%","")))
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in _refresh_stats")
         if not vals:
             self._stats_lbl.setText("No numeric data"); return
@@ -1962,7 +1962,7 @@ class InteractiveTableBubble(QFrame):
             try:
                 v = float(str(r[col_idx]).replace(",","").replace("%",""))
                 labels.append(str(r[0])); values.append(v)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in _draw_chart")
         if not values: return
 

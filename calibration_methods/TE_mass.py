@@ -2880,7 +2880,7 @@ class MassMethodWidget(QMainWindow):
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
                 else:
                     sample_name = Path(folder_path).name
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in update_concentration_table")
                 sample_name = Path(folder_path).name
             
@@ -3149,7 +3149,7 @@ class MassMethodWidget(QMainWindow):
                 ss_res = np.sum(weights * (y - y_fit)**2)
                 ss_tot = np.sum(weights * (y - np.mean(y))**2)
                 r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in perform_ionic_calibration")
                 from scipy import stats
                 slope, intercept, r_value, _, _ = stats.linregress(x, y)

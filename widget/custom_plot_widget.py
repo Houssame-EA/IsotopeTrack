@@ -1406,7 +1406,7 @@ class PlotSettingsDialog(QDialog):
         rl.addWidget(QLabel("⬤")); rl.addWidget(QLabel(item_name))
 
         try: color = pg.mkBrush(item.opts.get('brush','r')).color()
-        except:
+        except Exception:
             _itk_log.exception("Handled exception in _scatter_row")
             color = QColor(255,0,0)
 
@@ -2511,7 +2511,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             except (IndexError, TypeError):
                 _itk_log.exception("Handled exception in _find_closest_scatter")
                 try: xd = pts['x']; yd = pts['y']
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in _find_closest_scatter")
                     continue
             dx = (xd - mx) / xr; dy = (yd - my) / yr
@@ -2630,7 +2630,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             if self.sceneBoundingRect().contains(pos):
                 mp = self.getPlotItem().vb.mapSceneToView(pos)
                 self.vertical_line.setPos(mp.x()); self.horizontal_line.setPos(mp.y())
-        except:
+        except Exception:
             _itk_log.exception("Handled exception in mouse_moved")
 
     def clear_plot(self):

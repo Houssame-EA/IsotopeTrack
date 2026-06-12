@@ -2434,7 +2434,7 @@ class IonicCalibrationWindow(QMainWindow):
                 with open(run_info_path, "r") as fp:
                     run_info = json.load(fp)
                 sample_name = run_info.get("SampleName", Path(folder).name)
-            except:
+            except Exception:
                 _itk_log.exception("Handled exception in update_table_rows")
                 sample_name = Path(folder).name
                 

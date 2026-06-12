@@ -4685,7 +4685,7 @@ class MainWindow(QMainWindow):
                     view_rect = self.plot_widget.viewRect()
                     current_x_range = [view_rect.left(), view_rect.right()]
                     current_y_range = [view_rect.top(), view_rect.bottom()]
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in parameters_table_clicked")
                     
             element_item = self.parameters_table.item(row, 0)
@@ -4749,7 +4749,7 @@ class MainWindow(QMainWindow):
                                 try:
                                     self.plot_widget.setXRange(current_x_range[0], current_x_range[1], padding=0)
                                     self.plot_widget.setYRange(current_y_range[1], current_y_range[0], padding=0)
-                                except:
+                                except Exception:
                                     _itk_log.exception("Handled exception in parameters_table_clicked")
                                     self.plot_widget.enableAutoRange()
                             else:
@@ -6605,7 +6605,7 @@ class MainWindow(QMainWindow):
                                     thresholds = self.element_thresholds[self.current_sample][element_key]
                                     background_val = thresholds.get('background', 0)
                                     threshold_val = thresholds.get('threshold', 0)
-                            except:
+                            except Exception:
                                 _itk_log.exception("Handled exception in highlight_multi_element_particle")
                             
                             element_data[display_label] = {
@@ -6845,7 +6845,7 @@ class MainWindow(QMainWindow):
             self.plot_widget.addItem(highlight_region)
             
             QTimer.singleShot(1500, lambda: self.plot_widget.removeItem(highlight_region))
-        except:
+        except Exception:
             _itk_log.exception("Handled exception in highlight_multi_element_particle")
                     
     def show_signal_selector(self):

@@ -2173,7 +2173,7 @@ class NumberMethodWidget(QMainWindow):
                 
                 try:
                     sample_name = self.calibration_data_table.item(row, 0).text()
-                except:
+                except Exception:
                     _itk_log.exception("Handled exception in calculate_transport_rates")
                     sample_name = f"Sample {row+1}"
                 
