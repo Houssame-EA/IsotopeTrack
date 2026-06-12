@@ -6,8 +6,8 @@
 
 | Name | Value |
 |------|-------|
-| `MASS_UNITS` | `{'ag': 1000.0, 'fg': 1.0, 'pg': 0.001, 'ng': 1e...` |
-| `MOLES_UNITS` | `{'amol': 1000.0, 'fmol': 1.0, 'pmol': 0.001, 'n...` |
+| `MASS_UNITS` | `{'ag': 1000.0, 'fg': 1.0, 'pg': 0.001, 'ng': 1e-06, 'µg':…` |
+| `MOLES_UNITS` | `{'amol': 1000.0, 'fmol': 1.0, 'pmol': 0.001, 'nmol': 1e-0…` |
 | `DIAMETER_UNITS` | `{'nm': 1.0, 'µm': 0.001}` |
 | `NUMBER_FORMATS` | `('decimal', 'scientific')` |
 | `_SETTINGS_ORG` | `'IsotopeTrack'` |
@@ -19,9 +19,6 @@
 ### `ExportUnits`
 
 Bundles the user's unit + formatting preferences.
-
-Defaults reproduce the original hardcoded behaviour (fg / fmol / nm,
-decimal notation, 4 decimals for mass, 6 for moles, 2 for diameter).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -38,48 +35,8 @@ decimal notation, 4 decimals for mass, 6 for moles, 2 for diameter).
 
 ## Functions
 
-### `load_units`
-
-```python
-def load_units() → ExportUnits
-```
-
-Load the user's saved preferences, falling back to defaults for any
-missing / invalid values.
-
-**Returns:**
-
-- `ExportUnits: Result of the operation.`
-
-### `save_units`
-
-```python
-def save_units(u: ExportUnits) → None
-```
-
-
-**Args:**
-
-- `u (ExportUnits): The u.`
-
-**Returns:**
-
-- `None`
-
-### `show_advanced_dialog`
-
-```python
-def show_advanced_dialog(parent, current: ExportUnits) → ExportUnits | None
-```
-
-Open the Advanced Options dialog and return the updated ExportUnits,
-or None if the user cancels.  Saves to QSettings on OK.
-
-**Args:**
-
-- `parent (Any): Parent widget or object.`
-- `current (ExportUnits): The current.`
-
-**Returns:**
-
-- `ExportUnits | None: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `load_units` | `() → ExportUnits` | Load the user's saved preferences, falling back to defaults for any |
+| `save_units` | `(u: ExportUnits) → None` | Args: |
+| `show_advanced_dialog` | `(parent, current: ExportUnits) → ExportUnits \| None` | Open the Advanced Options dialog and return the updated ExportUnits, |

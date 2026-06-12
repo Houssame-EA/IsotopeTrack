@@ -6,10 +6,10 @@
 
 | Name | Value |
 |------|-------|
-| `LINE_STYLE_MAP` | `{'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'D...` |
-| `LINE_STYLE_REVERSE` | `{v: k for k, v in LINE_STYLE_MAP.items()}` |
-| `SCATTER_SYMBOLS` | `{'Circle': 'o', 'Square': 's', 'Triangle Up': '...` |
-| `SCATTER_SYMBOLS_REVERSE` | `{v: k for k, v in SCATTER_SYMBOLS.items()}` |
+| `LINE_STYLE_MAP` | `{'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.Do…` |
+| `LINE_STYLE_REVERSE` | `{v: k for (k, v) in LINE_STYLE_MAP.items()}` |
+| `SCATTER_SYMBOLS` | `{'Circle': 'o', 'Square': 's', 'Triangle Up': 't', 'Trian…` |
+| `SCATTER_SYMBOLS_REVERSE` | `{v: k for (k, v) in SCATTER_SYMBOLS.items()}` |
 
 ## Classes
 
@@ -19,7 +19,7 @@ Edit a single trace: color, width, line style, legend name.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, curve_item, plot_widget, parent = None)` | Args: |
+| `__init__` | `(self, curve_item, plot_widget, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
 | `_refresh_color_btn` | `(self)` |  |
 | `_pick_color` | `(self)` |  |
@@ -31,7 +31,7 @@ Edit scatter points: fill color, symbol shape, size.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, scatter_item, plot_widget, parent = None)` | Args: |
+| `__init__` | `(self, scatter_item, plot_widget, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
 | `_pick_color` | `(self)` |  |
 | `_apply` | `(self)` |  |
@@ -42,10 +42,10 @@ Edit an axis label: text, units, font, size, bold/italic, color.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_widget, axis_name, parent = None)` | Args: |
+| `__init__` | `(self, plot_widget, axis_name, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
-| `_pick_color` | `(self)` |  |
-| `_apply` | `(self)` |  |
+| `_pick_color` | `(self)` | Select a color for the axis label text. |
+| `_apply` | `(self)` | Apply axis label text plus explicit styling to the target axis. |
 
 ### `TitleEditorDialog` *(extends `QDialog`)*
 
@@ -53,10 +53,10 @@ Edit the plot title.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_widget, parent = None)` | Args: |
-| `_setup_ui` | `(self)` |  |
-| `_pick_color` | `(self)` |  |
-| `_apply` | `(self)` |  |
+| `__init__` | `(self, plot_widget, parent=None, text_only: bool=False, title_apply_ca` | Args: |
+| `_setup_ui` | `(self)` | Build the title editor controls for the current plot widget. |
+| `_pick_color` | `(self)` | Select a title text color for the styled editor mode. |
+| `_apply` | `(self)` | Apply the edited title text, with optional style controls. |
 
 ### `LegendEditorDialog` *(extends `QDialog`)*
 
@@ -64,7 +64,7 @@ Edit legend appearance.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_widget, parent = None)` | Args: |
+| `__init__` | `(self, plot_widget, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
 | `_pick_color` | `(self)` |  |
 | `_apply` | `(self)` |  |
@@ -75,7 +75,7 @@ Edit background color and grid.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_widget, parent = None)` | Args: |
+| `__init__` | `(self, plot_widget, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
 | `_pick_bg` | `(self)` |  |
 | `_apply` | `(self)` |  |
@@ -84,20 +84,21 @@ Edit background color and grid.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_widget, parent = None)` | Args: |
-| `_setup_ui` | `(self)` |  |
-| `_create_font_tab` | `(self)` |  |
+| `__init__` | `(self, plot_widget, parent=None, show_apply: bool=True, allow_title_te` | Args: |
+| `_setup_ui` | `(self)` | Build PlotSettings tabs and bottom action buttons. |
+| `_create_font_tab` | `(self)` | Build global text-format controls for the current plot widget. |
 | `_create_grid_tab` | `(self)` |  |
 | `_create_traces_tab` | `(self)` |  |
 | `_populate_traces` | `(self)` |  |
 | `_curve_row` | `(self, item, index)` | Args: |
 | `_scatter_row` | `(self, item, index)` | Args: |
 | `_bar_row` | `(self, name, items, index)` | One row in the Traces tab for a group of BarGraphItems that |
+| `_toggle_particle_scatter` | `(self, checked: bool)` | Show or hide all particle integration scatter items on the plot. |
 | `_choose_color` | `(self, color_type)` | Args: |
-| `_load_persistent` | `(self)` |  |
-| `_save_persistent` | `(self)` |  |
-| `_apply_settings` | `(self)` |  |
-| `_reset_defaults` | `(self)` |  |
+| `_load_persistent` | `(self)` | Restore shared plot-format state from the target plot widget. |
+| `_save_persistent` | `(self)` | Persist shared plot-format state back onto the target plot widget. |
+| `_apply_settings` | `(self)` | Apply shared global plot-format settings to the live plot widget. |
+| `_reset_defaults` | `(self)` | Reset shared plot-format controls to their default values. |
 | `_accept_and_apply` | `(self)` |  |
 | `closeEvent` | `(self, event)` | Args: |
 
@@ -112,21 +113,9 @@ Edit background color and grid.
 
 A vertical shaded band marking an excluded X-range.
 
-Each region carries a ``scope``:
-- ``'element'`` : applies only to the element currently displayed.
-Drawn with a red dashed outline.
-- ``'sample'``  : applies to every element in the active sample.
-Drawn with a thicker blue solid outline so it is
-visually distinct from element-scope bands.
-
-Drag the middle to move, drag the edges to resize. Right-click on
-the band for a small menu (Remove / Edit bounds / Change scope /
-Clear all). The widget that owns this region is held as ``_owner``
-so the region can ask the owner to apply the chosen action.
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, values, owner, scope = 'element')` | Args: |
+| `__init__` | `(self, values, owner, scope='element')` | Args: |
 | `scope` | `(self)` | Returns: |
 | `set_scope` | `(self, scope)` | Change scope in-place (updates the visual styling). |
 | `mouseClickEvent` | `(self, ev)` | Args: |
@@ -137,16 +126,18 @@ so the region can ask the owner to apply the chosen action.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `setup_appearance` | `(self)` |  |
+| `apply_theme` | `(self, *args)` | Repaint background and all foreground elements (axes, tick text, |
+| `_style_legend` | `(self, legend)` | Apply theme colors to a legend (text, background, border). |
 | `setup_interaction_features` | `(self)` |  |
 | `_install_autorange_button` | `(self)` | Overlay a small auto-scale button in the top-right corner. |
 | `_reposition_autorange_btn` | `(self)` |  |
 | `resizeEvent` | `(self, event)` | Args: |
 | `_install_exclusion_context_menu` | `(self)` | Add 'Add exclusion region here (this element / whole sample)' and |
 | `_capture_context_menu_position` | `(self)` | Cache the data-X under the cursor when the context menu opens. |
-| `_add_exclusion_region_at_cursor` | `(self, scope = 'element')` | Create a new band centred on the last right-click X-position. |
-| `add_exclusion_region` | `(self, x_min, x_max, scope = 'element')` | Add a new exclusion band spanning [x_min, x_max] (data coords). |
+| `_add_exclusion_region_at_cursor` | `(self, scope='element')` | Create a new band centred on the last right-click X-position. |
+| `add_exclusion_region` | `(self, x_min, x_max, scope='element')` | Add a new exclusion band spanning [x_min, x_max] (data coords). |
 | `remove_exclusion_region` | `(self, region)` | Remove a single exclusion band. Emits exclusionRegionsChanged. |
 | `clear_exclusion_regions` | `(self)` | Remove every exclusion band. Emits exclusionRegionsChanged. |
 | `get_exclusion_regions` | `(self)` | Return excluded X-ranges as a list of (x_min, x_max, scope). |
@@ -157,8 +148,8 @@ so the region can ask the owner to apply the chosen action.
 | `clear` | `(self)` |  |
 | `open_plot_settings` | `(self)` |  |
 | `mouseDoubleClickEvent` | `(self, event)` | Hit-detection priority: |
-| `_find_closest_scatter` | `(self, scene_pos, threshold_px = 20)` | Args: |
-| `_find_closest_curve` | `(self, scene_pos, threshold_px = 15)` | Args: |
+| `_find_closest_scatter` | `(self, scene_pos, threshold_px=20)` | Args: |
+| `_find_closest_curve` | `(self, scene_pos, threshold_px=15)` | Args: |
 | `wheelEvent` | `(self, event)` | Args: |
 | `update_plot` | `(self, time_array, data)` | Args: |
 | `mouse_moved` | `(self, pos)` | Args: |
@@ -168,7 +159,7 @@ so the region can ask the owner to apply the chosen action.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `setup_basic_appearance` | `(self)` |  |
 | `_install_autorange_button` | `(self)` |  |
 | `_reposition_autorange_btn` | `(self)` |  |
@@ -183,32 +174,29 @@ Calibration plot with interactive exclusion of outlier points.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `setup_interaction_features` | `(self)` | Override: calibration plot uses no crosshair lines. |
 | `_setup_calibration_appearance` | `(self)` |  |
 | `_build_calibration_items` | `(self)` |  |
-| `setLabel` | `(self, axis, text, units = None, color = None, font = None)` | Args: |
+| `setLabel` | `(self, axis, text, units=None, color=None, font=None)` | Args: |
 | `setTitle` | `(self, title)` | Args: |
-| `update_plot` | `(self, x_data, y_data, y_std, method = 'zero', y_fit = None, key = 'Da` | Refresh the plot with new data. |
+| `update_plot` | `(self, x_data, y_data, y_std, method='zero', y_fit=None, key='Data', *` | Refresh the plot with new data. |
 | `clear_plot` | `(self)` |  |
 | `mouseDoubleClickEvent` | `(self, event)` | Args: |
 | `_redraw_markers` | `(self)` |  |
 | `_redraw_fit_line` | `(self)` |  |
 | `_redraw_equation` | `(self)` |  |
 | `_reposition_equation` | `(self)` |  |
-| `_on_scatter_clicked` | `(self, _plot, points, event = None)` | A single press on a scatter fires this. We queue the |
+| `_on_scatter_clicked` | `(self, _plot, points, event=None)` | A single press on a scatter fires this. We queue the |
 | `_emit_pending_click` | `(self)` |  |
 
 ### `BarEditorDialog` *(extends `QDialog`)*
 
 Simple editor for a single m/z bar: fill color.
 
-Operates directly on the bar meta-dict so changes are immediately
-reflected in the chart and survive subsequent data refreshes.
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, meta, parent = None)` | Args: |
+| `__init__` | `(self, meta, parent=None)` | Args: |
 | `_setup_ui` | `(self)` |  |
 | `_pick_fill` | `(self)` |  |
 | `_apply` | `(self)` |  |
@@ -217,196 +205,26 @@ reflected in the chart and survive subsequent data refreshes.
 
 Drop-in pg.PlotWidget for the inline m/z bar chart.
 
-Gives the same double-click-to-edit experience as EnhancedPlotWidget:
-
-Double-click title       → TitleEditorDialog
-Double-click left axis   → AxisLabelEditorDialog('left')
-Double-click bottom axis → AxisLabelEditorDialog('bottom')
-Double-click a bar       → BarEditorDialog  (fill color)
-Double-click empty area  → BackgroundEditorDialog
-Right-click anywhere     → 'Plot Settings…' → PlotSettingsDialog
-(Font + Grid tabs; Traces tab omitted
-because bars are not PlotDataItem objects)
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `open_plot_settings` | `(self)` |  |
 | `set_bar_meta` | `(self, meta)` | Store per-bar metadata dicts for hit-testing on double-click. |
 | `mouseDoubleClickEvent` | `(self, event)` | Hit-detection priority (same order as EnhancedPlotWidget): |
 
 ## Functions
 
-### `_editor_dialog_qss`
-
-```python
-def _editor_dialog_qss()
-```
-
-Stylesheet applied to every small plot editor dialog
-(TraceEditor, ScatterEditor, AxisLabelEditor, TitleEditor,
-LegendEditor, BackgroundEditor, etc). Pulls from the current theme.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_editor_header_qss`
-
-```python
-def _editor_header_qss()
-```
-
-Header label at the top of each editor dialog (was '#2c3e50' bold).
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_editor_ok_button_qss`
-
-```python
-def _editor_ok_button_qss()
-```
-
-Primary OK/Apply button. Was hardcoded #3498db → #2980b9.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_editor_cancel_button_qss`
-
-```python
-def _editor_cancel_button_qss()
-```
-
-Neutral Cancel button. Was hardcoded #95a5a6 → #7f8c8d.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_color_swatch_qss`
-
-```python
-def _color_swatch_qss(hex_color)
-```
-
-Small color picker swatch. hex_color may be any valid CSS color.
-
-**Args:**
-
-- `hex_color (Any): The hex color.`
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_tall_color_swatch_qss`
-
-```python
-def _tall_color_swatch_qss(hex_color)
-```
-
-Full-width color swatch used in the PlotSettingsDialog form rows
-(font color / background color / grid color). Keeps the border
-theme-aware so the button doesn't look pasted-on in dark mode.
-
-**Args:**
-
-- `hex_color (Any): The hex color.`
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_hint_label_qss`
-
-```python
-def _hint_label_qss()
-```
-
-Italic tip / hint labels (the 'Double-click any element…' line and
-the 'Edit all traces…' header on the Traces tab). Used to be hardcoded
-#555/#666/#999 which is unreadable in dark mode.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_trace_row_qss`
-
-```python
-def _trace_row_qss()
-```
-
-Per-trace row background on the Traces tab (formerly hardcoded white
-`#fff`). Uses the theme's tertiary surface in both light and dark mode,
-with a left-edge accent bar to visually distinguish it from scatter rows.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_scatter_row_qss`
-
-```python
-def _scatter_row_qss()
-```
-
-Per-scatter row background on the Traces tab (formerly cream `#fff8f0`
-with an orange accent). Shares the same dark surface as trace rows but
-uses a 'success' / teal left-edge accent so scatter vs. line is still
-visually distinguishable — no more olive-yellow warning color showing up
-in dark mode.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_inline_apply_btn_qss`
-
-```python
-def _inline_apply_btn_qss(variant = 'primary')
-```
-
-Small 'Apply' button rendered inside each trace/scatter row.
-`variant` is either 'primary' (trace rows) or 'warn' (scatter rows).
-Theme-aware replacement for the old hardcoded blue/orange — the
-'warn' variant now uses the theme's success color to stay readable.
-
-**Args:**
-
-- `variant (Any): The variant.`
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_install_theme_subscription`
-
-```python
-def _install_theme_subscription(dialog)
-```
-
-Attach the editor_dialog_qss to a dialog AND keep it updated when the
-user toggles theme. Safe to call from any editor dialog's __init__.
-
-**Args:**
-
-- `dialog (Any): Parent or target dialog.`
-
-### `get_system_font_families`
-
-```python
-def get_system_font_families()
-```
-
-Get available system font families from Qt font database,
-sorted with common scientific fonts first.
-
-
-**Returns:**
-
-- `list: Sorted list of font family names`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_editor_dialog_qss` | `()` | Stylesheet applied to every small plot editor dialog |
+| `_editor_header_qss` | `()` | Header label at the top of each editor dialog (was '#2c3e50' bold). |
+| `_editor_ok_button_qss` | `()` | Primary OK/Apply button. Was hardcoded #3498db → #2980b9. |
+| `_editor_cancel_button_qss` | `()` | Neutral Cancel button. Was hardcoded #95a5a6 → #7f8c8d. |
+| `_color_swatch_qss` | `(hex_color)` | Small color picker swatch. hex_color may be any valid CSS color. |
+| `_tall_color_swatch_qss` | `(hex_color)` | Full-width color swatch used in the PlotSettingsDialog form rows |
+| `_hint_label_qss` | `()` | Italic tip / hint labels (the 'Double-click any element…' line and |
+| `_trace_row_qss` | `()` | Per-trace row background on the Traces tab (formerly hardcoded white |
+| `_scatter_row_qss` | `()` | Per-scatter row background on the Traces tab (formerly cream `#fff8f0` |
+| `_inline_apply_btn_qss` | `(variant='primary')` | Small 'Apply' button rendered inside each trace/scatter row. |
+| `_install_theme_subscription` | `(dialog)` | Attach the editor_dialog_qss to a dialog AND keep it updated when the |
+| `get_system_font_families` | `()` | Get available system font families from Qt font database, |

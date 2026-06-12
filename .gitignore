@@ -49,3 +49,4 @@ test_data/logs/
 # ── Generated ─────────────────────────────────────────────────────────────────
 _rth_no_pyarrow.py
 example_data/
+site/

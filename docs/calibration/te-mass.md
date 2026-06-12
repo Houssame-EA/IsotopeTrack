@@ -8,13 +8,25 @@
 
 QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes.
 
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `wheelEvent` | `(self, event)` |  |
+
 ### `NoWheelIntSpinBox` *(extends `QSpinBox`)*
 
 QSpinBox that ignores mouse-wheel to prevent accidental changes.
 
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `wheelEvent` | `(self, event)` |  |
+
 ### `NoWheelComboBox` *(extends `QComboBox`)*
 
 QComboBox that ignores mouse-wheel to prevent accidental changes.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `wheelEvent` | `(self, event)` |  |
 
 ### `CollapsibleSection` *(extends `QWidget`)*
 
@@ -22,37 +34,31 @@ Themed collapsible panel. Click header to expand/collapse.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title: str, parent = None)` | Args: |
+| `__init__` | `(self, title: str, parent=None)` | Args: |
 | `toggle` | `(self)` |  |
-| `collapse` | `(self, status: str = '')` | Args: |
+| `collapse` | `(self, status: str='')` | Args: |
 | `expand` | `(self)` |  |
-
-### `PeriodicTableDialog` *(extends `QDialog`)*
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Initialize the Periodic Table Dialog for element selection. |
-| `on_selection_confirmed` | `(self, selected_data)` | Handle when user confirms their element selection. |
-| `on_isotope_selected` | `(self, symbol, mass, abundance)` | Track individual isotope selections. |
-| `update_available_masses` | `(self, masses)` | Update the periodic table with available masses. |
+| `set_status` | `(self, text: str)` |  |
+| `is_expanded` | `(self)` |  |
 
 ### `MassMethodWidget` *(extends `QMainWindow`)*
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Initialize the Mass Method Widget for mass-based calibration. |
+| `__init__` | `(self, parent=None)` | Initialize the Mass Method Widget for mass-based calibration. |
 | `apply_theme` | `(self, *_)` | Re-apply themed stylesheet; refresh plots and dynamic labels. |
-| `_mark_button_modified` | `(self, button, modified = True)` | Toggle the 'warning' look on a button to indicate unsaved / |
+| `_mark_button_modified` | `(self, button, modified=True)` | Toggle the 'warning' look on a button to indicate unsaved / |
 | `initUI` | `(self)` | Single-page collapsible layout replacing the 5-tab structure. |
 | `_build_samples_content` | `(self)` | Section 1 — sample folder selection. |
 | `_build_element_content` | `(self)` | Section 2 — element / isotope selection. |
 | `_build_detection_content` | `(self)` | Section 3 — 12-column detection parameters + detect button. |
 | `_build_plot` | `(self, parent_layout)` | Always-visible signal visualization plot. |
-| `_build_detection_results_content` | `(self)` | Section 4 — results table (left) | file info table (right). |
+| `_build_detection_results_content` | `(self)` | Section 4 — results table (left) \| file info table (right). |
 | `_hint` | `(text: str) → QLabel` | Convenience: create a styled hint label. |
 | `_build_analysis_results_content` | `(self)` | Section 6 — Mass Analysis regression + Transport Rate + Diameter Distribution. |
 | `_build_ionic_calibration_content` | `(self)` | Section 5 — Ionic calibration setup + visualization. |
-| `show_periodic_table` | `(self)` | Show the periodic table dialog for element selection. |
+| `show_periodic_table` | `(self)` |  |
+| `_handle_selection_confirmed` | `(self, selected_data)` |  |
 | `update_folder_list` | `(self)` | Update the folder list widget with selected folders - supports folders, CSV, and TOFWERK. |
 | `enable_ui_elements` | `(self)` | Enable UI elements after successful folder loading. |
 | `on_element_selected` | `(self, element)` | Handle element selection from periodic table. |

@@ -11,14 +11,23 @@ Full settings dialog opened from the right-click → Configure… action.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, config: dict, available_elements: list, is_multi: bool, sample_` | Args: |
-| `_build_ui` | `(self)` | Returns: |
-| `_on_mode_changed` | `(self)` |  |
+| `_sample_point_colors_available` | `(self) → bool` | Return whether sample-owned colors currently drive scatter points. |
+| `_sample_point_color_unavailable_text` | `(self) → str` | Return the explanatory note for disabled sample point colors. |
+| `_style_color_button` | `(self, button: QPushButton, color: str) → None` | Apply a compact swatch preview to a Correlation color button. |
+| `_sample_display_label` | `(self, sample_name: str) → str` | Return the visible display label for one raw sample key. |
+| `_pick_single_sample_color` | `(self) → None` | Pick the actual single-sample scatter point color. |
+| `_pick_sample_color` | `(self, sample_name: str, button: QPushButton) → None` | Pick one canonical scatter color for a raw multi-sample key. |
+| `_reset_sample_color` | `(self, sample_name: str, sample_index: int, button: QPushButton) → Non` | Reset one sample color override back to palette fallback. |
+| `_build_ui` | `(self)` | Build settings UI sections and mark each section as format or quantities. |
+| `_apply_scope_visibility` | `(self)` | Show only relevant setting groups for the current route scope. |
+| `_on_mode_changed` | `(self)` | Toggle simple/custom selector groups for quantity-editing routes. |
 | `_on_eq_changed` | `(self)` | Auto-populate axis labels from equation text when label is blank or was auto. |
 | `_move_up` | `(self)` |  |
 | `_move_down` | `(self)` |  |
 | `_pick_sd_color` | `(self)` |  |
 | `_pick_ref_color` | `(self)` |  |
-| `collect` | `(self) → dict` | Return the updated config dict. |
+| `_pick_font_color` | `(self)` | Pick the font/text color used for axis labels and overlay text. |
+| `collect` | `(self) → dict` | Return scope-safe config updates for format/quantities routes. |
 
 ### `AutoCorrelationDialog` *(extends `QDialog`)*
 
@@ -26,7 +35,7 @@ Table of top correlations — double-click to jump to that pair.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, top_pairs: list, parent = None)` | Args: |
+| `__init__` | `(self, top_pairs: list, parent=None)` | Args: |
 | `_build` | `(self)` |  |
 | `_on_double_click` | `(self, index)` | Args: |
 
@@ -34,44 +43,54 @@ Table of top correlations — double-click to jump to that pair.
 
 Full-figure correlation dialog.
 
-Right-click anywhere on the plot to access:
-- Quick toggles (log axes, trend line, correlation coeff)
-- Data type switching
-- Auto-detect correlations
-- Full settings dialog
-- Download
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, correlation_node, parent_window = None)` | Args: |
+| `normalize_display_mode` | `(mode: str) → str` | Normalize legacy Correlation display modes to active UI modes. |
+| `__init__` | `(self, correlation_node, parent_window=None)` | Args: |
 | `_is_multi` | `(self) → bool` | Returns: |
 | `_sample_names` | `(self) → list` | Returns: |
+| `_ordered_plot_data_items` | `(self, plot_data)` | Return plot_data items in configured sample order when available. |
 | `_available_elements` | `(self) → list` | Returns: |
-| `_setup_ui` | `(self)` |  |
-| `_refresh_hint` | `(self)` |  |
-| `_show_context_menu` | `(self, pos)` | Args: |
+| `_setup_ui` | `(self)` | Build the Correlation dialog with a full-width four-button action row. |
+| `_show_context_menu` | `(self, pos)` | Show Correlation right-click actions with mode-aware subplot export. |
 | `_add_toggle` | `(self, menu, label, key)` | Args: |
 | `_toggle` | `(self, key, value)` | Args: |
 | `_set_data_type` | `(self, dt)` | Args: |
 | `_set_elem` | `(self, key, elem)` | Args: |
-| `_set_display_mode` | `(self, mode)` | Args: |
-| `_open_settings` | `(self)` |  |
+| `_set_display_mode` | `(self, mode)` | Set display mode using alias-normalized values and refresh. |
+| `_open_plot_format_settings` | `(self)` | Open scoped visual formatting controls and refresh on apply. |
+| `_open_configure_plot_quantities` | `(self)` | Open scoped quantity controls and refresh on apply. |
+| `_reset_layout` | `(self)` | Reset current view layout by re-enabling axis autorange and redrawing. |
+| `_export_figure` | `(self)` | Export the full Correlation figure with the shared export workflow. |
+| `_plot_item_at` | `(self, pos)` | Resolve the clicked PlotItem using scene-space hit testing. |
+| `_sanitize_filename_token` | `(self, text: str) → str` | Sanitize subplot names for use in export filename stems. |
+| `_export_subplot` | `(self, plot_item, subplot_ctx: dict)` | Export only the clicked subplot while reusing full export options. |
 | `_open_plot_settings` | `(self)` | Open PlotSettingsDialog via the adapter bridge. |
 | `_click_to_data_coords` | `(self, widget_pos) → tuple` | Convert a right-click position in plot_widget coords to data coords |
 | `_current_xy_arrays` | `(self)` | Return (x_array, y_array) pooled across samples in the plot's |
 | `_build_smart_actions` | `(self) → list` | Data-aware smart actions for correlation plots. |
 | `_auto_detect_correlations` | `(self)` |  |
 | `_apply_auto_pair` | `(self, x_elem, y_elem)` | Args: |
-| `_cleanup_color_bars` | `(self)` |  |
-| `_refresh` | `(self)` |  |
+| `_cleanup_color_bars` | `(self)` | Remove any existing per-plot color bars before a redraw. |
+| `_suppress_native_plot_menus` | `(self)` | Disable native PyQtGraph right-click menus for Correlation plot items. |
+| `_refresh` | `(self)` | Redraw Correlation plots from current config without changing math semantics. |
 | `_extract_xy_color` | `(self, df, cfg)` | Extract (x, y, color_or_None) arrays from a DataFrame and config. |
 | `_prepare_data` | `(self, df, cfg)` | Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting. |
-| `_plot_scatter` | `(self, pi, x, y, c, cfg, color)` | Add scatter + optional trend + SD envelope + ref line + box to a PlotItem. |
+| `_plot_scatter` | `(self, pi, x, y, c, cfg, color, correlation_label: str \| None=None, co` | Add scatter + overlays to a PlotItem using already-prepared sample data. |
 | `_apply_labels` | `(self, pi, cfg)` | Args: |
 | `_draw_single` | `(self, pi, plot_data, cfg)` | Args: |
-| `_draw_subplots` | `(self, plot_data, cfg)` | Args: |
-| `_draw_side_by_side` | `(self, plot_data, cfg)` | Args: |
-| `_draw_combined` | `(self, pi, plot_data, cfg)` | Args: |
+| `_draw_subplots` | `(self, plot_data, cfg)` | Draw one subplot per sample and register subplot-export context. |
+| `_draw_side_by_side` | `(self, plot_data, cfg)` | Draw one panel per sample in one row and register export context. |
+| `_draw_combined` | `(self, pi, plot_data, cfg)` | Draw all samples overlaid in one panel with capped per-sample r labels. |
+| `_add_no_valid_data_message` | `(self, pi, text: str='No valid paired data after filtering.')` | Show a centered non-modal empty-data message in the given PlotItem. |
+
+### `CorrelationGraphicsLayoutWidget` *(extends `EnhancedGraphicsLayoutWidget`)*
+
+Correlation-local GraphicsLayout widget with double-click editor suppression.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `mouseDoubleClickEvent` | `(self, event)` | Consume double-click events to suppress incompatible style editors. |
 
 ### `CorrelationPlotNode` *(extends `QObject`)*
 
@@ -79,7 +98,7 @@ Correlation plot node with multiple sample support and auto-detection.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `set_position` | `(self, pos)` | Args: |
 | `configure` | `(self, parent_window)` | Args: |
 | `process_data` | `(self, input_data)` | Args: |
