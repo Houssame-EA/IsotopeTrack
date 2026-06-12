@@ -991,7 +991,7 @@ class AnnotationManager(QObject):
             self._wrappers[data['id']] = w
         except Exception as e:
             _itk_log.exception("Handled exception in _build_wrapper")
-            print(f"[annotations] failed to build {data.get('type')}: {e}")
+            _itk_log.error(f"[annotations] failed to build {data.get('type')}: {e}")
 
     # ── insert mode ─────────────────────────────────
 
@@ -1056,7 +1056,7 @@ class AnnotationManager(QObject):
                 self.add_new(self._insert_type, float(data_pt.x()), float(data_pt.y()))
             except Exception as e:
                 _itk_log.exception("Handled exception in _on_scene_clicked")
-                print(f"[annotations] insert failed: {e}")
+                _itk_log.error(f"[annotations] insert failed: {e}")
             finally:
                 self._insert_type = None
             try:

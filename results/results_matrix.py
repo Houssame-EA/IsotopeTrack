@@ -458,7 +458,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error refreshing correlation matrix: {e}")
+            _itk_log.error(f"Error refreshing correlation matrix: {e}")
             import traceback; traceback.print_exc()
 
     def _draw_single(self, data, cfg):

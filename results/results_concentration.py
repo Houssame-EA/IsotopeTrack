@@ -576,7 +576,7 @@ class ConcentrationDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error refreshing concentration plot: {e}")
+            _itk_log.error(f"Error refreshing concentration plot: {e}")
             import traceback; traceback.print_exc()
 
     # ── Core drawing ───────────────────────────────────────────────────

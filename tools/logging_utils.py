@@ -1564,14 +1564,14 @@ class EnhancedLoggingManager:
             self._logger.addHandler(fh)
         except Exception as exc:
             _itk_log.exception("Handled exception in _setup_logging")
-            print(f"[logging_utils] Could not create rotating log file: {exc}")
+            _itk_log.error(f"[logging_utils] Could not create rotating log file: {exc}")
 
         jsonl_path = LOG_DIR / f"isotope_track_{stamp}.jsonl"
         try:
             self._logger.addHandler(JsonlFileHandler(jsonl_path))
         except Exception as exc:
             _itk_log.exception("Handled exception in _setup_logging")
-            print(f"[logging_utils] Could not create JSONL log file: {exc}")
+            _itk_log.error(f"[logging_utils] Could not create JSONL log file: {exc}")
 
         self._buffer_handler = _BufferHandler(self._pre_window_buffer)
         self._buffer_handler.setLevel(logging.DEBUG)

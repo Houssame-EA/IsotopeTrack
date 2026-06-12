@@ -398,7 +398,7 @@ def export_data(main_window):
             except Exception as e:
                 _itk_log.exception("Handled exception in export_data")
                 failed_exports.append(("Summary file", str(e)))
-                print(f"Error creating summary file: {str(e)}")
+                _itk_log.error(f"Error creating summary file: {str(e)}")
 
         if export_type in ["all", "samples"]:
             for sample_name in selected_samples:
@@ -420,7 +420,7 @@ def export_data(main_window):
                 except Exception as e:
                     _itk_log.exception("Handled exception in export_data")
                     failed_exports.append((sample_name, str(e)))
-                    print(f"Error exporting {sample_name}: {str(e)}")
+                    _itk_log.error(f"Error exporting {sample_name}: {str(e)}")
                     continue
 
         if successful_exports > 0:
@@ -438,7 +438,7 @@ def export_data(main_window):
 
     except Exception as e:
         QMessageBox.critical(main_window, "Export Error", f"Error during export: {str(e)}")
-        print(f"Export error: {str(e)}")
+        _itk_log.error(f"Export error: {str(e)}")
         return False
 
 def export_saturation_filter_info(main_window, summary_file, selected_samples):
@@ -808,7 +808,7 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
                                     
         except Exception as e:
             _itk_log.exception("Handled exception in export_summary_file_with_mass_fractions")
-            print(f"Error processing {sample_name} for summary: {str(e)}")
+            _itk_log.error(f"Error processing {sample_name} for summary: {str(e)}")
             continue
     
     for row in total_particles_data:

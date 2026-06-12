@@ -985,7 +985,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating SM display: {e}")
+            _itk_log.error(f"Error updating SM display: {e}")
             import traceback; traceback.print_exc()
 
 
@@ -1388,7 +1388,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             self.table.resizeColumnsToContents()
         except Exception as e:
             _itk_log.exception("Handled exception in _update_table")
-            print(f"Table update error: {e}")
+            _itk_log.error(f"Table update error: {e}")
 
 
 # ── Node ───────────────────────────────────────────────────────────────

@@ -480,7 +480,7 @@ class NumberMethodWidget(QMainWindow):
                 self._on_exclusion_regions_changed)
         except Exception as e:
             _itk_log.exception("Handled exception in _build_plot")
-            print(f"Could not connect exclusionRegionsChanged: {e}")
+            _itk_log.error(f"Could not connect exclusionRegionsChanged: {e}")
 
         parent_layout.addWidget(plot_group)
 
@@ -674,7 +674,7 @@ class NumberMethodWidget(QMainWindow):
                         all_masses_from_files.extend(masses)
                     except Exception as mass_error:
                         _itk_log.exception("Handled exception in handle_tofwerk_import")
-                        print(f"Warning: Could not get masses from {h5_path}: {mass_error}")
+                        _itk_log.error(f"Warning: Could not get masses from {h5_path}: {mass_error}")
                         masses = []
                     
                     self.folder_data[h5_path] = {
@@ -699,7 +699,7 @@ class NumberMethodWidget(QMainWindow):
                     }
                     self.sample_name_to_folder[sample_name] = h5_path
                     
-                    print(f"Warning: Error loading {sample_name}: {str(e)}")
+                    _itk_log.error(f"Warning: Error loading {sample_name}: {str(e)}")
                     continue
             
             progress.setValue(80)
@@ -848,7 +848,7 @@ class NumberMethodWidget(QMainWindow):
                         all_masses_from_folders.extend(masses)
                     except Exception as mass_error:
                         _itk_log.exception("Handled exception in handle_folder_import")
-                        print(f"Warning: Could not get masses from {folder_path}: {mass_error}")
+                        _itk_log.error(f"Warning: Could not get masses from {folder_path}: {mass_error}")
                         masses = []
                     
                     self.folder_data[folder_path] = {
@@ -871,7 +871,7 @@ class NumberMethodWidget(QMainWindow):
                     }
                     self.sample_name_to_folder[sample_name] = folder_path
                     
-                    print(f"Warning: Error loading {sample_name}: {str(e)}")
+                    _itk_log.error(f"Warning: Error loading {sample_name}: {str(e)}")
                     continue
             
             progress.setValue(80)
@@ -1083,7 +1083,7 @@ class NumberMethodWidget(QMainWindow):
             self.sample_name_to_folder[sample_name] = csv_file_path
             self.folder_paths.append(csv_file_path)
             
-            print(f"CSV sample '{sample_name}' processed successfully")
+            _itk_log.debug(f"CSV sample '{sample_name}' processed successfully")
             
             expected_files = len(self.csv_config['files']) if self.csv_config else 0
             processed_files = len([s for s in self.sample_name_to_folder.values() if str(s).endswith('.csv')])
@@ -1095,11 +1095,11 @@ class NumberMethodWidget(QMainWindow):
                 self.update_sample_table()
                 self.enable_ui_elements()
                 
-                print(f"All CSV files processed successfully ({processed_files} samples)")
+                _itk_log.debug(f"All CSV files processed successfully ({processed_files} samples)")
                 
         except Exception as e:
             _itk_log.exception("Handled exception in handle_csv_finished")
-            print(f"Error processing CSV data for {sample_name}: {str(e)}")
+            _itk_log.error(f"Error processing CSV data for {sample_name}: {str(e)}")
 
     def handle_csv_error(self, error_message):
         """
@@ -1226,11 +1226,11 @@ class NumberMethodWidget(QMainWindow):
                                 break
                         except Exception as e:
                             _itk_log.exception("Handled exception in show_periodic_table")
-                            print(f"Could not get masses from {folder_path}: {e}")
+                            _itk_log.error(f"Could not get masses from {folder_path}: {e}")
                             continue
             except Exception as e:
                 _itk_log.exception("Handled exception in show_periodic_table")
-                print(f"Error getting masses for periodic table: {e}")
+                _itk_log.error(f"Error getting masses for periodic table: {e}")
         
         if not self.all_masses or len(self.all_masses) == 0:
             QMessageBox.warning(
@@ -1455,7 +1455,7 @@ class NumberMethodWidget(QMainWindow):
                     
             except Exception as e:
                 error_msg = f"Error loading data for {sample_name}: {str(e)}"
-                print(error_msg)
+                _itk_log.error(error_msg)
                 QMessageBox.warning(self, "Data Loading Error", error_msg)
                 self.folder_data[folder_path]['status'] = f'Error: {str(e)}'
                 continue
@@ -1491,7 +1491,7 @@ class NumberMethodWidget(QMainWindow):
             plot_regions = self.plot_widget.get_exclusion_regions()
         except Exception as e:
             _itk_log.exception("Handled exception in _on_exclusion_regions_changed")
-            print(f"get_exclusion_regions failed: {e}")
+            _itk_log.error(f"get_exclusion_regions failed: {e}")
             return
 
         new_store = []
@@ -1578,7 +1578,7 @@ class NumberMethodWidget(QMainWindow):
                 pass
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
-            print(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")
+            _itk_log.error(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")
 
     def plot_raw_signal_preview(self, folder_path, sample_name):
         """

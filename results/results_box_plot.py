@@ -1875,7 +1875,7 @@ class BoxPlotDisplayDialog(QDialog):
             self._update_stats(plot_data, multi)
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating distribution plot: {e}")
+            _itk_log.error(f"Error updating distribution plot: {e}")
             import traceback; traceback.print_exc()
     def _draw_single_sample(self, pi, data, cfg):
         """Draw one sample panel with element-only x-axis labels.

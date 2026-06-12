@@ -801,7 +801,7 @@ def read_detection_row(table, row):
         }
     except Exception as exc:
         _itk_log.exception("Handled exception in read_detection_row")
-        print(f"Warning: falling back to defaults for row {row}: {exc}")
+        _itk_log.error(f"Warning: falling back to defaults for row {row}: {exc}")
         return dict(DEFAULT_DETECTION_PARAMS)
 
 

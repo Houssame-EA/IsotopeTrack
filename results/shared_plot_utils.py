@@ -789,7 +789,7 @@ def apply_font_to_pyqtgraph(plot_item, config: dict):
         )
     except Exception as e:
         _itk_log.exception("Handled exception in apply_font_to_pyqtgraph")
-        print(f"Error applying pyqtgraph font settings: {e}")
+        _itk_log.error(f"Error applying pyqtgraph font settings: {e}")
 
 
 def set_axis_labels(plot_item, x_label: str, y_label: str, config: dict):
@@ -863,7 +863,7 @@ def apply_font_to_matplotlib(ax, config: dict):
                     _apply_font_to_colorbar(cbar, fc)
     except Exception as e:
         _itk_log.exception("Handled exception in apply_font_to_matplotlib")
-        print(f"Error applying matplotlib font settings: {e}")
+        _itk_log.error(f"Error applying matplotlib font settings: {e}")
 
 
 def make_font_properties(config: dict):
@@ -925,7 +925,7 @@ def apply_font_to_ternary(ax, config: dict):
             ax.set_title(title, fontproperties=fp, color=fc['color'])
     except Exception as e:
         _itk_log.exception("Handled exception in apply_font_to_ternary")
-        print(f"Error applying ternary font settings: {e}")
+        _itk_log.error(f"Error applying ternary font settings: {e}")
 
 
 def _apply_font_to_colorbar(cbar, fc: dict):
@@ -992,7 +992,7 @@ def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.Data
     numeric_df = element_data.select_dtypes(include='number')
     mask = (numeric_df < threshold).all(axis=1)
     filtered = element_data[mask]
-    print(f"Saturation filter: {len(element_data)} → {len(filtered)} particles (threshold={threshold})")
+    _itk_log.debug(f"Saturation filter: {len(element_data)} → {len(filtered)} particles (threshold={threshold})")
     return filtered
 
 
@@ -1596,7 +1596,7 @@ class CustomColorBar:
             return self.items
         except Exception as e:
             _itk_log.exception("Handled exception in create")
-            print(f"Error creating color bar: {e}")
+            _itk_log.error(f"Error creating color bar: {e}")
             return []
 
     def remove(self):
@@ -1695,7 +1695,7 @@ def create_color_mapped_scatter(plot_item, x, y, color_values, config,
         return scatter
     except Exception as e:
         _itk_log.exception("Handled exception in create_color_mapped_scatter")
-        print(f"Error creating color-mapped scatter: {e}")
+        _itk_log.error(f"Error creating color-mapped scatter: {e}")
         return create_single_color_scatter(plot_item, x, y, config, base_color)
 
 
@@ -1717,7 +1717,7 @@ def add_trend_line(plot_item, x, y, color):
                 pen=pg.mkPen(color=color, style=Qt.DashLine, width=2)))
     except Exception as e:
         _itk_log.exception("Handled exception in add_trend_line")
-        print(f"Error adding trend line: {e}")
+        _itk_log.error(f"Error adding trend line: {e}")
 
 
 def add_correlation_text(plot_item, x, y, config):
@@ -1739,7 +1739,7 @@ def add_correlation_text(plot_item, x, y, config):
                       vr[1][0] + 0.95 * (vr[1][1] - vr[1][0]))
     except Exception as e:
         _itk_log.exception("Handled exception in add_correlation_text")
-        print(f"Error adding correlation text: {e}")
+        _itk_log.error(f"Error adding correlation text: {e}")
 
 
 # ─────────────────────────────────────────────
@@ -2883,7 +2883,7 @@ def _add_stat_lines_hist(plot_item, values: np.ndarray, cfg: dict):
             ))
         except Exception as e:
             _itk_log.exception("Handled exception in _add_stat_lines_hist")
-            print(f'[mode marker] {e}')
+            _itk_log.error(f'[mode marker] {e}')
 
 
 def _add_det_limit_v(plot_item, cfg: dict):

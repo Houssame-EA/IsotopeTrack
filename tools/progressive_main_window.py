@@ -270,7 +270,7 @@ class ProgressiveMainWindow(QObject):
             QApplication.processEvents()
         except Exception as e:
             _itk_log.exception("Handled exception in step_preload_mass_fraction_db")
-            print(f"[ProgressiveMainWindow] CSV preload skipped: {e}")
+            _itk_log.error(f"[ProgressiveMainWindow] CSV preload skipped: {e}")
             QApplication.processEvents()
 
     def log_status(self, message: str):

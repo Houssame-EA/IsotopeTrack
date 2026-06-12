@@ -100,7 +100,7 @@ def save_session_to_csv(file_path: str, session_data: Dict[str, Any], ionic_wind
         if summary_stats_5sec:
             save_summary_csv(file_path, summary_stats_5sec)
             
-        print(f"Session saved successfully to {main_csv_path}")
+        _itk_log.debug(f"Session saved successfully to {main_csv_path}")
         
     except Exception as e:
         raise Exception(f"Failed to save session: {str(e)}")
@@ -184,7 +184,7 @@ def extract_5sec_summary_stats(ionic_window) -> Dict[str, Any]:
         
     except Exception as e:
         _itk_log.exception("Handled exception in extract_5sec_summary_stats")
-        print(f"Error extracting summary statistics: {str(e)}")
+        _itk_log.error(f"Error extracting summary statistics: {str(e)}")
         return {}
     
     return summary_stats
@@ -239,11 +239,11 @@ def save_summary_csv(base_file_path: str, summary_stats: Dict[str, Any]) -> None
                 writer = csv.DictWriter(csvfile, fieldnames=summary_rows[0].keys())
                 writer.writeheader()
                 writer.writerows(summary_rows)
-            print(f"Saved summary statistics: {summary_csv_path}")
+            _itk_log.debug(f"Saved summary statistics: {summary_csv_path}")
         
     except Exception as e:
         _itk_log.exception("Handled exception in save_summary_csv")
-        print(f"Error saving summary statistics: {str(e)}")
+        _itk_log.error(f"Error saving summary statistics: {str(e)}")
 
 def load_session_from_csv(file_path: str) -> Dict[str, Any]:
     """
@@ -313,5 +313,5 @@ def load_summary_stats_from_csv(base_file_path: str) -> Dict[str, Any]:
         
     except Exception as e:
         _itk_log.exception("Handled exception in load_summary_stats_from_csv")
-        print(f"Error loading summary statistics: {str(e)}")
+        _itk_log.error(f"Error loading summary statistics: {str(e)}")
         return {}

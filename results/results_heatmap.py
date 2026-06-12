@@ -661,7 +661,7 @@ class HeatmapDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error refreshing heatmap: {e}")
+            _itk_log.error(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
 
     # ── Multi-sample dispatch ───────────────
@@ -1144,6 +1144,6 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
         return combos or None
     except Exception as e:
         _itk_log.exception("Handled exception in _build_combinations")
-        print(f"Error building combinations: {e}")
+        _itk_log.error(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None

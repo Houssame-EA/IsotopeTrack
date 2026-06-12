@@ -1446,7 +1446,7 @@ class IonicCalibrationWindow(QMainWindow):
             element, mass = isotope_key.split('-')
             isotope_label = self.get_isotope_label(element, float(mass))
             best_r2 = r_squared_values[best_method_key]
-            print(f"Auto-selected {best_method_display} for {isotope_label} (R² = {best_r2:.4f})")
+            _itk_log.debug(f"Auto-selected {best_method_display} for {isotope_label} (R² = {best_r2:.4f})")
 
     def apply_method_to_all_isotopes(self, method_name):
         """
@@ -1461,7 +1461,7 @@ class IonicCalibrationWindow(QMainWindow):
                 
             self.isotope_method_preferences[isotope_key] = method_name
         
-        print(f"Applied {method_name} to applicable isotopes")
+        _itk_log.debug(f"Applied {method_name} to applicable isotopes")
 
     def auto_fill_concentrations(self):
         """
@@ -1929,7 +1929,7 @@ class IonicCalibrationWindow(QMainWindow):
             
         except Exception as e:
             _itk_log.exception("Handled exception in update_time_plot")
-            print(f"Error updating time plot: {str(e)}")
+            _itk_log.error(f"Error updating time plot: {str(e)}")
             self.statusBar.showMessage(f"Error updating plot: {str(e)}", 3000)
 
     def show_periodic_table(self):
@@ -2163,7 +2163,7 @@ class IonicCalibrationWindow(QMainWindow):
             
             summary_stats = load_summary_stats_from_csv(file_path)
             if summary_stats:
-                print(f"Loaded summary statistics for {len(summary_stats)} samples")
+                _itk_log.debug(f"Loaded summary statistics for {len(summary_stats)} samples")
                 self.summary_stats_5sec = summary_stats
             
             self.update_element_isotope_combo()
@@ -2634,7 +2634,7 @@ class IonicCalibrationWindow(QMainWindow):
                     self.count_vs_time_widget.setTitle("Count vs Time - Invalid column selection")
             except Exception as e:
                 _itk_log.exception("Handled exception in plot_count_vs_time")
-                print(f"Error plotting count vs time: {str(e)}")
+                _itk_log.error(f"Error plotting count vs time: {str(e)}")
                 self.count_vs_time_widget.setTitle("Count vs Time - Error in plotting")
         else:
             self.count_vs_time_widget.setTitle("Count vs Time - No cell selected")

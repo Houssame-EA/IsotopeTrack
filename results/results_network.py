@@ -1054,7 +1054,7 @@ class NetworkDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error refreshing network diagram: {e}")
+            _itk_log.error(f"Error refreshing network diagram: {e}")
             import traceback; traceback.print_exc()
 
     def _draw_network(self, ax, net_data, cfg):

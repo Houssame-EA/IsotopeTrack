@@ -673,7 +673,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
 
         except Exception as e:
             _itk_log.exception("Handled exception in mouseDoubleClickEvent")
-            print(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
+            _itk_log.error(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
             import traceback; traceback.print_exc()
             super().mouseDoubleClickEvent(event)
 
@@ -2563,7 +2563,7 @@ class HistogramDisplayDialog(QDialog):
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
             _itk_log.exception("Handled exception in _download_figure")
-            print(f"Warning: could not build CSV data: {e}")
+            _itk_log.error(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
             self.pw, self, default_name='histogram', csv_data=csv_df)
@@ -2691,7 +2691,7 @@ class HistogramDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating histogram: {e}")
+            _itk_log.error(f"Error updating histogram: {e}")
             import traceback
             traceback.print_exc()
 
@@ -4305,7 +4305,7 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
         return True
     except Exception as e:
         _itk_log.exception("Handled exception in _add_density_curve")
-        print(f"Density curve error: {e}")
+        _itk_log.error(f"Density curve error: {e}")
         return False
 
 
@@ -5350,7 +5350,7 @@ class ElementBarChartDisplayDialog(QDialog):
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
             _itk_log.exception("Handled exception in _download_figure")
-            print(f"Warning: could not build CSV data: {e}")
+            _itk_log.error(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
             self.pw, self,
@@ -5469,7 +5469,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating bar chart: {e}")
+            _itk_log.error(f"Error updating bar chart: {e}")
             import traceback
             traceback.print_exc()
 

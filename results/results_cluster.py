@@ -5544,7 +5544,7 @@ class ClusteringDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _run_algo")
-            print(f"Clustering failed for {name}: {e}")
+            _itk_log.error(f"Clustering failed for {name}: {e}")
         return None
 
     def _run_som(self, k, data, cfg, progress_cb=None):

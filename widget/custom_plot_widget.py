@@ -1672,7 +1672,7 @@ class PlotSettingsDialog(QDialog):
                 self.grid_style.setCurrentText(s.get('grid_style','Solid'))
             except Exception as e:
                 _itk_log.exception("Handled exception in _load_persistent")
-                print(f"Error loading settings: {e}")
+                _itk_log.error(f"Error loading settings: {e}")
 
     def _save_persistent(self):
         """Persist shared plot-format state back onto the target plot widget."""
@@ -2128,7 +2128,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self.scene().sigMouseMoved.connect(self.mouse_moved)
         except Exception as e:
             _itk_log.exception("Handled exception in setup_interaction_features")
-            print(f"Warning: Could not setup crosshair: {e}")
+            _itk_log.error(f"Warning: Could not setup crosshair: {e}")
         self._install_autorange_button()
 
     # ── Auto-scale corner button ──────────────────────────────────────────
@@ -2204,7 +2204,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             menu.aboutToShow.connect(self._capture_context_menu_position)
         except Exception as e:
             _itk_log.exception("Handled exception in _install_exclusion_context_menu")
-            print(f"Warning: Could not install exclusion context menu: {e}")
+            _itk_log.error(f"Warning: Could not install exclusion context menu: {e}")
 
     def _capture_context_menu_position(self):
         """Cache the data-X under the cursor when the context menu opens."""
@@ -2241,7 +2241,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                                       scope=scope)
         except Exception as e:
             _itk_log.exception("Handled exception in _add_exclusion_region_at_cursor")
-            print(f"Warning: Could not add exclusion region: {e}")
+            _itk_log.error(f"Warning: Could not add exclusion region: {e}")
 
     def add_exclusion_region(self, x_min, x_max, scope='element'):
         """Add a new exclusion band spanning [x_min, x_max] (data coords).
@@ -2270,7 +2270,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             return region
         except Exception as e:
             _itk_log.exception("Handled exception in add_exclusion_region")
-            print(f"Warning: add_exclusion_region failed: {e}")
+            _itk_log.error(f"Warning: add_exclusion_region failed: {e}")
             return None
 
     def remove_exclusion_region(self, region):
@@ -2289,7 +2289,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self._emit_exclusion_changed()
         except Exception as e:
             _itk_log.exception("Handled exception in remove_exclusion_region")
-            print(f"Warning: remove_exclusion_region failed: {e}")
+            _itk_log.error(f"Warning: remove_exclusion_region failed: {e}")
 
     def clear_exclusion_regions(self):
         """Remove every exclusion band. Emits exclusionRegionsChanged."""
@@ -2508,7 +2508,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
 
         except Exception as e:
             _itk_log.exception("Handled exception in mouseDoubleClickEvent")
-            print(f"Warning: Double-click handler error: {e}")
+            _itk_log.error(f"Warning: Double-click handler error: {e}")
             super().mouseDoubleClickEvent(event)
 
     def _find_closest_scatter(self, scene_pos, threshold_px=20):
@@ -2619,7 +2619,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             event.accept()
         except Exception as e:
             _itk_log.exception("Handled exception in wheelEvent")
-            print(f"Warning: wheel zoom error: {e}")
+            _itk_log.error(f"Warning: wheel zoom error: {e}")
 
     def update_plot(self, time_array, data):
         """
@@ -2652,7 +2652,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
                     self.addItem(pi); self.data_items[mass] = pi
             except Exception as e:
                 _itk_log.exception("Handled exception in update_plot")
-                print(f"Warning: Error plotting mass {mass}: {e}")
+                _itk_log.error(f"Warning: Error plotting mass {mass}: {e}")
         if self.original_range is None:
             self.original_range = self.viewRange()
 
@@ -2675,7 +2675,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self.data_items.clear(); self.original_range = None
         except Exception as e:
             _itk_log.exception("Handled exception in clear_plot")
-            print(f"Warning: Error clearing plot: {e}")
+            _itk_log.error(f"Warning: Error clearing plot: {e}")
 
 
 class BasicPlotWidget(pg.PlotWidget):
@@ -3272,5 +3272,5 @@ class MzBarPlotWidget(pg.PlotWidget):
 
         except Exception as exc:
             _itk_log.exception("Handled exception in mouseDoubleClickEvent")
-            print(f"Warning: MzBarPlotWidget double-click error: {exc}")
+            _itk_log.error(f"Warning: MzBarPlotWidget double-click error: {exc}")
             super().mouseDoubleClickEvent(event)

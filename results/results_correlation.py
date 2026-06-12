@@ -1192,7 +1192,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 actions.append(('Mark mean y', _mean_y))
             except Exception as e:
                 _itk_log.exception("Handled exception in _build_smart_actions")
-                print(f"[smart] mark means failed: {e}")
+                _itk_log.error(f"[smart] mark means failed: {e}")
 
             try:
                 sx = float(np.std(x)); sy = float(np.std(y))
@@ -1222,7 +1222,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                         actions.append(('Highlight 1σ core region', _core_box))
             except Exception as e:
                 _itk_log.exception("Handled exception in _build_smart_actions")
-                print(f"[smart] core box failed: {e}")
+                _itk_log.error(f"[smart] core box failed: {e}")
 
             try:
                 r = float(np.corrcoef(x, y)[0, 1])
@@ -1245,7 +1245,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     actions.append(('Label Pearson r', _r_label))
             except Exception as e:
                 _itk_log.exception("Handled exception in _build_smart_actions")
-                print(f"[smart] r label failed: {e}")
+                _itk_log.error(f"[smart] r label failed: {e}")
 
             try:
                 if len(x) >= 3:
@@ -1287,7 +1287,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                         actions.append(('Shade ±SD around trend', _sd_band))
             except Exception as e:
                 _itk_log.exception("Handled exception in _build_smart_actions")
-                print(f"[smart] trend band failed: {e}")
+                _itk_log.error(f"[smart] trend band failed: {e}")
 
         return actions
 
@@ -1424,7 +1424,7 @@ class CorrelationPlotDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error refreshing correlation display: {e}")
+            _itk_log.error(f"Error refreshing correlation display: {e}")
             import traceback; traceback.print_exc()
 
     # ── Drawing helpers ─────────────────────
@@ -1563,7 +1563,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     pi.addItem(fill)
                 except Exception as e:
                     _itk_log.exception("Handled exception in _plot_scatter")
-                    print(f'[SD envelope] {e}')
+                    _itk_log.error(f'[SD envelope] {e}')
 
         if cfg.get('show_correlation', True) and len(x) > 1:
             if correlation_label:
@@ -1625,7 +1625,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 pi.addItem(lbl_item)
             except Exception as e:
                 _itk_log.exception("Handled exception in _plot_scatter")
-                print(f'[ref line] {e}')
+                _itk_log.error(f'[ref line] {e}')
 
         _apply_box(pi, cfg)
         return scatter

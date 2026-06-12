@@ -209,7 +209,7 @@ class TransportRateCalibrationWindow(QDialog):
         if widget:
             self._content_layout.addWidget(widget)
         else:
-            print(f"Warning: no widget for method '{key}'")
+            _itk_log.warning(f"Warning: no widget for method '{key}'")
 
     def _on_calibration_completed(self, method, transport_rate):
         """

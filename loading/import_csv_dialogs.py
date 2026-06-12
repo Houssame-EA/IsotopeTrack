@@ -1119,7 +1119,7 @@ class FileStructureDialog(QDialog):
         except Exception as e:
             _itk_log.exception("Handled exception in _load_file")
             error_msg = f"Error loading {Path(file_path).name}: {e}"
-            print(error_msg)
+            _itk_log.error(error_msg)
             self.current_df = pd.DataFrame({
                 'Error':  [f'Could not load: {Path(file_path).name}'],
                 'Reason': [str(e)[:80]],
@@ -1595,7 +1595,7 @@ class FileStructureDialog(QDialog):
                 target_cols = self._read_columns_only(self.file_paths[tgt])
             except Exception as e:
                 _itk_log.exception("Handled exception in _perform_apply_to_all")
-                print(f"Cannot read columns of {self.file_paths[tgt]}: {e}")
+                _itk_log.error(f"Cannot read columns of {self.file_paths[tgt]}: {e}")
                 continue
 
             stale = [k for k, v in self.column_mappings.items()
@@ -1696,7 +1696,7 @@ class FileStructureDialog(QDialog):
                 self._load_file(self.file_paths[self.current_file_index])
         except Exception as e:
             _itk_log.exception("Handled exception in _do_reload")
-            print(f"Reload failed: {e}")
+            _itk_log.error(f"Reload failed: {e}")
 
     # -- Validation / config emission -----------------------------------
 

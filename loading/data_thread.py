@@ -95,9 +95,9 @@ class DataProcessThread(QThread):
             path = Path(folder_path)
             data_format = DataProcessThread.detect_data_format(folder_path)
             
-            print(f"\n=== DEBUG: get_masses_only ===")
-            print(f"Path: {path}")
-            print(f"Data format detected: {data_format}")
+            _itk_log.debug(f"\n=== DEBUG: get_masses_only ===")
+            _itk_log.debug(f"Path: {path}")
+            _itk_log.debug(f"Data format detected: {data_format}")
             
             if data_format == "nu":
                 masses, _, _ = loading.vitesse_loading.read_nu_directory(
@@ -106,69 +106,69 @@ class DataProcessThread(QThread):
                     autoblank=False,
                     raw=False
                 )
-                print(f"NU masses found: {len(masses)} masses")
+                _itk_log.debug(f"NU masses found: {len(masses)} masses")
                 return masses
             
             elif data_format == "tofwerk":
-                print(f"Processing TOFWERK file...")
+                _itk_log.debug(f"Processing TOFWERK file...")
                 
                 if path.is_file():
                     h5_file = path
-                    print(f"Using file: {h5_file}")
+                    _itk_log.debug(f"Using file: {h5_file}")
                 else:
                     h5_files = [f for f in path.glob("*.h5") if loading.tofwerk_loading.is_tofwerk_file(f)]
                     if not h5_files:
-                        print("No .h5 files found in directory")
+                        _itk_log.debug("No .h5 files found in directory")
                         return None
                     h5_file = h5_files[0]
-                    print(f"Using first .h5 file in directory: {h5_file}")
+                    _itk_log.debug(f"Using first .h5 file in directory: {h5_file}")
                 
-                print(f"Reading TOFWERK file...")
+                _itk_log.debug(f"Reading TOFWERK file...")
                 data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(h5_file)
                 
-                print(f"\n--- TOFWERK FILE STRUCTURE ---")
-                print(f"Data shape: {data.shape}")
-                print(f"Data dtype: {data.dtype}")
+                _itk_log.debug(f"\n--- TOFWERK FILE STRUCTURE ---")
+                _itk_log.debug(f"Data shape: {data.shape}")
+                _itk_log.debug(f"Data dtype: {data.dtype}")
                 if hasattr(data.dtype, 'names') and data.dtype.names:
-                    print(f"Data field names: {data.dtype.names}")
-                    print(f"Number of fields: {len(data.dtype.names)}")
+                    _itk_log.debug(f"Data field names: {data.dtype.names}")
+                    _itk_log.debug(f"Number of fields: {len(data.dtype.names)}")
                 
-                print(f"\nInfo shape: {info.shape}")
-                print(f"Info dtype: {info.dtype}")
-                print(f"Info field names: {info.dtype.names}")
+                _itk_log.debug(f"\nInfo shape: {info.shape}")
+                _itk_log.debug(f"Info dtype: {info.dtype}")
+                _itk_log.debug(f"Info field names: {info.dtype.names}")
                 
-                print(f"\nDwell time: {dwell_time}")
+                _itk_log.debug(f"\nDwell time: {dwell_time}")
                 
-                print(f"\nFirst 5 entries of info:")
+                _itk_log.debug(f"\nFirst 5 entries of info:")
                 for i in range(min(5, len(info))):
-                    print(f"  Entry {i}: {info[i]}")
+                    _itk_log.debug(f"  Entry {i}: {info[i]}")
                 
                 if 'mass' in info.dtype.names:
                     masses = info['mass']
-                    print(f"\nFound 'mass' field in info")
-                    print(f"Mass values (first 10): {masses[:10]}")
-                    print(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
+                    _itk_log.debug(f"\nFound 'mass' field in info")
+                    _itk_log.debug(f"Mass values (first 10): {masses[:10]}")
+                    _itk_log.debug(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
                 else:
-                    print(f"\nNo 'mass' field found, trying to extract from labels...")
-                    print(f"Label field sample: {info['label'][:5]}")
+                    _itk_log.debug(f"\nNo 'mass' field found, trying to extract from labels...")
+                    _itk_log.debug(f"Label field sample: {info['label'][:5]}")
                     try:
                         masses = np.array([float(label.decode() if isinstance(label, bytes) else label) 
                                          for label in info['label']])
-                        print(f"Successfully extracted masses from labels")
-                        print(f"Mass values (first 10): {masses[:10]}")
-                        print(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
+                        _itk_log.debug(f"Successfully extracted masses from labels")
+                        _itk_log.debug(f"Mass values (first 10): {masses[:10]}")
+                        _itk_log.debug(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
                     except Exception as e:
                         _itk_log.exception("Handled exception in get_masses_only")
-                        print(f"Failed to extract masses from labels: {e}")
+                        _itk_log.error(f"Failed to extract masses from labels: {e}")
                         return None
                 
-                print(f"Total masses found: {len(masses)}")
-                print(f"=== END DEBUG ===\n")
+                _itk_log.debug(f"Total masses found: {len(masses)}")
+                _itk_log.debug(f"=== END DEBUG ===\n")
                 return masses
                 
         except Exception as e:
             _itk_log.exception("Handled exception in get_masses_only")
-            print(f"Error getting masses: {str(e)}")
+            _itk_log.error(f"Error getting masses: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -285,60 +285,60 @@ class DataProcessThread(QThread):
         """
         path = Path(self.folder_path)
         
-        print(f"\n=== DEBUG: process_tofwerk_data ===")
-        print(f"Processing path: {path}")
-        print(f"Selected masses: {self.selected_masses}")
+        _itk_log.debug(f"\n=== DEBUG: process_tofwerk_data ===")
+        _itk_log.debug(f"Processing path: {path}")
+        _itk_log.debug(f"Selected masses: {self.selected_masses}")
         
         if path.is_file():
             h5_file = path
-            print(f"Using single file: {h5_file}")
+            _itk_log.debug(f"Using single file: {h5_file}")
         else:
             h5_files = [f for f in path.glob("*.h5") if loading.tofwerk_loading.is_tofwerk_file(f)]
             if not h5_files:
                 raise FileNotFoundError("No valid TOFWERK .h5 files found")
             h5_file = h5_files[0]
-            print(f"Using first .h5 file in directory: {h5_file}")
+            _itk_log.debug(f"Using first .h5 file in directory: {h5_file}")
         
         self.progress.emit(20)
 
         def _read_progress(frac):
             self.progress.emit(int(20 + frac * 40))
 
-        print(f"Reading TOFWERK data...")
+        _itk_log.debug(f"Reading TOFWERK data...")
         data, info, dwell_time = loading.tofwerk_loading.read_tofwerk_file(
             h5_file, progress_callback=_read_progress
         )
         
-        print(f"\n--- TOFWERK DATA PROCESSING ---")
-        print(f"Data shape: {data.shape}")
-        print(f"Data dtype: {data.dtype}")
+        _itk_log.debug(f"\n--- TOFWERK DATA PROCESSING ---")
+        _itk_log.debug(f"Data shape: {data.shape}")
+        _itk_log.debug(f"Data dtype: {data.dtype}")
         if hasattr(data.dtype, 'names') and data.dtype.names:
-            print(f"Data field names: {list(data.dtype.names)}")
-            print(f"First few field names: {list(data.dtype.names)[:10]}")
+            _itk_log.debug(f"Data field names: {list(data.dtype.names)}")
+            _itk_log.debug(f"First few field names: {list(data.dtype.names)[:10]}")
         
-        print(f"Info shape: {info.shape}")
-        print(f"Dwell time: {dwell_time}")
+        _itk_log.debug(f"Info shape: {info.shape}")
+        _itk_log.debug(f"Dwell time: {dwell_time}")
         
         self.progress.emit(60)
         
         if 'mass' in info.dtype.names:
             masses = info['mass']
-            print(f"Using 'mass' field from info")
+            _itk_log.debug(f"Using 'mass' field from info")
         else:
-            print(f"No 'mass' field, extracting from labels...")
+            _itk_log.debug(f"No 'mass' field, extracting from labels...")
             try:
                 masses = np.array([float(label.decode() if isinstance(label, bytes) else label) 
                                  for label in info['label']])
-                print(f"Successfully extracted masses from labels")
+                _itk_log.debug(f"Successfully extracted masses from labels")
             except Exception as e:
-                print(f"Failed to extract masses from labels: {e}")
+                _itk_log.error(f"Failed to extract masses from labels: {e}")
                 raise ValueError("Could not extract masses from TOFWERK data")
         
-        print(f"Available masses: {masses[:10]}... (showing first 10)")
-        print(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
+        _itk_log.debug(f"Available masses: {masses[:10]}... (showing first 10)")
+        _itk_log.debug(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
         
         mass_mapping = self.find_closest_masses(masses, self.selected_masses)
-        print(f"Mass mapping found: {mass_mapping}")
+        _itk_log.debug(f"Mass mapping found: {mass_mapping}")
         
         if not mass_mapping:
             raise ValueError("No matching masses found within tolerance. Available masses: " + 
@@ -347,39 +347,39 @@ class DataProcessThread(QThread):
         self.progress.emit(75)
         
         selected_data_dict = {}
-        print(f"\nExtracting data for selected masses...")
+        _itk_log.debug(f"\nExtracting data for selected masses...")
         
         for target_mass in self.selected_masses:
             if target_mass in mass_mapping:
                 actual_mass = mass_mapping[target_mass]
-                print(f"Processing target mass {target_mass} -> actual mass {actual_mass}")
+                _itk_log.debug(f"Processing target mass {target_mass} -> actual mass {actual_mass}")
                 
                 mass_idx = np.argmin(np.abs(masses - actual_mass))
-                print(f"Mass index: {mass_idx}")
+                _itk_log.debug(f"Mass index: {mass_idx}")
                 
                 if hasattr(data.dtype, 'names') and data.dtype.names and len(data.dtype.names) > mass_idx:
                     field_name = data.dtype.names[mass_idx]
-                    print(f"Using field name: {field_name}")
+                    _itk_log.debug(f"Using field name: {field_name}")
                     selected_data_dict[target_mass] = data[field_name].copy()
-                    print(f"Data shape for this mass: {selected_data_dict[target_mass].shape}")
-                    print(f"Data sample (first 5 values): {selected_data_dict[target_mass][:5]}")
+                    _itk_log.debug(f"Data shape for this mass: {selected_data_dict[target_mass].shape}")
+                    _itk_log.debug(f"Data sample (first 5 values): {selected_data_dict[target_mass][:5]}")
                 else:
-                    print(f"Fallback: using array indexing")
+                    _itk_log.warning(f"Fallback: using array indexing")
                     if len(data.shape) > 1 and data.shape[1] > mass_idx:
                         selected_data_dict[target_mass] = data[:, mass_idx].copy()
-                        print(f"Data shape for this mass: {selected_data_dict[target_mass].shape}")
+                        _itk_log.debug(f"Data shape for this mass: {selected_data_dict[target_mass].shape}")
                     else:
                         selected_data_dict[target_mass] = data.copy()
-                        print(f"Using entire data array (single mass?)")
+                        _itk_log.debug(f"Using entire data array (single mass?)")
         
-        print(f"Successfully extracted data for {len(selected_data_dict)} masses")
+        _itk_log.debug(f"Successfully extracted data for {len(selected_data_dict)} masses")
         n_timepoints = len(data)
         del data 
 
         self.progress.emit(90)
         
         time_array = np.arange(n_timepoints) * dwell_time
-        print(f"Time array length: {len(time_array)}, range: {time_array[0]:.6f} to {time_array[-1]:.6f}")
+        _itk_log.debug(f"Time array length: {len(time_array)}, range: {time_array[0]:.6f} to {time_array[-1]:.6f}")
         
         run_info = {
             "DataFormat": "TOFWERK",
@@ -390,7 +390,7 @@ class DataProcessThread(QThread):
         
         analysis_datetime = "Unknown"
         
-        print(f"=== END DEBUG ===\n")
+        _itk_log.debug(f"=== END DEBUG ===\n")
         return selected_data_dict, run_info, time_array, analysis_datetime
 
     def run(self):
@@ -407,7 +407,7 @@ class DataProcessThread(QThread):
             self.progress.emit(0)
             
             data_format = self.detect_data_format(self.folder_path)
-            print(f"\nProcessing {data_format} format for sample: {self.sample_name}")
+            _itk_log.debug(f"\nProcessing {data_format} format for sample: {self.sample_name}")
             
             if data_format == "nu":
                 selected_data_dict, run_info, time_array, analysis_datetime = self.process_nu_data()
@@ -417,12 +417,12 @@ class DataProcessThread(QThread):
                 raise ValueError(f"Unknown data format in {self.folder_path}")
             
             self.progress.emit(100)
-            print(f"Successfully processed {self.sample_name} - {len(selected_data_dict)} masses extracted")
+            _itk_log.debug(f"Successfully processed {self.sample_name} - {len(selected_data_dict)} masses extracted")
             self.finished.emit(selected_data_dict, run_info, time_array, self.sample_name, analysis_datetime)
 
         except Exception as e:
             _itk_log.exception("Handled exception in run")
-            print(f"Error processing {self.sample_name}: {str(e)}")
+            _itk_log.error(f"Error processing {self.sample_name}: {str(e)}")
             import traceback
             traceback.print_exc()
             self.error.emit(f"Processing error: {str(e)}")

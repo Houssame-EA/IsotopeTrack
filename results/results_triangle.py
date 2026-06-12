@@ -1255,7 +1255,7 @@ class TriangleDisplayDialog(QDialog):
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating ternary display: {e}")
+            _itk_log.error(f"Error updating ternary display: {e}")
             import traceback
             traceback.print_exc()
 

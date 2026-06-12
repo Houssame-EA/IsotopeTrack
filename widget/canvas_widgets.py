@@ -913,7 +913,7 @@ class LinkItem(QGraphicsWidget):
             self.curve_item.set_pen(pen)
         except Exception as e:
             _itk_log.exception("Handled exception in __update_curve")
-            print(f"Link update error: {e}")
+            _itk_log.error(f"Link update error: {e}")
 
     def boundingRect(self):
         """
@@ -2423,7 +2423,7 @@ class _StatusNodeMixin:
                             lk.sink_node.process_data(result)
                     except Exception as exc:
                         _itk_log.exception("Handled exception in _on_calc_done")
-                        print(f"Data flow error: {exc}")
+                        _itk_log.error(f"Data flow error: {exc}")
         self.update()
 
     def _on_calc_failed(self, message):
@@ -2432,7 +2432,7 @@ class _StatusNodeMixin:
         Args:
             message (str): Error text from the worker thread.
         """
-        print(f"Calculation error: {message}")
+        _itk_log.error(f"Calculation error: {message}")
         self.update()
 
     def _cleanup_worker(self, worker):
@@ -3776,7 +3776,7 @@ class EnhancedCanvasScene(QGraphicsScene):
                 wl.sink_node.process_data(data)
         except Exception as e:
             _itk_log.exception("Handled exception in _trigger_data_flow")
-            print(f"Data flow error: {e}")
+            _itk_log.error(f"Data flow error: {e}")
 
     def contextMenuEvent(self, event):
         """Right-click on empty canvas space → canvas context menu.

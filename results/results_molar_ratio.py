@@ -755,7 +755,7 @@ def _add_density_curve(plot_item, values, cfg, edges, total):
         plot_item.addItem(pg.PlotDataItem(x=xc, y=yc, pen=pg.mkPen('#2C3E50', width=2.5)))
     except Exception as e:
         _itk_log.exception("Handled exception in _add_density_curve")
-        print(f"Density curve error: {e}")
+        _itk_log.error(f"Density curve error: {e}")
 
 
 def _apply_box(plot_item, cfg):
@@ -885,7 +885,7 @@ def _add_stat_lines(plot_item, values, cfg):
             ))
         except Exception as e:
             _itk_log.exception("Handled exception in _add_stat_lines")
-            print(f"[mode marker] {e}")
+            _itk_log.error(f"[mode marker] {e}")
 
 
 def _add_shaded_region(plot_item, values, cfg):
@@ -1363,7 +1363,7 @@ class MolarRatioDisplayDialog(QDialog):
             self._disable_native_pyqtgraph_context_menu()
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
-            print(f"Error updating molar ratio: {e}")
+            _itk_log.error(f"Error updating molar ratio: {e}")
             import traceback; traceback.print_exc()
 
     def _draw_single(self, pi, ratios, cfg):

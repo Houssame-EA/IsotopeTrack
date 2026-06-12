@@ -21,7 +21,7 @@ try:
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
     NUMBA_AVAILABLE = False
-    print("numba not available - install with 'pip install numba'")
+    _itk_log.error("numba not available - install with 'pip install numba'")
     def jit(*args, **kwargs):
         """
         Args:
@@ -55,7 +55,7 @@ try:
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
     SCIPY_AVAILABLE = False
-    print("scipy not available - using fallback smoothing")
+    _itk_log.error("scipy not available - using fallback smoothing")
 
 from scipy import stats, special
 from numba import jit
@@ -383,7 +383,7 @@ class CompoundPoissonLognormal:
             return float(threshold)
         except Exception as e:
             _itk_log.exception("Handled exception in get_threshold")
-            print(f"Lognormal approximation error: {e}, using simple approximation")
+            _itk_log.error(f"Lognormal approximation error: {e}, using simple approximation")
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
 
 
@@ -424,7 +424,7 @@ class CompoundPoissonLognormalOptimized:
             return result
         except Exception as e:
             _itk_log.exception("Handled exception in get_threshold")
-            print(f"Lognormal approximation error: {e}, using simple approximation")
+            _itk_log.error(f"Lognormal approximation error: {e}, using simple approximation")
             result = lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
             self._threshold_cache[cache_key] = result
             return result
@@ -503,7 +503,7 @@ class CompoundPoissonLognormaltable:
             return
 
         if not os.path.isfile(path):
-            print(f"[CompoundPoissonLognormaltable] Table not found at {path} — "
+            _itk_log.warning(f"[CompoundPoissonLognormaltable] Table not found at {path} — "
                   f"using fallback (CompoundPoissonLognormalOptimized).")
             return
 
@@ -538,7 +538,7 @@ class CompoundPoissonLognormaltable:
             )
         except Exception as exc:
             _itk_log.exception("Handled exception in _load_table")
-            print(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
+            _itk_log.error(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
                   f"— using fallback.")
 
     def get_threshold(self, lambda_bkgd: float, alpha: float, sigma: float = 0.55) -> float:
@@ -587,7 +587,7 @@ class CompoundPoissonLognormaltable:
             return result
         except Exception as exc:
             _itk_log.exception("Handled exception in get_threshold")
-            print(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
+            _itk_log.error(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
             return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
 
     def clear_cache(self) -> None:
@@ -1127,7 +1127,7 @@ class PeakDetection:
 
                 except Exception as e:
                     _itk_log.exception("Handled exception in calculate_thresholds_batch_safe")
-                    print(f"Error calculating iterative threshold for {element_key} using {method}: {e}")
+                    _itk_log.error(f"Error calculating iterative threshold for {element_key} using {method}: {e}")
                     working_signal = self.apply_window_size(signal, use_window_size, window_size)
                     lambda_bkgd = np.mean(working_signal)
                     threshold = lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
@@ -1228,7 +1228,7 @@ class PeakDetection:
                 return [(start_idx, end_idx)]
         except Exception as exc:
             _itk_log.exception("Handled exception in split_peak_region")
-            print(f"split_peak_region ({split_method}) error: {exc}")
+            _itk_log.error(f"split_peak_region ({split_method}) error: {exc}")
             return [(start_idx, end_idx)]
 
 
@@ -1741,7 +1741,7 @@ class PeakDetection:
 
                 except Exception as e:
                     _itk_log.exception("Handled exception in process_single_sample_safe")
-                    print(f"Error processing {element}-{isotope}: {str(e)}")
+                    _itk_log.error(f"Error processing {element}-{isotope}: {str(e)}")
                     continue
 
             return {
@@ -1754,7 +1754,7 @@ class PeakDetection:
 
         except Exception as e:
             _itk_log.exception("Handled exception in process_single_sample_safe")
-            print(f"Error processing sample {sample_name}: {str(e)}")
+            _itk_log.error(f"Error processing sample {sample_name}: {str(e)}")
             return None
 
     def process_single_sample(self, main_window, sample_name):
@@ -1924,7 +1924,7 @@ class PeakDetection:
 
         except Exception as e:
             _itk_log.exception("Handled exception in detect_particles_incremental")
-            print(f"Error in incremental detect_particles: {str(e)}")
+            _itk_log.error(f"Error in incremental detect_particles: {str(e)}")
             import traceback
             traceback.print_exc()
             main_window.status_label.setText("Error during incremental detection")
@@ -2017,7 +2017,7 @@ class PeakDetection:
 
                     except Exception as e:
                         _itk_log.exception("Handled exception in process_sample_incremental")
-                        print(f"Error processing {element}-{isotope}: {str(e)}")
+                        _itk_log.error(f"Error processing {element}-{isotope}: {str(e)}")
                         continue
 
             for element, isotope, element_key in excluded_elements:
@@ -2042,7 +2042,7 @@ class PeakDetection:
 
         except Exception as e:
             _itk_log.exception("Handled exception in process_sample_incremental")
-            print(f"Error in incremental processing for {sample_name}: {str(e)}")
+            _itk_log.error(f"Error in incremental processing for {sample_name}: {str(e)}")
             return None
 
     def merge_detection_results(self, main_window, sample_name, new_results, changed_elements):
@@ -2107,7 +2107,7 @@ class PeakDetection:
 
         except Exception as e:
             _itk_log.exception("Handled exception in merge_detection_results")
-            print(f"Error merging results for {sample_name}: {str(e)}")
+            _itk_log.error(f"Error merging results for {sample_name}: {str(e)}")
             import traceback
             traceback.print_exc()
 
@@ -2432,7 +2432,7 @@ class PeakDetection:
                     except Exception as e:
                         _itk_log.exception("Handled exception in detect_particles")
        
-                        print(f"Error processing {sample_name}: {str(e)}")
+                        _itk_log.error(f"Error processing {sample_name}: {str(e)}")
                         del e 
 
                 del future_to_sample
@@ -2469,7 +2469,7 @@ class PeakDetection:
 
         except Exception as e:
             _itk_log.exception("Handled exception in detect_particles")
-            print(f"Error in detect_particles: {str(e)}")
+            _itk_log.error(f"Error in detect_particles: {str(e)}")
             main_window.status_label.setText("Error during iterative peak detection")
             main_window.progress_bar.setVisible(False)
         finally:

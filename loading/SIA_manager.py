@@ -162,7 +162,7 @@ class SIAWorker(QObject):
         except Exception as e:
             _itk_log.exception("Handled exception in process_sia_data")
             self.error.emit(f"Error processing single-ion distribution: {e}")
-            print(f"SIAWorker error:\n{traceback.format_exc()}")
+            _itk_log.error(f"SIAWorker error:\n{traceback.format_exc()}")
 
     @Slot()
     def stop_processing(self):
@@ -372,7 +372,7 @@ class SIAWorker(QObject):
                 }
             except Exception as e:
                 _itk_log.exception("Handled exception in _build_result")
-                print(f"Warning: failed to process mass {masses[i]}: {e}")
+                _itk_log.error(f"Warning: failed to process mass {masses[i]}: {e}")
 
         sample_name = run_info.get("SampleName", Path(data_path).name)
 
@@ -1464,7 +1464,7 @@ class SingleIonDistributionManager(QObject):
             pw.plot(x_fit, y_fit, pen=pg.mkPen(color='r', width=2.5))
         except Exception as e:
             _itk_log.exception("Handled exception in _update_sia_plot")
-            print(f"Lognormal fit failed: {e}")
+            _itk_log.error(f"Lognormal fit failed: {e}")
 
         q_val = self._calc_quantile(mean_signal, calc_sigma, avg_sia,
                                     sig_vals, raw_weights)
@@ -1891,7 +1891,7 @@ class SingleIonDistributionManager(QObject):
                     break
         except Exception as e:
             _itk_log.exception("Handled exception in _on_sigma_scatter_clicked")
-            print(f"Sigma scatter click handler error: {e}")
+            _itk_log.error(f"Sigma scatter click handler error: {e}")
 
     # ── export functionality ──────────────────────────────────────────────────
 

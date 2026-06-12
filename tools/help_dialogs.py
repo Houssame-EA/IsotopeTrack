@@ -2018,7 +2018,7 @@ def _lut_load():
                 data["ys"],     data["quantiles"])
     except Exception as e:
         _itk_log.exception("Handled exception in _lut_load")
-        print(f"[LUT] Could not load cpln_quantiles.npz: {e}")
+        _itk_log.error(f"[LUT] Could not load cpln_quantiles.npz: {e}")
         return None
 
 

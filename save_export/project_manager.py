@@ -53,7 +53,7 @@ class ProjectManager:
             bool: True if successful, False otherwise
         """
         if not Path(self.icon_path).exists():
-            print(f"Icon file not found at: {self.icon_path}")
+            _itk_log.warning(f"Icon file not found at: {self.icon_path}")
             return False
         
         system = platform.system()
@@ -67,7 +67,7 @@ class ProjectManager:
                 return self._set_icon_linux(file_path)
         except Exception as e:
             _itk_log.exception("Handled exception in _set_file_icon_cross_platform")
-            print(f"Error setting file icon: {str(e)}")
+            _itk_log.error(f"Error setting file icon: {str(e)}")
             return False
     
     def _set_icon_macos(self, file_path):
@@ -127,7 +127,7 @@ class ProjectManager:
             
         except Exception as e:
             _itk_log.exception("Handled exception in _set_icon_macos")
-            print(f"macOS icon setting error: {str(e)}")
+            _itk_log.error(f"macOS icon setting error: {str(e)}")
             return False
     
     def _set_icon_windows(self, file_path):
@@ -167,7 +167,7 @@ class ProjectManager:
             
         except Exception as e:
             _itk_log.exception("Handled exception in _set_icon_windows")
-            print(f"Windows icon setting error: {str(e)}")
+            _itk_log.error(f"Windows icon setting error: {str(e)}")
             return False
     
     def _set_icon_linux(self, file_path):
@@ -199,7 +199,7 @@ Terminal=false
             
         except Exception as e:
             _itk_log.exception("Handled exception in _set_icon_linux")
-            print(f"Linux icon setting error: {str(e)}")
+            _itk_log.error(f"Linux icon setting error: {str(e)}")
             return False
     
     def save_project(self):
@@ -378,7 +378,7 @@ Terminal=false
                 self._deserialize_canvas_state(canvas_state)
             except Exception as e:
                 _itk_log.exception("Handled exception in _finalize_load")
-                print(f"Warning: Could not restore canvas workflow: {e}")
+                _itk_log.error(f"Warning: Could not restore canvas workflow: {e}")
             finally:
                 mw._pending_canvas_workflow = None
 
@@ -818,7 +818,7 @@ Terminal=false
                 scene.addItem(note)
             except Exception as e:
                 _itk_log.exception("Handled exception in _deserialize_canvas_state")
-                print(f"Warning: Could not restore sticky note: {e}")
+                _itk_log.error(f"Warning: Could not restore sticky note: {e}")
 
         saved_zoom = canvas_state.get('zoom', None)
         if saved_zoom is not None:
@@ -827,7 +827,7 @@ Terminal=false
                 canvas_view.set_zoom(saved_zoom)
             except Exception as e:
                 _itk_log.exception("Handled exception in _deserialize_canvas_state")
-                print(f"Warning: Could not restore canvas zoom: {e}")
+                _itk_log.error(f"Warning: Could not restore canvas zoom: {e}")
     
     def _deserialize_node_config(self, workflow_node, node_data):
         """
@@ -1035,5 +1035,5 @@ Terminal=false
             }
         except Exception as e:
             _itk_log.exception("Handled exception in get_project_info")
-            print(f"Error reading project info: {str(e)}")
+            _itk_log.error(f"Error reading project info: {str(e)}")
             return None

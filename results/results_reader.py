@@ -454,7 +454,7 @@ def _get_data_context(scene) -> dict:
                     candidates.append(d)
             except Exception as exc:
                 _itk_log.exception("Handled exception in _get_data_context")
-                print(f"[Insights] get_output_data failed on '{getattr(node,'title',node)}': {exc}")
+                _itk_log.error(f"[Insights] get_output_data failed on '{getattr(node,'title',node)}': {exc}")
         raw = getattr(node, "input_data", None)
         if isinstance(raw, dict):
             candidates.append(raw)
@@ -463,7 +463,7 @@ def _get_data_context(scene) -> dict:
             if cnt > best_n:
                 best, best_n = d, cnt
     if best_n:
-        print(f"[Insights] {best_n:,} particles (type={best.get('type','?')})")
+        _itk_log.debug(f"[Insights] {best_n:,} particles (type={best.get('type','?')})")
     return best or {}
 
 
@@ -827,12 +827,12 @@ class SmartInsightsPanel(QWidget):
             from widget.canvas_widgets import _NODE_FACTORIES
         except ImportError:
             _itk_log.debug("Handled exception in _add_suggestion")
-            print("[Insights] Could not import _NODE_FACTORIES")
+            _itk_log.error("[Insights] Could not import _NODE_FACTORIES")
             return
 
         factory = _NODE_FACTORIES.get(s.node_type)
         if factory is None:
-            print(f"[Insights] Unknown node_type: {s.node_type}")
+            _itk_log.debug(f"[Insights] Unknown node_type: {s.node_type}")
             return
 
         scene = self._scene

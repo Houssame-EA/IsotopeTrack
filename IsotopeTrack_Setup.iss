@@ -59,7 +59,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; ── Files to install ──────────────────────────────────────────────────────────
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "example_data\*"; DestDir: "{app}\example_data"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; ── Start Menu shortcuts ──────────────────────────────────────────────────────
 [Icons]

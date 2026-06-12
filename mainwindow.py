@@ -3070,7 +3070,7 @@ class MainWindow(QMainWindow):
                                 self.sample_method_info[sample_name] = method_info
                     except Exception as e:
                         _itk_log.exception("Handled exception in handle_thread_finished")
-                        print(f"Could not load method info for {sample_name}: {str(e)}")
+                        _itk_log.error(f"Could not load method info for {sample_name}: {str(e)}")
 
             if analysis_datetime:
                 try:
@@ -3614,7 +3614,7 @@ class MainWindow(QMainWindow):
             error_msg = f"Error removing sample '{sample_name}': {str(e)}"
             self.status_label.setText(error_msg)
             QMessageBox.critical(self, "Removal Error", error_msg)
-            print(f"Error in remove_sample: {str(e)}")
+            _itk_log.error(f"Error in remove_sample: {str(e)}")
 
     def remove_all_samples(self):
         """

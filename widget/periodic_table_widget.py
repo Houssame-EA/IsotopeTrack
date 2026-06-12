@@ -2056,7 +2056,7 @@ class PeriodicTableWidget(QDialog):
                                             self.isotope_selected.emit(symbol, mass, abundance)
                                         break
             
-            print(f"Selected preset: {preset_name}")
+            _itk_log.debug(f"Selected preset: {preset_name}")
         
         model = self.preset_combo.model()
         for i in range(model.rowCount()):
