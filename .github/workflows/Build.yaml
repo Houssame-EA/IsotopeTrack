@@ -34,15 +34,15 @@ jobs:
         run: brew install create-dmg
 
       - name: Build .app with PyInstaller
-        run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec
+        run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_M.spec
 
       - name: Clean dist for DMG (keep only .app)
         run: rm -rf dist/IsotopeTrack
 
       - name: Build DMG
         run: |
-          chmod +x create_dmg.sh
-          ./create_dmg.sh
+          chmod +x packaging/create_dmg.sh
+          ./packaging/create_dmg.sh
 
       - name: Verify DMG exists
         run: ls -lh IsotopeTrack_M.dmg
@@ -73,7 +73,7 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Build .exe with PyInstaller
-        run: pyinstaller --noconfirm --clean IsotopeTrack_W.spec
+        run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_W.spec
 
       - name: List dist contents (debug)
         shell: cmd
@@ -86,7 +86,7 @@ jobs:
       - name: Build Windows installer with Inno Setup
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" IsotopeTrack_Setup.iss
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" packaging\IsotopeTrack_Setup.iss
 
       - name: Find installer output
         shell: cmd

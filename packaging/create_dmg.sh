@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Always run from the repo root (this script lives in packaging/)
+cd "$(dirname "$0")/.."
+
 OUTPUT_NAME="${1:-IsotopeTrack_M.dmg}"
 
 create-dmg \

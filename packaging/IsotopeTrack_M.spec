@@ -14,7 +14,10 @@ for _pkg in ('pytz', 'tzdata', 'pandas', 'numpy', 'python-dateutil', 'six'):
     except Exception:
         print(f"WARNING: could not copy metadata for {_pkg} (is it installed?)")
 
-_rth = os.path.join(os.path.dirname(os.path.abspath(SPEC)), '_rth_no_pyarrow.py')
+SPECDIR = os.path.dirname(os.path.abspath(SPEC))
+ROOT = os.path.dirname(SPECDIR)  # repo root (specs live in packaging/)
+os.chdir(ROOT)
+_rth = os.path.join(SPECDIR, '_rth_no_pyarrow.py')
 with open(_rth, 'w') as _f:
     _f.write(
         "import sys, types\n"
@@ -31,7 +34,7 @@ if os.path.exists('images'):
         if image_file.endswith(('.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg')):
             image_path = os.path.join('images', image_file)
             if os.path.isfile(image_path):
-                data_files.append((image_path, 'images'))
+                data_files.append((os.path.abspath(image_path), 'images'))
                 print(f"Including image: {image_file}")
 
 if os.path.exists('data'):
@@ -39,20 +42,20 @@ if os.path.exists('data'):
         if data_file.endswith(('.csv', '.txt', '.csv.gz', '.json', '.xml')):
             data_path = os.path.join('data', data_file)
             if os.path.isfile(data_path):
-                data_files.append((data_path, 'data'))
+                data_files.append((os.path.abspath(data_path), 'data'))
                 print(f"Including data file: {data_file}")
 
 if os.path.exists('data/interference_corrections.json'):
-    data_files.append(('data/interference_corrections.json', '.'))
+    data_files.append((os.path.abspath('data/interference_corrections.json'), '.'))
 
 if os.path.exists('images/isotrack_icon.ico'):
-    data_files.append(('images/isotrack_icon.ico', '.'))
+    data_files.append((os.path.abspath('images/isotrack_icon.ico'), '.'))
 
 if os.path.exists('data/materials_trimmed.csv.gz'):
-    data_files.append(('data/materials_trimmed.csv.gz', '.'))
+    data_files.append((os.path.abspath('data/materials_trimmed.csv.gz'), '.'))
 
 if os.path.exists('processing/cpln_quantiles.npz'):
-    data_files.append(('processing/cpln_quantiles.npz', 'processing'))
+    data_files.append((os.path.abspath('processing/cpln_quantiles.npz'), 'processing'))
     print("Including cpln_quantiles.npz")
 else:
     print("WARNING: processing/cpln_quantiles.npz not found — peak detection LUT will be missing!")
@@ -60,8 +63,8 @@ else:
 print(f"Total data files to include: {len(data_files)}")
 
 a = Analysis(
-    ['Run.py'],
-    pathex=[],
+    [os.path.join(ROOT, 'Run.py')],
+    pathex=[ROOT],
     binaries=[],
     datas=data_files + pandas_meta,
     hiddenimports=[
@@ -346,7 +349,7 @@ exe = EXE(
     target_arch='arm64',
     codesign_identity=None,
     entitlements_file=None,
-    icon='images/isotrack_icon.ico' if os.path.exists('images/isotrack_icon.ico') else None,
+    icon=os.path.join(ROOT, 'images/isotrack_icon.ico') if os.path.exists(os.path.join(ROOT, 'images/isotrack_icon.ico')) else None,
 )
 
 coll = COLLECT(
@@ -362,7 +365,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='IsotopeTrack.app',
-    icon='images/isotrack_icon.ico' if os.path.exists('images/isotrack_icon.ico') else None,
+    icon=os.path.join(ROOT, 'images/isotrack_icon.ico') if os.path.exists(os.path.join(ROOT, 'images/isotrack_icon.ico')) else None,
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',

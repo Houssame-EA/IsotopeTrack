@@ -7,7 +7,7 @@
 #define AppVersion     "1.10.0"
 #define AppPublisher   "IsotopeTrack"
 #define AppExeName     "IsotopeTrack.exe"
-#define SourceDir      "dist\IsotopeTrack"
+#define SourceDir      "..\dist\IsotopeTrack"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
@@ -25,11 +25,11 @@ AllowNoIcons=yes
 PrivilegesRequired=admin
 
 ; Output installer file
-OutputDir=Output
+OutputDir=..\Output
 OutputBaseFilename=IsotopeTrack_Setup_{#AppVersion}_W
 
 ; Installer icon
-SetupIconFile=images\isotrack_icon.ico
+SetupIconFile=..\images\isotrack_icon.ico
 
 ; Compression
 Compression=lzma2/ultra64
@@ -41,8 +41,8 @@ MinVersion=10.0
 
 ; Wizard styling
 WizardStyle=modern
-WizardImageFile=images\dmg_background_PC.PNG
-WizardSmallImageFile=images\isotrack_icon.png
+WizardImageFile=..\images\dmg_background_PC.PNG
+WizardSmallImageFile=..\images\isotrack_icon.png
 
 ; Uninstall
 UninstallDisplayIcon={app}\{#AppExeName}
