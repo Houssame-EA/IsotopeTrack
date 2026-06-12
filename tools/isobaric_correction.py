@@ -573,8 +573,49 @@ def correct_sample_channels(sample_data: Dict[float, np.ndarray],
 # ---------------------------------------------------------------------------
 
 _TABLE_CACHE: Optional[List[dict]] = None
-_TABLE_PATH = os.path.join(os.path.dirname(__file__), "data", "interference_corrections.json")
-_OVERRIDES_PATH = os.path.join(os.path.dirname(__file__), "data", "isobaric_overrides.json")
+
+
+def _find_table_path() -> str:
+    """Locate the bundled interference table (read-only app data).
+
+    Checks, in order: the PyInstaller bundle dir, the repo-root data/
+    folder, a data/ folder next to this module, and the CWD.
+    """
+    import sys
+    candidates = []
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        candidates.append(os.path.join(sys._MEIPASS, 'data'))
+        candidates.append(sys._MEIPASS)
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(os.path.dirname(here), 'data'))  # repo root/data
+    candidates.append(os.path.join(here, 'data'))
+    candidates.append(os.path.join(os.getcwd(), 'data'))
+    for base in candidates:
+        p = os.path.join(base, 'interference_corrections.json')
+        if os.path.isfile(p):
+            return p
+    return os.path.join(candidates[0] if candidates else '', 'interference_corrections.json')
+
+
+def _user_overrides_path() -> str:
+    """Writable location for user-saved overrides (mirrors the log-dir logic)."""
+    import sys
+    from pathlib import Path
+    if getattr(sys, 'frozen', False):
+        if sys.platform == 'darwin':
+            base = Path.home() / 'Library' / 'Application Support' / 'IsotopeTrack'
+        elif sys.platform == 'win32':
+            base = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'IsotopeTrack'
+        else:
+            base = Path(os.environ.get('XDG_DATA_HOME',
+                        str(Path.home() / '.local' / 'share'))) / 'IsotopeTrack'
+    else:
+        base = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / 'data'
+    return str(base / 'isobaric_overrides.json')
+
+
+_TABLE_PATH = _find_table_path()
+_OVERRIDES_PATH = _user_overrides_path()
 
 
 # ---------------------------------------------------------------------------
@@ -591,8 +632,11 @@ def load_overrides(path: str = _OVERRIDES_PATH) -> Dict[str, dict]:
         with open(path, "r") as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
-    except (FileNotFoundError, json.JSONDecodeError):
-        _itk_log.exception("Handled exception in load_overrides")
+    except FileNotFoundError:
+        # Normal on first run — no overrides saved yet.
+        return {}
+    except json.JSONDecodeError:
+        _itk_log.exception("Corrupt isobaric overrides file: %s", path)
         return {}
 
 
@@ -654,8 +698,12 @@ def load_table_corrections(path: str = _TABLE_PATH) -> List[dict]:
     try:
         with open(path, "r") as fh:
             _TABLE_CACHE = json.load(fh)
-    except (FileNotFoundError, json.JSONDecodeError):
-        _itk_log.exception("Handled exception in load_table_corrections")
+    except FileNotFoundError:
+        _itk_log.error("Interference correction table not found: %s — "
+                       "isobaric corrections will be unavailable", path)
+        _TABLE_CACHE = []
+    except json.JSONDecodeError:
+        _itk_log.exception("Corrupt interference correction table: %s", path)
         _TABLE_CACHE = []
     return _TABLE_CACHE
 

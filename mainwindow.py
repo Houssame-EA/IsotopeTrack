@@ -8897,7 +8897,7 @@ if __name__ == "__main__":
     """
     from PySide6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets  # noqa: F401  (PyInstaller bundling)
+    from PySide6 import QtWebEngineWidgets 
     app = QApplication(sys.argv)
     theme.sync_with_system()       
     main_window = MainWindow()
