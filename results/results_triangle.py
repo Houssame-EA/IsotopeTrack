@@ -160,20 +160,21 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
 
     if config.get('show_grid', True):
         ax.grid(True, alpha=0.3)
-        ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        axis_specs = (
-            (ax.taxis, 'c_min'),
-            (ax.laxis, 'a_min'),
-            (ax.raxis, 'b_min'),
-        )
-        for axis, component_key in axis_specs:
-            axis.set_ticks(ticks)
-            axis.set_ticklabels(_viewport_tick_labels(viewport, component_key, ticks))
-            for lbl in axis.get_ticklabels():
-                lbl.set_fontproperties(fp)
-                lbl.set_color(fc['color'])
     else:
         ax.grid(False)
+
+    ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    axis_specs = (
+        (ax.taxis, 'c_min'),
+        (ax.laxis, 'a_min'),
+        (ax.raxis, 'b_min'),
+    )
+    for axis, component_key in axis_specs:
+        axis.set_ticks(ticks)
+        axis.set_ticklabels(_viewport_tick_labels(viewport, component_key, ticks))
+        for lbl in axis.get_ticklabels():
+            lbl.set_fontproperties(fp)
+            lbl.set_color(fc['color'])
 
     ax.set_title('')
 
