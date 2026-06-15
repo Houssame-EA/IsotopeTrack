@@ -362,6 +362,9 @@ class TernarySettingsDialog(QDialog):
             self.max_particles.setRange(1, 100_000_000)
             self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
             fl.addRow("Max Particles:", self.max_particles)
+            self.avg_only_all = QCheckBox()
+            self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
+            fl.addRow("Only particles with all 3 elements:", self.avg_only_all)
             layout.addWidget(g)
 
         if self._scope in ('all', 'format'):
@@ -429,9 +432,6 @@ class TernarySettingsDialog(QDialog):
             self.show_avg = QCheckBox()
             self.show_avg.setChecked(self._cfg.get('show_average_point', True))
             fl.addRow("Show Average:", self.show_avg)
-            self.avg_only_all = QCheckBox()
-            self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
-            fl.addRow("Only Particles With All 3:", self.avg_only_all)
             self.show_avg_text = QCheckBox()
             self.show_avg_text.setChecked(self._cfg.get('show_average_text', True))
             fl.addRow("Show Stats Text:", self.show_avg_text)
@@ -1452,7 +1452,7 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
         self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
         self._add_toggle(toggle_menu, "Show 2s Ellipse", 'show_confidence_ellipse')
-        self._add_toggle(toggle_menu, "Average: All 3 Required", 'average_only_with_all_elements')
+        self._add_toggle(toggle_menu, "Only particles with all 3 elements", 'average_only_with_all_elements')
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
@@ -1846,6 +1846,12 @@ class TriangleDisplayDialog(QDialog):
             visible_point['b_local'] = b_local
             visible_point['c_local'] = c_local
             visible_points.append(visible_point)
+
+        if cfg.get('average_only_with_all_elements', True):
+            visible_points = [
+                p for p in visible_points
+                if p['a'] > 0 and p['b'] > 0 and p['c'] > 0
+            ]
 
         if not visible_points:
             ax.text(
