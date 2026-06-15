@@ -1077,6 +1077,7 @@ class TriangleDisplayDialog(QDialog):
         self.setWindowTitle("Ternary Composition Analysis")
         self.setMinimumSize(1000, 750)
         self._triangle_viewport = _full_triangle_viewport()
+        self._last_layout_key = None
 
         self._ternary_zoom_active    = False
         self._ternary_zoom_press     = None
@@ -1588,6 +1589,7 @@ class TriangleDisplayDialog(QDialog):
 
     def _reset_layout(self):
         """Reset subplot layout/view positions; same behavior as prior reset action."""
+        self._last_layout_key = None
         self._triangle_viewport = _full_triangle_viewport()
         self.canvas.reset_layout()
         if self._is_multi():
@@ -1652,7 +1654,17 @@ class TriangleDisplayDialog(QDialog):
 
             self._update_stats(plot_data)
 
-            self.figure.tight_layout()
+            if self._is_multi():
+                layout_key = (
+                    len(self.figure.get_axes()),
+                    cfg.get('display_mode', ''),
+                )
+                if layout_key != self._last_layout_key:
+                    self.figure.tight_layout()
+                    self._last_layout_key = layout_key
+            else:
+                self.figure.tight_layout()
+                self._last_layout_key = None
             self.canvas.draw()
             self.canvas.snapshot_positions()
             self.canvas.snapshot_view_limits()
