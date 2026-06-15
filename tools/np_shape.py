@@ -2,27 +2,35 @@
 from collections import namedtuple
 from typing import Any
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, QStyledItemDelegate, \
-    QDialog, QComboBox, QFormLayout, QTextEdit, QLineEdit
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
+    QDialog, QComboBox, QFormLayout, QLineEdit, QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QAbstractItemModel
 
 
 class NanoParticleShape:
-    def __init__(self, formula=None):
-        self.formula = formula
+    def __init__(self, name=None):
+        self.name = name
+
+    def get_name(self):
+        """
+
+        Returns:
+            (str) string of the informal way of calling the nano particle shape.
+        """
+        return self.name
 
     def get_formula(self):
         """
 
         Returns:
-            (str) string that represents the nano particle
+            (str) string that represents the nano particle.
         """
-        return self.formula
+        return "No formula"
 
     def get_shape(self):
         """
         Returns:
-            (str) shape name
+            (str) shape name.
         """
         return "No shape name"
 
@@ -32,10 +40,10 @@ class NanoParticleShape:
 
 class ShellNPS(NanoParticleShape):
 
-    def __init__(self, formula=None):
-        super().__init__(formula=formula)
-        self.core = None
-        self.shell = None
+    def __init__(self, name=None, core=None, shell=None):
+        super().__init__(name=name)
+        self.core: str | None = core
+        self.shell: str | None = shell
 
     def get_formula(self):
         return f"{str(self.core)}  + {self.shell}"
@@ -44,13 +52,22 @@ class ShellNPS(NanoParticleShape):
         return "Shell"
 
 
-class ShpereNPS(NanoParticleShape):
+class SphereNPS(NanoParticleShape):
+    def __init__(self, formula=None, name=None):
+        super().__init__(name=name)
+        self.formula: str | None = formula
+
+    def get_formula(self):
+        return self.formula
+
     def get_shape(self):
         return "Shpere"
+
 
 class RodNPS(NanoParticleShape):
     def get_shape(self):
         return "Rod"
+
 
 class NanoParticleShapeService:
     """
@@ -130,7 +147,7 @@ class NanoParticleShapeService:
 
 
 class NanoParticleShapeModel(QAbstractTableModel):
-    """Model that manages particle shapes"""
+    """Adaptor between views and `NanoParticleShapeService`."""
     ColumnInfo = namedtuple('ColumnInfo', ['title'])
 
     def __init__(self, nps_service: NanoParticleShapeService, parent: QObject | Any = None):
@@ -144,6 +161,7 @@ class NanoParticleShapeModel(QAbstractTableModel):
         self.nps_service = nps_service
 
         self.columns_info = [
+            self.ColumnInfo("Name"),
             self.ColumnInfo("Formula"),
             self.ColumnInfo("Shape"),
         ]
@@ -160,16 +178,18 @@ class NanoParticleShapeModel(QAbstractTableModel):
             if shape is None:
                 return ""
 
-            match index.column(): # TODO: Reduce hard coding
+            match index.column():  # TODO: Reduce hard coding
                 case 0:
-                    return shape.get_formula()
+                    return shape.get_name()
                 case 1:
+                    return shape.get_formula()
+                case 2:
                     return shape.get_shape()
                 case column:
                     if column < len(self.columns_info):
                         raise NotImplementedError(f"There's no implementation for column # {column}")
                     return ""
-        if role == Qt.ItemDataRole.EditRole: # TODO: stop using that
+        if role == Qt.ItemDataRole.EditRole:  # TODO: stop using that
             # returns the entire shape because the editor is a model.
             return self.nps_service.get_shape(index.row())
         return None
@@ -184,14 +204,6 @@ class NanoParticleShapeModel(QAbstractTableModel):
                 return self.columns_info[section].title
         return None
 
-    def flags(self, index):
-        if not index.isValid():
-            return Qt.ItemFlag.NoItemFlags
-        base = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if index.column() == 0:  # TODO: Find a new way to reference the col_index
-            return base
-        return Qt.ItemFlag.ItemIsEditable | base
-
     def removeRows(self, position, row, parent=QModelIndex()):
         print("Remove row")
         self.beginRemoveRows(parent, position, position + row - 1)
@@ -204,13 +216,33 @@ class NanoParticleShapeModel(QAbstractTableModel):
 
     def addData(self, nps: NanoParticleShape):
         insert_index = self.rowCount()
-        index = self.index(insert_index, 0)  # TODO: Is this okay?
+        index = self.index(insert_index, 0)
         self.beginInsertRows(index, insert_index, insert_index)
 
         print("Row inserted")
         self.nps_service.update_shape(insert_index, nps)
 
         self.endInsertRows()
+
+
+class SphereNPSEditor(QWidget):
+    def __init__(self, sphere: SphereNPS):
+        super().__init__()
+        self.sphere = sphere
+        self.formula_edit = QLineEdit(str(self.sphere.formula) if self.sphere.formula
+                                      else "",
+                                      placeholderText="Formula")
+        self.formula_edit.textChanged.connect(self.set_formula)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QFormLayout()
+        self.setLayout(layout)
+        layout.addRow("Formula", self.formula_edit)
+
+    def set_formula(self):
+        self.sphere.formula = self.formula_edit.text()
 
 
 class ShellNPSEditor(QWidget):
@@ -253,6 +285,10 @@ class NPSEditor(QDialog):
         self.index = index
         self.nps = (model.data(index, Qt.ItemDataRole.EditRole) if index is not None
                     else self.get_default_shape())  # TODO: Make this flexible for None NPS
+        self.nps_name = self.nps.get_name() or ""
+        self.nps_name_edit = QLineEdit(str(self.nps_name),
+                                       placeholderText="Name")
+
         self.current_form_widget = None
 
         self.accept_with_nps.connect(self.accept)
@@ -262,10 +298,12 @@ class NPSEditor(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
-        layout.addWidget(self._setup_header())
-        self._setup_form(self.nps)
+        layout.addWidget(self._build_header())
+        layout.addWidget(self._build_name_form())
+        layout.addStretch(1)
+        self.display_form_for_nps(self.nps)
 
-    def _setup_header(self):
+    def _build_header(self):
         header = QWidget()
         header_layout = QHBoxLayout()
         header.setLayout(header_layout)
@@ -273,29 +311,50 @@ class NPSEditor(QDialog):
         # Setting up the dropdown with all NanoParticleShape available
         self.nps_combo_box = QComboBox(parent=header)
         header_layout.addWidget(self.nps_combo_box)
-        self.nps_combo_box.currentIndexChanged.connect(self.change_current_form_widget)
+
+        current_index = -1
 
         for index, sub_class in enumerate(NanoParticleShape.__subclasses__()):
             if sub_class == type(self.nps):
                 # Uses the pre-existing nps to get user's entries
-                self.nps_combo_box.addItem(self.nps.get_shape(), self.nps)
-                self.nps_combo_box.setCurrentIndex(index)
+                self.nps_combo_box.addItem(self.nps.get_shape(), userData=self.nps)
+                current_index = index
                 continue
             sub_class_instance = sub_class()
             self.nps_combo_box.addItem(sub_class_instance.get_shape(), sub_class_instance)
+
+        self.nps_combo_box.currentIndexChanged.connect(self.handle_nps_selection_change)
+        self.nps_combo_box.setCurrentIndex(current_index)
 
         title = QLabel("Editor")
         title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
         header_layout.addWidget(title)
 
         accept_button = QPushButton("Accept Changes")
-        accept_button.clicked.connect(lambda: self.accept_with_nps.emit(self.nps))
+        accept_button.clicked.connect(self.emit_accept_with_nps)
         header_layout.addWidget(accept_button)
 
         return header
 
-    def _setup_form(self, nps):
+    def emit_accept_with_nps(self):
+        """
+        Makes final preparation before emitting `accept_with_nps`.
+        """
+        self.nps.name = self.nps_name_edit.text()
+        self.accept_with_nps.emit(self.nps)
+
+    def display_form_for_nps(self, nps: NanoParticleShape):
+        """
+        Display the form with the right fields for the parameter's
+        `NanoParticleShape` variation.
+
+        Args:
+            nps (NanoParticleShape): `NanoParticleShape` to be displayed.
+        """
         layout = self.layout()
+
+        # TODO: Find a smoother alternative
+        assert isinstance(layout, QVBoxLayout)
 
         if isinstance(self.current_form_widget, QWidget):
             print("Widget removed")
@@ -304,59 +363,62 @@ class NPSEditor(QDialog):
             self.current_form_widget.deleteLater()
             self.current_form_widget = None
 
+        before_last = layout.count() - 1
+
         match nps:
             case ShellNPS():
                 print("Form for ShellNPS")
                 self.current_form_widget = ShellNPSEditor(nps)
-                layout.addWidget(self.current_form_widget)
-            case ShpereNPS():
-                print("Form for Shperes")
+                layout.insertWidget(before_last, self.current_form_widget)
+            case SphereNPS():
+                print("Form for ShperesNPS")
+                self.current_form_widget = SphereNPSEditor(nps)
+                layout.insertWidget(before_last, self.current_form_widget)
             case obj:
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
 
-    @property
-    def nps(self):
-        return self._nps
-
-    @nps.setter
-    def nps(self, nps: NanoParticleShape):
-        self._nps = nps
-
-    def get_default_shape(self):
+    @staticmethod
+    def get_default_shape():
+        """Defines a default `NanoParticleShape` to display."""
         return ShellNPS()  # TODO: Could we add a setting for that
 
-    def change_current_form_widget(self, index: int):
+    def handle_nps_selection_change(self, index: int):
+        """
+        Handles a user changing nps selection by displaying the new form.
+
+        Args:
+            index: index of the item in the `self.nps_combo_box`.
+        """
         self.nps = self.nps_combo_box.itemData(index)
-        self._setup_form(self.nps)
-        print(self.nps)
+        self.display_form_for_nps(self.nps)
+
+    def _build_name_form(self):
+        widget = QWidget(parent=self)
+        layout = QFormLayout()
+        widget.setLayout(layout)
+        layout.addRow("Name", self.nps_name_edit)
+        return widget
 
 
 class QTableViewKeyEvents(QTableView):
     """QTableView that has basic direct model control"""
-    on_double_left_click = Signal(QModelIndex)
+    on_edit = Signal(QModelIndex)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
     def mouseDoubleClickEvent(self, event, /):
-        """
-
-        Args:
-            event:
-        """
         if event.button() == Qt.MouseButton.LeftButton:
-            self.on_double_left_click.emit(self.currentIndex())
+            self.on_edit.emit(self.currentIndex())
 
     def keyPressEvent(self, event, /):
-        """
-
-        Args:
-            event:
-        """
 
         if event.key() == Qt.Key.Key_Delete:
             self.remove_fully_selected_rows()
+        if event.key() in [Qt.Key.Key_Enter, Qt.Key.Key_Return]:
+            self.on_edit.emit(self.currentIndex())
 
     def remove_fully_selected_rows(self):
         """
@@ -387,12 +449,12 @@ class NanoParticleShapeWidget(QWidget):
     def __init__(self, parent: QWidget | Any,
                  nps_service: NanoParticleShapeService = NanoParticleShapeService(nps_list=[
 
-                     ShpereNPS(formula="1O"),
-                     ShellNPS(formula="2H"),
-                     ShpereNPS(formula="3H"),
-                     ShellNPS(formula="4H"),
-                     ShellNPS(formula="5H"),
-                     ShellNPS(formula="6H"),  # TODO: remove this atrocity
+                     SphereNPS(name="That", formula="1O"),
+                     ShellNPS(name="2H", core="Ti", shell="Fe"),
+                     SphereNPS(name="This", formula="3H"),
+                     ShellNPS(name="4H", core="Ti", shell="Fe"),
+                     ShellNPS(name="5H", core="Ti", shell="Fe"),
+                     ShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
                  ]), /):
         super().__init__(parent=parent)
         self.nps_editor = None
@@ -411,20 +473,10 @@ class NanoParticleShapeWidget(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        header = self._setup_header()
-        layout.addWidget(header)
+        layout.addWidget(self._setup_header())
         layout.addWidget(self.nps_table)
 
-        # TODO: Move btns to _setup_header
-        show_model_btn = QPushButton("Remove selected shape(s)")
-        header.layout().addWidget(show_model_btn)
-        show_model_btn.clicked.connect(self.nps_table.remove_fully_selected_rows)
-
-        new_shpae_btn = QPushButton("New Shape")
-        header.layout().addWidget(new_shpae_btn)
-        new_shpae_btn.clicked.connect(self.open_nps_editor_new)
-
-        self.nps_table.on_double_left_click.connect(self.open_nps_editor_edit)
+        self.nps_table.on_edit.connect(self.open_nps_editor_with_index)
 
     def _setup_header(self):
         header = QWidget(self)
@@ -435,26 +487,34 @@ class NanoParticleShapeWidget(QWidget):
         title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
         layout.addWidget(title)
 
+        show_model_btn = QPushButton("Remove selected shape(s)")
+        header.layout().addWidget(show_model_btn)
+        show_model_btn.clicked.connect(self.nps_table.remove_fully_selected_rows)
+
+        new_shape_btn = QPushButton("New Shape")
+        header.layout().addWidget(new_shape_btn)
+        new_shape_btn.clicked.connect(self.open_nps_editor)
+
         return header
 
-    def open_nps_editor_edit(self, index: QModelIndex):
+    def open_nps_editor_with_index(self, index: QModelIndex):
         print("Editor edit")
         print(index)
         self.nps_editor = self._create_and_open_nps_editor(index)
         self.nps_editor.accept_with_nps.connect(
-            lambda nps: self.modify_nps(nps, index)
+            lambda nps: self.handle_modify_nps(nps, index)
         )
 
-    def modify_nps(self, nps: NanoParticleShape, index: QModelIndex):
+    def handle_modify_nps(self, nps: NanoParticleShape, index: QModelIndex):
         print("Modify nps")
         self.nps_model.setData(index, nps)
         self.nps_editor = None
 
-    def open_nps_editor_new(self):
+    def open_nps_editor(self):
         self.nps_editor = self._create_and_open_nps_editor()
-        self.nps_editor.accept_with_nps.connect(self.new_nps)
+        self.nps_editor.accept_with_nps.connect(self.handle_new_nps)
 
-    def new_nps(self, nps: NanoParticleShape):
+    def handle_new_nps(self, nps: NanoParticleShape):
         print("New nps")
         self.nps_model.addData(nps)
         self.nps_editor = None
