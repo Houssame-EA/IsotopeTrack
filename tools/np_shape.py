@@ -1,16 +1,122 @@
 """Manages user defined nano particles shapes"""
 import copy
+from abc import ABC, abstractmethod
 from collections import namedtuple
-from typing import Any
+from typing import Any, Self
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
     QDialog, QComboBox, QFormLayout, QLineEdit, QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QAbstractItemModel
 
+from tools.mass_fraction_calculator import canonicalize_preserve_user_order
 from tools.theme import primary_button_qss, theme, results_title_qss
 
 
-class NanoParticleShape:
+class ValidationInfos:
+    """This class contains information collected by validation classes"""
+
+    def __init__(self,
+                 messages: list[str] | None = None,
+                 errors: list[RuntimeError] | None = None):
+        self.messages = messages or []
+        self.errors = errors or []
+
+    def has_errors(self) -> bool:
+        """
+        Returns: `True` if there's errors and `False` if there's no errors
+        """
+        return (self.errors is not None
+                and len(self.errors) > 0)
+
+    def has_messages(self) -> bool:
+        """
+        Returns: `True` if there's messages and `False` if there's no messages
+        """
+        return (self.messages is not None
+                and len(self.messages) > 0)
+
+    def merge(self, other: Self) -> Self:
+        """
+        Merges another `ValidationInfos` with the current one.
+        Args:
+            other (ValidationInfos): The other `ValidationInfos` to be merged
+        Returns:
+            The caller `ValidationInfos` with the merged data (no copy).
+        """
+        if not isinstance(other, ValidationInfos):
+            return self
+        self.messages = self.messages + other.messages
+        self.errors = self.errors + other.messages
+        return self
+
+
+class IValidation(ABC):
+    """
+    Validation interface. Classes using this interface must implement a
+    `validate` method that clean up and check for class integrity.
+    """
+
+    @abstractmethod
+    def validate(self) -> ValidationInfos:
+        """
+        Cleanup (strip, reformat, etc.) and validation of all fields.
+
+        Returns: `ValidationInfos` that lists all invalid fields in `errors`
+        (`list[RuntimeError]`) and list of all cleanups as `messages`
+        (`list[str]`).
+        """
+        pass
+
+
+def validate_stoichiometry(formula: str, represents: str | None = None) -> tuple[str, ValidationInfos]:
+    """
+    Validates the stoichiometry of a formula, and returns it reduced, with a
+    `ValidationInfos` message (if needed).
+    Args:
+        formula: The formula to reduce.
+        represents: What the formula represents (or is associated with) for the
+         user.
+
+    Returns:
+        `tuple[str, ValidationInfos]` a tuple, which first field is a `str` of
+        the reduced formula and the second field is the `ValidationInfos` of
+        the operation
+    """
+    messages = []
+    reduced_formula = canonicalize_preserve_user_order(formula)
+    if reduced_formula != formula:
+        formated_represents = f" ({represents})" if represents else ''
+        messages.append(f"\"{formula}\"{formated_represents} was "
+                        f"stoichiometrically reduced to \"{reduced_formula}\"")
+
+    return reduced_formula, ValidationInfos(messages=messages)
+
+
+def validate_required(value: Any, represents: str | None = None):
+    """
+    If the `value` argument is truthy `ValidationInfos` will be empty.
+    Otherwise, `ValidationInfos` will have a "value required" error.
+    Args:
+        value: The value to check truthiness
+        represents: What the value represents to the user
+
+    Returns:
+        empty `ValidationInfos` if `value` is truthy else a `ValidationInfos`
+        with a "value required" error.
+    """
+    if not value:
+        if represents:
+            return ValidationInfos(errors=[RuntimeError(f"{represents} is/are required.")])
+        else:
+            return ValidationInfos(errors=[RuntimeError(f"Required field(s) is/are missing.")])
+    return ValidationInfos()
+
+
+class NanoParticleShape(IValidation):
+    """
+    Base class for nano particle shapes.
+    """
+
     def __init__(self, name=None):
         self.name = name
 
@@ -35,6 +141,22 @@ class NanoParticleShape:
         """
         return "No shape name"
 
+    def validate(self) -> ValidationInfos:
+        """
+        Cleanup (strip, reformat, etc.) and validation of all fields.
+
+        Returns: `ValidationInfos` that lists all invalid fields in `errors`
+        (`list[RuntimeError]`) and list of all cleanups as `messages`
+        (`list[str]`).
+        """
+        messages: list[str] = []
+        if not self.name:
+            self.name = self.get_formula()
+            messages.append(f"No name was given to the shape, so the formula "
+                            f"\"{self.get_formula()}\" was taken instead")
+
+        return ValidationInfos(messages=messages)
+
     def __repr__(self):
         return f"<{self.__module__}.{self.__class__.__name__} formula={self.get_formula()}, shape={self.get_shape()}>"
 
@@ -55,6 +177,27 @@ class CoreShellNPS(NanoParticleShape):
     def get_shape(self):
         return "Core-Shell"
 
+    def validate(self) -> ValidationInfos:
+        return (self._validate_core()
+                .merge(self._validate_shell())
+                .merge(super().validate()))
+
+    def _validate_core(self) -> ValidationInfos:
+        if not self.core:
+            return validate_required(self.core, represents="Core formula")
+
+        self.core, stoichiometry_validation = validate_stoichiometry(self.core,
+                                                                     represents="Core")
+        return stoichiometry_validation
+
+    def _validate_shell(self) -> ValidationInfos:
+        if not self.shell:
+            return validate_required(self.core, represents="Shell formula")
+
+        self.shell, shell_validation_infos = validate_stoichiometry(self.shell,
+                                                                    represents="Shell")
+        return shell_validation_infos
+
 
 class SphereNPS(NanoParticleShape):
     def __init__(self, formula=None, name=None):
@@ -66,6 +209,13 @@ class SphereNPS(NanoParticleShape):
 
     def get_shape(self):
         return "Shpere"
+
+    def validate(self) -> ValidationInfos:
+        if not self.formula:
+            sphere_validation = validate_required(self.formula, "Formula")
+        else:
+            self.formula, sphere_validation = validate_stoichiometry(self.formula)
+        return sphere_validation.merge(super().validate())
 
 
 class RodNPS(NanoParticleShape):
@@ -291,7 +441,7 @@ class NPSEditor(QDialog):
                     else self.get_default_shape())  # TODO: Make this flexible for None NPS
         self.nps_name = self.nps.get_name() or ""
         self.nps_name_edit = QLineEdit(str(self.nps_name),
-                                       placeholderText="Name")
+                                       placeholderText="Name (default: shape formula)")
 
         self.current_form_widget = None
 
@@ -382,7 +532,7 @@ class NPSEditor(QDialog):
     @staticmethod
     def get_default_shape():
         """Defines a default `NanoParticleShape` to display."""
-        return CoreShellNPS()  # TODO: Could we add a setting for that
+        return SphereNPS()  # TODO: Could we add a setting for that
 
     def handle_nps_selection_change(self, index: int):
         """
