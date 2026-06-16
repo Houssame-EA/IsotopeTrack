@@ -16,7 +16,6 @@ class NanoParticleShape:
 
     def get_name(self):
         """
-
         Returns:
             (str) string of the informal way of calling the nano particle shape.
         """
@@ -24,7 +23,6 @@ class NanoParticleShape:
 
     def get_formula(self):
         """
-
         Returns:
             (str) string that represents the nano particle.
         """
@@ -41,7 +39,10 @@ class NanoParticleShape:
         return f"<{self.__module__}.{self.__class__.__name__} formula={self.get_formula()}, shape={self.get_shape()}>"
 
 
-class ShellNPS(NanoParticleShape):
+class CoreShellNPS(NanoParticleShape):
+    """
+
+    """
 
     def __init__(self, name=None, core=None, shell=None):
         super().__init__(name=name)
@@ -52,7 +53,7 @@ class ShellNPS(NanoParticleShape):
         return f"{str(self.core)}  + {self.shell}"
 
     def get_shape(self):
-        return "Shell"
+        return "Core-Shell"
 
 
 class SphereNPS(NanoParticleShape):
@@ -248,14 +249,14 @@ class SphereNPSEditor(QWidget):
         self.sphere.formula = self.formula_edit.text()
 
 
-class ShellNPSEditor(QWidget):
-    def __init__(self, shell: ShellNPS, /):
+class CoreShellNPSEditor(QWidget):
+    def __init__(self, core_shell: CoreShellNPS, /):
         super().__init__()
-        self.shell = shell
-        self.core_edit = QLineEdit(str(shell.core or ""),
+        self.core_shell = core_shell
+        self.core_edit = QLineEdit(str(core_shell.core or ""),
                                    placeholderText="Core")
         self.core_edit.textChanged.connect(self.set_core)
-        self.shell_edit = QLineEdit(str(shell.shell or ""),
+        self.shell_edit = QLineEdit(str(core_shell.shell or ""),
                                     placeholderText="Shell")
         self.shell_edit.textChanged.connect(self.set_shell)
         self._setup_ui()
@@ -268,14 +269,14 @@ class ShellNPSEditor(QWidget):
         layout.addRow("Shell", self.shell_edit)
 
     def set_core(self):
-        self.shell.core = self.core_edit.text()
+        self.core_shell.core = self.core_edit.text()
 
     def set_shell(self):
-        self.shell.shell = self.shell_edit.text()
+        self.core_shell.shell = self.shell_edit.text()
 
     def get_nps(self):
         # TODO: Raise en error if the nps is not valid
-        return self.shell
+        return self.core_shell
 
 
 class NPSEditor(QDialog):
@@ -367,9 +368,9 @@ class NPSEditor(QDialog):
             self.current_form_widget = None
 
         match nps:
-            case ShellNPS():
-                print("Form for ShellNPS")
-                self.current_form_widget = ShellNPSEditor(nps)
+            case CoreShellNPS():
+                print("Form for CoreShellNPS")
+                self.current_form_widget = CoreShellNPSEditor(nps)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case SphereNPS():
                 print("Form for ShperesNPS")
@@ -381,7 +382,7 @@ class NPSEditor(QDialog):
     @staticmethod
     def get_default_shape():
         """Defines a default `NanoParticleShape` to display."""
-        return ShellNPS()  # TODO: Could we add a setting for that
+        return CoreShellNPS()  # TODO: Could we add a setting for that
 
     def handle_nps_selection_change(self, index: int):
         """
@@ -466,11 +467,11 @@ class NanoParticleShapeWidget(QWidget):
                  nps_service: NanoParticleShapeService = NanoParticleShapeService(nps_list=[
 
                      SphereNPS(name="That", formula="1O"),
-                     ShellNPS(name="2H", core="Ti", shell="Fe"),
+                     CoreShellNPS(name="2H", core="Ti", shell="Fe"),
                      SphereNPS(name="This", formula="3H"),
-                     ShellNPS(name="4H", core="Ti", shell="Fe"),
-                     ShellNPS(name="5H", core="Ti", shell="Fe"),
-                     ShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
+                     CoreShellNPS(name="4H", core="Ti", shell="Fe"),
+                     CoreShellNPS(name="5H", core="Ti", shell="Fe"),
+                     CoreShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
                  ]), /):
         super().__init__(parent=parent)
         self.nps_editor = None
