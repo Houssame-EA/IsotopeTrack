@@ -155,9 +155,55 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
     fmt  = [format_element_label(e, mode, Renderer.MATHTEXT, config) for e in element_labels]
     viewport = _validate_triangle_viewport(viewport)
 
-    ax.set_llabel(fmt[0], fontproperties=fp, color=fc['color'])
-    ax.set_rlabel(fmt[1], fontproperties=fp, color=fc['color'])
-    ax.set_tlabel(fmt[2], fontproperties=fp, color=fc['color'])
+    # Clear mpltern's default vertex labels (they appear ambiguously at the
+    # 100%-composition corners, making it unclear whether they mark the
+    # start or end of the axis).
+    ax.set_llabel('')
+    ax.set_rlabel('')
+    ax.set_tlabel('')
+
+    # Place element labels at the midpoints of the triangle edges, outside
+    # the triangle — the same position as "X Axis"/"Y Axis"/"Z Axis" in a
+    # standard ternary diagram.  Each label sits on the edge adjacent to its
+    # component's vertex:
+    #
+    #   element_a (L, bottom-left vertex) → left  edge, rotation +60°
+    #   element_b (R, bottom-right vertex) → right edge, rotation −60°
+    #   element_c (T, top vertex)          → bottom edge, rotation   0°
+    #
+    # mpltern Cartesian data-space corners (confirmed by _ternary_xdata_to_abc):
+    #   T vertex: (0,       1.0)
+    #   L vertex: (−1/√3,   0.0)
+    #   R vertex: (+1/√3,   0.0)
+    _s   = 1.0 / math.sqrt(3.0)   # ≈ 0.5774
+    _pad = 0.14                    # outward offset in data units
+
+    # bottom edge midpoint (0, 0) — element_c; outward = (0, −1)
+    ax.text(
+        0.0, -_pad,
+        fmt[2],
+        transform=ax.transData,
+        ha='center', va='top', rotation=0,
+        fontproperties=fp, color=fc['color'],
+    )
+    # left edge midpoint (−_s/2, 0.5) — element_a; outward normal ≈ (−√3/2, +½)
+    ax.text(
+        -_s * 0.5 - _pad * (math.sqrt(3) / 2),
+        0.5 + _pad * 0.5,
+        fmt[0],
+        transform=ax.transData,
+        ha='right', va='center', rotation=60,
+        fontproperties=fp, color=fc['color'],
+    )
+    # right edge midpoint (+_s/2, 0.5) — element_b; outward normal ≈ (+√3/2, +½)
+    ax.text(
+        _s * 0.5 + _pad * (math.sqrt(3) / 2),
+        0.5 + _pad * 0.5,
+        fmt[1],
+        transform=ax.transData,
+        ha='left', va='center', rotation=-60,
+        fontproperties=fp, color=fc['color'],
+    )
 
     if config.get('show_grid', True):
         ax.grid(True, alpha=0.3)
