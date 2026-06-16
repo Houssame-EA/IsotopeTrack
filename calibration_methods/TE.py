@@ -25,7 +25,7 @@ def _ual():
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
-    except Exception:
+    except (ImportError, AttributeError):
         _itk_log.exception("Handled exception in _ual")
         return None
 

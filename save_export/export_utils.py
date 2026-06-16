@@ -11,6 +11,7 @@ import time
 
 from tools.theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
+from tools.app_version import __version__ as APP_VERSION
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
@@ -558,6 +559,7 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
     if units is None:
         units = ExportUnits()
     summary_file.write("IsotopeTrack Summary Results\n")
+    summary_file.write(f"Software: IsotopeTrack v{APP_VERSION}\n")
     summary_file.write(f"Date: {time.strftime('%Y-%m-%d')}\n")
     summary_file.write(f"Time: {time.strftime('%H:%M:%S')}\n")
     summary_file.write(f"Data Type: {data_type.capitalize()} Type\n\n")
@@ -948,9 +950,10 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             if 'time' in date_info:
                 f.write(f"Analysis Time: {date_info['time']}\n")
                 
+        f.write(f"Software: IsotopeTrack v{APP_VERSION}\n")
         f.write(f"Export Date: {time.strftime('%Y-%m-%d')}\n")
         f.write(f"Export Time: {time.strftime('%H:%M:%S')}\n")
-        
+
         f.write("-" * 50 + "\n\n")
 
         f.write("Calibration Information:\n")

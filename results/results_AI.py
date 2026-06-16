@@ -1744,9 +1744,9 @@ class _NumericItem(QTableWidgetItem):
     """QTableWidgetItem that sorts numerically when possible."""
     def __lt__(self, other):
         def _num(s):
-            try: return float(s.replace(',','').replace('%',''))
-            except Exception:
-                _itk_log.exception("Handled exception in _num")
+            try:
+                return float(s.replace(',', '').replace('%', ''))
+            except (ValueError, AttributeError):
                 return None
         a, b = _num(self.text()), _num(other.text())
         if a is not None and b is not None: return a < b

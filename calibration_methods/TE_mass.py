@@ -29,6 +29,7 @@ from calibration_methods.te_common import (
 from tools.theme import theme
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_mass")
+from tools.logging_utils import log_context
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes."""
@@ -2842,7 +2843,6 @@ class MassMethodWidget(QMainWindow):
                     concentration_value = float(matches[0])
                     return str(concentration_value)
                 except ValueError:
-                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         number_matches = re.findall(r'\b(\d+(?:\.\d+)?)\b', sample_name_lower)
@@ -2855,7 +2855,6 @@ class MassMethodWidget(QMainWindow):
                     if value in common_concentrations or (0.01 <= value <= 10000):
                         return str(value)
                 except ValueError:
-                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         return "-1"
@@ -2880,7 +2879,7 @@ class MassMethodWidget(QMainWindow):
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
                 else:
                     sample_name = Path(folder_path).name
-            except Exception:
+            except (OSError, ValueError, KeyError):
                 _itk_log.exception("Handled exception in update_concentration_table")
                 sample_name = Path(folder_path).name
             
@@ -3149,7 +3148,7 @@ class MassMethodWidget(QMainWindow):
                 ss_res = np.sum(weights * (y - y_fit)**2)
                 ss_tot = np.sum(weights * (y - np.mean(y))**2)
                 r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-            except Exception:
+            except (ArithmeticError, ValueError):
                 _itk_log.exception("Handled exception in perform_ionic_calibration")
                 from scipy import stats
                 slope, intercept, r_value, _, _ = stats.linregress(x, y)
@@ -3223,54 +3222,61 @@ class MassMethodWidget(QMainWindow):
             
             for folder_index, folder_path in enumerate(self.particle_folder_paths):
                 folder_name = Path(folder_path).name
-                progress_label.setText(f"Processing folder {folder_index+1}/{folder_count}: {folder_name}")
-                progress_bar.setValue(40 + (40 * folder_index // folder_count))
-                QApplication.processEvents()
+                with log_context(sample=folder_name, method="transport_rate_mass"):
+                    progress_label.setText(f"Processing folder {folder_index+1}/{folder_count}: {folder_name}")
+                    progress_bar.setValue(40 + (40 * folder_index // folder_count))
+                    QApplication.processEvents()
                 
-                if folder_path not in self.detected_particles or not self.detected_particles[folder_path]:
-                    continue
+                    if folder_path not in self.detected_particles or not self.detected_particles[folder_path]:
+                        continue
                 
-                density = self.folder_densities.get(folder_path, self.default_density)
+                    density = self.folder_densities.get(folder_path, self.default_density)
         
-                if density <= 0:
-                    density = default_element_density
+                    if density <= 0:
+                        density = default_element_density
 
-                if density <= 0:
-                    _itk_log.warning(f"Warning: Skipping folder {folder_name} - no valid density available")
-                    continue
-                    
-                folder_diameters = []
-                
-                particles = self.detected_particles[folder_path]
-                for particle in particles:
-                    if particle is None:
-                        continue
-                        
-                    total_counts = particle['total_counts']
-                    
-                    if total_counts <= 0:
+                    if density <= 0:
+                        _itk_log.warning(f"Warning: Skipping folder {folder_name} - no valid density available")
                         continue
                     
-                    try:
-                        mass_fg = total_counts / conversion_factor
-                        
-                        volume_cm3 = (mass_fg * 1e-15) / density
-                        
-                        if volume_cm3 <= 0:
+                    folder_diameters = []
+                    skipped_particles = 0
+
+                    particles = self.detected_particles[folder_path]
+                    for particle in particles:
+                        if particle is None:
                             continue
+                        
+                        total_counts = particle['total_counts']
+                    
+                        if total_counts <= 0:
+                            continue
+                    
+                        try:
+                            mass_fg = total_counts / conversion_factor
+                        
+                            volume_cm3 = (mass_fg * 1e-15) / density
+                        
+                            if volume_cm3 <= 0:
+                                continue
                             
-                        diameter_nm = 2 * (3 * volume_cm3 / (4 * np.pi))**(1/3) * 1e7
+                            diameter_nm = 2 * (3 * volume_cm3 / (4 * np.pi))**(1/3) * 1e7
                         
-                        if diameter_nm > 0 and not np.isnan(diameter_nm) and not np.isinf(diameter_nm):
-                            folder_diameters.append(diameter_nm)
+                            if diameter_nm > 0 and not np.isnan(diameter_nm) and not np.isinf(diameter_nm):
+                                folder_diameters.append(diameter_nm)
                         
-                    except (ZeroDivisionError, ValueError, OverflowError) as e:
-                        _itk_log.exception("Handled exception in calculate_transport_rate")
-                        _itk_log.error(f"Warning: Error calculating diameter for particle in {folder_name}: {e}")
-                        continue
-                        
-                if folder_diameters:
-                    all_diameters[folder_name] = folder_diameters
+                        except (ZeroDivisionError, ValueError, OverflowError):
+                            skipped_particles += 1
+                            continue
+
+                    if skipped_particles:
+                        _itk_log.warning(
+                            f"{folder_name}: skipped {skipped_particles} particle(s) "
+                            f"with invalid diameter (zero/negative/overflow)."
+                        )
+
+                    if folder_diameters:
+                        all_diameters[folder_name] = folder_diameters
             
             progress_label.setText("Generating diameter distribution plot...")
             progress_bar.setValue(90)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import logging.handlers
@@ -7,6 +8,7 @@ import os
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -20,6 +22,94 @@ from PySide6.QtWidgets import (
 )
 import qtawesome as qta
 _itk_log = logging.getLogger("IsotopeTrack.tools.logging_utils")
+
+
+_LOG_CONTEXT: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "isotopetrack_log_context", default={}
+)
+
+
+def push_log_context(**fields) -> contextvars.Token:
+    """Merge domain fields into the active logging context.
+
+    Args:
+        **fields: Context key/values to attach to subsequent log records,
+            such as sample, isotope, element, or method. None values are
+            ignored.
+    Returns:
+        contextvars.Token: Token to pass to reset_log_context to undo this push.
+    """
+    current = dict(_LOG_CONTEXT.get())
+    current.update({k: v for k, v in fields.items() if v is not None})
+    return _LOG_CONTEXT.set(current)
+
+
+def reset_log_context(token: contextvars.Token) -> None:
+    """Restore the logging context to the state captured by a push token.
+
+    Args:
+        token (contextvars.Token): Token returned by push_log_context.
+    Returns:
+        None
+    """
+    try:
+        _LOG_CONTEXT.reset(token)
+    except (ValueError, LookupError):
+        pass
+
+
+@contextmanager
+def log_context(**fields):
+    """Stamp domain context onto every log record emitted inside the block.
+
+    Args:
+        **fields: Context key/values such as sample, isotope, element, method.
+    Yields:
+        None
+    """
+    token = push_log_context(**fields)
+    try:
+        yield
+    finally:
+        reset_log_context(token)
+
+
+def set_current_window(window_id) -> None:
+    """Set or clear the window identifier stamped on every log record.
+
+    Unlike log_context, this persists for the GUI thread until changed, so all
+    activity from the active window is attributed to it.
+
+    Args:
+        window_id: Identifier for the active window, or None to clear it.
+    Returns:
+        None
+    """
+    current = dict(_LOG_CONTEXT.get())
+    if window_id is None:
+        current.pop("window", None)
+    else:
+        current["window"] = window_id
+    _LOG_CONTEXT.set(current)
+
+
+class _ContextFilter(logging.Filter):
+    """Attaches the active domain context to every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Set record.context and record.context_str from the active context.
+
+        Args:
+            record (logging.LogRecord): The record being emitted.
+        Returns:
+            bool: Always True so the record is never dropped.
+        """
+        ctx = _LOG_CONTEXT.get()
+        record.context = dict(ctx)
+        record.context_str = (
+            "  " + " ".join(f"[{k}={v}]" for k, v in ctx.items()) if ctx else ""
+        )
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1084,6 +1174,15 @@ class EnhancedLogWindow(QDialog):
         cursor.setCharFormat(fmt_badge)
         cursor.insertText(badge)
 
+        win = (entry.get("context") or {}).get("window")
+        if win:
+            fmt_win = QTextCharFormat()
+            fmt_win.setForeground(QColor("#c8a020" if mode == "dark" else "#8a6d00"))
+            fmt_win.setBackground(QColor(bg))
+            fmt_win.setFontWeight(700)
+            cursor.setCharFormat(fmt_win)
+            cursor.insertText(f" {win} ")
+
         if level == "DEBUG":
             fmt_mod = QTextCharFormat()
             fmt_mod.setForeground(
@@ -1544,11 +1643,14 @@ class EnhancedLoggingManager:
         self._logger.setLevel(logging.DEBUG)
         self._logger.handlers.clear()
 
+        self._context_filter = _ContextFilter()
+
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
         ch.setFormatter(logging.Formatter(
-            "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+            "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s%(context_str)s"
         ))
+        ch.addFilter(self._context_filter)
         self._logger.addHandler(ch)
 
         stamp    = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1560,8 +1662,9 @@ class EnhancedLoggingManager:
             fh.setLevel(logging.DEBUG)
             fh.setFormatter(logging.Formatter(
                 "%(asctime)s  %(levelname)-8s  %(name)s  "
-                "%(module)s.%(funcName)s:%(lineno)d  %(message)s"
+                "%(module)s.%(funcName)s:%(lineno)d  %(message)s%(context_str)s"
             ))
+            fh.addFilter(self._context_filter)
             self._logger.addHandler(fh)
         except Exception as exc:
             _itk_log.exception("Handled exception in _setup_logging")
@@ -1569,13 +1672,16 @@ class EnhancedLoggingManager:
 
         jsonl_path = LOG_DIR / f"isotope_track_{stamp}.jsonl"
         try:
-            self._logger.addHandler(JsonlFileHandler(jsonl_path))
+            jsonl_handler = JsonlFileHandler(jsonl_path)
+            jsonl_handler.addFilter(self._context_filter)
+            self._logger.addHandler(jsonl_handler)
         except Exception as exc:
             _itk_log.exception("Handled exception in _setup_logging")
             _itk_log.error(f"[logging_utils] Could not create JSONL log file: {exc}")
 
         self._buffer_handler = _BufferHandler(self._pre_window_buffer)
         self._buffer_handler.setLevel(logging.DEBUG)
+        self._buffer_handler.addFilter(self._context_filter)
         self._logger.addHandler(self._buffer_handler)
 
         self._prune_old_logs(keep=50)
@@ -1650,27 +1756,61 @@ class EnhancedLoggingManager:
         """
         return self._user_action_logger
 
-    def create_log_window(self, parent: QWidget | None = None) -> EnhancedLogWindow:
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
+    def _log_window_is_alive(self) -> bool:
+        """Return whether the cached log window exists and its Qt object is still valid.
+
         Returns:
-            EnhancedLogWindow: Result of the operation.
+            bool: True if the log window can still be shown and updated.
         """
         if self._log_window is None:
-            self._log_window = EnhancedLogWindow(parent)
+            return False
+        try:
+            self._log_window.objectName()
+            return True
+        except RuntimeError:
+            return False
+
+    def _discard_log_window(self) -> None:
+        """Drop the cached log window and detach its Qt log handler.
+
+        Returns:
+            None
+        """
+        if self._qt_handler is not None:
+            try:
+                self._logger.removeHandler(self._qt_handler)
+            except (ValueError, RuntimeError):
+                pass
+        self._qt_handler = None
+        self._log_window = None
+
+    def create_log_window(self, parent: QWidget | None = None) -> EnhancedLogWindow:
+        """Return the shared log window, rebuilding it if it was destroyed.
+
+        The window is created top-level (no parent) so it outlives any single
+        MainWindow; the parent argument is accepted for compatibility only.
+
+        Args:
+            parent (QWidget | None): Ignored; retained for call-site compatibility.
+        Returns:
+            EnhancedLogWindow: The live log window instance.
+        """
+        if not self._log_window_is_alive():
+            self._discard_log_window()
+            self._log_window = EnhancedLogWindow(None)
+            self._log_window.destroyed.connect(self._discard_log_window)
 
             self._qt_handler = EnhancedQtLogHandler(self._log_window)
             self._qt_handler.setLevel(logging.DEBUG)
             self._qt_handler.setFormatter(logging.Formatter("%(name)s — %(message)s"))
+            self._qt_handler.addFilter(self._context_filter)
             self._logger.addHandler(self._qt_handler)
 
             if self._buffer_handler:
                 self._logger.removeHandler(self._buffer_handler)
                 self._buffer_handler = None
-
-            for entry in self._pre_window_buffer:
-                self._log_window._receive_entry(entry)
+                for entry in self._pre_window_buffer:
+                    self._log_window._receive_entry(entry)
 
         return self._log_window
 

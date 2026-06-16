@@ -156,7 +156,7 @@ class DataProcessThread(QThread):
                         _itk_log.debug(f"Successfully extracted masses from labels")
                         _itk_log.debug(f"Mass values (first 10): {masses[:10]}")
                         _itk_log.debug(f"Mass range: {np.min(masses):.4f} to {np.max(masses):.4f}")
-                    except Exception as e:
+                    except (ValueError, KeyError, TypeError, AttributeError) as e:
                         _itk_log.exception("Handled exception in get_masses_only")
                         _itk_log.error(f"Failed to extract masses from labels: {e}")
                         return None

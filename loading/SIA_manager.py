@@ -370,7 +370,7 @@ class SIAWorker(QObject):
                     'sigma'       : m_sigma,
                     'num_points'  : int(len(pos)),
                 }
-            except Exception as e:
+            except (ValueError, ArithmeticError, IndexError, KeyError) as e:
                 _itk_log.exception("Handled exception in _build_result")
                 _itk_log.error(f"Warning: failed to process mass {masses[i]}: {e}")
 
@@ -1674,7 +1674,7 @@ class SingleIonDistributionManager(QObject):
             q = q_adc / avg_sia
             if np.isfinite(q) and q > 0:
                 return q
-        except Exception:
+        except (ArithmeticError, ValueError, FloatingPointError):
             _itk_log.exception("Handled exception in _calc_quantile")
 
         try:
@@ -1684,7 +1684,7 @@ class SingleIonDistributionManager(QObject):
             q   = sig_vals[min(idx, len(sig_vals) - 1)]
             if np.isfinite(q) and q > 0:
                 return q
-        except Exception:
+        except (ArithmeticError, ValueError, IndexError):
             _itk_log.exception("Handled exception in _calc_quantile")
 
         return None

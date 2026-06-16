@@ -683,7 +683,7 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
         )
         return file_path
 
-    except Exception as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         QMessageBox.critical(
             parent_widget, "Export Error", f"Error exporting results: {exc}"
         )
@@ -796,7 +796,7 @@ def read_detection_row(table, row):
             "min_continuous": minpts_w.value(),
             "alpha": alpha_w.value(),
         }
-    except Exception as exc:
+    except (ValueError, AttributeError, RuntimeError) as exc:
         _itk_log.exception("Handled exception in read_detection_row")
         _itk_log.error(f"Warning: falling back to defaults for row {row}: {exc}")
         return dict(DEFAULT_DETECTION_PARAMS)

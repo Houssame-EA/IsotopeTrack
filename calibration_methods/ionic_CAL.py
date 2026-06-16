@@ -25,6 +25,7 @@ from calibration_methods.te_common import (
 from tools.theme import theme
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
+from tools.logging_utils import log_context
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -35,7 +36,7 @@ def _ual():
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
-    except Exception:
+    except (ImportError, AttributeError):
         _itk_log.exception("Handled exception in _ual")
         return None
 
@@ -2256,7 +2257,7 @@ class IonicCalibrationWindow(QMainWindow):
                     
                 self.sample_combo.addItem(sample_name, folder)
                 
-            except Exception:
+            except (OSError, ValueError, KeyError):
                 _itk_log.exception("Handled exception in update_sample_combo")
                 self.sample_combo.addItem(Path(folder).name, folder)
 
@@ -2434,7 +2435,7 @@ class IonicCalibrationWindow(QMainWindow):
                 with open(run_info_path, "r") as fp:
                     run_info = json.load(fp)
                 sample_name = run_info.get("SampleName", Path(folder).name)
-            except Exception:
+            except (OSError, ValueError, KeyError):
                 _itk_log.exception("Handled exception in update_table_rows")
                 sample_name = Path(folder).name
                 
@@ -2551,7 +2552,7 @@ class IonicCalibrationWindow(QMainWindow):
             if len(parts) == 2:
                 return parts[0], float(parts[1]), unit
                 
-        except Exception:
+        except (ValueError, KeyError, IndexError, AttributeError):
             _itk_log.exception("Handled exception in parse_header_for_element_isotope_and_unit")
         return None
 
@@ -3922,121 +3923,122 @@ class IonicCalibrationWindow(QMainWindow):
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
                 isotope_key = f"{element}-{isotope:.4f}"
-                mass_index  = isotope_indices[isotope_key]
+                with log_context(isotope=isotope_key):
+                    mass_index  = isotope_indices[isotope_key]
     
-                # ── Progress update ───────────────────────────────────────────
-                if progress:
-                    isotope_count += 1
-                    progress.setValue(30 + int(60 * isotope_count / total_isotopes))
-                    progress.setLabelText(
-                        f"Calculating: {self.get_isotope_label(element, isotope)}"
-                    )
-                    QApplication.processEvents()
+                    # ── Progress update ───────────────────────────────────────────
+                    if progress:
+                        isotope_count += 1
+                        progress.setValue(30 + int(60 * isotope_count / total_isotopes))
+                        progress.setLabelText(
+                            f"Calculating: {self.get_isotope_label(element, isotope)}"
+                        )
+                        QApplication.processEvents()
     
-                x_list, y_list, y_std_list = [], [], []
-                folders_list = []
+                    x_list, y_list, y_std_list = [], [], []
+                    folders_list = []
     
-                for folder, folder_data in self.data.items():
-                    if isotope_key not in concentrations.get(folder, {}):
-                        continue
+                    for folder, folder_data in self.data.items():
+                        if isotope_key not in concentrations.get(folder, {}):
+                            continue
     
-                    conc = concentrations[folder][isotope_key]
-                    if conc == -1:
-                        continue
+                        conc = concentrations[folder][isotope_key]
+                        if conc == -1:
+                            continue
     
-                    run_info      = folder_data['run_info']
-                    acq_ns        = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"]
-                    dwell_time    = (acq_ns * 1e-9
-                                    * run_info["NumAccumulations1"]
-                                    * run_info["NumAccumulations2"])
+                        run_info      = folder_data['run_info']
+                        acq_ns        = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"]
+                        dwell_time    = (acq_ns * 1e-9
+                                        * run_info["NumAccumulations1"]
+                                        * run_info["NumAccumulations2"])
     
-                    local_masses = folder_data['masses']
-                    local_idx    = int(np.argmin(np.abs(local_masses - isotope)))
+                        local_masses = folder_data['masses']
+                        local_idx    = int(np.argmin(np.abs(local_masses - isotope)))
     
-                    counts = folder_data['signals'][:, local_idx]
-                    cps    = counts / dwell_time
+                        counts = folder_data['signals'][:, local_idx]
+                        cps    = counts / dwell_time
 
          
-                    time_values = np.arange(len(cps)) * dwell_time
-                    time_mask   = np.ones(len(cps), dtype=bool)
-                    for lo, hi in self._time_exclusions_element.get(
-                            (folder, isotope_key), []):
-                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
-                    for lo, hi in self._time_exclusions_sample.get(folder, []):
-                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        time_values = np.arange(len(cps)) * dwell_time
+                        time_mask   = np.ones(len(cps), dtype=bool)
+                        for lo, hi in self._time_exclusions_element.get(
+                                (folder, isotope_key), []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        for lo, hi in self._time_exclusions_sample.get(folder, []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
 
               
-                    if not time_mask.any():
+                        if not time_mask.any():
+                            continue
+
+                        cps_for_stats = cps[time_mask]
+
+                        x_list.append(conc)
+                        y_list.append(float(np.mean(cps_for_stats)))
+                        y_std_list.append(float(np.std(cps_for_stats)))
+                        folders_list.append(folder)
+    
+                    if len(x_list) == 0:
                         continue
 
-                    cps_for_stats = cps[time_mask]
-
-                    x_list.append(conc)
-                    y_list.append(float(np.mean(cps_for_stats)))
-                    y_std_list.append(float(np.std(cps_for_stats)))
-                    folders_list.append(folder)
-    
-                if len(x_list) == 0:
-                    continue
-
-                # ── Element density from periodic table ───────────────────────
-                element_data = next(
-                    (e for e in self.periodic_table.get_elements()
-                    if e['symbol'] == element),
-                    None
-                )
-                density = element_data['density'] if element_data else 'N/A'
-
-                if len(x_list) == 1:
-           
-                    x1 = np.array(x_list)
-                    y1 = np.array(y_list)
-                    s1 = np.array(y_std_list)
-                    fit_zero = self._fit_zero(x1, y1)
-                    fom = self._compute_figures_of_merit(
-                        fit_zero["slope"], 0.0, float(s1[0])
+                    # ── Element density from periodic table ───────────────────────
+                    element_data = next(
+                        (e for e in self.periodic_table.get_elements()
+                        if e['symbol'] == element),
+                        None
                     )
-                    y_fit = (fit_zero["slope"] * x1).tolist()
-   
-                    shared = {
-                        'slope':     fit_zero["slope"],
-                        'intercept': 0.0,
-                        'r_squared': 1.0,
-                        'y_fit':     y_fit,
-                        **fom,
-                    }
-                    results[isotope_key] = {
-                        'zero':             shared.copy(),
-                        'simple':           shared.copy(),
-                        'weighted':         shared.copy(),
-                        'x':                x1.tolist(),
-                        'y':                y1.tolist(),
-                        'y_std':            s1.tolist(),
-                        'density':          density,
-                        'folders':          list(folders_list),
-                        'excluded_folders': [],
-                        'single_point':     True,
-                    }
-                    continue
+                    density = element_data['density'] if element_data else 'N/A'
 
-                x     = np.array(x_list)
-                y     = np.array(y_list)
-                y_std = np.array(y_std_list)
-
-
-                excluded_folders = self.excluded_points.get(isotope_key, set())
-                included_mask = np.array(
-                    [f not in excluded_folders for f in folders_list])
-
-                isotope_result = self._run_all_fits_on_subset(
-                    x, y, y_std, included_mask, density)
-                if isotope_result is None:
-        
-                    continue
-                isotope_result['folders'] = list(folders_list)
+                    if len(x_list) == 1:
            
-                isotope_result['excluded_folders'] = sorted(excluded_folders)
-                results[isotope_key] = isotope_result
+                        x1 = np.array(x_list)
+                        y1 = np.array(y_list)
+                        s1 = np.array(y_std_list)
+                        fit_zero = self._fit_zero(x1, y1)
+                        fom = self._compute_figures_of_merit(
+                            fit_zero["slope"], 0.0, float(s1[0])
+                        )
+                        y_fit = (fit_zero["slope"] * x1).tolist()
+   
+                        shared = {
+                            'slope':     fit_zero["slope"],
+                            'intercept': 0.0,
+                            'r_squared': 1.0,
+                            'y_fit':     y_fit,
+                            **fom,
+                        }
+                        results[isotope_key] = {
+                            'zero':             shared.copy(),
+                            'simple':           shared.copy(),
+                            'weighted':         shared.copy(),
+                            'x':                x1.tolist(),
+                            'y':                y1.tolist(),
+                            'y_std':            s1.tolist(),
+                            'density':          density,
+                            'folders':          list(folders_list),
+                            'excluded_folders': [],
+                            'single_point':     True,
+                        }
+                        continue
+
+                    x     = np.array(x_list)
+                    y     = np.array(y_list)
+                    y_std = np.array(y_std_list)
+
+
+                    excluded_folders = self.excluded_points.get(isotope_key, set())
+                    included_mask = np.array(
+                        [f not in excluded_folders for f in folders_list])
+
+                    isotope_result = self._run_all_fits_on_subset(
+                        x, y, y_std, included_mask, density)
+                    if isotope_result is None:
+        
+                        continue
+                    isotope_result['folders'] = list(folders_list)
+           
+                    isotope_result['excluded_folders'] = sorted(excluded_folders)
+                    results[isotope_key] = isotope_result
 
         return results
 

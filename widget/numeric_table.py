@@ -28,5 +28,4 @@ class NumericTableWidgetItem(QTableWidgetItem):
             
             return self_value < other_value
         except ValueError:
-            _itk_log.exception("Handled exception in __lt__")
             return self.text() < other.text()

@@ -32,7 +32,7 @@ from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
 from tools.signal_selector_dialog import SignalSelectorDialog
 import tools.isobaric_correction as isobaric
-from tools.logging_utils import logging_manager, log_user_action
+from tools.logging_utils import logging_manager, log_user_action, set_current_window
 import logging
 from widget.colors import element_colors
 from tools.theme import (
@@ -69,7 +69,7 @@ _itk_log = logging.getLogger("IsotopeTrack.mainwindow")
 def element_chip_qss(p) -> str:
     """Stylesheet for a single element chip in the quick-selector.
 
-    ``p`` is a theme ``Palette``. The ``:checked`` state marks the element
+    p is a theme Palette. The :checked state marks the element
     currently shown in the plot.
     """
     return (
@@ -181,6 +181,14 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         
+        _app = QApplication.instance()
+        if not hasattr(_app, '_window_counter'):
+            _app._window_counter = 0
+        _app._window_counter += 1
+        self.window_number = _app._window_counter
+        self.window_id = f"W{self.window_number}"
+        set_current_window(self.window_id)
+
         if not hasattr(self, 'logger'):
             self.logger = logging_manager.get_logger('MainWindow')
             self.user_action_logger = logging_manager.get_user_action_logger()
@@ -312,10 +320,6 @@ class MainWindow(QMainWindow):
         
         if not hasattr(QApplication.instance(), 'main_windows'):
             QApplication.instance().main_windows = []
-        if not hasattr(QApplication.instance(), '_window_counter'):
-            QApplication.instance()._window_counter = 0
-        QApplication.instance()._window_counter += 1
-        self.window_number = QApplication.instance()._window_counter
         self._project_filepath = None
         QApplication.instance().main_windows.append(self)
         self.update_window_title()
@@ -592,7 +596,6 @@ class MainWindow(QMainWindow):
             overrides=isobaric.load_overrides(),
         )
  
-    # ---- PREVIEW: compute IN vs OUT, change nothing ----
     def preview_isobaric_correction(self, sample_name=None, corrections=None):
         """Return per-channel before/after for the in/out plot. No mutation.
  
@@ -1974,11 +1977,22 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, 'sidebar') and getattr(self, 'sidebar_visible', True):
             self.sidebar.setFixedWidth(self.sidebar_width)
-        
+
         if hasattr(self, 'content_area'):
             self.content_area.setSizes([int(self.height() * 0.7), int(self.height() * 0.3)])
-            
-        
+
+    def changeEvent(self, event):
+        """Attribute subsequent log records to whichever window is active.
+
+        Args:
+            event (QEvent): The Qt change event.
+        Returns:
+            None
+        """
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            set_current_window(getattr(self, "window_id", None))
+        super().changeEvent(event)
+
     #----------------------------------------------------------------------------------------------------------
     #------------------------------------Data loading and import --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
