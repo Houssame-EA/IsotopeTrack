@@ -7917,14 +7917,15 @@ class MainWindow(QMainWindow):
             bool: True if save was successful
         """
         self.user_action_logger.log_menu_action('File', 'Save Project')
-        result = self.project_manager.save_project()
-        
-        self.user_action_logger.log_file_operation(
-            'Project Save', 
-            'project.itp', 
-            success=result
-        )
-        return result
+
+        def _after(success):
+            self.user_action_logger.log_file_operation(
+                'Project Save',
+                'project.itp',
+                success=success
+            )
+
+        self.project_manager.save_project(on_complete=_after)
 
     @log_user_action('MENU', 'File -> Load Project')
     def load_project(self, filepath: str | None=None):
@@ -8652,7 +8653,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.Save
             )       
             if reply == QMessageBox.Save:
-                saved = self.save_project()
+                saved = self.project_manager.save_project(blocking=True)
                 if not saved:
                     event.ignore()
                     return

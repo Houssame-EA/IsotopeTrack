@@ -5,6 +5,7 @@ import gzip
 import zipfile
 import time
 import logging
+import numbers
 from pathlib import Path
 
 import numpy as np
@@ -73,20 +74,32 @@ def _particles_to_columnar(particles):
         if np.any(arr != 0):
             scalars[key] = arr
 
+    nested_element_keys = set()
+    for dict_key in _ELEMENT_DICT_KEYS:
+        for p in particles:
+            d = p.get(dict_key)
+            if isinstance(d, dict) and any(
+                not isinstance(v, numbers.Number) or isinstance(v, bool)
+                for v in d.values()
+            ):
+                nested_element_keys.add(dict_key)
+                break
+
     element_arrays = {}
     for dict_key in _ELEMENT_DICT_KEYS:
+        if dict_key in nested_element_keys:
+            continue
         mat = np.zeros((n, n_elements), dtype=np.float64)
         has_data = False
         for i, p in enumerate(particles):
             d = p.get(dict_key, {})
             if isinstance(d, dict):
                 for lbl, val in d.items():
-                    if lbl in label_to_idx:
-                        try:
-                            mat[i, label_to_idx[lbl]] = float(val)
-                            has_data = True
-                        except (TypeError, ValueError):
-                            _itk_log.exception("Handled exception in _particles_to_columnar")
+                    if (lbl in label_to_idx
+                            and isinstance(val, numbers.Number)
+                            and not isinstance(val, bool)):
+                        mat[i, label_to_idx[lbl]] = float(val)
+                        has_data = True
         if has_data:
             element_arrays[dict_key] = mat
 
@@ -108,14 +121,14 @@ def _particles_to_columnar(particles):
     for p in particles:
         extra = {}
         for k, v in p.items():
-            if k in _SCALAR_KEYS or k in _ELEMENT_DICT_KEYS or k == 'totals':
+            if k in _SCALAR_KEYS or k == 'totals':
+                continue
+            if k in _ELEMENT_DICT_KEYS and k not in nested_element_keys:
                 continue
             if k.startswith('_'):
                 continue
             extra[k] = v
             complex_keys.add(k)
-        if 'densities_used' in p and isinstance(p['densities_used'], dict):
-            extra['densities_used'] = p['densities_used']
         extra_particles.append(extra)
 
     has_extras = any(bool(e) for e in extra_particles)

@@ -15,13 +15,16 @@ from results.shared_plot_utils import (
 
 
 class TestAtomicNotationLabelFormatting(unittest.TestCase):
+    # Atomic Notation renders the mass as a Qt/HTML <sup> superscript so it
+    # uses the same font as the rest of the plot (see shared_plot_utils:
+    # format_element_label docstring). It is NOT a Unicode superscript glyph.
     def test_atomic_notation_prefix(self):
-        self.assertEqual(format_element_label("197Au", "Atomic Notation"), "\u00B9\u2079\u2077Au")
-        self.assertEqual(format_element_label("56Fe", "Atomic Notation"), "\u2075\u2076Fe")
-        self.assertEqual(format_element_label("107Ag", "Atomic Notation"), "\u00B9\u2070\u2077Ag")
+        self.assertEqual(format_element_label("197Au", "Atomic Notation"), "<sup>197</sup>Au")
+        self.assertEqual(format_element_label("56Fe", "Atomic Notation"), "<sup>56</sup>Fe")
+        self.assertEqual(format_element_label("107Ag", "Atomic Notation"), "<sup>107</sup>Ag")
 
     def test_atomic_notation_other_common_forms(self):
-        expected = "\u00B9\u2079\u2077Au"
+        expected = "<sup>197</sup>Au"
         self.assertEqual(format_element_label("Au197", "Atomic Notation"), expected)
         self.assertEqual(format_element_label("Au-197", "Atomic Notation"), expected)
         self.assertEqual(format_element_label("Au 197", "Atomic Notation"), expected)
@@ -45,17 +48,17 @@ class TestAtomicNotationLabelFormatting(unittest.TestCase):
         self.assertEqual(format_combination_label(raw, "Mass + Symbol"), "197Au, 56Fe")
         self.assertEqual(
             format_combination_label(raw, "Atomic Notation"),
-            "\u00B9\u2079\u2077Au, \u2075\u2076Fe",
+            "<sup>197</sup>Au, <sup>56</sup>Fe",
         )
 
     def test_axis_text_token_formatting(self):
         self.assertEqual(
             format_label_text_tokens("197Au (Counts)", "Atomic Notation"),
-            "\u00B9\u2079\u2077Au (Counts)",
+            "<sup>197</sup>Au (Counts)",
         )
         self.assertEqual(
             format_label_text_tokens("log\u2081\u2080(197Au) (Counts)", "Atomic Notation"),
-            "log\u2081\u2080(\u00B9\u2079\u2077Au) (Counts)",
+            "log\u2081\u2080(<sup>197</sup>Au) (Counts)",
         )
 
 

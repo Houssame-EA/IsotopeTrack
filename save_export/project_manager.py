@@ -7,12 +7,50 @@ import os
 import subprocess
 from pathlib import Path
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QApplication
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, QThread, Signal
 from save_export.fast_project_io import (
     save_project_v2, load_project_auto
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
+
+
+class SaveProjectThread(QThread):
+    """Run the heavy project-save work off the UI thread."""
+
+    progress = Signal(int, str)
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, filepath, main_window):
+        """Store the destination path and the window whose state is saved.
+
+        Args:
+            filepath (str): Destination .itproj path.
+            main_window: The MainWindow whose project state is written.
+        Returns:
+            None
+        """
+        super().__init__()
+        self._filepath = filepath
+        self._main_window = main_window
+
+    def run(self) -> None:
+        """Write the project, emitting progress and a final success/failure signal.
+
+        Returns:
+            None
+        """
+        try:
+            save_project_v2(
+                self._filepath,
+                self._main_window,
+                lambda pct, msg="": self.progress.emit(int(pct), msg),
+            )
+            self.succeeded.emit(self._filepath)
+        except Exception as exc:
+            _itk_log.exception("Handled exception in SaveProjectThread.run")
+            self.failed.emit(str(exc))
 
 
 class ProjectManager:
@@ -200,15 +238,20 @@ Terminal=false
             _itk_log.error(f"Linux icon setting error: {str(e)}")
             return False
     
-    def save_project(self):
+    def save_project(self, on_complete=None, blocking=False):
         """
         Save the current project state to a compressed file.
-        
+
+        Interactive saves run on a background thread so the UI stays responsive;
+        the quit-before-close path passes blocking=True for a synchronous result.
+
         Args:
-            None
-            
+            on_complete (callable | None): Called with a single bool (success)
+                when the save finishes.
+            blocking (bool): When True, save synchronously and return the result.
+
         Returns:
-            bool: True if save was successful, False otherwise
+            bool | None: The success flag when blocking; None when threaded.
         """
         filepath, _ = QFileDialog.getSaveFileName(
             self.main_window,
@@ -217,43 +260,127 @@ Terminal=false
             "IsotopeTrack Project (*.itproj)"
         )
         if not filepath:
-            return False
+            if on_complete:
+                on_complete(False)
+            return False if blocking else None
 
         if not filepath.endswith('.itproj'):
             filepath += '.itproj'
 
+        self.main_window.save_current_parameters()
+        self.main_window.progress_bar.setVisible(True)
+        self.main_window.progress_bar.setValue(0)
+
+        if blocking:
+            return self._save_blocking(filepath, on_complete)
+
+        if getattr(self, '_save_thread', None) is not None and self._save_thread.isRunning():
+            self.main_window.status_label.setText("A save is already in progress…")
+            if on_complete:
+                on_complete(False)
+            return None
+
+        self._save_on_complete = on_complete
+        self._save_thread = SaveProjectThread(filepath, self.main_window)
+        self._save_thread.progress.connect(self._on_save_progress)
+        self._save_thread.succeeded.connect(self._on_save_succeeded)
+        self._save_thread.failed.connect(self._on_save_failed)
+        self._save_thread.start()
+        return None
+
+    def _on_save_progress(self, pct, msg):
+        """Update the progress bar and status label during a threaded save.
+
+        Args:
+            pct (int): Progress percentage (0–100).
+            msg (str): Status message.
+        Returns:
+            None
+        """
+        self.main_window.progress_bar.setValue(pct)
+        self.main_window.status_label.setText(msg)
+
+    def _finalize_save_success(self, filepath):
+        """Apply the post-save UI updates after a successful write.
+
+        Args:
+            filepath (str): The saved project path.
+        Returns:
+            None
+        """
+        self._set_file_icon_cross_platform(filepath)
+        self.main_window.progress_bar.setVisible(False)
+        self.main_window.unsaved_changes = False
+        self.main_window.status_label.setText(f"Project saved: {filepath}")
+        self.main_window.update_window_title(filepath)
+
+    def _on_save_succeeded(self, filepath):
+        """Handle the worker thread's success signal on the UI thread.
+
+        Args:
+            filepath (str): The saved project path.
+        Returns:
+            None
+        """
+        self._finalize_save_success(filepath)
+        callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
+        if callback:
+            callback(True)
+
+    def _on_save_failed(self, message):
+        """Handle the worker thread's failure signal on the UI thread.
+
+        Args:
+            message (str): The error description.
+        Returns:
+            None
+        """
+        self.main_window.progress_bar.setVisible(False)
+        QMessageBox.critical(
+            self.main_window, "Save Error",
+            f"Error saving project: {message}"
+        )
+        callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
+        if callback:
+            callback(False)
+
+    def _save_blocking(self, filepath, on_complete):
+        """Save synchronously on the calling thread and return the result.
+
+        Args:
+            filepath (str): Destination .itproj path.
+            on_complete (callable | None): Called with the success flag.
+        Returns:
+            bool: True on success, False on failure.
+        """
+        def progress_callback(pct, msg=""):
+            """Update progress widgets during the blocking save.
+
+            Args:
+                pct (int): Progress percentage (0–100).
+                msg (str): Status message.
+            Returns:
+                None
+            """
+            self.main_window.progress_bar.setValue(int(pct))
+            self.main_window.status_label.setText(msg)
+            QApplication.processEvents()
+
         try:
-            self.main_window.save_current_parameters()
-
-            self.main_window.progress_bar.setVisible(True)
-            self.main_window.progress_bar.setValue(0)
-
-            def progress_callback(pct, msg):
-                """
-                Args:
-                    pct (Any): Progress percentage (0–100).
-                    msg (Any): Message string.
-                """
-                self.main_window.progress_bar.setValue(pct)
-                self.main_window.status_label.setText(msg)
-                QApplication.processEvents()
-
             save_project_v2(filepath, self.main_window, progress_callback)
-
-            self._set_file_icon_cross_platform(filepath)
-
-            self.main_window.progress_bar.setVisible(False)
-            self.main_window.unsaved_changes = False
-            self.main_window.status_label.setText(f"Project saved: {filepath}")
-            self.main_window.update_window_title(filepath)
+            self._finalize_save_success(filepath)
+            if on_complete:
+                on_complete(True)
             return True
-
         except Exception as e:
             self.main_window.progress_bar.setVisible(False)
+            _itk_log.exception("Handled exception in _save_blocking")
             QMessageBox.critical(
                 self.main_window, "Save Error",
                 f"Error saving project: {str(e)}"
             )
+            if on_complete:
+                on_complete(False)
             return False
         
     def load_project(self, filepath=None):
