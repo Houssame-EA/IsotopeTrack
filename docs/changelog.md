@@ -4,6 +4,24 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.10.2 — 2026-06-16
+
+### New Features
+
+- Add test files for some function (need more to be added in new version)
+- Log file improve you can trace output for each window open
+- fix bug with the bundle pyarrow 
+
+## v1.10.1 — 2026-06-13
+
+### New Features
+- "Results" button is highlighted when there are unsaved modifications
+- All application `print()` output replaced with structured logging (`logs/*.jsonl`)
+- Example datasets moved to a dedicated [GitHub release](https://github.com/Houssame-EA/IsotopeTrack/releases/tag/example-data), slimming the repository
+- Developer/build dependencies split into `requirements-dev.txt`
+- Documentation reference pages now auto-generated from source (`docs_gen.py`)
+
+
 ## v1.10.0 — 2026-06-11
 
 ### New Features
@@ -15,11 +33,7 @@ All notable changes to IsotopeTrack are documented here.
 ### Improvements
 - Added legend to network results figure
 - Cluster results now saved with project
-- "Results" button is highlighted when there are unsaved modifications
-- All application `print()` output replaced with structured logging (`logs/*.jsonl`)
-- Example datasets moved to a dedicated [GitHub release](https://github.com/Houssame-EA/IsotopeTrack/releases/tag/example-data), slimming the repository
-- Developer/build dependencies split into `requirements-dev.txt`
-- Documentation reference pages now auto-generated from source (`docs_gen.py`)
+
 
 ## v1.0.9 — 2026-06-09
 
