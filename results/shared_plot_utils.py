@@ -1439,7 +1439,7 @@ def build_element_matrix(particles: list, data_key: str) -> pd.DataFrame | None:
                 row.append(v if (v > 0 and not np.isnan(v)) else 0)
         rows.append(row)
 
-    return pd.DataFrame(rows, columns=all_elements)
+    return pd.DataFrame(rows, columns=pd.Index(list(all_elements)))
 
 
 # ─────────────────────────────────────────────

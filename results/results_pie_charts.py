@@ -1328,7 +1328,7 @@ class PieChartPlotNode(QObject):
                 v = p.get(data_key, {}).get(e, 0)
                 row.append(v if (v > 0 and (data_key == 'elements' or not np.isnan(v))) else 0)
             mat.append(row)
-        return {'element_data': pd.DataFrame(mat, columns=all_elems)} if mat else None
+        return {'element_data': pd.DataFrame(mat, columns=pd.Index(list(all_elems)))} if mat else None
 
     def _extract_multi(self, data_key):
         """
@@ -1354,7 +1354,7 @@ class PieChartPlotNode(QObject):
                     row.append(
                         v if (v > 0 and (data_key == 'elements' or not np.isnan(v))) else 0)
                 sd[src].append(row)
-        return ({n: {'element_data': pd.DataFrame(m, columns=all_elems)}
+        return ({n: {'element_data': pd.DataFrame(m, columns=pd.Index(list(all_elems)))}
                  for n, m in sd.items() if m} or None)
 
 
