@@ -24,6 +24,12 @@ with open(_rth, 'w') as _f:
         "if 'pyarrow' not in sys.modules:\n"
         "    m = types.ModuleType('pyarrow')\n"
         "    m.__version__ = '0.0.0'\n"
+        "    class _Array:\n"
+        "        pass\n"
+        "    class _ChunkedArray:\n"
+        "        pass\n"
+        "    m.Array = _Array\n"
+        "    m.ChunkedArray = _ChunkedArray\n"
         "    sys.modules['pyarrow'] = m\n"
     )
 
