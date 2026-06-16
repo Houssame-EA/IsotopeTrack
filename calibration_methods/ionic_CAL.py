@@ -29,10 +29,7 @@ from tools.logging_utils import log_context
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
-    """Return the UserActionLogger, or None if logging isn't ready.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return the UserActionLogger, or None if logging isn't ready."""
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
@@ -45,10 +42,6 @@ def _build_ionic_qss(p) -> str:
     """Full stylesheet for the Ionic Calibration window, built from a
     theme Palette.  Covers main window, toolbar, tabs, tables, buttons,
     inputs, group boxes, scroll areas, and the status bar.
-    Args:
-        p (Any): The p.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         /* Base window + widgets ---------------------------------------- */
@@ -386,10 +379,6 @@ def _build_ionic_status_colors(p) -> dict:
         selected  — manually selected by user (was #e6f3ff blue)
         base      — neutral background for unhighlighted cells
         text      — foreground color that reads on all three backgrounds
-    Args:
-        p (Any): The p.
-    Returns:
-        dict: Result of the operation.
     """
     if p.name == "dark":
         return {
@@ -540,8 +529,6 @@ class IonicCalibrationWindow(QMainWindow):
         theme palette.  Called on init and whenever the user toggles light/
         dark — any widgets that show dynamic colors (e.g. the results table
         status cells) are refreshed via refresh_status_colors().
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(_build_ionic_qss(p))
@@ -989,10 +976,7 @@ class IonicCalibrationWindow(QMainWindow):
         splitter.setSizes([500, 300])
         
     def _log_tab_switch(self, index):
-        """Log which tab the user switches to.
-        Args:
-            index (Any): Row or item index.
-        """
+        """Log which tab the user switches to."""
         tab_names = ["Data Management", "Manual Sensitivity", "Calibration Results"]
         name = tab_names[index] if index < len(tab_names) else str(index)
         ual = _ual()
@@ -1852,9 +1836,6 @@ class IonicCalibrationWindow(QMainWindow):
     def _restore_time_exclusions(self, folder, isotope_key):
         """Load the stored regions for (folder, isotope_key) into the
         count_vs_time_widget, replacing whatever was there before.
-        Args:
-            folder (Any): The folder.
-            isotope_key (Any): The isotope key.
         """
         key = (folder, isotope_key)
         elem_regions   = self._time_exclusions_element.get(key, [])
@@ -3099,16 +3080,12 @@ class IonicCalibrationWindow(QMainWindow):
             self.update_results_table_with_method(isotope_key, data, current_unit)
                     
     def convert_concentration(self, value, from_unit, to_unit):
-        """
-        Convert concentration between different units.
-        
+        """Convert concentration between different units.
+
         Args:
             value: Concentration value to convert
             from_unit: Source unit (ppb, ppm, ppt)
             to_unit: Target unit (ppb, ppm, ppt)
-            
-        Returns:
-            Converted concentration value
         """
         if from_unit == to_unit:
             return value
@@ -3479,13 +3456,6 @@ class IonicCalibrationWindow(QMainWindow):
         fit_weighted = self._fit_weighted(xi, yi, si)
         
         def eval_line(slope, intercept):
-            """
-            Args:
-                slope (Any): The slope.
-                intercept (Any): The intercept.
-            Returns:
-                object: Result of the operation.
-            """
             return (slope * x + intercept).tolist()
 
         y_fit_zero     = eval_line(fit_zero["slope"],     0.0)
@@ -3529,19 +3499,13 @@ class IonicCalibrationWindow(QMainWindow):
 
     def _compute_outlier_indices(self, y, y_fit, included_mask,
                                  z_threshold=1.5):
-        """
-        Flag included points whose standardized residual exceeds ``z_threshold``.
+        """Flag included points whose standardized residual exceeds ``z_threshold``.
 
         Standardization uses the sample standard deviation of the *included*
         residuals (ddof=1). With too few points the flag is disabled.
 
         Returns:
             set[int]: indices into the full ``y`` array.
-        Args:
-            y (Any): Input array or value.
-            y_fit (Any): The y fit.
-            included_mask (Any): The included mask.
-            z_threshold (Any): The z threshold.
         """
         import numpy as np
         y = np.asarray(y, dtype=float)
@@ -3564,14 +3528,11 @@ class IonicCalibrationWindow(QMainWindow):
         }
 
     def refit_isotope(self, isotope_key):
-        """
-        Re-run the three fits for a single isotope using the current
+        """Re-run the three fits for a single isotope using the current
         exclusion set. Called after every exclusion toggle.
 
         Returns True on success, False if the fit couldn't be performed
         (e.g. fewer than 2 points would remain included).
-        Args:
-            isotope_key (Any): The isotope key.
         """
         import numpy as np
         data = self.calibration_results.get(isotope_key)
@@ -3611,8 +3572,6 @@ class IonicCalibrationWindow(QMainWindow):
     def on_calibration_point_exclusion_toggled(self, index):
         """Toggle exclusion of the clicked point for the current isotope,
         refit, and redraw.
-        Args:
-            index (Any): Row or item index.
         """
         current_index = self.element_isotope_combo.currentIndex()
         if current_index < 0:
@@ -3681,11 +3640,7 @@ class IonicCalibrationWindow(QMainWindow):
                 3000)
 
     def _update_exclusion_status_label(self, isotope_key, total_points):
-        """Refresh the small status label next to the plot controls.
-        Args:
-            isotope_key (Any): The isotope key.
-            total_points (Any): The total points.
-        """
+        """Refresh the small status label next to the plot controls."""
         if not hasattr(self, 'exclusion_status_label'):
             return
         excluded = self.excluded_points.get(isotope_key, set())
@@ -3718,10 +3673,6 @@ class IonicCalibrationWindow(QMainWindow):
         The input is shown only when the active method is Manual. Its
         value is read from self.sensitivity_overrides when available,
         otherwise seeded from the Simple-linear fit.
-        Args:
-            isotope_key (Any): The isotope key.
-            data (Any): Input data.
-            current_unit (Any): The current unit.
         """
         is_manual = (self.calibration_method_combo.currentText() == 'Manual')
         self._set_manual_slope_controls_visible(is_manual)

@@ -371,12 +371,6 @@ theme = ThemeManager()
 # --------------------------------------------------------------------------- #
 
 def main_window_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QMainWindow, QWidget {{
             background-color: {p.bg_primary};
@@ -699,12 +693,6 @@ def main_window_qss(p: Palette) -> str:
         
 
 def sidebar_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QWidget {{
             background-color: {p.bg_sidebar};
@@ -750,12 +738,6 @@ def sidebar_qss(p: Palette) -> str:
 
 
 def edge_strip_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QWidget {{
             background-color: transparent;
@@ -767,22 +749,10 @@ def edge_strip_qss(p: Palette) -> str:
 
 
 def sidebar_logo_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"font-size: 30px; color: {p.accent}; font-weight: bold;"
 
 
 def sidebar_list_label_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QLabel {{
             font-weight: bold;
@@ -794,12 +764,6 @@ def sidebar_list_label_qss(p: Palette) -> str:
 
 
 def calibration_panel_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QTextEdit {{
             background-color: {p.bg_sidebar_alt};
@@ -811,12 +775,6 @@ def calibration_panel_qss(p: Palette) -> str:
 
 
 def sample_table_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QTableWidget {{
             background-color: {p.bg_sidebar_alt};
@@ -845,12 +803,6 @@ def sample_table_qss(p: Palette) -> str:
 
 
 def parameters_table_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QTableWidget {{
             gridline-color: {p.border};
@@ -882,12 +834,6 @@ def parameters_table_qss(p: Palette) -> str:
 
 
 def info_button_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QPushButton {{
             background-color: {p.bg_secondary};
@@ -903,12 +849,6 @@ def info_button_qss(p: Palette) -> str:
 
 
 def theme_toggle_button_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QPushButton {{
             background-color: {p.bg_secondary};
@@ -924,12 +864,6 @@ def theme_toggle_button_qss(p: Palette) -> str:
 
 
 def sidebar_toggle_button_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QPushButton {{
             border-radius: 16px;
@@ -944,12 +878,7 @@ def sidebar_toggle_button_qss(p: Palette) -> str:
 
 
 def primary_button_qss(p: Palette) -> str:
-    """Used by batch_edit_button, show_all_signals_button, detect_button.
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
+    """Used by batch_edit_button, show_all_signals_button, detect_button."""
     return f"""
         QPushButton {{
             padding: 8px 15px;
@@ -976,12 +905,6 @@ def primary_button_qss(p: Palette) -> str:
 
 
 def progress_bar_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QProgressBar {{
             border: 1px solid {p.border};
@@ -997,12 +920,7 @@ def progress_bar_qss(p: Palette) -> str:
 
 
 def groupbox_qss(p: Palette) -> str:
-    """Used by plot, control panel, summary group boxes.
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
+    """Used by plot, control panel, summary group boxes."""
     return f"""
         QGroupBox {{
             font-weight: bold;
@@ -1029,12 +947,6 @@ def groupbox_qss(p: Palette) -> str:
 
 
 def summary_label_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QLabel {{
             font-size: 13px;
@@ -1047,12 +959,6 @@ def summary_label_qss(p: Palette) -> str:
 
 
 def results_container_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QWidget {{
             background-color: {p.bg_tertiary};
@@ -1062,12 +968,6 @@ def results_container_qss(p: Palette) -> str:
 
 
 def results_header_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QWidget {{
             background-color: {p.bg_secondary};
@@ -1078,12 +978,6 @@ def results_header_qss(p: Palette) -> str:
 
 
 def results_title_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QLabel {{
             font-size: 18px;
@@ -1097,12 +991,6 @@ def results_title_qss(p: Palette) -> str:
 
 
 def perf_tip_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QLabel {{
             font-size: 12px;
@@ -1117,12 +1005,6 @@ def perf_tip_qss(p: Palette) -> str:
 
 
 def enhanced_checkbox_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     check_svg_b64 = (
         "PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9"
         "Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9"
@@ -1179,12 +1061,6 @@ def enhanced_checkbox_qss(p: Palette) -> str:
 def table_header_label_qss(p: Palette, bg_color: str, text_color: str) -> str:
     """The create_table_header helper takes explicit colors; this keeps that API
     but funnels through the theme-aware border.
-    Args:
-        p (Palette): The p.
-        bg_color (str): The bg color.
-        text_color (str): The text color.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         QLabel {{
@@ -1200,12 +1076,6 @@ def table_header_label_qss(p: Palette, bg_color: str, text_color: str) -> str:
 
 
 def context_menu_qss(p: Palette) -> str:
-    """
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
-    """
     return f"""
         QMenu {{
             background-color: {p.bg_secondary};
@@ -1232,10 +1102,6 @@ def context_menu_qss(p: Palette) -> str:
 def results_table_qss(p: Palette) -> str:
     """Styling for results_table and multi_element_table (data tables under
     the Results Display section).
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         QTableWidget {{
@@ -1285,10 +1151,6 @@ def dialog_qss(p: Palette) -> str:
     """Generic QDialog styling — covers background, labels, group boxes,
     and radio buttons inside popup dialogs. Use for dialogs you don't have
     direct control over creating.
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         QDialog {{
@@ -1480,8 +1342,6 @@ def dialog_qss(p: Palette) -> str:
 def tier_colors(p: Palette) -> dict:
     """Returns a dict mapping tier name -> QColor-compatible hex string.
     Replacement for hardcoded (255,200,200) style row backgrounds.
-    Args:
-        p (Palette): The p.
     """
     return {
         'critical': p.tier_critical,
@@ -1500,10 +1360,6 @@ def html_table_css(p: Palette) -> str:
     Usage:
         html = f"<style>{html_table_css(theme.palette)}</style><table>...</table>"
         label.setText(html)
-    Args:
-        p (Palette): The p.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         table {{

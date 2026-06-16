@@ -75,20 +75,12 @@ class _SafeFigureCanvas(FigureCanvas):
     """
 
     def showEvent(self, event):
-        """
-        Args:
-            event (QShowEvent): The show event forwarded by Qt.
-        """
         try:
             super().showEvent(event)
         except AttributeError:
             _itk_log.exception("Handled exception in showEvent")
 
     def resizeEvent(self, event):
-        """
-        Args:
-            event (QResizeEvent): The resize event forwarded by Qt.
-        """
         try:
             super().resizeEvent(event)
         except AttributeError:
@@ -962,16 +954,6 @@ def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_cou
 
 class _SOM:
     def __init__(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_state=42):
-        """
-        Args:
-            rows (int): Grid rows.
-            cols (int): Grid columns.
-            n_features (int): Input feature count.
-            sigma (float): Initial neighbourhood radius.
-            lr (float): Initial learning rate.
-            n_iter (int): Training iterations.
-            random_state (int): Random seed.
-        """
         rng = np.random.RandomState(random_state)
         self.weights = rng.randn(rows * cols, n_features).astype(np.float32)
         self.rows = rows
@@ -1020,12 +1002,6 @@ class _SOM:
         return self
 
     def predict(self, X):
-        """
-        Args:
-            X (np.ndarray): Input data (n_samples, n_features).
-        Returns:
-            np.ndarray: BMU index per sample.
-        """
         X = np.asarray(X, dtype=np.float32)
         out = []
         for x in X:
@@ -1034,19 +1010,9 @@ class _SOM:
         return np.array(out)
 
     def get_weights(self):
-        """
-        Returns:
-            np.ndarray: Neuron weight vectors (n_neurons, n_features).
-        """
         return self.weights.copy()
 
     def get_grid_labels(self, neuron_cluster_labels):
-        """
-        Args:
-            neuron_cluster_labels (np.ndarray): Cluster label per neuron.
-        Returns:
-            np.ndarray: 2-D grid of shape (rows, cols).
-        """
         return neuron_cluster_labels.reshape(self.rows, self.cols)
 
     def get_u_matrix(self):
@@ -3142,16 +3108,6 @@ class _ClusterWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, sel_k, elements, data, enabled, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            sel_k (int): Selected number of clusters.
-            elements (list[str]): Active element list.
-            data (np.ndarray or None): Cached preprocessed matrix, or None to
-                trigger preparation inside the worker.
-            enabled (list[str]): Algorithm names to run.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._sel_k = sel_k
@@ -3227,12 +3183,6 @@ class _EvalWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, elements, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            elements (list[str]): Active element list.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._elements = elements
@@ -3309,16 +3259,6 @@ class _BootstrapWorker(QThread):
 
     def __init__(self, dialog, data, enabled_algos, bootstrap_metrics,
                  n_boot, seed, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            data (np.ndarray): Prepared (scaled + reduced) data matrix.
-            enabled_algos (list[str]): Non-SOM algorithms to evaluate.
-            bootstrap_metrics (list[str]): Bootstrap-safe metric names to track.
-            n_boot (int): Number of bootstrap resamples.
-            seed (int): RNG seed for reproducible resampling.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._data = data
@@ -3396,11 +3336,6 @@ class ClusteringDisplayDialog(QDialog):
     """
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.parent_window = parent_window
@@ -3621,10 +3556,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _is_multi(self):
-        """
-        Returns:
-            bool: True if the node input contains multiple-sample data.
-        """
         return bool(self.node.input_data and
                     self.node.input_data.get('type') == 'multiple_sample_data')
 
@@ -3806,14 +3737,6 @@ class ClusteringDisplayDialog(QDialog):
         )
 
     def _make_btn(self, text, color, slot):
-        """
-        Args:
-            text (Any): Text string.
-            color (Any): Colour value.
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton(text)
         btn.setStyleSheet(self._btn_style(color))
         btn.clicked.connect(slot)
@@ -4045,11 +3968,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _ctx_menu(self, pos, tab):
-        """
-        Args:
-            pos (Any): Position point.
-            tab (Any): The tab.
-        """
         menu = QMenu(self)
 
         edit_action = menu.addAction("✎  Edit Figure…")
@@ -4077,12 +3995,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _make_popout_btn(self, slot):
-        """
-        Args:
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton("⤢")
         btn.setToolTip("Open in separate window")
         btn.setFixedSize(26, 22)
@@ -4094,10 +4006,7 @@ class ClusteringDisplayDialog(QDialog):
         return btn
 
     def _pop_out_figure(self, tab: str):
-        """Redraw the requested figure into a standalone resizable window.
-        Args:
-            tab (str): The tab.
-        """
+        """Redraw the requested figure into a standalone resizable window."""
         titles = {'eval': 'Evaluation Metrics',
                   'summary': 'Consensus Summary',
                   'cluster': 'Cluster Scatter',
@@ -4303,10 +4212,6 @@ class ClusteringDisplayDialog(QDialog):
             self._apply_display_settings()
 
     def _redraw_figure(self, tab: str):
-        """
-        Args:
-            tab (str): The tab.
-        """
         if tab == 'eval':
             self._refresh_eval_plot()
         elif tab == 'cluster':
@@ -4338,10 +4243,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _cl_drag_press(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button != 1 or event.inaxes is None:
             return
         self._cl_drag_ax    = event.inaxes
@@ -4349,10 +4250,6 @@ class ClusteringDisplayDialog(QDialog):
         self._cl_drag_pos0  = event.inaxes.get_position()
 
     def _cl_drag_motion(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._cl_drag_ax is None or event.x is None:
             return
         w_px, h_px = (self.cluster_fig.get_size_inches()
@@ -4365,20 +4262,11 @@ class ClusteringDisplayDialog(QDialog):
         self.cluster_canvas.draw_idle()
 
     def _cl_drag_release(self, _event):
-        """
-        Args:
-            _event (Any): The  event.
-        """
         self._cl_drag_ax    = None
         self._cl_drag_start = None
         self._cl_drag_pos0  = None
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._data_matrix_cache = None
         self.status.setText(f"Changed {key} → re-run evaluation for updated results")
@@ -4591,11 +4479,7 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _set_3d_view(self, elev, azim):
-        """Snap all 3D axes to a preset view angle.
-        Args:
-            elev (Any): The elev.
-            azim (Any): The azim.
-        """
+        """Snap all 3D axes to a preset view angle."""
         for ax in self._3d_fig.get_axes():
             ax.view_init(elev=elev, azim=azim)
         self._3d_canvas.draw_idle()
@@ -4683,10 +4567,6 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _draw_3d_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
 
         data    = self._data_matrix_cache
@@ -4906,10 +4786,6 @@ class ClusteringDisplayDialog(QDialog):
         self.dendro_canvas.draw()
 
     def _draw_dendrogram_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
         ax = target_fig.add_subplot(111)
 
@@ -5200,10 +5076,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_eval_pick(self, event):
-        """Click a point on an evaluation curve to set K directly.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Click a point on an evaluation curve to set K directly."""
         if not hasattr(event, 'ind') or len(event.ind) == 0:
             return
         line = event.artist
@@ -5218,10 +5091,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_cluster_hover(self, event):
-        """Show a floating tooltip with element values when hovering scatter points.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Show a floating tooltip with element values when hovering scatter points."""
         if not self.final_results or self._data_matrix_cache is None:
             return
 
@@ -5330,10 +5200,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _get_elements(self):
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.node.input_data:
             return []
         isotopes = self.node.input_data.get('selected_isotopes', [])
@@ -5343,21 +5209,7 @@ class ClusteringDisplayDialog(QDialog):
         return []
 
     def _prepare_data(self, elements):
-        """Prepare data matrix — identical logic to original.
-        Args:
-            elements (Any): The elements.
-        Returns:
-            object: Result of the operation.
-
-        Side effects:
-            - Sets ``self._raw_matrix`` to the pre-scaling matrix (rows already
-              filtered, columns matching the filtered element list).
-            - Sets ``self._particle_samples`` to the per-row sample name array.
-            - Sets ``self._elements_filtered`` to the elements that survived the
-              optional low-detection filter. Callers (evaluation, clustering,
-              characterisation) should use this list rather than the original
-              ``elements`` argument because the data matrix is built from it.
-        """
+        """Prepare data matrix — identical logic to original."""
         if not self.node.input_data or not elements:
             self._elements_filtered = list(elements) if elements else []
             return None
@@ -5439,14 +5291,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _run_algo(self, name, k, data):
-        """
-        Args:
-            name (Any): Name string.
-            k (Any): The k.
-            data (Any): Input data.
-        Returns:
-            None
-        """
         cfg = self.node.config
         try:
             if name == 'K-Means':
@@ -6138,15 +5982,9 @@ class ClusteringDisplayDialog(QDialog):
 
     @staticmethod
     def _elbow_k(k_vals: list, scores: list) -> int:
-        """
-        Kneedle algorithm: find the K at the elbow of a monotone curve.
+        """Kneedle algorithm: find the K at the elbow of a monotone curve.
         Normalises both axes to [0,1] and returns the point furthest from
         the straight line joining the first and last points.
-        Args:
-            k_vals (list): The k vals.
-            scores (list): The scores.
-        Returns:
-            int: Result of the operation.
         """
         k = np.array(k_vals, dtype=float)
         v = np.array(scores, dtype=float)
@@ -6377,16 +6215,12 @@ class ClusteringDisplayDialog(QDialog):
             _itk_log.exception("Handled exception in _on_som_snapshot")
 
     def _persist_results_to_node(self, sel_k=None):
-        """
-        Store the full clustering state on the workflow node so it is
+        """Store the full clustering state on the workflow node so it is
         saved with the project and restored when the dialog is reopened,
         without re-running the analysis.
 
         Args:
             sel_k (int): K used for the final clustering, when known.
-
-        Returns:
-            None
         """
         try:
             self.node.saved_cluster_state = {
@@ -6416,13 +6250,9 @@ class ClusteringDisplayDialog(QDialog):
             _itk_log.exception("Handled exception in _persist_results_to_node")
 
     def _restore_saved_results(self):
-        """
-        Restore a previously saved clustering state from the workflow
+        """Restore a previously saved clustering state from the workflow
         node and redraw the result figures, so reopening the dialog or
         loading a project shows the clustering without re-running it.
-
-        Returns:
-            None
         """
         st = getattr(self.node, 'saved_cluster_state', None)
         if not st or not st.get('final_results'):
@@ -7063,10 +6893,6 @@ class ClusteringPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Clustering Analysis"
         self.node_type = "clustering_plot"
@@ -7081,30 +6907,16 @@ class ClusteringPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         self._active_dialog = ClusteringDisplayDialog(self, parent_window)
         self._active_dialog.show()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data

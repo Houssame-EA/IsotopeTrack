@@ -43,8 +43,6 @@ def info_palette() -> InfoPalette:
     Keeps the distinctive "dark navy header + light body" identity in
     light mode, and switches to an all-dark variant that still separates
     the header from the body via contrasting brightness.
-    Returns:
-        InfoPalette: Result of the operation.
     """
     p = theme.palette
     if p.name == "dark":
@@ -96,10 +94,6 @@ def info_palette() -> InfoPalette:
 
 class Divider(QFrame):
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFrameShape(QFrame.HLine)
         self.setFixedHeight(1)
@@ -110,11 +104,6 @@ class Divider(QFrame):
 class SectionHeader(QWidget):
     """Compact section title with accent bar on the left."""
     def __init__(self, title, parent=None):
-        """
-        Args:
-            title (Any): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFixedHeight(36)
         ip = info_palette()
@@ -145,14 +134,6 @@ class SectionHeader(QWidget):
 class ParamRow(QWidget):
     """Single label/value row with optional unit."""
     def __init__(self, label, value, unit="", alternate=False, parent=None):
-        """
-        Args:
-            label (Any): Label text.
-            value (Any): Value to set or process.
-            unit (Any): The unit.
-            alternate (Any): The alternate.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         ip = info_palette()
 
@@ -185,13 +166,6 @@ class ParamRow(QWidget):
 class StatusRow(QWidget):
     """Label/value row where value is coloured by enabled/disabled state."""
     def __init__(self, label, enabled, alternate=False, parent=None):
-        """
-        Args:
-            label (Any): Label text.
-            enabled (Any): Whether the widget/feature is enabled.
-            alternate (Any): The alternate.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         ip = info_palette()
         bg = ip.row_alt if alternate else ip.surface
@@ -219,11 +193,6 @@ class StatusRow(QWidget):
 class Card(QWidget):
     """White card with border and title, containing stacked rows."""
     def __init__(self, title, parent=None):
-        """
-        Args:
-            title (Any): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         ip = info_palette()
         self.setStyleSheet(f"""
@@ -242,33 +211,19 @@ class Card(QWidget):
         self._row_count = 0
 
     def add_row(self, label, value, unit=""):
-        """
-        Args:
-            label (Any): Label text.
-            value (Any): Value to set or process.
-            unit (Any): The unit.
-        """
         alternate = (self._row_count % 2 == 1)
         row = ParamRow(label, value, unit, alternate)
         self._layout.addWidget(row)
         self._row_count += 1
 
     def add_status_row(self, label, enabled):
-        """
-        Args:
-            label (Any): Label text.
-            enabled (Any): Whether the widget/feature is enabled.
-        """
         alternate = (self._row_count % 2 == 1)
         row = StatusRow(label, enabled, alternate)
         self._layout.addWidget(row)
         self._row_count += 1
 
     def add_divider(self, sub_title):
-        """Add a visual sub-group divider with a label.
-        Args:
-            sub_title (Any): The sub title.
-        """
+        """Add a visual sub-group divider with a label."""
         ip = info_palette()
         spacer = QWidget()
         spacer.setFixedHeight(1)
@@ -292,11 +247,6 @@ class Card(QWidget):
 class SummaryBar(QWidget):
     """Dark top bar showing key stats at a glance."""
     def __init__(self, stats, parent=None):
-        """
-        Args:
-            stats (Any): The stats.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFixedHeight(80)
         ip = info_palette()
@@ -361,15 +311,6 @@ class FileInfoDialog(QDialog):
     """Dialog for displaying detailed file information."""
 
     def __init__(self, sample_name, run_info, method_info, time_array, masses, parent=None):
-        """
-        Args:
-            sample_name (Any): The sample name.
-            run_info (Any): Instrument metadata dictionary.
-            method_info (Any): The method info.
-            time_array (Any): The time array.
-            masses (Any): Mass array.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.sample_name = sample_name
         self.run_info = run_info
@@ -389,8 +330,6 @@ class FileInfoDialog(QDialog):
     def _rebuild(self, *_):
         """Re-create the entire UI so every sub-widget picks up the new
         palette.  Called on theme toggle.
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         old_layout = self.layout()
         if old_layout is not None:
@@ -485,10 +424,7 @@ class FileInfoDialog(QDialog):
         self._build_content()
 
     def _insert_card(self, card):
-        """Insert card before the trailing stretch.
-        Args:
-            card (Any): The card.
-        """
+        """Insert card before the trailing stretch."""
         count = self._content_layout.count()
         self._content_layout.insertWidget(count - 1, card)
 
@@ -546,10 +482,6 @@ class FileInfoDialog(QDialog):
             self._insert_card(err)
 
     def _build_method_card(self, segment):
-        """
-        Args:
-            segment (Any): The segment.
-        """
         hex_c  = segment["HexapoleConfig"]
         quad_c = segment["QuadrupoleConfig"]
         ab_c   = segment["AutoBlankingConfig"]
@@ -613,17 +545,6 @@ class FileInfoDialog(QDialog):
 class FileInfoMenu:
     @staticmethod
     def create_menu(sample_name, run_info, method_info, time_array, masses, parent=None):
-        """
-        Args:
-            sample_name (Any): The sample name.
-            run_info (Any): Instrument metadata dictionary.
-            method_info (Any): The method info.
-            time_array (Any): The time array.
-            masses (Any): Mass array.
-            parent (Any): Parent widget or object.
-        Returns:
-            object: Result of the operation.
-        """
         menu = QMenu(parent)
         action = menu.addAction("Show Method Information")
         action.triggered.connect(lambda: FileInfoMenu.show_file_info(
@@ -633,14 +554,5 @@ class FileInfoMenu:
 
     @staticmethod
     def show_file_info(sample_name, run_info, method_info, time_array, masses, parent=None):
-        """
-        Args:
-            sample_name (Any): The sample name.
-            run_info (Any): Instrument metadata dictionary.
-            method_info (Any): The method info.
-            time_array (Any): The time array.
-            masses (Any): Mass array.
-            parent (Any): Parent widget or object.
-        """
         dialog = FileInfoDialog(sample_name, run_info, method_info, time_array, masses, parent)
         dialog.exec()

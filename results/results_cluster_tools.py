@@ -469,9 +469,6 @@ def parse_components(text):
     capital-letter boundaries).  ``Name=El1+El2`` gives an explicit label; for a
     fused token the label is kept exactly as typed.
 
-    Args:
-        text (str): The raw component string.
-
     Returns:
         list[tuple[str, list[str]]]: Ordered component definitions.
     """
@@ -2326,9 +2323,6 @@ if _QT_OK:
             This removes the requirement to run K-evaluation first: the chosen K
             is pushed into the host's combo and the trigger buttons are enabled,
             so the host's own Cluster button works directly.
-
-            Args:
-                result (dict): The applied result row.
 
             Returns:
                 bool: True if the host was prepared successfully.

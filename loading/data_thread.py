@@ -18,16 +18,12 @@ class DataProcessThread(QThread):
     error = Signal(str)
 
     def __init__(self, folder_path, selected_masses, sample_name):
-        """
-        Initialize the data processing thread.
-        
+        """Initialize the data processing thread.
+
         Args:
             folder_path (str): Path to data folder or file
             selected_masses (list): List of masses to extract
             sample_name (str): Name of the sample
-            
-        Returns:
-            None
         """
         QThread.__init__(self)  
         self.folder_path = folder_path
@@ -393,13 +389,9 @@ class DataProcessThread(QThread):
         return selected_data_dict, run_info, time_array, analysis_datetime
 
     def run(self):
-        """
-        Execute the data processing thread.
-        
+        """Execute the data processing thread.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         try:

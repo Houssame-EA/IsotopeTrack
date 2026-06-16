@@ -332,9 +332,6 @@ class IsobaricCorrectionDialog(QDialog):
 
         Args:
             sample: Sample name key in data_by_sample.
-
-        Returns:
-            Dict mapping mass keys to signal arrays.
         """
         sample_data = getattr(self.mw, 'data_by_sample', {}).get(sample, {})
         base = dict(sample_data)
@@ -434,11 +431,7 @@ class IsobaricCorrectionDialog(QDialog):
         self._update_button_states()
 
     def _refresh_equations(self, entry: dict):
-        """Update the default and active equation labels for an entry.
-
-        Args:
-            entry: The analyte entry being shown.
-        """
+        """Update the default and active equation labels for an entry."""
         self.base_equation_label.setText(
             f"Default: corrected({entry['label']}) = "
             f"max( {entry['default_expr']}, 0 )")
@@ -448,11 +441,7 @@ class IsobaricCorrectionDialog(QDialog):
         self.equation_label.setText(active)
 
     def _refresh_preview(self, entry: dict):
-        """Re-draw the IN/OUT preview plot for an entry's analyte channel.
-
-        Args:
-            entry: The analyte entry being previewed.
-        """
+        """Re-draw the IN/OUT preview plot for an entry's analyte channel."""
         self.plot.clear()
         sample = self.sample_combo.currentText() or getattr(self.mw, 'current_sample', None)
         if not sample:

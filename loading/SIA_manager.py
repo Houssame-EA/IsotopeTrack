@@ -122,13 +122,9 @@ class SIAWorker(QObject):
     error         = Signal(str)
 
     def __init__(self):
-        """
-        Initialise the SIA worker.
+        """Initialise the SIA worker.
 
         Args:
-            None
-
-        Returns:
             None
         """
         super().__init__()
@@ -138,15 +134,11 @@ class SIAWorker(QObject):
 
     @Slot(str, str)
     def process_sia_data(self, data_path: str, file_type: str = "nu"):
-        """
-        Entry point — dispatch to the correct instrument handler.
+        """Entry point — dispatch to the correct instrument handler.
 
         Args:
             data_path (str): Path to a Nu Vitesse folder or TOFWERK .h5 file.
             file_type (str): Instrument type — ``'nu'`` or ``'tofwerk'``.
-
-        Returns:
-            None
         """
         try:
             self._should_stop = False
@@ -166,13 +158,9 @@ class SIAWorker(QObject):
 
     @Slot()
     def stop_processing(self):
-        """
-        Request cancellation of the current processing run.
+        """Request cancellation of the current processing run.
 
         Args:
-            None
-
-        Returns:
             None
         """
         self._should_stop = True
@@ -180,14 +168,10 @@ class SIAWorker(QObject):
     # ── Nu Vitesse ────────────────────────────────────────────────────────────
 
     def _process_nu(self, path: Path):
-        """
-        Load and process a Nu Vitesse data folder.
+        """Load and process a Nu Vitesse data folder.
 
         Args:
             path (Path): Path to the Nu Vitesse folder containing ``run.info``.
-
-        Returns:
-            None
         """
         if not (path / "run.info").exists():
             self.error.emit(
@@ -227,14 +211,10 @@ class SIAWorker(QObject):
     # ── TOFWERK ───────────────────────────────────────────────────────────────
 
     def _process_tofwerk(self, path: Path):
-        """
-        Load and process a TOFWERK .h5 file.
+        """Load and process a TOFWERK .h5 file.
 
         Args:
             path (Path): Path to the TOFWERK HDF5 file.
-
-        Returns:
-            None
         """
         if not path.exists():
             self.error.emit("Selected file does not exist.")
@@ -403,15 +383,11 @@ class SIAWorker(QObject):
     # ── private helper ────────────────────────────────────────────────────────
 
     def _emit(self, pct: int, msg: str):
-        """
-        Emit progress and status signals together.
+        """Emit progress and status signals together.
 
         Args:
             pct (int): Progress percentage (0–100).
             msg (str): Status message string.
-
-        Returns:
-            None
         """
         self.progress.emit(pct)
         self.status_update.emit(msg)
@@ -423,14 +399,10 @@ class SingleIonDistributionManager(QObject):
     """Unified SIA Manager — Nu Vitesse + TOFWERK."""
 
     def __init__(self, main_window):
-        """
-        Initialise the SIA manager.
+        """Initialise the SIA manager.
 
         Args:
             main_window (object): Reference to the application main window.
-
-        Returns:
-            None
         """
         super().__init__(main_window)
 
@@ -482,8 +454,6 @@ class SingleIonDistributionManager(QObject):
             text (str): Text string.
             buttons (Any): The buttons.
             default_button (Any): The default button.
-        Returns:
-            object: Result of the operation.
         """
         box = QMessageBox(parent)
         box.setWindowTitle(title)
@@ -505,11 +475,7 @@ class SingleIonDistributionManager(QObject):
     # ── theme helpers ─────────────────────────────────────────────────────────
 
     def _on_theme_changed(self, _name: str):
-        """
-        Restyle owned widgets and any live dialogs when the theme changes.
-        Args:
-            _name (str): The  name.
-        """
+        """Restyle owned widgets and any live dialogs when the theme changes."""
         if self.upload_sid_button is not None:
             if self.is_sia_loaded():
                 self.upload_sid_button.setStyleSheet(self._loaded_button_qss())
@@ -548,10 +514,7 @@ class SingleIonDistributionManager(QObject):
 
     @staticmethod
     def _loaded_button_qss() -> str:
-        """QSS for the upload button once a SIA has been loaded.
-        Returns:
-            str: Result of the operation.
-        """
+        """QSS for the upload button once a SIA has been loaded."""
         p = theme.palette
         return f"""
             QPushButton {{
@@ -566,10 +529,7 @@ class SingleIonDistributionManager(QObject):
 
     @staticmethod
     def _close_button_qss() -> str:
-        """QSS for the Close buttons in SIA dialogs.
-        Returns:
-            str: Result of the operation.
-        """
+        """QSS for the Close buttons in SIA dialogs."""
         p = theme.palette
         return f"""
             QPushButton {{
@@ -589,10 +549,7 @@ class SingleIonDistributionManager(QObject):
 
     @staticmethod
     def _restyle_plot_widget(pw):
-        """Re-apply plot background and axis colors from the active palette.
-        Args:
-            pw (Any): The pw.
-        """
+        """Re-apply plot background and axis colors from the active palette."""
         p = theme.palette
         try:
             pw.setBackground(p.plot_bg)
@@ -613,10 +570,7 @@ class SingleIonDistributionManager(QObject):
             _itk_log.exception("Handled exception in _restyle_plot_widget")
 
     def _register_dialog(self, dialog):
-        """Track a dialog so it gets restyled on theme change.
-        Args:
-            dialog (Any): Parent or target dialog.
-        """
+        """Track a dialog so it gets restyled on theme change."""
         self._live_dialogs.append(dialog)
         dialog.destroyed.connect(
             lambda _=None, d=dialog: self._live_dialogs.remove(d)
@@ -626,14 +580,10 @@ class SingleIonDistributionManager(QObject):
     # ── UI buttons ────────────────────────────────────────────────────────────
 
     def create_sia_buttons(self, parent_layout):
-        """
-        Create and add the three SIA control buttons to a layout.
+        """Create and add the three SIA control buttons to a layout.
 
         Args:
             parent_layout (QLayout): Layout to which the buttons are added.
-
-        Returns:
-            None
         """
         self.upload_sid_button = QPushButton()
         self.upload_sid_button.setIcon(qta.icon('fa6s.folder-open', color="#2196F3"))
@@ -661,14 +611,10 @@ class SingleIonDistributionManager(QObject):
     # ── upload flow ───────────────────────────────────────────────────────────
 
     def upload_single_ion_distribution(self):
-        """
-        Prompt the user to choose an instrument type, then open the
+        """Prompt the user to choose an instrument type, then open the
         appropriate file/folder picker and start background processing.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self._is_processing:
@@ -709,15 +655,11 @@ class SingleIonDistributionManager(QObject):
                 self._start_sia_processing(file_path, "tofwerk")
 
     def upload_overlay_distribution(self):
-        """
-        Load a second SIA dataset for overlay comparison.
+        """Load a second SIA dataset for overlay comparison.
         Follows the same instrument-selection flow but stores results
         in the overlay slots instead of the primary ones.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self._is_processing:
@@ -764,15 +706,11 @@ class SingleIonDistributionManager(QObject):
                 self._loading_overlay = False
 
     def _start_sia_processing(self, data_path: str, file_type: str = "nu"):
-        """
-        Spawn a QThread, move a SIAWorker onto it, and start processing.
+        """Spawn a QThread, move a SIAWorker onto it, and start processing.
 
         Args:
             data_path (str): Path to the Nu Vitesse folder or TOFWERK .h5 file.
             file_type (str): ``'nu'`` or ``'tofwerk'``.
-
-        Returns:
-            None
         """
         try:
             self._is_processing = True
@@ -811,39 +749,27 @@ class SingleIonDistributionManager(QObject):
     # ── thread callbacks ──────────────────────────────────────────────────────
 
     def _on_progress(self, value: int):
-        """
-        Forward a progress value to the main-window progress bar.
+        """Forward a progress value to the main-window progress bar.
 
         Args:
             value (int): Progress percentage (0–100).
-
-        Returns:
-            None
         """
         self.main_window.progress_bar.setValue(value)
 
     def _on_status(self, text: str):
-        """
-        Forward a status string to the main-window status label.
+        """Forward a status string to the main-window status label.
 
         Args:
             text (str): Status message to display.
-
-        Returns:
-            None
         """
         self.main_window.status_label.setText(text)
 
     def _on_finished(self, result: dict):
-        """
-        Store results, update UI, and notify the user on successful processing.
+        """Store results, update UI, and notify the user on successful processing.
         Routes to overlay storage if ``_loading_overlay`` is True.
 
         Args:
             result (dict): Result dictionary emitted by SIAWorker.finished.
-
-        Returns:
-            None
         """
         try:
             if self._loading_overlay:
@@ -894,14 +820,10 @@ class SingleIonDistributionManager(QObject):
             self._reset_processing_state()
 
     def _on_error(self, msg: str):
-        """
-        Handle a processing error emitted by the worker.
+        """Handle a processing error emitted by the worker.
 
         Args:
             msg (str): Human-readable error message.
-
-        Returns:
-            None
         """
         self._loading_overlay = False
         self._reset_processing_state()
@@ -909,8 +831,7 @@ class SingleIonDistributionManager(QObject):
         self._themed_msgbox('critical', self.main_window, "SIA Processing Error", msg)
 
     def _on_thread_cleanup(self):
-        """
-        Disconnect worker signals and nullify thread/worker references after
+        """Disconnect worker signals and nullify thread/worker references after
         the thread has finished.
 
         Without disconnecting, the signal slots keep bound-method references to
@@ -918,9 +839,6 @@ class SingleIonDistributionManager(QObject):
         ``sia_worker = None`` is assigned.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self.sia_worker is not None:
@@ -939,13 +857,9 @@ class SingleIonDistributionManager(QObject):
         self.sia_worker = None
 
     def _reset_processing_state(self):
-        """
-        Restore the upload button and hide the progress bar.
+        """Restore the upload button and hide the progress bar.
 
         Args:
-            None
-
-        Returns:
             None
         """
         self._is_processing = False
@@ -956,15 +870,11 @@ class SingleIonDistributionManager(QObject):
     # ── post-load UI helpers ──────────────────────────────────────────────────
 
     def _update_ui_after_load(self):
-        """
-        Update sigma spinbox and button states after a successful SIA load.
+        """Update sigma spinbox and button states after a successful SIA load.
         Uses ``blockSignals`` to avoid triggering spurious valueChanged
         callbacks (fix #8).
 
         Args:
-            None
-
-        Returns:
             None
         """
         if hasattr(self.main_window, 'sigma_spinbox'):
@@ -978,26 +888,18 @@ class SingleIonDistributionManager(QObject):
         self.upload_sid_button.setStyleSheet(self._loaded_button_qss())
 
     def _apply_sia_to_all_samples(self):
-        """
-        Trigger a parameters-table refresh so all samples reflect the new SIA.
+        """Trigger a parameters-table refresh so all samples reflect the new SIA.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if hasattr(self.main_window, 'parameters_table'):
             self.main_window.update_parameters_table()
 
     def _show_success_message(self):
-        """
-        Display a QMessageBox summarising the loaded SIA.
+        """Display a QMessageBox summarising the loaded SIA.
 
         Args:
-            None
-
-        Returns:
             None
         """
         info = self.single_ion_info
@@ -1016,14 +918,10 @@ class SingleIonDistributionManager(QObject):
     # ── info dialog ───────────────────────────────────────────────────────────
 
     def show_single_ion_info(self):
-        """
-        Open the SIA information dialog with plot and optional per-mass
+        """Open the SIA information dialog with plot and optional per-mass
         controls, export buttons, overlay toggle, and outlier exclusion.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self.single_ion_distribution_data is None:
@@ -1167,13 +1065,9 @@ class SingleIonDistributionManager(QObject):
         self._plot_sigma.hide()
 
         def _export_visible_plot():
-            """
-            Determine which plot widget is currently visible and export it.
+            """Determine which plot widget is currently visible and export it.
 
             Args:
-                None
-
-            Returns:
                 None
             """
             if self._plot_sigma.isVisible():
@@ -1187,13 +1081,9 @@ class SingleIonDistributionManager(QObject):
 
         if self.per_mass_distributions:
             def _refresh():
-                """
-                Refresh the visible plot based on current toggle/selector state.
+                """Refresh the visible plot based on current toggle/selector state.
 
                 Args:
-                    None
-
-                Returns:
                     None
                 """
                 if self.view_toggle.isChecked():
@@ -1374,8 +1264,7 @@ class SingleIonDistributionManager(QObject):
         return pw
 
     def _update_sia_plot(self, pw: pg.PlotWidget, info: dict, mass_key):
-        """
-        Redraw a SIA distribution plot in place without recreating the widget.
+        """Redraw a SIA distribution plot in place without recreating the widget.
         Called on every mass-selector or toggle change.
 
         Now includes overlay support: if overlay data is loaded, draws the
@@ -1386,9 +1275,6 @@ class SingleIonDistributionManager(QObject):
             info     (dict):          ``single_ion_info`` dictionary.
             mass_key (str | None):    Key into ``per_mass_distributions``, or
                                       ``None`` for the overall distribution.
-
-        Returns:
-            None
         """
         pw.clear()
 
@@ -1510,8 +1396,7 @@ class SingleIonDistributionManager(QObject):
         return pw
 
     def _update_qq_plot(self, pw: pg.PlotWidget, info: dict, mass_key):
-        """
-        Draw a Q-Q plot: theoretical lognormal quantiles on x,
+        """Draw a Q-Q plot: theoretical lognormal quantiles on x,
         observed quantiles on y.  Points on the diagonal = model fits.
 
         Args:
@@ -1519,9 +1404,6 @@ class SingleIonDistributionManager(QObject):
             info     (dict):          ``single_ion_info`` dictionary.
             mass_key (str | None):    Key into ``per_mass_distributions``, or
                                       ``None`` for the overall distribution.
-
-        Returns:
-            None
         """
         pw.clear()
 
@@ -1589,8 +1471,7 @@ class SingleIonDistributionManager(QObject):
             pw.addItem(t)
 
     def _show_qq_dialog(self, info: dict, parent: QWidget):
-        """
-        Open a separate dialog showing a lognormal Q-Q plot for the
+        """Open a separate dialog showing a lognormal Q-Q plot for the
         currently visible distribution (overall or per-mass).
 
         The plot shows theoretical lognormal quantiles on the X-axis and
@@ -1600,9 +1481,6 @@ class SingleIonDistributionManager(QObject):
         Args:
             info   (dict):    ``single_ion_info`` dictionary.
             parent (QWidget): Parent widget for the dialog.
-
-        Returns:
-            None
         """
         mass_key = self._current_qq_mass_key
 
@@ -1707,8 +1585,7 @@ class SingleIonDistributionManager(QObject):
 
     def _update_sigma_comparison_plot(self, pw: pg.PlotWidget,
                                       exclude_outliers: bool = False):
-        """
-        Redraw the sigma comparison scatter plot in place.
+        """Redraw the sigma comparison scatter plot in place.
         Flags outliers in red and optionally recomputes global σ without them.
         Applies Shapiro–Wilk normality test to label ±2 SD lines correctly.
 
@@ -1716,9 +1593,6 @@ class SingleIonDistributionManager(QObject):
             pw               (pg.PlotWidget): Existing sigma plot widget.
             exclude_outliers (bool):          If ``True``, recompute the mean σ
                                               excluding outlier masses.
-
-        Returns:
-            None
         """
         pw.clear()
 
@@ -1801,17 +1675,13 @@ class SingleIonDistributionManager(QObject):
         tnr = "font-family:Times New Roman;font-size:18pt;"
 
         def _txt(html: str, x: float, y: float, anchor=(0, 1)):
-            """
-            Add a TextItem at a given position.
+            """Add a TextItem at a given position.
 
             Args:
                 html   (str):   HTML content for the label.
                 x      (float): X position in data coordinates.
                 y      (float): Y position in data coordinates.
                 anchor (tuple): (horizontal, vertical) anchor fractions.
-
-            Returns:
-                None
             """
             t = pg.TextItem(anchor=anchor, html=html)
             t.setPos(x, y)
@@ -1848,15 +1718,11 @@ class SingleIonDistributionManager(QObject):
             self._effective_sigma = mean_s
 
     def _on_sigma_scatter_clicked(self, points):
-        """
-        Handle a click on a point in the sigma scatter plot.
+        """Handle a click on a point in the sigma scatter plot.
         Switches the view to show the clicked mass's individual distribution.
 
         Args:
             points (list): List of clicked SpotItem objects from pyqtgraph.
-
-        Returns:
-            None
         """
         if not points or not hasattr(self, 'view_toggle'):
             return
@@ -1890,16 +1756,12 @@ class SingleIonDistributionManager(QObject):
     # ── export functionality ──────────────────────────────────────────────────
 
     def _export_per_mass_csv(self, parent: QWidget):
-        """
-        Export per-mass sigma data to a CSV file via a save-file dialog.
+        """Export per-mass sigma data to a CSV file via a save-file dialog.
 
         Columns: mass, mean_signal, std_signal, sigma, num_points
 
         Args:
             parent (QWidget): Parent widget for the file dialog.
-
-        Returns:
-            None
         """
         if not self.per_mass_distributions:
             self._themed_msgbox('warning', parent, "No Data", "No per-mass distributions to export.")
@@ -1938,15 +1800,11 @@ class SingleIonDistributionManager(QObject):
             self._themed_msgbox('critical', parent, "Export Error", f"Failed to export CSV: {e}")
 
     def _export_plot(self, pw: pg.PlotWidget, parent: QWidget):
-        """
-        Export a PlotWidget to SVG or PNG via a save-file dialog.
+        """Export a PlotWidget to SVG or PNG via a save-file dialog.
 
         Args:
             pw     (pg.PlotWidget): The plot widget to export.
             parent (QWidget):       Parent widget for the file dialog.
-
-        Returns:
-            None
         """
         path, selected_filter = QFileDialog.getSaveFileName(
             parent, "Export Plot",
@@ -1974,8 +1832,7 @@ class SingleIonDistributionManager(QObject):
     # ── per-mass sigma assignment ─────────────────────────────────────────────
 
     def _assign_per_mass_sigma(self):
-        """
-        Assign each element's sigma from its closest matching per-mass SIA
+        """Assign each element's sigma from its closest matching per-mass SIA
         distribution. Falls back to the global calculated sigma if no
         per-mass match is within 0.5 amu of the element's target mass.
 
@@ -1983,9 +1840,6 @@ class SingleIonDistributionManager(QObject):
         refreshes the parameters table.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if not self.per_mass_distributions:
@@ -2050,14 +1904,10 @@ class SingleIonDistributionManager(QObject):
     # ── overlay helpers ───────────────────────────────────────────────────────
 
     def _clear_overlay(self, dialog: QDialog):
-        """
-        Clear the overlay SIA data and refresh the current dialog view.
+        """Clear the overlay SIA data and refresh the current dialog view.
 
         Args:
             dialog (QDialog): The parent SIA info dialog to refresh.
-
-        Returns:
-            None
         """
         self._overlay_info              = None
         self._overlay_per_mass          = {}
@@ -2073,13 +1923,9 @@ class SingleIonDistributionManager(QObject):
     # ── clear ─────────────────────────────────────────────────────────────────
 
     def clear_single_ion_distribution(self):
-        """
-        Prompt the user to confirm, then clear all SIA data and reset sigma.
+        """Prompt the user to confirm, then clear all SIA data and reset sigma.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self._is_processing:
@@ -2101,17 +1947,13 @@ class SingleIonDistributionManager(QObject):
         self._themed_msgbox('information', self.main_window, "Cleared", f"Single-ion distribution cleared.\n\nσ reset to {DEFAULT_SIGMA}")
 
     def _clear_sia_data(self):
-        """
-        Reset all stored SIA data (primary and overlay) and restore sigma to
+        """Reset all stored SIA data (primary and overlay) and restore sigma to
         ``DEFAULT_SIGMA`` for every sample/element in the parameters table.
 
         Uses ``blockSignals`` to avoid triggering spurious valueChanged
         callbacks (fix #8).
 
         Args:
-            None
-
-        Returns:
             None
         """
         self.single_ion_distribution_data = None
@@ -2137,13 +1979,9 @@ class SingleIonDistributionManager(QObject):
             self.main_window.update_parameters_table()
 
     def _update_ui_after_clear(self):
-        """
-        Disable info/clear buttons and reset the upload button style after clear.
+        """Disable info/clear buttons and reset the upload button style after clear.
 
         Args:
-            None
-
-        Returns:
             None
         """
         self.info_sid_button.setEnabled(False)
@@ -2232,13 +2070,9 @@ class SingleIonDistributionManager(QObject):
         return self._overlay_info is not None
 
     def stop_processing(self):
-        """
-        Request the background worker to stop and reset the UI.
+        """Request the background worker to stop and reset the UI.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self._is_processing and self.sia_worker:
@@ -2246,14 +2080,10 @@ class SingleIonDistributionManager(QObject):
             self._reset_processing_state()
 
     def cleanup(self):
-        """
-        Gracefully stop the worker thread and release all references.
+        """Gracefully stop the worker thread and release all references.
         Should be called when the parent window is closing.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if self.sia_thread and self.sia_thread.isRunning():

@@ -214,10 +214,6 @@ class InfoTooltip(QWidget):
     """
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -229,10 +225,7 @@ class InfoTooltip(QWidget):
         self._trigger_widget = None
 
     def set_trigger_widget(self, widget):
-        """Set the widget (e.g. info button) whose clicks should NOT auto-close us.
-        Args:
-            widget (Any): Target widget.
-        """
+        """Set the widget (e.g. info button) whose clicks should NOT auto-close us."""
         self._trigger_widget = widget
 
     # --- Click-outside-to-dismiss -------------------------------------------
@@ -254,13 +247,7 @@ class InfoTooltip(QWidget):
         super().hide()
 
     def eventFilter(self, obj, event):
-        """Hide on any mouse click that lands outside the tooltip.
-        Args:
-            obj (Any): The obj.
-            event (Any): Qt event object.
-        Returns:
-            object: Result of the operation.
-        """
+        """Hide on any mouse click that lands outside the tooltip."""
         if event.type() == QEvent.MouseButtonPress:
             click_pos = QCursor.pos()
             if self.geometry().contains(click_pos):
@@ -359,10 +346,6 @@ class InfoTooltip(QWidget):
     # ----- helpers --------------------------------------------------------
 
     def _create_stat_box(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         stat_box = QWidget()
         stat_layout = QVBoxLayout(stat_box)
         value_label = QLabel()

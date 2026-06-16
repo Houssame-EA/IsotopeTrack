@@ -49,16 +49,6 @@ class CorrelationSettingsDialog(QDialog):
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
                  scope: str = "all", parent=None):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-            available_elements (list): The available elements.
-            is_multi (bool): The is multi.
-            sample_names (list): The sample names.
-            scope (str): Which settings scope to expose and collect:
-                ``format``, ``quantities``, or ``all``.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._scope = scope if scope in {"format", "quantities", "all"} else "all"
         if self._scope == "format":
@@ -475,16 +465,6 @@ class CorrelationSettingsDialog(QDialog):
         fl = QFormLayout(g)
 
         def _range_row(min_key, max_key, auto_key, min_def, max_def):
-            """
-            Args:
-                min_key (Any): The min key.
-                max_key (Any): The max key.
-                auto_key (Any): The auto key.
-                min_def (Any): The min def.
-                max_def (Any): The max def.
-            Returns:
-                tuple: Result of the operation.
-            """
             rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
             auto_cb = QCheckBox("Auto"); auto_cb.setChecked(self._config.get(auto_key, True))
             mn = QDoubleSpinBox(); mn.setRange(-1e9, 1e9); mn.setDecimals(4)
@@ -667,11 +647,6 @@ class AutoCorrelationDialog(QDialog):
     pair_selected = Signal(str, str)
 
     def __init__(self, top_pairs: list, parent=None):
-        """
-        Args:
-            top_pairs (list): The top pairs.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Automated Correlation Detection")
         self.setMinimumSize(520, 400)
@@ -718,10 +693,6 @@ class AutoCorrelationDialog(QDialog):
         layout.addWidget(btn)
 
     def _on_double_click(self, index):
-        """
-        Args:
-            index (Any): Row or item index.
-        """
         row = index.row()
         if 0 <= row < len(self._pairs):
             p = self._pairs[row]
@@ -761,11 +732,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         return CorrelationPlotDisplayDialog.DISPLAY_MODE_OVERLAID
 
     def __init__(self, correlation_node, parent_window=None):
-        """
-        Args:
-            correlation_node (Any): The correlation node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = correlation_node
         self.parent_window = parent_window
@@ -786,18 +752,10 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── helpers ─────────────────────────────
 
     def _is_multi(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
         return bool(self.node.input_data and
                     self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
@@ -819,10 +777,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         return [(k, plot_data[k]) for k in ordered_keys]
 
     def _available_elements(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         try:
             pd = self.node.extract_plot_data()
             if pd:
@@ -942,40 +896,20 @@ class CorrelationPlotDisplayDialog(QDialog):
         menu.exec(QCursor.pos())
 
     def _add_toggle(self, menu, label, key):
-        """
-        Args:
-            menu (Any): QMenu object.
-            label (Any): Label text.
-            key (Any): Dictionary or storage key.
-        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
     def _set_data_type(self, dt):
-        """
-        Args:
-            dt (Any): The dt.
-        """
         self.node.config['data_type_display'] = dt
         self._refresh()
 
     def _set_elem(self, key, elem):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            elem (Any): The elem.
-        """
         self.node.config[key] = elem
         self._refresh()
 
@@ -1062,8 +996,6 @@ class CorrelationPlotDisplayDialog(QDialog):
     def _click_to_data_coords(self, widget_pos) -> tuple:
         """Convert a right-click position in plot_widget coords to data coords
         on the primary plot item. Returns (x, y) as floats.
-        Args:
-            widget_pos (Any): The widget pos.
         """
         pi = getattr(self, '_primary_plot_item', None)
         if pi is None:
@@ -1118,8 +1050,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         are additionally clamped to the data's (min, max) bounds so they never
         blow out pyqtgraph's autoRange — annotation items are also added with
         ignoreBounds=True for belt-and-suspenders.
-        Returns:
-            list: Result of the operation.
         """
         # Annotation actions were intentionally removed in Correlation Phase 1.
         return []
@@ -1161,11 +1091,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         dlg.exec()
 
     def _apply_auto_pair(self, x_elem, y_elem):
-        """
-        Args:
-            x_elem (Any): The x elem.
-            y_elem (Any): The y elem.
-        """
         self.node.config['mode'] = 'Simple Element Correlation'
         self.node.config['x_element'] = x_elem
         self.node.config['y_element'] = y_elem
@@ -1260,13 +1185,7 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── Drawing helpers ─────────────────────
 
     def _extract_xy_color(self, df, cfg):
-        """Extract (x, y, color_or_None) arrays from a DataFrame and config.
-        Args:
-            df (Any): Pandas DataFrame.
-            cfg (Any): The cfg.
-        Returns:
-            tuple: Result of the operation.
-        """
+        """Extract (x, y, color_or_None) arrays from a DataFrame and config."""
         mode = cfg.get('mode', 'Simple Element Correlation')
 
         if mode == 'Simple Element Correlation':
@@ -1290,11 +1209,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             return xa[mask], ya[mask], None
 
     def _prepare_data(self, df, cfg):
-        """Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting.
-        Args:
-            df (Any): Pandas DataFrame.
-            cfg (Any): The cfg.
-        """
+        """Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting."""
         df = apply_saturation_filter(df, cfg)
         if df.empty:
             return np.array([]), np.array([]), None
@@ -1354,8 +1269,6 @@ class CorrelationPlotDisplayDialog(QDialog):
             correlation_index (int): Series index used for r label vertical
                 offset in overlaid plots.
             correlation_count (int): Number of series in the overlaid panel.
-        Returns:
-            object: Result of the operation.
         """
         from PySide6.QtGui import QColor as _QC
         mode = cfg.get('mode', 'Simple Element Correlation')
@@ -1460,11 +1373,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         return scatter
 
     def _apply_labels(self, pi, cfg):
-        """
-        Args:
-            pi (Any): The pi.
-            cfg (Any): The cfg.
-        """
         if cfg.get('mode') != 'Simple Element Correlation':
             x_lbl = cfg.get('x_label', '') or cfg.get('x_equation', 'X-axis')
             y_lbl = cfg.get('y_label', '') or cfg.get('y_equation', 'Y-axis')
@@ -1488,12 +1396,6 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── Single sample ───────────────────────
 
     def _draw_single(self, pi, plot_data, cfg):
-        """
-        Args:
-            pi (Any): The pi.
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         df = plot_data.get('element_data')
         if df is None or df.empty:
             return
@@ -1677,10 +1579,6 @@ class CorrelationPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Element Correlation"
         self.node_type = "correlation_plot"
@@ -1694,30 +1592,16 @@ class CorrelationPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = CorrelationPlotDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
@@ -1732,20 +1616,12 @@ class CorrelationPlotNode(QObject):
             self.config['y_element'] = elems[1]
 
     def _get_elements(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.input_data:
             return []
         sel = self.input_data.get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
     def extract_plot_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         dk = DATA_KEY_MAPPING.get(

@@ -12,17 +12,13 @@ _itk_log = logging.getLogger("IsotopeTrack.widget.calibration_info")
 
 class CalibrationInfoDialog(QDialog):
     def __init__(self, calibration_results, selected_methods, method_preferences=None, parent=None):
-        """
-        Initialize the calibration information dialog.
+        """Initialize the calibration information dialog.
 
         Args:
             calibration_results: Dictionary containing all calibration results data
             selected_methods: List of selected transport rate methods
             method_preferences: Dictionary mapping elements to preferred calibration methods
             parent: Parent widget for the dialog
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("Calibration Information")
@@ -48,10 +44,6 @@ class CalibrationInfoDialog(QDialog):
         self._refresh_avg_rate_style()
 
     def closeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
@@ -260,11 +252,6 @@ class CalibrationInfoDialog(QDialog):
         Maps the six legacy quality buckets to the 4-tier palette + accent_soft.
         Light mode keeps pastel-like colors; dark mode gets desaturated
         tints automatically because they come from the palette.
-        Args:
-            r_squared (Any): The r squared.
-            method_name (Any): The method name.
-        Returns:
-            object: Result of the operation.
         """
         p = theme.palette
         if r_squared <= 0:
@@ -278,17 +265,11 @@ class CalibrationInfoDialog(QDialog):
         return QColor(p.tier_critical)
 
     def _tier_text_color(self):
-        """Text color to use on top of tier-colored row backgrounds.
-        Returns:
-            object: Result of the operation.
-        """
+        """Text color to use on top of tier-colored row backgrounds."""
         return QColor(theme.palette.tier_text)
 
     def _muted_color(self):
-        """Color for 'Not available' / em-dash placeholder text.
-        Returns:
-            object: Result of the operation.
-        """
+        """Color for 'Not available' / em-dash placeholder text."""
         return QColor(theme.palette.text_muted)
 
     # ------------------------------------------------------------------ #
@@ -296,12 +277,6 @@ class CalibrationInfoDialog(QDialog):
     # ------------------------------------------------------------------ #
 
     def format_isotope_label(self, element_key):
-        """
-        Args:
-            element_key (Any): The element key.
-        Returns:
-            object: Result of the operation.
-        """
         try:
             if '-' in element_key:
                 element, mass_str = element_key.split('-')
@@ -314,12 +289,6 @@ class CalibrationInfoDialog(QDialog):
             return element_key
 
     def get_mass_number_for_sorting(self, formatted_label):
-        """
-        Args:
-            formatted_label (Any): The formatted label.
-        Returns:
-            int: Result of the operation.
-        """
         try:
             import re
             match = re.match(r'^(\d+)', formatted_label)
@@ -331,13 +300,6 @@ class CalibrationInfoDialog(QDialog):
             return 999
 
     def find_matching_threshold_key(self, formatted_isotope, element_thresholds):
-        """
-        Args:
-            formatted_isotope (Any): The formatted isotope.
-            element_thresholds (Any): The element thresholds.
-        Returns:
-            None
-        """
         try:
             import re
             match = re.match(r'^(\d+)([A-Za-z]+)', formatted_isotope)
@@ -355,13 +317,6 @@ class CalibrationInfoDialog(QDialog):
         return None
 
     def find_matching_limit_key(self, formatted_isotope, element_limits):
-        """
-        Args:
-            formatted_isotope (Any): The formatted isotope.
-            element_limits (Any): The element limits.
-        Returns:
-            None
-        """
         if formatted_isotope in element_limits:
             return formatted_isotope
         try:
@@ -510,10 +465,6 @@ class CalibrationInfoDialog(QDialog):
                 item.setToolTip(tooltip)
 
     def create_bottom_buttons(self, layout):
-        """
-        Args:
-            layout (Any): Target layout.
-        """
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
 
@@ -736,13 +687,6 @@ class CalibrationInfoDialog(QDialog):
     # ------------------------------------------------------------------ #
 
     def create_item(self, value, editable=True):
-        """
-        Args:
-            value (Any): Value to set or process.
-            editable (Any): The editable.
-        Returns:
-            object: Result of the operation.
-        """
         if value is None or (isinstance(value, str) and not value):
             item = QTableWidgetItem("—")
             item.setForeground(QBrush(self._muted_color()))
@@ -753,12 +697,6 @@ class CalibrationInfoDialog(QDialog):
         return item
 
     def create_scientific_item(self, value):
-        """
-        Args:
-            value (Any): Value to set or process.
-        Returns:
-            object: Result of the operation.
-        """
         if value is None or value == 'N/A':
             return self.create_item("—", False)
         try:
@@ -768,13 +706,6 @@ class CalibrationInfoDialog(QDialog):
             return self.create_item("—", False)
 
     def create_decimal_item(self, value, decimals=2):
-        """
-        Args:
-            value (Any): Value to set or process.
-            decimals (Any): The decimals.
-        Returns:
-            object: Result of the operation.
-        """
         if value is None or value == 'N/A':
             return self.create_item("—", False)
         try:
@@ -784,12 +715,6 @@ class CalibrationInfoDialog(QDialog):
             return self.create_item("—", False)
 
     def create_quality_item(self, r_squared):
-        """
-        Args:
-            r_squared (Any): The r squared.
-        Returns:
-            object: Result of the operation.
-        """
         if r_squared >= 0.99:
             quality = "Good"
         elif r_squared >= 0.95:
@@ -803,14 +728,6 @@ class CalibrationInfoDialog(QDialog):
         return self.create_item(quality, False)
 
     def create_status_item(self, r_squared, method_data, limit_data):
-        """
-        Args:
-            r_squared (Any): The r squared.
-            method_data (Any): The method data.
-            limit_data (Any): The limit data.
-        Returns:
-            object: Result of the operation.
-        """
         if not method_data:
             status = "Not calibrated"
         elif r_squared >= 0.9 and limit_data:

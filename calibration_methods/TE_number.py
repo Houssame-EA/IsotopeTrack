@@ -46,11 +46,6 @@ class CollapsibleSection(QWidget):
     """
 
     def __init__(self, title: str, parent=None):
-        """
-        Args:
-            title (str): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._expanded = True
 
@@ -98,10 +93,6 @@ class CollapsibleSection(QWidget):
         self._arrow.setText("▼" if self._expanded else "▶")
 
     def collapse(self, status: str = ""):
-        """
-        Args:
-            status (str): Status message string.
-        """
         if status:
             self._status_lbl.setText(status)
         if self._expanded:
@@ -116,48 +107,28 @@ class CollapsibleSection(QWidget):
             self._arrow.setText("▼")
 
     def set_status(self, text: str):
-        """
-        Args:
-            text (str): Text string.
-        """
         self._status_lbl.setText(text)
 
     @property
     def is_expanded(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._expanded
 
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
 class NoWheelIntSpinBox(QSpinBox):
     """QSpinBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
 class NoWheelComboBox(QComboBox):
     """QComboBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
@@ -196,10 +167,7 @@ class NumberMethodWidget(QMainWindow):
         self.destroyed.connect(lambda *_: self._theme_cleanup())
 
     def apply_theme(self, *_):
-        """Re-apply the themed stylesheet and refresh dynamic labels.
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
+        """Re-apply the themed stylesheet and refresh dynamic labels."""
         p = theme.palette
 
         section_qss = f"""
@@ -445,10 +413,7 @@ class NumberMethodWidget(QMainWindow):
         layout.addWidget(self.detect_button)
 
     def _build_plot(self, parent_layout):
-        """Add the always-visible signal visualization plot to parent_layout.
-        Args:
-            parent_layout (Any): Layout to which widgets are added.
-        """
+        """Add the always-visible signal visualization plot to parent_layout."""
         plot_group = QGroupBox("Signal Visualization")
         plot_layout = QVBoxLayout(plot_group)
         plot_layout.setSpacing(6)
@@ -1016,15 +981,11 @@ class NumberMethodWidget(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error processing CSV files: {str(e)}")
 
     def filter_csv_config_by_isotopes(self, config, selected_isotopes):
-        """
-        Filter CSV configuration to only include selected isotopes.
-        
+        """Filter CSV configuration to only include selected isotopes.
+
         Args:
             config: Original CSV configuration dictionary
             selected_isotopes: Dictionary mapping element symbols to selected isotope masses
-            
-        Returns:
-            Filtered configuration containing only mappings for selected isotopes
         """
         filtered_config = config.copy()
         filtered_config['files'] = []
@@ -1467,8 +1428,6 @@ class NumberMethodWidget(QMainWindow):
 
         Each entry is a dict ``{'bounds': (x0, x1), 'scope': 'sample',
         'element_key': None}``.  Returns an empty list when there are none.
-        Args:
-            sample_name (Any): The sample name.
         """
         return self._exclusion_regions_by_sample.get(sample_name, [])
 
@@ -1607,14 +1566,10 @@ class NumberMethodWidget(QMainWindow):
         self.plot_widget.enableAutoRange()
 
     def update_detection_parameters_table(self):
-        """
-        Update detection parameters table with all samples.
-        
+        """Update detection parameters table with all samples.
+
         Populates the detection parameters table with default values for each sample
         including detection method, and threshold parameters.
-
-        Returns:
-            None
         """
         if not self.selected_element:
             return
@@ -1717,14 +1672,10 @@ class NumberMethodWidget(QMainWindow):
         self.detect_button.setEnabled(True)
 
     def apply_global_detection_params(self, method):
-        """
-        Apply global detection method to all samples.
-        
+        """Apply global detection method to all samples.
+
         Args:
             method (str): Detection method name to apply to all sample rows.
-
-        Returns:
-            None
         """
         apply_global_method(self.detection_params_table, method)
             
@@ -1972,15 +1923,11 @@ class NumberMethodWidget(QMainWindow):
             self.highlight_particle_in_plot(particle, results)
 
     def highlight_particle_in_plot(self, particle, results):
-        """
-        Add highlighting to a specific particle in the plot.
-        
+        """Add highlighting to a specific particle in the plot.
+
         Args:
             particle (dict): Particle dictionary containing detection information.
             results (dict): Detection results dictionary for the sample.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = highlight_particle(
             self.plot_widget, particle,
@@ -2014,9 +1961,8 @@ class NumberMethodWidget(QMainWindow):
         )
 
     def plot_sample_results(self, sample_name, signal, particles, lambda_bkgd, threshold, time_array):
-        """
-        Plot results for a specific sample.
-        
+        """Plot results for a specific sample.
+
         Args:
             sample_name (str): Display name of the sample.
             signal (np.ndarray): Raw signal array.
@@ -2024,9 +1970,6 @@ class NumberMethodWidget(QMainWindow):
             lambda_bkgd (float): Background level value.
             threshold (float): Detection threshold value.
             time_array (np.ndarray): Time array corresponding to signal data.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = None
         plot_detection_results(
@@ -2209,12 +2152,7 @@ class NumberMethodWidget(QMainWindow):
             self.summary_label.setText("<div style='text-align: center; color: red;'><h3>No successful calculations</h3></div>")
 
     def export_results_to_csv(self):
-        """
-        Export detection results to CSV file.
-
-        Returns:
-            None
-        """
+        """Export detection results to CSV file."""
         export_table_to_csv(self.results_table, self)
 
 

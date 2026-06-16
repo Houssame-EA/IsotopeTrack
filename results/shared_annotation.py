@@ -87,10 +87,6 @@ QUICK_COLORS = [
 
 
 def _new_id() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     return f"ann_{uuid.uuid4().hex[:8]}"
 
 
@@ -100,8 +96,6 @@ def _default_data(ann_type: str, x: float = 0.0, y: float = 0.0) -> dict:
         ann_type (str): The ann type.
         x (float): Input array or value.
         y (float): Input array or value.
-    Returns:
-        dict: Result of the operation.
     """
     base = {
         'id':    _new_id(),
@@ -142,11 +136,6 @@ class _Command:
 
 class AddCommand(_Command):
     def __init__(self, mgr, data):
-        """
-        Args:
-            mgr (Any): The mgr.
-            data (Any): Input data.
-        """
         self.mgr = mgr
         self.data = copy.deepcopy(data)
 
@@ -159,12 +148,6 @@ class AddCommand(_Command):
 
 class RemoveCommand(_Command):
     def __init__(self, mgr, data, index):
-        """
-        Args:
-            mgr (Any): The mgr.
-            data (Any): Input data.
-            index (Any): Row or item index.
-        """
         self.mgr = mgr
         self.data = copy.deepcopy(data)
         self.index = index
@@ -178,13 +161,6 @@ class RemoveCommand(_Command):
 
 class ModifyCommand(_Command):
     def __init__(self, mgr, ann_id, before, after):
-        """
-        Args:
-            mgr (Any): The mgr.
-            ann_id (Any): The ann id.
-            before (Any): The before.
-            after (Any): The after.
-        """
         self.mgr = mgr
         self.ann_id = ann_id
         self.before = copy.deepcopy(before)
@@ -201,20 +177,12 @@ class UndoStack(QObject):
     changed = Signal()
 
     def __init__(self, limit: int = 100):
-        """
-        Args:
-            limit (int): The limit.
-        """
         super().__init__()
         self._undo: list[_Command] = []
         self._redo: list[_Command] = []
         self._limit = limit
 
     def push(self, cmd: _Command):
-        """
-        Args:
-            cmd (_Command): The cmd.
-        """
         cmd.apply()
         self._undo.append(cmd)
         if len(self._undo) > self._limit:
@@ -253,12 +221,6 @@ class _DraggableText(pg.TextItem):
     sigClicked = Signal(object)
 
     def __init__(self, html: str = "", color='#000000', anchor=(0, 0)):
-        """
-        Args:
-            html (str): The html.
-            color (Any): Colour value.
-            anchor (Any): The anchor.
-        """
         super().__init__(html=html, color=color, anchor=anchor)
         self.setFlag(QGraphicsItem.ItemIsMovable, False)
         self.setAcceptHoverEvents(True)
@@ -266,26 +228,14 @@ class _DraggableText(pg.TextItem):
         self._drag_offset = None
 
     def hoverEnterEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         self.setCursor(QCursor(Qt.SizeAllCursor))
         super().hoverEnterEvent(ev)
 
     def hoverLeaveEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         self.unsetCursor()
         super().hoverLeaveEvent(ev)
 
     def mousePressEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         if ev.button() == Qt.LeftButton:
             self.sigClicked.emit(self)
             self._dragging = True
@@ -295,10 +245,6 @@ class _DraggableText(pg.TextItem):
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         if self._dragging:
             delta = ev.pos() - self._drag_offset
             new_pos = self.pos() + delta
@@ -308,10 +254,6 @@ class _DraggableText(pg.TextItem):
             super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         if self._dragging and ev.button() == Qt.LeftButton:
             self._dragging = False
             self.sigPositionChangeFinished.emit(self)
@@ -328,10 +270,6 @@ class BaseAnnotation(QObject):
     sig_drag_finished = Signal(str, dict)
 
     def __init__(self, data: dict):
-        """
-        Args:
-            data (dict): Input data.
-        """
         super().__init__()
         self.data = data
         self.item = None
@@ -342,10 +280,7 @@ class BaseAnnotation(QObject):
     # ── public lifecycle ────────────────────────────
 
     def attach(self, plot_item):
-        """Create and add item(s) to the plot.
-        Args:
-            plot_item (Any): The plot item.
-        """
+        """Create and add item(s) to the plot."""
         self._plot_item = plot_item
         self._build_item(plot_item)
         self._sync_from_data()
@@ -371,10 +306,6 @@ class BaseAnnotation(QObject):
             self._sync_from_data()
 
     def set_selected(self, selected: bool):
-        """
-        Args:
-            selected (bool): The selected.
-        """
         self._selected = selected
         if self.item is not None:
             self._apply_selection_style()
@@ -382,10 +313,6 @@ class BaseAnnotation(QObject):
     # ── subclass API ────────────────────────────────
 
     def _build_item(self, plot_item):
-        """
-        Args:
-            plot_item (Any): The plot item.
-        """
         raise NotImplementedError
 
     def _sync_from_data(self):
@@ -400,17 +327,9 @@ class BaseAnnotation(QObject):
     # ── helpers ─────────────────────────────────────
 
     def _color(self) -> QColor:
-        """
-        Returns:
-            QColor: Result of the operation.
-        """
         return QColor(self.data.get('color', DEFAULT_COLOR))
 
     def _pen(self) -> QPen:
-        """
-        Returns:
-            QPen: Result of the operation.
-        """
         w = int(self.data.get('width', 2))
         return QPen(self._color(), w,
                     LINE_STYLES.get(self.data.get('style', 'solid'), Qt.SolidLine))
@@ -424,18 +343,10 @@ class TextAnnotation(BaseAnnotation):
     TYPE = 'text'
 
     def __init__(self, data):
-        """
-        Args:
-            data (Any): Input data.
-        """
         super().__init__(data)
         self._arrow = None
 
     def _build_item(self, plot_item):
-        """
-        Args:
-            plot_item (Any): The plot item.
-        """
         self.item = _DraggableText(html="", anchor=(0, 0.5))
         plot_item.addItem(self.item, ignoreBounds=True)
         self._arrow = pg.PlotDataItem(pen=pg.mkPen(self._color(), width=1.5))
@@ -476,10 +387,6 @@ class TextAnnotation(BaseAnnotation):
         self.item.sigPositionChangeFinished.connect(self._on_drag_done)
 
     def _on_drag_done(self, _):
-        """
-        Args:
-            _ (Any): The  .
-        """
         pos = self.item.pos()
         new = copy.deepcopy(self.data)
         new['x'] = float(pos.x())
@@ -514,10 +421,6 @@ class _LineAnnotation(BaseAnnotation):
     POS_KEY = 'x'
 
     def _build_item(self, plot_item):
-        """
-        Args:
-            plot_item (Any): The plot item.
-        """
         self.item = pg.InfiniteLine(
             angle=self.ANGLE, movable=True, pen=self._pen(),
         )
@@ -549,10 +452,6 @@ class _LineAnnotation(BaseAnnotation):
         self.item.sigClicked.connect(lambda _: self.sig_clicked.emit(self.data['id']))
 
     def _on_drag_done(self, _):
-        """
-        Args:
-            _ (Any): The  .
-        """
         new = copy.deepcopy(self.data)
         new[self.POS_KEY] = float(self.item.value())
         self.sig_drag_finished.emit(self.data['id'], new)
@@ -586,10 +485,6 @@ class VBandAnnotation(BaseAnnotation):
     TYPE = 'vband'
 
     def _build_item(self, plot_item):
-        """
-        Args:
-            plot_item (Any): The plot item.
-        """
         c = self._color()
         alpha = int(255 * float(self.data.get('alpha', 0.25)))
         brush = QBrush(QColor(c.red(), c.green(), c.blue(), alpha))
@@ -629,10 +524,6 @@ class VBandAnnotation(BaseAnnotation):
         self.item.sigRegionChangeFinished.connect(self._on_drag_done)
 
     def _on_drag_done(self, _):
-        """
-        Args:
-            _ (Any): The  .
-        """
         new = copy.deepcopy(self.data)
         r = self.item.getRegion()
         new['x1'] = float(min(r))
@@ -648,18 +539,10 @@ class RectAnnotation(BaseAnnotation):
     TYPE = 'rect'
 
     def __init__(self, data):
-        """
-        Args:
-            data (Any): Input data.
-        """
         super().__init__(data)
         self._corner_handles = []
 
     def _build_item(self, plot_item):
-        """
-        Args:
-            plot_item (Any): The plot item.
-        """
         self.item = pg.PlotDataItem(pen=self._pen())
         plot_item.addItem(self.item, ignoreBounds=True)
 
@@ -773,11 +656,6 @@ class RectAnnotation(BaseAnnotation):
         self._handle_corners = []
 
     def _on_handle_done(self, which: str, handle):
-        """
-        Args:
-            which (str): The which.
-            handle (Any): The handle.
-        """
         new = copy.deepcopy(self.data)
         try:
             pos = handle.pos()
@@ -820,12 +698,6 @@ _ANNOTATION_CLASSES = {
 
 
 def make_annotation(data: dict) -> BaseAnnotation:
-    """
-    Args:
-        data (dict): Input data.
-    Returns:
-        BaseAnnotation: Result of the operation.
-    """
     cls = _ANNOTATION_CLASSES.get(data.get('type'))
     if cls is None:
         raise ValueError(f"Unknown annotation type: {data.get('type')}")
@@ -856,21 +728,10 @@ class _SceneMouseEventFilter(QObject):
     _MOUSE_EVENT_TYPES = None
 
     def __init__(self, manager):
-        """
-        Args:
-            manager (Any): The manager.
-        """
         super().__init__()
         self._manager = manager
 
     def eventFilter(self, obj, event):
-        """
-        Args:
-            obj (Any): The obj.
-            event (Any): Qt event object.
-        Returns:
-            bool: Result of the operation.
-        """
         if _SceneMouseEventFilter._MOUSE_EVENT_TYPES is None:
             from PySide6.QtCore import QEvent
             _SceneMouseEventFilter._MOUSE_EVENT_TYPES = {
@@ -904,11 +765,6 @@ class AnnotationManager(QObject):
     sig_selection_changed = Signal(object)
 
     def __init__(self, cfg: dict, parent=None):
-        """
-        Args:
-            cfg (dict): The cfg.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.cfg = cfg
         self.cfg.setdefault('annotations', [])
@@ -925,10 +781,7 @@ class AnnotationManager(QObject):
     # ── plot attachment ─────────────────────────────
 
     def attach_plot(self, plot_item):
-        """Called after every plot refresh. Rebuilds all annotation items.
-        Args:
-            plot_item (Any): The plot item.
-        """
+        """Called after every plot refresh. Rebuilds all annotation items."""
         self._detach_all()
         self._plot_item = plot_item
         for d in self.cfg.get('annotations', []):
@@ -963,10 +816,6 @@ class AnnotationManager(QObject):
         self._wrappers.clear()
 
     def _build_wrapper(self, data):
-        """
-        Args:
-            data (Any): Input data.
-        """
         try:
             w = make_annotation(data)
             w.sig_clicked.connect(self._on_item_clicked)
@@ -980,10 +829,6 @@ class AnnotationManager(QObject):
     # ── insert mode ─────────────────────────────────
 
     def begin_insert(self, ann_type: str):
-        """
-        Args:
-            ann_type (str): The ann type.
-        """
         if ann_type not in ANNOTATION_TYPES:
             return
         self._insert_type = ann_type
@@ -992,17 +837,11 @@ class AnnotationManager(QObject):
         self._insert_type = None
 
     def is_inserting(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
         return self._insert_type is not None
 
     def _on_scene_clicked(self, ev):
         """Scene-level click: either places a new annotation (insert mode),
         selects the annotation under the click, or clears selection on empty.
-        Args:
-            ev (Any): The ev.
         """
         if self._plot_item is None:
             return
@@ -1062,12 +901,6 @@ class AnnotationManager(QObject):
     # ── CRUD + undo ─────────────────────────────────
 
     def add_new(self, ann_type: str, x: float, y: float):
-        """
-        Args:
-            ann_type (str): The ann type.
-            x (float): Input array or value.
-            y (float): Input array or value.
-        """
         data = _default_data(ann_type, x, y)
         self.undo_stack.push(AddCommand(self, data))
         self.select(data['id'])
@@ -1083,10 +916,6 @@ class AnnotationManager(QObject):
                 return
 
     def update_selected(self, new_data: dict):
-        """
-        Args:
-            new_data (dict): The new data.
-        """
         if self._selected_id is None:
             return
         before = None
@@ -1100,10 +929,6 @@ class AnnotationManager(QObject):
             self, self._selected_id, before, new_data))
 
     def select(self, ann_id: Optional[str]):
-        """
-        Args:
-            ann_id (Optional[str]): The ann id.
-        """
         if ann_id == self._selected_id:
             return
         if self._selected_id and self._selected_id in self._wrappers:
@@ -1114,10 +939,6 @@ class AnnotationManager(QObject):
         self.sig_selection_changed.emit(self.get_selected_data())
 
     def get_selected_data(self) -> Optional[dict]:
-        """
-        Returns:
-            Optional[dict]: Result of the operation.
-        """
         if self._selected_id is None:
             return None
         for d in self.cfg.get('annotations', []):
@@ -1126,39 +947,22 @@ class AnnotationManager(QObject):
         return None
 
     def get_all_data(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         return list(self.cfg.get('annotations', []))
 
 
     def _raw_add(self, data):
-        """
-        Args:
-            data (Any): Input data.
-        """
         self.cfg.setdefault('annotations', []).append(copy.deepcopy(data))
         if self._plot_item is not None:
             self._build_wrapper(self.cfg['annotations'][-1])
         self.sig_annotations_changed.emit()
 
     def _raw_insert(self, index, data):
-        """
-        Args:
-            index (Any): Row or item index.
-            data (Any): Input data.
-        """
         self.cfg.setdefault('annotations', []).insert(index, copy.deepcopy(data))
         if self._plot_item is not None:
             self._build_wrapper(self.cfg['annotations'][index])
         self.sig_annotations_changed.emit()
 
     def _raw_remove(self, ann_id):
-        """
-        Args:
-            ann_id (Any): The ann id.
-        """
         lst = self.cfg.get('annotations', [])
         for i, d in enumerate(lst):
             if d['id'] == ann_id:
@@ -1173,11 +977,6 @@ class AnnotationManager(QObject):
         self.sig_annotations_changed.emit()
 
     def _raw_update(self, ann_id, new_data):
-        """
-        Args:
-            ann_id (Any): The ann id.
-            new_data (Any): The new data.
-        """
         lst = self.cfg.get('annotations', [])
         for i, d in enumerate(lst):
             if d['id'] == ann_id:
@@ -1193,18 +992,9 @@ class AnnotationManager(QObject):
     # ── signal handlers ─────────────────────────────
 
     def _on_item_clicked(self, ann_id: str):
-        """
-        Args:
-            ann_id (str): The ann id.
-        """
         self.select(ann_id)
 
     def _on_item_drag_done(self, ann_id: str, new_data: dict):
-        """
-        Args:
-            ann_id (str): The ann id.
-            new_data (dict): The new data.
-        """
         for d in self.cfg.get('annotations', []):
             if d['id'] == ann_id:
                 before = d
@@ -1240,8 +1030,7 @@ def build_annotate_submenu(parent_menu,
                            data_y: float,
                            smart_actions=None,
                            title_prefix: str = "Annotate here") -> None:
-    """
-    Insert annotation items at the top of `parent_menu`, with coordinates
+    """Insert annotation items at the top of `parent_menu`, with coordinates
     pre-filled from (data_x, data_y). Lays out inline (no submenu cascade)
     so the menu is fast to scan and robust against Qt-side menu lifetime
     issues.
@@ -1253,8 +1042,6 @@ def build_annotate_submenu(parent_menu,
         smart_actions:  optional list of (label:str, callback:callable) for
                         plot-type-specific data-aware actions
         title_prefix:   header text before the coord pair
-    Returns:
-        None
     """
     coord_txt = f"({data_x:.3g}, {data_y:.3g})"
 
@@ -1303,8 +1090,6 @@ def _anchor_for(data: dict, viewbox) -> tuple[float, float]:
     Args:
         data (dict): Input data.
         viewbox (Any): The viewbox.
-    Returns:
-        tuple[float, float]: Result of the operation.
     """
     t = data.get('type')
     try:
@@ -1334,13 +1119,6 @@ class _ColorSwatch(QToolButton):
 
     def __init__(self, hex_color: str, selected: bool = False, size: int = 20,
                  parent=None):
-        """
-        Args:
-            hex_color (str): The hex color.
-            selected (bool): The selected.
-            size (int): Size value.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._hex = hex_color
         self._size = size
@@ -1350,10 +1128,6 @@ class _ColorSwatch(QToolButton):
         self.clicked.connect(lambda: self.sig_picked.emit(self._hex))
 
     def _set_selected(self, sel: bool):
-        """
-        Args:
-            sel (bool): The sel.
-        """
         border = "2px solid #222" if sel else "1px solid rgba(0,0,0,0.25)"
         self.setStyleSheet(
             f"QToolButton {{ "
@@ -1367,10 +1141,6 @@ class _ColorSwatch(QToolButton):
         )
 
     def set_selected(self, sel: bool):
-        """
-        Args:
-            sel (bool): The sel.
-        """
         self._set_selected(sel)
 
 
@@ -1379,11 +1149,6 @@ class _CustomColorButton(QToolButton):
     sig_picked = Signal(str)
 
     def __init__(self, size: int = 20, parent=None):
-        """
-        Args:
-            size (int): Size value.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._size = size
         self.setFixedSize(size, size)
@@ -1427,11 +1192,6 @@ class FloatingInspector(QFrame):
     OFFSET_Y = 14
 
     def __init__(self, mgr: 'AnnotationManager', parent: QWidget):
-        """
-        Args:
-            mgr ('AnnotationManager'): The mgr.
-            parent (QWidget): Parent widget or object.
-        """
         super().__init__(parent)
         self.mgr = mgr
         self._plot_accessor: Callable = lambda: (None, None)
@@ -1485,17 +1245,11 @@ class FloatingInspector(QFrame):
     # ── public accessor wiring ──────────────────────
 
     def set_plot_accessor(self, fn: Callable):
-        """fn() → (plot_widget, plot_item).  Both may be None.
-        Args:
-            fn (Callable): The fn.
-        """
+        """fn() → (plot_widget, plot_item).  Both may be None."""
         self._plot_accessor = fn
 
     def attach(self, plot_item):
-        """Called after each host-dialog _refresh to rebind positioning signals.
-        Args:
-            plot_item (Any): The plot item.
-        """
+        """Called after each host-dialog _refresh to rebind positioning signals."""
         if self._viewbox is not None:
             try:
                 self._viewbox.sigRangeChanged.disconnect(self._reposition)
@@ -1521,10 +1275,6 @@ class FloatingInspector(QFrame):
     # ── selection handling ──────────────────────────
 
     def _on_selection_changed(self, data):
-        """
-        Args:
-            data (Any): Input data.
-        """
         if data is None:
             self.hide()
             return
@@ -1611,10 +1361,6 @@ class FloatingInspector(QFrame):
         self._swatches.clear()
 
     def _build_for(self, data: dict):
-        """
-        Args:
-            data (dict): Input data.
-        """
         self._clear_form()
         self._form = QWidget(self)
         form_lay = QVBoxLayout(self._form)
@@ -1663,12 +1409,6 @@ class FloatingInspector(QFrame):
         self._outer.addWidget(self._form)
 
     def _title_for(self, data: dict) -> str:
-        """
-        Args:
-            data (dict): Input data.
-        Returns:
-            str: Result of the operation.
-        """
         t = data.get('type')
         if t == 'text':
             return f"TEXT  ·  ({data.get('x', 0):.3g}, {data.get('y', 0):.3g})"
@@ -1686,13 +1426,6 @@ class FloatingInspector(QFrame):
     # ── field builders (compact) ────────────────────
 
     def _add_text_editor(self, layout, data, key: str, placeholder: str = ""):
-        """
-        Args:
-            layout (Any): Target layout.
-            data (Any): Input data.
-            key (str): Dictionary or storage key.
-            placeholder (str): The placeholder.
-        """
         ed = QLineEdit(str(data.get(key, '')))
         ed.setPlaceholderText(placeholder)
         ed.editingFinished.connect(self._commit)
@@ -1700,11 +1433,6 @@ class FloatingInspector(QFrame):
         layout.addWidget(ed)
 
     def _add_style_row(self, layout, data):
-        """
-        Args:
-            layout (Any): Target layout.
-            data (Any): Input data.
-        """
         row = QHBoxLayout()
         row.setSpacing(6)
         row.addWidget(QLabel("Style:"))
@@ -1729,11 +1457,6 @@ class FloatingInspector(QFrame):
         layout.addLayout(row)
 
     def _add_opacity_row(self, layout, data):
-        """
-        Args:
-            layout (Any): Target layout.
-            data (Any): Input data.
-        """
         row = QHBoxLayout()
         row.setSpacing(6)
         row.addWidget(QLabel("Opacity:"))
@@ -1747,11 +1470,6 @@ class FloatingInspector(QFrame):
         layout.addLayout(row)
 
     def _add_border_width_row(self, layout, data):
-        """
-        Args:
-            layout (Any): Target layout.
-            data (Any): Input data.
-        """
         row = QHBoxLayout()
         row.setSpacing(6)
         row.addWidget(QLabel("Border:"))
@@ -1764,11 +1482,6 @@ class FloatingInspector(QFrame):
         layout.addLayout(row)
 
     def _add_arrow_fields(self, layout, data):
-        """
-        Args:
-            layout (Any): Target layout.
-            data (Any): Input data.
-        """
         target = data.get('arrow_to')
         has_arrow = (target is not None and
                       isinstance(target, (list, tuple)) and len(target) == 2)
@@ -1813,12 +1526,6 @@ class FloatingInspector(QFrame):
         layout.addWidget(wrapper)
 
     def _build_color_row(self, data) -> QWidget:
-        """
-        Args:
-            data (Any): Input data.
-        Returns:
-            QWidget: Result of the operation.
-        """
         current = data.get('color', DEFAULT_COLOR)
         row_widget = QWidget()
         row = QHBoxLayout(row_widget)
@@ -1838,10 +1545,6 @@ class FloatingInspector(QFrame):
         return row_widget
 
     def _on_swatch_picked(self, hx: str):
-        """
-        Args:
-            hx (str): The hx.
-        """
         for sw in self._swatches:
             sw.set_selected(sw._hex.lower() == hx.lower())
         cur = self.mgr.get_selected_data()
@@ -1892,11 +1595,6 @@ class AnnotationShelfButton(QPushButton):
     """
 
     def __init__(self, mgr: 'AnnotationManager', parent=None):
-        """
-        Args:
-            mgr ('AnnotationManager'): The mgr.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.mgr = mgr
         self.setCursor(Qt.PointingHandCursor)
@@ -1925,12 +1623,6 @@ class AnnotationShelfButton(QPushButton):
         self.setVisible(True)
 
     def _summarize(self, d: dict) -> str:
-        """
-        Args:
-            d (dict): The d.
-        Returns:
-            str: Result of the operation.
-        """
         t = d.get('type')
         if t == 'text':
             tx = d.get('text', '')
@@ -1985,17 +1677,8 @@ def install_annotation_shortcuts(widget: QWidget, mgr: AnnotationManager):
     Args:
         widget (QWidget): Target widget.
         mgr (AnnotationManager): The mgr.
-    Returns:
-        object: Result of the operation.
     """
     def _sc(seq: str, slot):
-        """
-        Args:
-            seq (str): The seq.
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         s = QShortcut(QKeySequence(seq), widget)
         s.activated.connect(slot)
         return s

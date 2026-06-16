@@ -63,11 +63,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
     """
 
     def __init__(self, figure, parent=None):
-        """
-        Args:
-            figure (Any): The figure.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(figure)
         if parent:
             self.setParent(parent)
@@ -106,10 +101,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
     # ── Drag internals ─────────────────────────────────────────────────
 
     def _drag_press(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button != 1 or event.inaxes is None:
             return
         for ann in event.inaxes.get_children():
@@ -124,10 +115,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_ax_pos0  = event.inaxes.get_position()
 
     def _drag_motion(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._drag_ax is None or event.x is None:
             return
         w_px, h_px = self.figure.get_size_inches() * self.figure.dpi
@@ -138,10 +125,6 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self.draw_idle()
 
     def _drag_release(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button == 2:
             self.reset_layout()
         self._drag_ax       = None
@@ -206,9 +189,6 @@ class HtmlAxisItem(pg.AxisItem):
 
         Args:
             x (int): Plain-text width measured by the base class.
-
-        Returns:
-            None
         """
         if (self.orientation in ('left', 'right')
                 and getattr(self, '_html_rendered_width', None)):
@@ -593,9 +573,6 @@ def apply_plot_title_style(plot_item, title_text: str,
         bold (bool | None): Optional bold-state override.
         italic (bool | None): Optional italic-state override.
         color (str | None): Optional text-color override.
-
-    Returns:
-        None
     """
     clean_title = (title_text or '').strip()
     if not clean_title:
@@ -632,9 +609,6 @@ def apply_axis_label_style(plot_item, axis_name: str, text: str,
         bold (bool | None): Optional bold-state override.
         italic (bool | None): Optional italic-state override.
         color (str | None): Optional text-color override.
-
-    Returns:
-        None
     """
     kwargs = build_axis_label_style_kwargs(
         config, family=family, size=size, bold=bold, italic=italic,
@@ -659,9 +633,6 @@ def apply_legend_label_style(legend, config: dict | None = None, *,
         bold (bool | None): Optional bold-state override.
         italic (bool | None): Optional italic-state override.
         color (str | None): Optional text-color override.
-
-    Returns:
-        None
     """
     if legend is None:
         return
@@ -706,9 +677,6 @@ def apply_plot_item_text_styling(
         axis_labels (dict | None): Optional mapping keyed by axis name with
             ``text`` and ``units`` values. When omitted, current live axis
             label text/units are preserved.
-
-    Returns:
-        None
     """
     if title_text is None:
         title_label = getattr(plot_item, 'titleLabel', None)
@@ -762,9 +730,6 @@ def apply_font_to_pyqtgraph(plot_item, config: dict):
         plot_item (Any): Target ``pg.PlotItem``.
         config (dict): Font-style configuration containing the standard
             ``font_*`` keys consumed by ``get_font_config``.
-
-    Returns:
-        None
 
     Preserved behavior:
         Tick labels continue to use the existing ``QFont`` path while title,
@@ -862,17 +827,13 @@ def apply_font_to_matplotlib(ax, config: dict):
 
 
 def make_font_properties(config: dict):
-    """
-    Create matplotlib FontProperties from a config dict.
+    """Create matplotlib FontProperties from a config dict.
 
     Useful for mpltern ternary axes and other matplotlib text that needs
     explicit FontProperties objects (not just keyword args).
 
     Args:
         config: dict with 'font_family', 'font_size', 'font_bold', 'font_italic'
-
-    Returns:
-        matplotlib.font_manager.FontProperties
     """
     import matplotlib.font_manager as fm
     fc = get_font_config(config)
@@ -924,11 +885,7 @@ def apply_font_to_ternary(ax, config: dict):
 
 
 def _apply_font_to_colorbar(cbar, fc: dict):
-    """Apply font config dict to a matplotlib colorbar.
-    Args:
-        cbar (Any): The cbar.
-        fc (dict): The fc.
-    """
+    """Apply font config dict to a matplotlib colorbar."""
     weight = 'bold' if fc['bold'] else 'normal'
     style = 'italic' if fc['italic'] else 'normal'
     cbar.ax.tick_params(labelsize=fc['size'], colors=fc['color'])
@@ -970,15 +927,11 @@ def apply_font_to_colorbar_standalone(cbar, config: dict, label_text: str = ""):
 # ─────────────────────────────────────────────
 
 def apply_saturation_filter(element_data: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """
-    Remove particles where *any* element exceeds the saturation threshold.
+    """Remove particles where *any* element exceeds the saturation threshold.
 
     Args:
         element_data: DataFrame (rows = particles, cols = elements)
         config: dict with 'filter_saturated' and 'saturation_threshold'
-
-    Returns:
-        Filtered DataFrame.
     """
     if not config.get('filter_saturated', True):
         return element_data
@@ -1031,17 +984,13 @@ def apply_log_transform(values: np.ndarray, others: list = None):
 # ─────────────────────────────────────────────
 
 def evaluate_equation(equation: str, element_data: dict) -> float:
-    """
-    Safely evaluate a mathematical equation with element name substitution.
+    """Safely evaluate a mathematical equation with element name substitution.
 
     Supported functions: log (log10), ln, sqrt, abs, min, max, pow.
 
     Args:
         equation: expression string, e.g. "Fe/Ti"
         element_data: {element_name: float_value, …}
-
-    Returns:
-        float result
 
     Raises:
         ValueError on invalid expression.
@@ -1100,8 +1049,6 @@ def get_sample_color(sample_name: str, index: int, config: dict) -> str:
         sample_name (str): The sample name.
         index (int): Row or item index.
         config (dict): Configuration dictionary.
-    Returns:
-        str: Result of the operation.
     """
     colors = config.get('sample_colors', {})
     if sample_name in colors:
@@ -1114,17 +1061,12 @@ def get_display_name(original_name: str, config: dict) -> str:
     Args:
         original_name (str): The original name.
         config (dict): Configuration dictionary.
-    Returns:
-        str: Result of the operation.
     """
     return config.get('sample_name_mappings', {}).get(original_name, original_name)
 
 
 def make_viridis_colormap():
-    """Create a viridis-like PyQtGraph ColorMap.
-    Returns:
-        object: Result of the operation.
-    """
+    """Create a viridis-like PyQtGraph ColorMap."""
     return pg.ColorMap(VIRIDIS_POSITIONS, VIRIDIS_COLORS)
 
 
@@ -1288,8 +1230,7 @@ def format_per_ml(value, renderer: Renderer = Renderer.HTML,
 
 
 def apply_sci_y_axis(plot_item, config: dict | None = None):
-    """
-    Render the left axis tick labels of a pyqtgraph plot as ten-to-a-power.
+    """Render the left axis tick labels of a pyqtgraph plot as ten-to-a-power.
 
     The existing left axis is reused, never swapped, to avoid breaking the
     plot layout. When that axis is an HtmlAxisItem the exponent is raised with
@@ -1299,9 +1240,6 @@ def apply_sci_y_axis(plot_item, config: dict | None = None):
     Args:
         plot_item (Any): Target pyqtgraph PlotItem.
         config (dict | None): Font config dict applied to the tick labels.
-
-    Returns:
-        None
     """
     fc = get_font_config(config) if config else None
 
@@ -1407,15 +1345,11 @@ def per_ml_unit_label(per_ml: bool, base: str = "Particle Count") -> str:
 # ─────────────────────────────────────────────
 
 def build_element_matrix(particles: list, data_key: str) -> pd.DataFrame | None:
-    """
-    Build a particles × elements DataFrame from a list of particle dicts.
+    """Build a particles × elements DataFrame from a list of particle dicts.
 
     Args:
         particles: list of particle dicts
         data_key: key inside each particle dict ('elements', 'element_mass_fg', etc.)
-
-    Returns:
-        DataFrame or None.
     """
     if not particles:
         return None
@@ -1521,15 +1455,6 @@ class CustomColorBar:
 
     def __init__(self, plot_item, colormap, vmin: float, vmax: float,
                  config: dict, element_name: str = ""):
-        """
-        Args:
-            plot_item (Any): The plot item.
-            colormap (Any): The colormap.
-            vmin (float): The vmin.
-            vmax (float): The vmax.
-            config (dict): Configuration dictionary.
-            element_name (str): The element name.
-        """
         self.plot_item = plot_item
         self.colormap = colormap
         self.vmin = vmin
@@ -1539,10 +1464,7 @@ class CustomColorBar:
         self.items: list = []
 
     def create(self) -> list:
-        """Draw the color bar and return list of added plot items.
-        Returns:
-            list: Result of the operation.
-        """
+        """Draw the color bar and return list of added plot items."""
         try:
             fc = get_font_config(self.config)
             data_type = self.config.get('data_type_display', 'Counts')
@@ -1606,14 +1528,7 @@ class CustomColorBar:
 # ─────────────────────────────────────────────
 
 def create_single_color_scatter(plot_item, x, y, config, color='#3B82F6'):
-    """Add a uniform-color scatter to plot_item. Returns the ScatterPlotItem.
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        y (Any): Input array or value.
-        config (Any): Configuration dictionary.
-        color (Any): Colour value.
-    """
+    """Add a uniform-color scatter to plot_item. Returns the ScatterPlotItem."""
     size = config.get('marker_size', 6) ** 2
     alpha = int(config.get('marker_alpha', 0.7) * 255)
     c = QColor(color)
@@ -1629,20 +1544,10 @@ def create_single_color_scatter(plot_item, x, y, config, color='#3B82F6'):
 def create_color_mapped_scatter(plot_item, x, y, color_values, config,
                                 base_color='#3B82F6', element_name="",
                                 active_color_bars=None):
-    """
-    Add a color-mapped scatter to plot_item.
+    """Add a color-mapped scatter to plot_item.
 
     Returns the ScatterPlotItem.
     If active_color_bars (list) is provided, appends the new CustomColorBar to it.
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        y (Any): Input array or value.
-        color_values (Any): The color values.
-        config (Any): Configuration dictionary.
-        base_color (Any): The base color.
-        element_name (Any): The element name.
-        active_color_bars (Any): The active color bars.
     """
     try:
         valid = ~np.isnan(color_values)
@@ -1691,13 +1596,7 @@ def create_color_mapped_scatter(plot_item, x, y, color_values, config,
 
 
 def add_trend_line(plot_item, x, y, color):
-    """Add a dashed linear regression line.
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        y (Any): Input array or value.
-        color (Any): Colour value.
-    """
+    """Add a dashed linear regression line."""
     try:
         if len(x) > 1:
             z = np.polyfit(x, y, 1)
@@ -1712,13 +1611,7 @@ def add_trend_line(plot_item, x, y, color):
 
 
 def add_correlation_text(plot_item, x, y, config):
-    """Add Pearson r text in the top-left corner of the plot.
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        y (Any): Input array or value.
-        config (Any): Configuration dictionary.
-    """
+    """Add Pearson r text in the top-left corner of the plot."""
     try:
         if len(x) > 1:
             r = np.corrcoef(x, y)[0, 1]
@@ -1759,12 +1652,6 @@ class DownloadConfigDialog(QDialog):
     def __init__(self, default_filename: str = 'figure',
                  formats: list[str] | None = None,
                  parent=None):
-        """
-        Args:
-            default_filename (str): The default filename.
-            formats (list[str] | None): The formats.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Export Figure")
         self.setMinimumWidth(380)
@@ -1897,10 +1784,6 @@ class DownloadConfigDialog(QDialog):
     # ── Slot helpers ─────────────────────────────────────────
 
     def _on_format_change(self, fmt: str):
-        """
-        Args:
-            fmt (str): The fmt.
-        """
         is_png = (fmt == 'PNG')
         is_csv = (fmt == 'CSV')
 
@@ -1939,10 +1822,6 @@ class DownloadConfigDialog(QDialog):
     # ── Result ────────────────────────────────────────────────
 
     def _get_csv_separator(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         text = self.csv_separator_combo.currentText()
         if 'Semicolon' in text:
             return ';'
@@ -1951,10 +1830,6 @@ class DownloadConfigDialog(QDialog):
         return ','
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'filename':         self.filename_edit.text().strip() or 'figure',
             'format':           self.fmt_combo.currentText(),
@@ -1975,19 +1850,13 @@ class DownloadConfigDialog(QDialog):
 # ─────────────────────────────────────────────
 
 def _prepare_csv_dataframe(data, columns: dict | None = None) -> pd.DataFrame:
-    """
-    Normalise various data shapes into a single DataFrame for CSV export.
+    """Normalise various data shapes into a single DataFrame for CSV export.
 
     Accepted input types:
         - pd.DataFrame       → returned as-is (with optional column rename)
         - dict of DataFrames → concatenated with a 'Sample' column
         - list[dict]         → flattened particle dicts
         - dict with arrays   → simple column frame (e.g. {'x': [...], 'y': [...]})
-    Args:
-        data (Any): Input data.
-        columns (dict | None): The columns.
-    Returns:
-        pd.DataFrame: Result of the operation.
     """
     if isinstance(data, pd.DataFrame):
         df = data.copy()
@@ -2395,10 +2264,6 @@ class FontSettingsGroup:
     """
 
     def __init__(self, config: dict):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-        """
         self._config = config
         self.family_combo = None
         self.size_spin = None
@@ -2408,12 +2273,6 @@ class FontSettingsGroup:
         self._color = QColor(config.get('font_color', DEFAULT_FONT_COLOR))
 
     def build(self, on_change=None) -> QGroupBox:
-        """
-        Args:
-            on_change (Any): The on change.
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         group = QGroupBox("Font Settings")
         layout = QFormLayout(group)
 
@@ -2462,10 +2321,6 @@ class FontSettingsGroup:
                 f"background-color: {c.name()}; min-height: 25px;")
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'font_family': self.family_combo.currentText(),
             'font_size': self.size_spin.value(),
@@ -2488,20 +2343,12 @@ class LegendGroup:
     ]
 
     def __init__(self, config: dict):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-        """
         self._config = config
         self.show_cb = None
         self.pos_combo = None
         self.outside_cb = None
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         group = QGroupBox("Legend")
         layout = QFormLayout(group)
 
@@ -2523,10 +2370,6 @@ class LegendGroup:
         return group
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'legend_show':     self.show_cb.isChecked(),
             'legend_position': self.pos_combo.currentText(),
@@ -2545,10 +2388,6 @@ class ExportSettingsGroup:
     _BACKGROUNDS = ['White', 'Transparent', 'Black']
 
     def __init__(self, config: dict):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-        """
         self._config = config
         self._bg_btn = None
         self._bg_color = config.get('bg_color', '#FFFFFF')
@@ -2559,10 +2398,6 @@ class ExportSettingsGroup:
         self.height_spin = None
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         from PySide6.QtWidgets import QDoubleSpinBox as _QDbl
         group = QGroupBox("Export & Appearance")
         layout = QFormLayout(group)
@@ -2620,10 +2455,6 @@ class ExportSettingsGroup:
                 f'background-color:{self._bg_color}; border:1px solid #666; border-radius:2px;')
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'bg_color':           self._bg_color,
             'export_format':      self.fmt_combo.currentText().lower(),
@@ -2701,8 +2532,6 @@ def apply_outlier_filter(values: np.ndarray, cfg: dict) -> np.ndarray:
     Args:
         values (np.ndarray): Array or sequence of values.
         cfg (dict): The cfg.
-    Returns:
-        np.ndarray: Result of the operation.
     """
     if not cfg.get('filter_outliers', False):
         return values
@@ -2711,11 +2540,7 @@ def apply_outlier_filter(values: np.ndarray, cfg: dict) -> np.ndarray:
 
 
 def _apply_box(plot_item, cfg: dict):
-    """Show or hide the top + right axes (figure box frame).
-    Args:
-        plot_item (Any): The plot item.
-        cfg (dict): The cfg.
-    """
+    """Show or hide the top + right axes (figure box frame)."""
     show = cfg.get('show_box', True)
     plot_item.showAxis('top', show)
     plot_item.showAxis('right', show)
@@ -2733,8 +2558,6 @@ def _add_shaded_region_hist(plot_item, values: np.ndarray, cfg: dict):
         plot_item (Any): The plot item.
         values (np.ndarray): Array or sequence of values.
         cfg (dict): The cfg.
-    Returns:
-        object: Result of the operation.
     """
     shade_type = cfg.get('shade_type', 'None')
     if shade_type == 'None' or len(values) < 3:
@@ -2745,12 +2568,6 @@ def _add_shaded_region_hist(plot_item, values: np.ndarray, cfg: dict):
     real_vals = (10 ** values) if log_x else values
 
     def _to_plot(v):
-        """
-        Args:
-            v (Any): The v.
-        Returns:
-            object: Result of the operation.
-        """
         v = float(v)
         return float(np.log10(max(v, 1e-12))) if log_x else v
 
@@ -2875,11 +2692,7 @@ def _add_stat_lines_hist(plot_item, values: np.ndarray, cfg: dict):
 
 
 def _add_det_limit_v(plot_item, cfg: dict):
-    """Vertical detection limit line (for histogram / molar ratio plots).
-    Args:
-        plot_item (Any): The plot item.
-        cfg (dict): The cfg.
-    """
+    """Vertical detection limit line (for histogram / molar ratio plots)."""
     if not cfg.get('show_det_limit', False):
         return
     val = float(cfg.get('det_limit_value', 1.0))
@@ -2899,11 +2712,7 @@ def _add_det_limit_v(plot_item, cfg: dict):
 
 
 def _add_det_limit_h(plot_item, cfg: dict):
-    """Horizontal detection limit line (for box plot / scatter plots).
-    Args:
-        plot_item (Any): The plot item.
-        cfg (dict): The cfg.
-    """
+    """Horizontal detection limit line (for box plot / scatter plots)."""
     if not cfg.get('show_det_limit', False):
         return
     val = float(cfg.get('det_limit_value', 1.0))
@@ -2926,11 +2735,6 @@ def _add_ref_line_vertical(plot_item, cfg: dict,
 
     Reads: show_ref_line, ref_line_value, ref_line_label,
            ref_line_color, ref_line_style, ref_line_width, log_x.
-    Args:
-        plot_item (Any): The plot item.
-        cfg (dict): The cfg.
-        num_label (str): The num label.
-        den_label (str): The den label.
     """
     if not cfg.get('show_ref_line', False):
         return
@@ -2974,15 +2778,6 @@ def build_quick_toggles_menu(parent_menu, cfg: dict,
     tm = parent_menu.addMenu('Quick Toggles')
 
     def _add(menu, label, key, default=False):
-        """
-        Args:
-            menu (Any): QMenu object.
-            label (Any): Label text.
-            key (Any): Dictionary or storage key.
-            default (Any): The default.
-        Returns:
-            object: Result of the operation.
-        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(cfg.get(key, default))

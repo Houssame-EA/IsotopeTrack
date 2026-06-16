@@ -704,8 +704,7 @@ DEFAULT_DETECTION_PARAMS = {
 
 def populate_detection_row(table, row, sample_name, element_label,
                            defaults=None):
-    """
-    Populate a single row in a detection-parameters QTableWidget.
+    """Populate a single row in a detection-parameters QTableWidget.
 
     Inserts read-only sample/element labels and configurable spin-box/combo
     widgets for detection method, threshold etc.
@@ -716,9 +715,6 @@ def populate_detection_row(table, row, sample_name, element_label,
         sample_name (str): Display name for the sample.
         element_label (str): Isotope label (e.g. '208Pb').
         defaults (dict | None): Override keys from DEFAULT_DETECTION_PARAMS.
-
-    Returns:
-        None
     """
     cfg = {**DEFAULT_DETECTION_PARAMS, **(defaults or {})}
 
@@ -803,15 +799,11 @@ def read_detection_row(table, row):
 
 
 def apply_global_method(table, method_name):
-    """
-    Set the detection method combo box on every row to *method_name*.
+    """Set the detection method combo box on every row to *method_name*.
 
     Args:
         table (QTableWidget): The detection parameters table.
         method_name (str): Method string to set (e.g. 'Currie').
-
-    Returns:
-        None
     """
     for row in range(table.rowCount()):
         combo = table.cellWidget(row, 2)
@@ -826,8 +818,7 @@ def apply_global_method(table, method_name):
 def plot_detection_results(plot_widget, sample_name, signal,
                            particles, lambda_bkgd, threshold, time_array,
                            peak_detector=None):
-    """
-    Render a comprehensive particle-detection visualisation on *plot_widget*.
+    """Render a comprehensive particle-detection visualisation on *plot_widget*.
 
     Draws raw signal, background/threshold lines, and
     detected peaks colour-coded by SNR.
@@ -842,9 +833,6 @@ def plot_detection_results(plot_widget, sample_name, signal,
         time_array (np.ndarray): Time array (seconds).
         peak_detector (PeakDetection | None): If provided, its
             ``get_snr_color`` method is used for scatter colouring.
-
-    Returns:
-        None
     """
     plot_widget.clear()
 

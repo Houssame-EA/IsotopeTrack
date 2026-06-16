@@ -72,14 +72,10 @@ PRESET_LISTS = {
 
 class AnimatedButton(QPushButton):
     def __init__(self, parent=None):
-        """
-        Initialize the animated button for periodic table elements.
-        
+        """Initialize the animated button for periodic table elements.
+
         Args:
             parent: Parent widget for the button
-            
-        Returns:
-            None
         """
         super().__init__(parent)
         self._scale = 1.0
@@ -91,39 +87,27 @@ class AnimatedButton(QPushButton):
         self._element_data = None
 
     def set_element_data(self, element_data):
-        """
-        Cache element data to avoid repeated lookups.
-        
+        """Cache element data to avoid repeated lookups.
+
         Args:
             element_data: Dictionary containing element information
-            
-        Returns:
-            None
         """
         self._element_data = element_data
 
     def set_isotope_display(self, display):
-        """
-        Set the isotope display widget for this button.
-        
+        """Set the isotope display widget for this button.
+
         Args:
             display: IsotopeDisplay widget instance
-            
-        Returns:
-            None
         """
         self.isotope_display = display
         display.set_parent_button(self)
 
     def paintEvent(self, event):
-        """
-        Paint the button with highlight gradient overlay.
-        
+        """Paint the button with highlight gradient overlay.
+
         Args:
             event: Paint event object
-            
-        Returns:
-            None
         """
         super().paintEvent(event)
         if self.highlight_percentage > 0:
@@ -135,15 +119,11 @@ class AnimatedButton(QPushButton):
             painter.fillRect(0, self.height() - highlight_height, self.width(), highlight_height, gradient)
 
     def set_highlight(self, percentage, accumulate=True):
-        """
-        Set or accumulate highlight percentage for the button.
-        
+        """Set or accumulate highlight percentage for the button.
+
         Args:
             percentage: Highlight percentage value
             accumulate: Whether to add to existing highlights or replace
-            
-        Returns:
-            None
         """
         if accumulate:
             self.selected_abundances.append(percentage)
@@ -154,14 +134,10 @@ class AnimatedButton(QPushButton):
         self.update()
 
     def remove_highlight(self, percentage):
-        """
-        Remove a specific highlight percentage value.
-        
+        """Remove a specific highlight percentage value.
+
         Args:
             percentage: Highlight percentage value to remove
-            
-        Returns:
-            None
         """
         if percentage in self.selected_abundances:
             self.selected_abundances.remove(percentage)
@@ -169,13 +145,9 @@ class AnimatedButton(QPushButton):
         self.update()
 
     def clear_highlights(self):
-        """
-        Clear all highlight values from the button.
-        
+        """Clear all highlight values from the button.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         self.selected_abundances = []
@@ -183,14 +155,10 @@ class AnimatedButton(QPushButton):
         self.update()
 
     def mousePressEvent(self, event):
-        """
-        Handle mouse press events for isotope selection.
-        
+        """Handle mouse press events for isotope selection.
+
         Args:
             event: Mouse press event object
-            
-        Returns:
-            None
         """
         if not self._element_data:
             return
@@ -236,17 +204,13 @@ class SelectableIsotopeLabel(QLabel):
     clicked = Signal(object, float)
     
     def __init__(self, text, isotope_mass, is_preferred=False, parent=None):
-        """
-        Initialize selectable isotope label.
-        
+        """Initialize selectable isotope label.
+
         Args:
             text: Label text to display
             isotope_mass: Mass value of the isotope
             is_preferred: Whether this is the preferred isotope
             parent: Parent widget
-            
-        Returns:
-            None
         """
         super().__init__(text, parent)
         self.isotope_mass = isotope_mass
@@ -259,26 +223,18 @@ class SelectableIsotopeLabel(QLabel):
         self.setFont(font)
         
     def setSelected(self, selected):
-        """
-        Set the selection state of the label.
-        
+        """Set the selection state of the label.
+
         Args:
             selected: Boolean selection state
-            
-        Returns:
-            None
         """
         self.is_selected = selected
         self.updateStyle()
         
     def updateStyle(self):
-        """
-        Update the visual style based on selection and preference state.
-        
+        """Update the visual style based on selection and preference state.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         base_style = """
@@ -306,28 +262,20 @@ class SelectableIsotopeLabel(QLabel):
                 """)
             
     def mousePressEvent(self, event):
-        """
-        Handle mouse press events on the label.
-        
+        """Handle mouse press events on the label.
+
         Args:
             event: Mouse press event object
-            
-        Returns:
-            None
         """
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self, self.isotope_mass)
         super().mousePressEvent(event)
         
     def enterEvent(self, event):
-        """
-        Handle mouse enter events for hover effect.
-        
+        """Handle mouse enter events for hover effect.
+
         Args:
             event: Enter event object
-            
-        Returns:
-            None
         """
         if not self.is_selected:
             hover_style = """
@@ -345,14 +293,10 @@ class SelectableIsotopeLabel(QLabel):
         super().enterEvent(event)
         
     def leaveEvent(self, event):
-        """
-        Handle mouse leave events to restore normal style.
-        
+        """Handle mouse leave events to restore normal style.
+
         Args:
             event: Leave event object
-            
-        Returns:
-            None
         """
         self.updateStyle()
         super().leaveEvent(event)
@@ -381,14 +325,10 @@ class IsotopeDisplay(QFrame):
     }
     
     def __init__(self, parent=None):
-        """
-        Initialize the isotope display panel.
-        
+        """Initialize the isotope display panel.
+
         Args:
             parent: Parent widget
-            
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setStyleSheet("""
@@ -426,14 +366,10 @@ class IsotopeDisplay(QFrame):
         return [(symbol, mass) for symbol, mass in self.selected_isotopes]
         
     def load_selected_isotopes(self, isotopes_data):
-        """
-        Load selected isotopes from saved data.
-        
+        """Load selected isotopes from saved data.
+
         Args:
             isotopes_data: List of tuples containing (symbol, mass) pairs
-            
-        Returns:
-            None
         """
         self.selected_isotopes = set((symbol, mass) for symbol, mass in isotopes_data)
         for mass, label in self.mass_labels.items():
@@ -441,14 +377,10 @@ class IsotopeDisplay(QFrame):
 
         
     def set_available_masses(self, available_masses):
-        """
-        Set the available masses from loaded data.
-        
+        """Set the available masses from loaded data.
+
         Args:
             available_masses: List or array of available mass values
-            
-        Returns:
-            None
         """
         self.available_masses = available_masses
         
@@ -469,14 +401,10 @@ class IsotopeDisplay(QFrame):
                   for available_mass in self.available_masses)
         
     def set_isotopes(self, element):
-        """
-        Set the isotopes to display for an element.
-        
+        """Set the isotopes to display for an element.
+
         Args:
             element: Dictionary containing element data
-            
-        Returns:
-            None
         """
         self.element_data = element
         self.element_symbol = element['symbol']
@@ -543,26 +471,18 @@ class IsotopeDisplay(QFrame):
         
     
     def set_parent_button(self, button):
-        """
-        Set the parent button for this isotope display.
-        
+        """Set the parent button for this isotope display.
+
         Args:
             button: AnimatedButton instance
-            
-        Returns:
-            None
         """
         self.parent_button = button
         
     def toggle_at_position(self, pos):
-        """
-        Toggle visibility of the display at a specific position.
-        
+        """Toggle visibility of the display at a specific position.
+
         Args:
             pos: QPoint position to display at
-            
-        Returns:
-            None
         """
         if self.is_visible:
             self.hide_with_animation()
@@ -570,13 +490,9 @@ class IsotopeDisplay(QFrame):
             self.show_at_position(pos)
             
     def hide_with_animation(self):
-        """
-        Hide the display with animation effect.
-        
+        """Hide the display with animation effect.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         if not self.isVisible():
@@ -593,13 +509,9 @@ class IsotopeDisplay(QFrame):
         self.anim.start()
         
     def _on_hide_finished(self):
-        """
-        Handle animation finished event for hiding.
-        
+        """Handle animation finished event for hiding.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         self.hide()
@@ -607,14 +519,10 @@ class IsotopeDisplay(QFrame):
         
 
     def show_at_position(self, pos):
-        """
-        Show the display at a specific position with animation.
-        
+        """Show the display at a specific position with animation.
+
         Args:
             pos: QPoint position to display at
-            
-        Returns:
-            None
         """
         screen_rect = QApplication.primaryScreen().geometry()
         parent_rect = self.parent().rect()
@@ -661,14 +569,10 @@ class IsotopeDisplay(QFrame):
         self.anim.start()
 
     def mousePressEvent(self, event):
-        """
-        Handle mouse press events on the display.
-        
+        """Handle mouse press events on the display.
+
         Args:
             event: Mouse press event object
-            
-        Returns:
-            None
         """
         if not self.rect().contains(event.position().toPoint()):
             self.hide_with_animation()
@@ -688,14 +592,10 @@ class IsotopeDisplay(QFrame):
         return list(self.selected_isotopes)
 
     def select_preferred_isotope(self, mass):
-        """
-        Select the preferred isotope with given mass.
-        
+        """Select the preferred isotope with given mass.
+
         Args:
             mass: Mass value of the isotope to select
-            
-        Returns:
-            None
         """
         if mass in self.mass_labels:
             label = self.mass_labels[mass]
@@ -721,15 +621,11 @@ class IsotopeDisplay(QFrame):
                 self.isotope_selected.emit(self.element_symbol, mass, abundance)
 
     def on_isotope_clicked(self, label, isotope_mass):
-        """
-        Handle isotope label click events.
-        
+        """Handle isotope label click events.
+
         Args:
             label: SelectableIsotopeLabel that was clicked
             isotope_mass: Mass value of the clicked isotope
-            
-        Returns:
-            None
         """
         if not self.element_data:
             return
@@ -753,13 +649,9 @@ class IsotopeDisplay(QFrame):
         self.isotope_selected.emit(self.element_symbol, isotope_mass, abundance)
 
     def clear_selection(self):
-        """
-        Clear all selections and update button state.
-        
+        """Clear all selections and update button state.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         self.selected_isotopes.clear()
@@ -776,14 +668,10 @@ class PeriodicTableWidget(QDialog):
     isotope_selected = Signal(str, float, float)
     
     def __init__(self, parent=None):
-        """
-        Initialize the periodic table widget.
-        
+        """Initialize the periodic table widget.
+
         Args:
             parent: Parent widget
-            
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("Periodic Table")
@@ -820,8 +708,6 @@ class PeriodicTableWidget(QDialog):
         Also refreshes every element button so disabled ones pick up the
         new palette's muted dark look (rather than staying in whatever
         state the previous theme left them).
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(f"background-color: {p.bg_primary};")
@@ -892,9 +778,6 @@ class PeriodicTableWidget(QDialog):
         Enabled buttons have a colored gradient, so the labels stay white
         (original design).  Disabled buttons have a dark-or-light neutral
         background from the theme, so labels use muted theme text.
-        Args:
-            btn (Any): The btn.
-            enabled (Any): Whether the widget/feature is enabled.
         """
         layout = btn.layout()
         if layout is None:
@@ -928,12 +811,7 @@ class PeriodicTableWidget(QDialog):
 
     @staticmethod
     def _toolbar_btn_style(p) -> str:
-        """Style for the small control-panel buttons (Clear/Save/Load/Confirm).
-        Args:
-            p (Any): The p.
-        Returns:
-            str: Result of the operation.
-        """
+        """Style for the small control-panel buttons (Clear/Save/Load/Confirm)."""
         return f"""
             QPushButton {{
                 background-color: {p.bg_tertiary};
@@ -960,11 +838,6 @@ class PeriodicTableWidget(QDialog):
         kind: 'save' → success-green, 'load' → accent-blue.  Text is always
         white so it reads on both light and dark variants (fixes the
         original 'color: black on #4CAF50' contrast bug).
-        Args:
-            p (Any): The p.
-            kind (Any): The kind.
-        Returns:
-            str: Result of the operation.
         """
         bg = p.success if kind == "save" else p.accent
         hover = p.accent_hover
@@ -987,8 +860,6 @@ class PeriodicTableWidget(QDialog):
         """Style for an element button whose isotopes aren't in the
         currently-loaded mass range.  Uses palette darks so it fits both
         light and dark themes instead of a hardcoded near-black.
-        Returns:
-            str: Result of the operation.
         """
         p = theme.palette
         return f"""
@@ -1003,10 +874,6 @@ class PeriodicTableWidget(QDialog):
 
     @staticmethod
     def create_elements_data():
-        """
-        Returns:
-            list: Result of the operation.
-        """
         return [
             {'symbol': 'H', 'name': 'Hydrogen', 'mass': 1.008, 'row': 0, 'col': 0, 'isotopes': [{'mass': 1.00783, 'abundance': 99.9844, 'label': '1H'}, {'mass': 2.0141, 'abundance': 0.01557, 'label': '2H'}, {'mass': 3.016049, 'abundance': 0, 'label': '3H'}], 'category': 'other', 'atomic_number': 1, 'density': 0.00008988, 'ionization_energy': 13.6},
             {'symbol': 'He', 'name': 'Helium', 'mass': 4.003, 'row': 0, 'col': 17, 'isotopes': [{'mass': 3.01603, 'abundance': 0.00013, 'label': '3He'}, {'mass': 4.0026, 'abundance': 99.9999, 'label': '4He'}], 'category': 'noble', 'atomic_number': 2, 'density': 0.0001785, 'ionization_energy': 24.6},
@@ -1614,13 +1481,9 @@ class PeriodicTableWidget(QDialog):
         ]
         
     def add_control_panel(self):
-        """
-        Add control panel with preset lists and save/load buttons.
-        
+        """Add control panel with preset lists and save/load buttons.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         control_layout = QHBoxLayout()
@@ -1655,13 +1518,9 @@ class PeriodicTableWidget(QDialog):
         self.layout().addLayout(control_layout, 10, 0, 1, 18)
         
     def confirm_selections(self):
-        """
-        Gather all selected elements and isotopes and emit signal.
-        
+        """Gather all selected elements and isotopes and emit signal.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         selected_data = {}
@@ -1684,13 +1543,9 @@ class PeriodicTableWidget(QDialog):
         
         
     def add_save_load_buttons(self):
-        """
-        Add save and load buttons to the dialog.
-        
+        """Add save and load buttons to the dialog.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         button_layout = QHBoxLayout()
@@ -1708,13 +1563,9 @@ class PeriodicTableWidget(QDialog):
         self.layout().addLayout(button_layout, 10, 0, 1, 18)
         
     def save_selections(self):
-        """
-        Save selected isotopes to a simple text file.
-        
+        """Save selected isotopes to a simple text file.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         selected_isotopes = []
@@ -1754,13 +1605,9 @@ class PeriodicTableWidget(QDialog):
                 QMessageBox.critical(self, "Error", f"Failed to save selections: {str(e)}")
                 
     def load_selections(self):
-        """
-        Load selected isotopes from a simple text file.
-        
+        """Load selected isotopes from a simple text file.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         file_name, _ = QFileDialog.getOpenFileName(
@@ -1868,13 +1715,9 @@ class PeriodicTableWidget(QDialog):
         return applied_count, missing_elements
 
     def initUI(self):
-        """
-        Initialize the user interface and periodic table grid.
-        
+        """Initialize the user interface and periodic table grid.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         layout = QGridLayout()
@@ -1964,14 +1807,10 @@ class PeriodicTableWidget(QDialog):
         return btn
         
     def on_preset_selected(self, preset_name):
-        """
-        Handle preset list selection events.
-        
+        """Handle preset list selection events.
+
         Args:
             preset_name: Name of the selected preset
-            
-        Returns:
-            None
         """
         if preset_name == 'Preset list':
             return
@@ -2071,28 +1910,20 @@ class PeriodicTableWidget(QDialog):
                     
                                         
     def on_element_button_clicked(self, element):
-        """
-        Handle element button click events.
-        
+        """Handle element button click events.
+
         Args:
             element: Dictionary containing element data
-            
-        Returns:
-            None
         """
         self.element_clicked.emit(element)
         
     def on_isotope_selected(self, element, mass, abundance):
-        """
-        Handle isotope selection with abundance.
-        
+        """Handle isotope selection with abundance.
+
         Args:
             element: Dictionary containing element data
             mass: Mass value of selected isotope
             abundance: Abundance percentage of the isotope
-            
-        Returns:
-            None
         """
         self.isotope_selected.emit(element['symbol'], mass, abundance)
         
@@ -2144,15 +1975,11 @@ class PeriodicTableWidget(QDialog):
         """
 
     def update_element_states(self, available_masses, low_count_elements):
-        """
-        Update element button states based on available masses.
-        
+        """Update element button states based on available masses.
+
         Args:
             available_masses: List of available mass values
             low_count_elements: List of elements with low counts
-            
-        Returns:
-            None
         """
         for symbol, btn in self.buttons.items():
             element = next((e for e in self.get_elements() if e['symbol'] == symbol), None)
@@ -2185,13 +2012,9 @@ class PeriodicTableWidget(QDialog):
                 
     
     def validate_selections_against_new_range(self):
-        """
-        Validate and clear selections that are no longer available in the new mass range.
-        
+        """Validate and clear selections that are no longer available in the new mass range.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         if not hasattr(self, 'all_masses') or not self.all_masses:
@@ -2235,14 +2058,10 @@ class PeriodicTableWidget(QDialog):
             )
 
     def update_available_masses(self, available_masses):
-        """
-        Update which elements are available based on detected masses.
-        
+        """Update which elements are available based on detected masses.
+
         Args:
             available_masses: List or array of available mass values
-            
-        Returns:
-            None
         """
         self.all_masses = available_masses
         
@@ -2314,14 +2133,10 @@ class PeriodicTableWidget(QDialog):
     
     
     def close_all_isotope_displays_except(self, current_button):
-        """
-        Close all isotope displays except for the specified button.
-        
+        """Close all isotope displays except for the specified button.
+
         Args:
             current_button: Button whose display should remain open (or None to close all)
-            
-        Returns:
-            None
         """
         for button in self.buttons.values():
             if button != current_button and button.isotope_display:
@@ -2330,13 +2145,9 @@ class PeriodicTableWidget(QDialog):
                     
     
     def clear_all_highlights(self):
-        """
-        Clear all element highlights.
-        
+        """Clear all element highlights.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         for element_symbol, button in self.buttons.items():
@@ -2345,13 +2156,9 @@ class PeriodicTableWidget(QDialog):
                 button.setStyleSheet(self.get_element_style(element))
     
     def clear_all_selections(self):
-        """
-        Clear all selected isotopes and highlights, respecting available mass range.
-        
+        """Clear all selected isotopes and highlights, respecting available mass range.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         self.preset_combo.setCurrentText('Preset list')
@@ -2370,13 +2177,9 @@ class PeriodicTableWidget(QDialog):
                     button.setStyleSheet(self.get_element_style(element))
 
     def clear_selections_in_range_only(self):
-        """
-        Clear only selections for elements within the available mass range.
-        
+        """Clear only selections for elements within the available mass range.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         if not hasattr(self, 'all_masses') or self.all_masses is None:

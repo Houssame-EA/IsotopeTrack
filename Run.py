@@ -17,12 +17,7 @@ from tools.splash_screen import SplashCoordinator
 from mainwindow import MainWindow
 
 def resource_path(relative_path):
-    """Get absolute path to resource — works for dev and PyInstaller.
-    Args:
-        relative_path (Any): The relative path.
-    Returns:
-        object: Result of the operation.
-    """
+    """Get absolute path to resource — works for dev and PyInstaller."""
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)

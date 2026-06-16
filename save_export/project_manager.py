@@ -28,19 +28,13 @@ class SaveProjectThread(QThread):
         Args:
             filepath (str): Destination .itproj path.
             main_window: The MainWindow whose project state is written.
-        Returns:
-            None
         """
         super().__init__()
         self._filepath = filepath
         self._main_window = main_window
 
     def run(self) -> None:
-        """Write the project, emitting progress and a final success/failure signal.
-
-        Returns:
-            None
-        """
+        """Write the project, emitting progress and a final success/failure signal."""
         try:
             save_project_v2(
                 self._filepath,
@@ -60,14 +54,10 @@ class ProjectManager:
     """
     
     def __init__(self, main_window):
-        """
-        Initialize the ProjectManager with a reference to the main window.
-        
+        """Initialize the ProjectManager with a reference to the main window.
+
         Args:
             main_window (object): Reference to the MainWindow instance
-            
-        Returns:
-            None
         """
         self.main_window = main_window
         self.project_version = '1.10.2'
@@ -294,20 +284,12 @@ Terminal=false
         Args:
             pct (int): Progress percentage (0–100).
             msg (str): Status message.
-        Returns:
-            None
         """
         self.main_window.progress_bar.setValue(pct)
         self.main_window.status_label.setText(msg)
 
     def _finalize_save_success(self, filepath):
-        """Apply the post-save UI updates after a successful write.
-
-        Args:
-            filepath (str): The saved project path.
-        Returns:
-            None
-        """
+        """Apply the post-save UI updates after a successful write."""
         self._set_file_icon_cross_platform(filepath)
         self.main_window.progress_bar.setVisible(False)
         self.main_window.unsaved_changes = False
@@ -315,26 +297,14 @@ Terminal=false
         self.main_window.update_window_title(filepath)
 
     def _on_save_succeeded(self, filepath):
-        """Handle the worker thread's success signal on the UI thread.
-
-        Args:
-            filepath (str): The saved project path.
-        Returns:
-            None
-        """
+        """Handle the worker thread's success signal on the UI thread."""
         self._finalize_save_success(filepath)
         callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
         if callback:
             callback(True)
 
     def _on_save_failed(self, message):
-        """Handle the worker thread's failure signal on the UI thread.
-
-        Args:
-            message (str): The error description.
-        Returns:
-            None
-        """
+        """Handle the worker thread's failure signal on the UI thread."""
         self.main_window.progress_bar.setVisible(False)
         QMessageBox.critical(
             self.main_window, "Save Error",
@@ -359,8 +329,6 @@ Terminal=false
             Args:
                 pct (int): Progress percentage (0–100).
                 msg (str): Status message.
-            Returns:
-                None
             """
             self.main_window.progress_bar.setValue(int(pct))
             self.main_window.status_label.setText(msg)
@@ -411,11 +379,6 @@ Terminal=false
             self.main_window.progress_bar.setValue(0)
 
             def progress_callback(pct, msg):
-                """
-                Args:
-                    pct (Any): Progress percentage (0–100).
-                    msg (Any): Message string.
-                """
                 self.main_window.progress_bar.setValue(pct)
                 self.main_window.status_label.setText(msg)
                 QApplication.processEvents()
@@ -613,14 +576,10 @@ Terminal=false
         }
     
     def _restore_project_data(self, project_data):
-        """
-        Restore project data from loaded file.
-        
+        """Restore project data from loaded file.
+
         Args:
             project_data (dict): Dictionary containing project data
-            
-        Returns:
-            None
         """
         self.main_window.selected_isotopes = project_data.get('selected_isotopes', {})
         self.main_window.data_by_sample = project_data.get('data_by_sample', {})
@@ -789,15 +748,11 @@ Terminal=false
         return canvas_state
     
     def _serialize_node_config(self, node, node_data):
-        """
-        Serialize node-specific configuration.
-        
+        """Serialize node-specific configuration.
+
         Args:
             node (object): Workflow node to serialize
             node_data (dict): Dictionary to store node data
-            
-        Returns:
-            None
         """
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
@@ -822,14 +777,10 @@ Terminal=false
                 node_data[attr] = value
     
     def _deserialize_canvas_state(self, canvas_state):
-        """
-        Recreate the canvas state from saved data.
-        
+        """Recreate the canvas state from saved data.
+
         Args:
             canvas_state (dict): Serialized canvas state dictionary
-            
-        Returns:
-            None
         """
         if not canvas_state:
             return
@@ -955,15 +906,11 @@ Terminal=false
                 _itk_log.error(f"Warning: Could not restore canvas zoom: {e}")
     
     def _deserialize_node_config(self, workflow_node, node_data):
-        """
-        Restore node configuration from saved data.
-        
+        """Restore node configuration from saved data.
+
         Args:
             workflow_node (object): Node to configure
             node_data (dict): Saved node configuration
-            
-        Returns:
-            None
         """
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
@@ -981,13 +928,9 @@ Terminal=false
                 setattr(workflow_node, attr, value)
     
     def _reset_data_structures(self):
-        """
-        Reset all data structures before loading a saved project.
-        
+        """Reset all data structures before loading a saved project.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         data_structures = [
@@ -1056,13 +999,9 @@ Terminal=false
             self.main_window.summary_label.setText("Select an element to view summary statistics")
     
     def _update_ui_after_load(self):
-        """
-        Update UI components after loading project.
-        
+        """Update UI components after loading project.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         if hasattr(self.main_window, 'sigma_spinbox'):

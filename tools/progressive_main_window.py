@@ -22,14 +22,10 @@ class ProgressiveMainWindow(QObject):
     loading_complete = Signal()
 
     def __init__(self, cli_parser: ArgumentParser):
-        """
-        Initialize the progressive main window loader.
-        
+        """Initialize the progressive main window loader.
+
         Args:
             cli_parser (argparse.ArgumentParser): Parser used to get the Cli arguments.
-            
-        Returns:
-            None
         """
         super().__init__()
         self.cli_parser = cli_parser
@@ -55,22 +51,12 @@ class ProgressiveMainWindow(QObject):
         ]
 
     def start_loading(self):
-        """
-        Start the progressive loading process.
-        
-        Returns:
-            None
-        """
+        """Start the progressive loading process."""
         self.current_step = 0
         self.process_next_step()
 
     def process_next_step(self):
-        """
-        Process the next loading step in sequence.
-        
-        Returns:
-            None
-        """
+        """Process the next loading step in sequence."""
         if self.current_step < len(self.loading_steps):
             progress, status, step_func = self.loading_steps[self.current_step]
             self.progress_updated.emit(progress, status)
@@ -96,81 +82,41 @@ class ProgressiveMainWindow(QObject):
         QApplication.processEvents()
 
     def step_init_core(self):
-        """
-        Step 2: Initialize core MainWindow.
-        
-        Returns:
-            None
-        """
+        """Step 2: Initialize core MainWindow."""
         self.main_window = MainWindow()
 
     def step_setup_window(self):
-        """
-        Step 3: Setup window properties.
-        
-        Returns:
-            None
-        """
+        """Step 3: Setup window properties."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_create_widgets(self):
-        """
-        Step 4: Create central widgets.
-        
-        Returns:
-            None
-        """
+        """Step 4: Create central widgets."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_init_plots(self):
-        """
-        Step 5: Initialize plot widgets.
-        
-        Returns:
-            None
-        """
+        """Step 5: Initialize plot widgets."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_setup_data(self):
-        """
-        Step 6: Setup data structures.
-        
-        Returns:
-            None
-        """
+        """Step 6: Setup data structures."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_setup_menus(self):
-        """
-        Step 7: Configure menu systems.
-        
-        Returns:
-            None
-        """
+        """Step 7: Configure menu systems."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_connect_signals(self):
-        """
-        Step 8: Connect signals and slots.
-        
-        Returns:
-            None
-        """
+        """Step 8: Connect signals and slots."""
         if self.main_window:
             QApplication.processEvents()
 
     def step_finalize(self):
-        """
-        Step 9: Finalize interface.
-        
-        Returns:
-            None
-        """
+        """Step 9: Finalize interface."""
         if self.main_window:
             QApplication.processEvents()
 
@@ -235,12 +181,7 @@ class ProgressiveMainWindow(QObject):
                 self.log_status("No periodic table loaded --> No isotope loaded")
 
     def step_complete(self):
-        """
-        Step 11: Loading complete.
-        
-        Returns:
-            None
-        """
+        """Step 11: Loading complete."""
 
     def get_main_window(self):
         """
@@ -252,13 +193,9 @@ class ProgressiveMainWindow(QObject):
         return self.main_window
 
     def step_preload_mass_fraction_db(self):
-        """
-        Preload the Mass Fraction CSV database and cache it on the main window.
-        
+        """Preload the Mass Fraction CSV database and cache it on the main window.
+
         This step loads the CSV database during splash screen to avoid lag later.
-        
-        Returns:
-            None
         """
         if not self.main_window:
             return

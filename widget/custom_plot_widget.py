@@ -25,8 +25,6 @@ def _editor_dialog_qss():
     """Stylesheet applied to every small plot editor dialog
     (TraceEditor, ScatterEditor, AxisLabelEditor, TitleEditor,
     LegendEditor, BackgroundEditor, etc). Pulls from the current theme.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     return f"""
@@ -183,19 +181,13 @@ def _editor_dialog_qss():
 
 
 def _editor_header_qss():
-    """Header label at the top of each editor dialog (was '#2c3e50' bold).
-    Returns:
-        object: Result of the operation.
-    """
+    """Header label at the top of each editor dialog (was '#2c3e50' bold)."""
     p = _app_theme.palette
     return f"font-size: 15px; font-weight: bold; color: {p.text_primary};"
 
 
 def _editor_ok_button_qss():
-    """Primary OK/Apply button. Was hardcoded #3498db → #2980b9.
-    Returns:
-        object: Result of the operation.
-    """
+    """Primary OK/Apply button. Was hardcoded #3498db → #2980b9."""
     p = _app_theme.palette
     return (
         f"QPushButton{{background:{p.accent};color:{p.text_inverse};"
@@ -205,10 +197,7 @@ def _editor_ok_button_qss():
 
 
 def _editor_cancel_button_qss():
-    """Neutral Cancel button. Was hardcoded #95a5a6 → #7f8c8d.
-    Returns:
-        object: Result of the operation.
-    """
+    """Neutral Cancel button. Was hardcoded #95a5a6 → #7f8c8d."""
     p = _app_theme.palette
     return (
         f"QPushButton{{background:{p.bg_tertiary};color:{p.text_primary};"
@@ -220,12 +209,7 @@ def _editor_cancel_button_qss():
 
 
 def _color_swatch_qss(hex_color):
-    """Small color picker swatch. hex_color may be any valid CSS color.
-    Args:
-        hex_color (Any): The hex color.
-    Returns:
-        object: Result of the operation.
-    """
+    """Small color picker swatch. hex_color may be any valid CSS color."""
     p = _app_theme.palette
     return (
         f"background-color:{hex_color};"
@@ -237,10 +221,6 @@ def _tall_color_swatch_qss(hex_color):
     """Full-width color swatch used in the PlotSettingsDialog form rows
     (font color / background color / grid color). Keeps the border
     theme-aware so the button doesn't look pasted-on in dark mode.
-    Args:
-        hex_color (Any): The hex color.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     return (
@@ -255,8 +235,6 @@ def _hint_label_qss():
     """Italic tip / hint labels (the 'Double-click any element…' line and
     the 'Edit all traces…' header on the Traces tab). Used to be hardcoded
     #555/#666/#999 which is unreadable in dark mode.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     return f"color:{p.text_secondary};font-style:italic;padding:6px;"
@@ -266,8 +244,6 @@ def _trace_row_qss():
     """Per-trace row background on the Traces tab (formerly hardcoded white
     `#fff`). Uses the theme's tertiary surface in both light and dark mode,
     with a left-edge accent bar to visually distinguish it from scatter rows.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     return (
@@ -286,8 +262,6 @@ def _scatter_row_qss():
     uses a 'success' / teal left-edge accent so scatter vs. line is still
     visually distinguishable — no more olive-yellow warning color showing up
     in dark mode.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     accent_bar = getattr(p, 'success', p.accent)
@@ -306,10 +280,6 @@ def _inline_apply_btn_qss(variant='primary'):
     `variant` is either 'primary' (trace rows) or 'warn' (scatter rows).
     Theme-aware replacement for the old hardcoded blue/orange — the
     'warn' variant now uses the theme's success color to stay readable.
-    Args:
-        variant (Any): The variant.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     if variant == 'warn':
@@ -330,8 +300,6 @@ def _inline_apply_btn_qss(variant='primary'):
 def _install_theme_subscription(dialog):
     """Attach the editor_dialog_qss to a dialog AND keep it updated when the
     user toggles theme. Safe to call from any editor dialog's __init__.
-    Args:
-        dialog (Any): Parent or target dialog.
     """
     dialog.setStyleSheet(_editor_dialog_qss())
 
@@ -344,10 +312,6 @@ def _install_theme_subscription(dialog):
     _app_theme.themeChanged.connect(_reapply)
     original_close = dialog.closeEvent
     def _close(event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         try:
             _app_theme.themeChanged.disconnect(_reapply)
         except (TypeError, RuntimeError):
@@ -415,12 +379,6 @@ class TraceEditorDialog(QDialog):
     """Edit a single trace: color, width, line style, legend name."""
 
     def __init__(self, curve_item, plot_widget, parent=None):
-        """
-        Args:
-            curve_item (Any): The curve item.
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.curve_item = curve_item
         self.plot_widget = plot_widget
@@ -540,12 +498,6 @@ class ScatterEditorDialog(QDialog):
     """Edit scatter points: fill color, symbol shape, size."""
 
     def __init__(self, scatter_item, plot_widget, parent=None):
-        """
-        Args:
-            scatter_item (Any): The scatter item.
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.scatter_item = scatter_item
         self.plot_widget = plot_widget
@@ -632,12 +584,6 @@ class AxisLabelEditorDialog(QDialog):
     """Edit an axis label: text, units, font, size, bold/italic, color."""
 
     def __init__(self, plot_widget, axis_name, parent=None):
-        """
-        Args:
-            plot_widget (Any): The plot widget.
-            axis_name (Any): The axis name.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.plot_widget = plot_widget
         self.axis_name = axis_name
@@ -771,16 +717,6 @@ class TitleEditorDialog(QDialog):
 
     def __init__(self, plot_widget, parent=None, text_only: bool = False,
                  title_apply_callback=None):
-        """
-        Args:
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-            text_only (bool): When ``True``, show only the title-text control
-                and hide title-style controls.
-            title_apply_callback (Callable[[str], None] | None): Optional
-                callback used to apply title text through plot-specific state
-                management instead of the default live ``setTitle(...)`` path.
-        """
         super().__init__(parent)
         self.plot_widget = plot_widget
         self.text_only = text_only
@@ -891,11 +827,6 @@ class LegendEditorDialog(QDialog):
     """Edit legend appearance."""
 
     def __init__(self, plot_widget, parent=None):
-        """
-        Args:
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.plot_widget = plot_widget
         self.setWindowTitle("Edit Legend")
@@ -987,11 +918,6 @@ class BackgroundEditorDialog(QDialog):
     """Edit background color and grid."""
 
     def __init__(self, plot_widget, parent=None):
-        """
-        Args:
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.plot_widget = plot_widget
         self.setWindowTitle("Edit Background")
@@ -1055,16 +981,6 @@ class PlotSettingsDialog(QDialog):
     def __init__(self, plot_widget, parent=None, show_apply: bool = True,
                  allow_title_text: bool = True):
         """
-        Args:
-            plot_widget (Any): The plot widget.
-            parent (Any): Parent widget or object.
-            show_apply (bool): When ``True`` (default), show the live ``Apply``
-                button for incremental preview-style edits. When ``False``, hide
-                that button so users confirm changes with one-shot ``OK``.
-            allow_title_text (bool): When ``True`` (default), expose the shared
-                ``Title Text`` field. When ``False``, the dialog edits only
-                global title formatting and preserves existing title content.
-
         Preserved behavior:
             Defaults remain ``show_apply=True`` and ``allow_title_text=True`` so
             existing callers keep the historical Apply/OK/Cancel workflow and
@@ -1296,13 +1212,6 @@ class PlotSettingsDialog(QDialog):
         self.traces_layout.addStretch()
 
     def _curve_row(self, item, index):
-        """
-        Args:
-            item (Any): List or table item.
-            index (Any): Row or item index.
-        Returns:
-            object: Result of the operation.
-        """
         row = QFrame()
         row.setStyleSheet(_trace_row_qss())
         rl = QHBoxLayout(row); rl.setContentsMargins(8,4,8,4)
@@ -1317,11 +1226,6 @@ class PlotSettingsDialog(QDialog):
         cb.setStyleSheet(_color_swatch_qss(color.name()))
         cb.setCursor(Qt.PointingHandCursor)
         def pick(*_args, btn=cb):
-            """
-            Args:
-                btn (Any): The btn.
-                *_args (Any): Additional positional arguments.
-            """
             c = QColorDialog.getColor(btn._color, self)
             if c.isValid():
                 btn._color = c
@@ -1341,15 +1245,6 @@ class PlotSettingsDialog(QDialog):
         ab = QPushButton("Apply"); ab.setFixedWidth(60)
         ab.setStyleSheet(_inline_apply_btn_qss('primary'))
         def apply_c(*_args, itm=item, name_e=ne, col_b=cb, w_s=ws, st_c=sc):
-            """
-            Args:
-                itm (Any): The itm.
-                name_e (Any): The name e.
-                col_b (Any): The col b.
-                w_s (Any): The w s.
-                st_c (Any): The st c.
-                *_args (Any): Additional positional arguments.
-            """
             sty = LINE_STYLE_MAP.get(st_c.currentText(), Qt.SolidLine)
             p = pg.mkPen(col_b._color, width=w_s.value(), style=sty)
             p.setCosmetic(True)
@@ -1392,13 +1287,6 @@ class PlotSettingsDialog(QDialog):
         return row
 
     def _scatter_row(self, item, index):
-        """
-        Args:
-            item (Any): List or table item.
-            index (Any): Row or item index.
-        Returns:
-            object: Result of the operation.
-        """
         row = QFrame()
         row.setStyleSheet(_scatter_row_qss())
         rl = QHBoxLayout(row); rl.setContentsMargins(8,4,8,4)
@@ -1414,11 +1302,6 @@ class PlotSettingsDialog(QDialog):
         cb.setStyleSheet(_color_swatch_qss(color.name()))
         cb.setCursor(Qt.PointingHandCursor)
         def pick(*_args, btn=cb):
-            """
-            Args:
-                btn (Any): The btn.
-                *_args (Any): Additional positional arguments.
-            """
             c = QColorDialog.getColor(btn._color, self)
             if c.isValid():
                 btn._color = c
@@ -1437,14 +1320,6 @@ class PlotSettingsDialog(QDialog):
         ab = QPushButton("Apply"); ab.setFixedWidth(60)
         ab.setStyleSheet(_inline_apply_btn_qss('warn'))
         def apply_s(*_args, itm=item, col_b=cb, sym_c=sy, sz_s=ss):
-            """
-            Args:
-                itm (Any): The itm.
-                col_b (Any): The col b.
-                sym_c (Any): The sym c.
-                sz_s (Any): The sz s.
-                *_args (Any): Additional positional arguments.
-            """
             itm.setSymbol(SCATTER_SYMBOLS.get(sym_c.currentText(), 'o'))
             itm.setSize(sz_s.value())
             itm.setBrush(pg.mkBrush(col_b._color))
@@ -1472,12 +1347,6 @@ class PlotSettingsDialog(QDialog):
         """One row in the Traces tab for a group of BarGraphItems that
         share the same label (element name or sample name).
         Changing the color and pressing Apply repaints all bars in the group.
-        Args:
-            name (Any): Name string.
-            items (Any): Sequence of items.
-            index (Any): Row or item index.
-        Returns:
-            object: Result of the operation.
         """
         row = QFrame()
         row.setStyleSheet(_scatter_row_qss())
@@ -1503,11 +1372,6 @@ class PlotSettingsDialog(QDialog):
         cb.setCursor(Qt.PointingHandCursor)
 
         def pick(*_args, btn=cb):
-            """
-            Args:
-                btn (Any): The btn.
-                *_args (Any): Additional positional arguments.
-            """
             c = QColorDialog.getColor(btn._color, self, "Bar Color")
             if c.isValid():
                 btn._color = c
@@ -1529,9 +1393,6 @@ class PlotSettingsDialog(QDialog):
                     same trace row in the Plot Settings dialog.
                 col_b (Any): Color-swatch button holding the selected color.
                 *_args (Any): Additional positional arguments.
-
-            Returns:
-                None
             """
             c = col_b._color
             alpha = c.alpha() if c.alpha() < 255 else 215
@@ -1614,10 +1475,6 @@ class PlotSettingsDialog(QDialog):
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def _choose_color(self, color_type):
-        """
-        Args:
-            color_type (Any): The color type.
-        """
         cmap = {'font': (self.font_color, self.font_color_button),
                 'bg': (self.bg_color, self.bg_color_button),
                 'grid': (self.grid_color, self.grid_color_button)}
@@ -1747,31 +1604,16 @@ class PlotSettingsDialog(QDialog):
         self._apply_settings(); self.accept()
 
     def closeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._save_persistent(); super().closeEvent(event)
 
 
 class CustomPlotItem(pg.PlotItem):
     def __init__(self, *args, **kwargs):
-        """
-        Args:
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
-        """
         super().__init__(*args, **kwargs)
         self.plot_widget = None
         self._settings_action = None
 
     def getContextMenus(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        Returns:
-            object: Result of the operation.
-        """
         menu = super().getContextMenus(event)
         if self.plot_widget is not None:
             existing = [a.text() for a in menu.actions()]
@@ -1819,12 +1661,6 @@ class ExclusionRegion(pg.LinearRegionItem):
     }
 
     def __init__(self, values, owner, scope='element'):
-        """
-        Args:
-            values (Any): Array or sequence of values.
-            owner (Any): The owner.
-            scope (Any): The scope.
-        """
         scope = scope if scope in self._STYLES else 'element'
         style = self._STYLES[scope]
         super().__init__(
@@ -1844,10 +1680,6 @@ class ExclusionRegion(pg.LinearRegionItem):
 
     # ── Scope ────────────────────────────────────────────────────────
     def scope(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._scope
 
     def set_scope(self, scope):
@@ -1855,8 +1687,6 @@ class ExclusionRegion(pg.LinearRegionItem):
 
         Notifies the owner so MainWindow can move the region between
         its element-scope and sample-scope bookkeeping stores.
-        Args:
-            scope (Any): The scope.
         """
         if scope not in self._STYLES or scope == self._scope:
             return
@@ -1884,10 +1714,6 @@ class ExclusionRegion(pg.LinearRegionItem):
 
     # ── Right-click menu ─────────────────────────────────────────────
     def mouseClickEvent(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         try:
             if ev.button() == Qt.RightButton:
                 ev.accept()
@@ -1898,10 +1724,6 @@ class ExclusionRegion(pg.LinearRegionItem):
         super().mouseClickEvent(ev)
 
     def _show_context_menu(self, ev):
-        """
-        Args:
-            ev (Any): The ev.
-        """
         menu = QMenu()
         act_remove = menu.addAction("Remove this region")
         act_edit = menu.addAction("Edit bounds…")
@@ -1986,10 +1808,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
     exclusionRegionsChanged = Signal()
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         self.custom_plot_item = CustomPlotItem()
         super().__init__(parent, plotItem=self.custom_plot_item)
         self.custom_plot_item.plot_widget = self
@@ -2134,10 +1952,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self._autorange_btn.raise_()
 
     def resizeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().resizeEvent(event)
         self._reposition_autorange_btn()
 
@@ -2200,8 +2014,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         Falls back to the centre of the current X view-range if the
         click position couldn't be captured. Width defaults to 5% of the
         current X-range so the band is immediately visible and grabbable.
-        Args:
-            scope (Any): The scope.
         """
         try:
             vb = self.getPlotItem().getViewBox()
@@ -2227,10 +2039,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         which signals to mask before particle detection.
 
         Returns the created ExclusionRegion. Emits exclusionRegionsChanged.
-        Args:
-            x_min (Any): The x min.
-            x_max (Any): The x max.
-            scope (Any): The scope.
         """
         try:
             x_min = float(x_min); x_max = float(x_max)
@@ -2249,10 +2057,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
             return None
 
     def remove_exclusion_region(self, region):
-        """Remove a single exclusion band. Emits exclusionRegionsChanged.
-        Args:
-            region (Any): The region.
-        """
+        """Remove a single exclusion band. Emits exclusionRegionsChanged."""
         try:
             if region in self._excluded_regions:
                 self._excluded_regions.remove(region)
@@ -2283,8 +2088,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         Bands are returned in the order they were added so MainWindow can
         match per-region scope without re-merging. (Merging happens only
         in get_exclusion_mask, which is what cares about it.)
-        Returns:
-            object: Result of the operation.
         """
         out = []
         for r in self._excluded_regions:
@@ -2308,8 +2111,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         it rebuilds the visible band set from its bookkeeping store.
 
         Emits exclusionRegionsChanged exactly once at the end.
-        Args:
-            regions (Any): The regions.
         """
         self._suppress_exclusion_signal = True
         try:
@@ -2338,10 +2139,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
 
         Note: this mask is built from ALL visible bands regardless of
         scope. Per-element masking on the back-end is MainWindow's job.
-        Args:
-            x_array (Any): The x array.
-        Returns:
-            object: Result of the operation.
         """
         x = np.asarray(x_array)
         mask = np.ones(len(x), dtype=bool)
@@ -2350,10 +2147,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         return mask
 
     def _on_region_edited(self, *_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         self._emit_exclusion_changed()
 
     def _emit_exclusion_changed(self):
@@ -2405,8 +2198,7 @@ class EnhancedPlotWidget(pg.PlotWidget):
     # ── Double-click editing ──────────────────────────────────────────────
 
     def mouseDoubleClickEvent(self, event):
-        """
-        Hit-detection priority:
+        """Hit-detection priority:
           0. Inside an exclusion region → swallow (let region handle it)
           1. Title → TitleEditorDialog
           2. Left axis → AxisLabelEditorDialog('left')
@@ -2415,8 +2207,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
           5. Near scatter → ScatterEditorDialog
           6. Near curve → TraceEditorDialog
           7. Empty area → BackgroundEditorDialog
-        Args:
-            event (Any): Qt event object.
         """
         try:
             pos = event.position() if hasattr(event, 'position') else event.pos()
@@ -2478,13 +2268,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
             super().mouseDoubleClickEvent(event)
 
     def _find_closest_scatter(self, scene_pos, threshold_px=20):
-        """
-        Args:
-            scene_pos (Any): The scene pos.
-            threshold_px (Any): The threshold px.
-        Returns:
-            object: Result of the operation.
-        """
         pi = self.getPlotItem()
         vb = pi.getViewBox()
         dp = vb.mapSceneToView(scene_pos)
@@ -2526,13 +2309,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
         return best
 
     def _find_closest_curve(self, scene_pos, threshold_px=15):
-        """
-        Args:
-            scene_pos (Any): The scene pos.
-            threshold_px (Any): The threshold px.
-        Returns:
-            object: Result of the operation.
-        """
         pi = self.getPlotItem()
         vb = pi.getViewBox()
         dp = vb.mapSceneToView(scene_pos)
@@ -2565,10 +2341,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
     # ── Wheel zoom ────────────────────────────────────────────────────────
 
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         try:
             xr, yr = self.getPlotItem().getViewBox().viewRange()
             zf = 0.5 if event.angleDelta().y() > 0 else 2.0
@@ -2588,11 +2360,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
             _itk_log.error(f"Warning: wheel zoom error: {e}")
 
     def update_plot(self, time_array, data):
-        """
-        Args:
-            time_array (Any): The time array.
-            data (Any): Input data.
-        """
         if time_array is None or not data:
             return
         colors = ['#3498db','#2ecc71','#e74c3c','#9b59b6','#f1c40f','#1abc9c','#e67e22']
@@ -2622,10 +2389,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
             self.original_range = self.viewRange()
 
     def mouse_moved(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         try:
             if self.sceneBoundingRect().contains(pos):
                 mp = self.getPlotItem().vb.mapSceneToView(pos)
@@ -2644,10 +2407,6 @@ class EnhancedPlotWidget(pg.PlotWidget):
 
 class BasicPlotWidget(pg.PlotWidget):
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setup_basic_appearance()
         self.data_items = {}
@@ -2692,19 +2451,10 @@ class BasicPlotWidget(pg.PlotWidget):
             self._autorange_btn.raise_()
 
     def resizeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().resizeEvent(event)
         self._reposition_autorange_btn()
 
     def update_plot(self, time_array, data):
-        """
-        Args:
-            time_array (Any): The time array.
-            data (Any): Input data.
-        """
         if time_array is None or not data: return
         colors = ['b','g','r','c','m','y']
         for mass in list(self.data_items.keys()):
@@ -2724,10 +2474,6 @@ class BasicPlotWidget(pg.PlotWidget):
         self.data_items.clear()
 
     def setTitle(self, title):
-        """
-        Args:
-            title (Any): Window or dialog title.
-        """
         self.getPlotItem().setTitle(title)
 
 
@@ -2742,10 +2488,6 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
     _DOUBLE_CLICK_MS = 350
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._x = np.array([])
         self._y = np.array([])
@@ -2856,14 +2598,6 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
     # ── Public API ───────────────────────────────────────────────────────
 
     def setLabel(self, axis, text, units=None, color=None, font=None):
-        """
-        Args:
-            axis (Any): The axis.
-            text (Any): Text string.
-            units (Any): The units.
-            color (Any): Colour value.
-            font (Any): Font object.
-        """
         kw = {}
         if units: kw['units'] = units
         if color: kw['color'] = color
@@ -2871,10 +2605,6 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
         self.getPlotItem().setLabel(axis, text, **kw)
 
     def setTitle(self, title):
-        """
-        Args:
-            title (Any): Window or dialog title.
-        """
         self.getPlotItem().setTitle(title)
 
     def update_plot(self, x_data, y_data, y_std, method='zero', y_fit=None,
@@ -2947,10 +2677,6 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
 
 
     def mouseDoubleClickEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._click_timer.isActive():
             self._click_timer.stop()
         self._pending_click_index = None
@@ -3048,10 +2774,6 @@ class CalibrationPlotWidget(EnhancedPlotWidget):
         """A single press on a scatter fires this. We queue the
         exclusion toggle and let mouseDoubleClickEvent cancel it if a
         second click follows within _DOUBLE_CLICK_MS.
-        Args:
-            _plot (Any): The  plot.
-            points (Any): The points.
-            event (Any): Qt event object.
         """
         if not points:
             return
@@ -3081,11 +2803,6 @@ class BarEditorDialog(QDialog):
     """
 
     def __init__(self, meta, parent=None):
-        """
-        Args:
-            meta (Any): The meta.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._meta = meta
         self.setWindowTitle(f"Bar — {meta['label']}")
@@ -3163,10 +2880,6 @@ class MzBarPlotWidget(pg.PlotWidget):
     """
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         pi = CustomPlotItem()
         super().__init__(parent, plotItem=pi)
         pi.plot_widget = self
@@ -3178,23 +2891,17 @@ class MzBarPlotWidget(pg.PlotWidget):
 
     # ── Bar metadata (called by MainWindow after every redraw) ────────
     def set_bar_meta(self, meta):
-        """Store per-bar metadata dicts for hit-testing on double-click.
-        Args:
-            meta (Any): The meta.
-        """
+        """Store per-bar metadata dicts for hit-testing on double-click."""
         self._bar_meta = list(meta)
 
     # ── Double-click editing ──────────────────────────────────────────
     def mouseDoubleClickEvent(self, event):
-        """
-        Hit-detection priority (same order as EnhancedPlotWidget):
+        """Hit-detection priority (same order as EnhancedPlotWidget):
           1. Title            → TitleEditorDialog
           2. Left axis        → AxisLabelEditorDialog('left')
           3. Bottom axis      → AxisLabelEditorDialog('bottom')
           4. Bar (by x pos)   → BarEditorDialog
           5. Empty area       → BackgroundEditorDialog
-        Args:
-            event (Any): Qt event object.
         """
         try:
             pos       = event.position() if hasattr(event, 'position') else event.pos()

@@ -325,9 +325,6 @@ def _eval_node(node, env: Dict[str, np.ndarray]):
     Args:
         node: AST node (already validated by _walk_expression).
         env: Maps 'raw' and channel tokens to signal arrays.
-
-    Returns:
-        ndarray or scalar result of the subexpression.
     """
     if isinstance(node, ast.Expression):
         return _eval_node(node.body, env)
@@ -688,9 +685,6 @@ def load_table_corrections(path: str = _TABLE_PATH) -> List[dict]:
     Args:
         path: Path to the JSON file. Defaults to data/interference_corrections.json
               next to this module.
-
-    Returns:
-        List of isotope records. Empty list if the file is not found.
     """
     global _TABLE_CACHE
     if _TABLE_CACHE is not None:

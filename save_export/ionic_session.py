@@ -13,12 +13,8 @@ class NumpyEncoder(json.JSONEncoder):
     Converts NumPy arrays and numeric types to JSON-serializable Python types.
     """
     def default(self, obj):
-        """
-        Default encoder for NumPy types.
-        
-        Args:
-            obj (Any): Object to encode
-            
+        """Default encoder for NumPy types.
+
         Returns:
             Any: JSON-serializable representation of the object
         """
@@ -33,12 +29,8 @@ class NumpyEncoder(json.JSONEncoder):
         return super(NumpyEncoder, self).default(obj)
 
 def convert_numpy_types(obj):
-    """
-    Recursively convert NumPy types to Python native types.
-    
-    Args:
-        obj (Any): Object to convert (dict, list, np.ndarray, or scalar)
-        
+    """Recursively convert NumPy types to Python native types.
+
     Returns:
         Any: Object with NumPy types converted to Python native types
     """
@@ -58,16 +50,12 @@ def convert_numpy_types(obj):
         return obj
 
 def save_session_to_csv(file_path: str, session_data: Dict[str, Any], ionic_window=None) -> None:
-    """
-    Save session data to CSV format including summary statistics for first 5 seconds.
-    
+    """Save session data to CSV format including summary statistics for first 5 seconds.
+
     Args:
         file_path (str): Path to save the CSV file
         session_data (Dict[str, Any]): Session data dictionary
         ionic_window (object, optional): Ionic window object for extracting statistics
-        
-    Returns:
-        None
     """
     try:
         session_data_clean = convert_numpy_types(session_data)
@@ -190,15 +178,11 @@ def extract_5sec_summary_stats(ionic_window) -> Dict[str, Any]:
     return summary_stats
 
 def save_summary_csv(base_file_path: str, summary_stats: Dict[str, Any]) -> None:
-    """
-    Save summary statistics to a separate CSV file.
-    
+    """Save summary statistics to a separate CSV file.
+
     Args:
         base_file_path (str): Base file path for the summary CSV
         summary_stats (Dict[str, Any]): Summary statistics dictionary
-        
-    Returns:
-        None
     """
     try:
         base_path = Path(base_file_path).with_suffix('')

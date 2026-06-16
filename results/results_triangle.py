@@ -575,11 +575,6 @@ _ANN_DEFAULTS = {
 class _ColorSwatch(QPushButton):
     """Compact colour-picker button."""
     def __init__(self, color='#FFFFFF', parent=None):
-        """
-        Args:
-            color (Any): Colour value.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFixedSize(36, 24)
         self._color = color
@@ -594,27 +589,15 @@ class _ColorSwatch(QPushButton):
             "}")
 
     def color(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._color
 
     def set_color(self, c):
-        """Store one validated triangle-preview color and refresh the swatch.
-
-        Args:
-            c (Any): Hex color string selected for this preview swatch.
-        """
+        """Store one validated triangle-preview color and refresh the swatch."""
         self._color = c
         self._update()
 
     def mousePressEvent(self, event):
-        """Open the shared safe color picker for this swatch on left click.
-
-        Args:
-            event (Any): Qt event object.
-        """
+        """Open the shared safe color picker for this swatch on left click."""
         if event.button() == Qt.LeftButton:
             picked = pick_color_hex(self._color, owner=self,
                                     title="Select Color")
@@ -627,11 +610,6 @@ class AnnotationDialog(QDialog):
     """Add or edit a single ternary-plot annotation (Text / Marker / Marker+Text)."""
 
     def __init__(self, ann: dict | None = None, parent=None):
-        """
-        Args:
-            ann (dict | None): The ann.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Add Annotation" if ann is None else "Edit Annotation")
         self.setMinimumWidth(460)
@@ -776,10 +754,6 @@ class AnnotationDialog(QDialog):
     # ── Helpers ───────────────────────────────
 
     def _on_type_changed(self, t):
-        """
-        Args:
-            t (Any): The t.
-        """
         is_text   = t in ('Text',)
         is_marker = t in ('Marker', 'Marker + Text')
         is_text_c = t in ('Text', 'Marker + Text')
@@ -804,10 +778,6 @@ class AnnotationDialog(QDialog):
         self._update_sum()
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         ann_type = self._type_combo.currentText()
         return {
             'type':              ann_type,
@@ -834,12 +804,6 @@ class AnnotationDialog(QDialog):
 
 
 def _hbox_widget(hbox: QHBoxLayout) -> QWidget:
-    """
-    Args:
-        hbox (QHBoxLayout): The hbox.
-    Returns:
-        QWidget: Result of the operation.
-    """
     w = QWidget(); w.setLayout(hbox); return w
 
 
@@ -849,11 +813,6 @@ class ManageAnnotationsDialog(QDialog):
     _TYPE_ICONS = {'Text': '', 'Marker': '●', 'Marker + Text': '●'}
 
     def __init__(self, annotations: list, parent=None):
-        """
-        Args:
-            annotations (list): The annotations.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Manage Annotations")
         self.setMinimumSize(640, 400)
@@ -934,10 +893,6 @@ class ManageAnnotationsDialog(QDialog):
                 self._table.setItem(r, 5, QTableWidgetItem(f"{r_val:.2f}"))
 
     def _selected_row(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         rows = self._table.selectionModel().selectedRows()
         return rows[0].row() if rows else -1
 
@@ -974,10 +929,6 @@ class ManageAnnotationsDialog(QDialog):
             self._reload(); self._table.selectRow(idx + 1)
 
     def collect(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         return [dict(a) for a in self._anns]
 
 
@@ -985,11 +936,6 @@ class TriangleDisplayDialog(QDialog):
     """Full-figure dialog with right-click context menu for all settings."""
 
     def __init__(self, triangle_node, parent_window=None):
-        """
-        Args:
-            triangle_node (Any): The triangle node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = triangle_node
         self.parent_window = parent_window
@@ -1003,27 +949,15 @@ class TriangleDisplayDialog(QDialog):
     # ── Helpers ─────────────────────────────
 
     def _is_multi(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
         return bool(self.node.input_data and
                     self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
 
     def _available_elements(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.node.input_data:
             return []
         elems = set()
@@ -1072,8 +1006,7 @@ class TriangleDisplayDialog(QDialog):
     # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
-        """
-        Build the intentionally minimal Triangle right-click menu.
+        """Build the intentionally minimal Triangle right-click menu.
 
         The context menu is intentionally limited to lightweight quick controls only:
         - `Quick Toggles` for fast visual toggles already supported by current config.
@@ -1087,9 +1020,6 @@ class TriangleDisplayDialog(QDialog):
         Preserved behavior:
         - Toggle and isotope label actions still update the same config keys.
         - Plot calculations/data semantics are unchanged.
-
-        Args:
-            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -1111,32 +1041,16 @@ class TriangleDisplayDialog(QDialog):
 
         menu.exec(QCursor.pos())
     def _add_toggle(self, menu, label, key):
-        """
-        Args:
-            menu (Any): QMenu object.
-            label (Any): Label text.
-            key (Any): Dictionary or storage key.
-        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -1267,9 +1181,6 @@ class TriangleDisplayDialog(QDialog):
         Text annotations are placed in axes-fraction space (draggable).
         Marker annotations are placed at ternary data coordinates.
         Position changes from dragging are saved back to config on mouse release.
-        Args:
-            ax (Any): The ax.
-            cfg (Any): The cfg.
         """
         anns = cfg.get('annotations', [])
         if not anns:
@@ -1337,10 +1248,7 @@ class TriangleDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _draw_annotations")
 
     def _save_ann_positions(self, event=None):
-        """Called on mouse button release — persist dragged text positions back to config.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Called on mouse button release — persist dragged text positions back to config."""
         try:
             anns = self.node.config.get('annotations', [])
             changed = False
@@ -1367,10 +1275,7 @@ class TriangleDisplayDialog(QDialog):
             _itk_log.exception("Handled exception in _save_ann_positions")
 
     def _update_stats(self, plot_data):
-        """Update the bottom statistics label.
-        Args:
-            plot_data (Any): The plot data.
-        """
+        """Update the bottom statistics label."""
         cfg = self.node.config
 
         if self._is_multi():
@@ -1468,13 +1373,7 @@ class TriangleDisplayDialog(QDialog):
         self._draw_average(ax, sample_data, cfg, title)
 
     def _draw_average(self, ax, sample_data, cfg, sample_name):
-        """Draw average point with optional stats text and confidence ellipse.
-        Args:
-            ax (Any): The ax.
-            sample_data (Any): The sample data.
-            cfg (Any): The cfg.
-            sample_name (Any): The sample name.
-        """
+        """Draw average point with optional stats text and confidence ellipse."""
         if not cfg.get('show_average_point', True) or not sample_data:
             return
 
@@ -1539,11 +1438,6 @@ class TriangleDisplayDialog(QDialog):
     # ── Multi-sample layouts ────────────────
 
     def _draw_subplots(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(2, n)
@@ -1560,11 +1454,6 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_ternary(ax, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         samples = list(plot_data.keys())
         n = len(samples)
 
@@ -1579,11 +1468,6 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_ternary(ax, cfg)
 
     def _draw_combined(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         ax = self.figure.add_subplot(111, projection='ternary')
         combined = []
         for sd in plot_data.values():
@@ -1594,11 +1478,6 @@ class TriangleDisplayDialog(QDialog):
             apply_font_to_ternary(ax, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         ax = self.figure.add_subplot(111, projection='ternary')
 
         ea = cfg.get('element_a', 'A')
@@ -1684,10 +1563,6 @@ class TrianglePlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Ternary Plot"
         self.node_type = "triangle_plot"
@@ -1702,30 +1577,16 @@ class TrianglePlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = TriangleDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
@@ -1784,8 +1645,7 @@ class TrianglePlotNode(QObject):
         return None
 
     def _extract_particles(self, particles, dk, ea, eb, ec, color_elem):
-        """
-        Extract ternary points from a list of particle dicts.
+        """Extract ternary points from a list of particle dicts.
 
         For each particle, reads the three element values from the chosen data key,
         normalises them to fractions summing to 1.0, and optionally reads a fourth
@@ -1796,9 +1656,6 @@ class TrianglePlotNode(QObject):
             dk:         data key ('elements', 'element_mass_fg', etc.)
             ea, eb, ec: element label strings
             color_elem: optional fourth element label for coloring (or '')
-
-        Returns:
-            list of point dicts or None
         """
         min_total = self.config.get('min_total', 0.0)
         max_pts = self.config.get('max_particles', 100_000_000)
@@ -1843,32 +1700,12 @@ class TrianglePlotNode(QObject):
         return result or None
 
     def _extract_single(self, dk, ea, eb, ec, color_elem):
-        """
-        Args:
-            dk (Any): The dk.
-            ea (Any): The ea.
-            eb (Any): The eb.
-            ec (Any): The ec.
-            color_elem (Any): The color elem.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
         return self._extract_particles(particles, dk, ea, eb, ec, color_elem)
 
     def _extract_multi(self, dk, ea, eb, ec, color_elem):
-        """
-        Args:
-            dk (Any): The dk.
-            ea (Any): The ea.
-            eb (Any): The eb.
-            ec (Any): The ec.
-            color_elem (Any): The color elem.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:

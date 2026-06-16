@@ -57,26 +57,14 @@ class ExportUnits:
     # ---- Unit labels for CSV headers --------------------------------- #
     @property
     def mass_label(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return self.mass_unit
 
     @property
     def moles_label(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return self.moles_unit
 
     @property
     def diameter_label(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return self.diameter_unit
 
     # ---- Formatters -------------------------------------------------- #
@@ -85,8 +73,6 @@ class ExportUnits:
         Args:
             value (float): Value to set or process.
             decimals (int): The decimals.
-        Returns:
-            str: Result of the operation.
         """
         if value is None:
             return "0"
@@ -100,60 +86,25 @@ class ExportUnits:
         return f"{v:.{decimals}f}"
 
     def fmt_mass(self, mass_fg: float) -> str:
-        """Format an internal fg mass in the user's chosen unit + format.
-        Args:
-            mass_fg (float): The mass fg.
-        Returns:
-            str: Result of the operation.
-        """
+        """Format an internal fg mass in the user's chosen unit + format."""
         factor = MASS_UNITS.get(self.mass_unit, 1.0)
         return self._format(mass_fg * factor, self.mass_decimals)
 
     def fmt_moles(self, moles_fmol: float) -> str:
-        """
-        Args:
-            moles_fmol (float): The moles fmol.
-        Returns:
-            str: Result of the operation.
-        """
         factor = MOLES_UNITS.get(self.moles_unit, 1.0)
         return self._format(moles_fmol * factor, self.moles_decimals)
 
     def fmt_diameter(self, diameter_nm: float) -> str:
-        """
-        Args:
-            diameter_nm (float): The diameter nm.
-        Returns:
-            str: Result of the operation.
-        """
         factor = DIAMETER_UNITS.get(self.diameter_unit, 1.0)
         return self._format(diameter_nm * factor, self.diameter_decimals)
 
     def fmt_mass_or_zero(self, mass_fg: float) -> str:
-        """
-        Args:
-            mass_fg (float): The mass fg.
-        Returns:
-            str: Result of the operation.
-        """
         return self.fmt_mass(mass_fg) if mass_fg and mass_fg > 0 else "0"
 
     def fmt_moles_or_zero(self, moles_fmol: float) -> str:
-        """
-        Args:
-            moles_fmol (float): The moles fmol.
-        Returns:
-            str: Result of the operation.
-        """
         return self.fmt_moles(moles_fmol) if moles_fmol and moles_fmol > 0 else "0"
 
     def fmt_diameter_or_zero(self, diameter_nm: float) -> str:
-        """
-        Args:
-            diameter_nm (float): The diameter nm.
-        Returns:
-            str: Result of the operation.
-        """
         if not diameter_nm or diameter_nm <= 0:
             return "0"
         try:
@@ -177,33 +128,14 @@ _KEY_PREFIX   = "export/units/"
 def load_units() -> ExportUnits:
     """Load the user's saved preferences, falling back to defaults for any
     missing / invalid values.
-    Returns:
-        ExportUnits: Result of the operation.
     """
     s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
 
     def _get_str(key, default, valid):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            default (Any): The default.
-            valid (Any): The valid.
-        Returns:
-            object: Result of the operation.
-        """
         v = s.value(_KEY_PREFIX + key, default)
         return v if v in valid else default
 
     def _get_int(key, default, lo=0, hi=12):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            default (Any): The default.
-            lo (Any): The lo.
-            hi (Any): The hi.
-        Returns:
-            object: Result of the operation.
-        """
         try:
             v = int(s.value(_KEY_PREFIX + key, default))
             return max(lo, min(hi, v))
@@ -223,12 +155,6 @@ def load_units() -> ExportUnits:
 
 
 def save_units(u: ExportUnits) -> None:
-    """
-    Args:
-        u (ExportUnits): The u.
-    Returns:
-        None
-    """
     s = QSettings(_SETTINGS_ORG, _SETTINGS_APP)
     s.setValue(_KEY_PREFIX + "mass", u.mass_unit)
     s.setValue(_KEY_PREFIX + "moles", u.moles_unit)
@@ -246,11 +172,6 @@ def save_units(u: ExportUnits) -> None:
 def show_advanced_dialog(parent, current: ExportUnits) -> ExportUnits | None:
     """Open the Advanced Options dialog and return the updated ExportUnits,
     or None if the user cancels.  Saves to QSettings on OK.
-    Args:
-        parent (Any): Parent widget or object.
-        current (ExportUnits): The current.
-    Returns:
-        ExportUnits | None: Result of the operation.
     """
     from PySide6.QtWidgets import (
         QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
@@ -265,10 +186,6 @@ def show_advanced_dialog(parent, current: ExportUnits) -> ExportUnits | None:
     dlg.setMinimumWidth(440)
 
     def _apply(*_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         dlg.setStyleSheet(dialog_qss(theme.palette))
     _apply()
     theme.themeChanged.connect(_apply)
@@ -345,10 +262,6 @@ def show_advanced_dialog(parent, current: ExportUnits) -> ExportUnits | None:
     root.addWidget(preview_label)
 
     def _update_preview(*_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         sample_mass_fg = 0.00012345
         sample_moles_fmol = 0.00000678
         sample_diameter_nm = 45.67

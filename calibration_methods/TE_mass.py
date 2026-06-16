@@ -48,11 +48,6 @@ class CollapsibleSection(QWidget):
     """Themed collapsible panel. Click header to expand/collapse."""
 
     def __init__(self, title: str, parent=None):
-        """
-        Args:
-            title (str): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._expanded = True
         outer = QVBoxLayout(self)
@@ -89,10 +84,6 @@ class CollapsibleSection(QWidget):
         self._arrow.setText("▼" if self._expanded else "▶")
 
     def collapse(self, status: str = ""):
-        """
-        Args:
-            status (str): Status message string.
-        """
         if status: self._status_lbl.setText(status)
         if self._expanded:
             self._expanded = False
@@ -165,10 +156,7 @@ class MassMethodWidget(QMainWindow):
         self.destroyed.connect(lambda *_: self._theme_cleanup())
     
     def apply_theme(self, *_):
-        """Re-apply themed stylesheet; refresh plots and dynamic labels.
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
+        """Re-apply themed stylesheet; refresh plots and dynamic labels."""
         p = theme.palette
         section_qss = f"""
             QWidget#collapsibleHeader {{
@@ -211,9 +199,6 @@ class MassMethodWidget(QMainWindow):
         """Toggle the 'warning' look on a button to indicate unsaved /
         modified state.  Uses the themed #warningBtn object name so the
         color follows light/dark themes.
-        Args:
-            button (Any): The button.
-            modified (Any): The modified.
         """
         if button is None:
             return
@@ -401,10 +386,7 @@ class MassMethodWidget(QMainWindow):
         layout.addWidget(self.detect_button)
 
     def _build_plot(self, parent_layout):
-        """Always-visible signal visualization plot.
-        Args:
-            parent_layout (Any): Layout to which widgets are added.
-        """
+        """Always-visible signal visualization plot."""
         plot_group = QGroupBox("Signal Visualization")
         plot_layout = QVBoxLayout(plot_group)
         plot_layout.setSpacing(6)
@@ -493,8 +475,6 @@ class MassMethodWidget(QMainWindow):
         """Convenience: create a styled hint label.
         Args:
             text (str): Text string.
-        Returns:
-            QLabel: Result of the operation.
         """
         lbl = QLabel(text)
         lbl.setWordWrap(True)
@@ -907,14 +887,10 @@ class MassMethodWidget(QMainWindow):
         
     
     def update_detection_parameters_table(self):
-        """
-        Update detection parameters table with all samples.
-        
+        """Update detection parameters table with all samples.
+
         Populates table with default detection parameters for each valid sample including
         method selection, thresholds and statistical parameters.
-
-        Returns:
-            None
         """
         if not self.selected_element:
             return
@@ -980,26 +956,17 @@ class MassMethodWidget(QMainWindow):
         self.detect_button.setEnabled(True)
 
     def apply_global_detection_params(self, method):
-        """
-        Apply global detection method to all samples.
-        
+        """Apply global detection method to all samples.
+
         Args:
             method (str): Detection method name to apply to all sample rows.
-
-        Returns:
-            None
         """
         apply_global_method(self.detection_params_table, method)
 
     # ── Exclusion region helpers — particle detection plot ───────────────
 
     def _visible_exclusion_entries_for(self, sample_name):
-        """Return stored exclusion entries for *sample_name* (empty list if none).
-        Args:
-            sample_name (Any): The sample name.
-        Returns:
-            object: Result of the operation.
-        """
+        """Return stored exclusion entries for *sample_name* (empty list if none)."""
         return self._exclusion_regions_by_sample.get(sample_name, [])
 
     def _on_exclusion_regions_changed(self):
@@ -1069,11 +1036,7 @@ class MassMethodWidget(QMainWindow):
             self._ionic_cal_exclusions_sample.pop(folder, None)
 
     def _restore_ionic_calibration_exclusions(self, folder_path, isotope_key):
-        """Reload stored ionic-calibration exclusion bands onto the plot.
-        Args:
-            folder_path (Any): The folder path.
-            isotope_key (Any): The isotope key.
-        """
+        """Reload stored ionic-calibration exclusion bands onto the plot."""
         key = (folder_path, isotope_key)
         elem_regions   = self._ionic_cal_exclusions_element.get(key, [])
         sample_regions = self._ionic_cal_exclusions_sample.get(folder_path, [])
@@ -1558,15 +1521,11 @@ class MassMethodWidget(QMainWindow):
             self.highlight_particle_in_plot(particle, results)
 
     def highlight_particle_in_plot(self, particle, results):
-        """
-        Add highlighting to a specific particle in the plot.
-        
+        """Add highlighting to a specific particle in the plot.
+
         Args:
             particle (dict): Particle dictionary containing detection information.
             results (dict): Detection results dictionary for the sample.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = highlight_particle(
             self.plot_widget, particle,
@@ -1599,9 +1558,8 @@ class MassMethodWidget(QMainWindow):
         )
 
     def plot_sample_results(self, sample_name, signal, particles, lambda_bkgd, threshold, time_array):
-        """
-        Plot results for a specific sample.
-        
+        """Plot results for a specific sample.
+
         Args:
             sample_name (str): Display name of the sample.
             signal (np.ndarray): Raw signal array.
@@ -1609,9 +1567,6 @@ class MassMethodWidget(QMainWindow):
             lambda_bkgd (float): Background level value.
             threshold (float): Detection threshold value.
             time_array (np.ndarray): Time array corresponding to signal data.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = None
         plot_detection_results(
@@ -2898,14 +2853,10 @@ class MassMethodWidget(QMainWindow):
         self.concentration_table.itemChanged.connect(self.on_concentration_data_changed)
 
     def validate_calibration_folders(self, folders):
-        """
-        Validate that calibration folders have compatible mass ranges.
-        
+        """Validate that calibration folders have compatible mass ranges.
+
         Args:
             folders: List of folder paths to validate
-            
-        Returns:
-            List of valid folder paths with compatible mass ranges
         """
         valid_folders = []
         mass_tolerance = 0.1
@@ -3089,15 +3040,11 @@ class MassMethodWidget(QMainWindow):
             traceback.print_exc()
 
     def convert_concentration_to_ppb(self, value, unit):
-        """
-        Convert concentration to ppb.
-        
+        """Convert concentration to ppb.
+
         Args:
             value: Concentration value
             unit: Unit string (ppb, ppm, ppt, etc.)
-            
-        Returns:
-            Concentration value in ppb
         """
         conversion_factors = {
             "ppt": 0.001,
@@ -3389,12 +3336,7 @@ class MassMethodWidget(QMainWindow):
         self.diameter_distribution_plot.setXRange(global_min - x_padding, global_max + x_padding)
 
     def export_to_csv(self):
-        """
-        Export detection results to CSV file.
-
-        Returns:
-            None
-        """
+        """Export detection results to CSV file."""
         export_table_to_csv(self.results_table, self)
     
 

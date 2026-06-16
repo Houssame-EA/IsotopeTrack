@@ -98,14 +98,6 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def analyze_particles(particle_data, pct_single=0.5, pct_multiple=0.5):
-        """
-        Args:
-            particle_data (Any): The particle data.
-            pct_single (Any): The pct single.
-            pct_multiple (Any): The pct multiple.
-        Returns:
-            dict: Result of the operation.
-        """
         if not particle_data:
             return None
         combo_data = defaultdict(list)
@@ -156,15 +148,6 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def calc_per_ml(count, parent_window, dilution=1.0, sample_info=None):
-        """
-        Args:
-            count (Any): The count.
-            parent_window (Any): The parent window.
-            dilution (Any): The dilution.
-            sample_info (Any): The sample info.
-        Returns:
-            object: Result of the operation.
-        """
         if not parent_window:
             return count
         try:
@@ -195,18 +178,6 @@ class SingleMultipleElementHelper:
     @staticmethod
     def pie_data(results, combo_type, custom_colors=None, per_ml=False,
                  parent_window=None, dilution=1.0, sample_info=None, label_mode='Symbol'):
-        """
-        Args:
-            results (Any): The results.
-            combo_type (Any): The combo type.
-            custom_colors (Any): The custom colors.
-            per_ml (Any): The per ml.
-            parent_window (Any): The parent window.
-            dilution (Any): The dilution.
-            sample_info (Any): The sample info.
-        Returns:
-            dict: Result of the operation.
-        """
         combos = results['single_combinations'] if combo_type == 'single' else results['multiple_combinations']
         if not combos:
             return None
@@ -283,16 +254,6 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def statistics_table(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilution=1.0, label_mode='Symbol'):
-        """
-        Args:
-            analysis_data (Any): The analysis data.
-            is_multi (Any): The is multi.
-            per_ml (Any): The per ml.
-            parent_window (Any): The parent window.
-            dilution (Any): The dilution.
-        Returns:
-            object: Result of the operation.
-        """
         unit = 'P/mL' if per_ml else 'P'
         si = {'is_summed': False}
         calc = lambda c: SingleMultipleElementHelper.calc_per_ml(c, parent_window, dilution, si) if per_ml else c
@@ -339,11 +300,6 @@ class SingleMultipleElementHelper:
 class _ColorBtn(QPushButton):
     """Compact colour-picker button."""
     def __init__(self, color: str = '#FFFFFF', parent=None):
-        """
-        Args:
-            color (str): Colour value.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFixedSize(34, 22)
         self._color = color
@@ -357,10 +313,6 @@ class _ColorBtn(QPushButton):
             "}")
 
     def color(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return self._color
 
     def set_color(self, c: str):
@@ -373,11 +325,7 @@ class _ColorBtn(QPushButton):
         self._apply()
 
     def mousePressEvent(self, event):
-        """Open the shared safe color picker for this swatch on left click.
-
-        Args:
-            event (Any): Qt event object.
-        """
+        """Open the shared safe color picker for this swatch on left click."""
         if event.button() == Qt.LeftButton:
             picked = pick_color_hex(self._color, owner=self,
                                     title="Select Color")
@@ -393,17 +341,9 @@ class PieStyleGroup:
     _LINE_NAMES  = ['Solid', 'Dashed', 'Dash-dot', 'Dotted']
 
     def __init__(self, cfg: dict):
-        """
-        Args:
-            cfg (dict): The cfg.
-        """
         self._cfg = cfg
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         cfg = self._cfg
         g = QGroupBox("Pie / Donut Style")
         f = QFormLayout(g)
@@ -471,10 +411,6 @@ class PieStyleGroup:
         return g
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'label_mode':             self._label_mode.currentText(),
             'donut':                  self._donut.isChecked(),
@@ -712,11 +648,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
     """Main dialog with matplotlib figure and right-click context menu."""
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.parent_window = parent_window
@@ -729,10 +660,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
     @property
     def _multi(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return (self.node.input_data and self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _build_ui(self):
@@ -809,8 +736,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         lay.addWidget(self.tabs, stretch=1)
     def _ctx_menu(self, pos):
-        """
-        Build an intentionally minimal right-click menu.
+        """Build an intentionally minimal right-click menu.
 
         This menu only exposes lightweight visual quick toggles and isotope label mode.
         Full format settings, quantity configuration, reset, figure export, and
@@ -818,9 +744,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         Preserved behavior:
             quick-toggle and isotope-label actions still update existing config keys.
-
-        Args:
-            pos (Any): Position point.
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -846,19 +769,10 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         menu.exec(self.canvas.mapToGlobal(pos))
     def _toggle(self, key):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -935,10 +849,7 @@ class SingleMultipleElementDisplayDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "Error", str(e))
     def _persist_positions(self, _event):
-        """Save current annotation positions into config so they survive redraws.
-        Args:
-            _event (Any): The  event.
-        """
+        """Save current annotation positions into config so they survive redraws."""
         for sp_key, anns in self._anns.items():
             bucket = (self.node.config
                       .setdefault('label_positions', {})
@@ -1108,22 +1019,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
         }
 
     def _pie_one(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, sp_key=''):
-        """
-        Args:
-            ax (Any): The ax.
-            results (Any): The results.
-            ctype (Any): The ctype.
-            custom_colors (Any): The custom colors.
-            pml (Any): The pml.
-            dil (Any): The dil.
-            si (Any): The si.
-            cfg (Any): The cfg.
-            fp (Any): The fp.
-            lc (Any): The lc.
-            sp_key (Any): The sp key.
-        Returns:
-            object: Result of the operation.
-        """
         pd_data = SingleMultipleElementHelper.pie_data(
             results, ctype, custom_colors, pml, self.parent_window, dil, si,
             cfg.get('label_mode', 'Symbol'))
@@ -1141,12 +1036,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
         # ── Apply label mode (strip mass numbers for 'Symbol') ────────
         mode = cfg.get('label_mode', 'Symbol')
         def _fmt(lbl: str) -> str:
-            """
-            Args:
-                lbl (str): The lbl.
-            Returns:
-                str: Result of the operation.
-            """
             lines = lbl.split('\n')
             lines[0] = format_combination_label(lines[0], mode, Renderer.MATHTEXT, cfg)
             return '\n'.join(lines)
@@ -1154,13 +1043,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
         # ── Optionally append percentage line ────────────────────────
         total_val = sum(values) or 1.0
         def _build_text(lbl: str, val: float) -> str:
-            """
-            Args:
-                lbl (str): The lbl.
-                val (float): The val.
-            Returns:
-                str: Result of the operation.
-            """
             text = _fmt(lbl)
             if cfg.get('show_percentages', True):
                 text += f'\n{val / total_val * 100:.1f}%'
@@ -1269,11 +1151,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
 
     def _draw_heatmaps(self, ad, cfg):
-        """
-        Args:
-            ad (Any): The ad.
-            cfg (Any): The cfg.
-        """
         if not self._multi:
             ax = self.fig.add_subplot(111)
             ax.text(0.5, 0.5, 'Heatmaps require multiple samples',
@@ -1338,10 +1215,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
 
     def _update_stats(self, ad):
-        """
-        Args:
-            ad (Any): The ad.
-        """
         cfg = self.node.config
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
@@ -1361,10 +1234,6 @@ class SingleMultipleElementDisplayDialog(QDialog):
             f"Total: {calc(tp):.1f} {unit}  |  Single: {calc(sc):.1f}  |  Multiple: {calc(mc):.1f}")
 
     def _update_table(self, ad):
-        """
-        Args:
-            ad (Any): The ad.
-        """
         try:
             cfg = self.node.config
             df = SingleMultipleElementHelper.statistics_table(
@@ -1393,10 +1262,6 @@ class SingleMultipleElementPlotNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Single/Multiple"
         self.node_type = "single_multiple_element_plot"
@@ -1410,40 +1275,22 @@ class SingleMultipleElementPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = SingleMultipleElementDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_analysis_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         st = self.config.get('single_threshold', 0.5)
@@ -1457,13 +1304,6 @@ class SingleMultipleElementPlotNode(QObject):
         return None
 
     def _extract_multi(self, st, mt):
-        """
-        Args:
-            st (Any): The st.
-            mt (Any): The mt.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:

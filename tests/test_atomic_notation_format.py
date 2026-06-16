@@ -15,9 +15,6 @@ from results.shared_plot_utils import (
 
 
 class TestAtomicNotationLabelFormatting(unittest.TestCase):
-    # Atomic Notation renders the mass as a Qt/HTML <sup> superscript so it
-    # uses the same font as the rest of the plot (see shared_plot_utils:
-    # format_element_label docstring). It is NOT a Unicode superscript glyph.
     def test_atomic_notation_prefix(self):
         self.assertEqual(format_element_label("197Au", "Atomic Notation"), "<sup>197</sup>Au")
         self.assertEqual(format_element_label("56Fe", "Atomic Notation"), "<sup>56</sup>Fe")

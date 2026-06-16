@@ -18,10 +18,7 @@ _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
-    """Return the UserActionLogger, or None if logging isn't ready.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return the UserActionLogger, or None if logging isn't ready."""
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
@@ -67,15 +64,7 @@ class TransportRateCalibrationWindow(QDialog):
     # ── Event overrides ──────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        """
-        Hide the window instead of destroying it on close.
-
-        Args:
-            event (QCloseEvent): The close event to intercept.
-
-        Returns:
-            None
-        """
+        """Hide the window instead of destroying it on close."""
         event.ignore()
         self.hide()
 
@@ -84,8 +73,6 @@ class TransportRateCalibrationWindow(QDialog):
     def apply_theme(self, *_):
         """Re-apply all stylesheets from the current theme palette.
         Runs on init and whenever theme.themeChanged fires.
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(
@@ -108,12 +95,7 @@ class TransportRateCalibrationWindow(QDialog):
     # ── UI construction ──────────────────────────────────────────────────
 
     def _build_ui(self):
-        """
-        Construct the header, method selector, content area, and scroll wrapper.
-
-        Returns:
-            None
-        """
+        """Construct the header, method selector, content area, and scroll wrapper."""
         main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
         main_layout.setSpacing(15)
@@ -177,14 +159,10 @@ class TransportRateCalibrationWindow(QDialog):
     # ── Slots ─────────────────────────────────────────────────────────────
 
     def _show_selected_method(self, index):
-        """
-        Swap the visible calibration widget to match the combo-box selection.
+        """Swap the visible calibration widget to match the combo-box selection.
 
         Args:
             index (int): Combo-box index of the newly selected method.
-
-        Returns:
-            None
         """
         if 0 <= index < len(self.selected_methods):
             _method_key = self.selected_methods[index]
@@ -211,15 +189,11 @@ class TransportRateCalibrationWindow(QDialog):
             _itk_log.warning(f"Warning: no widget for method '{key}'")
 
     def _on_calibration_completed(self, method, transport_rate):
-        """
-        Re-emit the calibration result with a standardised method name.
+        """Re-emit the calibration result with a standardised method name.
 
         Args:
             method (str): Method name as emitted by the child widget.
             transport_rate (float): Calculated transport rate in µL/s.
-
-        Returns:
-            None
         """
         standardised = _METHOD_SIGNAL_MAP.get(method, method)
         ual = _ual()

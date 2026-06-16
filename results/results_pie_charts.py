@@ -65,12 +65,6 @@ DEGREE_SIGN = "\N{DEGREE SIGN}"
 # â”€â”€ Small helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return bool(input_data and input_data.get('type') == 'multiple_sample_data')
 
 
@@ -78,11 +72,6 @@ class _ColorBtn(QPushButton):
     """Single-click colour-picker button with a colour swatch."""
 
     def __init__(self, color: str = '#FFFFFF', parent=None):
-        """
-        Args:
-            color (str): Colour value.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFixedSize(30, 20)
         self._color = color
@@ -98,10 +87,6 @@ class _ColorBtn(QPushButton):
         )
 
     def color(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return self._color
 
     def set_color(self, c: str):
@@ -114,11 +99,7 @@ class _ColorBtn(QPushButton):
         self._apply()
 
     def mousePressEvent(self, event):
-        """Open the shared safe color picker for this swatch on left click.
-
-        Args:
-            event (Any): Qt event object.
-        """
+        """Open the shared safe color picker for this swatch on left click."""
         if event.button() == Qt.LeftButton:
             picked = pick_color_hex(self._color, owner=self,
                                     title="Select Color")
@@ -131,18 +112,10 @@ class PieStyleGroup:
     """Donut, start angle, shadow, edge style, label distance."""
 
     def __init__(self, cfg: dict):
-        """
-        Args:
-            cfg (dict): The cfg.
-        """
         self._cfg = cfg
         self._edge_btn = _ColorBtn(cfg.get('edge_color', '#FFFFFF'))
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         cfg = self._cfg
         g = QGroupBox("Pie / Donut Style")
         f = QFormLayout(g)
@@ -185,10 +158,6 @@ class PieStyleGroup:
         return g
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'donut':             self._donut.isChecked(),
             'donut_hole_size':   self._hole.value(),
@@ -205,18 +174,10 @@ class LabelLineGroup:
     """Connection lines + label background box."""
 
     def __init__(self, cfg: dict):
-        """
-        Args:
-            cfg (dict): The cfg.
-        """
         self._cfg = cfg
         self._line_color = _ColorBtn(cfg.get('connection_line_color', '#888888'))
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         cfg = self._cfg
         g = QGroupBox("Labels & Connection Lines")
         f = QFormLayout(g)
@@ -241,10 +202,6 @@ class LabelLineGroup:
         return g
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'show_connection_lines': self._show_lines.isChecked(),
             'connection_line_style': _LINE_STYLES[self._line_style.currentIndex()],
@@ -257,17 +214,9 @@ class LegendGroup:
     """Legend visibility and placement."""
 
     def __init__(self, cfg: dict):
-        """
-        Args:
-            cfg (dict): The cfg.
-        """
         self._cfg = cfg
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         cfg = self._cfg
         g = QGroupBox("Legend")
         f = QFormLayout(g)
@@ -290,10 +239,6 @@ class LegendGroup:
         return g
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'legend_show':     self._show.isChecked(),
             'legend_position': self._pos.currentText(),
@@ -305,18 +250,10 @@ class ExportGroup:
     """Export format, DPI, background colour."""
 
     def __init__(self, cfg: dict):
-        """
-        Args:
-            cfg (dict): The cfg.
-        """
         self._cfg = cfg
         self._bg_btn = _ColorBtn(cfg.get('bg_color', '#FFFFFF'))
 
     def build(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         cfg = self._cfg
         g = QGroupBox("Export Settings")
         f = QFormLayout(g)
@@ -337,10 +274,6 @@ class ExportGroup:
         return g
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         return {
             'export_format': self._fmt.currentText().lower(),
             'export_dpi':    self._dpi.value(),
@@ -361,11 +294,6 @@ class MplPieCanvas(QWidget):
     """
 
     def __init__(self, cfg: dict, parent=None):
-        """
-        Args:
-            cfg (dict): The cfg.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._cfg  = cfg
         self._anns: dict[str, dict] = {}
@@ -394,23 +322,16 @@ class MplPieCanvas(QWidget):
     # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def set_context_menu_callback(self, fn):
-        """
-        Args:
-            fn (Any): The fn.
-        """
         self._ctx_cb = fn
 
     def render(self, subplots: list[dict]):
-        """
-        subplots â€“ list of dicts:
+        """subplots â€“ list of dicts:
             labels : list[str]
             sizes  : list[float]   (percentages, â‰ˆ sum 100)
             texts  : list[str]     (annotation text per wedge)
             colors : list[str]     (hex colours)
             title  : str
             key    : str           (unique key for position persistence)
-        Args:
-            subplots (list[dict]): The subplots.
         """
         self.figure.clear()
         self._anns = {}
@@ -459,10 +380,6 @@ class MplPieCanvas(QWidget):
         self._cfg['label_positions'] = lp
 
     def export_figure(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         fmt  = self._cfg.get('export_format', 'svg')
         dpi  = self._cfg.get('export_dpi', 300)
         filt = ('SVG Vector (*.svg);;PDF Document (*.pdf);;'
@@ -477,18 +394,10 @@ class MplPieCanvas(QWidget):
     # â”€â”€ Internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _fwd_ctx(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self._ctx_cb:
             self._ctx_cb(self.canvas.mapToGlobal(pos))
 
     def _persist_positions(self, _event):
-        """
-        Args:
-            _event (Any): The  event.
-        """
         for sp_key, anns in self._anns.items():
             bucket = (self._cfg
                       .setdefault('label_positions', {})
@@ -500,10 +409,7 @@ class MplPieCanvas(QWidget):
     # â”€â”€ Pie-axes drag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _pie_drag_press(self, event):
-        """Start dragging an axes when the user clicks on its background.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Start dragging an axes when the user clicks on its background."""
         if event.button != 1 or event.inaxes is None:
             return
         for anns in self._anns.values():
@@ -519,10 +425,6 @@ class MplPieCanvas(QWidget):
         self._drag_ax_pos0  = event.inaxes.get_position()
 
     def _pie_drag_motion(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._drag_ax is None or event.x is None:
             return
         w_px, h_px = (self.figure.get_size_inches() * self.figure.dpi)
@@ -533,21 +435,11 @@ class MplPieCanvas(QWidget):
         self.canvas.draw_idle()
 
     def _pie_drag_release(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._drag_ax       = None
         self._drag_start_px = None
         self._drag_ax_pos0  = None
 
     def _draw_one(self, ax, sp: dict, cfg: dict):
-        """
-        Args:
-            ax (Any): The ax.
-            sp (dict): The sp.
-            cfg (dict): The cfg.
-        """
         labels   = sp['labels']
         sizes    = sp['sizes']
         texts    = sp['texts']
@@ -893,13 +785,7 @@ class PieChartSettingsDialog(QDialog):
 
 class PieChartDisplayDialog(QDialog):
     def __init__(self, node, parent_window=None):
-        """
-        Initialize the element-distribution pie-chart display dialog.
-
-        Args:
-            node (Any): Plot node containing config and plot-data extraction methods.
-            parent_window (Any): Parent window reference.
-        """
+        """Initialize the element-distribution pie-chart display dialog."""
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Element Distribution Pie Charts")
@@ -939,11 +825,7 @@ class PieChartDisplayDialog(QDialog):
         lay.addLayout(bb)
 
     def _ctx_menu(self, global_pos):
-        """
-        Show minimal right-click controls for quick visual toggles and isotope labels.
-
-        Args:
-            global_pos (Any): Global screen position for menu placement.
+        """Show minimal right-click controls for quick visual toggles and isotope labels.
 
         Preserved behavior:
             Quick visual toggles and isotope-label updates are still available while
@@ -1205,10 +1087,6 @@ class PieChartPlotNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Element Distribution"
         self.node_type       = "pie_chart_plot"
@@ -1258,40 +1136,22 @@ class PieChartPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = PieChartDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         dt = self.config.get('data_type_display', 'Counts')
@@ -1309,12 +1169,6 @@ class PieChartPlotNode(QObject):
         return None
 
     def _extract_single(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -1331,12 +1185,6 @@ class PieChartPlotNode(QObject):
         return {'element_data': pd.DataFrame(mat, columns=pd.Index(list(all_elems)))} if mat else None
 
     def _extract_multi(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names     = self.input_data.get('sample_names', [])
         if not particles:
@@ -1583,13 +1431,7 @@ class ElementCompositionSettingsDialog(QDialog):
 
 class ElementCompositionDisplayDialog(QDialog):
     def __init__(self, node, parent_window=None):
-        """
-        Initialize the Element Composition pie-chart display dialog.
-
-        Args:
-            node (Any): Plot node with config and data extraction methods.
-            parent_window (Any): Parent window reference.
-        """
+        """Initialize the Element Composition pie-chart display dialog."""
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Element Combination Analysis")
@@ -1629,11 +1471,7 @@ class ElementCompositionDisplayDialog(QDialog):
         lay.addLayout(bb)
 
     def _ctx_menu(self, global_pos):
-        """
-        Show minimal right-click controls for quick visual toggles and isotope labels.
-
-        Args:
-            global_pos (Any): Global screen position for menu placement.
+        """Show minimal right-click controls for quick visual toggles and isotope labels.
 
         Preserved behavior:
             Quick visual controls remain available, while full configuration/reset/
@@ -1940,10 +1778,6 @@ class ElementCompositionPlotNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Element Composition"
         self.node_type       = "element_composition_plot"
@@ -1995,40 +1829,22 @@ class ElementCompositionPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = ElementCompositionDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         dt = self.config.get('data_type_display', 'Counts')
@@ -2046,12 +1862,6 @@ class ElementCompositionPlotNode(QObject):
         return None
 
     def _extract_single_enhanced(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -2072,12 +1882,6 @@ class ElementCompositionPlotNode(QObject):
         return combos or None
 
     def _extract_multi_enhanced(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names     = self.input_data.get('sample_names', [])
         if not particles:

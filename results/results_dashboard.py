@@ -17,12 +17,6 @@ except ImportError:
 
 
 def _safe_positive(v):
-    """
-    Args:
-        v (Any): The v.
-    Returns:
-        object: Result of the operation.
-    """
     try:
         v = float(v)
         return v > 0 and not np.isnan(v)
@@ -32,12 +26,7 @@ def _safe_positive(v):
 
 
 def _build_dashboard_data(data_context):
-    """Extract everything the dashboard JS needs.
-    Args:
-        data_context (Any): The data context.
-    Returns:
-        dict: Result of the operation.
-    """
+    """Extract everything the dashboard JS needs."""
     if not data_context:
         return None
 
@@ -78,12 +67,6 @@ def _build_dashboard_data(data_context):
                 mass_pcts.append(round(float(mp), 1))
 
         def _stats(arr):
-            """
-            Args:
-                arr (Any): The arr.
-            Returns:
-                dict: Result of the operation.
-            """
             if not arr:
                 return {'mean': 0, 'std': 0, 'min': 0, 'max': 0,
                         'q1': 0, 'median': 0, 'q3': 0}
@@ -1281,11 +1264,6 @@ class DashboardDisplayDialog(QDialog):
     """Full-window enhanced Chart.js dashboard."""
 
     def __init__(self, dashboard_node, parent_window=None):
-        """
-        Args:
-            dashboard_node (Any): The dashboard node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = dashboard_node
         self.parent_window = parent_window
@@ -1314,10 +1292,6 @@ class DashboardDisplayDialog(QDialog):
         self._web.loadFinished.connect(self._inject_data)
 
     def _inject_data(self, ok):
-        """
-        Args:
-            ok (Any): The ok.
-        """
         if not ok:
             return
 
@@ -1347,10 +1321,6 @@ class DashboardNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Dashboard"
         self.node_type = "dashboard"
@@ -1363,39 +1333,21 @@ class DashboardNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def get_data_summary(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if not self.input_data:
             return "No data"
         n = len(self.input_data.get('particle_data', []))
         return f"{n:,} particles"
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = DashboardDisplayDialog(self, parent_window)
         dlg.exec()
         return True

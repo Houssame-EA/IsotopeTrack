@@ -95,24 +95,11 @@ DEFAULT_CONFIG = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _compute_correlation_matrix(particles, elements, data_key):
-    """Build NxN Pearson-r matrix from particle data.
-    Args:
-        particles (Any): The particles.
-        elements (Any): The elements.
-        data_key (Any): The data key.
-    Returns:
-        tuple: Result of the operation.
-    """
+    """Build NxN Pearson-r matrix from particle data."""
     n = len(elements)
     if n < 2:
         return None, None
@@ -147,12 +134,6 @@ def _compute_correlation_matrix(particles, elements, data_key):
 
 
 def _matrix_stats(mat):
-    """
-    Args:
-        mat (Any): The mat.
-    Returns:
-        object: Result of the operation.
-    """
     n = mat.shape[0]
     off_diag = [mat[i, j] for i in range(n) for j in range(n)
                 if i != j and not np.isnan(mat[i, j])]
@@ -166,12 +147,6 @@ def _matrix_stats(mat):
 
 class MatrixSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None, scope='all'):
-        """
-        Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         if scope == 'format':
             self.setWindowTitle("Correlation matrix plot format settings")
@@ -267,10 +242,6 @@ class MatrixSettingsDialog(QDialog):
         root.addWidget(bb)
 
     def collect(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         d = {
             'data_type_display': self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
             'min_particles':     int(self.min_part.value()) if self.min_part else int(self._cfg.get('min_particles', 5)),
@@ -296,11 +267,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
     """Matplotlib-based correlation matrix dialog with drag support."""
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Correlation Matrix Analysis")
@@ -342,8 +308,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
     # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
-        """
-        Build a minimal Matrix right-click menu with quick controls only.
+        """Build a minimal Matrix right-click menu with quick controls only.
 
         The context menu is intentionally limited to `Quick Toggles` and
         `Isotope Label`. Full format/quantity configuration, reset, and export
@@ -352,9 +317,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
         Preserved behavior:
         - Toggle and label-mode actions still update the same config keys.
         - Matrix calculations, thresholds, and data semantics are unchanged.
-
-        Args:
-            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -374,19 +336,10 @@ class CorrelationMatrixDisplayDialog(QDialog):
 
         menu.exec(QCursor.pos())
     def _toggle(self, key):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -458,11 +411,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
             import traceback; traceback.print_exc()
 
     def _draw_single(self, data, cfg):
-        """
-        Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-        """
         mat = data['matrix']
         elems = data['elements']
         n = data.get('n_particles', 0)
@@ -473,11 +421,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
         apply_font_to_matplotlib(ax, cfg)
 
     def _draw_multi(self, data, cfg):
-        """
-        Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-        """
         names = list(data.keys())
         n = len(names)
         cols = min(n, 3)
@@ -492,11 +435,6 @@ class CorrelationMatrixDisplayDialog(QDialog):
             apply_font_to_matplotlib(ax, cfg)
 
     def _draw_difference(self, data, cfg):
-        """
-        Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-        """
         names = list(data.keys())
         info1, info2 = data[names[0]], data[names[1]]
         common = [e for e in info1['elements'] if e in info2['elements']]
@@ -519,14 +457,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         apply_font_to_matplotlib(ax, cfg)
 
     def _draw_matrix_ax(self, ax, mat, elems, cfg, title=""):
-        """Draw one correlation matrix onto ax using imshow.
-        Args:
-            ax (Any): The ax.
-            mat (Any): The mat.
-            elems (Any): The elems.
-            cfg (Any): The cfg.
-            title (Any): Window or dialog title.
-        """
+        """Draw one correlation matrix onto ax using imshow."""
         n = len(elems)
         threshold = cfg.get('r_threshold', 0.0)
         show_diag = cfg.get('show_diagonal', True)
@@ -585,10 +516,6 @@ class CorrelationMatrixNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Corr. Matrix"
         self.node_type       = "correlation_matrix"
@@ -602,40 +529,22 @@ class CorrelationMatrixNode(QObject):
         self.input_data      = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = CorrelationMatrixDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_matrix_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         data_key = MATRIX_DATA_KEY_MAP.get(
@@ -648,10 +557,6 @@ class CorrelationMatrixNode(QObject):
         return None
 
     def _get_elements(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
@@ -662,12 +567,6 @@ class CorrelationMatrixNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def _extract_single(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            dict: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         if not particles:
             return None
@@ -681,12 +580,6 @@ class CorrelationMatrixNode(QObject):
                 'p_matrix': p_mat, 'n_particles': len(particles)}
 
     def _extract_multi(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles or not names:

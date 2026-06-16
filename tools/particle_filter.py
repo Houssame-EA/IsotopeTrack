@@ -521,17 +521,6 @@ class ParticleFilterDialog(QDialog):
 
     def __init__(self, parent, upstreams, sample_filters=None,
                  selected_sources=None, merged_name="Combined"):
-        """
-        Args:
-            parent (Any): Parent window.
-            upstreams (list | dict): Snapshot(s) of the upstream data from
-                every input link, fetched once by the caller.
-            sample_filters (dict): Mapping sample name -> filter config.
-            selected_sources (list): Sample names currently selected to flow
-                through, or None for all.
-            merged_name (str): Output name used when several Single Sample
-                inputs are merged into one sample at the exit.
-        """
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -866,11 +855,7 @@ class ParticleFilterDialog(QDialog):
         return lbl
 
     def _refresh_row(self, item):
-        """Refresh one sample row: name, particle count and filter tag.
-
-        Args:
-            item (QListWidgetItem): The row to refresh.
-        """
+        """Refresh one sample row: name, particle count and filter tag."""
         name = item.data(Qt.UserRole)
         if not name:
             return
@@ -898,11 +883,7 @@ class ParticleFilterDialog(QDialog):
         self._schedule_preview()
 
     def _on_item_checked(self, item):
-        """React to an include/exclude checkbox toggle.
-
-        Args:
-            item (QListWidgetItem): The toggled row.
-        """
+        """React to an include/exclude checkbox toggle."""
         if not self._loading:
             self._schedule_preview()
 
@@ -1042,11 +1023,7 @@ class ParticleFilterDialog(QDialog):
         self._schedule_preview()
 
     def _schedule_preview(self, *_):
-        """Restart the debounce timer for the live preview.
-
-        Args:
-            *_ (Any): Ignored signal payloads.
-        """
+        """Restart the debounce timer for the live preview."""
         if not self._loading:
             self._preview_timer.start()
 
@@ -1246,10 +1223,6 @@ class ParticleFilterNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Particle Filter"
         self.node_type = "particle_filter"
@@ -1268,21 +1241,13 @@ class ParticleFilterNode(QObject):
         self._incoming_names = []
 
     def set_position(self, pos):
-        """Update the node position and notify the canvas item.
-
-        Args:
-            pos (Any): Position point.
-        """
+        """Update the node position and notify the canvas item."""
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def process_data(self, input_data):
-        """Receive pushed upstream data, refresh stale state and propagate.
-
-        Args:
-            input_data (Any): The upstream data dict (or None).
-        """
+        """Receive pushed upstream data, refresh stale state and propagate."""
         self.input_data = input_data
         self._recompute_stale(normalize_sources([input_data]))
         self.configuration_changed.emit()
@@ -1513,9 +1478,6 @@ class ParticleFilterNode(QObject):
     def configure(self, parent_window):
         """Open the configuration dialog (double-click).
 
-        Args:
-            parent_window (Any): The parent window.
-
         Returns:
             bool: True when the dialog was accepted.
         """
@@ -1558,11 +1520,6 @@ def build_particle_filter_node_item():
         """Funnel icon node item for the Particle Filter."""
 
         def __init__(self, wf, pw=None):
-            """
-            Args:
-                wf (Any): The workflow node.
-                pw (Any): The parent window.
-            """
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
@@ -1578,10 +1535,6 @@ def build_particle_filter_node_item():
         def itemChange(self, change, value):
             """Track scene membership so the node can pull via its links.
 
-            Args:
-                change (Any): The change.
-                value (Any): Value to set or process.
-
             Returns:
                 object: Result of the base implementation.
             """
@@ -1592,11 +1545,6 @@ def build_particle_filter_node_item():
         def paint(self, painter, option, widget=None):
             """Draw the teal funnel icon, status badge, stale warning ring
             and the live summary line.
-
-            Args:
-                painter (Any): QPainter instance.
-                option (Any): The option.
-                widget (Any): Target widget.
             """
             wf = self.workflow_node
             stale = bool(wf.stale_labels())
@@ -1692,29 +1640,17 @@ def build_particle_filter_node_item():
             tw.raise_()
 
         def hoverEnterEvent(self, event):
-            """
-            Args:
-                event (Any): Qt event object.
-            """
             super().hoverEnterEvent(event)
             self.hover_pos = event.screenPos()
             self.hover_timer.start(400)
 
         def hoverMoveEvent(self, event):
-            """
-            Args:
-                event (Any): Qt event object.
-            """
             super().hoverMoveEvent(event)
             self.hover_pos = event.screenPos()
             if not self._tooltip_widget.isVisible():
                 self.hover_timer.start(400)
 
         def hoverLeaveEvent(self, event):
-            """
-            Args:
-                event (Any): Qt event object.
-            """
             self.hover_timer.stop()
             self._tooltip_widget.hide()
             super().hoverLeaveEvent(event)

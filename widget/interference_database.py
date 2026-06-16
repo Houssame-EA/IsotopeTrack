@@ -516,8 +516,7 @@ def get_interferences_for_mass(nominal_mass: int) -> list:
 
 def get_particle_relevant_interferences(nominal_mass: int,
                                          elements_in_particle: Set[str]) -> list:
-    """
-    Get interferences that are plausible for a specific particle based on
+    """Get interferences that are plausible for a specific particle based on
     which elements were co-detected.
 
     Plasma-based interferences (ArO+, Ar2+, etc.) are always included.
@@ -527,9 +526,6 @@ def get_particle_relevant_interferences(nominal_mass: int,
     Args:
         nominal_mass: Integer nominal mass being evaluated
         elements_in_particle: Set of element symbols detected in this particle
-
-    Returns:
-        List of plausible interference dicts
     """
     all_interferences = get_interferences_for_mass(nominal_mass)
     plausible = []
@@ -568,14 +564,10 @@ def get_worst_severity(interferences: list) -> str:
 
 
 def has_any_interference(nominal_mass: int) -> bool:
-    """
-    Quick check if a nominal mass has any known interferences.
+    """Quick check if a nominal mass has any known interferences.
 
     Args:
         nominal_mass: Integer nominal mass
-
-    Returns:
-        True if interferences are known
     """
     return nominal_mass in INTERFERENCE_DB and len(INTERFERENCE_DB[nominal_mass]) > 0
 

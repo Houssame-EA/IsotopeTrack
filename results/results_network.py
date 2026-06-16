@@ -89,26 +89,11 @@ DEFAULT_CONFIG = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _compute_edges(particles, elements, data_key, r_threshold, min_n):
-    """Return list of (i, j, r) where |r| >= threshold.
-    Args:
-        particles (Any): The particles.
-        elements (Any): The elements.
-        data_key (Any): The data key.
-        r_threshold (Any): The r threshold.
-        min_n (Any): The min n.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return list of (i, j, r) where |r| >= threshold."""
     n = len(elements)
     vectors = {el: [] for el in elements}
     for p in particles:
@@ -185,9 +170,6 @@ def _compute_node_amounts(particles, elements, data_key, aggregation="Sum"):
 
 def _normalize_node_size_aggregation(value):
     """Normalize node-size aggregation config values to supported options.
-
-    Args:
-        value (Any): Raw config or UI value to normalize.
 
     Returns:
         str: ``Sum`` or ``Mean``, defaulting to ``Sum`` for unsupported values.
@@ -1417,10 +1399,6 @@ class NetworkDiagramNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Network"
         self.node_type       = "network_diagram"
@@ -1434,40 +1412,22 @@ class NetworkDiagramNode(QObject):
         self.input_data      = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = NetworkDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def _get_elements(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
@@ -1478,10 +1438,6 @@ class NetworkDiagramNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def extract_network_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         data_key    = NET_DATA_KEY_MAP.get(

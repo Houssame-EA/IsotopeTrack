@@ -24,29 +24,10 @@ except ImportError:
     NUMBA_AVAILABLE = False
     _itk_log.error("numba not available - install with 'pip install numba'")
     def jit(*args, **kwargs):
-        """
-        Args:
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
-        Returns:
-            object: Result of the operation.
-        """
         def decorator(func):
-            """
-            Args:
-                func (Any): Callable to invoke.
-            Returns:
-                object: Result of the operation.
-            """
             return func
         return decorator
     def prange(x):
-        """
-        Args:
-            x (Any): Input array or value.
-        Returns:
-            object: Result of the operation.
-        """
         return range(x)
 
 try:
@@ -471,11 +452,6 @@ class CompoundPoissonLognormaltable:
     _lut_cache: dict = {}
 
     def __init__(self, lut_path: str | None = None):
-        """
-        Args:
-            lut_path (str | None): Path to cpln_quantiles.npz.
-                Defaults to cpln_quantiles.npz in the same directory as this file.
-        """
         self._ready   = False
         self._interp  = None
         self._lam_min = 0.0
@@ -788,17 +764,8 @@ class PeakDetection:
     @jit(nopython=True, nogil=True)
     def _find_particles_numba_dynamic(raw_signal, threshold_arr, lambda_bkgd_arr,
                                       min_continuous_points, integration_level_arr):
-        """
-        JIT-compiled particle detection for dynamic array thresholds (window)
+        """JIT-compiled particle detection for dynamic array thresholds (window)
         with configurable integration baseline array.
-        Args:
-            raw_signal (Any): The raw signal.
-            threshold_arr (Any): The threshold arr.
-            lambda_bkgd_arr (Any): The lambda bkgd arr.
-            min_continuous_points (Any): The min continuous points.
-            integration_level_arr (Any): The integration level arr.
-        Returns:
-            tuple: Result of the operation.
         """
         n = len(raw_signal)
         particles_start = []
@@ -979,15 +946,8 @@ class PeakDetection:
         }
 
     def _rolling_background(self, signal, threshold, window_size):
-        """
-        Calculates a dynamic rolling background excluding peaks above threshold.
+        """Calculates a dynamic rolling background excluding peaks above threshold.
         Uses uniform_filter1d — O(n) regardless of window_size.
-        Args:
-            signal (Any): The signal.
-            threshold (Any): The threshold.
-            window_size (Any): The window size.
-        Returns:
-            object: Result of the operation.
         """
         valid_mask = signal < threshold
         valid_signal = signal * valid_mask
@@ -999,16 +959,8 @@ class PeakDetection:
         return local_bg[:len(signal)]
 
     def _calculate_array_threshold(self, lambda_bkgd_array, method, alpha, sigma=0.55):
-        """
-        Fast threshold calculation for moving window arrays.
+        """Fast threshold calculation for moving window arrays.
         Adaptive interpolation grid size.
-        Args:
-            lambda_bkgd_array (Any): The lambda bkgd array.
-            method (Any): The method.
-            alpha (Any): The alpha.
-            sigma (Any): Standard deviation (sigma) value.
-        Returns:
-            object: Result of the operation.
         """
         if method in ["Manual"]:
             return self._calculate_single_threshold(lambda_bkgd_array, method, alpha, sigma)
@@ -1150,14 +1102,7 @@ class PeakDetection:
         return all_threshold_data
 
     def calculate_thresholds_batch(self, signals_dict, params_dict, method_groups=None):
-        """Wrapper for safe batch threshold processing.
-        Args:
-            signals_dict (Any): The signals dict.
-            params_dict (Any): The params dict.
-            method_groups (Any): The method groups.
-        Returns:
-            object: Result of the operation.
-        """
+        """Wrapper for safe batch threshold processing."""
         return self.calculate_thresholds_batch_safe(signals_dict, params_dict, method_groups)
 
     # ----------------------------------------------------------------------------------------------------------
@@ -1238,15 +1183,7 @@ class PeakDetection:
 
     @staticmethod
     def _split_no_split(signal, start_idx, end_idx, **kwargs):
-        """Baseline: return the region unchanged.
-        Args:
-            signal (Any): The signal.
-            start_idx (Any): The start idx.
-            end_idx (Any): The end idx.
-            **kwargs (Any): Additional keyword arguments.
-        Returns:
-            list: Result of the operation.
-        """
+        """Baseline: return the region unchanged."""
         return [(start_idx, end_idx)]
 
     # ── Method 2 — 1D Watershed ──────────────────────────────────────────────
@@ -1626,21 +1563,7 @@ class PeakDetection:
                        split_method="1D Watershed",
                        sigma=0.55,
                        min_valley_ratio=0.50):
-        """Wrapper for safe particle detection.
-        Args:
-            time (Any): The time.
-            raw_signal (Any): The raw signal.
-            lambda_bkgd (Any): The lambda bkgd.
-            threshold (Any): The threshold.
-            min_width (Any): The min width.
-            min_continuous_points (Any): The min continuous points.
-            integration_method (Any): The integration method.
-            split_method (Any): The split method.
-            sigma (Any): Standard deviation (sigma) value.
-            min_valley_ratio (Any): The min valley ratio.
-        Returns:
-            object: Result of the operation.
-        """
+        """Wrapper for safe particle detection."""
         return self.find_particles_safe(
             time, raw_signal, lambda_bkgd, threshold,
             min_width, min_continuous_points,
@@ -1655,13 +1578,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def process_single_sample_safe(self, main_window, sample_name):
-        """Threading-safe sample processing with iterative calculation.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            dict: Result of the operation.
-        """
+        """Threading-safe sample processing with iterative calculation."""
         try:
             local_data = main_window.data_by_sample[sample_name]
             local_time = main_window.time_array_by_sample[sample_name]
@@ -1761,13 +1678,6 @@ class PeakDetection:
             return None
 
     def process_single_sample(self, main_window, sample_name):
-        """
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            object: Result of the operation.
-        """
         return self.process_single_sample_safe(main_window, sample_name)
 
     def detect_peaks_with_poisson(self, signal, alpha=0.000001,
@@ -1850,10 +1760,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def detect_particles_incremental(self, main_window):
-        """Incremental particle detection for changed elements only.
-        Args:
-            main_window (Any): The main window.
-        """
+        """Incremental particle detection for changed elements only."""
         original_sample = main_window.current_sample
         overlay = None
 
@@ -1940,14 +1847,7 @@ class PeakDetection:
         main_window.unsaved_changes = True
 
     def process_sample_incremental(self, main_window, sample_name, changed_elements):
-        """Process only changed elements for a sample incrementally.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-            changed_elements (Any): The changed elements.
-        Returns:
-            dict: Result of the operation.
-        """
+        """Process only changed elements for a sample incrementally."""
         try:
             local_data = main_window.data_by_sample[sample_name]
             local_time = main_window.time_array_by_sample[sample_name]
@@ -2049,13 +1949,7 @@ class PeakDetection:
             return None
 
     def merge_detection_results(self, main_window, sample_name, new_results, changed_elements):
-        """Merge new detection results with existing results.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-            new_results (Any): The new results.
-            changed_elements (Any): The changed elements.
-        """
+        """Merge new detection results with existing results."""
         try:
             if sample_name not in main_window.sample_detected_peaks:
                 main_window.sample_detected_peaks[sample_name] = {}
@@ -2115,11 +2009,7 @@ class PeakDetection:
             traceback.print_exc()
 
     def update_current_sample_display(self, main_window, sample_name):
-        """Update display for currently selected sample.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        """
+        """Update display for currently selected sample."""
         if sample_name == main_window.current_sample:
             main_window.detected_peaks = main_window.sample_detected_peaks.get(sample_name, {})
             if sample_name in main_window.sample_particle_data:
@@ -2130,14 +2020,7 @@ class PeakDetection:
                 main_window.parameters_table_clicked(current_row, 0)
 
     def apply_window_size(self, signal, use_window_size, window_size):
-        """Apply window size limitation to signal if enabled.
-        Args:
-            signal (Any): The signal.
-            use_window_size (Any): The use window size.
-            window_size (Any): The window size.
-        Returns:
-            object: Result of the operation.
-        """
+        """Apply window size limitation to signal if enabled."""
         if not use_window_size or window_size <= 0:
             return signal
         signal_length = len(signal)
@@ -2148,13 +2031,7 @@ class PeakDetection:
         return signal[start_idx:end_idx]
 
     def get_changed_elements(self, main_window, sample_name):
-        """Determine which elements need reprocessing for a sample.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            tuple: Result of the operation.
-        """
+        """Determine which elements need reprocessing for a sample."""
         changed_elements = []
         new_file_elements = []
 
@@ -2193,20 +2070,7 @@ class PeakDetection:
                                         selected_isotopes, get_formatted_label_func,
                                         current_sample, element_thresholds, parameters_table,
                                         min_overlap_percentage=75.0):
-        """Process and identify multi-element particles.
-        Args:
-            all_particles (Any): The all particles.
-            time_array (Any): The time array.
-            sample_detected_peaks (Any): The sample detected peaks.
-            selected_isotopes (Any): The selected isotopes.
-            get_formatted_label_func (Any): The get formatted label func.
-            current_sample (Any): The current sample.
-            element_thresholds (Any): The element thresholds.
-            parameters_table (Any): The parameters table.
-            min_overlap_percentage (Any): The min overlap percentage.
-        Returns:
-            object: Result of the operation.
-        """
+        """Process and identify multi-element particles."""
         multi_element_particles = []
 
         included_elements = {}
@@ -2336,10 +2200,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def detect_particles(self, main_window):
-        """Main threading-safe particle detection function.
-        Args:
-            main_window (Any): The main window.
-        """
+        """Main threading-safe particle detection function."""
         original_sample = main_window.current_sample
         overlay = None
 
@@ -2490,12 +2351,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def get_snr_color(self, snr):
-        """Get color based on signal-to-noise ratio.
-        Args:
-            snr (Any): The snr.
-        Returns:
-            object: Result of the operation.
-        """
+        """Get color based on signal-to-noise ratio."""
         if snr <= 1.1:
             return QColor(231, 76, 60)
         elif snr <= 1.2:

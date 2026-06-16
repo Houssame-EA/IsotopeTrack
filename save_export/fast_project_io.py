@@ -228,11 +228,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
-        """
-        Args:
-            pct (Any): Progress percentage (0–100).
-            msg (Any): Message string.
-        """
         if progress_callback:
             progress_callback(pct, msg)
 
@@ -418,11 +413,6 @@ def load_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
-        """
-        Args:
-            pct (Any): Progress percentage (0–100).
-            msg (Any): Message string.
-        """
         if progress_callback:
             progress_callback(pct, msg)
 

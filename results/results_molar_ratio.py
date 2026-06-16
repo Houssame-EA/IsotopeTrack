@@ -122,22 +122,10 @@ DEFAULT_CONFIG = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _xy_labels(cfg):
-    """
-    Args:
-        cfg (Any): The cfg.
-    Returns:
-        tuple: Result of the operation.
-    """
     num = cfg.get('numerator_element', 'Element1')
     den = cfg.get('denominator_element', 'Element2')
     lm = cfg.get('label_mode', 'Symbol')
@@ -166,13 +154,6 @@ class MolarRatioSettingsDialog(QDialog):
 
     def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
-        Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            available_elements (Any): The available elements.
-            parent (Any): Parent widget or object.
-            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
-
         Preserved behavior:
             ``all`` keeps legacy combined settings support. Scoped routes are
             used by the four-button UI so quantity and format edits are routed
@@ -240,10 +221,6 @@ class MolarRatioSettingsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
-        """
-        Returns:
-            tuple: Result of the operation.
-        """
         root = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
@@ -412,12 +389,6 @@ class MolarRatioSettingsDialog(QDialog):
         def _line_row(color_key, style_key, width_key, defaults):
             """Build one statistical-overlay row with isolated color/style/width state.
 
-            Args:
-                color_key (Any): Config key storing the overlay color string.
-                style_key (Any): Config key storing the overlay line style.
-                width_key (Any): Config key storing the overlay line width.
-                defaults (Any): Default ``[color, style, width]`` triple.
-
             Returns:
                 tuple: Row layout, mutable color holder, style combo, and width
                 spinbox for the overlay.
@@ -428,13 +399,7 @@ class MolarRatioSettingsDialog(QDialog):
             btn = QPushButton(); btn.setFixedSize(26, 22)
             btn.setStyleSheet(f"background:{color_holder[0]};")
             def _pick(*_args, holder=color_holder, button=btn):
-                """Pick one overlay color without letting button state replace it.
-
-                Args:
-                    *_args (Any): Ignored Qt signal payload such as ``checked``.
-                    holder (Any): One-item mutable color holder for this row.
-                    button (Any): Swatch button previewing the current color.
-                """
+                """Pick one overlay color without letting button state replace it."""
                 picked = pick_color_hex(holder[0], owner=self,
                                         title="Overlay Color")
                 if picked:
@@ -605,8 +570,7 @@ class MolarRatioSettingsDialog(QDialog):
             self.shade_color_btn.setStyleSheet(f"background:{self._shade_color};")
 
     def collect(self):
-        """
-        Collect config updates using strict scope-aware key groups.
+        """Collect config updates using strict scope-aware key groups.
 
         Preserved behavior:
             ``scope='quantities'`` only reads scientific/quantity controls and
@@ -614,9 +578,6 @@ class MolarRatioSettingsDialog(QDialog):
             line checkboxes), preventing deleted-Qt-object access in quantity
             workflows. ``scope='format'`` collects presentation-only settings.
             ``scope='all'`` remains supported for compatibility.
-
-        Returns:
-            object: Result of the operation.
         """
         d = {}
         in_quantities = self._scope in ('all', 'quantities')
@@ -705,8 +666,6 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0):
         cfg (Any): The cfg.
         color (Any): Colour value.
         y_scale (float): Multiplier converting bin counts to particles per mL.
-    Returns:
-        tuple: Result of the operation.
     """
     bins = cfg.get('bins', 50)
     log_x = cfg.get('log_x', True)
@@ -734,14 +693,7 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0):
 
 
 def _add_density_curve(plot_item, values, cfg, edges, total):
-    """KDE density curve scaled to histogram counts.
-    Args:
-        plot_item (Any): The plot item.
-        values (Any): Array or sequence of values.
-        cfg (Any): The cfg.
-        edges (Any): The edges.
-        total (Any): The total.
-    """
+    """KDE density curve scaled to histogram counts."""
     try:
         bw = edges[1] - edges[0] if len(edges) > 1 else 1.0
         xmin, xmax = min(values), max(values)
@@ -762,9 +714,6 @@ def _apply_box(plot_item, cfg):
 
     The frame state is forced on every redraw so toggling ``show_box`` is
     responsive in single and multi-sample views.
-    Args:
-        plot_item (Any): The plot item.
-        cfg (Any): The cfg.
     """
     show = bool(cfg.get('show_box', True))
     plot_item.showAxis('top', show)
@@ -786,11 +735,7 @@ _QT_LINE = {
 
 
 def _add_ref_line(plot_item, cfg):
-    """Draw a customisable reference vertical line (e.g. ratio = 1).
-    Args:
-        plot_item (Any): The plot item.
-        cfg (Any): The cfg.
-    """
+    """Draw a customisable reference vertical line (e.g. ratio = 1)."""
     if not cfg.get('show_ref_line', False):
         return
     log_x = cfg.get('log_x', True)
@@ -824,10 +769,6 @@ def _add_stat_lines(plot_item, values, cfg):
     Lines are drawn as pg.InfiniteLine with built-in labels — no floating
     TextItem so they can't be mispositioned by view-range race conditions.
     Colors, styles and widths are all customisable via cfg.
-    Args:
-        plot_item (Any): The plot item.
-        values (Any): Array or sequence of values.
-        cfg (Any): The cfg.
     """
     if len(values) == 0:
         return
@@ -891,12 +832,6 @@ def _add_shaded_region(plot_item, values, cfg):
     """Draw a statistical shaded band — applied to every subplot.
 
     ``values`` must already be in plot-space (log10 if log_x is True).
-    Args:
-        plot_item (Any): The plot item.
-        values (Any): Array or sequence of values.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
     """
     shade_type = cfg.get('shade_type', 'None')
     if shade_type == 'None' or len(values) < 3:
@@ -908,12 +843,6 @@ def _add_shaded_region(plot_item, values, cfg):
     real_vals = 10**values if log_x else values
 
     def _to_plot(v):
-        """
-        Args:
-            v (Any): The v.
-        Returns:
-            object: Result of the operation.
-        """
         if log_x:
             return float(np.log10(max(float(v), 1e-12)))
         return float(v)
@@ -962,12 +891,7 @@ def _add_shaded_region(plot_item, values, cfg):
 
 
 def _add_stats_text(plot_item, ratios, cfg):
-    """Add statistics text box.
-    Args:
-        plot_item (Any): The plot item.
-        ratios (Any): The ratios.
-        cfg (Any): The cfg.
-    """
+    """Add statistics text box."""
     lm = cfg.get('label_mode', 'Symbol')
     num = format_element_label(cfg.get('numerator_element', '?'), lm, Renderer.HTML)
     den = format_element_label(cfg.get('denominator_element', '?'), lm, Renderer.HTML)
@@ -1046,11 +970,6 @@ class MolarRatioDisplayDialog(QDialog):
     """Main dialog with PyQtGraph plot and right-click context menu."""
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Particle Data Molar Ratio Analysis")
@@ -1192,19 +1111,10 @@ class MolarRatioDisplayDialog(QDialog):
         return None
 
     def _toggle(self, key):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -1362,14 +1272,7 @@ class MolarRatioDisplayDialog(QDialog):
             import traceback; traceback.print_exc()
 
     def _draw_single(self, pi, ratios, cfg):
-        """
-        Draw single-sample ratio histogram and apply explicit axis log states.
-
-        Args:
-            pi (Any): The pi.
-            ratios (Any): The ratios.
-            cfg (Any): The cfg.
-        """
+        """Draw single-sample ratio histogram and apply explicit axis log states."""
         sc = cfg.get('sample_colors', {})
         color = sc.get('single_sample', '#663399')
         per_ml = per_ml_active(cfg, self.node.input_data)
@@ -1388,14 +1291,7 @@ class MolarRatioDisplayDialog(QDialog):
             _add_stats_text(pi, pr, cfg)
 
     def _draw_overlaid(self, pi, plot_data, cfg):
-        """
-        Draw multi-sample overlaid ratios in one panel with explicit log states.
-
-        Args:
-            pi (Any): The pi.
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
+        """Draw multi-sample overlaid ratios in one panel with explicit log states."""
         sc = cfg.get('sample_colors', {})
         legend_items = []
         all_pr = []
@@ -1429,13 +1325,7 @@ class MolarRatioDisplayDialog(QDialog):
                 legend.addItem(item, dn)
 
     def _draw_subplots(self, plot_data, cfg):
-        """
-        Draw one subplot per sample and apply explicit log + stats behavior.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
+        """Draw one subplot per sample and apply explicit log + stats behavior."""
         names = list(plot_data.keys())
         cols = min(3, len(names))
         rows = math.ceil(len(names) / cols)
@@ -1464,13 +1354,7 @@ class MolarRatioDisplayDialog(QDialog):
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
-        """
-        Draw side-by-side sample subplots with explicit log + stats behavior.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
+        """Draw side-by-side sample subplots with explicit log + stats behavior."""
         names = list(plot_data.keys())
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
@@ -1496,11 +1380,6 @@ class MolarRatioDisplayDialog(QDialog):
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _update_stats(self, plot_data, multi):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            multi (Any): The multi.
-        """
         if multi:
             total = sum(len(v) for v in plot_data.values() if v is not None and hasattr(v, '__len__'))
             self._stats.setText(f"{len(plot_data)} samples  |  {total} total ratio values")
@@ -1515,10 +1394,6 @@ class MolarRatioPlotNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Molar Ratio"
         self.node_type = "molar_ratio_plot"
@@ -1533,56 +1408,34 @@ class MolarRatioPlotNode(QObject):
         self._last_extract_reason = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = MolarRatioDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_available_elements(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if not self.input_data:
             return []
         sel = self.input_data.get('selected_isotopes', [])
         return [i['label'] for i in sel] if sel else []
 
     def extract_plot_data(self):
-        """
-        Compute ratio arrays for current numerator/denominator/data-type config.
+        """Compute ratio arrays for current numerator/denominator/data-type config.
 
         Preserved behavior:
             Old configs may still carry obsolete zero-handling keys; they are
             ignored. Ratio extraction now uses one fixed scientific behavior:
             skip zero/nonpositive/missing/NaN/non-finite components.
-
-        Returns:
-            None
         """
         self._last_extract_reason = None
         if not self.input_data:
@@ -1602,22 +1455,13 @@ class MolarRatioPlotNode(QObject):
         return None
 
     def _compute_ratios(self, particles, dk, num, den):
-        """
-        Compute positive finite ratios with fixed skip-invalid behavior.
+        """Compute positive finite ratios with fixed skip-invalid behavior.
 
         Preserved behavior:
             Legacy ``zero_handling`` / ``min_threshold`` config keys are
             ignored for backward compatibility. This method now always skips
             particles where numerator or denominator is missing, non-finite,
             or nonpositive.
-
-        Args:
-            particles (Any): The particles.
-            dk (Any): The dk.
-            num (Any): The num.
-            den (Any): The den.
-        Returns:
-            object: Result of the operation.
         """
         # Obsolete zero-handling config keys are intentionally ignored.
         # Fixed behavior: skip zero/nonpositive/missing/invalid components.
@@ -1644,14 +1488,6 @@ class MolarRatioPlotNode(QObject):
         return np.array(ratios) if ratios else None
 
     def _extract_single(self, dk, num, den):
-        """
-        Args:
-            dk (Any): The dk.
-            num (Any): The num.
-            den (Any): The den.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -1662,14 +1498,6 @@ class MolarRatioPlotNode(QObject):
         return ratios
 
     def _extract_multi(self, dk, num, den):
-        """
-        Args:
-            dk (Any): The dk.
-            num (Any): The num.
-            den (Any): The den.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
