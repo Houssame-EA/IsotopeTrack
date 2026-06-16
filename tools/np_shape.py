@@ -1,10 +1,13 @@
 """Manages user defined nano particles shapes"""
+import copy
 from collections import namedtuple
 from typing import Any
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
     QDialog, QComboBox, QFormLayout, QLineEdit, QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QAbstractItemModel
+
+from tools.theme import primary_button_qss, theme, results_title_qss
 
 
 class NanoParticleShape:
@@ -119,7 +122,7 @@ class NanoParticleShapeService:
         """
         if self.is_index_invalid(index):
             return None
-        return self.nps_list[index]
+        return copy.deepcopy(self.nps_list[index])
 
     def is_index_invalid(self, index: int) -> bool:
         return index < 0 or index >= len(self.nps_list)
@@ -291,6 +294,8 @@ class NPSEditor(QDialog):
 
         self.current_form_widget = None
 
+        self.nps_form_layout_index = 0
+
         self.accept_with_nps.connect(self.accept)
 
         self._setup_ui()
@@ -300,39 +305,37 @@ class NPSEditor(QDialog):
         self.setLayout(layout)
         layout.addWidget(self._build_header())
         layout.addWidget(self._build_name_form())
-        layout.addStretch(1)
+        self.nps_form_layout_index = layout.count()
         self.display_form_for_nps(self.nps)
+        layout.addStretch(1)
+        layout.addWidget(self._build_footer())
 
     def _build_header(self):
-        header = QWidget()
+        header = QWidget(parent=self)
         header_layout = QHBoxLayout()
         header.setLayout(header_layout)
 
         # Setting up the dropdown with all NanoParticleShape available
-        self.nps_combo_box = QComboBox(parent=header)
-        header_layout.addWidget(self.nps_combo_box)
+        self.nps_combo_box = QComboBox(header)
 
-        current_index = -1
+        current_nps_index = -1
 
         for index, sub_class in enumerate(NanoParticleShape.__subclasses__()):
             if sub_class == type(self.nps):
                 # Uses the pre-existing nps to get user's entries
                 self.nps_combo_box.addItem(self.nps.get_shape(), userData=self.nps)
-                current_index = index
+                current_nps_index = index
                 continue
             sub_class_instance = sub_class()
             self.nps_combo_box.addItem(sub_class_instance.get_shape(), sub_class_instance)
 
+        self.nps_combo_box.setCurrentIndex(current_nps_index)
         self.nps_combo_box.currentIndexChanged.connect(self.handle_nps_selection_change)
-        self.nps_combo_box.setCurrentIndex(current_index)
 
         title = QLabel("Editor")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
+        title.setStyleSheet(results_title_qss(theme.palette))  # TODO: make a common style
         header_layout.addWidget(title)
-
-        accept_button = QPushButton("Accept Changes")
-        accept_button.clicked.connect(self.emit_accept_with_nps)
-        header_layout.addWidget(accept_button)
+        header_layout.addWidget(self.nps_combo_box)
 
         return header
 
@@ -363,17 +366,15 @@ class NPSEditor(QDialog):
             self.current_form_widget.deleteLater()
             self.current_form_widget = None
 
-        before_last = layout.count() - 1
-
         match nps:
             case ShellNPS():
                 print("Form for ShellNPS")
                 self.current_form_widget = ShellNPSEditor(nps)
-                layout.insertWidget(before_last, self.current_form_widget)
+                layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case SphereNPS():
                 print("Form for ShperesNPS")
                 self.current_form_widget = SphereNPSEditor(nps)
-                layout.insertWidget(before_last, self.current_form_widget)
+                layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case obj:
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
 
@@ -397,6 +398,21 @@ class NPSEditor(QDialog):
         layout = QFormLayout()
         widget.setLayout(layout)
         layout.addRow("Name", self.nps_name_edit)
+        return widget
+
+    def _build_footer(self):
+        widget = QWidget()
+        layout = QHBoxLayout()
+        widget.setLayout(layout)
+
+        accept_btn = QPushButton("Apply")
+        accept_btn.setStyleSheet(primary_button_qss(theme.palette))
+        accept_btn.clicked.connect(self.emit_accept_with_nps)
+        layout.addWidget(accept_btn)
+
+        reject_btn = QPushButton("Cancel")
+        reject_btn.clicked.connect(self.close)
+        layout.addWidget(reject_btn)
         return widget
 
 
