@@ -166,6 +166,23 @@ class MplDraggableCanvas(_FigureCanvasBase):
             id(ax): ax.get_position() for ax in self.figure.get_axes()
         }
 
+    def showEvent(self, event):
+        """Guard matplotlib's installEventFilter call against QWidgetItem parents.
+
+        matplotlib's FigureCanvasQT.showEvent calls self.window().installEventFilter(self).
+        When a dialog containing this canvas is shown while its parent chain passes
+        through a QGraphicsScene, Qt may return a QWidgetItem (a QLayoutItem, not a
+        QWidget), which has no installEventFilter method and raises AttributeError.
+
+        Catching AttributeError here is safe: the only side-effect of that call is
+        subscribing to window-level resize events, which is non-critical for dialogs
+        that manage their own sizing.
+        """
+        try:
+            super().showEvent(event)
+        except AttributeError:
+            pass
+
     # ── Drag internals ─────────────────────────────────────────────────
 
     def _drag_press(self, event):

@@ -1393,7 +1393,7 @@ class TriangleDisplayDialog(QDialog):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(4)
 
-        self.figure = Figure(figsize=(14, 10), dpi=140, tight_layout=True)
+        self.figure = Figure(figsize=(14, 10), dpi=100, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
         self.canvas.enable_view_limit_tracking(True)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1856,28 +1856,22 @@ class TriangleDisplayDialog(QDialog):
         viewport = _validate_triangle_viewport(viewport)
         setup_ternary_axes(ax, [ea, eb, ec], cfg, viewport)
 
-        visible_points = []
-        for point in sample_data:
-            a_val = point['a']
-            b_val = point['b']
-            c_val = point['c']
-            if not _point_in_triangle_viewport(a_val, b_val, c_val, viewport):
-                continue
-            a_local, b_local, c_local = _remap_point_to_triangle_viewport(
-                a_val, b_val, c_val, viewport)
-            visible_point = dict(point)
-            visible_point['a_local'] = a_local
-            visible_point['b_local'] = b_local
-            visible_point['c_local'] = c_local
-            visible_points.append(visible_point)
+        # --- vectorized extraction & viewport filtering (replaces O(n) Python loop) ---
+        a_raw = np.array([p['a'] for p in sample_data])
+        b_raw = np.array([p['b'] for p in sample_data])
+        c_raw = np.array([p['c'] for p in sample_data])
+
+        tol = 1e-9
+        mask = (
+            (a_raw >= viewport['a_min'] - tol) &
+            (b_raw >= viewport['b_min'] - tol) &
+            (c_raw >= viewport['c_min'] - tol)
+        )
 
         if cfg.get('average_only_with_all_elements', True):
-            visible_points = [
-                p for p in visible_points
-                if p['a'] > 0 and p['b'] > 0 and p['c'] > 0
-            ]
+            mask &= (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
 
-        if not visible_points:
+        if not mask.any():
             ax.text(
                 0.5, 0.5,
                 "No points in current viewport",
@@ -1887,22 +1881,27 @@ class TriangleDisplayDialog(QDialog):
             )
             return
 
-        a_vals = np.array([p['a_local'] for p in visible_points])
-        b_vals = np.array([p['b_local'] for p in visible_points])
-        c_vals = np.array([p['c_local'] for p in visible_points])
+        # Remap filtered points to local viewport coordinates
+        remaining = _viewport_remaining(viewport)
+        a_orig = a_raw[mask]
+        b_orig = b_raw[mask]
+        c_orig = c_raw[mask]
+        a_vals = (a_orig - viewport['a_min']) / remaining
+        b_vals = (b_orig - viewport['b_min']) / remaining
+        c_vals = (c_orig - viewport['c_min']) / remaining
 
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
         show_cbar = cfg.get('show_colorbar', True) and not return_mappable
+        color_elem = cfg.get('color_element', '')
         _mappable = None
 
         if plot_type == 'Scatter Plot':
             size = cfg.get('marker_size', 20)
             alpha = cfg.get('marker_alpha', 0.7)
-            color_elem = cfg.get('color_element', '')
 
             if color_elem and not sample_color:
-                color_vals = np.array([p.get('color_val', 0) for p in visible_points])
+                color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, c=color_vals, cmap=cmap,
@@ -1920,7 +1919,7 @@ class TriangleDisplayDialog(QDialog):
             else:
                 scatter = ax.scatter(
                     b_vals, c_vals, a_vals,
-                    s=size, alpha=alpha, c=range(len(b_vals)), cmap=cmap,
+                    s=size, alpha=alpha, c=np.arange(len(b_vals)), cmap=cmap,
                     edgecolors='white', linewidth=0.5)
                 if cfg.get('show_colorbar', True):
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
@@ -1938,7 +1937,8 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, cfg.get('colorbar_label', 'Density'))
 
-        self._draw_average(ax, visible_points, cfg, title, viewport)
+        self._draw_average_arrays(ax, a_orig, b_orig, c_orig, a_vals, b_vals, c_vals,
+                                   cfg, title, viewport)
 
         if return_mappable:
             return _mappable
@@ -2010,6 +2010,81 @@ class TriangleDisplayDialog(QDialog):
         if (_is_full_triangle_viewport(viewport)
                 and cfg.get('show_confidence_ellipse', False) and len(data) >= 3):
             params = confidence_ellipse_params(b_vals, c_vals, n_std=2.0)
+            if params:
+                ellipse = Ellipse(
+                    (params['cx'], params['cy']),
+                    params['width'], params['height'],
+                    angle=params['angle_deg'],
+                    fill=False, edgecolor=avg_color,
+                    linewidth=2, linestyle='--', zorder=9)
+                ax.add_patch(ellipse)
+
+    def _draw_average_arrays(self, ax, a_orig, b_orig, c_orig,
+                              a_local, b_local, c_local,
+                              cfg, sample_name, viewport=None, n_unfiltered=None):
+        """Draw average point, stats text and confidence ellipse from pre-filtered numpy arrays.
+
+        Avoids list comprehension passes over already-extracted data.
+
+        Args:
+            ax:                     mpltern axes
+            a_orig, b_orig, c_orig: original ternary fractions (pre-viewport remap),
+                                    already filtered by viewport and all_elements
+            a_local, b_local, c_local: viewport-remapped local coordinates (same length)
+            cfg:                    config dict
+            sample_name:            label string for this sample
+            viewport:               ternary viewport dict (or None for full)
+            n_unfiltered:           if provided and > len(a_orig), appends
+                                    "(n_filt/n_total)" to the average point label
+        """
+        if not cfg.get('show_average_point', True) or len(a_orig) == 0:
+            return
+        viewport = _validate_triangle_viewport(viewport)
+
+        ma, mb, mc = a_orig.mean(), b_orig.mean(), c_orig.mean()
+        sa, sb, sc = a_orig.std(), b_orig.std(), c_orig.std()
+
+        if not _point_in_triangle_viewport(ma, mb, mc, viewport):
+            return
+        ma_local, mb_local, mc_local = _remap_point_to_triangle_viewport(
+            ma, mb, mc, viewport)
+
+        avg_color = cfg.get('average_point_color', '#FF0000')
+        avg_size  = cfg.get('average_point_size', 100)
+
+        n_filt = len(a_orig)
+        suffix = (f" ({n_filt}/{n_unfiltered})"
+                  if n_unfiltered is not None and n_filt < n_unfiltered else "")
+        label = f'Average{(" (" + sample_name + ")") if sample_name else ""}{suffix}'
+
+        ax.scatter(
+            [mb_local], [mc_local], [ma_local],
+            s=avg_size, marker='*', color=avg_color,
+            edgecolors='black', linewidth=1.5, zorder=10,
+            label=label)
+
+        if cfg.get('show_average_text', True):
+            fp = make_font_properties(cfg)
+            ea = cfg.get('element_a', 'A')
+            eb = cfg.get('element_b', 'B')
+            ec = cfg.get('element_c', 'C')
+
+            text = (f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
+                    f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
+                    f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
+
+            tx = min(mb_local + 0.15, 0.98)
+            ty = min(mc_local + 0.01, 0.98)
+            tz = max(1.0 - tx - ty, 0.01)
+            ax.text(tx, ty, tz, text,
+                    fontproperties=fp, color='black',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                              alpha=0.85, edgecolor='gray'),
+                    ha='left', va='bottom', zorder=11)
+
+        if (_is_full_triangle_viewport(viewport)
+                and cfg.get('show_confidence_ellipse', False) and len(a_orig) >= 3):
+            params = confidence_ellipse_params(b_orig, c_orig, n_std=2.0)
             if params:
                 ellipse = Ellipse(
                     (params['cx'], params['cy']),
@@ -2137,7 +2212,16 @@ class TriangleDisplayDialog(QDialog):
                 s=size, alpha=alpha, color=color, label=dname,
                 edgecolors='white', linewidth=0.5)
 
-            self._draw_average(ax, sd, cfg, dname)
+            # Apply all_elements filter once with numpy, then call array-based average
+            if cfg.get('average_only_with_all_elements', True):
+                avg_mask = (a_vals > 0) & (b_vals > 0) & (c_vals > 0)
+            else:
+                avg_mask = np.ones(len(a_vals), dtype=bool)
+            self._draw_average_arrays(
+                ax,
+                a_vals[avg_mask], b_vals[avg_mask], c_vals[avg_mask],
+                a_vals[avg_mask], b_vals[avg_mask], c_vals[avg_mask],
+                cfg, dname, None, n_unfiltered=len(a_vals))
 
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         apply_font_to_ternary(ax, cfg)
