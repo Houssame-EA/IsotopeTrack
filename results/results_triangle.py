@@ -7,7 +7,7 @@ Features:
 - Color-by-fourth-element option for scatter plots
 - Average point with optional 2σ confidence ellipse
 - Particle statistics bar (total, filtered, per-sample)
-- Multiple sample support (overlaid, subplots, side-by-side, combined)
+- Multiple sample support (overlaid, subplots, combined)
 - Right-click context menu replaces sidebar for all settings
 - Shared font, color, and export utilities via shared_plot_utils
 """
@@ -24,6 +24,8 @@ from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
 from matplotlib.lines import Line2D
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import numpy as np
 import math
 import mpltern
@@ -42,7 +44,6 @@ from results.shared_plot_utils import (
 
 DISPLAY_MODES = [
     'Individual Subplots',
-    'Side by Side Subplots',
     'Combined Plot',
     'Overlaid Samples',
 ]
@@ -1078,6 +1079,7 @@ class TriangleDisplayDialog(QDialog):
         self.setMinimumSize(1000, 750)
         self._triangle_viewport = _full_triangle_viewport()
         self._last_layout_key = None
+        self._pending_shared_cbar = None
 
         self._ternary_zoom_active    = False
         self._ternary_zoom_press     = None
@@ -1590,6 +1592,7 @@ class TriangleDisplayDialog(QDialog):
     def _reset_layout(self):
         """Reset subplot layout/view positions; same behavior as prior reset action."""
         self._last_layout_key = None
+        self._pending_shared_cbar = None
         self._triangle_viewport = _full_triangle_viewport()
         self.canvas.reset_layout()
         if self._is_multi():
@@ -1633,8 +1636,6 @@ class TriangleDisplayDialog(QDialog):
                 mode = cfg.get('display_mode', DISPLAY_MODES[0])
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
-                elif mode == 'Side by Side Subplots':
-                    self._draw_side_by_side(plot_data, cfg)
                 elif mode == 'Combined Plot':
                     self._draw_combined(plot_data, cfg)
                 else:
@@ -1655,13 +1656,23 @@ class TriangleDisplayDialog(QDialog):
             self._update_stats(plot_data)
 
             if self._is_multi():
+                pending = self._pending_shared_cbar
                 layout_key = (
                     len(self.figure.get_axes()),
                     cfg.get('display_mode', ''),
+                    pending is not None,
                 )
                 if layout_key != self._last_layout_key:
-                    self.figure.tight_layout()
+                    rect = [0, 0, 0.87, 1] if (pending is not None) else [0, 0, 1, 1]
+                    self.figure.tight_layout(
+                        pad=0.5, h_pad=0.2, w_pad=0.3, rect=rect)
                     self._last_layout_key = layout_key
+                if pending is not None:
+                    self._pending_shared_cbar = None
+                    sm, cb_label = pending
+                    cbar_ax = self.figure.add_axes([0.89, 0.10, 0.025, 0.80])
+                    cbar = self.figure.colorbar(sm, cax=cbar_ax)
+                    apply_font_to_colorbar_standalone(cbar, cfg, cb_label)
             else:
                 self.figure.tight_layout()
                 self._last_layout_key = None
@@ -1823,7 +1834,8 @@ class TriangleDisplayDialog(QDialog):
             self.stats_label.setText("  ·  ".join(parts))
 
 
-    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None):
+    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
+                     return_mappable=False):
         """
         Draw a ternary scatter or hexbin for one sample.
 
@@ -1881,7 +1893,8 @@ class TriangleDisplayDialog(QDialog):
 
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
-        show_cbar = cfg.get('show_colorbar', True)
+        show_cbar = cfg.get('show_colorbar', True) and not return_mappable
+        _mappable = None
 
         if plot_type == 'Scatter Plot':
             size = cfg.get('marker_size', 20)
@@ -1894,6 +1907,7 @@ class TriangleDisplayDialog(QDialog):
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, c=color_vals, cmap=cmap,
                     edgecolors='white', linewidth=0.5)
+                _mappable = scatter
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
@@ -1908,7 +1922,7 @@ class TriangleDisplayDialog(QDialog):
                     b_vals, c_vals, a_vals,
                     s=size, alpha=alpha, c=range(len(b_vals)), cmap=cmap,
                     edgecolors='white', linewidth=0.5)
-                if show_cbar:
+                if cfg.get('show_colorbar', True):
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
                         cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
@@ -1918,12 +1932,16 @@ class TriangleDisplayDialog(QDialog):
             hexbin = ax.hexbin(
                 b_vals, c_vals, a_vals,
                 gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+            _mappable = hexbin
             if show_cbar:
                 cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, cfg.get('colorbar_label', 'Density'))
 
         self._draw_average(ax, visible_points, cfg, title, viewport)
+
+        if return_mappable:
+            return _mappable
 
     def _draw_average(self, ax, sample_data, cfg, sample_name, viewport=None):
         """Draw average point with optional stats text and confidence ellipse.
@@ -2004,44 +2022,74 @@ class TriangleDisplayDialog(QDialog):
     # ── Multi-sample layouts ────────────────
 
     def _draw_subplots(self, plot_data, cfg):
-        """
+        """Draw one ternary subplot per sample in a 2-column grid
+        with a single shared density/color legend spanning the full
+        data range across all plots.
+
         Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+            plot_data (Any): dict mapping sample name to point list.
+            cfg (Any): node config dict.
         """
         samples = list(plot_data.keys())
         n = len(samples)
         cols = min(2, n)
         rows = math.ceil(n / cols)
 
+        if (cfg.get('plot_type', 'Scatter Plot') != 'Scatter Plot'
+                and cfg.get('show_colorbar', True)):
+            self.figure.subplots_adjust(
+                left=0.07, right=0.85,
+                top=0.91, bottom=0.09,
+                hspace=0.45, wspace=0.30)
+
+        mappables = []
         for idx, sn in enumerate(samples):
-            ax = self.figure.add_subplot(rows, cols, idx + 1, projection='ternary')
+            ax = self.figure.add_subplot(
+                rows, cols, idx + 1, projection='ternary')
             sd = plot_data[sn]
             if sd:
                 dname = get_display_name(sn, cfg)
-                self._draw_sample(ax, sd, cfg, dname)
+                m = self._draw_sample(
+                    ax, sd, cfg, dname, return_mappable=True)
+                if m is not None:
+                    mappables.append(m)
                 fc = get_font_config(cfg)
-                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
+                ax.set_title(
+                    dname, fontsize=fc['size'] - 2,
+                    color=fc['color'])
                 apply_font_to_ternary(ax, cfg)
 
-    def _draw_side_by_side(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
-        samples = list(plot_data.keys())
-        n = len(samples)
+        self._pending_shared_cbar = None
+        if mappables and cfg.get('show_colorbar', True):
+            global_min = float('inf')
+            global_max = float('-inf')
+            for m in mappables:
+                try:
+                    arr = m.get_array()
+                    if arr is not None and len(arr) > 0:
+                        vmin = float(np.ma.min(arr))
+                        vmax = float(np.ma.max(arr))
+                        if np.isfinite(vmin):
+                            global_min = min(global_min, vmin)
+                        if np.isfinite(vmax):
+                            global_max = max(global_max, vmax)
+                except Exception:
+                    pass
 
-        for idx, sn in enumerate(samples):
-            ax = self.figure.add_subplot(1, n, idx + 1, projection='ternary')
-            sd = plot_data[sn]
-            if sd:
-                dname = get_display_name(sn, cfg)
-                self._draw_sample(ax, sd, cfg, dname)
-                fc = get_font_config(cfg)
-                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
-                apply_font_to_ternary(ax, cfg)
+            if (np.isfinite(global_min) and np.isfinite(global_max)
+                    and global_max > global_min):
+                norm = mcolors.Normalize(
+                    vmin=global_min, vmax=global_max)
+                for m in mappables:
+                    try:
+                        m.set_norm(norm)
+                    except Exception:
+                        pass
+                sm = cm.ScalarMappable(
+                    cmap=cfg.get('colormap', 'YlGn'), norm=norm)
+                sm.set_array([])
+                self._pending_shared_cbar = (
+                    sm, cfg.get('colorbar_label', 'Density'))
 
     def _draw_combined(self, plot_data, cfg):
         """
