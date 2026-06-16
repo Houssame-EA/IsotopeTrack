@@ -12,6 +12,7 @@ from scipy.signal import find_peaks
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.processing.peak_detection")
 from tools.logging_utils import log_context
+from processing import detection_registry
 
 os.environ['NUMBA_THREADING_LAYER'] = 'safe'
 
@@ -848,7 +849,7 @@ class PeakDetection:
         """
         overall_mean_signal = np.mean(signal)
 
-        if method == "Manual":
+        if detection_registry.get(method).is_manual:
             threshold = manual_threshold
             if use_window_size:
                 lambda_bkgd = self._rolling_background(signal, threshold, window_size)
@@ -962,22 +963,8 @@ class PeakDetection:
         """Fast threshold calculation for moving window arrays.
         Adaptive interpolation grid size.
         """
-        if method in ["Manual"]:
-            return self._calculate_single_threshold(lambda_bkgd_array, method, alpha, sigma)
-        elif method in ["Compound Poisson LogNormal", "CPLN table"]:
-            min_bg = np.min(lambda_bkgd_array)
-            max_bg = np.max(lambda_bkgd_array)
-            if min_bg == max_bg:
-                single_thresh = self._calculate_single_threshold(min_bg, method, alpha, sigma)
-                return np.full_like(lambda_bkgd_array, single_thresh)
-            n_eval = min(30, max(5, int((max_bg - min_bg) / 0.5)))
-            eval_bg = np.linspace(min_bg, max_bg, n_eval)
-            eval_thresh = np.array([
-                self._calculate_single_threshold(bg, method, alpha, sigma) for bg in eval_bg
-            ])
-            return np.interp(lambda_bkgd_array, eval_bg, eval_thresh)
-        else:
-            return lambda_bkgd_array + 3.0 * np.sqrt(np.maximum(lambda_bkgd_array, 1))
+        return detection_registry.get(method).array_threshold(
+            self, lambda_bkgd_array, alpha, sigma)
 
     def _calculate_single_threshold(self, lambda_bkgd, method, alpha, sigma=0.55):
         """
@@ -993,12 +980,7 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "CPLN table":
-            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma)
-        elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        else:
-            return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
+        return detection_registry.get(method).single_threshold(self, lambda_bkgd, alpha, sigma)
 
     @lru_cache(maxsize=512)
     def _cached_threshold_calculation(self, lambda_bkgd, method, alpha, isotope_key):
@@ -1014,12 +996,7 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "CPLN table":
-            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        else:
-            return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
+        return detection_registry.get(method).single_threshold(self, lambda_bkgd, alpha, 0.55)
 
     def calculate_thresholds_batch_safe(self, signals_dict, params_dict,
                                         method_groups=None, isotope_mapping=None):
@@ -1727,7 +1704,7 @@ class PeakDetection:
             working_signal = self.apply_window_size(signal, use_window_size, window_size)
             lambda_bkgd = np.mean(working_signal) if len(working_signal) > 0 else 0
 
-            if method == "Manual":
+            if detection_registry.get(method).is_manual:
                 threshold = manual_threshold
                 threshold_data = {
                     'threshold': threshold,
@@ -1739,7 +1716,7 @@ class PeakDetection:
                     'window_applied': use_window_size,
                     'window_size_used': window_size if use_window_size else None,
                 }
-            elif method == "Compound Poisson LogNormal":
+            elif detection_registry.get(method).id == "Compound Poisson LogNormal":
                 threshold = self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=sigma)
                 threshold_data = {
                     'threshold': threshold,

@@ -13,6 +13,7 @@ from calibration_methods.te_common import (
     base_stylesheet, return_button_style,
 )
 from tools.theme import theme
+from calibration_methods import calibration_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE")
 
@@ -26,11 +27,9 @@ def _ual():
         _itk_log.exception("Handled exception in _ual")
         return None
 
-_METHOD_SIGNAL_MAP = {
-    "Liquid weight": "Weight Method",
-    "Number based": "Particle Method",
-    "Mass based": "Mass Method",
-}
+# Display label -> signal name. Sourced from the calibration registry so the
+# mapping lives in one place (see calibration_methods/calibration_registry.py).
+_METHOD_SIGNAL_MAP = calibration_registry.label_to_signal_map()
 
 
 class TransportRateCalibrationWindow(QDialog):
@@ -208,7 +207,7 @@ class TransportRateCalibrationWindow(QDialog):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = TransportRateCalibrationWindow(
-        ["Liquid weight", "Number based", "Mass based"]
+        calibration_registry.default_transport_labels()
     )
     window.showMaximized()
     sys.exit(app.exec())

@@ -196,11 +196,8 @@ class BatchElementParametersDialog(QDialog):
 
         grid.addWidget(QLabel("Detection Method:"), row, 0)
         self.method_combo = QComboBox()
-        self.method_combo.addItems([
-            "Manual",
-            "Compound Poisson LogNormal",
-            "CPLN table",
-        ])
+        from processing import detection_registry
+        self.method_combo.addItems(detection_registry.selectable_labels())
         self.method_combo.currentTextChanged.connect(self.toggle_manual_threshold)
         grid.addWidget(self.method_combo, row, 1)
         row += 1

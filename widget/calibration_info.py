@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtCore import Qt
 from tools.theme import theme
+from calibration_methods import calibration_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.calibration_info")
 
@@ -498,7 +499,7 @@ class CalibrationInfoDialog(QDialog):
         self._refresh_summary_line()
 
     def populate_transport_rate_table(self):
-        transport_methods = ["Weight Method", "Particle Method", "Mass Method"]
+        transport_methods = calibration_registry.transport_signal_names()
         p = theme.palette
 
         for row, method in enumerate(transport_methods):
@@ -820,7 +821,7 @@ class CalibrationInfoDialog(QDialog):
             return
 
         transport_count = len([
-            m for m in ["Weight Method", "Particle Method", "Mass Method"]
+            m for m in calibration_registry.transport_signal_names()
             if m in self.calibration_results
             and 'transport_rate' in self.calibration_results[m]
         ])

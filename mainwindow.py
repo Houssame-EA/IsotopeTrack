@@ -19,6 +19,7 @@ from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget
 from calibration_methods.TE import TransportRateCalibrationWindow
+from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.calibration_info import CalibrationInfoDialog
 from loading.data_thread import DataProcessThread
@@ -261,7 +262,7 @@ class MainWindow(QMainWindow):
         self.peak_detector = PeakDetection()  
         self.sample_method_info = {}
         self.sample_to_folder_map = {}
-        self.transport_rate_methods = ["Liquid weight", "Number based", "Mass based"]
+        self.transport_rate_methods = calibration_registry.default_transport_labels()
         self.element_mass_fractions = {}
         self.element_densities = {}
         self.element_molecular_weights = {}  
@@ -297,6 +298,16 @@ class MainWindow(QMainWindow):
         if not getattr(_app, '_update_check_done', False):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
+
+        # Autosave + crash recovery. The timer writes a background snapshot when
+        # there are unsaved changes; a leftover snapshot at startup means the
+        # last session did not exit cleanly, so offer to recover it (first
+        # window only, after the event loop starts).
+        from save_export.autosave import AutosaveManager
+        self._autosave = AutosaveManager(self)
+        self._autosave.start()
+        if self.window_number == 1:
+            QTimer.singleShot(800, self._offer_crash_recovery)
 
     def update_window_title(self, filepath=None):
         """Update the window title to reflect the current project state.
@@ -6097,7 +6108,7 @@ class MainWindow(QMainWindow):
         """Open transport rate calibration window."""
         self.user_action_logger.log_dialog_open('Transport Rate Calibration', 'Calibration Window')
     
-        all_methods = ["Liquid weight", "Number based", "Mass based"]
+        all_methods = calibration_registry.default_transport_labels()
         
         if not self.transport_rate_window:
             self.transport_rate_window = TransportRateCalibrationWindow(
@@ -6142,14 +6153,14 @@ class MainWindow(QMainWindow):
 
     def handle_calibration_result(self, method, calibration_data):
         """Process calibration results from calibration windows."""
-        if method == "Ionic Calibration":
+        if calibration_registry.is_ionic(method):
             self.calibration_results["Ionic Calibration"] = calibration_data["results"]
             self.isotope_method_preferences = calibration_data["method_preferences"]
 
             if hasattr(self, 'average_transport_rate') and self.average_transport_rate > 0:
                 self.calculate_mass_limits()
-                
-        elif method in ["Weight Method", "Particle Method", "Mass Method"]:
+
+        elif calibration_registry.is_transport_signal(method):
             self.calibration_results[method] = {'transport_rate': calibration_data}
             
             if method not in self.selected_transport_rate_methods:
@@ -6262,7 +6273,7 @@ class MainWindow(QMainWindow):
         display_text += "{:<20} {:<20} {:<10}\n".format("Method", "Transport Rate (µL/s)", "Use")
         display_text += "-" * 50 + "\n"
         
-        for method in ["Weight Method", "Particle Method", "Mass Method"]:
+        for method in calibration_registry.transport_signal_names():
             if method in self.calibration_results and 'transport_rate' in self.calibration_results[method]:
                 rate = self.calibration_results[method]['transport_rate']
                 selected = method in self.selected_transport_rate_methods
@@ -7584,6 +7595,43 @@ class MainWindow(QMainWindow):
         from save_export.export_utils import export_data
         export_data(self)
 
+    def _offer_crash_recovery(self):
+        """Offer to reload an autosave snapshot left behind by a crashed session."""
+        try:
+            from save_export.autosave import AutosaveManager
+            found = AutosaveManager.find_recovery_files()
+        except Exception:
+            _itk_log.exception("Handled exception in _offer_crash_recovery")
+            return
+        if not found:
+            return
+
+        path, when = found[0]
+        leftovers = [p for p, _ in found]
+        ts = when.strftime("%Y-%m-%d %H:%M")
+        reply = QMessageBox.question(
+            self,
+            "Recover unsaved session?",
+            "IsotopeTrack didn't close normally last time.\n\n"
+            f"An autosaved session from {ts} was found. Recover it?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            try:
+                self.project_manager.load_project(filepath=str(path))
+                # The recovered state is not a saved project file yet.
+                self.unsaved_changes = True
+            except Exception:
+                _itk_log.exception("Handled exception in _offer_crash_recovery")
+                QMessageBox.warning(
+                    self, "Recovery failed",
+                    "The autosaved session could not be loaded.")
+                return  # keep the snapshot so it can be retried
+        # Recovered or declined: clear the leftovers so we don't prompt again.
+        from save_export.autosave import AutosaveManager
+        AutosaveManager.discard_recovery_files(leftovers)
+
     def closeEvent(self, event):
         """Handle application close event with unsaved changes check."""
         if self.unsaved_changes:
@@ -7602,7 +7650,13 @@ class MainWindow(QMainWindow):
             elif reply == QMessageBox.Cancel:
                 event.ignore()
                 return
-        
+
+        # Clean exit: drop this window's recovery snapshot so the next launch
+        # doesn't treat it as a crash.
+        if getattr(self, '_autosave', None) is not None:
+            self._autosave.stop()
+            self._autosave.clear()
+
         for timer in self.findChildren(QTimer):
             timer.stop()
 

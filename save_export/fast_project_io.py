@@ -9,6 +9,7 @@ import numbers
 from pathlib import Path
 
 import numpy as np
+from calibration_methods import calibration_registry
 _itk_log = logging.getLogger("IsotopeTrack.save_export.fast_project_io")
 
 logger = logging.getLogger(__name__)
@@ -261,9 +262,10 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sample_mass_fractions': getattr(mw, 'sample_mass_fractions', {}),
         'sample_densities': getattr(mw, 'sample_densities', {}),
         'sample_molecular_weights': getattr(mw, 'sample_molecular_weights', {}),
+        'sample_dilutions': getattr(mw, 'sample_dilutions', {}),
         'sample_status': getattr(mw, 'sample_status', {}),
         'detection_states': getattr(mw, 'detection_states', {}),
-        'transport_rate_methods': getattr(mw, 'transport_rate_methods', ["Liquid weight", "Number based", "Mass based"]),
+        'transport_rate_methods': getattr(mw, 'transport_rate_methods', calibration_registry.default_transport_labels()),
         'all_masses': getattr(mw, 'all_masses', None),
         'folder_paths': getattr(mw, 'folder_paths', []),
         '_display_label_to_element': getattr(mw, '_display_label_to_element', {}),
@@ -504,6 +506,7 @@ def _restore_metadata(mw, metadata):
         'sample_run_info', 'sample_method_info',
         'element_mass_fractions', 'element_densities', 'element_molecular_weights',
         'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
+        'sample_dilutions',
         'sample_status', 'detection_states',
         'transport_rate_methods',
         'all_masses',

@@ -119,7 +119,7 @@ If you use IsotopeTrack in your research, please cite:
 
 ## Acknowledgements
 
-IsotopeTrack builds upon the work of the SP-ICP-MS community. We are deeply grateful to all scientists whose published methodologies, open-source tools, and foundational research form the scientific backbone of this software.
+IsotopeTrack builds upon the work of the spICP-MS community. We are deeply grateful to all scientists whose published methodologies, open-source tools, and foundational research form the scientific backbone of this software.
 
 ### SPCal
 

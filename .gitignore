@@ -45,6 +45,7 @@ test_data/logs/
 *.csv
 *.xlsx
 .Rhistory
+.coverage
 
 # ── Generated ─────────────────────────────────────────────────────────────────
 _rth_no_pyarrow.py

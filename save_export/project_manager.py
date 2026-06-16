@@ -11,6 +11,7 @@ from PySide6.QtCore import QPointF, QThread, Signal
 from save_export.fast_project_io import (
     save_project_v2, load_project_auto
 )
+from calibration_methods import calibration_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
 
@@ -295,6 +296,10 @@ Terminal=false
         self.main_window.unsaved_changes = False
         self.main_window.status_label.setText(f"Project saved: {filepath}")
         self.main_window.update_window_title(filepath)
+        # The project is now safely on disk; drop the autosave recovery snapshot.
+        autosave = getattr(self.main_window, '_autosave', None)
+        if autosave is not None:
+            autosave.clear()
 
     def _on_save_succeeded(self, filepath):
         """Handle the worker thread's success signal on the UI thread."""
@@ -533,14 +538,15 @@ Terminal=false
             'calibration_results': self.main_window.calibration_results,
             'average_transport_rate': self.main_window.average_transport_rate,
             'selected_transport_rate_methods': self.main_window.selected_transport_rate_methods,
-            'transport_rate_methods': getattr(self.main_window, 'transport_rate_methods', ["Liquid weight", "Number based", "Mass based"]),
+            'transport_rate_methods': getattr(self.main_window, 'transport_rate_methods', calibration_registry.default_transport_labels()),
             
             'element_mass_fractions': getattr(self.main_window, 'element_mass_fractions', {}),
             'element_densities': getattr(self.main_window, 'element_densities', {}),
             'element_molecular_weights': getattr(self.main_window, 'element_molecular_weights', {}),  
             'sample_mass_fractions': getattr(self.main_window, 'sample_mass_fractions', {}),
             'sample_densities': getattr(self.main_window, 'sample_densities', {}),
-            'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}), 
+            'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}),
+            'sample_dilutions': getattr(self.main_window, 'sample_dilutions', {}),
             
             'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 75.0),
             '_global_sigma': getattr(self.main_window, '_global_sigma', 0.55),
@@ -600,14 +606,15 @@ Terminal=false
         self.main_window.calibration_results = project_data.get('calibration_results', {})
         self.main_window.average_transport_rate = project_data.get('average_transport_rate', 0)
         self.main_window.selected_transport_rate_methods = project_data.get('selected_transport_rate_methods', [])
-        self.main_window.transport_rate_methods = project_data.get('transport_rate_methods', ["Liquid weight", "Number based", "Mass based"])
+        self.main_window.transport_rate_methods = project_data.get('transport_rate_methods', calibration_registry.default_transport_labels())
         
         self.main_window.element_mass_fractions = project_data.get('element_mass_fractions', {})
         self.main_window.element_densities = project_data.get('element_densities', {})
         self.main_window.element_molecular_weights = project_data.get('element_molecular_weights', {})  
         self.main_window.sample_mass_fractions = project_data.get('sample_mass_fractions', {})
         self.main_window.sample_densities = project_data.get('sample_densities', {})
-        self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})  
+        self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})
+        self.main_window.sample_dilutions = project_data.get('sample_dilutions', {})
         
         self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 75.0)
         self.main_window._global_sigma = project_data.get('_global_sigma', 0.55)
@@ -939,8 +946,9 @@ Terminal=false
             'sample_results_data', 'isotope_method_preferences', 'sample_particle_data',
             'sample_analysis_dates', 'sample_to_folder_map', 'element_thresholds',
             'element_limits', 'sample_run_info', 'sample_method_info',
-            'element_mass_fractions', 'element_densities', 'element_molecular_weights', 
-            'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights'  
+            'element_mass_fractions', 'element_densities', 'element_molecular_weights',
+            'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
+            'sample_dilutions'
         ]
         
         for attr in data_structures:
@@ -986,7 +994,7 @@ Terminal=false
         }
         self.main_window.average_transport_rate = 0
         self.main_window.selected_transport_rate_methods = []
-        self.main_window.transport_rate_methods = ["Liquid weight", "Number based", "Mass based"]
+        self.main_window.transport_rate_methods = calibration_registry.default_transport_labels()
         
         self.main_window.sample_table.setRowCount(0)
         self.main_window.parameters_table.setRowCount(0)
