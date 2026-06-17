@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Patch
 from matplotlib.lines import Line2D
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
@@ -176,7 +176,7 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
     #   L vertex: (−1/√3,   0.0)
     #   R vertex: (+1/√3,   0.0)
     _s   = 1.0 / math.sqrt(3.0)   # ≈ 0.5774
-    _pad = 0.15         # outward offset in data units
+    _pad = 0.12         # outward offset in data units
 
     # Resolve per-axis colors.  When colored_axes is off every axis uses the
     # global font color so the rest of the rendering path is identical.
@@ -368,6 +368,7 @@ class TernarySettingsDialog(QDialog):
         self._scatter_frame = None
         self._hexbin_frame = None
         self._color_btns = {}
+        self._mean_color_btns = {}
         self._name_edits = {}
         self.colored_axes_cb = None
         self.axis_a_btn = None
@@ -600,6 +601,34 @@ class TernarySettingsDialog(QDialog):
                     vl.addWidget(w)
                 layout.addWidget(g)
 
+                g2 = QGroupBox("Mean Marker Colors (Overlaid Mode)")
+                vl2 = QVBoxLayout(g2)
+                mean_colors_cfg = self._cfg.get('sample_mean_colors', {})
+                sc_map = self._cfg.get('sample_colors', {})
+                for i2, sn in enumerate(self._sample_names):
+                    row2 = QHBoxLayout()
+                    name_text = (self._name_edits[sn].text()
+                                 if sn in self._name_edits else sn)
+                    lbl2 = QLabel(name_text)
+                    lbl2.setFixedWidth(180)
+                    row2.addWidget(lbl2)
+                    def_c = sc_map.get(
+                        sn, DEFAULT_SAMPLE_COLORS[i2 % len(DEFAULT_SAMPLE_COLORS)])
+                    mc = mean_colors_cfg.get(sn, def_c)
+                    mcb = QPushButton()
+                    mcb.setFixedSize(30, 22)
+                    mcb.setStyleSheet(
+                        f'background-color: {mc}; border: 1px solid black;')
+                    mcb.clicked.connect(
+                        lambda _, s=sn, b=mcb: self._pick_mean_color(s, b))
+                    row2.addWidget(mcb)
+                    self._mean_color_btns[sn] = (mcb, mc)
+                    row2.addStretch()
+                    w2 = QWidget()
+                    w2.setLayout(row2)
+                    vl2.addWidget(w2)
+                layout.addWidget(g2)
+
             self._font_group = FontSettingsGroup(self._cfg)
             layout.addWidget(self._font_group.build())
             self._legend_grp = LegendGroup(self._cfg)
@@ -664,6 +693,16 @@ class TernarySettingsDialog(QDialog):
         if c.isValid():
             btn.setStyleSheet(f"background-color: {c.name()}; border: 1px solid black;")
             self._color_btns[name] = (btn, c.name())
+
+    def _pick_mean_color(self, name, btn):
+        """Pick mean marker color for a sample in overlaid mode."""
+        from PySide6.QtWidgets import QColorDialog
+        cur = QColor(self._mean_color_btns[name][1])
+        c = QColorDialog.getColor(cur, self, f'Mean marker color for {name}')
+        if c.isValid():
+            btn.setStyleSheet(
+                f'background-color: {c.name()}; border: 1px solid black;')
+            self._mean_color_btns[name] = (btn, c.name())
 
     def _reset_name(self, original):
         """
@@ -737,6 +776,9 @@ class TernarySettingsDialog(QDialog):
             out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
         if self._is_multi and self._name_edits:
             out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
+        if self._is_multi and self._mean_color_btns:
+            out['sample_mean_colors'] = {
+                sn: c for sn, (_, c) in self._mean_color_btns.items()}
         if self.colored_axes_cb is not None:
             out['colored_axes'] = self.colored_axes_cb.isChecked()
         out['axis_a_color'] = self._axis_a_color
@@ -1222,6 +1264,8 @@ class TriangleDisplayDialog(QDialog):
         self._triangle_viewport = _full_triangle_viewport()
         self._last_layout_key = None
         self._pending_shared_cbar = None
+        self._overlaid_stats_dlg = None
+        self._overlaid_stats_data = []
 
         self._ternary_zoom_active    = False
         self._ternary_zoom_press     = None
@@ -1845,6 +1889,13 @@ class TriangleDisplayDialog(QDialog):
 
             self._update_stats(plot_data)
 
+            in_overlaid = (self._is_multi() and
+                           cfg.get('display_mode', '') == 'Overlaid Samples')
+            if in_overlaid and cfg.get('show_average_text', False):
+                self._open_or_update_stats_table()
+            elif self._overlaid_stats_dlg is not None:
+                self._overlaid_stats_dlg.hide()
+
             if self._is_multi():
                 pending = self._pending_shared_cbar
                 layout_key = (
@@ -1855,7 +1906,11 @@ class TriangleDisplayDialog(QDialog):
                 if layout_key != self._last_layout_key:
                     rect = [0, 0, 0.87, 1] if (pending is not None) else [0, 0, 1, 1]
                     self.figure.tight_layout(
-                        pad=0.5, h_pad=0.2, w_pad=0.3, rect=rect)
+                        pad=0.3, h_pad=0.1, w_pad=0.1, rect=rect)
+                    # Clamp inter-subplot gaps — tight_layout is over-generous
+                    # with ternary axis label room
+                    if cfg.get('display_mode', '') == 'Individual Subplots':
+                        self.figure.subplots_adjust(hspace=0.15, wspace=0.08)
                     self._last_layout_key = layout_key
                 if pending is not None:
                     self._pending_shared_cbar = None
@@ -2023,6 +2078,81 @@ class TriangleDisplayDialog(QDialog):
                 parts.append(self._triangle_viewport_summary())
             self.stats_label.setText("  ·  ".join(parts))
 
+    def _open_or_update_stats_table(self):
+        """Show or refresh the per-sample statistics table for overlaid mode."""
+        stats = self._overlaid_stats_data
+        if not stats:
+            return
+
+        cfg = self.node.config
+        ea = cfg.get('element_a', 'A') or 'A'
+        eb = cfg.get('element_b', 'B') or 'B'
+        ec = cfg.get('element_c', 'C') or 'C'
+
+        row_labels = [
+            'Particles (all 3 elements)',
+            f'{ea} mean (%)',
+            f'{ea} std (%)',
+            f'{eb} mean (%)',
+            f'{eb} std (%)',
+            f'{ec} mean (%)',
+            f'{ec} std (%)',
+        ]
+        col_labels = [s['dname'] for s in stats]
+        n_rows = len(row_labels)
+        n_cols = len(col_labels)
+
+        if self._overlaid_stats_dlg is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle('Overlaid Samples — Statistics')
+            dlg.setWindowFlags(
+                dlg.windowFlags() | Qt.Window)
+            dlg.setMinimumSize(max(320, n_cols * 140), 300)
+            lay = QVBoxLayout(dlg)
+            tbl = QTableWidget(n_rows, n_cols)
+            tbl.setHorizontalHeaderLabels(col_labels)
+            tbl.setVerticalHeaderLabels(row_labels)
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            tbl.setAlternatingRowColors(True)
+            lay.addWidget(tbl)
+            bb = QDialogButtonBox(QDialogButtonBox.Close)
+            def _on_close():
+                dlg.hide()
+                self.node.config['show_average_text'] = False
+                self._refresh()
+            bb.rejected.connect(_on_close)
+            lay.addWidget(bb)
+            dlg._tbl = tbl
+            self._overlaid_stats_dlg = dlg
+
+        dlg = self._overlaid_stats_dlg
+        tbl = dlg._tbl
+
+        if tbl.columnCount() != n_cols or tbl.rowCount() != n_rows:
+            tbl.setColumnCount(n_cols)
+            tbl.setRowCount(n_rows)
+        tbl.setHorizontalHeaderLabels(col_labels)
+        tbl.setVerticalHeaderLabels(row_labels)
+
+        for ci, s in enumerate(stats):
+            cell_vals = [
+                f"{s['n']:,}",
+                f"{s['ma'] * 100:.2f}",
+                f"{s['sa'] * 100:.2f}",
+                f"{s['mb'] * 100:.2f}",
+                f"{s['sb'] * 100:.2f}",
+                f"{s['mc'] * 100:.2f}",
+                f"{s['sc'] * 100:.2f}",
+            ]
+            for ri, v in enumerate(cell_vals):
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(ri, ci, item)
+
+        if not dlg.isVisible():
+            dlg.show()
 
     def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
                      return_mappable=False):
@@ -2111,7 +2241,7 @@ class TriangleDisplayDialog(QDialog):
                     c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, c=np.arange(len(c_vals)), cmap=cmap,
                     edgecolors='white', linewidth=0.5)
-                if cfg.get('show_colorbar', True):
+                if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
                         cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
@@ -2211,7 +2341,8 @@ class TriangleDisplayDialog(QDialog):
 
     def _draw_average_arrays(self, ax, a_orig, b_orig, c_orig,
                               a_local, b_local, c_local,
-                              cfg, sample_name, viewport=None, n_unfiltered=None):
+                              cfg, sample_name, viewport=None, n_unfiltered=None,
+                              avg_color_override=None, stats_box_idx=0):
         """Draw average point, stats text and confidence ellipse from pre-filtered numpy arrays.
 
         Avoids list comprehension passes over already-extracted data.
@@ -2239,7 +2370,8 @@ class TriangleDisplayDialog(QDialog):
         ma_local, mb_local, mc_local = _remap_point_to_triangle_viewport(
             ma, mb, mc, viewport)
 
-        avg_color = cfg.get('average_point_color', '#FF0000')
+        avg_color = (avg_color_override if avg_color_override is not None
+                     else cfg.get('average_point_color', '#FF0000'))
         avg_size  = cfg.get('average_point_size', 100)
 
         n_filt = len(a_orig)
@@ -2260,12 +2392,15 @@ class TriangleDisplayDialog(QDialog):
             eb = format_element_label(cfg.get('element_b', 'B') or 'B', label_mode, Renderer.MATHTEXT, cfg)
             ec = format_element_label(cfg.get('element_c', 'C') or 'C', label_mode, Renderer.MATHTEXT, cfg)
 
-            text = (f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
+            title_line = f'-- {sample_name} --\n' if sample_name else ''
+            text = (title_line +
+                    f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
                     f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
                     f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
 
+            y_pos = max(0.04, 0.97 - stats_box_idx * 0.34)
             ax.text(
-                0.05, 0.95, text,
+                0.05, y_pos, text,
                 transform=ax.transAxes,
                 fontproperties=fp, color='black',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
@@ -2298,7 +2433,7 @@ class TriangleDisplayDialog(QDialog):
         """
         samples = list(plot_data.keys())
         n = len(samples)
-        cols = min(2, n)
+        cols = 3 if n >= 5 else min(2, n)
         rows = math.ceil(n / cols)
 
         if (cfg.get('plot_type', 'Scatter Plot') != 'Scatter Plot'
@@ -2306,7 +2441,7 @@ class TriangleDisplayDialog(QDialog):
             self.figure.subplots_adjust(
                 left=0.07, right=0.85,
                 top=0.91, bottom=0.09,
-                hspace=0.45, wspace=0.30)
+                hspace=0.15, wspace=0.10)
 
         mappables = []
         for idx, sn in enumerate(samples):
@@ -2374,11 +2509,6 @@ class TriangleDisplayDialog(QDialog):
             apply_font_to_ternary(ax, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         ax = self.figure.add_subplot(111, projection='ternary')
 
         ea = cfg.get('element_a', 'A')
@@ -2386,36 +2516,131 @@ class TriangleDisplayDialog(QDialog):
         ec = cfg.get('element_c', 'C')
         setup_ternary_axes(ax, [ea, eb, ec], cfg)
 
-        alpha = cfg.get('marker_alpha', 0.7)
+        alpha_base = cfg.get('marker_alpha', 0.7)
         size = cfg.get('marker_size', 20)
+        sample_mean_colors = cfg.get('sample_mean_colors', {})
+
+        # Global density histogram over all samples in (b, c) space
+        all_b, all_c = [], []
+        for sd in plot_data.values():
+            if sd:
+                for p in sd:
+                    all_b.append(p['b'])
+                    all_c.append(p['c'])
+
+        H = None
+        b_edges = c_edges = None
+        density_max = 1.0
+        show_density = cfg.get('show_colorbar', True) and len(all_b) >= 10
+        if show_density:
+            n_bins = 40
+            H, b_edges, c_edges = np.histogram2d(
+                all_b, all_c, bins=n_bins, range=[[0.0, 1.0], [0.0, 1.0]])
+            density_max = float(H.max()) if H.max() > 0 else 1.0
+
+        legend_handles = []
+        self._overlaid_stats_data = []
 
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
                 continue
-            color = get_sample_color(sn, idx, cfg)
+            sample_color = get_sample_color(sn, idx, cfg)
+            mean_color = sample_mean_colors.get(sn, sample_color)
             dname = get_display_name(sn, cfg)
 
             a_vals = np.array([p['a'] for p in sd])
             b_vals = np.array([p['b'] for p in sd])
             c_vals = np.array([p['c'] for p in sd])
 
-            ax.scatter(
-                c_vals, a_vals, b_vals,
-                s=size, alpha=alpha, color=color, label=dname,
-                edgecolors='white', linewidth=0.5)
+            if H is not None and density_max > 0:
+                # Per-point alpha encodes local density; hue stays sample-specific
+                b_idx = np.clip(
+                    np.searchsorted(b_edges[1:], b_vals), 0, H.shape[0] - 1)
+                c_idx = np.clip(
+                    np.searchsorted(c_edges[1:], c_vals), 0, H.shape[1] - 1)
+                densities = H[b_idx, c_idx]
+                d_norm = np.clip(densities / density_max, 0.0, 1.0)
+                alphas = 0.15 + 0.80 * d_norm
+                rgb = mcolors.to_rgb(sample_color)
+                rgba = np.zeros((len(a_vals), 4))
+                rgba[:, 0] = rgb[0]
+                rgba[:, 1] = rgb[1]
+                rgba[:, 2] = rgb[2]
+                rgba[:, 3] = alphas
+                ax.scatter(c_vals, a_vals, b_vals, s=size, c=rgba,
+                           edgecolors='none', linewidth=0.0)
+            else:
+                ax.scatter(c_vals, a_vals, b_vals, s=size, alpha=alpha_base,
+                           color=sample_color, edgecolors='white', linewidth=0.5)
 
-            # Apply all_elements filter once with numpy, then call array-based average
+            # Legend handle: line (scatter color) + star (mean color) in one entry
+            if cfg.get('show_average_point', True):
+                legend_handles.append(
+                    Line2D([0], [0], marker='*', color=sample_color,
+                           markerfacecolor=mean_color, markeredgecolor='black',
+                           markersize=11, linewidth=3, label=dname))
+            else:
+                legend_handles.append(
+                    Patch(facecolor=sample_color, label=dname))
+
             if cfg.get('average_only_with_all_elements', True):
                 avg_mask = (a_vals > 0) & (b_vals > 0) & (c_vals > 0)
             else:
                 avg_mask = np.ones(len(a_vals), dtype=bool)
-            self._draw_average_arrays(
-                ax,
-                a_vals[avg_mask], b_vals[avg_mask], c_vals[avg_mask],
-                a_vals[avg_mask], b_vals[avg_mask], c_vals[avg_mask],
-                cfg, dname, None, n_unfiltered=len(a_vals))
 
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            if avg_mask.any():
+                a_avg = a_vals[avg_mask]
+                b_avg = b_vals[avg_mask]
+                c_avg = c_vals[avg_mask]
+                self._overlaid_stats_data.append({
+                    'sn': sn, 'dname': dname,
+                    'n': int(avg_mask.sum()),
+                    'ma': float(a_avg.mean()), 'sa': float(a_avg.std()),
+                    'mb': float(b_avg.mean()), 'sb': float(b_avg.std()),
+                    'mc': float(c_avg.mean()), 'sc': float(c_avg.std()),
+                })
+                # Draw mean marker only — stats text goes to the popup table
+                cfg_marker_only = dict(cfg, show_average_text=False)
+                self._draw_average_arrays(
+                    ax, a_avg, b_avg, c_avg, a_avg, b_avg, c_avg,
+                    cfg_marker_only, dname, None, n_unfiltered=len(a_vals),
+                    avg_color_override=mean_color,
+                    stats_box_idx=0,
+                )
+
+        # Greyscale density colorbar (lighter = sparse, darker = dense)
+        density_cbar_shown = False
+        if H is not None and density_max > 1:
+            norm = mcolors.Normalize(vmin=0, vmax=density_max)
+            sm = cm.ScalarMappable(cmap='Greys', norm=norm)
+            sm.set_array([])
+            cbar = self.figure.colorbar(
+                sm, ax=ax, shrink=0.65, aspect=22, pad=0.10)
+            apply_font_to_colorbar_standalone(
+                cbar, cfg, 'Particle density\n(count per cell)')
+            density_cbar_shown = True
+
+        fp = make_font_properties(cfg)
+        if legend_handles:
+            if density_cbar_shown:
+                # Colorbar occupies the right; put legend below to avoid overlap
+                ax.legend(
+                    handles=legend_handles,
+                    loc='upper center',
+                    bbox_to_anchor=(0.5, -0.06),
+                    ncol=min(4, len(legend_handles)),
+                    framealpha=0.9,
+                    prop=fp,
+                )
+            else:
+                ax.legend(
+                    handles=legend_handles,
+                    bbox_to_anchor=(1.05, 1.0),
+                    loc='upper left',
+                    framealpha=0.9,
+                    prop=fp,
+                )
+
         apply_font_to_ternary(ax, cfg)
 
 
@@ -2458,6 +2683,7 @@ class TrianglePlotNode(QObject):
         'display_mode': 'Individual Subplots',
         'sample_colors': {},
         'sample_name_mappings': {},
+        'sample_mean_colors': {},
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,

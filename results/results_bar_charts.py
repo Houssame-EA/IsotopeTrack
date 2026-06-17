@@ -1454,10 +1454,16 @@ class HistogramSettingsDialog(QDialog):
 
         g = QGroupBox("Plot Options")
         fl = QFormLayout(g)
-        self.bins = QSpinBox()
-        self.bins.setRange(5, 200)
-        self.bins.setValue(self._cfg.get('bins', 20))
-        fl.addRow("Bins:", self.bins)
+        self.bin_width = QDoubleSpinBox()
+        self.bin_width.setRange(0.1, 100000)
+        self.bin_width.setDecimals(2)
+        self.bin_width.setSingleStep(5)
+        self.bin_width.setValue(self._cfg.get('bin_width', 20))
+        self.bin_width.setToolTip(
+            "Width of each histogram bin in data units (e.g. 20 = bins of 20 counts).\n"
+            "All samples/elements share the same bin edges for fair comparison.\n"
+            "In log-X mode a fixed 0.25-decade bin width is used instead.")
+        fl.addRow("Bin Width:", self.bin_width)
         self.alpha = QSlider(Qt.Horizontal)
         self.alpha.setRange(10, 100)
         self.alpha.setValue(int(self._cfg.get('alpha', 0.7) * 100))
@@ -1591,7 +1597,7 @@ class HistogramSettingsDialog(QDialog):
         out['det_limit_value'] = self.det_val_spin.value()
         out['det_limit_label'] = self.det_label_edit.text().strip()
         out['show_box'] = self.show_box_cb.isChecked()
-        out['bins'] = self.bins.value()
+        out['bin_width'] = self.bin_width.value()
         out['alpha'] = self.alpha.value() / 100.0
         out['log_x'] = self.log_x.isChecked()
         out['log_y'] = self.log_y.isChecked()
@@ -2775,7 +2781,7 @@ class HistogramDisplayDialog(QDialog):
             pi, 'Overlaid (Different Colors)', 'Overlaid', {})
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
-        bins_n = cfg.get('bins', 20)
+        bin_width = cfg.get('bin_width', 20)
         per_ml = _per_ml_active(cfg, self.node.input_data)
 
         legend = pg.LegendItem(offset=(60, 10))
@@ -2790,6 +2796,21 @@ class HistogramDisplayDialog(QDialog):
             len(plottable_samples) > 0
             and all(sn in hidden_samples for sn in plottable_samples)
         )
+
+        # Compute global bin edges from all visible samples so x-axis is consistent.
+        all_prepared = []
+        for sn, sd in plot_data.items():
+            if not sd or sn in hidden_samples:
+                continue
+            combined_pre = []
+            for elem, raw_vals in sd.items():
+                if elem not in hidden:
+                    combined_pre.extend(raw_vals)
+            v_pre = _prepare_values(combined_pre, dt, log_x)
+            if v_pre is not None:
+                all_prepared.append(v_pre)
+        global_edges = _compute_global_bin_edges(all_prepared, bin_width, log_x)
+
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
                 continue
@@ -2823,7 +2844,7 @@ class HistogramDisplayDialog(QDialog):
                 continue
             drew_any = True
             y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
-            _draw_histogram_bars(pi, v, cfg, color, bins_n, y_scale=y_scale)
+            _draw_histogram_bars(pi, v, cfg, color, bin_edges=global_edges, y_scale=y_scale)
 
         if not drew_any:
             msg = (
@@ -3434,7 +3455,7 @@ class HistogramPlotNode(QObject):
         'mode_line_style': 'dot',
         'mode_line_width': 2,
         'curve_color': '#2C3E50',
-        'bins': 20,
+        'bin_width': 20,
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
@@ -4157,7 +4178,65 @@ def _prepare_values(values, data_type, log_x):
     return v
 
 
-def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
+def _compute_bin_edges(values, bin_width, log_x=False):
+    """Compute fixed-width bin edges for a single array of (possibly log-transformed) values.
+
+    Args:
+        values: 1-D array of already-prepared values (log10-transformed when log_x=True).
+        bin_width: Desired bin width in raw data units (linear mode) or ignored in log mode.
+        log_x: When True, values are in log10 space; uses 0.25-decade fixed bins instead.
+
+    Returns:
+        np.ndarray of bin edges with at least 2 elements.
+    """
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return np.array([0.0, max(float(bin_width), 1.0)])
+    v_min = float(np.nanmin(arr))
+    v_max = float(np.nanmax(arr))
+    if log_x:
+        # Values are log10-transformed; use 0.25-decade bins (4 bins per decade)
+        bw = 0.25
+        start = np.floor(v_min / bw) * bw
+        stop = np.ceil(v_max / bw) * bw + bw
+        edges = np.arange(start, stop, bw)
+    else:
+        bw = float(bin_width) if float(bin_width) > 0 else 1.0
+        start = np.floor(v_min / bw) * bw
+        stop = np.ceil(v_max / bw) * bw + bw
+        edges = np.arange(start, stop, bw)
+    if len(edges) < 2:
+        bw = float(bin_width) if float(bin_width) > 0 else 1.0
+        edges = np.array([v_min - bw, v_max + bw])
+    return edges
+
+
+def _compute_global_bin_edges(all_values_list, bin_width, log_x=False):
+    """Compute shared fixed-width bin edges from multiple value arrays.
+
+    Ensures all histograms in a multi-element or multi-sample view share
+    the same bin edges, keeping x-axis comparison scientifically valid.
+
+    Args:
+        all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
+        bin_width: Desired bin width in raw data units.
+        log_x: Whether values are already in log10 space.
+
+    Returns:
+        np.ndarray of shared bin edges, or None when no valid data found.
+    """
+    arrays = [np.asarray(v, dtype=float) for v in all_values_list if v is not None]
+    if not arrays:
+        return None
+    combined = np.concatenate(arrays)
+    combined = combined[np.isfinite(combined)]
+    if len(combined) == 0:
+        return None
+    return _compute_bin_edges(combined, bin_width, log_x)
+
+
+def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
                          name='', y_scale=1.0):
     """Draw histogram bars using PyQtGraph BarGraphItem.
 
@@ -4167,17 +4246,20 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bins_n=None,
         values (Any): Array or sequence of values.
         cfg (Any): The cfg.
         color_hex (Any): The color hex.
-        bins_n (Any): The bins n.
+        bin_edges: Pre-computed bin edges (np.ndarray). When None, edges are
+            computed from values using the cfg ``bin_width`` setting.
         name (Any): Name string.
         y_scale (float): Multiplier applied to bin counts, used to convert raw
             counts to particles per millilitre. Defaults to 1.0.
     """
-    if bins_n is None:
-        bins_n = cfg.get('bins', 20)
+    if bin_edges is None:
+        bin_width = cfg.get('bin_width', 20)
+        log_x = cfg.get('log_x', False)
+        bin_edges = _compute_bin_edges(values, bin_width, log_x)
     alpha = int(cfg.get('alpha', 0.7) * 255)
     log_y = cfg.get('log_y', False)
 
-    counts, bin_edges = np.histogram(values, bins=bins_n)
+    counts, bin_edges = np.histogram(values, bins=bin_edges)
     scaled = counts.astype(float) * y_scale
     y_plot = np.log10(scaled + 1) if log_y else scaled
 
@@ -4415,12 +4497,23 @@ def _draw_single_histogram(
     """
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
-    bins_n = cfg.get('bins', 20)
+    bin_width = cfg.get('bin_width', 20)
     hidden = set(hidden_elements or set())
 
     sorted_data = sort_element_dict_by_mass(element_data)
     is_single = len(sorted_data) == 1
     visible_count = 0
+
+    # Pre-compute global bin edges from all visible elements so every element
+    # in this plot shares the same x-axis bin widths.
+    prepared_all = []
+    for elem, raw_vals in sorted_data.items():
+        if elem in hidden:
+            continue
+        v = _prepare_values(raw_vals, dt, log_x)
+        if v is not None:
+            prepared_all.append(v)
+    global_edges = _compute_global_bin_edges(prepared_all, bin_width, log_x)
 
     all_vals = []
     for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
@@ -4432,12 +4525,12 @@ def _draw_single_histogram(
 
         visible_count += 1
         color = single_color or _get_element_color(elem, idx, cfg)
-        _draw_histogram_bars(plot_item, vals, cfg, color, bins_n,
+        _draw_histogram_bars(plot_item, vals, cfg, color, bin_edges=global_edges,
                              name=_fmt_elem(elem, cfg), y_scale=y_scale)
         all_vals.append(vals)
 
         if is_single:
-            _, bin_edges = np.histogram(vals, bins=bins_n)
+            bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x)
             can_attempt_density, density_reason = _density_curve_status(vals, cfg)
             density_attempted = cfg.get('show_curve', True)
             density_success = False
