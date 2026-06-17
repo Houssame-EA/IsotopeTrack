@@ -20,6 +20,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
+          # Pinned to 3.11 to match requirements.txt, the local .conda env,
+          # and the Windows job — the pinned deps only ship 3.11 wheels.
           python-version: '3.11'
 
       - name: Install Python dependencies
@@ -38,6 +40,19 @@ jobs:
 
       - name: Clean dist for DMG (keep only .app)
         run: rm -rf dist/IsotopeTrack
+
+      # The hardened runtime is applied to the .app automatically on Apple
+      # Silicon, but without entitlements it blocks the executable-memory
+      # allocations numba/llvmlite need to JIT-compile — which crashes the
+      # packaged app even though running from source is fine. Re-sign ad-hoc
+      # with the project entitlements so JIT memory is permitted.
+      - name: Re-sign .app with entitlements (allow numba/llvmlite JIT)
+        run: |
+          codesign --force --deep --options runtime \
+            --entitlements packaging/entitlements.plist \
+            --sign - dist/IsotopeTrack.app
+          echo "Entitlements now embedded in the app:"
+          codesign -d --entitlements - dist/IsotopeTrack.app || true
 
       - name: Build DMG
         run: |

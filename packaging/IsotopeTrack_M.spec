@@ -142,6 +142,9 @@ a = Analysis(
         'lz4.frame',
         'lz4.block',
 
+        'openpyxl',
+        'pypdf',
+
         *scipy_hidden,
 
         *numba_hidden,
@@ -239,6 +242,7 @@ a = Analysis(
         'calibration_methods.TE_number',
         'calibration_methods.TE',
         'calibration_methods.te_common',
+        'calibration_methods.calibration_registry',
 
         'loading',
         'loading.data_thread',
@@ -249,6 +253,7 @@ a = Analysis(
 
         'processing',
         'processing.peak_detection',
+        'processing.detection_registry',
 
         'results',
         'results.results_AI',
@@ -279,6 +284,7 @@ a = Analysis(
         'save_export.fast_project_io',
         'save_export.ionic_session',
         'save_export.project_manager',
+        'save_export.autosave',
 
         'tools',
         'tools.dilution_utils',
@@ -298,6 +304,9 @@ a = Analysis(
         'tools.tutorial',
         'tools.unit',
         'tools.cli_utils',
+        'tools.home_panel',
+        'tools.toast',
+        'tools.welcome',
 
         'utils',
         'utils.app_version',
@@ -333,7 +342,6 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'plotly',
         'pyarrow',
-        'openpyxl',
         'xlsxwriter',
     ],
     noarchive=False,

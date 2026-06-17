@@ -30,6 +30,10 @@ pyparsing==3.3.2
 # ── Data loading ──────────────────────────────────────────────────────────────
 h5py==3.16.0
 lz4==4.3.3
+openpyxl==3.1.5          # read sheet names when importing .xlsx data
+
+# ── Document parsing ────────────────────────────────────────────────────────────
+pypdf==5.1.0             # extract text from PDFs for the AI results feature
 
 # ── Networking ────────────────────────────────────────────────────────────────
 requests==2.32.5

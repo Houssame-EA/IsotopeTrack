@@ -949,8 +949,14 @@ class MainWindow(QMainWindow):
     
     def create_menu_bar(self):
         """Create application menu bar with actions."""
-        menu_bar = self.menuBar() 
-        
+        from PySide6.QtWidgets import QMenuBar
+        menu_bar = self.menuBar()
+        if not isinstance(menu_bar, QMenuBar):
+            # PySide6/shiboken can hand back a stale QWidgetItem wrapper for a
+            # recycled C++ pointer when a 2nd window is created — rebuild it.
+            menu_bar = QMenuBar(self)
+            self.setMenuBar(menu_bar)
+
         self._menu_icon_items = []
 
         def _ma(icon_name, text, slot, shortcut=None):
@@ -1078,8 +1084,13 @@ class MainWindow(QMainWindow):
         
     def create_status_bar(self):
         """Create application status bar with progress indicator."""
+        from PySide6.QtWidgets import QStatusBar
         status_bar = self.statusBar()
-        
+        if not isinstance(status_bar, QStatusBar):
+            # Same PySide6/shiboken stale-wrapper issue as menuBar() — guard it.
+            status_bar = QStatusBar(self)
+            self.setStatusBar(status_bar)
+
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(5, 2, 5, 2)

@@ -68,7 +68,12 @@ def maybe_prompt_dilution(window):
 
 def highlight_tools_menu(window):
     """Briefly animate the Tools menu to indicate where dilution is entered."""
+    from PySide6.QtWidgets import QMenuBar
     menu_bar = window.menuBar()
+    if not isinstance(menu_bar, QMenuBar):
+        # Defensive: PySide6 can return a stale QWidgetItem wrapper; skip the
+        # cosmetic animation rather than crash.
+        return
     tools_action = None
     for action in menu_bar.actions():
         if action.text() == "Tools":
