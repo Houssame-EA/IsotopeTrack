@@ -176,7 +176,7 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
     #   L vertex: (−1/√3,   0.0)
     #   R vertex: (+1/√3,   0.0)
     _s   = 1.0 / math.sqrt(3.0)   # ≈ 0.5774
-    _pad = 0.1            # outward offset in data units
+    _pad = 0.15         # outward offset in data units
 
     # Resolve per-axis colors.  When colored_axes is off every axis uses the
     # global font color so the rest of the rendering path is identical.
@@ -1597,30 +1597,92 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
-        mm = menu.addMenu("Mouse mode")
-        if not self._is_multi() and self._ternary_zoom_active:
-            current_mouse_mode = "Zoom"
-        else:
-            current_mouse_mode = self.canvas.mouse_mode()
-        zoom_supported = self._is_multi() or self._single_sample_triangle_zoom_supported()
-        for mode in ("Cursor", "Zoom"):
-            action = mm.addAction(mode)
-            action.setCheckable(True)
-            action.setChecked(current_mouse_mode == mode)
-            if mode == "Zoom" and not zoom_supported:
-                action.setChecked(False)
-                action.setEnabled(False)
-                action.setText("Zoom (unavailable for single-sample ternary)")
-                reason = (
-                    "Single-sample ternary zoom is disabled until a true "
-                    "ternary-aware viewport is implemented."
-                )
-                action.setStatusTip(reason)
-                action.setToolTip(reason)
+        in_subplots = (self._is_multi()
+                       and cfg.get('display_mode', '') == 'Individual Subplots')
+        if not in_subplots:
+            mm = menu.addMenu("Mouse mode")
+            if not self._is_multi() and self._ternary_zoom_active:
+                current_mouse_mode = "Zoom"
             else:
-                action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+                current_mouse_mode = self.canvas.mouse_mode()
+            zoom_supported = self._is_multi() or self._single_sample_triangle_zoom_supported()
+            for mode in ("Cursor", "Zoom"):
+                action = mm.addAction(mode)
+                action.setCheckable(True)
+                action.setChecked(current_mouse_mode == mode)
+                if mode == "Zoom" and not zoom_supported:
+                    action.setChecked(False)
+                    action.setEnabled(False)
+                    action.setText("Zoom (unavailable for single-sample ternary)")
+                    reason = (
+                        "Single-sample ternary zoom is disabled until a true "
+                        "ternary-aware viewport is implemented."
+                    )
+                    action.setStatusTip(reason)
+                    action.setToolTip(reason)
+                else:
+                    action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
+        # "Examine" — only in Individual Subplots mode when clicking a specific subplot
+        if (self._is_multi()
+                and cfg.get('display_mode', '') == 'Individual Subplots'):
+            sn = self._subplot_under_cursor(pos)
+            if sn is not None:
+                dname = get_display_name(sn, cfg)
+                menu.addSeparator()
+                act = menu.addAction(f"Examine  '{dname}'")
+                act.triggered.connect(lambda _=False, s=sn: self._examine_sample(s))
 
         menu.exec(QCursor.pos())
+
+    def _subplot_under_cursor(self, widget_pos):
+        """Return the sample key of the subplot under widget_pos, or None."""
+        cw = self.canvas.width()
+        ch = self.canvas.height()
+        if cw <= 0 or ch <= 0:
+            return None
+        nx = widget_pos.x() / cw
+        ny = 1.0 - widget_pos.y() / ch      # flip: Qt origin top-left, mpl bottom-left
+        for ax in self.figure.get_axes():
+            sn = getattr(ax, '_exam_sample_key', None)
+            if sn is None:
+                continue
+            bb = ax.get_position()
+            if bb.x0 <= nx <= bb.x1 and bb.y0 <= ny <= bb.y1:
+                return sn
+        return None
+
+    def _examine_sample(self, sample_key):
+        """Open a full single-sample ternary window for one subplot."""
+        all_particles = self.node.input_data.get('particle_data', [])
+        sample_particles = [p for p in all_particles
+                            if p.get('source_sample') == sample_key]
+        if not sample_particles:
+            return
+
+        single_input = {
+            'type': 'sample_data',
+            'particle_data': sample_particles,
+        }
+
+        node = TrianglePlotNode(parent_window=self.parent_window)
+        node.config = dict(self.node.config)   # inherit element choices and style
+        node.process_data(single_input)
+
+        dname = get_display_name(sample_key, self.node.config)
+        dlg = TriangleDisplayDialog(node, parent_window=self)
+        dlg.setWindowTitle(f"Ternary — {dname}")
+        dlg.setMinimumSize(1000, 750)
+        dlg.show()
+
+        # Hold a reference so the dialog isn't garbage-collected
+        if not hasattr(self, '_examine_dialogs'):
+            self._examine_dialogs = []
+        self._examine_dialogs.append(dlg)
+        dlg.finished.connect(
+            lambda _: self._examine_dialogs.remove(dlg)
+            if dlg in self._examine_dialogs else None)
+
     def _add_toggle(self, menu, label, key):
         """
         Args:
@@ -2193,22 +2255,23 @@ class TriangleDisplayDialog(QDialog):
 
         if cfg.get('show_average_text', True):
             fp = make_font_properties(cfg)
-            ea = cfg.get('element_a', 'A')
-            eb = cfg.get('element_b', 'B')
-            ec = cfg.get('element_c', 'C')
+            label_mode = cfg.get('label_mode', 'Symbol')
+            ea = format_element_label(cfg.get('element_a', 'A') or 'A', label_mode, Renderer.MATHTEXT, cfg)
+            eb = format_element_label(cfg.get('element_b', 'B') or 'B', label_mode, Renderer.MATHTEXT, cfg)
+            ec = format_element_label(cfg.get('element_c', 'C') or 'C', label_mode, Renderer.MATHTEXT, cfg)
 
             text = (f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
                     f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
                     f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
 
-            tx = min(mb_local + 0.15, 0.98)
-            ty = min(mc_local + 0.01, 0.98)
-            tz = max(1.0 - tx - ty, 0.01)
-            ax.text(tx, ty, tz, text,
-                    fontproperties=fp, color='black',
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
-                              alpha=0.85, edgecolor='gray'),
-                    ha='left', va='bottom', zorder=11)
+            ax.text(
+                0.05, 0.95, text,
+                transform=ax.transAxes,
+                fontproperties=fp, color='black',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          alpha=0.85, edgecolor='gray'),
+                ha='left', va='top', zorder=11,
+            )
 
         if (_is_full_triangle_viewport(viewport)
                 and cfg.get('show_confidence_ellipse', False) and len(a_orig) >= 3):
@@ -2249,6 +2312,7 @@ class TriangleDisplayDialog(QDialog):
         for idx, sn in enumerate(samples):
             ax = self.figure.add_subplot(
                 rows, cols, idx + 1, projection='ternary')
+            ax._exam_sample_key = sn          # for "Examine this ternary" right-click
             sd = plot_data[sn]
             if sd:
                 dname = get_display_name(sn, cfg)

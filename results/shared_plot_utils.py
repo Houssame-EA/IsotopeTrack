@@ -200,7 +200,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
         for ann in event.inaxes.get_children():
             try:
                 hit, _ = ann.contains(event)
-                if hit and hasattr(ann, 'draggable'):
+                if hit and getattr(ann, '_ann_idx', None) is not None:
                     return
             except Exception:
                 pass
