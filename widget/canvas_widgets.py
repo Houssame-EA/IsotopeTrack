@@ -3335,6 +3335,39 @@ class EnhancedCanvasView(QGraphicsView):
                 x += gs
             y += gs
 
+    def drawForeground(self, painter, rect):
+        """Draw a centered hint while the canvas has no result blocks yet."""
+        super().drawForeground(painter, rect)
+        try:
+            scene = self.scene
+            if getattr(scene, 'workflow_nodes', None):
+                return
+            if any(isinstance(i, (NodeItem, StickyNoteItem)) for i in scene.items()):
+                return
+            p = _app_theme.palette
+            center = self.mapToScene(self.viewport().rect().center())
+            cx, cy = center.x(), center.y()
+            painter.save()
+            painter.setPen(QPen(QColor(p.text_secondary)))
+            f = painter.font()
+            f.setPointSize(15)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.drawText(
+                QRectF(cx - 240, cy - 30, 480, 30),
+                Qt.AlignCenter, "Drag a result block onto the canvas to begin")
+            f.setPointSize(11)
+            f.setBold(False)
+            painter.setFont(f)
+            painter.setPen(QPen(QColor(p.text_muted)))
+            painter.drawText(
+                QRectF(cx - 240, cy + 4, 480, 24),
+                Qt.AlignCenter,
+                "Choose a visualization from the panel on the left, then connect a sample")
+            painter.restore()
+        except Exception:
+            _itk_log.debug("canvas empty hint skipped")
+
     def _drag_node_type(self, event):
         """Return the node type carried by a drag/drop event, or None.
 

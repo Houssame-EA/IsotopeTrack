@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the concentration math in tools/dilution_utils.py.
+"""Tests for the concentration math in utils/dilution.py.
 
 These convert a raw particle count into particles-per-millilitre, via the
 analyzed acquisition time, the transport rate, the analyzed volume, and the
@@ -11,7 +11,7 @@ import types
 
 import numpy as np
 
-from tools import dilution_utils as du
+from utils import dilution as du
 
 
 def make_window(**attrs):

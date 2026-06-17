@@ -280,7 +280,6 @@ a = Analysis(
         'save_export.project_manager',
 
         'tools',
-        'tools.app_version',
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
@@ -295,10 +294,15 @@ a = Analysis(
         'tools.progressive_main_window',
         'tools.signal_selector_dialog',
         'tools.splash_screen',
-        'tools.isobaric_correction',
         'tools.tutorial',
         'tools.unit',
         'tools.cli_utils',
+
+        'utils',
+        'utils.app_version',
+        'utils.isobaric_correction',
+        'utils.unit',
+        'utils.dilution',
 
         'widget',
         'widget.batch_parameters',

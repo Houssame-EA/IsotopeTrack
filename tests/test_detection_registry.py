@@ -7,9 +7,9 @@ The registry replaced the ``if/elif`` method dispatch that used to live in
 
 These tests transcribe the *original* branch logic as reference functions and
 assert the registry produces byte-identical results for every method name and a
-grid of inputs — including the subtle per-call-site sigma differences
-(``CPLN table`` uses the caller's sigma in one path and a fixed 0.55 in the
-cached path; the analytic method is always 0.55). The detection engine itself
+grid of inputs. Both ``CPLN table`` and the analytic ``Compound Poisson
+LogNormal`` now use the caller's sigma (the analytic method falls back to 0.55
+only when sigma is missing or non-positive). The detection engine itself
 (numba/scipy) is mocked, so this runs without those dependencies.
 """
 import numpy as np
@@ -40,7 +40,11 @@ def ref_single(engine, lam, method, alpha, sigma):
     if method == "CPLN table":
         return engine.compound_poisson_lognormal_lut.get_threshold(lam, alpha, sigma)
     elif method == "Compound Poisson LogNormal":
-        return engine.compound_poisson_lognormal.get_threshold(lam, alpha, sigma=0.55)
+        # The analytic method now honours the caller's sigma, falling back to
+        # 0.55 only when sigma is missing or non-positive (mirrors
+        # _cpln_lognormal_single in the registry).
+        sig = sigma if (sigma is not None and sigma > 0) else 0.55
+        return engine.compound_poisson_lognormal.get_threshold(lam, alpha, sigma=sig)
     else:
         return lam + 3.0 * np.sqrt(lam)
 

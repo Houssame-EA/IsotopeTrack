@@ -64,10 +64,14 @@ def _analytic_interp_array(method, engine, lam_arr, alpha, sigma):
 def _cpln_lognormal_single(engine, lam, alpha, sigma):
     """Analytic Compound Poisson Log-Normal threshold.
 
-    Historically called with sigma fixed at 0.55 at every call site, so the
-    caller-supplied sigma is intentionally ignored here to preserve behavior.
+    Uses the caller-supplied per-isotope sigma (the log-normal width of the
+    single-ion response) so the sigma set in the parameters table actually
+    drives the threshold. Falls back to the historic 0.55 default when sigma
+    is missing or non-positive, since a log-normal requires sigma > 0.
     """
-    return engine.compound_poisson_lognormal.get_threshold(lam, alpha, sigma=0.55)
+    if sigma is None or sigma <= 0:
+        sigma = 0.55
+    return engine.compound_poisson_lognormal.get_threshold(lam, alpha, sigma=sigma)
 
 
 def _cpln_table_single(engine, lam, alpha, sigma):

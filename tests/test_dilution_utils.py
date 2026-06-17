@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Tests for tools/dilution_utils.py.
+"""Tests for utils/dilution.py.
 
 Dilution factors scale every per-volume concentration the app reports, so the
 coercion (`normalize_factor`) and the filename auto-detection
 (`detect_dilution_from_name`) need to behave predictably. These functions are
-pure; the module imports Qt only for the dialog it also defines.
+pure logic (no Qt); the dialog UI lives separately in tools/dilution_utils.py.
 """
 import pytest
 
-from tools import dilution_utils as du
+from utils import dilution as du
 
 
 class TestNormalizeFactor:

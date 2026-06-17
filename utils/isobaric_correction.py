@@ -48,7 +48,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.tools.isobaric_correction")
+_itk_log = logging.getLogger("IsotopeTrack.utils.isobaric_correction")
 
 def _nominal(mass: float) -> int:
     """Return the nominal (integer) mass by rounding to the nearest integer."""

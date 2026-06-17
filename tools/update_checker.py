@@ -20,7 +20,7 @@ import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.update_checker")
 
 try:
-    from tools.app_version import __version__ as CURRENT_VERSION
+    from utils.app_version import __version__ as CURRENT_VERSION
 except Exception:
     _itk_log.exception("Handled exception in <module>")
     CURRENT_VERSION = "0.0.0"

@@ -136,6 +136,12 @@ class AutosaveManager(QObject):
     def _on_ok(self, path):
         self._writing = False
         _itk_log.info("Autosave snapshot written: %s", path)
+        try:
+            notify = getattr(self.main_window, "notify", None)
+            if callable(notify):
+                notify("Autosaved", "success", 1800)
+        except Exception:
+            _itk_log.debug("Autosave toast skipped")
 
     def _on_fail(self, message):
         self._writing = False

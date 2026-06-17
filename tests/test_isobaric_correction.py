@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the isobaric correction engine (tools/isobaric_correction.py).
+"""Tests for the isobaric correction engine (utils/isobaric_correction.py).
 
 This module is pure logic (numpy + ast only, no GUI) and it implements two
 safety-critical pieces:
@@ -19,7 +19,7 @@ evaluator) is affected, so these are the tests most worth having.
 import numpy as np
 import pytest
 
-from tools import isobaric_correction as ic
+from utils import isobaric_correction as ic
 
 
 # --------------------------------------------------------------------------- #

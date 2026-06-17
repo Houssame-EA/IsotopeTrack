@@ -13,12 +13,13 @@ _itk_log = logging.getLogger("IsotopeTrack.tools.tutorial")
 
 
 def get_resource_path(relative_path):
-    try:
-        base_path = Path(sys._MEIPASS)
-    except AttributeError:
-        _itk_log.exception("Handled exception in get_resource_path")
+    # sys._MEIPASS only exists inside a PyInstaller bundle; in dev we resolve
+    # relative to the project root. Use getattr so the dev case is normal
+    # control flow rather than a logged AttributeError on every call.
+    base_path = getattr(sys, "_MEIPASS", None)
+    if base_path is None:
         base_path = Path(__file__).parent.parent
-    return base_path / relative_path
+    return Path(base_path) / relative_path
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +245,7 @@ class UserGuideDialog(QDialog):
     def _tab_overview(self):
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.10.2</h2>
+            <h2>IsotopeTrack v1.10.3</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 

@@ -14,6 +14,7 @@ import pyqtgraph as pg
 from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup
 from PySide6.QtWidgets import QWidget
 import tools.dilution_utils
+import utils.dilution
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -32,7 +33,7 @@ from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
 from tools.signal_selector_dialog import SignalSelectorDialog
-import tools.isobaric_correction as isobaric
+import utils.isobaric_correction as isobaric
 from tools.logging_utils import logging_manager, log_user_action, set_current_window
 import logging
 from widget.colors import element_colors
@@ -283,6 +284,8 @@ class MainWindow(QMainWindow):
         theme.themeChanged.connect(self.apply_theme)
         self.apply_theme()
 
+        self._init_ui_enhancements()
+
         self.initialize_help_manager()
         self.transport_rate_window = None
         self.ionic_calibration_window = None
@@ -307,7 +310,109 @@ class MainWindow(QMainWindow):
         self._autosave = AutosaveManager(self)
         self._autosave.start()
         if self.window_number == 1:
-            QTimer.singleShot(800, self._offer_crash_recovery)
+            # Crash recovery is now surfaced non-modally via the home panel
+            # (a "Recover unsaved session" card), instead of a blocking prompt.
+            QTimer.singleShot(1200, self._maybe_show_welcome)
+
+    # ------------------------------------------------------------------ #
+    # UI polish: toasts, home panel, welcome screen
+    # ------------------------------------------------------------------ #
+    def _init_ui_enhancements(self):
+        """Set up toast notifications and the home panel.
+
+        Grouped here to keep __init__ readable. Every block is wrapped
+        defensively so a cosmetic failure can never prevent the core
+        application from starting.
+        """
+        # Toast notifications
+        try:
+            from tools.toast import ToastManager
+            self.toasts = ToastManager(self)
+        except Exception:
+            self.toasts = None
+            _itk_log.exception("Could not initialize toast manager")
+
+        # Home panel: shown in the plot area only while no data is loaded, so
+        # it never covers an actual plot. Surfaces recent saved projects and
+        # any recoverable crashed session so the user can resume quickly.
+        try:
+            from tools.home_panel import HomePanel
+            self._home_panel = HomePanel(
+                overlay_target=self.plot_widget,
+                on_open_project=lambda path: self.load_project(filepath=path),
+                on_recover=self._recover_session,
+            )
+            if hasattr(self, 'sample_table') and self.sample_table.model():
+                m = self.sample_table.model()
+                m.rowsInserted.connect(lambda *a: self._sync_home_state())
+                m.rowsRemoved.connect(lambda *a: self._sync_home_state())
+            self._sync_home_state()
+        except Exception:
+            self._home_panel = None
+            _itk_log.exception("Could not initialize home panel")
+
+    def _sync_home_state(self):
+        """Show the home panel only while no samples are loaded (never over a plot)."""
+        panel = getattr(self, '_home_panel', None)
+        if panel is None:
+            return
+        try:
+            has_data = self.sample_table.rowCount() > 0
+            if not has_data:
+                panel.refresh()
+                panel.setGeometry(self.plot_widget.rect())
+                panel.setVisible(True)
+                panel.raise_()
+            else:
+                panel.setVisible(False)
+        except RuntimeError:
+            pass
+
+    def _recover_session(self, path):
+        """Load a crashed session's autosave snapshot, then clear the snapshot."""
+        try:
+            from save_export.autosave import AutosaveManager
+            self.project_manager.load_project(filepath=str(path))
+            self.unsaved_changes = True
+            AutosaveManager.discard_recovery_files([path])
+            self.notify("Recovered unsaved session", "success")
+        except Exception:
+            _itk_log.exception("Could not recover session")
+            self.notify("Could not recover session", "error")
+
+    def notify(self, message, level="info", duration=3500):
+        """Show a non-blocking toast notification.
+
+        Safe no-op if the toast manager could not be created.
+        Levels: 'success', 'info', 'warning', 'error'.
+        """
+        mgr = getattr(self, 'toasts', None)
+        if mgr is not None:
+            mgr.show(message, level, duration)
+
+    def _maybe_show_welcome(self):
+        """Show the welcome screen on first launch unless the user opted out
+        or data is already present (e.g. after crash recovery)."""
+        try:
+            from tools.welcome import should_show_on_startup
+            if not should_show_on_startup():
+                return
+            if getattr(self, 'data_by_sample', None):
+                return
+            self.show_welcome()
+        except Exception:
+            _itk_log.exception("Could not show welcome screen")
+
+    def show_welcome(self):
+        """Open the Welcome / Home dialog."""
+        try:
+            from tools.welcome import WelcomeDialog
+            self._welcome_dialog = WelcomeDialog(self)
+            self._welcome_dialog.show()
+            self._welcome_dialog.raise_()
+            self._welcome_dialog.activateWindow()
+        except Exception:
+            _itk_log.exception("Could not open welcome screen")
 
     def update_window_title(self, filepath=None):
         """Update the window title to reflect the current project state.
@@ -323,6 +428,11 @@ class MainWindow(QMainWindow):
         """
         if filepath is not None:
             self._project_filepath = filepath
+            try:
+                from tools.welcome import add_recent_project
+                add_recent_project(filepath)
+            except Exception:
+                _itk_log.debug("Could not record recent project")
         if self._project_filepath:
             name = Path(self._project_filepath).stem
             self.setWindowTitle(f"IsotopeTrack — Window {self.window_number} ({name})")
@@ -927,6 +1037,7 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("Help")
         self._menu_icon_items.append((help_menu, 'fa6s.circle-question'))
         
+        welcome_action = _ma('fa6s.house', "Welcome Screen", self.show_welcome)
         guide_action = _ma('fa6s.book', "User Guide", self.show_user_guide)
         detection_action = _ma('fa6s.magnifying-glass', "Detection Methods",
                                self.show_detection_methods)
@@ -937,6 +1048,8 @@ class MainWindow(QMainWindow):
         update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
                            lambda: self._update_checker.check(silent=False))
 
+        help_menu.addAction(welcome_action)
+        help_menu.addSeparator()
         help_menu.addAction(guide_action)
         help_menu.addAction(detection_action)
         help_menu.addAction(calibration_action)
@@ -6620,7 +6733,7 @@ class MainWindow(QMainWindow):
         Returns:
             float: Dilution factor, defaulting to 1.0 when unset.
         """
-        return tools.dilution_utils.get_sample_dilution(self, sample_name)
+        return utils.dilution.get_sample_dilution(self, sample_name)
 
     def set_sample_dilution(self, sample_name, factor):
         """Store the dilution factor for a sample.
@@ -6629,7 +6742,7 @@ class MainWindow(QMainWindow):
             sample_name (str): Sample identifier.
             factor (float): Dilution factor to store.
         """
-        tools.dilution_utils.set_sample_dilution(self, sample_name, factor)
+        utils.dilution.set_sample_dilution(self, sample_name, factor)
 
     def effective_volume_ml(self, sample_name, element_key=None):
         """
@@ -6643,9 +6756,9 @@ class MainWindow(QMainWindow):
             float: Effective analyzed volume in millilitres. Manual
             exclusion regions and the time windows flagged by the
             detector non-linearity filter are both subtracted exactly
-            inside tools.dilution_utils.
+            inside utils.dilution.
         """
-        return tools.dilution_utils.effective_volume_ml(self, sample_name, element_key)
+        return utils.dilution.effective_volume_ml(self, sample_name, element_key)
 
     def particles_per_ml(self, sample_name, particle_count, element_key=None, apply_dilution=True):
         """
@@ -6660,7 +6773,7 @@ class MainWindow(QMainWindow):
         Returns:
             float: Concentration in particles per millilitre.
         """
-        return tools.dilution_utils.particles_per_ml(
+        return utils.dilution.particles_per_ml(
             self, sample_name, particle_count, element_key, apply_dilution)
 
     def has_transport_rate(self):
@@ -6670,7 +6783,7 @@ class MainWindow(QMainWindow):
         Returns:
             bool: True when an average transport rate greater than zero exists.
         """
-        return tools.dilution_utils.has_transport_rate(self)
+        return utils.dilution.has_transport_rate(self)
 
     def open_dilution_factor_dialog(self):
         """Open the per sample dilution factor editor dialog."""
@@ -6928,6 +7041,8 @@ class MainWindow(QMainWindow):
                 'project.itp',
                 success=success
             )
+            if success:
+                self.notify("Project saved", "success")
 
         self.project_manager.save_project(on_complete=_after)
 
@@ -6940,12 +7055,14 @@ class MainWindow(QMainWindow):
         """
         self.user_action_logger.log_menu_action('File', 'Load Project')
         result = self.project_manager.load_project(filepath=filepath)
-        
+
         self.user_action_logger.log_file_operation(
             'Project Load',
             'project file',
             success=result
         )
+        if result:
+            self.notify("Project loaded", "success")
         return result
     
     # ------------------------------------------------------------------
