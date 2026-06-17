@@ -6,7 +6,7 @@
 
 | Name | Value |
 |------|-------|
-| `_TOKEN_RE` | `re.compile('([A-Z][a-z]?|\\(|\\))(\\d*(?:\\.\\d...` |
+| `_TOKEN_RE` | `re.compile('([A-Z][a-z]?\|\\(\|\\))(\\d*(?:\\.\\d+)?)')` |
 | `_ELEMENT_ORDER_RE` | `re.compile('([A-Z][a-z]?)')` |
 
 ## Classes
@@ -19,7 +19,7 @@ Database loader for materials from CSV with signature-based lookup.
 |--------|-----------|-------------|
 | `__init__` | `(self)` |  |
 | `auto_load_csv` | `(self) → bool` | Try to load CSV from standard locations, preferring trimmed/compressed versions. |
-| `load_csv` | `(self, csv_path: str | Path) → bool` | Load CSV and build signature-based indices. |
+| `load_csv` | `(self, csv_path: str \| Path) → bool` | Load CSV and build signature-based indices. |
 | `_signature_for_formula` | `(self, formula: str) → str` | Args: |
 | `get_data_by_formula_or_signature` | `(self, formula: str) → list[dict]` | Args: |
 | `best_density_for_formula` | `(self, formula: str) → float` | Args: |
@@ -31,12 +31,6 @@ Database loader for materials from CSV with signature-based lookup.
 ### `FormulaComboBox` *(extends `QComboBox`)*
 
 Editable combobox for chemical formulas with debounced filtering.
-
-Key design decisions that prevent the old recursion crash:
-1. Both the combobox AND lineEdit signals are blocked during rebuilds
-2. Filtering is debounced (300 ms) so rapid typing doesn't queue rebuilds
-3. Only the top MAX_DROPDOWN_ITEMS matches are shown, not thousands
-4. Minimum 2 characters before filtering starts (avoids huge result sets)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -58,7 +52,7 @@ Compact widget with checkbox + label for sample list.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, sample_name: str, parent = None)` | Args: |
+| `__init__` | `(self, sample_name: str, parent=None)` | Args: |
 | `is_checked` | `(self) → bool` | Returns: |
 | `set_checked` | `(self, checked: bool)` | Args: |
 
@@ -78,7 +72,7 @@ Mass fraction calculator with sample selection and molecular weight calculations
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, selected_isotopes: dict, periodic_table_widget, parent = None)` | Args: |
+| `__init__` | `(self, selected_isotopes: dict, periodic_table_widget, parent=None)` | Args: |
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
 | `closeEvent` | `(self, event)` | Disconnect theme signal so we don't leak slots on closed dialogs. |
 | `_build_stylesheet` | `(self) → str` | Dark/light aware stylesheet for the whole dialog. |
@@ -91,7 +85,7 @@ Mass fraction calculator with sample selection and molecular weight calculations
 | `_build_buttons` | `(self) → QHBoxLayout` | Returns: |
 | `_populate_table` | `(self)` |  |
 | `_make_readonly_item` | `(text: str) → QTableWidgetItem` | Args: |
-| `_element_data` | `(self, symbol: str) → dict | None` | Args: |
+| `_element_data` | `(self, symbol: str) → dict \| None` | Args: |
 | `_current_formula` | `(self, row: int) → str` | Args: |
 | `_calc_mass_fraction` | `(self, row: int, formula: str)` | Args: |
 | `_calc_molecular_weight` | `(self, row: int, formula: str)` | Args: |
@@ -112,121 +106,12 @@ Mass fraction calculator with sample selection and molecular weight calculations
 
 ## Functions
 
-### `_parse_formula_to_counts`
-
-```python
-def _parse_formula_to_counts(formula: str) → dict
-```
-
-Parse a chemical formula string into {element: integer_count}.
-
-Handles parenthesised groups such as Ca(OH)2 → {'Ca': 1, 'O': 2, 'H': 2}.
-Nested parentheses are supported.
-
-
-**Args:**
-
-- `formula: Chemical formula string.`
-
-
-**Returns:**
-
-- `dict mapping element symbols to positive integer counts.`
-
-### `_safe_int`
-
-```python
-def _safe_int(s: str, default: int = 1) → int
-```
-
-Convert a numeric string to a positive int, rounding floats.
-
-**Args:**
-
-- `s (str): The s.`
-- `default (int): The default.`
-
-**Returns:**
-
-- `int: Result of the operation.`
-
-### `_element_order_in_formula`
-
-```python
-def _element_order_in_formula(formula: str) → list[str]
-```
-
-Return elements in the order they first appear in *formula*.
-
-**Args:**
-
-- `formula (str): The formula.`
-
-**Returns:**
-
-- `list[str]: Result of the operation.`
-
-### `_reduce_counts`
-
-```python
-def _reduce_counts(counts: dict) → dict
-```
-
-Divide all counts by their GCD to get the empirical formula.
-
-**Args:**
-
-- `counts (dict): The counts.`
-
-**Returns:**
-
-- `dict: Result of the operation.`
-
-### `_signature_from_counts`
-
-```python
-def _signature_from_counts(counts: dict) → str
-```
-
-Order-independent canonical key for matching equivalent formulas.
-
-**Args:**
-
-- `counts (dict): The counts.`
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_join_formula_from_counts`
-
-```python
-def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = None) → str
-```
-
-Build a human-readable formula string from counts.
-
-**Args:**
-
-- `counts (dict): The counts.`
-- `prefer_order (list[str] | None): The prefer order.`
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `canonicalize_preserve_user_order`
-
-```python
-def canonicalize_preserve_user_order(formula: str) → str
-```
-
-Reduce stoichiometry but preserve the user's element order.
-
-**Args:**
-
-- `formula (str): The formula.`
-
-**Returns:**
-
-- `str: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_parse_formula_to_counts` | `(formula: str) → dict` | Parse a chemical formula string into {element: integer_count}. |
+| `_safe_int` | `(s: str, *, default: int=1) → int` | Convert a numeric string to a positive int, rounding floats. |
+| `_element_order_in_formula` | `(formula: str) → list[str]` | Return elements in the order they first appear in *formula*. |
+| `_reduce_counts` | `(counts: dict) → dict` | Divide all counts by their GCD to get the empirical formula. |
+| `_signature_from_counts` | `(counts: dict) → str` | Order-independent canonical key for matching equivalent formulas. |
+| `_join_formula_from_counts` | `(counts: dict, prefer_order: list[str] \| None=None) → str` | Build a human-readable formula string from counts. |
+| `canonicalize_preserve_user_order` | `(formula: str) → str` | Reduce stoichiometry but preserve the user's element order. |

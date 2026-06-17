@@ -6,7 +6,8 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QGroupBox, QMessageBox,
     QHeaderView, QSplitter, QFileDialog, QListWidget,
     QListWidgetItem, QWidget, QRadioButton, QButtonGroup,
-    QStyledItemDelegate, )
+    QStyledItemDelegate,
+)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtCore import QUrl
@@ -19,8 +20,9 @@ from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_
 from tools.np_shape import NanoParticleShapeWidget
 from tools.theme import theme
 
-logger = logging.getLogger(__name__)
+_itk_log = logging.getLogger("IsotopeTrack.tools.mass_fraction_calculator")
 
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -47,8 +49,6 @@ class CSVCompoundDatabase:
 
         Handles both normal execution and PyInstaller frozen bundles
         (where data files live under sys._MEIPASS).
-        Returns:
-            bool: Result of the operation.
         """
         import sys
 
@@ -79,10 +79,6 @@ class CSVCompoundDatabase:
         """Load CSV and build signature-based indices.
 
         Uses ``itertuples()`` for ~5-10× speed-up over ``iterrows()``.
-        Args:
-            csv_path (str | Path): The csv path.
-        Returns:
-            bool: Result of the operation.
         """
         if self.is_loaded:
             return True
@@ -169,42 +165,18 @@ class CSVCompoundDatabase:
     # ------------------------------------------------------------------
 
     def _signature_for_formula(self, formula: str) -> str:
-        """
-        Args:
-            formula (str): The formula.
-        Returns:
-            str: Result of the operation.
-        """
         return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
 
     def get_data_by_formula_or_signature(self, formula: str) -> list[dict]:
-        """
-        Args:
-            formula (str): The formula.
-        Returns:
-            list[dict]: Result of the operation.
-        """
         return self.signature_to_data.get(self._signature_for_formula(formula), [])
 
     def best_density_for_formula(self, formula: str) -> float:
-        """
-        Args:
-            formula (str): The formula.
-        Returns:
-            float: Result of the operation.
-        """
         for r in self.get_data_by_formula_or_signature(formula):
             if r.get('density', 0) > 0:
                 return float(r['density'])
         return 0.0
 
     def best_url_for_formula(self, formula: str) -> str:
-        """
-        Args:
-            formula (str): The formula.
-        Returns:
-            str: Result of the operation.
-        """
         for r in self.get_data_by_formula_or_signature(formula):
             url = (r.get('mp_url') or '').strip()
             if url:
@@ -221,10 +193,6 @@ class CSVCompoundDatabase:
 
         For multi-polymorph formulas, this shows the first density found.
         Use get_variants_for_formula() to expand into all polymorphs.
-        Args:
-            element (str): The element.
-        Returns:
-            list[dict]: Result of the operation.
         """
         if element not in self.element_to_compounds:
             return []
@@ -251,8 +219,6 @@ class CSVCompoundDatabase:
 
         Returns one entry per material_id, each with its own density,
         space group, and URL — so the user can pick the right polymorph.
-        Args:
-            formula (str): The formula.
         """
         sig = self._signature_for_formula(formula)
         rows = self.signature_to_data.get(sig, [])
@@ -293,12 +259,6 @@ class CSVCompoundDatabase:
         return variants
 
     def get_material_data(self, formula: str) -> list[dict]:
-        """
-        Args:
-            formula (str): The formula.
-        Returns:
-            list[dict]: Result of the operation.
-        """
         return self.formula_to_data.get(formula, [])
 
 
@@ -324,13 +284,6 @@ class FormulaComboBox(QComboBox):
 
     def __init__(self, element: str, csv_database: CSVCompoundDatabase,
                  tracked_elements: set[str] | None = None, parent=None):
-        """
-        Args:
-            element (str): The element.
-            csv_database (CSVCompoundDatabase): The csv database.
-            tracked_elements (set[str] | None): The tracked elements.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.element = element
         self.csv_database = csv_database
@@ -431,10 +384,7 @@ class FormulaComboBox(QComboBox):
         self._rebuild_items(filtered)
 
     def filter_to_formula(self, user_canon_formula: str):
-        """Show all polymorphs/structures for the confirmed formula.
-        Args:
-            user_canon_formula (str): The user canon formula.
-        """
+        """Show all polymorphs/structures for the confirmed formula."""
         variants = self.csv_database.get_variants_for_formula(user_canon_formula)
         if variants:
             self._rebuild_items(variants[:self.MAX_DROPDOWN_ITEMS])
@@ -468,10 +418,6 @@ class FormulaComboBox(QComboBox):
             self._updating = False
 
     def current_formula(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         text = (self.lineEdit().text() or '').strip()
         if not text:
             return self.element
@@ -489,11 +435,6 @@ class FormulaComboBox(QComboBox):
         self._debounce_timer.start()
 
     def _on_item_activated(self, index: int):
-        """
-        Args:
-            index (int): Row or item index.
-        """
-        print("Item activated")
         if self._updating:
             return
         self._debounce_timer.stop()
@@ -553,11 +494,6 @@ class CheckableListItem(QWidget):
     """Compact widget with checkbox + label for sample list."""
 
     def __init__(self, sample_name: str, parent=None):
-        """
-        Args:
-            sample_name (str): The sample name.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.sample_name = sample_name
 
@@ -573,17 +509,9 @@ class CheckableListItem(QWidget):
         lay.addStretch()
 
     def is_checked(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
         return self.checkbox.isChecked()
 
     def set_checked(self, checked: bool):
-        """
-        Args:
-            checked (bool): Whether the item is checked.
-        """
         self.checkbox.setChecked(checked)
 
 
@@ -595,39 +523,21 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
     """Only accept positive floats when editing density cells."""
 
     def createEditor(self, parent, option, index):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-            option (Any): The option.
-            index (Any): Row or item index.
-        Returns:
-            object: Result of the operation.
-        """
         editor = QLineEdit(parent)
         editor.setValidator(QDoubleValidator(0.0, 1e6, 6, editor))
         return editor
 
     def setEditorData(self, editor, index):
-        """
-        Args:
-            editor (Any): The editor.
-            index (Any): Row or item index.
-        """
         editor.setText(index.data(Qt.ItemDataRole.DisplayRole) or '')
 
     def setModelData(self, editor, model, index):
-        """
-        Args:
-            editor (Any): The editor.
-            model (Any): Data model object.
-            index (Any): Row or item index.
-        """
         text = editor.text().strip()
         try:
             val = float(text)
             if val < 0:
                 raise ValueError
         except ValueError:
+            _itk_log.exception("Handled exception in setModelData")
             return
         model.setData(index, f"{val:.6f}", Qt.ItemDataRole.EditRole)
 
@@ -685,12 +595,6 @@ class MassFractionCalculator(QDialog):
             return [column.title for column in cls]
 
     def __init__(self, selected_isotopes: dict, periodic_table_widget, parent=None):
-        """
-        Args:
-            selected_isotopes (dict): The selected isotopes.
-            periodic_table_widget (Any): The periodic table widget.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.selected_isotopes = selected_isotopes
         self.periodic_table_widget = periodic_table_widget
@@ -713,7 +617,7 @@ class MassFractionCalculator(QDialog):
                 try:
                     parent._cached_csv_database = self.csv_database
                 except AttributeError:
-                    pass
+                    _itk_log.exception("Handled exception in __init__")
 
         self.periodic_table_data = (
             periodic_table_widget.get_elements() if periodic_table_widget else []
@@ -739,21 +643,15 @@ class MassFractionCalculator(QDialog):
             self._refresh_apply_button_style()
 
     def closeEvent(self, event):
-        """Disconnect theme signal so we don't leak slots on closed dialogs.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Disconnect theme signal so we don't leak slots on closed dialogs."""
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
-            pass
+            _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)
 
     def _build_stylesheet(self) -> str:
-        """Dark/light aware stylesheet for the whole dialog.
-        Returns:
-            str: Result of the operation.
-        """
+        """Dark/light aware stylesheet for the whole dialog."""
         p = theme.palette
         return f"""
         QDialog {{
@@ -1053,10 +951,6 @@ class MassFractionCalculator(QDialog):
     # -- sub-builders --------------------------------------------------
 
     def _build_sample_panel(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         panel = QGroupBox("Sample Selection")
         panel.setFixedWidth(280)
         layout = QVBoxLayout(panel)
@@ -1101,10 +995,6 @@ class MassFractionCalculator(QDialog):
         return panel
 
     def _build_header(self) -> QHBoxLayout:
-        """
-        Returns:
-            QHBoxLayout: Result of the operation.
-        """
         header = QHBoxLayout()
 
         title = QLabel("Mass Fraction Calculator")
@@ -1148,10 +1038,6 @@ class MassFractionCalculator(QDialog):
         return table
 
     def _build_dialog_control_buttons(self) -> QWidget:
-        """
-        Returns:
-            QHBoxLayout: Result of the operation.
-        """
         layout = QHBoxLayout()
         layout.addStretch()
 
@@ -1227,45 +1113,22 @@ class MassFractionCalculator(QDialog):
 
     @staticmethod
     def _make_readonly_item(text: str) -> QTableWidgetItem:
-        """
-        Args:
-            text (str): Text string.
-        Returns:
-            QTableWidgetItem: Result of the operation.
-        """
         item = QTableWidgetItem(text)
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
     def _element_data(self, symbol: str) -> dict | None:
-        """
-        Args:
-            symbol (str): The symbol.
-        Returns:
-            dict | None: Result of the operation.
-        """
         for e in self.periodic_table_data:
             if e['symbol'] == symbol:
                 return e
         return None
 
     def _current_formula(self, row: int) -> str:
-        """
-        Args:
-            row (int): Row index.
-        Returns:
-            str: Result of the operation.
-        """
         combo = self.table.cellWidget(row, self.CalculatorColumn.FORMULA.col_index)
         return combo.current_formula() if combo else ''
 
     def _calc_mass_fraction(self, row: int, formula: str):
-        """
-        Args:
-            row (int): Row index.
-            formula (str): The formula.
-        """
         # Get the string formula
         el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
         if not el_item:
@@ -1297,11 +1160,6 @@ class MassFractionCalculator(QDialog):
         self.table.setItem(row, self.CalculatorColumn.MASSFRAC.col_index, self._make_readonly_item(f"{mf:.6f}"))
 
     def _calc_molecular_weight(self, row: int, formula: str):
-        """
-        Args:
-            row (int): Row index.
-            formula (str): The formula.
-        """
         # Get the elements count with reduced values
         counts = reduce_counts(parse_formula_to_counts(formula))
         # Calculate molecular weight (MW) while checking if the molecule is
@@ -1331,12 +1189,6 @@ class MassFractionCalculator(QDialog):
         self.table.setItem(row, self.CalculatorColumn.MW.col_index, self._make_readonly_item(f"{mw:.6f}"))
 
     def _on_compound_selected(self, row: int, formula: str, density_csv: float):
-        """
-        Args:
-            row (int): Row index.
-            formula (str): The formula.
-            density_csv (float): The density csv.
-        """
         # Update mass fraction and molecular weight
         self._calc_mass_fraction(row, formula)
         self._calc_molecular_weight(row, formula)
@@ -1417,10 +1269,6 @@ class MassFractionCalculator(QDialog):
                 w.set_checked(False)
 
     def _get_selected_samples(self) -> list[str]:
-        """
-        Returns:
-            list[str]: Result of the operation.
-        """
         out = []
         for i in range(self.sample_list.count()):
             w = self.sample_list.itemWidget(self.sample_list.item(i))
@@ -1459,7 +1307,7 @@ class MassFractionCalculator(QDialog):
                     try:
                         state[key][element] = float(cell.text())
                     except ValueError:
-                        pass
+                        _itk_log.exception("Handled exception in _save_state")
 
         self.parent_window._mass_fraction_calculator_state = state
 
@@ -1509,10 +1357,6 @@ class MassFractionCalculator(QDialog):
             QMessageBox.information(self, "Success", "Database loaded!")
 
     def _open_structure(self, row: int):
-        """
-        Args:
-            row (int): Row index.
-        """
         formula = self._current_formula(row)
         if not formula:
             QMessageBox.warning(self, "No compound", "Please choose a compound first.")
@@ -1544,13 +1388,14 @@ class MassFractionCalculator(QDialog):
             try:
                 self.mass_fractions[element] = float(mf_cell.text()) if mf_cell else 1.0
             except ValueError:
+                _itk_log.exception("Handled exception in _apply_mass_fractions")
                 self.mass_fractions[element] = 1.0
 
             if mw_cell:
                 try:
                     self.molecular_weights[element] = float(mw_cell.text())
                 except ValueError:
-                    pass
+                    _itk_log.exception("Handled exception in _apply_mass_fractions")
 
             if cd_cell:
                 try:
@@ -1558,7 +1403,7 @@ class MassFractionCalculator(QDialog):
                     if val > 0:
                         self.densities[element] = val
                 except ValueError:
-                    pass
+                    _itk_log.exception("Handled exception in _apply_mass_fractions")
 
         self._save_state()
 
@@ -1572,10 +1417,6 @@ class MassFractionCalculator(QDialog):
         self.accept()
 
     def closeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._save_state()
         super().closeEvent(event)
 

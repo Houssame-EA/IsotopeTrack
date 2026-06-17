@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
     QApplication, QDialog, QTabWidget, QVBoxLayout, QPushButton,
-    QMainWindow, QLabel, QScrollArea, QWidget, QHBoxLayout,
-    QSlider, QSpinBox, QComboBox, QGridLayout, QGroupBox,
-    QCheckBox, QDoubleSpinBox, QSizePolicy, QFrame,
+    QLabel, QScrollArea, QWidget, QHBoxLayout, QSlider,
+    QSpinBox, QComboBox, QGridLayout, QGroupBox, QCheckBox,
+    QDoubleSpinBox, QFrame,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
@@ -14,6 +14,8 @@ from scipy import stats as sp_stats
 from widget.custom_plot_widget import EnhancedPlotWidget
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.help_dialogs")
 
 
 
@@ -29,6 +31,7 @@ def get_resource_path(relative_path):
     try:
         base_path = Path(sys._MEIPASS)
     except AttributeError:
+        _itk_log.exception("Handled exception in get_resource_path")
         base_path = Path(__file__).parent.parent
     return base_path / relative_path
 
@@ -107,6 +110,7 @@ except ImportError:
                 cdf = cdf_matrix @ weights
                 return float(xs[np.argmax(cdf > q0)])
             except Exception:
+                _itk_log.exception("Handled exception in get_threshold")
                 return lambda_bkgd + 3.0 * np.sqrt(max(lambda_bkgd, 1))
 
 
@@ -195,24 +199,6 @@ class SPICPToFMSSimulator:
         sigma_sir=0.47,
         seed=None,
     ):
-        """
-        Args:
-            acq_time_s: Total acquisition time in seconds.
-            dwell_us: Dwell time per bin in microseconds.
-            lambda_bg: Poisson mean background per dwell bin.
-            n_particles: Number of nanoparticle events.
-            particle_mean_counts: Mean expected ion yield per particle.
-            particle_sigma_log: Log-sigma of the particle size distribution.
-            sigma_sir: Log-sigma of the single-ion response distribution.
-            seed: Random seed (None = non-reproducible).
-
-        Returns:
-            times: ndarray, time axis in seconds.
-            signal: ndarray, counts per dwell bin.
-            particle_centres: ndarray, centre-bin index of each particle.
-            peak_width: int, bins per particle event.
-            particle_totals: ndarray, total integrated counts per particle.
-        """
         rng = np.random.default_rng(seed)
 
         dwell_s = dwell_us * 1e-6
@@ -322,9 +308,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setMinimumHeight(750)
@@ -354,9 +337,6 @@ class InteractiveEquationVisualizer(QWidget):
         """Build the two-column layout: controls scroll area on the left, plots on the right.
 
         Args:
-            None
-
-        Returns:
             None
         """
         root = QHBoxLayout(self)
@@ -677,9 +657,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         Args:
             v (int): Slider position (0–90); maps to alpha = 10^(-v/10).
-
-        Returns:
-            None
         """
         alpha = 1.0 if v == 0 else 10 ** (-v / 10.0)
         self._alpha_spin.blockSignals(True)
@@ -692,9 +669,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         Args:
             None
-
-        Returns:
-            None
         """
         self._timer.start()
 
@@ -702,9 +676,6 @@ class InteractiveEquationVisualizer(QWidget):
         """Generate a new simulated signal, compute the threshold, and refresh all plots.
 
         Args:
-            None
-
-        Returns:
             None
         """
         seed = self._seed_spin.value() if self._seed_spin.value() > 0 else None
@@ -755,9 +726,6 @@ class InteractiveEquationVisualizer(QWidget):
 
         Args:
             None
-
-        Returns:
-            None
         """
         if self._times.size == 0:
             return
@@ -768,9 +736,6 @@ class InteractiveEquationVisualizer(QWidget):
         """Render the time-domain signal trace with threshold, LOD, and detected events.
 
         Args:
-            None
-
-        Returns:
             None
         """
         p = self._trace_plot
@@ -874,7 +839,7 @@ class InteractiveEquationVisualizer(QWidget):
                                 float(np.max(y_fit)) * 0.9)
                 p.addItem(fit_text)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _draw_histogram")
 
         p.addLegend(offset=(10, 10))
 
@@ -912,9 +877,6 @@ class InteractiveEquationVisualizer(QWidget):
         """Compute and display detection statistics (TP, FP, FN, detection rate).
 
         Args:
-            None
-
-        Returns:
             None
         """
         s      = self._signal
@@ -1006,9 +968,6 @@ class PeakIntegrationVisualizer(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setMinimumHeight(500)
@@ -1056,9 +1015,6 @@ class PeakIntegrationVisualizer(QWidget):
 
         Args:
             None
-
-        Returns:
-            None
         """
         self.x = np.linspace(0, 10, 500)
         self.raw = 100 * np.exp(-(self.x - 5) ** 2 / 0.5) + 10
@@ -1069,9 +1025,6 @@ class PeakIntegrationVisualizer(QWidget):
         """Recompute integration bounds for the current method and redraw the plot.
 
         Args:
-            None
-
-        Returns:
             None
         """
         self.plot.clear()
@@ -1186,9 +1139,6 @@ class IterativeThresholdVisualizer(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setMinimumHeight(700)
@@ -1448,9 +1398,6 @@ class WatershedSplittingVisualizer(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setMinimumHeight(650)
@@ -1589,9 +1536,6 @@ class WatershedSplittingVisualizer(QWidget):
         """Regenerate the merged peak signal and redraw both before/after watershed plots.
 
         Args:
-            None
-
-        Returns:
             None
         """
         sep = self._sep_spin.value()
@@ -1799,9 +1743,6 @@ class HelpManager:
 
         Args:
             parent (QWidget | None): Parent widget passed to child dialogs.
-
-        Returns:
-            None
         """
         self.parent             = parent
         self.user_guide_dialog  = None
@@ -1813,6 +1754,7 @@ class HelpManager:
         try:
             from tools.tutorial import UserGuideDialog
         except ImportError:
+            _itk_log.debug("Handled exception in show_user_guide")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.information(
                 self.parent, "User Guide",
@@ -1828,9 +1770,6 @@ class HelpManager:
 
         Args:
             None
-
-        Returns:
-            None
         """
         if not self.detection_dialog:
             self.detection_dialog = DetectionMethodsDialog(self.parent)
@@ -1841,9 +1780,6 @@ class HelpManager:
         """Show the Calibration Methods dialog, creating it on first call.
 
         Args:
-            None
-
-        Returns:
             None
         """
         if not self.calibration_dialog:
@@ -2011,7 +1947,8 @@ def _lut_load():
         return (data["lambdas"], data["sigmas"],
                 data["ys"],     data["quantiles"])
     except Exception as e:
-        print(f"[LUT] Could not load cpln_quantiles.npz: {e}")
+        _itk_log.exception("Handled exception in _lut_load")
+        _itk_log.error(f"[LUT] Could not load cpln_quantiles.npz: {e}")
         return None
 
 
@@ -2167,9 +2104,6 @@ class _LUTHeatmapWidget(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self._selected = None
@@ -2256,9 +2190,6 @@ class _LUTHeatmapWidget(QWidget):
         """Rebuild the full heatmap grid for the currently selected alpha level.
 
         Args:
-            None
-
-        Returns:
             None
         """
         p  = self._theme_colours()
@@ -2355,9 +2286,6 @@ class _LUTHeatmapWidget(QWidget):
 
             Args:
                 event (QMouseEvent): The mouse-press event (unused).
-
-            Returns:
-                None
             """
             self._select_cell(cell)
         return _handler
@@ -2367,9 +2295,6 @@ class _LUTHeatmapWidget(QWidget):
 
         Args:
             cell (QLabel): The cell widget that was clicked.
-
-        Returns:
-            None
         """
         p   = self._theme_colours()
         i   = cell.property("row_i")
@@ -2419,14 +2344,7 @@ class _LUTHeatmapWidget(QWidget):
 
      
     def _reset_cell_style(self, cell):
-        """Restore a cell to its default (unselected) stylesheet.
-
-        Args:
-            cell (QLabel): The cell widget to reset.
-
-        Returns:
-            None
-        """
+        """Restore a cell to its default (unselected) stylesheet."""
         bg_c = cell.property("bg")
         fg_c = cell.property("fg")
         cell.setStyleSheet(
@@ -2444,9 +2362,6 @@ class _LUTProfileWidget(QWidget):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         lay = QVBoxLayout(self)
@@ -2500,9 +2415,6 @@ class DetectionMethodsDialog(QDialog):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("Detection Methods - IsotopeTrack")
@@ -2552,21 +2464,11 @@ class DetectionMethodsDialog(QDialog):
 
         Args:
             None
-
-        Returns:
-            None
         """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
-        """Reapply the theme each time the dialog becomes visible.
-
-        Args:
-            event (QShowEvent): The show event.
-
-        Returns:
-            None
-        """
+        """Reapply the theme each time the dialog becomes visible."""
         self.apply_theme()
         super().showEvent(event)
 
@@ -2805,9 +2707,6 @@ class CalibrationMethodsDialog(QDialog):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("Calibration Methods – IsotopeTrack")
@@ -2832,21 +2731,11 @@ class CalibrationMethodsDialog(QDialog):
 
         Args:
             None
-
-        Returns:
-            None
         """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
-        """Reapply the theme each time the dialog becomes visible.
-
-        Args:
-            event (QShowEvent): The show event.
-
-        Returns:
-            None
-        """
+        """Reapply the theme each time the dialog becomes visible."""
         self.apply_theme()
         super().showEvent(event)
 
@@ -2872,7 +2761,7 @@ class CalibrationMethodsDialog(QDialog):
                 lbl.setAlignment(Qt.AlignCenter)
                 return lbl
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _img")
         return QLabel(f"<i style='color:red'>Image not found: {path}</i>")
 
     def _scroll(self, *widgets):
@@ -3170,9 +3059,6 @@ class AboutDialog(QDialog):
 
         Args:
             parent (QWidget | None): Optional parent widget.
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("About IsotopeTrack")
@@ -3193,11 +3079,11 @@ class AboutDialog(QDialog):
                 logo.setPixmap(pm.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 logo.setText("")
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in __init__")
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.0.8</h3>"
+            "<h3 align='center'>Version 1.10.2</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))
@@ -3213,21 +3099,11 @@ class AboutDialog(QDialog):
 
         Args:
             None
-
-        Returns:
-            None
         """
         self.setStyleSheet(_help_dialog_qss())
 
     def showEvent(self, event):
-        """Reapply the theme each time the dialog becomes visible.
-
-        Args:
-            event (QShowEvent): The show event.
-
-        Returns:
-            None
-        """
+        """Reapply the theme each time the dialog becomes visible."""
         self.apply_theme()
         super().showEvent(event)
 

@@ -3,14 +3,11 @@ from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,QRadioButton,
-                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox,
-                            QLayout, QFrame, QGridLayout)
+                            QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView, QSpinBox)
 from tools.parameters_table import (ParametersTableView,
-                               COL_ELEMENT, COL_INCLUDE, COL_METHOD, COL_SIGMA,
-                               COL_THRESHOLD, COL_MIN_CONT, COL_ALPHA, COL_ITERATIVE,
-                               COL_WINDOW, COL_INTEG, COL_SPLIT, COL_VALLEY)
+                               COL_SIGMA)
 from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
-                            QRect, QEvent, QEventLoop, QSettings, Signal)
+                            QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
@@ -22,6 +19,7 @@ from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget
 from calibration_methods.TE import TransportRateCalibrationWindow
+from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
 from widget.calibration_info import CalibrationInfoDialog
 from loading.data_thread import DataProcessThread
@@ -34,8 +32,8 @@ from widget.canvas_widgets import CanvasResultsDialog
 from loading.SIA_manager import SingleIonDistributionManager
 import qtawesome as qta
 from tools.signal_selector_dialog import SignalSelectorDialog
-import isobaric_correction as isobaric
-from tools.logging_utils import logging_manager, log_user_action
+import tools.isobaric_correction as isobaric
+from tools.logging_utils import logging_manager, log_user_action, set_current_window
 import logging
 from widget.colors import element_colors
 from tools.theme import (
@@ -66,12 +64,13 @@ from tools.theme import (
     table_header_label_qss,
     html_table_css,
 )
+_itk_log = logging.getLogger("IsotopeTrack.mainwindow")
 
 
 def element_chip_qss(p) -> str:
     """Stylesheet for a single element chip in the quick-selector.
 
-    ``p`` is a theme ``Palette``. The ``:checked`` state marks the element
+    p is a theme Palette. The :checked state marks the element
     currently shown in the plot.
     """
     return (
@@ -85,81 +84,58 @@ def element_chip_qss(p) -> str:
     )
 
 
-from tools.element_picker import ElementGridPopup, ElementPicker
+from tools.element_picker import ElementPicker
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
     CSVDataProcessThread = None
     show_csv_structure_dialog = None
     
     
 class NoWheelSpinBox(QDoubleSpinBox):
-    """
-    Custom QDoubleSpinBox that ignores mouse wheel events.
-    
+    """Custom QDoubleSpinBox that ignores mouse wheel events.
+
     Args:
         Inherits from QDoubleSpinBox
-        
-    Returns:
-        None
     """
     def wheelEvent(self, event):
-        """
-        Ignore mouse wheel scroll events.
-        
+        """Ignore mouse wheel scroll events.
+
         Args:
             event: QWheelEvent object
-            
-        Returns:
-            None
         """
         event.ignore()
 
 
 class NoWheelIntSpinBox(QSpinBox):
-    """
-    Custom QSpinBox that ignores mouse wheel events.
-    
+    """Custom QSpinBox that ignores mouse wheel events.
+
     Args:
         Inherits from QSpinBox
-        
-    Returns:
-        None
     """
     def wheelEvent(self, event):
-        """
-        Ignore mouse wheel scroll events.
-        
+        """Ignore mouse wheel scroll events.
+
         Args:
             event: QWheelEvent object
-            
-        Returns:
-            None
         """
         event.ignore()
 
 
 class NoWheelComboBox(QComboBox):
-    """
-    Custom QComboBox that ignores mouse wheel events.
-    
+    """Custom QComboBox that ignores mouse wheel events.
+
     Args:
         Inherits from QComboBox
-        
-    Returns:
-        None
     """
     def wheelEvent(self, event):
-        """
-        Ignore mouse wheel scroll events.
-        
+        """Ignore mouse wheel scroll events.
+
         Args:
             event: QWheelEvent object
-            
-        Returns:
-            None
         """
         event.ignore()
         
@@ -171,17 +147,17 @@ class NoWheelComboBox(QComboBox):
      
 class MainWindow(QMainWindow):
     def __init__(self):
-        """
-        Initialize the MainWindow for IsotopeTrack application.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Initialize the MainWindow for IsotopeTrack application."""
         super().__init__()
         
+        _app = QApplication.instance()
+        if not hasattr(_app, '_window_counter'):
+            _app._window_counter = 0
+        _app._window_counter += 1
+        self.window_number = _app._window_counter
+        self.window_id = f"W{self.window_number}"
+        set_current_window(self.window_id)
+
         if not hasattr(self, 'logger'):
             self.logger = logging_manager.get_logger('MainWindow')
             self.user_action_logger = logging_manager.get_user_action_logger()
@@ -202,6 +178,39 @@ class MainWindow(QMainWindow):
         self.element_mass_map = {}
         self.detected_peaks = {}
         self.sample_status = {} 
+        _sat_settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        self.saturation_filter_enabled = False
+        try:
+            self.saturation_filter_ms = float(
+                _sat_settings.value("filters/saturation_fwhm_ms", 1.5))
+        except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
+            self.saturation_filter_ms = 1.5
+        self.saturation_highlight = _sat_settings.value(
+            "filters/saturation_highlight", True, type=bool)
+        try:
+            self.saturation_min_snr = float(
+                _sat_settings.value("filters/saturation_min_snr", 10.0))
+        except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
+            self.saturation_min_snr = 10.0
+        try:
+            self.saturation_flat_ratio = float(
+                _sat_settings.value("filters/saturation_flat_ratio", 0.5))
+        except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
+            self.saturation_flat_ratio = 0.5
+        try:
+            self.saturation_top_frac = float(
+                _sat_settings.value("filters/saturation_top_frac", 0.90))
+        except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
+            self.saturation_top_frac = 0.90
+        self.saturation_top_frac = min(0.99, max(0.50, self.saturation_top_frac))
+        self.saturation_filtered_peaks = {}
+        self.saturation_filtered_multi = {}
+        self.saturation_windows = {}
+        self.saturation_excluded_time_s = {}
         self.animation = None
         self.animation_group = None
         self.overlap_threshold_percentage = 75.0
@@ -213,6 +222,7 @@ class MainWindow(QMainWindow):
             _saved_w = int(QSettings("IsotopeTrack", "IsotopeTrack")
                            .value("ui/sidebar_width", 200))
         except (TypeError, ValueError):
+            _itk_log.exception("Handled exception in __init__")
             _saved_w = 200
         self.sidebar_width = max(self.sidebar_min_width,
                                  min(self.sidebar_max_width, _saved_w))
@@ -248,10 +258,11 @@ class MainWindow(QMainWindow):
         self.project_manager = ProjectManager(self)
         self.detection_states = {}  
         self.needs_initial_detection = set() 
+        self._results_attention = False
         self.peak_detector = PeakDetection()  
         self.sample_method_info = {}
         self.sample_to_folder_map = {}
-        self.transport_rate_methods = ["Liquid weight", "Number based", "Mass based"]
+        self.transport_rate_methods = calibration_registry.default_transport_labels()
         self.element_mass_fractions = {}
         self.element_densities = {}
         self.element_molecular_weights = {}  
@@ -278,10 +289,6 @@ class MainWindow(QMainWindow):
         
         if not hasattr(QApplication.instance(), 'main_windows'):
             QApplication.instance().main_windows = []
-        if not hasattr(QApplication.instance(), '_window_counter'):
-            QApplication.instance()._window_counter = 0
-        QApplication.instance()._window_counter += 1
-        self.window_number = QApplication.instance()._window_counter
         self._project_filepath = None
         QApplication.instance().main_windows.append(self)
         self.update_window_title()
@@ -292,9 +299,18 @@ class MainWindow(QMainWindow):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
 
+        # Autosave + crash recovery. The timer writes a background snapshot when
+        # there are unsaved changes; a leftover snapshot at startup means the
+        # last session did not exit cleanly, so offer to recover it (first
+        # window only, after the event loop starts).
+        from save_export.autosave import AutosaveManager
+        self._autosave = AutosaveManager(self)
+        self._autosave.start()
+        if self.window_number == 1:
+            QTimer.singleShot(800, self._offer_crash_recovery)
+
     def update_window_title(self, filepath=None):
-        """
-        Update the window title to reflect the current project state.
+        """Update the window title to reflect the current project state.
 
         When no project is saved the title reads
         "IsotopeTrack — Window N (Unnamed)".  After a save or load the
@@ -304,9 +320,6 @@ class MainWindow(QMainWindow):
             filepath (str | None): Path to the project file that was just
                 saved or loaded.  Pass None to keep the current filepath or
                 to show the unnamed title on a fresh window.
-
-        Returns:
-            None
         """
         if filepath is not None:
             self._project_filepath = filepath
@@ -317,15 +330,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(f"IsotopeTrack — Window {self.window_number} (Unnamed)")
 
     def setup_window_size(self):
-        """
-        Configure initial window size and position.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Configure initial window size and position."""
         screen = QGuiApplication.primaryScreen().availableGeometry()
 
         window_width = int(screen.width() * 0.8)
@@ -334,43 +339,19 @@ class MainWindow(QMainWindow):
         self.center_on_screen()
         
     def initialize_help_manager(self):
-        """
-        Initialize help dialog manager.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Initialize help dialog manager."""
         from tools.help_dialogs import HelpManager
         self.help_manager = HelpManager(self)
         
     def center_on_screen(self):
-        """
-        Center window on screen.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Center window on screen."""
         screen = QGuiApplication.primaryScreen().availableGeometry()
         window_geometry = self.frameGeometry()
         window_geometry.moveCenter(screen.center())
         self.move(window_geometry.topLeft())
         
     def reset_data_structures(self):
-        """
-        Reset all data structures before loading a saved project.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Reset all data structures before loading a saved project."""
         self.selected_isotopes = {}
         self.data_by_sample = {}
         self._exclusion_regions_by_sample = {}
@@ -412,22 +393,28 @@ class MainWindow(QMainWindow):
     #------------------------------------UI creation - main layout --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
     def open_isobaric_correction(self):
+        """Open the isobaric correction dialog, reusing a single instance.
+
+        The dialog is created once and kept on self._isobaric_dialog, then
+        refreshed on every subsequent open. Recreating it each time crashes
+        on close: Python garbage-collects the dialog inside the menu-action
+        handler and the pyqtgraph PlotWidget's QGraphicsScene teardown
+        double-frees under PySide6 (segfault in Shiboken::Object::destroy).
+        """
         if not self.selected_isotopes or not self.data_by_sample:
             QMessageBox.warning(self, "Isobaric Correction", "Load data and select elements first.")
             return
         from widget.isobaric_correction_dialog import IsobaricCorrectionDialog
-        IsobaricCorrectionDialog(self).exec()
+        dlg = getattr(self, '_isobaric_dialog', None)
+        if dlg is None:
+            dlg = IsobaricCorrectionDialog(self)
+            self._isobaric_dialog = dlg
+        else:
+            dlg.reload()
+        dlg.exec()
         
     def create_central_widget(self):
-        """
-        Create and configure the central widget with main UI layout.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Create and configure the central widget with main UI layout."""
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
@@ -524,22 +511,26 @@ class MainWindow(QMainWindow):
     
     def compute_isobaric_corrections(self):
         """Derive every applicable correction from self.selected_isotopes.
- 
-        Reuses the periodic table's abundance data (get_element_by_symbol /
-        get_elements). A correction is 'enabled' only when a clean monitor of
-        the interferent is itself among the selected isotopes.
+
+        Overlaps come from the reference table
+        (data/interference_corrections.json) — the known list of isobaric
+        interferences — with any persisted user overrides (custom R factor or
+        monitor isotope) applied on top. A correction is 'enabled' only when
+        its monitor channel is among the measured data channels.
         """
-        if not getattr(self, 'periodic_table_widget', None):
-            return []
         if not getattr(self, 'selected_isotopes', None):
             return []
-        return isobaric.build_all_corrections(
+        all_channels = sorted({
+            m
+            for sd in getattr(self, 'data_by_sample', {}).values()
+            for m in sd.keys()
+        })
+        return isobaric.build_table_corrections(
             self.selected_isotopes,
-            self.periodic_table_widget.get_element_by_symbol,
-            self.periodic_table_widget.get_elements,
+            available_masses=all_channels or None,
+            overrides=isobaric.load_overrides(),
         )
  
-    # ---- PREVIEW: compute IN vs OUT, change nothing ----
     def preview_isobaric_correction(self, sample_name=None, corrections=None):
         """Return per-channel before/after for the in/out plot. No mutation.
  
@@ -621,12 +612,22 @@ class MainWindow(QMainWindow):
  
         if changed:
             self.isobaric_applied = True
+            if self._invalidate_particle_detection(sample_names):
+                self.status_label.setText(
+                    "Isobaric correction applied — previous peak detection "
+                    "results were cleared. Run Detect Peaks again.")
         return changed
- 
+
     # ---- REVERT: undo an apply, restore raw ----
     def revert_isobaric_correction(self):
-        """Restore the raw signal everywhere a correction was applied."""
+        """Restore the raw signal everywhere a correction was applied.
+
+        Stale particle-detection results (computed on the corrected signal)
+        are cleared as well, so the plot and result tables never show peaks
+        that no longer match the visible signal.
+        """
         backup = getattr(self, '_isobaric_raw_backup', {})
+        reverted_samples = list(backup.keys())
         for sname, channels in backup.items():
             sample_data = self.data_by_sample.get(sname)
             if not sample_data:
@@ -637,15 +638,106 @@ class MainWindow(QMainWindow):
                 self.data = sample_data
         self._isobaric_raw_backup = {}
         self.isobaric_applied = False
+        if reverted_samples and self._invalidate_particle_detection(reverted_samples):
+            self.status_label.setText(
+                "Isobaric correction reverted — previous peak detection "
+                "results were cleared. Run Detect Peaks again.")
+
+    def _invalidate_particle_detection(self, sample_names=None):
+        """Clear stale particle-detection results after the signal changed.
+
+        Applying or reverting an isobaric correction rewrites the working
+        signal, so particles detected on the previous signal (positions,
+        heights, integrated counts) no longer match what is plotted. This
+        clears every stored detection product for the affected samples and
+        refreshes the current display so no stale peaks remain visible.
+
+        Args:
+            sample_names: Samples whose results to clear. Defaults to all
+                loaded samples.
+
+        Returns:
+            bool: True when at least one sample actually had results.
+        """
+        if sample_names is None:
+            sample_names = list(self.data_by_sample.keys())
+
+        had_results = False
+        for sname in sample_names:
+            if self.sample_detected_peaks.get(sname):
+                had_results = True
+            self.sample_detected_peaks.pop(sname, None)
+            self.sample_results_data.pop(sname, None)
+            self.sample_particle_data.pop(sname, None)
+            self.detection_states.pop(sname, None)
+            self.saturation_filtered_peaks.pop(sname, None)
+            self.saturation_filtered_multi.pop(sname, None)
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+            if hasattr(self, 'needs_initial_detection'):
+                self.needs_initial_detection.add(sname)
+
+        if getattr(self, 'current_sample', None) in sample_names:
+            self.detected_peaks = {}
+            self.multi_element_particles = []
+            try:
+                self.results_table.setRowCount(0)
+            except Exception:
+                _itk_log.exception("Handled exception in _invalidate_particle_detection")
+            try:
+                self.update_sample_table()
+            except Exception:
+                _itk_log.exception("Handled exception in _invalidate_particle_detection")
+        if had_results:
+            self._mark_results_changed()
+        return had_results
         
     
-    def create_sidebar(self):
-        """
-        Create sidebar with calibration and sample management tools.
-        
+    def _set_results_attention(self, on):
+        """Highlight or un-highlight the sidebar Results button.
+
+        When the working signal is modified in a way that invalidates the
+        currently stored particle results, the Results button is given an
+        accent-colored fill so the user immediately sees that fresh results
+        are waiting to be viewed. The highlight is cleared once the user
+        opens the results.
+
         Args:
-            self: MainWindow instance
-            
+            on (bool): True to apply the attention highlight, False to
+                restore the button's default sidebar styling.
+        """
+        self._results_attention = bool(on)
+        if not hasattr(self, 'results_button'):
+            return
+        p = theme.palette
+        if on:
+            self.results_button.setStyleSheet(
+                f"QPushButton{{background:{p.accent};color:{p.text_inverse};"
+                f"border:1px solid {p.accent};font-weight:700;}}"
+                f"QPushButton:hover{{background:{p.accent};"
+                f"border-color:{p.accent};}}"
+            )
+            self.results_button.setToolTip(
+                "Something changed — click Results to update the results "
+                "in the canvas.")
+        else:
+            self.results_button.setStyleSheet("")
+            self.results_button.setToolTip("")
+
+    def _mark_results_changed(self):
+        """Flag that the stored results are now out of date.
+
+        Called from every place that mutates data feeding into the
+        results (particle detection, the non-linearity filter, particle
+        rebuilds, calibration changes, isobaric corrections). The Results
+        button is highlighted so the user knows fresh results are waiting
+        and that opening Results will update the canvas.
+        """
+        self._set_results_attention(True)
+
+    def create_sidebar(self):
+        """Create sidebar with calibration and sample management tools.
+
         Returns:
             QWidget: Configured sidebar widget
         """
@@ -714,9 +806,11 @@ class MainWindow(QMainWindow):
         samples_layout.addWidget(elements_button)
 
         results_button = QPushButton("Results")
+        self.results_button = results_button
         self._sidebar_icon_buttons.append((results_button, 'fa6s.table-list'))
         results_button.clicked.connect(self.show_results)
         samples_layout.addWidget(results_button)
+        self._set_results_attention(self._results_attention)
 
         export_button = QPushButton("Export")
         self._sidebar_icon_buttons.append((export_button, 'fa6s.file-export'))
@@ -744,29 +838,13 @@ class MainWindow(QMainWindow):
         return sidebar
     
     def create_menu_bar(self):
-        """
-        Create application menu bar with actions.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Create application menu bar with actions."""
         menu_bar = self.menuBar() 
         
         self._menu_icon_items = []
 
         def _ma(icon_name, text, slot, shortcut=None):
-            """Create a menu action, register it for retinting, return it.
-            Args:
-                icon_name (Any): The icon name.
-                text (Any): Text string.
-                slot (Any): The slot.
-                shortcut (Any): The shortcut.
-            Returns:
-                object: Result of the operation.
-            """
+            """Create a menu action, register it for retinting, return it."""
             action = QAction(text, self)
             if shortcut:
                 action.setShortcut(shortcut)
@@ -867,10 +945,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def open_new_window(self):
-        """
-        Returns:
-            None
-        """
         self.user_action_logger.log_action('NEW_WINDOW', 'Opened new analysis window')
         
         new_window = MainWindow()
@@ -881,15 +955,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Opened new analysis window")
 
     def close_all_windows(self):
-        """
-        Close all open windows and quit application.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Close all open windows and quit application."""
         self.user_action_logger.log_action('CLICK', 'Close all windows and quit')
         app = QApplication.instance()
         if hasattr(app, 'main_windows'):
@@ -898,15 +964,7 @@ class MainWindow(QMainWindow):
         app.quit()
         
     def create_status_bar(self):
-        """
-        Create application status bar with progress indicator.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Create application status bar with progress indicator."""
         status_bar = self.statusBar()
         
         container = QWidget()
@@ -972,6 +1030,8 @@ class MainWindow(QMainWindow):
 
         for btn, icon_name in getattr(self, '_sidebar_icon_buttons', []):
             btn.setIcon(qta.icon(icon_name, color=p.text_on_sidebar))
+
+        self._set_results_attention(getattr(self, '_results_attention', False))
 
         if hasattr(self, 'toggle_button'):
             arrow_icon = 'fa6s.arrow-left' if self.sidebar_visible else 'fa6s.arrow-right'
@@ -1106,11 +1166,7 @@ class MainWindow(QMainWindow):
         self.logger.info(f"Theme applied: {p.name}")
 
     def create_plot_widget(self):
-        """
-        Create plot widget for data visualization with an inline Time / m/z toggle.
-
-        Args:
-            self: MainWindow instance
+        """Create plot widget for data visualization with an inline Time / m/z toggle.
 
         Returns:
             QGroupBox: Plot widget container
@@ -1200,12 +1256,8 @@ class MainWindow(QMainWindow):
         return wrapper
     
     def create_control_panel(self):
-        """
-        Create control panel for particle detection parameters.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create control panel for particle detection parameters.
+
         Returns:
             QGroupBox: Control panel widget
         """
@@ -1299,6 +1351,25 @@ class MainWindow(QMainWindow):
         self.detect_button.clicked.connect(self.detect_particles)
         
         button_layout.addWidget(self.detect_button)
+
+        self.saturation_filter_button = QPushButton()
+        self._primary_buttons.append((self.saturation_filter_button, 'fa6s.filter'))
+        self.saturation_filter_button.setCheckable(True)
+        self.saturation_filter_button.setToolTip(
+            "Exclude events recorded under non-linear detector response.\n"
+            "Detection is based on peak shape: when any isotope shows a wide,\n"
+            "flat-topped peak, that time window is excluded for ALL isotopes\n"
+            "(results, summary, exports), and the excluded time is subtracted\n"
+            "from the analysis time used for concentrations.\n\n"
+            "Left-click: toggle the filter on/off.\n"
+            "Right-click: customize the criteria and highlighting."
+        )
+        self.saturation_filter_button.toggled.connect(self.on_saturation_filter_toggled)
+        self.saturation_filter_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.saturation_filter_button.customContextMenuRequested.connect(
+            self.show_saturation_filter_menu)
+        button_layout.addWidget(self.saturation_filter_button)
+        self._update_saturation_button_text()
         main_layout.addLayout(button_layout)
         
         self.showing_all_signals = False
@@ -1308,12 +1379,8 @@ class MainWindow(QMainWindow):
         return group_box
     
     def create_summary_widget(self):
-        """
-        Create widget for particle summary statistics display.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create widget for particle summary statistics display.
+
         Returns:
             QGroupBox: Summary statistics widget
         """
@@ -1337,12 +1404,8 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
         
     def create_results_container(self):
-        """
-        Create container for results display with element and particle tables.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create container for results display with element and particle tables.
+
         Returns:
             QWidget: Container widget with results display elements
         """
@@ -1423,12 +1486,8 @@ class MainWindow(QMainWindow):
         return container
 
     def create_sample_table(self):
-        """
-        Create sample list table widget.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create sample list table widget.
+
         Returns:
             QTableWidget: Configured sample table
         """
@@ -1446,12 +1505,8 @@ class MainWindow(QMainWindow):
         return self.sample_table
     
     def create_results_table(self):
-        """
-        Create table for single element detection results.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create table for single element detection results.
+
         Returns:
             QTableWidget: Configured results table
         """
@@ -1471,12 +1526,8 @@ class MainWindow(QMainWindow):
         return self.results_table
     
     def create_multi_element_table(self):
-        """
-        Create table for multi-element particle results.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Create table for multi-element particle results.
+
         Returns:
             QTableWidget: Configured multi-element table
         """
@@ -1487,15 +1538,8 @@ class MainWindow(QMainWindow):
         return self.multi_element_table
     
     def create_table_header(self, title, bg_color, text_color):
-        """
-        Create styled header label for tables.
-        
-        Args:
-            self: MainWindow instance
-            title (str): Header text
-            bg_color (str): Background color (hex)
-            text_color (str): Text color (hex)
-            
+        """Create styled header label for tables.
+
         Returns:
             QLabel: Styled header label
         """
@@ -1514,14 +1558,8 @@ class MainWindow(QMainWindow):
         return header
 
     def create_enhanced_checkbox(self, text, tooltip):
-        """
-        Create styled checkbox with custom appearance.
-        
-        Args:
-            self: MainWindow instance
-            text (str): Checkbox label text
-            tooltip (str): Tooltip text
-            
+        """Create styled checkbox with custom appearance.
+
         Returns:
             QCheckBox: Configured checkbox widget
         """
@@ -1540,22 +1578,14 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
    
     def toggle_sidebar(self):
-        """
-        Animate sidebar visibility toggle.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Animate sidebar visibility toggle."""
         current_width = self.sidebar.maximumWidth()
         if getattr(self, 'animation_group', None) is not None:
             try:
                 self.animation_group.stop()
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
-                pass
+                _itk_log.exception("Handled exception in toggle_sidebar")
             self.animation_group = None
 
         opening = not self.sidebar_visible
@@ -1640,19 +1670,11 @@ class MainWindow(QMainWindow):
             QSettings("IsotopeTrack", "IsotopeTrack").setValue(
                 "ui/sidebar_width", self.sidebar_width)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _sidebar_grip_release")
         event.accept()
 
     def on_animation_finished(self):
-        """
-        Clean up after sidebar animation completes.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Clean up after sidebar animation completes."""
         if not self.sidebar_visible:
             self.sidebar.hide()
             self.toggle_button.hide()  
@@ -1667,19 +1689,11 @@ class MainWindow(QMainWindow):
             try:
                 self.animation_group.finished.disconnect()
             except (RuntimeError, TypeError):
-                pass
+                _itk_log.exception("Handled exception in on_animation_finished")
             self.animation_group = None
         
     def toggle_info(self):
-        """
-        Toggle visibility of sample information tooltip.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Toggle visibility of sample information tooltip."""
         if not hasattr(self, 'info_tooltip'):
             self.info_tooltip = InfoTooltip(self)
             self.info_tooltip.set_trigger_widget(self.info_button)
@@ -1716,56 +1730,22 @@ class MainWindow(QMainWindow):
             self.info_tooltip.show()
 
     def hide_info_tooltip(self, event):
-        """
-        Hide the information tooltip.
-        
-        Args:
-            self: MainWindow instance
-            event: QEvent object
-            
-        Returns:
-            None
-        """
+        """Hide the information tooltip."""
         if hasattr(self, 'info_tooltip'):
             self.info_tooltip.hide()
             
     def toggle_fullscreen(self):
-        """
-        Toggle fullscreen mode.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Toggle fullscreen mode."""
         if self.isFullScreen():
             self.exit_fullscreen()
 
     def exit_fullscreen(self):
-        """
-        Exit fullscreen mode.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Exit fullscreen mode."""
         self.showNormal()
         self.status_label.setText("Exited fullscreen mode")
 
     def keyPressEvent(self, event):
-        """
-        Handle keyboard events.
-        
-        Args:
-            self: MainWindow instance
-            event: QKeyEvent object
-            
-        Returns:
-            None
-        """
+        """Handle keyboard events."""
         if event.key() == Qt.Key_F11:
             self.toggle_fullscreen()
         elif event.key() == Qt.Key_Escape and self.isFullScreen():
@@ -1774,34 +1754,26 @@ class MainWindow(QMainWindow):
             super().keyPressEvent(event)
                 
     def resizeEvent(self, event):
-        """
-        Handle window resize events.
-        
-        Args:
-            self: MainWindow instance
-            event: QResizeEvent object
-            
-        Returns:
-            None
-        """
+        """Handle window resize events."""
         super().resizeEvent(event)
         if hasattr(self, 'sidebar') and getattr(self, 'sidebar_visible', True):
             self.sidebar.setFixedWidth(self.sidebar_width)
-        
+
         if hasattr(self, 'content_area'):
             self.content_area.setSizes([int(self.height() * 0.7), int(self.height() * 0.3)])
-            
-        
+
+    def changeEvent(self, event):
+        """Attribute subsequent log records to whichever window is active."""
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+            set_current_window(getattr(self, "window_id", None))
+        super().changeEvent(event)
+
     #----------------------------------------------------------------------------------------------------------
     #------------------------------------Data loading and import --------------------------------------------
     #----------------------------------------------------------------------------------------------------------
 
     def _has_loaded_samples(self):
-        """
-        Check whether any sample data is currently loaded in this window.
-
-        Args:
-            self: MainWindow instance
+        """Check whether any sample data is currently loaded in this window.
 
         Returns:
             bool: True if at least one sample is registered, False otherwise.
@@ -1810,18 +1782,12 @@ class MainWindow(QMainWindow):
                bool(getattr(self, 'data_by_sample', None))
 
     def _probe_masses(self, paths, source_type):
-        """
-        Quickly probe the mass list of the first accessible path.
+        """Quickly probe the mass list of the first accessible path.
 
         Used before deciding whether a new set of files can be appended to the
         current session. For NU and TOFWERK this calls ``get_masses_only``
         without loading the full signals. CSV is handled separately because
         masses come from the structure-dialog config.
-
-        Args:
-            self: MainWindow instance
-            paths (list): Candidate data paths (folders or files)
-            source_type (str): One of "nu", "tofwerk", "csv"
 
         Returns:
             np.ndarray | None: Array of masses from the first readable path,
@@ -1835,23 +1801,17 @@ class MainWindow(QMainWindow):
                 if masses is not None and len(masses) > 0:
                     return np.asarray(masses, dtype=float)
             except Exception:
+                _itk_log.exception("Handled exception in _probe_masses")
                 continue
         return None
 
     def _prepare_for_load(self, source_type, paths, new_masses=None):
-        """
-        Decide how to handle a new load request against the current session.
+        """Decide how to handle a new load request against the current session.
 
         If nothing is loaded yet, behaves as a fresh load. Otherwise checks
         source-type compatibility (offers "open in new window" on mismatch)
         and mass-range compatibility (offers Ignore / New Window / Cancel on
         mismatch).
-
-        Args:
-            self: MainWindow instance
-            source_type (str): "nu", "tofwerk", or "csv"
-            paths (list): Paths the user is trying to load
-            new_masses (np.ndarray | None): Probed masses, if already known
 
         Returns:
             tuple[bool, bool]: (proceed, append_mode). If proceed is False
@@ -1922,17 +1882,7 @@ class MainWindow(QMainWindow):
         return True, True
 
     def _open_in_new_window(self, paths, source_type):
-        """
-        Open a fresh MainWindow and auto-load the given paths into it.
-
-        Args:
-            self: MainWindow instance
-            paths (list): Paths to load
-            source_type (str): "nu", "tofwerk", or "csv"
-
-        Returns:
-            None
-        """
+        """Open a fresh MainWindow and auto-load the given paths into it."""
         try:
             new_window = MainWindow()
             new_window.showMaximized()
@@ -1959,20 +1909,12 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error opening new window: {e}")
 
     def _load_selected_isotopes_for_new_samples(self, sample_names):
-        """
-        Load currently-selected isotopes for samples added in append mode.
+        """Load currently-selected isotopes for samples added in append mode.
 
         Without this step, samples appended after isotopes were already picked
         would stay empty until the user toggled an isotope in the periodic
         table. CSV samples are skipped because they go through their own
         processing pipeline.
-
-        Args:
-            self: MainWindow instance
-            sample_names (list): Names of newly added samples
-
-        Returns:
-            None
         """
         if not sample_names or not self.selected_isotopes:
             return
@@ -2022,7 +1964,7 @@ class MainWindow(QMainWindow):
                     thread.finished.disconnect()
                     thread.error.disconnect()
                 except (RuntimeError, TypeError):
-                    pass
+                    _itk_log.exception("Handled exception in _load_selected_isotopes_for_new_samples")
                 thread.deleteLater()
             except Exception as e:
                 self.logger.error(
@@ -2035,15 +1977,7 @@ class MainWindow(QMainWindow):
 
     @log_user_action('MENU', 'File -> Open Folder')
     def select_folder(self):
-        """
-        Show dialog to select data source type and load data.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Show dialog to select data source type and load data."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Select Data Source")
         dialog.setMinimumWidth(500)
@@ -2136,15 +2070,43 @@ class MainWindow(QMainWindow):
                 self.select_csv_files()
             else:
                 self.select_tofwerk_files()
+    
+    def expand_nu_replicate_folders(self, selected_paths):
+        """
+        Expand selected folders into Nu run folders, descending into replicate subfolders.
+
+        For each selected path, if the folder contains a run.info file directly it is
+        kept as is. If it does not, the folder is treated as a parent and each immediate
+        subfolder that contains a run.info file is added as a separate Nu run folder.
+        Parent folders without any run.info-containing subfolder are returned unchanged
+        so existing validation and error handling still applies.
+
+        Args:
+            selected_paths (list): List of folder paths chosen by the user
+
+        Returns:
+            list: Expanded list of folder paths, each pointing to a Nu run folder
+        """
+        expanded_paths = []
+        for selected in selected_paths:
+            path = Path(selected)
+            if (path / "run.info").exists():
+                expanded_paths.append(str(path))
+                continue
+            replicate_paths = []
+            if path.is_dir():
+                for child in sorted(path.iterdir()):
+                    if child.is_dir() and (child / "run.info").exists():
+                        replicate_paths.append(str(child))
+            if replicate_paths:
+                expanded_paths.extend(replicate_paths)
+            else:
+                expanded_paths.append(str(path))
+        return expanded_paths
                 
     def get_unique_sample_name(self, base_name):
-        """
-        Generate a unique sample name by appending a number if name already exists.
-        
-        Args:
-            self: MainWindow instance
-            base_name (str): Original sample name
-            
+        """Generate a unique sample name by appending a number if name already exists.
+
         Returns:
             str: Unique sample name with number suffix if necessary
         """
@@ -2159,15 +2121,7 @@ class MainWindow(QMainWindow):
             counter += 1
                     
     def select_folders(self):
-        """
-        Select NU folders for data loading.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Select NU folders for data loading."""
         self.user_action_logger.log_action('FILE_OP', 'Open multiple NU folders dialog')
         try:
             file_dialog = QFileDialog(self)
@@ -2192,19 +2146,15 @@ class MainWindow(QMainWindow):
                     'OPEN',
                     ', '.join(selected_paths[:3]) + ('…' if len(selected_paths) > 3 else ''),
                     {'folder_count': len(selected_paths)})
+                selected_paths = self.expand_nu_replicate_folders(selected_paths)
                 self.process_folders(selected_paths)
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error selecting folders: {str(e)}")
             
     def check_data_source_accessible(self, path):
-        """
-        Check if a data source path is still accessible.
-        
-        Args:
-            self: MainWindow instance
-            path: Path to data source (folder or file)
-            
+        """Check if a data source path is still accessible.
+
         Returns:
             bool: True if accessible, False otherwise
         """
@@ -2219,6 +2169,7 @@ class MainWindow(QMainWindow):
                     list(path_obj.iterdir())
                     return True
                 except (PermissionError, OSError):
+                    _itk_log.exception("Handled exception in check_data_source_accessible")
                     return False
             
             elif path_obj.is_file():
@@ -2227,6 +2178,7 @@ class MainWindow(QMainWindow):
                         f.read(1)  
                     return True
                 except (PermissionError, OSError, IOError):
+                    _itk_log.exception("Handled exception in check_data_source_accessible")
                     return False
             
             return False
@@ -2236,12 +2188,8 @@ class MainWindow(QMainWindow):
             return False
 
     def verify_all_data_sources(self):
-        """
-        Verify that all loaded data sources are still accessible.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Verify that all loaded data sources are still accessible.
+
         Returns:
             tuple: (all_accessible: bool, inaccessible_samples: list)
         """
@@ -2254,17 +2202,12 @@ class MainWindow(QMainWindow):
         return len(inaccessible_samples) == 0, inaccessible_samples
 
     def prompt_reconnect_data_source(self, inaccessible_samples):
-        """
-        Prompt user to reconnect inaccessible data sources.
-        
-        Args:
-            self: MainWindow instance
-            inaccessible_samples: List of (sample_name, path) tuples
-            
+        """Prompt user to reconnect inaccessible data sources.
+
         Returns:
             bool: True if user wants to reconnect, False to cancel
         """
-        from PySide6.QtWidgets import QMessageBox, QTextEdit, QVBoxLayout, QDialog, QPushButton
+        from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QDialog, QPushButton
         
         dialog = QDialog(self)
         dialog.setWindowTitle("Data Sources Not Accessible")
@@ -2315,13 +2258,8 @@ class MainWindow(QMainWindow):
         return dialog.exec() == QDialog.Accepted
     
     def rebuild_isotope_dict_from_set(self, isotope_set):
-        """
-        Rebuild isotope dictionary from a set of (element, isotope) tuples.
-        
-        Args:
-            self: MainWindow instance
-            isotope_set: Set of (element, isotope) tuples
-            
+        """Rebuild isotope dictionary from a set of (element, isotope) tuples.
+
         Returns:
             dict: Dictionary mapping element to list of isotopes
         """
@@ -2333,15 +2271,7 @@ class MainWindow(QMainWindow):
         return isotope_dict
                     
     def select_csv_files(self):
-        """
-        Select CSV/Excel files for data loading.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Select CSV/Excel files for data loading."""
         self.user_action_logger.log_action('FILE_OP', 'Open CSV / Excel files dialog')
         try:
             if not CSVStructureDialog:
@@ -2367,15 +2297,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error selecting files: {str(e)}")
                 
     def select_tofwerk_files(self):
-        """
-        Select TOFWERK .h5 files for processing.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Select TOFWERK .h5 files for processing."""
         self.user_action_logger.log_action('FILE_OP', 'Open TOFWERK .h5 files dialog')
         try:
             h5_files, _ = QFileDialog.getOpenFileNames(
@@ -2395,16 +2317,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error selecting TOFWERK files: {str(e)}")
             
     def process_folders(self, folder_paths):
-        """
-        Process selected NU folders.
-        
-        Args:
-            self: MainWindow instance
-            folder_paths (list): List of folder paths
-            
-        Returns:
-            None
-        """
+        """Process selected NU folders."""
         self.log_status(f"Processing {len(folder_paths)} folders")
 
         probe = self._probe_masses(folder_paths, "nu")
@@ -2501,16 +2414,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error processing folders: {str(e)}")
     
     def process_csv_files_with_isotopes(self, selected_isotopes):
-        """
-        Process CSV files with selected isotopes.
-        
-        Args:
-            self: MainWindow instance
-            selected_isotopes (dict): Dictionary of selected isotopes
-            
-        Returns:
-            None
-        """
+        """Process CSV files with selected isotopes."""
         try:
             if not self.csv_config: 
                 raise ValueError("No CSV configuration available")
@@ -2558,7 +2462,7 @@ class MainWindow(QMainWindow):
                     self.csv_thread.finished.disconnect()
                     self.csv_thread.error.disconnect()
                 except (RuntimeError, TypeError):
-                    pass
+                    _itk_log.exception("Handled exception in process_csv_files_with_isotopes")
                 self.csv_thread.deleteLater()
                 self.csv_thread = None
             
@@ -2576,16 +2480,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error processing CSV files: {str(e)}")
 
     def process_tofwerk_files(self, h5_file_paths):
-        """
-        Process selected TOFWERK .h5 files.
-        
-        Args:
-            self: MainWindow instance
-            h5_file_paths (list): List of .h5 file paths
-            
-        Returns:
-            None
-        """
+        """Process selected TOFWERK .h5 files."""
         try:
             self.log_status(f"Processing {len(h5_file_paths)} TOFWERK files")
 
@@ -2688,16 +2583,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error processing TOFWERK files: {str(e)}")
 
     def handle_csv_import(self, file_paths):
-        """
-        Handle CSV file import with configuration.
-        
-        Args:
-            self: MainWindow instance
-            file_paths (list): List of CSV file paths
-            
-        Returns:
-            None
-        """
+        """Handle CSV file import with configuration."""
         try:
             config = show_csv_structure_dialog(file_paths, self)
             if not config:
@@ -2738,18 +2624,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error importing CSV files: {str(e)}")
 
     def extract_masses_from_csv_config(self, config, append_mode=False):
-        """
-        Extract available masses from CSV configuration.
-        
-        Args:
-            self: MainWindow instance
-            config (dict): CSV configuration dictionary
-            append_mode (bool): If True, merge with existing masses instead of
-                replacing them. Default False.
-            
-        Returns:
-            None
-        """
+        """Extract available masses from CSV configuration."""
         masses = []
         for file_config in config['files']:
             for mapping in file_config['mappings'].values():
@@ -2764,14 +2639,8 @@ class MainWindow(QMainWindow):
             self.folder_paths = []
 
     def filter_csv_config_by_isotopes(self, config, selected_isotopes):
-        """
-        Filter CSV configuration to include only selected isotopes.
-        
-        Args:
-            self: MainWindow instance
-            config (dict): CSV configuration dictionary
-            selected_isotopes (dict): Dictionary of selected isotopes
-            
+        """Filter CSV configuration to include only selected isotopes.
+
         Returns:
             dict: Filtered configuration dictionary
         """
@@ -2801,20 +2670,7 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
    
     def handle_thread_finished(self, data, run_info, time_array, sample_name, analysis_datetime=None):
-        """
-        Handle completion of data processing thread.
-        
-        Args:
-            self: MainWindow instance
-            data (dict): Processed mass data dictionary
-            run_info (dict): Run information dictionary
-            time_array (ndarray): Time array
-            sample_name (str): Sample name
-            analysis_datetime (str, optional): Analysis datetime string
-            
-        Returns:
-            None
-        """
+        """Handle completion of data processing thread."""
         try:
             if sample_name not in self.data_by_sample:
                 self.data_by_sample[sample_name] = {}
@@ -2835,7 +2691,8 @@ class MainWindow(QMainWindow):
                                 method_info = json.load(fp)
                                 self.sample_method_info[sample_name] = method_info
                     except Exception as e:
-                        print(f"Could not load method info for {sample_name}: {str(e)}")
+                        _itk_log.exception("Handled exception in handle_thread_finished")
+                        _itk_log.error(f"Could not load method info for {sample_name}: {str(e)}")
 
             if analysis_datetime:
                 try:
@@ -2883,20 +2740,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error processing data for {sample_name}: {str(e)}")       
     
     def handle_csv_finished(self, data, run_info, time_array, sample_name, datetime_str):
-        """
-        Handle completion of CSV file processing.
-        
-        Args:
-            self: MainWindow instance
-            data (dict): Processed data dictionary
-            run_info (dict): Run information dictionary
-            time_array (ndarray): Time array
-            sample_name (str): Sample name
-            datetime_str (str): Datetime string
-            
-        Returns:
-            None
-        """
+        """Handle completion of CSV file processing."""
         try:
             self.data_by_sample[sample_name] = data.copy()
             self.time_array_by_sample[sample_name] = time_array.copy()
@@ -2946,20 +2790,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error processing CSV data for {sample_name}: {str(e)}")     
     
     def handle_new_elements_finished(self, new_data, run_info, time_array, sample_name, analysis_datetime=None):
-        """
-        Handle completion of new element processing.
-        
-        Args:
-            self: MainWindow instance
-            new_data (dict): New mass data dictionary
-            run_info (dict): Run information dictionary
-            time_array (ndarray): Time array
-            sample_name (str): Sample name
-            analysis_datetime (str, optional): Analysis datetime string
-            
-        Returns:
-            None
-        """
+        """Handle completion of new element processing."""
         try:
             if sample_name in self.data_by_sample:
                 self.data_by_sample[sample_name].update(new_data)
@@ -3011,16 +2842,7 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error merging new elements for {sample_name}: {str(e)}")
         
     def handle_error(self, error_message):
-        """
-        Handle errors from data processing threads.
-        
-        Args:
-            self: MainWindow instance
-            error_message (str): Error message
-            
-        Returns:
-            None
-        """
+        """Handle errors from data processing threads."""
         self.log_status(f"Error: {error_message}", 'error')
         
         self.progress_bar.setVisible(False)
@@ -3028,19 +2850,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", f"An error occurred: {error_message}")
 
     def display_data(self, new_data, run_info, time_array, sample_name):
-        """
-        Display processed data in UI.
-        
-        Args:
-            self: MainWindow instance
-            new_data (dict): Processed data dictionary
-            run_info (dict): Run information dictionary
-            time_array (ndarray): Time array
-            sample_name (str): Sample name
-            
-        Returns:
-            None
-        """
+        """Display processed data in UI."""
         self.handle_thread_finished(new_data, run_info, time_array, sample_name)
         self.progress_bar.setVisible(False)
         self.status_label.setText("Data processed successfully!")
@@ -3068,16 +2878,7 @@ class MainWindow(QMainWindow):
    
     
     def on_sample_selected(self, item):
-        """
-        Handle sample selection from sample table.
-        
-        Args:
-            self: MainWindow instance
-            item: QTableWidgetItem that was selected
-            
-        Returns:
-            None
-        """
+        """Handle sample selection from sample table."""
         if not item:
             return
         
@@ -3131,7 +2932,9 @@ class MainWindow(QMainWindow):
             self.restore_results_tables(sample_name)
             
             if hasattr(self, 'showing_all_signals') and self.showing_all_signals:
-                self.plot_all_signals()
+                # Legacy inline multi-signal view was removed; the
+                # Multi-Signal View button now opens SignalSelectorDialog.
+                pass
             else:
                 if currently_selected_element and currently_selected_isotope:
                     found_row = -1
@@ -3180,15 +2983,7 @@ class MainWindow(QMainWindow):
                 )
 
     def update_sample_table(self):
-        """
-        Update sample table with all loaded samples.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Update sample table with all loaded samples."""
         self.sample_table.setRowCount(0)
         
         for sample_name, source_path in self.sample_to_folder_map.items():
@@ -3208,16 +3003,7 @@ class MainWindow(QMainWindow):
             self.sample_table.setItem(row, 1, status_item)
             
     def show_sample_context_menu(self, position):
-        """
-        Show context menu for sample table.
-        
-        Args:
-            self: MainWindow instance
-            position: QPoint position for menu
-            
-        Returns:
-            None
-        """
+        """Show context menu for sample table."""
         row = self.sample_table.rowAt(position.y())
         if row >= 0:
             sample_name = self.sample_table.item(row, 0).text()
@@ -3273,16 +3059,7 @@ class MainWindow(QMainWindow):
             menu.exec(self.sample_table.viewport().mapToGlobal(position))
             
     def remove_sample(self, sample_name):
-        """
-        Remove sample and all associated data.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Name of sample to remove
-            
-        Returns:
-            None
-        """
+        """Remove sample and all associated data."""
         reply = QMessageBox.question(
             self, 
             'Remove Sample',
@@ -3320,7 +3097,11 @@ class MainWindow(QMainWindow):
                 ('sample_analysis_dates', self.sample_analysis_dates),
                 ('element_thresholds', self.element_thresholds),
                 ('sample_run_info', self.sample_run_info),
-                ('sample_method_info', self.sample_method_info)
+                ('sample_method_info', self.sample_method_info),
+                ('saturation_filtered_peaks', self.saturation_filtered_peaks),
+                ('saturation_filtered_multi', self.saturation_filtered_multi),
+                ('saturation_windows', self.saturation_windows),
+                ('saturation_excluded_time_s', self.saturation_excluded_time_s)
             ]
             
             removed_count = 0
@@ -3375,18 +3156,10 @@ class MainWindow(QMainWindow):
             error_msg = f"Error removing sample '{sample_name}': {str(e)}"
             self.status_label.setText(error_msg)
             QMessageBox.critical(self, "Removal Error", error_msg)
-            print(f"Error in remove_sample: {str(e)}")
+            _itk_log.error(f"Error in remove_sample: {str(e)}")
 
     def remove_all_samples(self):
-        """
-        Remove all samples and reset application.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Remove all samples and reset application."""
         reply = QMessageBox.question(
             self, 
             'Remove All Samples',
@@ -3418,16 +3191,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Removal Error", error_msg)        
             
     def sample_table_key_press(self, event):
-        """
-        Handle keyboard navigation in sample table.
-        
-        Args:
-            self: MainWindow instance
-            event: QKeyEvent object
-            
-        Returns:
-            None
-        """
+        """Handle keyboard navigation in sample table."""
         current_row = self.sample_table.currentRow()
         
         if event.key() == Qt.Key_Up:
@@ -3454,15 +3218,7 @@ class MainWindow(QMainWindow):
    
     @log_user_action('DIALOG_OPEN', 'Opened periodic table')
     def show_periodic_table(self):
-        """
-        Display periodic table for element selection.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display periodic table for element selection."""
         self.user_action_logger.log_dialog_open('Periodic Table', 'Element Selection')
         if self.all_masses is None or len(self.all_masses) == 0:
             QMessageBox.warning(
@@ -3485,15 +3241,7 @@ class MainWindow(QMainWindow):
         self.periodic_table_widget.raise_()
                            
     def show_periodic_table_after_load(self):
-        """
-        Show periodic table after data is loaded.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Show periodic table after data is loaded."""
         if not self.periodic_table_widget:
             self.periodic_table_widget = PeriodicTableWidget()
             self.periodic_table_widget.selection_confirmed.connect(self.handle_isotopes_selected)
@@ -3505,16 +3253,7 @@ class MainWindow(QMainWindow):
         self.update_sample_table()                   
                         
     def handle_isotopes_selected(self, selected_isotopes):
-        """
-        Handle confirmed isotope selections from periodic table.
-        
-        Args:
-            self: MainWindow instance
-            selected_isotopes (dict): Dictionary of selected isotopes by element
-            
-        Returns:
-            None
-        """
+        """Handle confirmed isotope selections from periodic table."""
         try:
             self.clear_element_caches()
             self._display_label_to_element.clear()
@@ -3575,6 +3314,8 @@ class MainWindow(QMainWindow):
                         for threshold_key in thresholds_to_remove:
                             if threshold_key in self.element_thresholds[sample_name]:
                                 del self.element_thresholds[sample_name][threshold_key]
+                
+                self._on_isotopes_removed(removed_isotopes)
             
             if newly_added and self.folder_paths and not self.pending_csv_processing:
                 all_accessible, inaccessible_samples = self.verify_all_data_sources()
@@ -3675,7 +3416,7 @@ class MainWindow(QMainWindow):
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
-                                pass
+                                _itk_log.exception("Handled exception in handle_isotopes_selected")
                             thread.deleteLater()
                                 
                         except Exception as e:
@@ -3724,19 +3465,12 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error in handle_isotopes_selected: {str(e)}")
             self.progress_bar.setVisible(False)
             
+        if (newly_added or removed_isotopes) and not is_project_loading:
+            self._mark_results_changed()
         self.unsaved_changes = True
             
     def handle_isotopes_selection_from_calibration(self, selected_isotopes):
-        """
-        Handle isotope selections from ionic calibration window.
-        
-        Args:
-            self: MainWindow instance
-            selected_isotopes (dict): Dictionary of selected isotopes by element
-            
-        Returns:
-            None
-        """
+        """Handle isotope selections from ionic calibration window."""
         try:
             self.clear_element_caches()
             self._display_label_to_element.clear()
@@ -3794,6 +3528,8 @@ class MainWindow(QMainWindow):
                         for threshold_key in thresholds_to_remove:
                             if threshold_key in self.element_thresholds[sample_name]:
                                 del self.element_thresholds[sample_name][threshold_key]
+                
+                self._on_isotopes_removed(removed_isotopes)
             
             if newly_added and self.folder_paths and not self.pending_csv_processing:
                 all_accessible, inaccessible_samples = self.verify_all_data_sources()
@@ -3896,7 +3632,7 @@ class MainWindow(QMainWindow):
                                 thread.finished.disconnect()
                                 thread.error.disconnect()
                             except (RuntimeError, TypeError):
-                                pass
+                                _itk_log.exception("Handled exception in handle_isotopes_selection_from_calibration")
                             thread.deleteLater()
                                 
                         except Exception as e:
@@ -3945,16 +3681,13 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error in handle_isotopes_selection_from_calibration: {str(e)}")
             self.progress_bar.setVisible(False)
             
+        if (newly_added or removed_isotopes) and not is_project_loading:
+            self._mark_results_changed()
         self.unsaved_changes = True
                                             
     def find_closest_isotope(self, target_mass):
-        """
-        Find closest isotope mass in loaded data.
-        
-        Args:
-            self: MainWindow instance
-            target_mass (float): Target isotope mass
-            
+        """Find closest isotope mass in loaded data.
+
         Returns:
             float or None: Closest mass key in data dictionary
         """
@@ -3963,13 +3696,8 @@ class MainWindow(QMainWindow):
         return min(self.data.keys(), key=lambda x: abs(x - target_mass))                   
                         
     def get_formatted_label(self, element_key):
-        """
-        Get proper isotope label from periodic table data with caching.
-        
-        Args:
-            self: MainWindow instance
-            element_key (str): Element identifier (e.g., "Au-197.0000")
-            
+        """Get proper isotope label from periodic table data with caching.
+
         Returns:
             str: Formatted isotope label (e.g., "197Au")
         """
@@ -4007,28 +3735,12 @@ class MainWindow(QMainWindow):
             return element_key
                        
     def clear_element_caches(self):
-        """
-        Clear element-related caches when data changes.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Clear element-related caches when data changes."""
         self._formatted_label_cache.clear()
         self._element_data_cache.clear()   
         
     def _build_element_lookup_cache(self):
-        """
-        Build fast lookup cache for element display labels.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Build fast lookup cache for element display labels."""
         self._display_label_to_element.clear()
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
@@ -4037,12 +3749,8 @@ class MainWindow(QMainWindow):
                 self._display_label_to_element[display_label] = (element, isotope, element_key)  
      
     def _build_element_conversion_cache(self):
-        """
-        Build cache for element count to mass conversions.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Build cache for element count to mass conversions.
+
         Returns:
             dict: Cache mapping display labels to conversion data with keys:
                 - 'element_key' (str): Element identifier
@@ -4086,15 +3794,7 @@ class MainWindow(QMainWindow):
         return cache
                 
     def _update_periodic_table_selections(self):
-        """
-        Update periodic table with current isotope selections.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Update periodic table with current isotope selections."""
         for element_symbol, isotopes in self.selected_isotopes.items():
             if element_symbol in self.periodic_table_widget.buttons:
                 button = self.periodic_table_widget.buttons[element_symbol]
@@ -4126,6 +3826,7 @@ class MainWindow(QMainWindow):
                 len(getattr(self, 'detected_peaks', {}) or {}),
             )
         except Exception:
+            _itk_log.exception("Handled exception in update_parameters_table")
             signature = None
 
         if signature is not None:
@@ -4250,16 +3951,7 @@ class MainWindow(QMainWindow):
                 self.parameters_table.set_row_colors(row, bg=QBrush(), fg=QBrush())
 
     def load_or_initialize_parameters(self, sample_name):
-        """
-        Load or initialize detection parameters for sample.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Name of sample
-            
-        Returns:
-            None
-        """
+        """Load or initialize detection parameters for sample."""
         if sample_name not in self.sample_parameters:
             self.sample_parameters[sample_name] = {}
 
@@ -4327,7 +4019,6 @@ class MainWindow(QMainWindow):
 
     def update_parameter_ranges(self, row, method):
         """No-op: enabled states are now derived by the delegate from model data."""
-        pass
 
     def get_element_parameters(self, row):
         """Get detection parameters from model row (replaces cellWidget reads)."""
@@ -4363,16 +4054,7 @@ class MainWindow(QMainWindow):
             self.on_parameter_changed(row)
         
     def on_parameter_changed(self, row):
-        """
-        Handle parameter change in table.
-        
-        Args:
-            self: MainWindow instance
-            row (int): Table row index
-            
-        Returns:
-            None
-        """
+        """Handle parameter change in table."""
         if not self.current_sample:
             return
             
@@ -4424,17 +4106,7 @@ class MainWindow(QMainWindow):
                 break
 
     def parameters_table_clicked(self, row, column):
-        """
-        Handle click on parameters table row.
-        
-        Args:
-            self: MainWindow instance
-            row (int): Clicked row index
-            column (int): Clicked column index
-            
-        Returns:
-            None
-        """
+        """Handle click on parameters table row."""
         if row >= 0:
             if hasattr(self, 'showing_all_signals') and self.showing_all_signals:
                 return
@@ -4446,8 +4118,8 @@ class MainWindow(QMainWindow):
                     view_rect = self.plot_widget.viewRect()
                     current_x_range = [view_rect.left(), view_rect.right()]
                     current_y_range = [view_rect.top(), view_rect.bottom()]
-                except:
-                    pass
+                except Exception:
+                    _itk_log.exception("Handled exception in parameters_table_clicked")
                     
             element_item = self.parameters_table.item(row, 0)
             if element_item:
@@ -4477,6 +4149,7 @@ class MainWindow(QMainWindow):
                                 lambda_bkgd = stored_values.get('background', 0)
                                 threshold = stored_values.get('threshold', 0)
                             except KeyError:
+                                _itk_log.exception("Handled exception in parameters_table_clicked")
                                 lambda_bkgd = 0
                                 threshold = 0
                             
@@ -4509,7 +4182,8 @@ class MainWindow(QMainWindow):
                                 try:
                                     self.plot_widget.setXRange(current_x_range[0], current_x_range[1], padding=0)
                                     self.plot_widget.setYRange(current_y_range[1], current_y_range[0], padding=0)
-                                except:
+                                except Exception:
+                                    _itk_log.exception("Handled exception in parameters_table_clicked")
                                     self.plot_widget.enableAutoRange()
                             else:
                                 self.plot_widget.enableAutoRange()
@@ -4522,22 +4196,12 @@ class MainWindow(QMainWindow):
                 
     def toggle_manual_threshold_input(self, row, method):
         """No-op: threshold cell enabled state is derived by the delegate from method."""
-        pass
 
     def toggle_window_size_parameters(self, row, state):
         """No-op: window size enabled state is derived by the delegate from use_window_size."""
-        pass
         
     def open_batch_parameters_dialog(self):
-        """
-        Open dialog for batch editing element parameters.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Open dialog for batch editing element parameters."""
         self.user_action_logger.log_dialog_open('Batch Parameters', 'Batch Parameters Dialog')
         if not self.selected_isotopes:
             QMessageBox.warning(self, "No Elements", "Please select elements first.")
@@ -4592,15 +4256,7 @@ class MainWindow(QMainWindow):
             )
             
     def filter_table(self):
-        """
-        Filter parameters table based on search text.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Filter parameters table based on search text."""
         search_text = self.search_box.text().lower()
         for row in range(self.parameters_table.rowCount()):
             match = False
@@ -4736,10 +4392,7 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
 
     def _current_element_key(self):
-        """element_key string for the currently displayed element, or None.
-        Returns:
-            None
-        """
+        """element_key string for the currently displayed element, or None."""
         el = getattr(self, 'current_element', None)
         iso = getattr(self, 'current_isotope', None)
         if el is None or iso is None:
@@ -4747,6 +4400,7 @@ class MainWindow(QMainWindow):
         try:
             return f"{el}-{iso:.4f}"
         except Exception:
+            _itk_log.exception("Handled exception in _current_element_key")
             return None
 
     def _visible_exclusion_entries_for(self, sample_name, element_key):
@@ -4756,11 +4410,6 @@ class MainWindow(QMainWindow):
         - 'element'-scope regions are only shown when element_key matches the
           region's stored element_key, so each element's exclusion bands are
           private to that element and don't appear while viewing other elements.
-        Args:
-            sample_name (Any): The sample name.
-            element_key (Any): The element key.
-        Returns:
-            list: Result of the operation.
         """
         entries = self._exclusion_regions_by_sample.get(sample_name, [])
         return [
@@ -4787,7 +4436,7 @@ class MainWindow(QMainWindow):
             self.plot_widget.exclusionRegionsChanged.disconnect(
                 self._on_exclusion_regions_changed)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
         try:
             self.plot_widget.set_exclusion_regions(visible)
         finally:
@@ -4795,7 +4444,7 @@ class MainWindow(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.connect(
                     self._on_exclusion_regions_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
 
     def _on_exclusion_regions_changed(self):
         """Sync the plot's current bands back into the bookkeeping store.
@@ -4843,8 +4492,7 @@ class MainWindow(QMainWindow):
         
     @log_user_action('CLICK', 'Clicked detect peaks button')
     def detect_particles(self):
-        """
-        Run particle detection, honouring per-sample / per-element
+        """Run particle detection, honouring per-sample / per-element
         exclusion regions.
 
         Masking strategy per sample:
@@ -4858,8 +4506,6 @@ class MainWindow(QMainWindow):
         even on exception. As a safety net, any detected peak whose
         centre time still landed inside one of its applicable bands is
         dropped from the results.
-        Returns:
-            object: Result of the operation.
         """
         self.user_action_logger.log_analysis_step(
             'Peak Detection Started',
@@ -4882,17 +4528,11 @@ class MainWindow(QMainWindow):
         exclusion_map = getattr(self, '_exclusion_regions_by_sample', {}) or {}
 
         def _element_key_to_isotope_key(sample_name, element_key):
-            """
-            Args:
-                sample_name (Any): The sample name.
-                element_key (Any): The element key.
-            Returns:
-                object: Result of the operation.
-            """
             try:
                 _el, iso_str = element_key.rsplit('-', 1)
                 iso = float(iso_str)
             except Exception:
+                _itk_log.exception("Handled exception in _element_key_to_isotope_key")
                 return None
             return self.find_closest_isotope(iso)
 
@@ -4989,6 +4629,7 @@ class MainWindow(QMainWindow):
                     el, iso = key
                     ek_here = f"{el}-{iso:.4f}"
                 except Exception:
+                    _itk_log.exception("Handled exception in detect_particles")
                     ek_here = None
                 bands = list(sample_bands)
                 if ek_here:
@@ -5009,39 +4650,35 @@ class MainWindow(QMainWindow):
                         kept.append(p)
                 detected[key] = kept
 
+        if getattr(self, 'saturation_filter_enabled', False):
+            if self.current_sample:
+                self.saturation_filtered_peaks.pop(self.current_sample, None)
+                self.saturation_filtered_multi.pop(self.current_sample, None)
+                self.saturation_windows.pop(self.current_sample, None)
+                self.saturation_excluded_time_s.pop(self.current_sample, None)
+            n_sat = self.apply_saturation_filter()
+            if n_sat:
+                excl_ms = self.get_saturation_excluded_time() * 1000.0
+                self.status_label.setText(
+                    f"Non-linearity filter: {n_sat} particle event(s) excluded "
+                    f"(FWHM > {self.saturation_filter_ms:g} ms), "
+                    f"{excl_ms:.1f} ms removed from the analysis time")
+            self._refresh_after_saturation_change()
+        else:
+            for sname in self._exclusion_regions_by_sample:        
+                self.rebuild_particle_data(sname)                  
+
+        self._mark_results_changed()
         return result
         
     def process_single_sample(self, sample_name):
-        """
-        Process particle detection for single sample.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Sample name
-            
-        Returns:
-            Detection results
-        """
+        """Process particle detection for single sample."""
         return self.peak_detector.process_single_sample(self, sample_name)
         
     def detect_peaks_with_poisson(self, signal, alpha=0.000001, 
          sample_name=None, element_key=None, method="CPLN table",
             manual_threshold=10.0):
-        """
-        Detect peaks using Poisson-based methods.
-        
-        Args:
-            self: MainWindow instance
-            signal (ndarray): Signal data array
-            alpha (float): Significance level
-            sample_name (str, optional): Sample name
-            element_key (str, optional): Element identifier
-            method (str): Detection method name
-            manual_threshold (float): Manual threshold value
-            
-        Returns:
-            Detection results
-        """
+        """Detect peaks using Poisson-based methods."""
         return self.peak_detector.detect_peaks_with_poisson(
             signal, alpha, 
             sample_name, element_key, method, manual_threshold, 
@@ -5051,23 +4688,7 @@ class MainWindow(QMainWindow):
     def find_particles(self, time, raw_signal, lambda_bkgd, threshold, 
             min_continuous_points=1, integration_method="Background",
             split_method="1D Watershed", sigma=0.55, min_valley_ratio=0.50):
-        """
-        Find individual particles in signal.
-        
-        Args:
-            self: MainWindow instance
-            time (ndarray): Time array
-            raw_signal (ndarray): Raw signal array
-            lambda_bkgd (float): Background level
-            threshold (float): Detection threshold
-            min_width (int): Minimum particle width
-            min_continuous_points (int): Minimum continuous points
-            integration_method (str): Integration method name
-            min_valley_ratio (float): Valley-to-peak ratio for watershed splitting
-            
-        Returns:
-            List of particle dictionaries
-        """
+        """Find individual particles in signal."""
         return self.peak_detector.find_particles(
             time, raw_signal, lambda_bkgd, threshold,
             min_continuous_points=min_continuous_points,
@@ -5078,16 +4699,7 @@ class MainWindow(QMainWindow):
         )
 
     def process_multi_element_particles(self, all_particles):
-        """
-        Process and identify multi-element particles.
-        
-        Args:
-            self: MainWindow instance
-            all_particles (list): List of all detected particles
-            
-        Returns:
-            None
-        """
+        """Process and identify multi-element particles."""
         self.multi_element_particles = self.peak_detector.process_multi_element_particles(
             all_particles, self.time_array, self.sample_detected_peaks, 
             self.selected_isotopes, self.get_formatted_label, 
@@ -5096,37 +4708,43 @@ class MainWindow(QMainWindow):
         )
     
     def mark_element_changed(self, sample_name, element_key):
-        """
-        Mark element as having changed parameters.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Sample name
-            element_key (str): Element identifier
-            
-        Returns:
-            None
-        """
+        """Mark element as having changed parameters."""
         if sample_name not in self.detection_states:
             self.detection_states[sample_name] = {}
         self.detection_states[sample_name][element_key] = 'changed'
         
     def get_parameter_hash(self, sample_name, element_key):
-        """
-        Generate hash of current parameters for change detection.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Sample name
-            element_key (str): Element identifier
-            
+        """Generate hash of current parameters for change detection.
+
+        The exclusion regions that apply to this element are part of the
+        hash: a sample-scope band affects every element of the sample,
+        an element-scope band only its own element. Adding, moving or
+        removing a region therefore marks the affected elements as
+        changed, so the next Detect Peaks re-runs for them instead of
+        being skipped by the incremental detector — newly excluded
+        particles are dropped and particles of removed regions come back.
+
         Returns:
             str: MD5 hash of parameters
         """
         import hashlib
-        
+
         params = self.sample_parameters.get(sample_name, {}).get(element_key, {})
-        param_str = str(sorted(params.items()))
+        regions = []
+        entries = (getattr(self, '_exclusion_regions_by_sample', {}) or {}).get(
+            sample_name, [])
+        for e in entries:
+            scope = e.get('scope')
+            if scope == 'sample' or e.get('element_key') == element_key:
+                try:
+                    bounds = tuple(round(float(b), 6)
+                                   for b in e.get('bounds', ()))
+                except (TypeError, ValueError):
+                    _itk_log.exception("Handled exception in get_parameter_hash")
+                    bounds = tuple(e.get('bounds', ()))
+                regions.append((scope, e.get('element_key'), bounds))
+        param_str = str(sorted(params.items())) + str(
+            sorted(regions, key=str))
         return hashlib.md5(param_str.encode()).hexdigest()
 
     #----------------------------------------------------------------------------------------------------------
@@ -5134,19 +4752,7 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
 
     def update_results_table(self, detected_particles, signal, element, isotope):
-        """
-        Update single element results table with detection results.
-        
-        Args:
-            self: MainWindow instance
-            detected_particles (list): List of detected particle dictionaries
-            signal (ndarray): Signal data array
-            element (str): Element symbol
-            isotope (float): Isotope mass
-            
-        Returns:
-            None
-        """
+        """Update single element results table with detection results."""
         if not (hasattr(self, 'show_element_results_checkbox') and self.show_element_results_checkbox.isChecked()):
             return  
             
@@ -5225,15 +4831,7 @@ class MainWindow(QMainWindow):
                             item.setSelected(True)
 
     def update_multi_element_table(self):
-        """
-        Update multi-element particle results table.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Update multi-element particle results table."""
         if not (hasattr(self, 'show_particle_results_checkbox') and self.show_particle_results_checkbox.isChecked()):
             return
             
@@ -5290,16 +4888,7 @@ class MainWindow(QMainWindow):
                             item.setSelected(True)
                             
     def toggle_element_results(self, checked):
-        """
-        Show or hide single element results table.
-        
-        Args:
-            self: MainWindow instance
-            checked (bool): Checkbox state
-            
-        Returns:
-            None
-        """
+        """Show or hide single element results table."""
         self.element_results_container.setVisible(checked)
         
         if checked:
@@ -5318,16 +4907,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Single element results table disabled (better performance)")
 
     def toggle_particle_results(self, checked):
-        """
-        Show or hide multi-element particle results table.
-        
-        Args:
-            self: MainWindow instance
-            checked (bool): Checkbox state
-            
-        Returns:
-            None
-        """
+        """Show or hide multi-element particle results table."""
         self.particle_results_container.setVisible(checked)
         
         if checked:
@@ -5340,16 +4920,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Multi-element particle results table disabled (better performance)")
         
     def restore_results_tables(self, sample_name):
-        """
-        Restore results tables for selected sample.
-        
-        Args:
-            self: MainWindow instance
-            sample_name (str): Sample name
-            
-        Returns:
-            None
-        """
+        """Restore results tables for selected sample."""
         if hasattr(self, 'show_element_results_checkbox') and self.show_element_results_checkbox.isChecked():
             if sample_name in self.sample_results_data:
                 results_data = self.sample_results_data[sample_name]
@@ -5369,18 +4940,7 @@ class MainWindow(QMainWindow):
                 self.multi_element_table.setRowCount(0)  
     
     def update_element_summary(self, element, isotope, detected_particles):
-        """
-        Update summary statistics for selected element.
-        
-        Args:
-            self: MainWindow instance
-            element (str): Element symbol
-            isotope (float): Isotope mass
-            detected_particles (list): List of detected particle dictionaries
-            
-        Returns:
-            None
-        """
+        """Update summary statistics for selected element."""
         self._last_summary_args = (element, isotope, detected_particles)
 
         element_key = f"{element}-{isotope:.4f}"
@@ -5504,23 +5064,72 @@ class MainWindow(QMainWindow):
         self.summary_label.setText(summary_html)                                
    
     @log_user_action('CLICK', 'Opened results dialog')
-    def show_results(self):
-        """
-        Display particle detection results in canvas dialog.
-        
+    def rebuild_particle_data(self, sample_name=None):
+        """Rebuild the multi-element particle list of a sample from the
+        current per-isotope detection results.
+
+        The multi-element particle data shown in the Results dialog is a
+        cache derived from sample_detected_peaks at detection time. When
+        the per-isotope peaks change (for example after the detector
+        non-linearity filter excludes events), this cache becomes stale.
+        Calling this method regenerates it so the Results dialog and the
+        exports reflect the current, filtered particles.
+
         Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
+            sample_name (str): Sample to rebuild. Defaults to the
+                current sample.
         """
+        sname = sample_name or self.current_sample
+        if not sname or sname not in self.sample_detected_peaks:
+            return
+        time_array = self.time_array_by_sample.get(sname)
+        if time_array is None:
+            return
+
+        all_particles = []
+        sample_data = self.data_by_sample.get(sname, {})
+        for (element, isotope), particles in self.sample_detected_peaks[sname].items():
+            if not particles:
+                continue
+            isotope_key = self.find_closest_isotope(isotope)
+            if isotope_key and isotope_key in sample_data:
+                signal = sample_data[isotope_key]
+                all_particles.append({
+                    'element': element,
+                    'isotope': isotope,
+                    'signal': signal,
+                    'clusters': [(p['left_idx'], p['right_idx'])
+                                 for p in particles if p],
+                })
+
+        try:
+            rebuilt = self.peak_detector.process_multi_element_particles(
+                all_particles, time_array,
+                {sname: self.sample_detected_peaks[sname]},
+                self.selected_isotopes, self.get_formatted_label,
+                sname, {sname: self.element_thresholds.get(sname, {})},
+                self.parameters_table,
+                min_overlap_percentage=self.overlap_threshold_percentage)
+            self.sample_particle_data[sname] = rebuilt
+            if sname == self.current_sample:
+                self.multi_element_particles = rebuilt
+            self._mark_results_changed()
+        except Exception as e:
+            self.logger.debug(f"Particle data rebuild failed for {sname}: {e}")
+
+    def show_results(self):
+        """Display particle detection results in canvas dialog."""
         if not self.current_sample or not self.sample_particle_data.get(self.current_sample):
             self.user_action_logger.log_action('ERROR', 'Attempted to show results with no data')
             QMessageBox.warning(self, "No Data", "No particle data available. Please run particle detection first.")
             return
         
         element_cache = self._build_element_conversion_cache()
-        
+
+        if getattr(self, 'saturation_filter_enabled', False):
+            for sample_name in list(self.sample_particle_data.keys()):
+                self.rebuild_particle_data(sample_name)
+
         all_samples_with_data = [sample for sample in self.sample_particle_data.keys() 
                                 if self.sample_particle_data[sample]]
         
@@ -5561,9 +5170,10 @@ class MainWindow(QMainWindow):
         if self.canvas_results_dialog is None:
             self.canvas_results_dialog = CanvasResultsDialog(self)
         self.canvas_results_dialog.showMaximized()
-        self.canvas_results_dialog.raise_() 
+        self.canvas_results_dialog.raise_()
         self.canvas_results_dialog.activateWindow()
         self.maybe_prompt_dilution()
+        self._set_results_attention(False)
         
     
                 
@@ -5572,22 +5182,9 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
    
     def plot_results(self, mass, signal, particles, lambda_bkgd, threshold, preserve_view_range=None):
-        """
-        Plot detection results with peaks and thresholds.
-        
+        """Plot detection results with peaks and thresholds.
+
         Uses collinear point removal for fast rendering of large signals.
-        
-        Args:
-            self: MainWindow instance
-            mass (str): Element mass identifier
-            signal (ndarray): Raw signal array
-            particles (list): List of detected particles
-            lambda_bkgd (float): Background level
-            threshold (float): Detection threshold
-            preserve_view_range (tuple, optional): Tuple of (x_range, y_range) to preserve zoom
-            
-        Returns:
-            None
         """
         self.plot_widget.clear()
         
@@ -5732,6 +5329,47 @@ class MainWindow(QMainWindow):
                     scatter_peak.setSize(ss.get('size', 9))
                     scatter_peak.setBrush(pg.mkBrush(QColor(ss['color'])))
                 self.plot_widget.addItem(scatter_peak)
+
+        # --- Saturation filter highlight ------------------------------
+        if (getattr(self, 'saturation_filter_enabled', False)
+                and getattr(self, 'saturation_highlight', True)):
+            f_key = None
+            if (getattr(self, 'current_element', None) is not None
+                    and getattr(self, 'current_isotope', None) is not None):
+                f_key = (self.current_element, self.current_isotope)
+            filtered = []
+            if f_key is not None:
+                filtered = (self.saturation_filtered_peaks
+                            .get(self.current_sample, {})
+                            .get(f_key, []))
+            if filtered:
+                fx, fy = [], []
+                for p in filtered:
+                    if p is None:
+                        continue
+                    left = int(p.get('left_idx', 0))
+                    right = int(p.get('right_idx', left))
+                    end = min(right + 1, len(signal), len(time_array))
+                    start = min(max(left, 0), end)
+                    if start >= end:
+                        continue
+                    peak_global = start + int(np.argmax(signal[start:end]))
+                    fx.append(float(time_array[peak_global]))
+                    fy.append(float(signal[peak_global]))
+                if fx:
+                    scatter_filt = pg.ScatterPlotItem(
+                        x=np.array(fx),
+                        y=np.array(fy),
+                        symbol='o',
+                        size=12,
+                        brush=pg.mkBrush(220, 20, 60, 255),
+                        pen=pg.mkPen('w', width=1),
+                        name='Non-linear (filtered)',
+                    )
+                    scatter_filt.setZValue(10)
+                    scatter_filt._role = 'saturation_filtered'
+                    scatter_filt._legend_representative = True
+                    self.plot_widget.addItem(scatter_filt)
         
         for sample, label in legend.items:
             label.setText(label.text, size='20pt')
@@ -5764,8 +5402,7 @@ class MainWindow(QMainWindow):
                 self.logger.debug(f"Could not refresh m/z view: {e}")
 
     def show_mass_spectrum_popup(self):
-        """
-        Open a floating window showing the mean signal intensity for every
+        """Open a floating window showing the mean signal intensity for every
         selected isotope in the current sample as a bar chart (mass spectrum).
 
         Each bar represents one isotope; bar height = mean signal over the
@@ -5775,9 +5412,6 @@ class MainWindow(QMainWindow):
 
         Args:
             None  (reads self.selected_isotopes / self.data / self.current_sample)
-
-        Returns:
-            None
         """
         self.user_action_logger.log_dialog_open('Mass Spectrum', 'Mass Spectrum Popup')
         if not self.current_sample or not self.data or not self.selected_isotopes:
@@ -5909,15 +5543,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def switch_plot_view(self, mode: str):
-        """
-        Switch the main plot area between the time-domain trace ('time')
+        """Switch the main plot area between the time-domain trace ('time')
         and the inline isotope bar chart ('mz').
 
         Args:
             mode (str): 'time' or 'mz'
-
-        Returns:
-            None
         """
         self.user_action_logger.log_action(
             'CLICK', f'Switched plot view to {mode!r}',
@@ -5943,9 +5573,6 @@ class MainWindow(QMainWindow):
           • Right-click              → 'Plot Settings…'
 
         Args:
-            None
-
-        Returns:
             None
         """
         pw = self._mz_pg_widget
@@ -6049,15 +5676,7 @@ class MainWindow(QMainWindow):
         pw.enableAutoRange()
 
     def highlight_selected_particle(self):
-        """
-        Highlight selected particle from single element results table.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Highlight selected particle from single element results table."""
         selected_rows = self.results_table.selectedItems()
         if not selected_rows:
             return
@@ -6112,15 +5731,7 @@ class MainWindow(QMainWindow):
                         return
                     
     def highlight_multi_element_particle(self):
-        """
-        Highlight and display selected multi-element particle.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Highlight and display selected multi-element particle."""
         selected_rows = self.multi_element_table.selectedItems()
         if not selected_rows:
             return
@@ -6219,8 +5830,8 @@ class MainWindow(QMainWindow):
                                     thresholds = self.element_thresholds[self.current_sample][element_key]
                                     background_val = thresholds.get('background', 0)
                                     threshold_val = thresholds.get('threshold', 0)
-                            except:
-                                pass
+                            except Exception:
+                                _itk_log.exception("Handled exception in highlight_multi_element_particle")
                             
                             element_data[display_label] = {
                                 'signal': view_section,
@@ -6385,7 +5996,7 @@ class MainWindow(QMainWindow):
                                             alpha=0.6
                                         )
                             except Exception as e:
-                                pass
+                                _itk_log.exception("Handled exception in highlight_multi_element_particle")
                                 
                         found = True
                         break
@@ -6459,19 +6070,11 @@ class MainWindow(QMainWindow):
             self.plot_widget.addItem(highlight_region)
             
             QTimer.singleShot(1500, lambda: self.plot_widget.removeItem(highlight_region))
-        except:
-            pass
+        except Exception:
+            _itk_log.exception("Handled exception in highlight_multi_element_particle")
                     
     def show_signal_selector(self):
-        """
-        Display signal selector dialog for multi-signal view.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display signal selector dialog for multi-signal view."""
         self.user_action_logger.log_dialog_open('Signal Selector', 'Multi-Signal View')
         if not self.selected_isotopes:
             QMessageBox.warning(self, "No Elements", "Please select elements first.")
@@ -6485,15 +6088,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
     
     def toggle_all_signals(self):
-        """
-        Toggle between single and multi-signal view.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Toggle between single and multi-signal view."""
         self.showing_all_signals = self.show_all_signals_button.isChecked()
         
         if self.showing_all_signals:
@@ -6510,18 +6105,10 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
    
     def open_transport_rate_calibration(self):
-        """
-        Open transport rate calibration window.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Open transport rate calibration window."""
         self.user_action_logger.log_dialog_open('Transport Rate Calibration', 'Calibration Window')
     
-        all_methods = ["Liquid weight", "Number based", "Mass based"]
+        all_methods = calibration_registry.default_transport_labels()
         
         if not self.transport_rate_window:
             self.transport_rate_window = TransportRateCalibrationWindow(
@@ -6538,14 +6125,10 @@ class MainWindow(QMainWindow):
         self.transport_rate_window.raise_()
                        
     def show_calibration_info(parent):
-        """
-        Display enhanced calibration information dialog.
-        
+        """Display enhanced calibration information dialog.
+
         Args:
             parent: Parent window
-            
-        Returns:
-            None
         """
         if not hasattr(parent, 'calibration_results'):
             parent.calibration_results = {}
@@ -6566,27 +6149,18 @@ class MainWindow(QMainWindow):
             parent.average_transport_rate = dialog.average_transport_rate
             parent.update_calibration_display()
             parent.update_calculations()
+            parent._mark_results_changed()
 
     def handle_calibration_result(self, method, calibration_data):
-        """
-        Process calibration results from calibration windows.
-        
-        Args:
-            self: MainWindow instance
-            method (str): Calibration method name
-            calibration_data (dict): Calibration data dictionary
-            
-        Returns:
-            None
-        """
-        if method == "Ionic Calibration":
+        """Process calibration results from calibration windows."""
+        if calibration_registry.is_ionic(method):
             self.calibration_results["Ionic Calibration"] = calibration_data["results"]
             self.isotope_method_preferences = calibration_data["method_preferences"]
 
             if hasattr(self, 'average_transport_rate') and self.average_transport_rate > 0:
                 self.calculate_mass_limits()
-                
-        elif method in ["Weight Method", "Particle Method", "Mass Method"]:
+
+        elif calibration_registry.is_transport_signal(method):
             self.calibration_results[method] = {'transport_rate': calibration_data}
             
             if method not in self.selected_transport_rate_methods:
@@ -6637,17 +6211,10 @@ class MainWindow(QMainWindow):
                                         self.logger.error(f"Error calculating limits for {element_key}: {str(e)}")
 
         self.update_calibration_display()   
+        self._mark_results_changed()
     
     def open_ionic_calibration(self):
-        """
-        Open ionic calibration window for sensitivity calibration.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Open ionic calibration window for sensitivity calibration."""
         self.user_action_logger.log_dialog_open('Ionic Calibration', 'Calibration Window')
     
         if not self.ionic_calibration_window:
@@ -6677,15 +6244,7 @@ class MainWindow(QMainWindow):
         self.ionic_calibration_window.raise_()     
         
     def calculate_average_transport_rate(self):
-        """
-        Calculate average transport rate from selected methods.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Calculate average transport rate from selected methods."""
         total_rate = 0
         count = 0
         
@@ -6708,21 +6267,13 @@ class MainWindow(QMainWindow):
                 self._calculate_mass_data_optimized(particles, element_cache)
                 
     def update_calibration_display(self):
-        """
-        Update calibration information display panel.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Update calibration information display panel."""
         display_text = "Transport Rate Calibration:\n\n"
         
         display_text += "{:<20} {:<20} {:<10}\n".format("Method", "Transport Rate (µL/s)", "Use")
         display_text += "-" * 50 + "\n"
         
-        for method in ["Weight Method", "Particle Method", "Mass Method"]:
+        for method in calibration_registry.transport_signal_names():
             if method in self.calibration_results and 'transport_rate' in self.calibration_results[method]:
                 rate = self.calibration_results[method]['transport_rate']
                 selected = method in self.selected_transport_rate_methods
@@ -6803,30 +6354,14 @@ class MainWindow(QMainWindow):
         self.calibration_info_panel.setHtml(display_text)
         
     def update_method_preferences(self, preferences):
-        """
-        Update calibration method preferences without recalculation.
-        
-        Args:
-            self: MainWindow instance
-            preferences (dict): Method preferences dictionary
-            
-        Returns:
-            None
-        """
+        """Update calibration method preferences without recalculation."""
         self.isotope_method_preferences = preferences
         
         self.update_calibration_display()
+        self._mark_results_changed()
         
     def calculate_mass_limits(self):
-        """
-        Calculate mass detection limits for all elements.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Calculate mass detection limits for all elements."""
         if not hasattr(self, 'average_transport_rate') or self.average_transport_rate <= 0:
             self.element_limits = {}
             return
@@ -6914,15 +6449,7 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
    
     def open_mass_fraction_calculator(self):
-        """
-        Open mass fraction calculator dialog.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Open mass fraction calculator dialog."""
         self.user_action_logger.log_dialog_open('Mass Fraction Calculator', 'Calculator')
         if not self.selected_isotopes:
             QMessageBox.warning(self, "No Elements Selected", 
@@ -6944,21 +6471,7 @@ class MainWindow(QMainWindow):
             self.logger.error("Mass fraction calculator module not found. Please ensure it is in the same directory as mainwindow.py.")
 
     def handle_mass_fractions_updated(self, data):
-        """
-        Handle mass fraction updates from calculator.
-        
-        Args:
-            self: MainWindow instance
-            data (dict): Dictionary containing:
-                - 'mass_fractions' (dict): Element mass fractions
-                - 'densities' (dict): Element densities
-                - 'molecular_weights' (dict): Element molecular weights
-                - 'apply_to_all' (bool): Apply globally flag
-                - 'selected_samples' (list): List of selected sample names
-            
-        Returns:
-            None
-        """
+        """Handle mass fraction updates from calculator."""
         mass_fractions = data['mass_fractions']
         densities = data['densities']
         molecular_weights = data.get('molecular_weights', {})
@@ -7011,17 +6524,12 @@ class MainWindow(QMainWindow):
             
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
         
+        self._mark_results_changed()
         self.unsaved_changes = True
             
     def get_molecular_weight(self, element_key, sample_name=None):
-        """
-        Get molecular weight for element compound.
-        
-        Args:
-            self: MainWindow instance
-            element_key (str): Element identifier (e.g., "Au-197.0000")
-            sample_name (str, optional): Sample name for sample-specific lookup
-            
+        """Get molecular weight for element compound.
+
         Returns:
             float or None: Molecular weight in g/mol
         """
@@ -7049,14 +6557,8 @@ class MainWindow(QMainWindow):
         return None
 
     def get_mass_fraction(self, element_key, sample_name=None):
-        """
-        Get mass fraction for element in compound.
-        
-        Args:
-            self: MainWindow instance
-            element_key (str): Element identifier (e.g., "Au-197.0000")
-            sample_name (str, optional): Sample name for sample-specific lookup
-            
+        """Get mass fraction for element in compound.
+
         Returns:
             float: Mass fraction (0.0-1.0), defaults to 1.0 for pure element
         """
@@ -7074,14 +6576,8 @@ class MainWindow(QMainWindow):
     
     
     def get_element_density(self, element_key, sample_name=None):
-        """
-        Get density for element compound.
-        
-        Args:
-            self: MainWindow instance
-            element_key (str): Element identifier (e.g., "Au-197.0000")
-            sample_name (str, optional): Sample name for sample-specific lookup
-            
+        """Get density for element compound.
+
         Returns:
             float or None: Density in g/cm³
         """
@@ -7103,14 +6599,8 @@ class MainWindow(QMainWindow):
         return None
     
     def mass_to_diameter(self, mass_fg, density):
-        """
-        Convert mass to spherical particle diameter.
-        
-        Args:
-            self: MainWindow instance
-            mass_fg (float): Mass in femtograms
-            density (float): Density in g/cm³
-            
+        """Convert mass to spherical particle diameter.
+
         Returns:
             float: Diameter in nanometers
         """
@@ -7133,15 +6623,11 @@ class MainWindow(QMainWindow):
         return tools.dilution_utils.get_sample_dilution(self, sample_name)
 
     def set_sample_dilution(self, sample_name, factor):
-        """
-        Store the dilution factor for a sample.
+        """Store the dilution factor for a sample.
 
         Args:
             sample_name (str): Sample identifier.
             factor (float): Dilution factor to store.
-
-        Returns:
-            None
         """
         tools.dilution_utils.set_sample_dilution(self, sample_name, factor)
 
@@ -7154,7 +6640,10 @@ class MainWindow(QMainWindow):
             element_key (str): Optional element key for element scope exclusions.
 
         Returns:
-            float: Effective analyzed volume in millilitres.
+            float: Effective analyzed volume in millilitres. Manual
+            exclusion regions and the time windows flagged by the
+            detector non-linearity filter are both subtracted exactly
+            inside tools.dilution_utils.
         """
         return tools.dilution_utils.effective_volume_ml(self, sample_name, element_key)
 
@@ -7184,49 +6673,19 @@ class MainWindow(QMainWindow):
         return tools.dilution_utils.has_transport_rate(self)
 
     def open_dilution_factor_dialog(self):
-        """
-        Open the per sample dilution factor editor dialog.
-
-        Returns:
-            None
-        """
+        """Open the per sample dilution factor editor dialog."""
         tools.dilution_utils.open_dilution_factor_dialog(self)
+        self._mark_results_changed()
 
     def maybe_prompt_dilution(self):
-        """
-        Show the one time dilution correction prompt when appropriate.
-
-        Returns:
-            None
-        """
+        """Show the one time dilution correction prompt when appropriate."""
         tools.dilution_utils.maybe_prompt_dilution(self)
 
     def update_calculations(self):
-        """
-        Update calculations after transport rate changes.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
-        pass
+        """Update calculations after transport rate changes."""
     
     def _calculate_mass_data_optimized(self, particles, element_cache, progress=None, process_all_samples=False):
-        """
-        Calculate comprehensive mass, mole, and diameter data for particles.
-        
-        Args:
-            self: MainWindow instance
-            particles (list): List of particle dictionaries
-            element_cache (dict): Pre-built element conversion cache
-            progress (QProgressDialog, optional): Progress dialog for UI updates
-            process_all_samples (bool): Whether to process particles from all samples
-            
-        Returns:
-            None
-        """
+        """Calculate comprehensive mass, mole, and diameter data for particles."""
         if process_all_samples:
             all_particles = []
             for sample_name, sample_particles in self.sample_particle_data.items():
@@ -7391,32 +6850,11 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
      
     def update_progress(self, value):
-        """
-        Update progress bar value.
-        
-        Args:
-            self: MainWindow instance
-            value (int): Progress value (0-100)
-            
-        Returns:
-            None
-        """
+        """Update progress bar value."""
         self.progress_bar.setValue(value)
                     
     def update_sample_progress(self, thread_progress, sample_name, current_sample, total_samples):
-        """
-        Update progress bar for sample processing.
-        
-        Args:
-            self: MainWindow instance
-            thread_progress (int): Thread progress percentage (0-100)
-            sample_name (str): Sample name
-            current_sample (int): Current sample number (1-based)
-            total_samples (int): Total number of samples
-            
-        Returns:
-            None
-        """
+        """Update progress bar for sample processing."""
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
@@ -7426,19 +6864,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()  
         
     def update_element_progress(self, thread_progress, sample_name, current_sample, total_samples):
-        """
-        Update progress bar during element processing.
-        
-        Args:
-            self: MainWindow instance
-            thread_progress (int): Thread progress percentage (0-100)
-            sample_name (str): Current sample name
-            current_sample (int): Current sample number (1-based)
-            total_samples (int): Total number of samples
-            
-        Returns:
-            None
-        """
+        """Update progress bar during element processing."""
         sample_increment = 100 / total_samples
         thread_contribution = (thread_progress / 100) * sample_increment
         base_progress = sample_increment * (current_sample - 1)
@@ -7448,18 +6874,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents() 
           
     def log_status(self, message, level='info', context=None):
-        """
-        Update status bar and log message with context.
-        
-        Args:
-            self: MainWindow instance
-            message (str): Status message to display
-            level (str): Log level - 'info', 'error', 'warning', or 'debug'
-            context (dict): Optional context dictionary
-            
-        Returns:
-            None
-        """
+        """Update status bar and log message with context."""
         self.status_label.setText(message)
         
         if hasattr(self, 'logger'):
@@ -7500,35 +6915,26 @@ class MainWindow(QMainWindow):
     
     @log_user_action('MENU', 'File -> Save Project')
     def save_project(self):
-        """
-        Save current project to file.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Save current project to file.
+
         Returns:
             bool: True if save was successful
         """
         self.user_action_logger.log_menu_action('File', 'Save Project')
-        result = self.project_manager.save_project()
-        
-        self.user_action_logger.log_file_operation(
-            'Project Save', 
-            'project.itp', 
-            success=result
-        )
-        return result
+
+        def _after(success):
+            self.user_action_logger.log_file_operation(
+                'Project Save',
+                'project.itp',
+                success=success
+            )
+
+        self.project_manager.save_project(on_complete=_after)
 
     @log_user_action('MENU', 'File -> Load Project')
     def load_project(self, filepath: str | None=None):
-        """
-        Load project from file.
-        
-        Args:
-            self: MainWindow instance
-            filepath: Filepath of the project. If None, the project manager will
-             take charge of it.
-            
+        """Load project from file.
+
         Returns:
             bool: True if load was successful
         """
@@ -7542,16 +6948,646 @@ class MainWindow(QMainWindow):
         )
         return result
     
-    def export_data(self):
+    # ------------------------------------------------------------------
+    # Detector non-linearity (saturation) filter
+    # ------------------------------------------------------------------
+    def _update_saturation_button_text(self):
+        """Refresh the non-linearity filter button caption with the current
+        state and FWHM threshold.
         """
-        Export all data using external export utility.
-        
+        if not hasattr(self, 'saturation_filter_button'):
+            return
+        state = "ON" if self.saturation_filter_enabled else "OFF"
+        self.saturation_filter_button.setText(
+            f"Non-linearity Filter: {state} (FWHM > {self.saturation_filter_ms:g} ms)")
+
+    def _particle_fwhm_s(self, particle, time_arr, signal=None):
+        """
+        Return the FWHM of a particle event in seconds.
+
+        The value computed during detection ('fwhm_s') is preferred. If
+        it is absent, the FWHM is recomputed from the signal above a
+        local background estimate. When neither is possible the method
+        returns 0.0 so the particle is never flagged from an unreliable
+        width estimate.
+
         Args:
-            self: MainWindow instance
-            
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+            signal (ndarray): Optional raw signal for recomputation.
+
         Returns:
-            None
+            float: FWHM in seconds, or 0.0 when it cannot be determined.
         """
+        fwhm = particle.get('fwhm_s')
+        if fwhm is not None:
+            try:
+                return float(fwhm)
+            except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _particle_fwhm_s")
+        try:
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            if signal is None or right <= left:
+                return 0.0
+            region = np.asarray(signal[left:right + 1], dtype=float)
+            apex = int(np.argmax(region))
+            edge = min(3, len(region))
+            bkgd = float(np.median(
+                np.concatenate((region[:edge], region[-edge:]))))
+            if region[apex] <= bkgd:
+                return 0.0
+            half = bkgd + 0.5 * (region[apex] - bkgd)
+            i = apex
+            while i > 0 and region[i - 1] > half:
+                i -= 1
+            j = apex
+            while j < len(region) - 1 and region[j + 1] > half:
+                j += 1
+            dwell = float(time_arr[1] - time_arr[0]) if n > 1 else 0.0
+            return float(time_arr[left + j] - time_arr[left + i]) + dwell
+        except Exception:
+            _itk_log.exception("Handled exception in _particle_fwhm_s")
+            return 0.0
+
+    def _particle_apex_time(self, particle, time_arr):
+        """
+        Return the apex time of a particle event in seconds.
+
+        Args:
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+
+        Returns:
+            float: Apex time, or 0.0 when it cannot be determined.
+        """
+        t = particle.get('peak_time')
+        if t is not None:
+            try:
+                return float(t)
+            except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _particle_apex_time")
+        try:
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            return float(time_arr[(left + right) // 2])
+        except Exception:
+            _itk_log.exception("Handled exception in _particle_apex_time")
+            return 0.0
+
+    def _particle_flat_ratio(self, particle, time_arr, signal):
+        """
+        Return the flat-top index of a peak: the width at the configured
+        top level (default 90 percent of max above local background)
+        divided by the FWHM.
+
+        A healthy single-particle transient narrows sharply toward the
+        apex (Gaussian reference at the 90 percent level: 0.39). A peak
+        recorded under non-linear detector response stays wide at the
+        top, pushing the ratio toward 1. The top width is measured
+        between the outermost crossings within the event, so a mid-peak
+        dip cannot hide the plateau.
+
+        Args:
+            particle (dict): Particle dictionary.
+            time_arr (ndarray): Sample time axis in seconds.
+            signal (ndarray): Raw signal of the isotope.
+
+        Returns:
+            float: Width ratio, or 0.0 when it cannot be computed.
+        """
+        try:
+            if signal is None:
+                return 0.0
+            n = len(time_arr)
+            left = max(0, min(int(particle.get('left_idx', 0)), n - 1))
+            right = max(left, min(int(particle.get('right_idx', left)), n - 1))
+            if right <= left:
+                return 0.0
+            region = np.asarray(signal[left:right + 1], dtype=float)
+            apex_val = float(np.max(region))
+            edge = min(3, len(region))
+            bkgd = float(np.median(
+                np.concatenate((region[:edge], region[-edge:]))))
+            if apex_val <= bkgd:
+                return 0.0
+            dwell = float(time_arr[1] - time_arr[0]) if n > 1 else 0.0
+            frac = min(0.99, max(0.50, float(
+                getattr(self, 'saturation_top_frac', 0.90))))
+            lvl = bkgd + frac * (apex_val - bkgd)
+            idx = np.where(region >= lvl)[0]
+            if len(idx) == 0:
+                return 0.0
+            w_top = float(time_arr[left + idx[-1]]
+                          - time_arr[left + idx[0]]) + dwell
+            fwhm = self._particle_fwhm_s(particle, time_arr, signal)
+            return w_top / fwhm if fwhm > 0 else 0.0
+        except Exception:
+            _itk_log.exception("Handled exception in _particle_flat_ratio")
+            return 0.0
+
+    @staticmethod
+    def _merge_time_windows(windows):
+        """
+        Merge overlapping time intervals into their sorted union.
+
+        Args:
+            windows (list): List of (t0, t1) tuples in seconds.
+
+        Returns:
+            list: Sorted, non-overlapping (t0, t1) tuples.
+        """
+        if not windows:
+            return []
+        windows = sorted(windows)
+        merged = [list(windows[0])]
+        for t0, t1 in windows[1:]:
+            if t0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], t1)
+            else:
+                merged.append([t0, t1])
+        return [(a, b) for a, b in merged]
+
+    def apply_saturation_filter(self, samples=None):
+        """
+        Particle-level filtering of detector non-linearity events,
+        re-evaluated from scratch for each sample.
+
+        The evaluation is a full re-assessment: previously filtered
+        particles are first merged back (entries whose isotope is no
+        longer selected are discarded), then two passes run. Pass 1
+        flags a time window for every peak, on any isotope, that is
+        large (SNR at or above the minimum), wide (FWHM above the
+        threshold) and flat-topped (top-width ratio at or above the
+        minimum). Pass 2 moves every particle whose apex falls inside a
+        flagged window, on all isotopes, plus every overlapping
+        multi-element particle, out of the results. Because each call
+        starts fresh, removing an isotope from the selection and
+        re-applying drops the windows that isotope was responsible for.
+
+        The union duration of the flagged windows is stored per sample
+        in self.saturation_excluded_time_s and is subtracted from the
+        analysis time when particle number concentrations are computed.
+
+        Args:
+            samples (list): Optional list of samples to evaluate.
+                Defaults to every sample with detection results.
+
+        Returns:
+            int: Number of particle events excluded after this call.
+        """
+        max_s = float(self.saturation_filter_ms) / 1000.0
+        target = samples if samples is not None else list(self.sample_detected_peaks.keys())
+        n_removed = 0
+
+        for sname in target:
+            detected = self.sample_detected_peaks.get(sname)
+            time_arr = self.time_array_by_sample.get(sname)
+            if detected is None or time_arr is None:
+                continue
+            time_arr = np.asarray(time_arr)
+            n = len(time_arr)
+            sample_data = self.data_by_sample.get(sname, {})
+
+            def _signal_for(key):
+                try:
+                    _el, iso = key
+                    ik = self.find_closest_isotope(iso)
+                    return sample_data.get(ik) if ik is not None else None
+                except Exception:
+                    _itk_log.exception("Handled exception in _signal_for")
+                    return None
+
+            old_store = self.saturation_filtered_peaks.pop(sname, {})
+            for key, removed in old_store.items():
+                if key in detected and removed:
+                    merged = list(detected[key]) + list(removed)
+                    merged.sort(key=lambda p: p.get('left_idx', 0) if p else 0)
+                    detected[key] = merged
+            old_multi = self.saturation_filtered_multi.pop(sname, None)
+            if old_multi and sname == self.current_sample:
+                merged = list(getattr(self, 'multi_element_particles', [])) + list(old_multi)
+                merged.sort(key=lambda mp: mp.get('start_time', 0.0))
+                self.multi_element_particles = merged
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+
+            windows = []
+            for key, particles in detected.items():
+                sig = None
+                sig_loaded = False
+                for p in particles or []:
+                    if p is None:
+                        continue
+                    snr = p.get('SNR')
+                    if snr is not None and float(snr) < self.saturation_min_snr:
+                        continue
+                    if not sig_loaded:
+                        sig = _signal_for(key)
+                        sig_loaded = True
+                    if self._particle_fwhm_s(p, time_arr, sig) <= max_s:
+                        continue
+                    if (sig is not None and self.saturation_flat_ratio > 0
+                            and self._particle_flat_ratio(p, time_arr, sig)
+                            < self.saturation_flat_ratio):
+                        continue
+                    left = max(0, min(int(p.get('left_idx', 0)), n - 1))
+                    right = max(left, min(int(p.get('right_idx', left)), n - 1))
+                    windows.append((float(time_arr[left]),
+                                    float(time_arr[right])))
+            windows = self._merge_time_windows(windows)
+            self.saturation_windows[sname] = windows
+            self.saturation_excluded_time_s[sname] = float(
+                sum(t1 - t0 for t0, t1 in windows))
+            if not windows:
+                continue
+
+            store = self.saturation_filtered_peaks.setdefault(sname, {})
+            for key, particles in list(detected.items()):
+                if not particles:
+                    continue
+                kept, removed = [], []
+                for p in particles:
+                    if p is None:
+                        continue
+                    t_apex = self._particle_apex_time(p, time_arr)
+                    if any(t0 <= t_apex <= t1 for t0, t1 in windows):
+                        removed.append(p)
+                    else:
+                        kept.append(p)
+                if removed:
+                    detected[key] = kept
+                    store.setdefault(key, []).extend(removed)
+                    n_removed += len(removed)
+
+            if sname == self.current_sample and getattr(self, 'multi_element_particles', None):
+                kept, removed = [], []
+                for mp in self.multi_element_particles:
+                    try:
+                        s = float(mp.get('start_time', 0.0))
+                        e = float(mp.get('end_time', s))
+                    except (TypeError, ValueError):
+                        _itk_log.exception("Handled exception in apply_saturation_filter")
+                        s = e = 0.0
+                    if any(s <= t1 and e >= t0 for t0, t1 in windows):
+                        removed.append(mp)
+                    else:
+                        kept.append(mp)
+                if removed:
+                    self.multi_element_particles = kept
+                    self.saturation_filtered_multi.setdefault(
+                        sname, []).extend(removed)
+                    n_removed += len(removed)
+
+        return n_removed
+
+    def restore_saturation_filtered(self, samples=None):
+        """
+        Merge previously filtered particles back into the detection
+        results in time order. Entries whose isotope is no longer
+        present in the detection results are discarded rather than
+        resurrected.
+
+        Args:
+            samples (list): Optional list of samples to restore.
+                Defaults to every sample with filtered particles.
+
+        Returns:
+            int: Number of particle events restored.
+        """
+        target = samples if samples is not None else list(self.saturation_filtered_peaks.keys())
+        n_restored = 0
+
+        for sname in list(target):
+            store = self.saturation_filtered_peaks.get(sname)
+            if not store:
+                continue
+            detected = self.sample_detected_peaks.setdefault(sname, {})
+            for key, removed in store.items():
+                if not removed or key not in detected:
+                    continue
+                merged = list(detected.get(key, [])) + list(removed)
+                merged.sort(key=lambda p: p.get('left_idx', 0) if p else 0)
+                detected[key] = merged
+                n_restored += len(removed)
+            self.saturation_filtered_peaks.pop(sname, None)
+            self.saturation_windows.pop(sname, None)
+            self.saturation_excluded_time_s.pop(sname, None)
+
+        for sname in (samples if samples is not None
+                      else list(self.saturation_filtered_multi.keys())):
+            removed = self.saturation_filtered_multi.pop(sname, None)
+            if not removed:
+                continue
+            n_restored += len(removed)
+            if sname == self.current_sample:
+                merged = list(getattr(self, 'multi_element_particles', [])) + list(removed)
+                merged.sort(key=lambda mp: mp.get('start_time', 0.0))
+                self.multi_element_particles = merged
+
+        if self.current_sample in self.sample_detected_peaks:
+            self.detected_peaks = self.sample_detected_peaks[self.current_sample]
+
+        return n_restored
+
+    def get_saturation_excluded_time(self, sample_name=None):
+        """
+        Return the total time excluded by the non-linearity filter for a
+        sample, in seconds. This duration is subtracted from the
+        analysis time when computing particle number concentrations so
+        the result stays unbiased.
+
+        Args:
+            sample_name (str): Sample identifier. Defaults to the
+                current sample.
+
+        Returns:
+            float: Excluded time in seconds, 0.0 when the filter is off.
+        """
+        sname = sample_name or self.current_sample
+        if not self.saturation_filter_enabled:
+            return 0.0
+        return float(self.saturation_excluded_time_s.get(sname, 0.0))
+
+    def _on_isotopes_removed(self, removed_isotopes):
+        """Keep the non-linearity filter consistent after isotopes are
+        removed from the selection: stored filtered particles of the
+        removed isotopes are dropped, and the filter is re-evaluated so
+        windows that were flagged by a removed isotope disappear and the
+        particles of the remaining isotopes inside them are restored.
+
+        Args:
+            removed_isotopes (set): Set of (element, isotope) tuples.
+        """
+        if not removed_isotopes:
+            return
+        for store in self.saturation_filtered_peaks.values():
+            for key in list(store.keys()):
+                if key in removed_isotopes:
+                    del store[key]
+        if self.saturation_filter_enabled:
+            n = self.apply_saturation_filter()
+            self.status_label.setText(
+                f"Non-linearity filter re-evaluated: {n} particle event(s) excluded")
+            self._refresh_after_saturation_change()
+
+    def _sync_saturation_filter_ui(self):
+        """Synchronize the non-linearity filter button with the current
+        state, without re-triggering the filter. Used after a project is
+        loaded.
+        """
+        if not hasattr(self, 'saturation_filter_button'):
+            return
+        self.saturation_filter_button.blockSignals(True)
+        self.saturation_filter_button.setChecked(bool(self.saturation_filter_enabled))
+        self.saturation_filter_button.blockSignals(False)
+        self._update_saturation_button_text()
+
+    def on_saturation_filter_toggled(self, checked):
+        """Toggle the detector non-linearity filter on or off.
+
+        Args:
+            checked (bool): New button state.
+        """
+        self.saturation_filter_enabled = bool(checked)
+        if checked:
+            n = self.apply_saturation_filter()
+            excl_ms = self.get_saturation_excluded_time() * 1000.0
+            msg = (f"Non-linearity filter ON (FWHM > {self.saturation_filter_ms:g} ms): "
+                   f"{n} particle event(s) excluded, "
+                   f"{excl_ms:.1f} ms removed from the analysis time")
+        else:
+            n = self.restore_saturation_filtered()
+            msg = f"Non-linearity filter OFF: {n} particle event(s) restored"
+        self.status_label.setText(msg)
+        self.user_action_logger.log_action(
+            'ANALYSIS', 'Non-linearity filter toggled',
+            {'enabled': self.saturation_filter_enabled,
+             'threshold_ms': self.saturation_filter_ms,
+             'affected_particles': n})
+        self._update_saturation_button_text()
+        self.unsaved_changes = True
+        self._refresh_after_saturation_change()
+
+    def show_saturation_filter_menu(self, pos):
+        """Show the right-click menu of the non-linearity filter button.
+
+        Args:
+            pos (QPoint): Local position of the context menu request.
+        """
+        menu = QMenu(self)
+
+        configure_action = QAction("Configure filter…", self)
+        configure_action.triggered.connect(self.configure_saturation_filter)
+        menu.addAction(configure_action)
+
+        highlight_action = QAction("Highlight filtered particles in plot", self)
+        highlight_action.setCheckable(True)
+        highlight_action.setChecked(self.saturation_highlight)
+
+        def _set_highlight(state):
+            self.saturation_highlight = bool(state)
+            QSettings("IsotopeTrack", "IsotopeTrack").setValue(
+                "filters/saturation_highlight", self.saturation_highlight)
+            self._refresh_after_saturation_change()
+
+        highlight_action.toggled.connect(_set_highlight)
+        menu.addAction(highlight_action)
+
+        menu.addSeparator()
+        n_filtered = sum(
+            len(plist)
+            for store in self.saturation_filtered_peaks.values()
+            for plist in store.values())
+        excl_ms = self.get_saturation_excluded_time() * 1000.0
+        info_action = QAction(
+            f"Excluded: {n_filtered} event(s), "
+            f"{excl_ms:.1f} ms of analysis time (current sample)", self)
+        info_action.setEnabled(False)
+        menu.addAction(info_action)
+
+        menu.exec(self.saturation_filter_button.mapToGlobal(pos))
+
+    def configure_saturation_filter(self):
+        """Open the settings dialog of the non-linearity filter. The
+        criteria are the maximum peak FWHM, the minimum SNR, the
+        minimum flat-top width ratio and the level at which the top
+        width is measured. The filter is re-evaluated immediately when
+        it is enabled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Detector Non-linearity Filter Settings")
+        layout = QVBoxLayout(dialog)
+
+        info = QLabel(
+            "Events recorded under non-linear detector response are\n"
+            "identified from the peak shape: the response stays wide at\n"
+            "the top instead of narrowing like a normal particle\n"
+            "transient. When any isotope shows such a peak, the whole\n"
+            "time window of the event is excluded for ALL isotopes, and\n"
+            "the excluded time is subtracted from the analysis time used\n"
+            "for particle number concentrations.")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Maximum peak FWHM:"))
+        spin = QDoubleSpinBox()
+        spin.setRange(0.001, 100000.0)
+        spin.setDecimals(3)
+        spin.setSuffix(" ms")
+        spin.setValue(self.saturation_filter_ms)
+        row.addWidget(spin)
+        row.addStretch()
+        layout.addLayout(row)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Minimum peak SNR to flag:"))
+        snr_spin = QDoubleSpinBox()
+        snr_spin.setRange(1.0, 100000.0)
+        snr_spin.setDecimals(1)
+        snr_spin.setToolTip(
+            "Non-linearity events are large by definition. Peaks below\n"
+            "this signal-to-threshold ratio are never flagged, even if\n"
+            "their width estimate is noisy.")
+        snr_spin.setValue(self.saturation_min_snr)
+        row2.addWidget(snr_spin)
+        row2.addStretch()
+        layout.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Minimum flat-top ratio (W_top/FWHM):"))
+        flat_spin = QDoubleSpinBox()
+        flat_spin.setRange(0.0, 1.0)
+        flat_spin.setSingleStep(0.05)
+        flat_spin.setDecimals(2)
+        flat_spin.setToolTip(
+            "Healthy transients narrow sharply toward the apex (Gaussian\n"
+            "at the 90 percent level: 0.39); a non-linear response stays\n"
+            "wide at the top (ratio toward 1). Set to 0 to disable.")
+        flat_spin.setValue(self.saturation_flat_ratio)
+        row3.addWidget(flat_spin)
+        row3.addStretch()
+        layout.addLayout(row3)
+
+        row4 = QHBoxLayout()
+        row4.addWidget(QLabel("Top width measured at (% of max):"))
+        frac_spin = QDoubleSpinBox()
+        frac_spin.setRange(50.0, 99.0)
+        frac_spin.setSingleStep(5.0)
+        frac_spin.setDecimals(0)
+        frac_spin.setSuffix(" %")
+        frac_spin.setToolTip(
+            "Level at which the top width is measured. 90 percent gives\n"
+            "the best shape discrimination at short dwell times; lower\n"
+            "levels make the ratio larger and noisier for narrow peaks\n"
+            "(Gaussian reference: 0.39 at 90, 0.57 at 80). Adjust the\n"
+            "flat-top ratio threshold accordingly if you change this.")
+        frac_spin.setValue(self.saturation_top_frac * 100.0)
+        row4.addWidget(frac_spin)
+        row4.addStretch()
+        layout.addLayout(row4)
+
+        highlight_cb = QCheckBox("Highlight filtered particles in the plot")
+        highlight_cb.setChecked(self.saturation_highlight)
+        layout.addWidget(highlight_cb)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        buttons.addWidget(ok_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        self.saturation_filter_ms = float(spin.value())
+        self.saturation_min_snr = float(snr_spin.value())
+        self.saturation_flat_ratio = float(flat_spin.value())
+        self.saturation_top_frac = float(frac_spin.value()) / 100.0
+        self.saturation_highlight = highlight_cb.isChecked()
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        settings.setValue("filters/saturation_fwhm_ms", self.saturation_filter_ms)
+        settings.setValue("filters/saturation_min_snr", self.saturation_min_snr)
+        settings.setValue("filters/saturation_flat_ratio", self.saturation_flat_ratio)
+        settings.setValue("filters/saturation_top_frac", self.saturation_top_frac)
+        settings.setValue("filters/saturation_highlight", self.saturation_highlight)
+
+        self.user_action_logger.log_action(
+            'ANALYSIS', 'Non-linearity filter configured',
+            {'threshold_ms': self.saturation_filter_ms,
+             'min_snr': self.saturation_min_snr,
+             'flat_ratio': self.saturation_flat_ratio,
+             'top_frac': self.saturation_top_frac,
+             'highlight': self.saturation_highlight})
+
+        if self.saturation_filter_enabled:
+            n = self.apply_saturation_filter()
+            self.status_label.setText(
+                f"Non-linearity filter updated (FWHM > {self.saturation_filter_ms:g} ms): "
+                f"{n} particle event(s) excluded")
+            self.unsaved_changes = True
+        self._update_saturation_button_text()
+        self._refresh_after_saturation_change()
+
+    def _refresh_after_saturation_change(self):
+        """Refresh the plot, the results tables and the summary of the
+        currently displayed element after the non-linearity filter
+        changed.
+        """
+        try:
+            if (self.current_element is not None and
+                    getattr(self, 'current_isotope', None) is not None and
+                    (self.current_element, self.current_isotope) in self.detected_peaks):
+                element_key = f"{self.current_element}-{self.current_isotope:.4f}"
+                isotope_key = self.find_closest_isotope(self.current_isotope)
+                if isotope_key is not None and isotope_key in self.data:
+                    signal = self.data[isotope_key]
+                    particles = self.detected_peaks[(self.current_element, self.current_isotope)]
+                    try:
+                        stored = self.element_thresholds[self.current_sample][element_key]
+                        lambda_bkgd = stored.get('background', 0)
+                        threshold = stored.get('threshold', 0)
+                    except KeyError:
+                        _itk_log.exception("Handled exception in _refresh_after_saturation_change")
+                        lambda_bkgd = 0
+                        threshold = 0
+                    view = None
+                    try:
+                        vr = self.plot_widget.viewRect()
+                        view = ([vr.left(), vr.right()], [vr.top(), vr.bottom()])
+                    except Exception:
+                        _itk_log.exception("Handled exception in _refresh_after_saturation_change")
+                    self.plot_results(element_key, signal, particles,
+                                      lambda_bkgd, threshold,
+                                      preserve_view_range=view)
+                    self.update_results_table(particles, signal,
+                                              self.current_element,
+                                              self.current_isotope)
+                    self.update_element_summary(self.current_element,
+                                                self.current_isotope,
+                                                particles)
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (element view) failed: {e}")
+
+        try:
+            self.rebuild_particle_data(self.current_sample)
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (particle data) failed: {e}")
+
+        try:
+            self.update_multi_element_table()
+        except Exception as e:
+            self.logger.debug(f"Non-linearity filter refresh (multi-element) failed: {e}")
+
+    def export_data(self):
+        """Export all data using external export utility."""
         self.user_action_logger.log_action(
             'FILE_OP', 'Export data triggered',
             {'sample_count': len(self.sample_to_folder_map),
@@ -7559,17 +7595,45 @@ class MainWindow(QMainWindow):
         from save_export.export_utils import export_data
         export_data(self)
 
+    def _offer_crash_recovery(self):
+        """Offer to reload an autosave snapshot left behind by a crashed session."""
+        try:
+            from save_export.autosave import AutosaveManager
+            found = AutosaveManager.find_recovery_files()
+        except Exception:
+            _itk_log.exception("Handled exception in _offer_crash_recovery")
+            return
+        if not found:
+            return
+
+        path, when = found[0]
+        leftovers = [p for p, _ in found]
+        ts = when.strftime("%Y-%m-%d %H:%M")
+        reply = QMessageBox.question(
+            self,
+            "Recover unsaved session?",
+            "IsotopeTrack didn't close normally last time.\n\n"
+            f"An autosaved session from {ts} was found. Recover it?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            try:
+                self.project_manager.load_project(filepath=str(path))
+                # The recovered state is not a saved project file yet.
+                self.unsaved_changes = True
+            except Exception:
+                _itk_log.exception("Handled exception in _offer_crash_recovery")
+                QMessageBox.warning(
+                    self, "Recovery failed",
+                    "The autosaved session could not be loaded.")
+                return  # keep the snapshot so it can be retried
+        # Recovered or declined: clear the leftovers so we don't prompt again.
+        from save_export.autosave import AutosaveManager
+        AutosaveManager.discard_recovery_files(leftovers)
+
     def closeEvent(self, event):
-        """
-        Handle application close event with unsaved changes check.
-        
-        Args:
-            self: MainWindow instance
-            event: QCloseEvent object
-            
-        Returns:
-            None
-        """
+        """Handle application close event with unsaved changes check."""
         if self.unsaved_changes:
             reply = QMessageBox.question(
                 self, 
@@ -7579,27 +7643,33 @@ class MainWindow(QMainWindow):
                 QMessageBox.Save
             )       
             if reply == QMessageBox.Save:
-                saved = self.save_project()
+                saved = self.project_manager.save_project(blocking=True)
                 if not saved:
                     event.ignore()
                     return
             elif reply == QMessageBox.Cancel:
                 event.ignore()
                 return
-        
+
+        # Clean exit: drop this window's recovery snapshot so the next launch
+        # doesn't treat it as a crash.
+        if getattr(self, '_autosave', None) is not None:
+            self._autosave.stop()
+            self._autosave.clear()
+
         for timer in self.findChildren(QTimer):
             timer.stop()
 
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (RuntimeError, TypeError):
-            pass 
+            _itk_log.exception("Handled exception in closeEvent")
 
         if hasattr(self, '_theme_follow_system_slot'):
             try:
                 theme.themeChanged.disconnect(self._theme_follow_system_slot)
             except (RuntimeError, TypeError):
-                pass
+                _itk_log.exception("Handled exception in closeEvent")
 
 
         if getattr(self, 'periodic_table_widget', None) is not None:
@@ -7629,7 +7699,7 @@ class MainWindow(QMainWindow):
             try:
                 app.main_windows.remove(self)
             except ValueError:
-                pass
+                _itk_log.exception("Handled exception in closeEvent")
         
         if not getattr(app, 'main_windows', []):
             app.quit()
@@ -7641,65 +7711,25 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
         
     def show_user_guide(self):
-        """
-        Display user guide dialog.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display user guide dialog."""
         self.help_manager.show_user_guide()
         
     def show_detection_methods(self):
-        """
-        Display detection methods information dialog.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display detection methods information dialog."""
         self.help_manager.show_detection_methods()
         
     def show_calibration_methods(self):
-        """
-        Display calibration methods information dialog.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display calibration methods information dialog."""
         self.help_manager.show_calibration_methods()
         
     def show_about_dialog(self):
-        """
-        Display about application dialog.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Display about application dialog."""
         from tools.help_dialogs import AboutDialog
         dialog = AboutDialog(self)
         dialog.exec()    
                      
     def show_log_window(self):
-        """
-        Open the application log viewer window.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Open the application log viewer window."""
         try:
             logging_manager.show_log_window(self)
         except Exception as e:
@@ -7710,14 +7740,8 @@ class MainWindow(QMainWindow):
     #----------------------------------------------------------------------------------------------------------
                     
     def eventFilter(self, obj, event):
-        """
-        Handle keyboard navigation for tables.
-        
-        Args:
-            self: MainWindow instance
-            obj: Object receiving event
-            event: QEvent object
-            
+        """Handle keyboard navigation for tables.
+
         Returns:
             bool: True if event was handled, False otherwise
         """
@@ -7768,25 +7792,12 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def get_snr_color(self, snr):
-        """
-        Get color code based on signal-to-noise ratio.
-        
-        Args:
-            self: MainWindow instance
-            snr (float): Signal-to-noise ratio
-            
-        Returns:
-            Color value for visualization
-        """
+        """Get color code based on signal-to-noise ratio."""
         return self.peak_detector.get_snr_color(snr)
 
     def calculate_accuracy(self):
-        """
-        Calculate suspected percentage using SNR criteria.
-        
-        Args:
-            self: MainWindow instance
-            
+        """Calculate suspected percentage using SNR criteria.
+
         Returns:
             float: Suspected percentage (0-100)
         """
@@ -7811,15 +7822,7 @@ class MainWindow(QMainWindow):
         return round(Suspected_percentage, 1)
                                         
     def clear_all_displays(self):
-        """
-        Clear all display elements when no samples available.
-        
-        Args:
-            self: MainWindow instance
-            
-        Returns:
-            None
-        """
+        """Clear all display elements when no samples available."""
         self.parameters_table.setRowCount(0)
         self.results_table.setRowCount(0)
         self.multi_element_table.setRowCount(0)
@@ -7838,7 +7841,7 @@ if __name__ == "__main__":
     """
     from PySide6.QtCore import Qt, QCoreApplication
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets
+    from PySide6 import QtWebEngineWidgets 
     app = QApplication(sys.argv)
     theme.sync_with_system()       
     main_window = MainWindow()

@@ -7,6 +7,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "**.py"
 
   workflow_dispatch:
 
@@ -33,6 +34,9 @@ jobs:
           pip install \
             mkdocs-material \
             mike
+
+      - name: Regenerate module reference pages
+        run: python docs_gen.py
 
       - name: Configure git (for mike to push to gh-pages)
         run: |

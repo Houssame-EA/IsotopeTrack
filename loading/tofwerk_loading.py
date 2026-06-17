@@ -4,6 +4,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 import numpy.lib.recfunctions as rfn
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.loading.tofwerk_loading")
 
 
 def is_tofwerk_file(path: Path) -> bool:
@@ -164,7 +166,7 @@ def integrate_tof_data(
             try:
                 progress_callback(end / max(1, n_samples))
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in integrate_tof_data")
     chunk = None  
 
     scale_factor = float(
@@ -219,7 +221,7 @@ def read_tofwerk_file(
         try:
             progress_callback(1.0)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in read_tofwerk_file")
 
     names = [x.decode() for x in info["label"]]
    

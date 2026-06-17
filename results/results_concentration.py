@@ -13,24 +13,25 @@ Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
+    QDoubleSpinBox, QSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QWidget, QMenu, QDialogButtonBox, QScrollArea, QLineEdit,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.figure import Figure
 import matplotlib.ticker as mticker
 import numpy as np
-import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_matplotlib,
-    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    LABEL_MODES, format_element_label, Renderer,
-    get_display_name, download_matplotlib_figure, pick_color_hex,
+    FontSettingsGroup, ExportSettingsGroup,
+    MplDraggableCanvas, LABEL_MODES, format_element_label,
+    Renderer, get_display_name, download_matplotlib_figure,
+    pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_concentration")
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -104,23 +105,10 @@ DEFAULT_GROUP_COLORS = [
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _agg(values, method):
-    """
-    Args:
-        values (Any): Array or sequence of values.
-        method (Any): The method.
-    Returns:
-        object: Result of the operation.
-    """
     if not values:
         return 0
     arr = np.array(values, dtype=float)
@@ -135,12 +123,6 @@ def _agg(values, method):
 
 
 def _fmt_val(v):
-    """
-    Args:
-        v (Any): The v.
-    Returns:
-        object: Result of the operation.
-    """
     if v == 0:
         return "—"
     if abs(v) >= 1000:
@@ -156,12 +138,6 @@ def _fmt_val(v):
 
 class ConcentrationSettingsDialog(QDialog):
     def __init__(self, cfg, input_data, parent=None, scope='all'):
-        """
-        Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         if scope == 'format':
             self.setWindowTitle("Concentration plot format settings")
@@ -345,12 +321,7 @@ class ConcentrationSettingsDialog(QDialog):
         root.addWidget(bb)
 
     def _pick_point_color(self, sn, btn):
-        """Pick one per-sample individual-point color and refresh its preview.
-
-        Args:
-            sn (Any): Canonical sample name key.
-            btn (Any): Swatch button previewing the current point color.
-        """
+        """Pick one per-sample individual-point color and refresh its preview."""
         picked = pick_color_hex(self._sample_colors.get(sn, '#3B82F6'),
                                 owner=self, title="Point Color")
         if picked:
@@ -359,12 +330,7 @@ class ConcentrationSettingsDialog(QDialog):
                 f"background-color:{picked}; border:1px solid black;")
 
     def _pick_mean_color(self, sn, btn):
-        """Pick one per-sample mean-marker color and refresh its preview.
-
-        Args:
-            sn (Any): Canonical sample name key.
-            btn (Any): Swatch button previewing the current mean marker color.
-        """
+        """Pick one per-sample mean-marker color and refresh its preview."""
         initial = self._mean_marker_colors.get(
             sn, self._sample_colors.get(sn, '#3B82F6'))
         picked = pick_color_hex(initial, owner=self,
@@ -375,10 +341,6 @@ class ConcentrationSettingsDialog(QDialog):
                 f"background-color:{picked}; border:1px solid black;")
 
     def collect(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         d = {
             'data_type_display': self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
             'aggregation':       self.agg_combo.currentText() if self.agg_combo else self._cfg.get('aggregation', 'Mean'),
@@ -411,11 +373,6 @@ class ConcentrationDisplayDialog(QDialog):
     """Matplotlib-based concentration strip-chart with drag support."""
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.setWindowTitle("Concentration Comparison Plot")
@@ -457,8 +414,7 @@ class ConcentrationDisplayDialog(QDialog):
     # ── Context menu ───────────────────────────────────────────────────
 
     def _ctx_menu(self, pos):
-        """
-        Build a minimal Concentration right-click menu with quick controls only.
+        """Build a minimal Concentration right-click menu with quick controls only.
 
         The context menu is intentionally limited to `Quick Toggles` and
         `Isotope Label`. Full format/quantity configuration, reset, and export
@@ -467,9 +423,6 @@ class ConcentrationDisplayDialog(QDialog):
         Preserved behavior:
         - Toggle and label-mode actions still update the same config keys.
         - Concentration calculations and aggregation semantics are unchanged.
-
-        Args:
-            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -493,19 +446,10 @@ class ConcentrationDisplayDialog(QDialog):
 
         menu.exec(QCursor.pos())
     def _toggle(self, key):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -573,17 +517,14 @@ class ConcentrationDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
 
         except Exception as e:
-            print(f"Error refreshing concentration plot: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error refreshing concentration plot: {e}")
             import traceback; traceback.print_exc()
 
     # ── Core drawing ───────────────────────────────────────────────────
 
     def _draw_chart(self, data, cfg):
-        """Draw the horizontal strip chart onto self.figure.
-        Args:
-            data (Any): Input data.
-            cfg (Any): The cfg.
-        """
+        """Draw the horizontal strip chart onto self.figure."""
         elements   = data['elements']
         groups     = data['groups']
         group_names = list(groups.keys())
@@ -750,10 +691,6 @@ class ConcentrationComparisonNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Concentration"
         self.node_type       = "concentration_comparison"
@@ -767,40 +704,22 @@ class ConcentrationComparisonNode(QObject):
         self.input_data      = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = ConcentrationDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def _get_elements(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
@@ -811,10 +730,6 @@ class ConcentrationComparisonNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def extract_concentration_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
 
@@ -835,15 +750,6 @@ class ConcentrationComparisonNode(QObject):
         return None
 
     def _extract_single(self, data_key, elements, agg_method, unit):
-        """
-        Args:
-            data_key (Any): The data key.
-            elements (Any): The elements.
-            agg_method (Any): The agg method.
-            unit (Any): The unit.
-        Returns:
-            dict: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         if not particles:
             return None
@@ -875,15 +781,6 @@ class ConcentrationComparisonNode(QObject):
         }
 
     def _extract_multi(self, data_key, elements, agg_method, unit):
-        """
-        Args:
-            data_key (Any): The data key.
-            elements (Any): The elements.
-            agg_method (Any): The agg method.
-            unit (Any): The unit.
-        Returns:
-            dict: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names     = self.input_data.get('sample_names', [])
         if not particles or not names:

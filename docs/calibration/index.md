@@ -1,13 +1,8 @@
 # Calibration
 
-Transport rate calibration methods — weight, number, mass, and ionic.
+Ionic calibration and transport-efficiency methods.
 
 ---
-
-### [`ionic_CAL.py`](ionic-cal.md)
-
-
-**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **99** methods
 
 ### [`TE.py`](te.md)
 
@@ -22,12 +17,17 @@ Transport rate calibration methods — weight, number, mass, and ionic.
 ### [`TE_mass.py`](te-mass.md)
 
 
-**6** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **81** methods
+**5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **83** methods
 
 ### [`TE_number.py`](te-number.md)
 
 
 **5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **54** methods
+
+### [`ionic_CAL.py`](ionic-cal.md)
+
+
+**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **99** methods
 
 ### [`te_common.py`](te-common.md)
 

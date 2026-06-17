@@ -3,12 +3,14 @@ import json
 import pickle
 import gzip
 import zipfile
-import tempfile
 import time
 import logging
+import numbers
 from pathlib import Path
 
 import numpy as np
+from calibration_methods import calibration_registry
+_itk_log = logging.getLogger("IsotopeTrack.save_export.fast_project_io")
 
 logger = logging.getLogger(__name__)
 
@@ -73,20 +75,32 @@ def _particles_to_columnar(particles):
         if np.any(arr != 0):
             scalars[key] = arr
 
+    nested_element_keys = set()
+    for dict_key in _ELEMENT_DICT_KEYS:
+        for p in particles:
+            d = p.get(dict_key)
+            if isinstance(d, dict) and any(
+                not isinstance(v, numbers.Number) or isinstance(v, bool)
+                for v in d.values()
+            ):
+                nested_element_keys.add(dict_key)
+                break
+
     element_arrays = {}
     for dict_key in _ELEMENT_DICT_KEYS:
+        if dict_key in nested_element_keys:
+            continue
         mat = np.zeros((n, n_elements), dtype=np.float64)
         has_data = False
         for i, p in enumerate(particles):
             d = p.get(dict_key, {})
             if isinstance(d, dict):
                 for lbl, val in d.items():
-                    if lbl in label_to_idx:
-                        try:
-                            mat[i, label_to_idx[lbl]] = float(val)
-                            has_data = True
-                        except (TypeError, ValueError):
-                            pass
+                    if (lbl in label_to_idx
+                            and isinstance(val, numbers.Number)
+                            and not isinstance(val, bool)):
+                        mat[i, label_to_idx[lbl]] = float(val)
+                        has_data = True
         if has_data:
             element_arrays[dict_key] = mat
 
@@ -108,14 +122,14 @@ def _particles_to_columnar(particles):
     for p in particles:
         extra = {}
         for k, v in p.items():
-            if k in _SCALAR_KEYS or k in _ELEMENT_DICT_KEYS or k == 'totals':
+            if k in _SCALAR_KEYS or k == 'totals':
+                continue
+            if k in _ELEMENT_DICT_KEYS and k not in nested_element_keys:
                 continue
             if k.startswith('_'):
                 continue
             extra[k] = v
             complex_keys.add(k)
-        if 'densities_used' in p and isinstance(p['densities_used'], dict):
-            extra['densities_used'] = p['densities_used']
         extra_particles.append(extra)
 
     has_extras = any(bool(e) for e in extra_particles)
@@ -215,11 +229,6 @@ def save_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
-        """
-        Args:
-            pct (Any): Progress percentage (0–100).
-            msg (Any): Message string.
-        """
         if progress_callback:
             progress_callback(pct, msg)
 
@@ -253,9 +262,10 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sample_mass_fractions': getattr(mw, 'sample_mass_fractions', {}),
         'sample_densities': getattr(mw, 'sample_densities', {}),
         'sample_molecular_weights': getattr(mw, 'sample_molecular_weights', {}),
+        'sample_dilutions': getattr(mw, 'sample_dilutions', {}),
         'sample_status': getattr(mw, 'sample_status', {}),
         'detection_states': getattr(mw, 'detection_states', {}),
-        'transport_rate_methods': getattr(mw, 'transport_rate_methods', ["Liquid weight", "Number based", "Mass based"]),
+        'transport_rate_methods': getattr(mw, 'transport_rate_methods', calibration_registry.default_transport_labels()),
         'all_masses': getattr(mw, 'all_masses', None),
         'folder_paths': getattr(mw, 'folder_paths', []),
         '_display_label_to_element': getattr(mw, '_display_label_to_element', {}),
@@ -266,6 +276,11 @@ def save_project_v2(filepath, mw, progress_callback=None):
         'sidebar_visible': getattr(mw, 'sidebar_visible', True),
         'csv_config': getattr(mw, 'csv_config', None),
         'pending_csv_processing': getattr(mw, 'pending_csv_processing', False),
+        'saturation_filter_enabled': getattr(mw, 'saturation_filter_enabled', False),
+        'saturation_filtered_peaks': getattr(mw, 'saturation_filtered_peaks', {}),
+        'saturation_filtered_multi': getattr(mw, 'saturation_filtered_multi', {}),
+        'saturation_windows': getattr(mw, 'saturation_windows', {}),
+        'saturation_excluded_time_s': getattr(mw, 'saturation_excluded_time_s', {}),
     }
 
     if hasattr(mw, 'canvas_results_dialog') and mw.canvas_results_dialog is not None:
@@ -400,11 +415,6 @@ def load_project_v2(filepath, mw, progress_callback=None):
     t0 = time.time()
 
     def _progress(pct, msg=""):
-        """
-        Args:
-            pct (Any): Progress percentage (0–100).
-            msg (Any): Message string.
-        """
         if progress_callback:
             progress_callback(pct, msg)
 
@@ -496,6 +506,7 @@ def _restore_metadata(mw, metadata):
         'sample_run_info', 'sample_method_info',
         'element_mass_fractions', 'element_densities', 'element_molecular_weights',
         'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
+        'sample_dilutions',
         'sample_status', 'detection_states',
         'transport_rate_methods',
         'all_masses',
@@ -505,11 +516,17 @@ def _restore_metadata(mw, metadata):
         'multi_element_particles',
         'sidebar_width', 'sidebar_visible',
         'csv_config', 'pending_csv_processing',
+        'saturation_filter_enabled', 'saturation_filtered_peaks',
+        'saturation_filtered_multi', 'saturation_windows',
+        'saturation_excluded_time_s',
     ]
     
     for attr in simple_attrs:
         if attr in metadata:
             setattr(mw, attr, metadata[attr])
+
+    if hasattr(mw, '_sync_saturation_filter_ui'):
+        mw._sync_saturation_filter_ui()
 
     if not hasattr(mw, '_sigma_mode') or mw._sigma_mode is None:
         mw._sigma_mode = 'global'
@@ -592,7 +609,7 @@ def detect_format(filepath):
                 if '__format__' in zf.namelist():
                     return 2
         except zipfile.BadZipFile:
-            pass
+            _itk_log.exception("Handled exception in detect_format")
     
     if magic[:2] == FORMAT_V1_GZIP_MAGIC:
         return 1
@@ -602,7 +619,7 @@ def detect_format(filepath):
             f.read(1)
         return 1
     except Exception:
-        pass
+        _itk_log.exception("Handled exception in detect_format")
     
     raise ValueError(f"Unrecognized project file format: {filepath}")
 
@@ -644,7 +661,6 @@ def estimate_project_size(mw):
     Returns:
         dict: Size estimates with keys 'arrays_mb', 'particles_mb', 'metadata_mb', 'total_mb'
     """
-    import sys
     
     arrays_bytes = 0
     for sample_name, sample_data in mw.data_by_sample.items():

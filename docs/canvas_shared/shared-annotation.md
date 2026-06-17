@@ -2,46 +2,6 @@
 
 shared_annotations.py — Figure annotation system for IsotopeTrack.
 
-PowerPoint-style overlay for any PyQtGraph plot: click-to-select, drag-to-move,
-resize handles, inspector panel, undo/redo. Designed to plug into any plot node
-via a small integration (see `integrate_with_plot_widget` and `AnnotationManager`).
-
-The annotation state lives in cfg['annotations'] (a list of plain dicts), so it
-serializes with the workflow and can be rendered to either PyQtGraph (interactive)
-or Matplotlib (publication export, future work).
-
-Annotation schema (MVP — 5 types):
-Common fields:
-'id':    str       — unique identifier (e.g. 'ann_3f9a2b')
-'type':  str       — 'text' | 'vline' | 'hline' | 'vband' | 'rect'
-'color': str       — hex, e.g. '#A32D2D'
-'width': int       — line/border width in px
-'alpha': float     — 0..1 fill opacity (where applicable)
-
-Type-specific fields:
-text:  'x', 'y', 'text', 'font_size', 'box'(bool),
-'arrow_to': [x, y] | None
-vline: 'x', 'label', 'style'('solid'|'dash'|'dot')
-hline: 'y', 'label', 'style'
-vband: 'x1', 'x2', 'label'
-rect:  'x1', 'y1', 'x2', 'y2', 'label', 'filled'(bool)
-
-Usage in a display dialog:
-
-from results.shared_annotations import (
-AnnotationManager, AnnotationToolbar, AnnotationInspector,
-draw_annotations,
-)
-
-# In _build_ui:
-self.ann_mgr = AnnotationManager(self.node.config, parent=self)
-self.ann_toolbar = AnnotationToolbar(self.ann_mgr, parent=self)
-self.ann_inspector = AnnotationInspector(self.ann_mgr, parent=self)
-# ... add toolbar to top, inspector to right-side of layout
-
-# In _refresh, after drawing the plot:
-self.ann_mgr.attach_plot(plot_item)  # rebuilds annotation items on the plot
-
 ---
 
 ## Constants
@@ -49,16 +9,21 @@ self.ann_mgr.attach_plot(plot_item)  # rebuilds annotation items on the plot
 | Name | Value |
 |------|-------|
 | `ANNOTATION_TYPES` | `['text', 'vline', 'hline', 'vband', 'rect']` |
-| `LINE_STYLES` | `{'solid': Qt.SolidLine, 'dash': Qt.DashLine, 'd...` |
+| `LINE_STYLES` | `{'solid': Qt.SolidLine, 'dash': Qt.DashLine, 'dot': Qt.Do…` |
 | `DEFAULT_COLOR` | `'#A32D2D'` |
 | `SELECTION_COLOR` | `'#378ADD'` |
 | `HANDLE_SIZE_PX` | `8` |
-| `QUICK_COLORS` | `['#A32D2D', '#185FA5', '#0F6E56', '#BA7517', '#...` |
-| `_ANNOTATION_CLASSES` | `{'text': TextAnnotation, 'vline': VLineAnnotati...` |
+| `QUICK_COLORS` | `['#A32D2D', '#185FA5', '#0F6E56', '#BA7517', '#444441', '…` |
+| `_ANNOTATION_CLASSES` | `{'text': TextAnnotation, 'vline': VLineAnnotation, 'hline…` |
 
 ## Classes
 
 ### `_Command`
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `apply` | `(self)` |  |
+| `revert` | `(self)` |  |
 
 ### `AddCommand` *(extends `_Command`)*
 
@@ -88,10 +53,12 @@ self.ann_mgr.attach_plot(plot_item)  # rebuilds annotation items on the plot
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, limit: int = 100)` | Args: |
+| `__init__` | `(self, limit: int=100)` | Args: |
 | `push` | `(self, cmd: _Command)` | Args: |
 | `undo` | `(self)` |  |
 | `redo` | `(self)` |  |
+| `can_undo` | `(self) → bool` |  |
+| `can_redo` | `(self) → bool` |  |
 
 ### `_DraggableText` *(extends `pg.TextItem`)*
 
@@ -99,7 +66,7 @@ TextItem with built-in drag-to-move + arrow line to an optional target.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, html: str = '', color = '#000000', anchor = (0, 0))` | Args: |
+| `__init__` | `(self, html: str='', color='#000000', anchor=(0, 0))` | Args: |
 | `hoverEnterEvent` | `(self, ev)` | Args: |
 | `hoverLeaveEvent` | `(self, ev)` | Args: |
 | `mousePressEvent` | `(self, ev)` | Args: |
@@ -178,18 +145,6 @@ Shared logic for vertical & horizontal lines.
 
 Event filter installed on the pyqtgraph plot scene.
 
-Purpose: consume mouse press / release / move events at the scene level
-so they never bubble to the parent dialog or the OS window manager.
-Without this, macOS treats an unaccepted scene-level mouse release
-(produced after dragging an annotation to a new position) as a click
-outside the focused dialog, which raises the main application window
-above the dialog.
-
-We don't filter events that would block interaction — pyqtgraph items
-still receive their own mousePressEvent / mouseMoveEvent / mouseReleaseEvent
-via the scene's normal event dispatch. The filter only accepts the event
-*after* dispatch, preventing onward propagation.
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, manager)` | Args: |
@@ -198,18 +153,10 @@ via the scene's normal event dispatch. The filter only accepts the event
 ### `AnnotationManager` *(extends `QObject`)*
 
 Owns cfg['annotations'], the list of live annotation wrappers, the selection
-state, and the undo stack. Exposes methods for toolbar/inspector to call.
-
-Flow:
-- Plot dialog calls attach_plot(plot_item) after every _refresh to rebuild items.
-- Toolbar calls begin_insert(type) to enter insert mode; next click on the
-plot scene creates an annotation at the clicked (data) coordinates.
-- Inspector calls update_selected(new_data) to modify the selected annotation.
-- Manager emits sig_selection_changed when selection changes.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, cfg: dict, parent = None)` | Args: |
+| `__init__` | `(self, cfg: dict, parent=None)` | Args: |
 | `attach_plot` | `(self, plot_item)` | Called after every plot refresh. Rebuilds all annotation items. |
 | `_detach_all` | `(self)` |  |
 | `_build_wrapper` | `(self, data)` | Args: |
@@ -237,7 +184,7 @@ A round, clickable color dot. Emits sig_picked(hex_str).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, hex_color: str, selected: bool = False, size: int = 20, parent ` | Args: |
+| `__init__` | `(self, hex_color: str, selected: bool=False, size: int=20, parent=None` | Args: |
 | `_set_selected` | `(self, sel: bool)` | Args: |
 | `set_selected` | `(self, sel: bool)` | Args: |
 
@@ -247,22 +194,12 @@ The '+' button that opens a QColorDialog. Emits sig_picked(hex).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, size: int = 20, parent = None)` | Args: |
+| `__init__` | `(self, size: int=20, parent=None)` | Args: |
 | `_pick` | `(self)` |  |
 
 ### `FloatingInspector` *(extends `QFrame`)*
 
 Small popover shown next to the currently selected annotation.
-
-Parented to a *persistent* container (not the plot widget, which gets
-recreated on every refresh). Uses a getter to find the current plot
-widget / viewbox for positioning.
-
-Lifecycle:
-fi = FloatingInspector(mgr, parent=plot_container)
-fi.set_plot_accessor(lambda: (self.pw, self.primary_plot_item))
-# after every _refresh() in the host dialog:
-fi.attach(current_plot_item)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -275,7 +212,7 @@ fi.attach(current_plot_item)
 | `_clear_form` | `(self)` |  |
 | `_build_for` | `(self, data: dict)` | Args: |
 | `_title_for` | `(self, data: dict) → str` | Args: |
-| `_add_text_editor` | `(self, layout, data, key: str, placeholder: str = '')` | Args: |
+| `_add_text_editor` | `(self, layout, data, key: str, placeholder: str='')` | Args: |
 | `_add_style_row` | `(self, layout, data)` | Args: |
 | `_add_opacity_row` | `(self, layout, data)` | Args: |
 | `_add_border_width_row` | `(self, layout, data)` | Args: |
@@ -287,11 +224,10 @@ fi.attach(current_plot_item)
 ### `AnnotationShelfButton` *(extends `QPushButton`)*
 
 A small pill showing "≡ N annotations". Clicking opens a popup menu
-with each annotation (select, toggle visible, delete) and a "clear all".
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, mgr: 'AnnotationManager', parent = None)` | Args: |
+| `__init__` | `(self, mgr: 'AnnotationManager', parent=None)` | Args: |
 | `_refresh` | `(self)` |  |
 | `_summarize` | `(self, d: dict) → str` | Args: |
 | `_show_menu` | `(self)` |  |
@@ -299,105 +235,11 @@ with each annotation (select, toggle visible, delete) and a "clear all".
 
 ## Functions
 
-### `_new_id`
-
-```python
-def _new_id() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_default_data`
-
-```python
-def _default_data(ann_type: str, x: float = 0.0, y: float = 0.0) → dict
-```
-
-Return a default data dict for a new annotation of the given type.
-
-**Args:**
-
-- `ann_type (str): The ann type.`
-- `x (float): Input array or value.`
-- `y (float): Input array or value.`
-
-**Returns:**
-
-- `dict: Result of the operation.`
-
-### `make_annotation`
-
-```python
-def make_annotation(data: dict) → BaseAnnotation
-```
-
-
-**Args:**
-
-- `data (dict): Input data.`
-
-**Returns:**
-
-- `BaseAnnotation: Result of the operation.`
-
-### `build_annotate_submenu`
-
-```python
-def build_annotate_submenu(parent_menu, mgr: 'AnnotationManager', data_x: float, data_y: float, smart_actions = None, title_prefix: str = 'Annotate here') → None
-```
-
-Insert annotation items at the top of `parent_menu`, with coordinates
-pre-filled from (data_x, data_y). Lays out inline (no submenu cascade)
-so the menu is fast to scan and robust against Qt-side menu lifetime
-issues.
-
-
-**Args:**
-
-- `parent_menu:    an existing QMenu to prepend into`
-- `mgr:            AnnotationManager for this plot`
-- `data_x, data_y: click coordinates in plot data space`
-- `smart_actions:  optional list of (label:str, callback:callable) for`
-- `plot-type-specific data-aware actions`
-- `title_prefix:   header text before the coord pair`
-
-**Returns:**
-
-- `None`
-
-### `_anchor_for`
-
-```python
-def _anchor_for(data: dict, viewbox) → tuple[float, float]
-```
-
-Return (data_x, data_y) near which the floating inspector should sit.
-
-**Args:**
-
-- `data (dict): Input data.`
-- `viewbox (Any): The viewbox.`
-
-**Returns:**
-
-- `tuple[float, float]: Result of the operation.`
-
-### `install_annotation_shortcuts`
-
-```python
-def install_annotation_shortcuts(widget: QWidget, mgr: AnnotationManager)
-```
-
-Install Del / Ctrl+Z / Ctrl+Shift+Z / Esc shortcuts on a dialog.
-
-**Args:**
-
-- `widget (QWidget): Target widget.`
-- `mgr (AnnotationManager): The mgr.`
-
-**Returns:**
-
-- `object: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_new_id` | `() → str` | Returns: |
+| `_default_data` | `(ann_type: str, x: float=0.0, y: float=0.0) → dict` | Return a default data dict for a new annotation of the given type. |
+| `make_annotation` | `(data: dict) → BaseAnnotation` | Args: |
+| `build_annotate_submenu` | `(parent_menu, mgr: 'AnnotationManager', data_x: float, data_y: float, ` | Insert annotation items at the top of `parent_menu`, with coordinates |
+| `_anchor_for` | `(data: dict, viewbox) → tuple[float, float]` | Return (data_x, data_y) near which the floating inspector should sit. |
+| `install_annotation_shortcuts` | `(widget: QWidget, mgr: AnnotationManager)` | Install Del / Ctrl+Z / Ctrl+Shift+Z / Esc shortcuts on a dialog. |

@@ -1,0 +1,10 @@
+# Test dependencies for IsotopeTrack.
+# Install on top of the runtime deps:
+#     pip install -r requirements.txt -r requirements-test.txt
+#     pytest
+#
+# The runtime dependencies (PySide6, numpy, scipy, numba, pandas, ...) must be
+# installed for the suite to import the application modules.
+
+pytest>=8.0
+pytest-cov>=5.0

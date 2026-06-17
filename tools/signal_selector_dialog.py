@@ -24,10 +24,6 @@ DEFAULT_ELEMENT_COLORS = [
 
 
 def _style_group_box() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QGroupBox {{
@@ -52,10 +48,6 @@ def _style_group_box() -> str:
 
 
 def _style_scroll_area() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     return """
         QScrollArea {
             border: none;
@@ -65,10 +57,6 @@ def _style_scroll_area() -> str:
 
 
 def _style_checkbox() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QCheckBox::indicator {{
@@ -92,10 +80,6 @@ def _style_checkbox() -> str:
 
 
 def _style_row_widget() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QWidget {{
@@ -111,10 +95,6 @@ def _style_row_widget() -> str:
 
 
 def _style_utility_btn() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QPushButton {{
@@ -139,10 +119,6 @@ def _style_utility_btn() -> str:
 
 
 def _style_plot_btn() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QPushButton {{
@@ -165,10 +141,6 @@ def _style_plot_btn() -> str:
 
 
 def _style_cancel_btn() -> str:
-    """
-    Returns:
-        str: Result of the operation.
-    """
     p = theme.palette
     return f"""
         QPushButton {{
@@ -196,14 +168,10 @@ class ColorButton(QPushButton):
     colorChanged = Signal(str)
 
     def __init__(self, color="#1f77b4"):
-        """
-        Initialize the color button.
+        """Initialize the color button.
 
         Args:
             color (str, optional): Initial color in hex format. Defaults to "#1f77b4"
-
-        Returns:
-            None
         """
         super().__init__()
         self.current_color = color
@@ -213,13 +181,9 @@ class ColorButton(QPushButton):
         self.clicked.connect(self.pick_color)
 
     def _apply_style(self):
-        """
-        Apply stylesheet to reflect the current color.
+        """Apply stylesheet to reflect the current color.
 
         Args:
-            None
-
-        Returns:
             None
         """
         p = theme.palette
@@ -235,13 +199,9 @@ class ColorButton(QPushButton):
         """)
 
     def pick_color(self):
-        """
-        Open the color picker dialog and emit colorChanged if a new color is chosen.
+        """Open the color picker dialog and emit colorChanged if a new color is chosen.
 
         Args:
-            None
-
-        Returns:
             None
         """
         color = QColorDialog.getColor(QColor(self.current_color), self)
@@ -263,14 +223,10 @@ class ColorButton(QPushButton):
         return self.current_color
 
     def set_color(self, color):
-        """
-        Set a new color and update appearance.
+        """Set a new color and update appearance.
 
         Args:
             color (str): New color in hex format
-
-        Returns:
-            None
         """
         self.current_color = color
         self._apply_style()
@@ -288,15 +244,11 @@ class SignalSelectorDialog(QDialog):
     """
 
     def __init__(self, main_window, parent=None):
-        """
-        Initialize the signal selector dialog.
+        """Initialize the signal selector dialog.
 
         Args:
             main_window (MainWindow): Reference to main window
             parent (QWidget, optional): Parent widget
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.main_window = main_window
@@ -387,10 +339,6 @@ class SignalSelectorDialog(QDialog):
             row_entry['color_btn']._apply_style()
 
     def showEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.apply_theme()
         super().showEvent(event)
 
@@ -434,10 +382,6 @@ class SignalSelectorDialog(QDialog):
         """)
 
     def _row_label_style(self) -> str:
-        """
-        Returns:
-            str: Result of the operation.
-        """
         p = theme.palette
         return (
             f"font-size: 12px; color: {p.text_primary}; font-weight: 500; "
@@ -833,8 +777,7 @@ class SignalSelectorDialog(QDialog):
     # ── Plot ──────────────────────────────────────────────────────────────
 
     def plot_signals(self):
-        """
-        Plot all selected signals with optimized performance.
+        """Plot all selected signals with optimized performance.
 
         Uses collinear point removal and PlotCurveItem for fast rendering.
         When multiple samples are selected each sample's color is used;
@@ -842,9 +785,6 @@ class SignalSelectorDialog(QDialog):
         All traces use solid lines.
 
         Args:
-            None
-
-        Returns:
             None
         """
         selected_samples = self._get_selected_samples()

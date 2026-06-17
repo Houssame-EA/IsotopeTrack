@@ -1,4 +1,6 @@
 from PySide6.QtWidgets import QTableWidgetItem
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.numeric_table")
 
 
 class NumericTableWidgetItem(QTableWidgetItem):

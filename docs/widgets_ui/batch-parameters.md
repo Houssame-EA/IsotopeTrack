@@ -8,12 +8,9 @@
 
 A lightweight collapsible container with a toggle header.
 
-Used to hide 'Advanced' parameters that most users don't need to touch,
-keeping the default dialog view short and focused.
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title: str, parent = None)` | Args: |
+| `__init__` | `(self, title: str, parent=None)` | Args: |
 | `_on_toggled` | `(self, checked: bool)` | Args: |
 | `content_layout` | `(self) → QGridLayout` | Returns: |
 
@@ -21,7 +18,7 @@ keeping the default dialog view short and focused.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None, elements = None, current_parameters = None, all_` | Initialize the batch element parameters dialog. |
+| `__init__` | `(self, parent=None, elements=None, current_parameters=None, all_sample` | Initialize the batch element parameters dialog. |
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
 | `closeEvent` | `(self, event)` | Disconnect theme signal so we don't leak slots on closed dialogs. |
 | `setup_ui` | `(self)` | Build the dialog layout. |

@@ -1,13 +1,13 @@
 """Loading data from Nu Instruments."""
 import json
 import logging
-from math import gamma
 from pathlib import Path
 from typing import BinaryIO, Generator
 
 import numpy as np
 import numpy.lib.recfunctions as rfn
 from scipy.special import gammainc
+_itk_log = logging.getLogger("IsotopeTrack.loading.vitesse_loading")
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ def collect_nu_integ_data(
             try:
                 progress_callback((file_pos + 1) / total)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in collect_nu_integ_data")
     return integs
 
 
@@ -452,7 +452,7 @@ def read_nu_directory(
             try:
                 progress_callback(frac * 0.85)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _integ_progress")
 
     integs = collect_nu_integ_data(
         path, integ_index, cyc_number=cycle, seg_number=segment,
@@ -467,7 +467,7 @@ def read_nu_directory(
         try:
             progress_callback(0.93)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in read_nu_directory")
 
     if not raw:
         signals /= run_info["AverageSingleIonArea"]
@@ -489,7 +489,7 @@ def read_nu_directory(
         try:
             progress_callback(1.0)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in read_nu_directory")
 
     return masses, signals, run_info
 

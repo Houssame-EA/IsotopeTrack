@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                               QDialog, QListWidget, QCheckBox, QDoubleSpinBox, QListWidgetItem,
                               QGroupBox, QGridLayout, QSpinBox, QToolButton)
 from tools.theme import theme, dialog_qss
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.batch_parameters")
 
 
 class CollapsibleSection(QWidget):
@@ -13,11 +15,6 @@ class CollapsibleSection(QWidget):
     keeping the default dialog view short and focused.
     """
     def __init__(self, title: str, parent=None):
-        """
-        Args:
-            title (str): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._toggle = QToolButton(text=title, checkable=True, checked=False)
         self._toggle.setStyleSheet("QToolButton { border: none; font-weight: 600; }")
@@ -37,34 +34,22 @@ class CollapsibleSection(QWidget):
         outer.addWidget(self._content)
 
     def _on_toggled(self, checked: bool):
-        """
-        Args:
-            checked (bool): Whether the item is checked.
-        """
         self._toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
         self._content.setVisible(checked)
 
     def content_layout(self) -> QGridLayout:
-        """
-        Returns:
-            QGridLayout: Result of the operation.
-        """
         return self._content_layout
 
 
 class BatchElementParametersDialog(QDialog):
     def __init__(self, parent=None, elements=None, current_parameters=None, all_samples=None):
-        """
-        Initialize the batch element parameters dialog.
+        """Initialize the batch element parameters dialog.
 
         Args:
             parent: Parent widget for the dialog
             elements: Dictionary mapping element keys to display labels
             current_parameters: Dictionary of current parameter settings
             all_samples: List of all available sample names
-
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setWindowTitle("Batch Edit Element Parameters")
@@ -89,14 +74,11 @@ class BatchElementParametersDialog(QDialog):
             self.toggle_window_size(self.use_window_size.checkState())
 
     def closeEvent(self, event):
-        """Disconnect theme signal so we don't leak slots on closed dialogs.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Disconnect theme signal so we don't leak slots on closed dialogs."""
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
-            pass
+            _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
@@ -133,10 +115,6 @@ class BatchElementParametersDialog(QDialog):
         self.initialize_controls_from_parameters()
 
     def _build_samples_group(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         self.samples_group = QGroupBox("Samples")
         layout = QVBoxLayout(self.samples_group)
         layout.setSpacing(6)
@@ -161,10 +139,6 @@ class BatchElementParametersDialog(QDialog):
         return self.samples_group
 
     def _build_elements_group(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         self.elements_group = QGroupBox("Elements")
         layout = QVBoxLayout(self.elements_group)
         layout.setSpacing(6)
@@ -207,10 +181,6 @@ class BatchElementParametersDialog(QDialog):
         return self.elements_group
 
     def _build_params_group(self) -> QGroupBox:
-        """
-        Returns:
-            QGroupBox: Result of the operation.
-        """
         params_group = QGroupBox("Parameter Settings")
         grid = QGridLayout(params_group)
         grid.setHorizontalSpacing(12)
@@ -226,11 +196,8 @@ class BatchElementParametersDialog(QDialog):
 
         grid.addWidget(QLabel("Detection Method:"), row, 0)
         self.method_combo = QComboBox()
-        self.method_combo.addItems([
-            "Manual",
-            "Compound Poisson LogNormal",
-            "CPLN table",
-        ])
+        from processing import detection_registry
+        self.method_combo.addItems(detection_registry.selectable_labels())
         self.method_combo.currentTextChanged.connect(self.toggle_manual_threshold)
         grid.addWidget(self.method_combo, row, 1)
         row += 1
@@ -257,10 +224,6 @@ class BatchElementParametersDialog(QDialog):
         return params_group
 
     def _build_advanced_section(self) -> CollapsibleSection:
-        """
-        Returns:
-            CollapsibleSection: Result of the operation.
-        """
         section = CollapsibleSection("Advanced")
         grid = section.content_layout()
         grid.setHorizontalSpacing(12)
@@ -346,10 +309,7 @@ class BatchElementParametersDialog(QDialog):
     # ------------------------------------------------------------------ #
 
     def toggle_manual_threshold(self, method):
-        """Show/hide the manual threshold input based on the detection method.
-        Args:
-            method (Any): The method.
-        """
+        """Show/hide the manual threshold input based on the detection method."""
         is_manual = method == "Manual"
         if hasattr(self, 'manual_threshold_label'):
             self.manual_threshold_label.setVisible(is_manual)
@@ -369,8 +329,6 @@ class BatchElementParametersDialog(QDialog):
 
         Accepts either a Qt.CheckState enum (from checkState()) or an int
         (from the stateChanged signal), since both call sites feed this.
-        Args:
-            state (Any): State value.
         """
         if isinstance(state, Qt.CheckState):
             is_enabled = state == Qt.CheckState.Checked
@@ -387,10 +345,7 @@ class BatchElementParametersDialog(QDialog):
             self.window_size.setStyleSheet("")
 
     def _toggle_valley_ratio(self, method: str):
-        """Show/hide the valley ratio input depending on the split method.
-        Args:
-            method (str): The method.
-        """
+        """Show/hide the valley ratio input depending on the split method."""
         is_watershed = method == "1D Watershed"
         self.valley_ratio_label.setVisible(is_watershed)
         self.valley_ratio.setVisible(is_watershed)
@@ -475,10 +430,7 @@ class BatchElementParametersDialog(QDialog):
         self.toggle_window_size(self.use_window_size.checkState())
 
     def get_parameters(self):
-        """Return the parameter values to apply to selected elements.
-        Returns:
-            dict: Result of the operation.
-        """
+        """Return the parameter values to apply to selected elements."""
         return {
             'include': self.include_checkbox.isChecked(),
             'method': self.method_combo.currentText(),
@@ -494,10 +446,7 @@ class BatchElementParametersDialog(QDialog):
         }
 
     def get_selected_samples(self):
-        """Return names of all selected samples.
-        Returns:
-            list: Result of the operation.
-        """
+        """Return names of all selected samples."""
         return [
             self.sample_list.item(i).text()
             for i in range(self.sample_list.count())

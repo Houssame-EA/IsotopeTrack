@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QWidget,
     QPushButton, QDoubleSpinBox, QMessageBox, QCheckBox, QGraphicsOpacityEffect,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.dilution_utils")
 
 
 def normalize_factor(value, minimum=1.0):
@@ -20,6 +22,7 @@ def normalize_factor(value, minimum=1.0):
     try:
         result = float(value)
     except (TypeError, ValueError):
+        _itk_log.exception("Handled exception in normalize_factor")
         return minimum
     return result if result >= minimum else minimum
 
@@ -42,16 +45,12 @@ def get_sample_dilution(window, sample_name):
 
 
 def set_sample_dilution(window, sample_name, factor):
-    """
-    Store a dilution factor for a sample on a window.
+    """Store a dilution factor for a sample on a window.
 
     Args:
         window (Any): Owning window holding a sample_dilutions mapping.
         sample_name (str): Sample identifier.
         factor (float): Dilution factor to store, clamped to a minimum of 1.0.
-
-    Returns:
-        None
     """
     if not isinstance(getattr(window, 'sample_dilutions', None), dict):
         window.sample_dilutions = {}
@@ -82,6 +81,7 @@ def detect_dilution_from_name(name):
     try:
         value = float(matches[-1])
     except ValueError:
+        _itk_log.exception("Handled exception in detect_dilution_from_name")
         return None
     return value if value >= 1.0 else None
 
@@ -110,6 +110,7 @@ def detect_dilution_for_sample(window, sample_name):
             from pathlib import Path
             stem = Path(str(source)).name
         except Exception:
+            _itk_log.exception("Handled exception in detect_dilution_for_sample")
             stem = str(source)
         detected = detect_dilution_from_name(stem)
         if detected is not None:
@@ -118,11 +119,7 @@ def detect_dilution_for_sample(window, sample_name):
 
 
 def has_transport_rate(window):
-    """
-    Report whether a window has a usable transport rate calibration.
-
-    Args:
-        window (Any): Owning window exposing average_transport_rate.
+    """Report whether a window has a usable transport rate calibration.
 
     Returns:
         bool: True when an average transport rate greater than zero exists.
@@ -137,7 +134,10 @@ def effective_acquisition_time(window, sample_name, element_key=None):
 
     Excluded time regions visible for the sample are subtracted from the full
     acquisition span. Sample scope exclusions always apply; element scope
-    exclusions apply only when element_key matches the stored region.
+    exclusions apply only when element_key matches the stored region. When the
+    detector non-linearity filter is enabled, its flagged time windows are
+    also subtracted; any portion of a window already inside a manual
+    exclusion region is not subtracted twice.
 
     Args:
         window (Any): Owning window exposing time arrays and exclusion regions.
@@ -158,6 +158,7 @@ def effective_acquisition_time(window, sample_name, element_key=None):
     t_min = float(time_array[0])
     t_max = float(time_array[-1])
     total_time = t_max - t_min
+    exclusion_bounds = []
     if hasattr(window, '_visible_exclusion_entries_for'):
         for entry in window._visible_exclusion_entries_for(sample_name, element_key):
             bounds = entry.get('bounds')
@@ -167,6 +168,17 @@ def effective_acquisition_time(window, sample_name, element_key=None):
             x1 = min(float(bounds[1]), t_max)
             if x1 > x0:
                 total_time -= (x1 - x0)
+                exclusion_bounds.append((x0, x1))
+    if getattr(window, 'saturation_filter_enabled', False):
+        for w0, w1 in getattr(window, 'saturation_windows', {}).get(sample_name, []):
+            w0 = max(float(w0), t_min)
+            w1 = min(float(w1), t_max)
+            if w1 <= w0:
+                continue
+            overlap = 0.0
+            for x0, x1 in exclusion_bounds:
+                overlap += max(0.0, min(w1, x1) - max(w0, x0))
+            total_time -= max(0.0, (w1 - w0) - overlap)
     return max(total_time, 0.0)
 
 
@@ -219,15 +231,7 @@ def particles_per_ml(window, sample_name, particle_count, element_key=None,
 
 
 def open_dilution_factor_dialog(window):
-    """
-    Open the per sample dilution factor editor for a window.
-
-    Args:
-        window (Any): Owning window exposing data_by_sample.
-
-    Returns:
-        None
-    """
+    """Open the per sample dilution factor editor for a window."""
     samples = list(getattr(window, 'data_by_sample', {}).keys())
     if not samples:
         QMessageBox.information(window, "No Samples",
@@ -238,18 +242,11 @@ def open_dilution_factor_dialog(window):
 
 
 def maybe_prompt_dilution(window):
-    """
-    Show a one time prompt inviting dilution correction of particles per mL.
+    """Show a one time prompt inviting dilution correction of particles per mL.
 
     The prompt appears when a transport rate is available, no sample has a
     dilution factor set, and the user has not chosen to hide it. When declined,
     the Tools menu is highlighted to indicate where the factor is entered.
-
-    Args:
-        window (Any): Owning window.
-
-    Returns:
-        None
     """
     if not has_transport_rate(window):
         return
@@ -281,15 +278,7 @@ def maybe_prompt_dilution(window):
 
 
 def highlight_tools_menu(window):
-    """
-    Briefly animate the Tools menu to indicate where dilution is entered.
-
-    Args:
-        window (Any): Owning window with a menu bar containing a Tools menu.
-
-    Returns:
-        None
-    """
+    """Briefly animate the Tools menu to indicate where dilution is entered."""
     menu_bar = window.menuBar()
     tools_action = None
     for action in menu_bar.actions():
@@ -324,15 +313,11 @@ class DilutionFactorDialog(QDialog):
     """Per sample dilution factor editor with filename auto detection."""
 
     def __init__(self, main_window, sample_names):
-        """
-        Build the dilution factor dialog for the given samples.
+        """Build the dilution factor dialog for the given samples.
 
         Args:
             main_window (Any): Owning window providing dilution storage.
             sample_names (list): Sample identifiers to expose for editing.
-
-        Returns:
-            None
         """
         super().__init__(main_window)
         self.main_window = main_window
@@ -343,15 +328,7 @@ class DilutionFactorDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
-        """
-        Construct the dialog widgets and populate stored values.
-
-        Args:
-            self: DilutionFactorDialog instance.
-
-        Returns:
-            None
-        """
+        """Construct the dialog widgets and populate stored values."""
         outer = QVBoxLayout(self)
 
         info = QLabel(
@@ -414,57 +391,29 @@ class DilutionFactorDialog(QDialog):
         outer.addLayout(btn_row)
 
     def _apply_detected(self, sample_name, value):
-        """
-        Set a single sample spinbox to a detected dilution factor.
+        """Set a single sample spinbox to a detected dilution factor.
 
         Args:
             sample_name (str): Sample to update.
             value (float): Detected dilution factor.
-
-        Returns:
-            None
         """
         if sample_name in self.spinboxes:
             self.spinboxes[sample_name].setValue(value)
 
     def _apply_all_detected(self):
-        """
-        Apply every detectable dilution factor to its sample spinbox.
-
-        Args:
-            self: DilutionFactorDialog instance.
-
-        Returns:
-            None
-        """
+        """Apply every detectable dilution factor to its sample spinbox."""
         for sample_name, spin in self.spinboxes.items():
             detected = detect_dilution_for_sample(self.main_window, sample_name)
             if detected is not None:
                 spin.setValue(detected)
 
     def _reset_all(self):
-        """
-        Reset every sample spinbox to a dilution factor of one.
-
-        Args:
-            self: DilutionFactorDialog instance.
-
-        Returns:
-            None
-        """
+        """Reset every sample spinbox to a dilution factor of one."""
         for spin in self.spinboxes.values():
             spin.setValue(1.0)
 
     def _save(self):
-        """
-        Persist all spinbox values into the main window dilution store.
-
-        Args:
-            self: DilutionFactorDialog instance.
-
-        Returns:
-            None
-        """
+        """Persist all spinbox values into the main window dilution store."""
         for sample_name, spin in self.spinboxes.items():
             set_sample_dilution(self.main_window, sample_name, spin.value())
         self.accept()

@@ -7,14 +7,12 @@
 ### `CollapsibleSection` *(extends `QWidget`)*
 
 A themed collapsible panel.  Click the header bar to expand / collapse.
-Use ``collapse(status)`` to fold it programmatically and show a summary
-string; use ``expand()`` to re-open it.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title: str, parent = None)` | Args: |
+| `__init__` | `(self, title: str, parent=None)` | Args: |
 | `toggle` | `(self)` |  |
-| `collapse` | `(self, status: str = '')` | Args: |
+| `collapse` | `(self, status: str='')` | Args: |
 | `expand` | `(self)` |  |
 | `set_status` | `(self, text: str)` | Args: |
 | `is_expanded` | `(self)` | Returns: |
@@ -47,7 +45,7 @@ QComboBox that ignores mouse-wheel events to prevent accidental changes.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Initialize the Number Method Widget for particle-based calibration. |
+| `__init__` | `(self, parent=None)` | Initialize the Number Method Widget for particle-based calibration. |
 | `apply_theme` | `(self, *_)` | Re-apply the themed stylesheet and refresh dynamic labels. |
 | `initUI` | `(self)` | Build the single-page collapsible layout. |
 | `_build_samples_content` | `(self)` | Populate the Samples collapsible section. |

@@ -1,10 +1,17 @@
 """
 Formula parsing – supports parentheses, e.g. Ca(OH)2, Al2(SO4)3
 """
-
+import logging
 import re
 from functools import reduce
 from math import gcd
+
+
+_itk_log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Formula parsing – supports parentheses, e.g. Ca(OH)2, Al2(SO4)3
+# ---------------------------------------------------------------------------
 
 _TOKEN_RE = re.compile(r'([A-Z][a-z]?|\(|\))(\d*(?:\.\d+)?)')
 
@@ -17,9 +24,6 @@ def parse_formula_to_counts(formula: str) -> dict:
 
     Args:
         formula: Chemical formula string.
-
-    Returns:
-        dict mapping element symbols to positive integer counts.
     """
     if not formula or not isinstance(formula, str):
         return {}
@@ -49,18 +53,13 @@ def parse_formula_to_counts(formula: str) -> dict:
 
 
 def _safe_int(s: str, *, default: int = 1) -> int:
-    """Convert a numeric string to a positive int, rounding floats.
-    Args:
-        s (str): The s.
-        default (int): The default.
-    Returns:
-        int: Result of the operation.
-    """
+    """Convert a numeric string to a positive int, rounding floats."""
     if not s:
         return default
     try:
         return max(int(round(float(s))), 0) or default
     except (ValueError, TypeError):
+        _itk_log.exception("Handled exception in _safe_int")
         return default
 
 
@@ -68,12 +67,7 @@ _ELEMENT_ORDER_RE = re.compile(r'([A-Z][a-z]?)')
 
 
 def _element_order_in_formula(formula: str) -> list[str]:
-    """Return elements in the order they first appear in *formula*.
-    Args:
-        formula (str): The formula.
-    Returns:
-        list[str]: Result of the operation.
-    """
+    """Return elements in the order they first appear in *formula*."""
     seen: set[str] = set()
     order: list[str] = []
     for el in _ELEMENT_ORDER_RE.findall(str(formula)):
@@ -84,12 +78,7 @@ def _element_order_in_formula(formula: str) -> list[str]:
 
 
 def reduce_counts(counts: dict) -> dict:
-    """Divide all counts by their GCD to get the empirical formula.
-    Args:
-        counts (dict): The counts.
-    Returns:
-        dict: Result of the operation.
-    """
+    """Divide all counts by their GCD to get the empirical formula."""
     if not counts:
         return counts
     nums = [abs(int(v)) for v in counts.values() if int(v) != 0]
@@ -102,25 +91,14 @@ def reduce_counts(counts: dict) -> dict:
 
 
 def signature_from_counts(counts: dict) -> str:
-    """Order-independent canonical key for matching equivalent formulas.
-    Args:
-        counts (dict): The counts.
-    Returns:
-        str: Result of the operation.
-    """
+    """Order-independent canonical key for matching equivalent formulas."""
     if not counts:
         return ''
     return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
 
 
 def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = None) -> str:
-    """Build a human-readable formula string from counts.
-    Args:
-        counts (dict): The counts.
-        prefer_order (list[str] | None): The prefer order.
-    Returns:
-        str: Result of the operation.
-    """
+    """Build a human-readable formula string from counts."""
     if not counts:
         return ''
     if prefer_order:
@@ -138,12 +116,7 @@ def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = Non
 
 
 def canonicalize_preserve_user_order(formula: str) -> str:
-    """Reduce stoichiometry but preserve the user's element order.
-    Args:
-        formula (str): The formula.
-    Returns:
-        str: Result of the operation.
-    """
+    """Reduce stoichiometry but preserve the user's element order."""
     counts = reduce_counts(parse_formula_to_counts(formula))
     order = _element_order_in_formula(formula)
     return _join_formula_from_counts(counts, prefer_order=order)

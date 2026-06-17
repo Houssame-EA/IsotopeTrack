@@ -1,16 +1,18 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QFrame, QSplitter, QTextEdit, QProgressBar, QMessageBox, QComboBox,
-    QScrollArea, QWidget, QDialogButtonBox, QFileDialog, QSizePolicy, QCheckBox,
-    QTableWidget, QTableWidgetItem, QHeaderView, QApplication, QAbstractItemView,
-    QStackedWidget, QPlainTextEdit, QSlider, QSpinBox,
+    QFrame, QTextEdit, QProgressBar, QComboBox, QScrollArea, QWidget,
+    QDialogButtonBox, QFileDialog, QSizePolicy, QCheckBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QApplication, QAbstractItemView, QStackedWidget, QPlainTextEdit,
+    QSlider, QSpinBox,
 )
-from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt, QSize
-from PySide6.QtGui import QPixmap, QImage, QFont, QCursor, QColor, QKeySequence
+from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt
+from PySide6.QtGui import QPixmap, QFont, QCursor, QColor, QKeySequence
 import requests, io, re, json, time, math, threading, base64, os, uuid
 from collections import Counter, defaultdict
 import numpy as np
 from tools.theme import theme as global_theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_AI")
 
 OLLAMA_BASE = "http://localhost:11434"
 OLLAMA_CHAT = f"{OLLAMA_BASE}/api/chat"
@@ -98,7 +100,9 @@ def _fs(delta=0):
 
 def _safe_positive(v):
     try: v = float(v); return v > 0 and not np.isnan(v)
-    except: return False
+    except Exception:
+        _itk_log.exception("Handled exception in _safe_positive")
+        return False
 
 def _extract_element_values(particles, field='elements'):
     result = {}
@@ -107,7 +111,9 @@ def _extract_element_values(particles, field='elements'):
         if not isinstance(d, dict): continue
         for el, v in d.items():
             try: v = float(v)
-            except: continue
+            except Exception:
+                _itk_log.exception("Handled exception in _extract_element_values")
+                continue
             if v > 0 and not np.isnan(v): result.setdefault(el, []).append(v)
     return result
 
@@ -329,7 +335,8 @@ show_table(['Element','N','% total','Diam mean','Diam median','Diam p95','Mass m
         try:
             d = (float(p['end_time']) - float(p['start_time'])) * 1000
             if d > 0: durations_ms.append(d)
-        except: pass
+        except Exception:
+            _itk_log.exception("Handled exception in _build_system_prompt")
 
     total_masses = _extract_total_values(particles, 'total_element_mass_fg')
 
@@ -660,13 +667,16 @@ def _execute_query_code(code, particles, dc):
     }
     try:
         from scipy import stats; ns['stats'] = stats
-    except: pass
+    except Exception:
+        _itk_log.exception("Handled exception in _execute_query_code")
 
     out = io.StringIO(); err = [None]
     def _run():
         try:
             with redirect_stdout(out): exec(code, ns)
-        except Exception as e: err[0] = f"{type(e).__name__}: {e}"
+        except Exception as e:
+            _itk_log.exception("Handled exception in _run")
+            err[0] = f"{type(e).__name__}: {e}"
 
     t = threading.Thread(target=_run, daemon=True)
     t.start(); t.join(timeout=CODE_EXEC_TIMEOUT)
@@ -696,8 +706,10 @@ def _extract_pdf_text(path):
         text = '\n'.join(pg.extract_text() or '' for pg in reader.pages)
         return text.strip() or None
     except ImportError:
+        _itk_log.debug("Handled exception in _extract_pdf_text")
         return "__MISSING_PYPDF__"
     except Exception as e:
+        _itk_log.exception("Handled exception in _extract_pdf_text")
         return None
 
 def _read_text_file(path):
@@ -758,7 +770,8 @@ class StreamWorker(QThread):
         self._cancelled.set()
         if self._resp:
             try: self._resp.close()
-            except: pass
+            except Exception:
+                _itk_log.exception("Handled exception in stop")
 
     def run(self):
         if   self.backend == 'mlx':    self._run_mlx()
@@ -826,9 +839,11 @@ class StreamWorker(QThread):
                 self.error_occurred.emit(f"Ollama HTTP {self._resp.status_code}"); return
             self._stream_ndjson()
         except requests.exceptions.ConnectionError:
+            _itk_log.exception("Handled exception in _run_ollama")
             if not self._cancelled.is_set():
                 self.error_occurred.emit("Cannot connect to Ollama. Run: ollama serve")
         except Exception as e:
+            _itk_log.exception("Handled exception in _run_ollama")
             if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
 
     def _stream_ndjson(self):
@@ -837,7 +852,9 @@ class StreamWorker(QThread):
             if self._cancelled.is_set(): break
             if not line: continue
             try: chunk = json.loads(line)
-            except: continue
+            except Exception:
+                _itk_log.exception("Handled exception in _stream_ndjson")
+                continue
             content = chunk.get('message', {}).get('content', '')
             if content: full.append(content); tc += 1; self.token_received.emit(content)
             if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
@@ -861,11 +878,13 @@ class StreamWorker(QThread):
                 self.error_occurred.emit(f"MLX HTTP {self._resp.status_code}"); return
             self._stream_sse()
         except requests.exceptions.ConnectionError:
+            _itk_log.exception("Handled exception in _run_mlx")
             if not self._cancelled.is_set():
                 self.error_occurred.emit(
                     "Cannot connect to MLX server.\n"
                     "Start it with:  mlx_lm.server --model <model-path> --port 8080")
         except Exception as e:
+            _itk_log.exception("Handled exception in _run_mlx")
             if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
 
     def _stream_sse(self):
@@ -876,7 +895,9 @@ class StreamWorker(QThread):
             ds = line[6:]
             if ds.strip() == '[DONE]': break
             try: ev = json.loads(ds)
-            except: continue
+            except Exception:
+                _itk_log.exception("Handled exception in _stream_sse")
+                continue
             content = ev.get('choices', [{}])[0].get('delta', {}).get('content', '')
             if content: full.append(content); tc += 1; self.token_received.emit(content)
             if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
@@ -903,13 +924,17 @@ class StreamWorker(QThread):
                 timeout=300, stream=True)
             if self._resp.status_code != 200:
                 try: detail = self._resp.json().get('error',{}).get('message','')
-                except: detail = ''
+                except Exception:
+                    _itk_log.exception("Handled exception in _run_custom_api")
+                    detail = ''
                 self.error_occurred.emit(f"API HTTP {self._resp.status_code}: {detail}"); return
             self._stream_sse()
         except requests.exceptions.ConnectionError:
+            _itk_log.exception("Handled exception in _run_custom_api")
             if not self._cancelled.is_set():
                 self.error_occurred.emit(f"Cannot connect to {self.cfg.get('custom_base_url','API')}")
         except Exception as e:
+            _itk_log.exception("Handled exception in _run_custom_api")
             if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
 
     def _finish(self, full, tc, t0):
@@ -1038,7 +1063,8 @@ class BackendDialog(QDialog):
                     self._ollama_status.setText("⚠ No models found — run: ollama pull <model>")
             else:
                 self._ollama_status.setText(f"✗ Ollama returned HTTP {r.status_code}")
-        except:
+        except Exception:
+            _itk_log.exception("Handled exception in _fetch_ollama_models")
             self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
 
     def _test_mlx(self):
@@ -1052,6 +1078,7 @@ class BackendDialog(QDialog):
             else:
                 self._mlx_status.setText(f"✗ HTTP {r.status_code}")
         except Exception as e:
+            _itk_log.exception("Handled exception in _test_mlx")
             self._mlx_status.setText(f"✗ {e}")
 
     def _test_custom(self):
@@ -1068,15 +1095,18 @@ class BackendDialog(QDialog):
                     self._custom_status.setText(f"✓ Connected — {len(models)} models")
                     if models and not self._custom_model.text():
                         self._custom_model.setText(models[0])
-                except:
+                except Exception:
+                    _itk_log.exception("Handled exception in _test_custom")
                     self._custom_status.setText("✓ Connected")
             elif r.status_code in (401, 403):
                 self._custom_status.setText("✗ Auth failed — check API key")
             else:
                 self._custom_status.setText(f"✗ HTTP {r.status_code}")
         except requests.exceptions.ConnectionError:
+            _itk_log.exception("Handled exception in _test_custom")
             self._custom_status.setText("✗ Cannot connect — check URL")
         except Exception as e:
+            _itk_log.exception("Handled exception in _test_custom")
             self._custom_status.setText(f"✗ {str(e)[:60]}")
 
     def get_config(self):
@@ -1278,6 +1308,7 @@ class AttachmentPreview(QFrame):
                 self._thumb.setScaledContents(True)
                 self._thumb.setStyleSheet("border-radius:6px;background:transparent;")
             except Exception:
+                _itk_log.exception("Handled exception in __init__")
                 self._thumb.setText(self._ICONS['image'])
                 self._thumb.setStyleSheet("font-size:20px;background:transparent;")
         else:
@@ -1656,12 +1687,14 @@ class ExplorationBubble(QFrame):
             try:
                 t = InteractiveTableBubble(tbl['headers'], tbl['rows'], tbl.get('title',''))
                 lo.addWidget(t)
-            except Exception: pass
+            except Exception:
+                _itk_log.exception("Handled exception in _build_step_widget")
 
         for ch in charts:
             try:
                 lo.addWidget(ChartBubble(ch))
-            except Exception: pass
+            except Exception:
+                _itk_log.exception("Handled exception in _build_step_widget")
 
         f.setStyleSheet(
             f"QFrame{{background:{Theme.c('bg_secondary')};"
@@ -1711,8 +1744,10 @@ class _NumericItem(QTableWidgetItem):
     """QTableWidgetItem that sorts numerically when possible."""
     def __lt__(self, other):
         def _num(s):
-            try: return float(s.replace(',','').replace('%',''))
-            except: return None
+            try:
+                return float(s.replace(',', '').replace('%', ''))
+            except (ValueError, AttributeError):
+                return None
         a, b = _num(self.text()), _num(other.text())
         if a is not None and b is not None: return a < b
         return self.text() < other.text()
@@ -1766,7 +1801,8 @@ class InteractiveTableBubble(QFrame):
                 [float(str(v).replace(",","").replace("%","")) for v in vals[:10]]
                 self._numeric_cols.append((i, h))
                 self._stats_col.addItem(h)
-            except: pass
+            except Exception:
+                _itk_log.exception("Handled exception in __init__")
         sl.addWidget(self._stats_col)
         self._stats_lbl = QLabel("")
         self._stats_lbl.setWordWrap(False)
@@ -1876,7 +1912,8 @@ class InteractiveTableBubble(QFrame):
         for r in self._all_rows:
             if col_idx < len(r):
                 try: vals.append(float(str(r[col_idx]).replace(",","").replace("%","")))
-                except: pass
+                except Exception:
+                    _itk_log.exception("Handled exception in _refresh_stats")
         if not vals:
             self._stats_lbl.setText("No numeric data"); return
         a = np.array(vals)
@@ -1925,7 +1962,8 @@ class InteractiveTableBubble(QFrame):
             try:
                 v = float(str(r[col_idx]).replace(",","").replace("%",""))
                 labels.append(str(r[0])); values.append(v)
-            except: pass
+            except Exception:
+                _itk_log.exception("Handled exception in _draw_chart")
         if not values: return
 
         kind = self._chart_kind
@@ -2268,6 +2306,7 @@ class ChartBubble(QFrame):
             canvas.draw()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _render")
             lay = self._canvas_frame.layout() or QVBoxLayout(self._canvas_frame)
             err_lbl = QLabel(f"\u26a0 Chart render error: {e}")
             err_lbl.setStyleSheet(
@@ -3055,6 +3094,7 @@ class AIChatDialog(QDialog):
                 self._pending_files.append(entry)
                 self._add_preview(name, 'text', entry)
             except Exception as e:
+                _itk_log.exception("Handled exception in _attach_file")
                 self._add_ai(f"Could not read **{name}**: {e}")
 
     def _add_preview(self, name, kind, entry, image_b64=None):
@@ -3264,21 +3304,24 @@ class AIChatDialog(QDialog):
         if not self._worker: return
         self._user_stopped = True
         try: self._worker.stop()
-        except Exception: pass
+        except Exception:
+            _itk_log.exception("Handled exception in _do_stop")
         self._think.setVisible(False); self._stop.setVisible(False)
         self._sendb.setVisible(True); self._speed.setVisible(False)
         if self._sb:
             try:
                 self._sb._raw = (self._sb._raw or "").rstrip() + "\n\n*[Stopped]*"
                 self._sb.finalise()
-            except Exception: pass
+            except Exception:
+                _itk_log.exception("Handled exception in _do_stop")
             self._sb = None
         try:
             self._worker.token_received.disconnect()
             self._worker.stats_update.disconnect()
             self._worker.stream_done.disconnect()
             self._worker.error_occurred.disconnect()
-        except Exception: pass
+        except Exception:
+            _itk_log.exception("Handled exception in _do_stop")
         self._worker = None
         if getattr(self, '_exp_mode', False):
             if getattr(self, '_exp_session', None):

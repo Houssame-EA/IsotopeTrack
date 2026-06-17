@@ -7,14 +7,10 @@ from PySide6.QtCore import Qt
 
 class DraggableTableWidget(QTableWidget):
     def __init__(self, parent=None):
-        """
-        Initialize the draggable table widget for calibration folders.
-        
+        """Initialize the draggable table widget for calibration folders.
+
         Args:
             parent: Parent widget for the table
-            
-        Returns:
-            None
         """
         super().__init__(parent)
         self.setDragEnabled(True)
@@ -34,14 +30,10 @@ class DraggableTableWidget(QTableWidget):
         self.setDragDropMode(QTableWidget.DragDrop)
 
     def dropEvent(self, event: QDropEvent):
-        """
-        Handle drop events for row reordering by swapping data between rows.
-        
+        """Handle drop events for row reordering by swapping data between rows.
+
         Args:
             event: Drop event containing information about the drop operation
-            
-        Returns:
-            None
         """
         if event.source() == self:
             selected_row = self.currentRow()
@@ -73,14 +65,10 @@ class DraggableTableWidget(QTableWidget):
             event.ignore()
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """
-        Handle drag enter events to validate drag source.
-        
+        """Handle drag enter events to validate drag source.
+
         Args:
             event: Drag enter event object
-            
-        Returns:
-            None
         """
         if event.source() == self:
             event.accept()
@@ -88,14 +76,10 @@ class DraggableTableWidget(QTableWidget):
             event.ignore()
             
     def dragMoveEvent(self, event: QDragMoveEvent):
-        """
-        Handle drag move events during dragging operation.
-        
+        """Handle drag move events during dragging operation.
+
         Args:
             event: Drag move event object
-            
-        Returns:
-            None
         """
         if event.source() == self:
             event.accept()
@@ -103,14 +87,10 @@ class DraggableTableWidget(QTableWidget):
             event.ignore()
 
     def show_context_menu(self, position):
-        """
-        Display context menu with add and remove options.
-        
+        """Display context menu with add and remove options.
+
         Args:
             position: Position where context menu should be displayed
-            
-        Returns:
-            None
         """
         context_menu = QMenu(self)
         add_action = context_menu.addAction("Add Folder")
@@ -124,13 +104,9 @@ class DraggableTableWidget(QTableWidget):
             self.remove_selected()
 
     def add_folder(self):
-        """
-        Add a new calibration folder to the table.
-        
+        """Add a new calibration folder to the table.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         folder = QFileDialog.getExistingDirectory(self, "Select Calibration Folder")
@@ -147,13 +123,9 @@ class DraggableTableWidget(QTableWidget):
             self.setCellWidget(row_position, 2, unit_combo)
 
     def remove_selected(self):
-        """
-        Remove the currently selected row from the table.
-        
+        """Remove the currently selected row from the table.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         current_row = self.currentRow()
@@ -174,14 +146,10 @@ class DraggableTableWidget(QTableWidget):
             QMessageBox.warning(self, "Warning", "Please select a row to remove")
 
     def update_with_folder_paths(self, folders):
-        """
-        Update the table with a list of folder paths.
-        
+        """Update the table with a list of folder paths.
+
         Args:
             folders: List of folder path strings to populate the table
-            
-        Returns:
-            None
         """
         self.setRowCount(0)
         self.folder_paths.clear()

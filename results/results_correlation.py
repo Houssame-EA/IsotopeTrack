@@ -1,31 +1,29 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
-    QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QWidgetAction,
-    QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QColorDialog, QListWidget,
+    QLineEdit, QScrollArea, QWidget, QMenu, QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+    QColorDialog,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QAction, QCursor
+from PySide6.QtGui import QColor, QCursor
 import pyqtgraph as pg
 import numpy as np
-import math
 import re
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    LABEL_MODES, format_label_text_tokens, Renderer,
-    FontSettingsGroup, build_axis_labels,
-    apply_saturation_filter, apply_zero_filter, apply_log_transform,
-    evaluate_equation, evaluate_equation_array, build_element_matrix,
-    compute_correlation_matrix, find_top_correlations,
-    create_single_color_scatter, create_color_mapped_scatter,
-    add_trend_line, add_correlation_text, CustomColorBar,
+    FONT_FAMILIES, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
+    apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
+    Renderer, build_axis_labels, apply_saturation_filter,
+    apply_zero_filter, apply_log_transform,
+    evaluate_equation_array, build_element_matrix, find_top_correlations,
+    create_single_color_scatter, create_color_mapped_scatter, add_trend_line,
+    add_correlation_text, CustomColorBar,
     get_sample_color, get_display_name,
-    download_pyqtgraph_figure, pick_color_hex,
-    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
+    download_pyqtgraph_figure, pick_color_hex, _QT_LINE,
+    _apply_box,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_correlation")
 
 try:
     from results.results_bar_charts import (
@@ -35,9 +33,11 @@ try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
         _CUSTOM_PLOT_AVAILABLE = True
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _PlotSettingsDialog = None
         _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
@@ -49,16 +49,6 @@ class CorrelationSettingsDialog(QDialog):
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
                  scope: str = "all", parent=None):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-            available_elements (list): The available elements.
-            is_multi (bool): The is multi.
-            sample_names (list): The sample names.
-            scope (str): Which settings scope to expose and collect:
-                ``format``, ``quantities``, or ``all``.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._scope = scope if scope in {"format", "quantities", "all"} else "all"
         if self._scope == "format":
@@ -475,16 +465,6 @@ class CorrelationSettingsDialog(QDialog):
         fl = QFormLayout(g)
 
         def _range_row(min_key, max_key, auto_key, min_def, max_def):
-            """
-            Args:
-                min_key (Any): The min key.
-                max_key (Any): The max key.
-                auto_key (Any): The auto key.
-                min_def (Any): The min def.
-                max_def (Any): The max def.
-            Returns:
-                tuple: Result of the operation.
-            """
             rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
             auto_cb = QCheckBox("Auto"); auto_cb.setChecked(self._config.get(auto_key, True))
             mn = QDoubleSpinBox(); mn.setRange(-1e9, 1e9); mn.setDecimals(4)
@@ -667,11 +647,6 @@ class AutoCorrelationDialog(QDialog):
     pair_selected = Signal(str, str)
 
     def __init__(self, top_pairs: list, parent=None):
-        """
-        Args:
-            top_pairs (list): The top pairs.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Automated Correlation Detection")
         self.setMinimumSize(520, 400)
@@ -718,10 +693,6 @@ class AutoCorrelationDialog(QDialog):
         layout.addWidget(btn)
 
     def _on_double_click(self, index):
-        """
-        Args:
-            index (Any): Row or item index.
-        """
         row = index.row()
         if 0 <= row < len(self._pairs):
             p = self._pairs[row]
@@ -761,11 +732,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         return CorrelationPlotDisplayDialog.DISPLAY_MODE_OVERLAID
 
     def __init__(self, correlation_node, parent_window=None):
-        """
-        Args:
-            correlation_node (Any): The correlation node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = correlation_node
         self.parent_window = parent_window
@@ -786,18 +752,10 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── helpers ─────────────────────────────
 
     def _is_multi(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
@@ -819,10 +777,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         return [(k, plot_data[k]) for k in ordered_keys]
 
     def _available_elements(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         try:
             pd = self.node.extract_plot_data()
             if pd:
@@ -835,7 +789,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 elif 'element_data' in pd:
                     return list(pd['element_data'].columns)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _available_elements")
         sel = (self.node.input_data or {}).get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
@@ -942,40 +896,20 @@ class CorrelationPlotDisplayDialog(QDialog):
         menu.exec(QCursor.pos())
 
     def _add_toggle(self, menu, label, key):
-        """
-        Args:
-            menu (Any): QMenu object.
-            label (Any): Label text.
-            key (Any): Dictionary or storage key.
-        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
     def _set_data_type(self, dt):
-        """
-        Args:
-            dt (Any): The dt.
-        """
         self.node.config['data_type_display'] = dt
         self._refresh()
 
     def _set_elem(self, key, elem):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            elem (Any): The elem.
-        """
         self.node.config[key] = elem
         self._refresh()
 
@@ -1062,8 +996,6 @@ class CorrelationPlotDisplayDialog(QDialog):
     def _click_to_data_coords(self, widget_pos) -> tuple:
         """Convert a right-click position in plot_widget coords to data coords
         on the primary plot item. Returns (x, y) as floats.
-        Args:
-            widget_pos (Any): The widget pos.
         """
         pi = getattr(self, '_primary_plot_item', None)
         if pi is None:
@@ -1076,6 +1008,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             data_pt = vb.mapSceneToView(scene_pt)
             return float(data_pt.x()), float(data_pt.y())
         except Exception:
+            _itk_log.exception("Handled exception in _click_to_data_coords")
             return 0.0, 0.0
 
     def _current_xy_arrays(self):
@@ -1086,6 +1019,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         try:
             plot_data = self.node.extract_plot_data()
         except Exception:
+            _itk_log.exception("Handled exception in _current_xy_arrays")
             return None, None
         if not plot_data:
             return None, None
@@ -1116,169 +1050,9 @@ class CorrelationPlotDisplayDialog(QDialog):
         are additionally clamped to the data's (min, max) bounds so they never
         blow out pyqtgraph's autoRange — annotation items are also added with
         ignoreBounds=True for belt-and-suspenders.
-        Returns:
-            list: Result of the operation.
         """
         # Annotation actions were intentionally removed in Correlation Phase 1.
         return []
-
-        actions = []
-        cfg = self.node.config
-        mgr = self.ann_mgr
-
-        x, y = self._current_xy_arrays()
-
-        if x is not None and len(x) >= 3:
-            x_lo, x_hi = float(np.min(x)), float(np.max(x))
-            y_lo, y_hi = float(np.min(y)), float(np.max(y))
-            x_span = max(x_hi - x_lo, 1e-9)
-            y_span = max(y_hi - y_lo, 1e-9)
-
-            both_linear = not cfg.get('log_x') and not cfg.get('log_y')
-            both_log = cfg.get('log_x') and cfg.get('log_y')
-            ranges_overlap = not (x_hi < y_lo or y_hi < x_lo)
-            if (both_linear or both_log) and ranges_overlap:
-                lo = max(x_lo, y_lo)
-                hi = min(x_hi, y_hi)
-                if hi > lo:
-                    def _one_to_one(a=lo, b=hi):
-                        """
-                        Args:
-                            a (Any): The a.
-                            b (Any): The b.
-                        """
-                        mgr.add_new('text', b, b)
-                        last = self.node.config['annotations'][-1]
-                        last['text'] = 'y = x'
-                        last['color'] = '#444441'
-                        last['box'] = False
-                        last['arrow_to'] = [a, a]
-                        mgr._raw_update(last['id'], last)
-                    actions.append(('Reference line  y = x', _one_to_one))
-
-            try:
-                mx = float(np.mean(x))
-                my = float(np.mean(y))
-
-                def _mean_x(val=mx):
-                    """
-                    Args:
-                        val (Any): The val.
-                    """
-                    mgr.add_new('vline', val, 0)
-                    last = self.node.config['annotations'][-1]
-                    last['label'] = f"mean x: {val:.3g}"
-                    last['color'] = '#0F6E56'
-                    mgr._raw_update(last['id'], last)
-                actions.append(('Mark mean x', _mean_x))
-
-                def _mean_y(val=my):
-                    """
-                    Args:
-                        val (Any): The val.
-                    """
-                    mgr.add_new('hline', 0, val)
-                    last = self.node.config['annotations'][-1]
-                    last['label'] = f"mean y: {val:.3g}"
-                    last['color'] = '#0F6E56'
-                    mgr._raw_update(last['id'], last)
-                actions.append(('Mark mean y', _mean_y))
-            except Exception as e:
-                print(f"[smart] mark means failed: {e}")
-
-            try:
-                sx = float(np.std(x)); sy = float(np.std(y))
-                mx = float(np.mean(x)); my = float(np.mean(y))
-                if sx > 0 and sy > 0:
-                    cx1 = max(mx - sx, x_lo)
-                    cx2 = min(mx + sx, x_hi)
-                    cy1 = max(my - sy, y_lo)
-                    cy2 = min(my + sy, y_hi)
-                    if cx2 > cx1 and cy2 > cy1:
-                        def _core_box(x1=cx1, x2=cx2, y1=cy1, y2=cy2):
-                            """
-                            Args:
-                                x1 (Any): The x1.
-                                x2 (Any): The x2.
-                                y1 (Any): The y1.
-                                y2 (Any): The y2.
-                            """
-                            mgr.add_new('rect', (x1 + x2) / 2, (y1 + y2) / 2)
-                            last = self.node.config['annotations'][-1]
-                            last['x1'] = x1; last['x2'] = x2
-                            last['y1'] = y1; last['y2'] = y2
-                            last['label'] = '1σ core'
-                            last['color'] = '#534AB7'
-                            last['filled'] = False
-                            mgr._raw_update(last['id'], last)
-                        actions.append(('Highlight 1σ core region', _core_box))
-            except Exception as e:
-                print(f"[smart] core box failed: {e}")
-
-            try:
-                r = float(np.corrcoef(x, y)[0, 1])
-                if np.isfinite(r):
-                    tx = x_lo + 0.05 * x_span
-                    ty = y_lo + 0.92 * y_span
-
-                    def _r_label(xx=tx, yy=ty, rv=r):
-                        """
-                        Args:
-                            xx (Any): The xx.
-                            yy (Any): The yy.
-                            rv (Any): The rv.
-                        """
-                        mgr.add_new('text', xx, yy)
-                        last = self.node.config['annotations'][-1]
-                        last['text'] = f"r = {rv:.3f}"
-                        last['color'] = '#185FA5'
-                        mgr._raw_update(last['id'], last)
-                    actions.append(('Label Pearson r', _r_label))
-            except Exception as e:
-                print(f"[smart] r label failed: {e}")
-
-            try:
-                if len(x) >= 3:
-                    slope, intercept = np.polyfit(x, y, 1)
-                    y_pred = slope * x + intercept
-                    residual_sd = float(np.std(y - y_pred))
-                    if np.isfinite(residual_sd) and residual_sd > 0:
-                        x_end_lo = x_lo
-                        x_end_hi = x_hi
-                        y_line_lo = slope * x_end_lo + intercept
-                        y_line_hi = slope * x_end_hi + intercept
-
-                        def _sd_band(xe1=x_end_lo, xe2=x_end_hi,
-                                      yl1=y_line_lo, yl2=y_line_hi,
-                                      sd=residual_sd, sl=slope):
-                            """
-                            Args:
-                                xe1 (Any): The xe1.
-                                xe2 (Any): The xe2.
-                                yl1 (Any): The yl1.
-                                yl2 (Any): The yl2.
-                                sd (Any): The sd.
-                                sl (Any): The sl.
-                            """
-                            x_mid = (xe1 + xe2) / 2
-                            y_mid = sl * x_mid + (yl1 - sl * xe1)
-                            mgr.add_new('rect', x_mid, y_mid)
-                            last = self.node.config['annotations'][-1]
-                            last['x1'] = xe1
-                            last['x2'] = xe2
-                            last['y1'] = y_mid - sd
-                            last['y2'] = y_mid + sd
-                            last['label'] = f'trend ± SD ({sd:.3g})'
-                            last['color'] = '#BA7517'
-                            last['filled'] = True
-                            last['alpha'] = 0.18
-                            last['width'] = 1
-                            mgr._raw_update(last['id'], last)
-                        actions.append(('Shade ±SD around trend', _sd_band))
-            except Exception as e:
-                print(f"[smart] trend band failed: {e}")
-
-        return actions
 
     # ── Auto-detect ─────────────────────────
 
@@ -1317,11 +1091,6 @@ class CorrelationPlotDisplayDialog(QDialog):
         dlg.exec()
 
     def _apply_auto_pair(self, x_elem, y_elem):
-        """
-        Args:
-            x_elem (Any): The x elem.
-            y_elem (Any): The y elem.
-        """
         self.node.config['mode'] = 'Simple Element Correlation'
         self.node.config['x_element'] = x_elem
         self.node.config['y_element'] = y_elem
@@ -1335,7 +1104,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             try:
                 cb.remove()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _cleanup_color_bars")
         self.active_color_bars.clear()
 
     def _suppress_native_plot_menus(self):
@@ -1345,13 +1114,13 @@ class CorrelationPlotDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _suppress_native_plot_menus")
                 vb = item.getViewBox()
                 if vb is not None:
                     try:
                         vb.setMenuEnabled(False)
                     except Exception:
-                        pass
+                        _itk_log.exception("Handled exception in _suppress_native_plot_menus")
 
     def _refresh(self):
         """Redraw Correlation plots from current config without changing math semantics."""
@@ -1409,19 +1178,14 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._suppress_native_plot_menus()
 
         except Exception as e:
-            print(f"Error refreshing correlation display: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error refreshing correlation display: {e}")
             import traceback; traceback.print_exc()
 
     # ── Drawing helpers ─────────────────────
 
     def _extract_xy_color(self, df, cfg):
-        """Extract (x, y, color_or_None) arrays from a DataFrame and config.
-        Args:
-            df (Any): Pandas DataFrame.
-            cfg (Any): The cfg.
-        Returns:
-            tuple: Result of the operation.
-        """
+        """Extract (x, y, color_or_None) arrays from a DataFrame and config."""
         mode = cfg.get('mode', 'Simple Element Correlation')
 
         if mode == 'Simple Element Correlation':
@@ -1445,11 +1209,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             return xa[mask], ya[mask], None
 
     def _prepare_data(self, df, cfg):
-        """Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting.
-        Args:
-            df (Any): Pandas DataFrame.
-            cfg (Any): The cfg.
-        """
+        """Filter + log-transform + outlier removal. Returns (x, y, color) ready for plotting."""
         df = apply_saturation_filter(df, cfg)
         if df.empty:
             return np.array([]), np.array([]), None
@@ -1509,8 +1269,6 @@ class CorrelationPlotDisplayDialog(QDialog):
             correlation_index (int): Series index used for r label vertical
                 offset in overlaid plots.
             correlation_count (int): Number of series in the overlaid panel.
-        Returns:
-            object: Result of the operation.
         """
         from PySide6.QtGui import QColor as _QC
         mode = cfg.get('mode', 'Simple Element Correlation')
@@ -1547,7 +1305,8 @@ class CorrelationPlotDisplayDialog(QDialog):
                     fill.setZValue(-5)
                     pi.addItem(fill)
                 except Exception as e:
-                    print(f'[SD envelope] {e}')
+                    _itk_log.exception("Handled exception in _plot_scatter")
+                    _itk_log.error(f'[SD envelope] {e}')
 
         if cfg.get('show_correlation', True) and len(x) > 1:
             if correlation_label:
@@ -1581,7 +1340,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                                 pi.addItem(txt)
                                 txt.setPos(x_pos, y_pos)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _plot_scatter")
             else:
                 add_correlation_text(pi, x, y, cfg)
 
@@ -1607,17 +1366,13 @@ class CorrelationPlotDisplayDialog(QDialog):
                 lbl_item.setPos(float(xr[-1]), float(yr[-1]))
                 pi.addItem(lbl_item)
             except Exception as e:
-                print(f'[ref line] {e}')
+                _itk_log.exception("Handled exception in _plot_scatter")
+                _itk_log.error(f'[ref line] {e}')
 
         _apply_box(pi, cfg)
         return scatter
 
     def _apply_labels(self, pi, cfg):
-        """
-        Args:
-            pi (Any): The pi.
-            cfg (Any): The cfg.
-        """
         if cfg.get('mode') != 'Simple Element Correlation':
             x_lbl = cfg.get('x_label', '') or cfg.get('x_equation', 'X-axis')
             y_lbl = cfg.get('y_label', '') or cfg.get('y_equation', 'Y-axis')
@@ -1641,12 +1396,6 @@ class CorrelationPlotDisplayDialog(QDialog):
     # ── Single sample ───────────────────────
 
     def _draw_single(self, pi, plot_data, cfg):
-        """
-        Args:
-            pi (Any): The pi.
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
         df = plot_data.get('element_data')
         if df is None or df.empty:
             return
@@ -1768,6 +1517,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             y_mid = vr[1][0] + 0.5 * (vr[1][1] - vr[1][0])
             ti.setPos(x_mid, y_mid)
         except Exception:
+            _itk_log.exception("Handled exception in _add_no_valid_data_message")
             ti.setPos(0.5, 0.5)
 
 
@@ -1829,10 +1579,6 @@ class CorrelationPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Element Correlation"
         self.node_type = "correlation_plot"
@@ -1846,30 +1592,16 @@ class CorrelationPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = CorrelationPlotDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
@@ -1884,20 +1616,12 @@ class CorrelationPlotNode(QObject):
             self.config['y_element'] = elems[1]
 
     def _get_elements(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.input_data:
             return []
         sel = self.input_data.get('selected_isotopes', [])
         return [iso['label'] for iso in sel]
 
     def extract_plot_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         dk = DATA_KEY_MAPPING.get(

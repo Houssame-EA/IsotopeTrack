@@ -31,7 +31,7 @@ FILES = [
     ]),
 
     # ── PyInstaller spec — macOS ──────────────────────────────────────────────
-    ("IsotopeTrack_M.spec", [
+    ("packaging/IsotopeTrack_M.spec", [
         (r"'CFBundleShortVersionString':\s*'[\d\.]+'",
          "'CFBundleShortVersionString': '{v}'"),
         (r"'CFBundleVersion':\s*'[\d\.]+'",
@@ -39,7 +39,7 @@ FILES = [
     ]),
 
     # ── Inno Setup installer ──────────────────────────────────────────────────
-    ("IsotopeTrack_Setup.iss", [
+    ("packaging/IsotopeTrack_Setup.iss", [
         (r'#define AppVersion\s+"[\d\.]+"',
          '#define AppVersion     "{v}"'),
     ]),

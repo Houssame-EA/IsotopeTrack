@@ -35,24 +35,26 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QSpinBox,
-    QVBoxLayout, QWidget, QDialogButtonBox,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QDialogButtonBox,
 )
 
 from results.shared_plot_utils import (
-    DEFAULT_SAMPLE_COLORS, FontSettingsGroup, Renderer, LABEL_MODES,
-    build_element_matrix, format_element_label, get_display_name,
-    get_sample_color, DownloadConfigDialog, export_csv,
-    make_font_properties,
+    FontSettingsGroup, Renderer, LABEL_MODES, build_element_matrix,
+    format_element_label, get_display_name, get_sample_color,
+    DownloadConfigDialog, make_font_properties,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_composition_wheel")
 
 
 try:
     import pyqtgraph.opengl as gl
     _HAVE_GL = True
 except Exception:                                   # pragma: no cover
+    _itk_log.exception("Handled exception in <module>")
     _HAVE_GL = False
 
 
@@ -419,6 +421,7 @@ def fp_or_none(cfg):
     try:
         return make_font_properties(cfg)
     except Exception:
+        _itk_log.exception("Handled exception in fp_or_none")
         return None
 
 

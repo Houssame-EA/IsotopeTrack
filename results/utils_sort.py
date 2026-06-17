@@ -1,14 +1,6 @@
 import re
 
 def extract_mass_and_element(element_name):
-    """ 
-    Args:
-        element_name (str): Element name string, potentially with mass number prefix (e.g., '55Fe', 'Fe')
-    
-    Returns:
-        tuple: (mass, element) where mass is an integer and element is a string
-               Returns (999, element_name) if no mass number is found
-    """
     element_name = element_name.strip()
              
     match = re.match(r'^(\d+)([A-Za-z]+)', element_name)
@@ -33,25 +25,12 @@ def sort_elements_by_mass(elements):
         list: Sorted list of element name strings ordered by mass number (ascending)
     """
     def get_sort_key(element):
-        """
-        Args:
-            element (Any): The element.
-        Returns:
-            object: Result of the operation.
-        """
         mass, _ = extract_mass_and_element(element)
         return mass
              
     return sorted(elements, key=get_sort_key)
 
 def sort_element_dict_by_mass(element_dict):
-    """    
-    Args:
-        element_dict (dict): Dictionary with element names as keys
-    
-    Returns:
-        dict: New dictionary with keys sorted by mass number (ascending order)
-    """
     if not element_dict:
         return element_dict
     

@@ -1,10 +1,10 @@
 # Main Window
 
-The central `MainWindow` class — layout, menus, signals, and all top-level logic.
+The central application window.
 
 ---
 
 ### [`mainwindow.py`](mainwindow.md)
 
 
-**4** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **146** methods
+**4** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **186** methods

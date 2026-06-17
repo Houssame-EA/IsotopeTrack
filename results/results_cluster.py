@@ -2,11 +2,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QFrame, QScrollArea, QWidget, QMenu, QTabWidget,
-    QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QProgressBar, QStackedWidget, QSlider,
+    QDialogButtonBox, QMessageBox, QProgressBar, QStackedWidget,
+    QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -15,6 +15,8 @@ import numpy as np
 import math
 import sys
 import warnings
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster")
 warnings.filterwarnings('ignore')
 
 from sklearn.cluster import (
@@ -29,11 +31,13 @@ try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
     _HDBSCAN_OK = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     try:
         import hdbscan as _hm
         _HDBSCAN_CLS = _hm.HDBSCAN
         _HDBSCAN_OK = True
     except ImportError:
+        _itk_log.debug("Handled exception in <module>")
         _HDBSCAN_CLS = None
         _HDBSCAN_OK = False
 from sklearn.metrics import (
@@ -47,16 +51,16 @@ from scipy.cluster.hierarchy import (
 )
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_font_properties,
-    apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
-    FontSettingsGroup,
-    download_matplotlib_figure,
-    format_element_label, Renderer,
-    per_ml_active, per_ml_factor, conc_meta_available, format_per_ml,
+    DEFAULT_SAMPLE_COLORS, get_font_config,
+    make_font_properties, FontSettingsGroup,
+    download_matplotlib_figure, format_element_label,
+    Renderer,
+    per_ml_active,
+    per_ml_factor, conc_meta_available,
+    format_per_ml,
 )
 from results.utils_sort import (
-    extract_mass_and_element, sort_elements_by_mass,
+    sort_elements_by_mass,
 )
 from results.results_heatmap import draw_combinations_heatmap
 
@@ -71,24 +75,16 @@ class _SafeFigureCanvas(FigureCanvas):
     """
 
     def showEvent(self, event):
-        """
-        Args:
-            event (QShowEvent): The show event forwarded by Qt.
-        """
         try:
             super().showEvent(event)
         except AttributeError:
-            pass
+            _itk_log.exception("Handled exception in showEvent")
 
     def resizeEvent(self, event):
-        """
-        Args:
-            event (QResizeEvent): The resize event forwarded by Qt.
-        """
         try:
             super().resizeEvent(event)
         except AttributeError:
-            pass
+            _itk_log.exception("Handled exception in resizeEvent")
 
 
 ALGORITHMS = [
@@ -367,6 +363,85 @@ def _dunn_sym_score(data, labels, max_points=2000, random_state=0):
     return float(min_sep / max_diam)
 
 
+def _c_index_score(data, labels, max_points=2000, random_state=0):
+    """C-index cluster validity index (lower is better, bounded in ``[0, 1]``).
+
+    The C-index compares the sum of within-cluster pairwise distances ``S_w``
+    against the best and worst values that sum could take for the same number of
+    within-cluster pairs ``N_w``. Writing ``S_min`` for the sum of the ``N_w``
+    smallest and ``S_max`` for the sum of the ``N_w`` largest pairwise distances
+    over the whole data set, the index is ``(S_w - S_min) / (S_max - S_min)``. It
+    is zero only when every within-cluster pair is among the globally closest
+    pairs — a perfectly compact partition — and approaches one for the worst.
+    Being normalised and bounded, it is directly comparable across cluster counts
+    and was among the better-performing indices in the comprehensive comparison
+    of Arbelaitz et al.
+
+    The computation is O(n^2) in the number of points, so large particle sets are
+    randomly sub-sampled to ``max_points`` before evaluation; this keeps the index
+    usable interactively while preserving its ranking behaviour. It is therefore
+    excluded from bootstrap stability runs by default (the registry
+    ``bootstrap_safe`` flag is ``False``).
+
+    References:
+        L. J. Hubert and J. R. Levin, "A general statistical framework for
+        assessing categorical clustering in free recall," *Psychol. Bull.* 83(6),
+        1976, 1072-1080, doi:10.1037/0033-2909.83.6.1072.
+        O. Arbelaitz et al., "An extensive comparative study of cluster validity
+        indices," *Pattern Recognit.* 46(1), 2013, 243-256,
+        doi:10.1016/j.patcog.2012.07.021.
+
+    Args:
+        data (np.ndarray): Data matrix of shape ``(n_samples, n_features)``.
+        labels (np.ndarray): Integer cluster label per row; negative labels
+            denote noise and are excluded from the computation.
+        max_points (int): Upper bound on the number of points used; larger inputs
+            are randomly sub-sampled to this size for tractability.
+        random_state (int): Seed for the sub-sampling RNG, for reproducibility.
+
+    Returns:
+        float: The C-index, or ``1.0`` (the worst attainable value) when it is
+            undefined — fewer than two clusters, no within-cluster pairs, or all
+            pairwise distances equal.
+    """
+    from scipy.spatial.distance import pdist
+
+    mask = labels >= 0
+    data = data[mask]
+    labels = labels[mask]
+    uniq = np.unique(labels)
+    if len(uniq) < 2:
+        return 1.0
+    if len(data) > max_points:
+        rng = np.random.default_rng(random_state)
+        sel = rng.choice(len(data), size=max_points, replace=False)
+        data = data[sel]
+        labels = labels[sel]
+        uniq = np.unique(labels)
+        if len(uniq) < 2:
+            return 1.0
+    all_d = pdist(data)
+    if all_d.size == 0:
+        return 1.0
+    s_w = 0.0
+    n_w = 0
+    for lab in uniq:
+        member = data[labels == lab]
+        if len(member) < 2:
+            continue
+        dm = pdist(member)
+        s_w += float(dm.sum())
+        n_w += dm.size
+    if n_w <= 0:
+        return 1.0
+    sorted_d = np.sort(all_d)
+    s_min = float(sorted_d[:n_w].sum())
+    s_max = float(sorted_d[-n_w:].sum())
+    if s_max <= s_min:
+        return 1.0
+    return float((s_w - s_min) / (s_max - s_min))
+
+
 CVI_FUNCS = {
     'silhouette_scores':         lambda d, l: float(silhouette_score(d, l)),
     'calinski_harabasz_scores':  lambda d, l: float(calinski_harabasz_score(d, l)),
@@ -375,6 +450,7 @@ CVI_FUNCS = {
     'xie_beni_scores':           lambda d, l: _xie_beni_score(d, l),
     'pbm_scores':                lambda d, l: _pbm_score(d, l),
     'dunn_sym_scores':           lambda d, l: _dunn_sym_score(d, l),
+    'c_index_scores':            lambda d, l: _c_index_score(d, l),
 }
 
 
@@ -432,6 +508,14 @@ METRIC_REGISTRY = {
         'key':            'dunn_sym_scores',
         'direction':      'max',
         'rule':           'max',
+        'bootstrap_safe': False,
+        'color':          '#2563EB',
+    },
+    'C-index': {
+        'display':        'C-index',
+        'key':            'c_index_scores',
+        'direction':      'min',
+        'rule':           'min',
         'bootstrap_safe': False,
         'color':          '#2563EB',
     },
@@ -568,13 +652,14 @@ CLUSTER_COLORS = [
     '#6366F1', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6',
 ]
 
-# ── App theme integration ──────────────────────────────────────────────────────
 try:
     from tools.theme import theme as _app_theme
 except Exception: 
+    _itk_log.exception("Handled exception in <module>")
     try:
         from ..tools.theme import theme as _app_theme
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _app_theme = None
 
 
@@ -635,7 +720,7 @@ def _current_plot_palette():
         try:
             return _palette_to_plot(_app_theme.palette)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _current_plot_palette")
     return _palette_to_plot(None)
 
 ALGO_LINE_STYLES = {
@@ -653,27 +738,142 @@ ALGO_LINE_STYLES = {
 }
 
 
-def _apply_clr(matrix):
-    """
+def multiplicative_replacement(matrix, frac=0.65, threshold=None):
+    """Replace zeros in a non-negative composition matrix without distorting ratios.
+
+    Log-ratio transforms are undefined at zero, and substituting a fixed tiny
+    constant such as ``1e-10`` is statistically poor for sparse, zero-inflated
+    data: every zero maps to an almost identical, very large negative log value,
+    so the transformed coordinates end up encoding presence/absence at enormous
+    magnitude and overwhelm genuine compositional differences. This is acute for
+    single-particle ICP-ToF-MS matrices, where most particles carry signal in
+    only one or a few element channels.
+
+    Multiplicative (simple) replacement substitutes a small positive ``delta``
+    for each zero and rescales the non-zero parts of the same row so the row
+    total is preserved, leaving the ratios among the observed parts unchanged —
+    the coherence property required for compositional data. ``delta`` is a
+    fraction of a per-column detection floor (by default the smallest strictly
+    positive value in each column), tying the imputed value to the instrument's
+    effective detection limit rather than to an arbitrary constant.
+
+    References:
+        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
+        "Dealing with zeros and missing values in compositional data sets using
+        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
+        doi:10.1023/A:1023866030544.
+        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
+        Hall, 1986.
+
     Args:
-        matrix (np.ndarray): Data matrix (n_samples, n_features), values >= 0.
+        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
+            row is one composition.
+        frac (float): Fraction of the per-column detection floor used as the
+            imputed value; ``0.65`` follows Martín-Fernández et al. (2003).
+        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
+            detection floor; when ``None`` the smallest strictly positive entry
+            of each column is used, with ``1.0`` for all-zero columns.
+
+    Returns:
+        np.ndarray: A float64 copy with zeros replaced and row totals preserved;
+            all-zero rows are filled with the per-column floor ``delta`` so
+            log-ratios stay finite.
+    """
+    X = np.array(matrix, dtype=np.float64, copy=True)
+    if X.size == 0:
+        return X
+    n_parts = X.shape[1]
+    if threshold is None:
+        floor = np.full(n_parts, np.nan)
+        for j in range(n_parts):
+            col = X[:, j]
+            pos = col[col > 0]
+            floor[j] = pos.min() if pos.size else 1.0
+    else:
+        floor = np.asarray(threshold, dtype=np.float64)
+        if floor.ndim == 0:
+            floor = np.full(n_parts, float(floor))
+    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
+    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
+
+    totals = X.sum(axis=1)
+    out = X.copy()
+    for i in range(X.shape[0]):
+        row = X[i]
+        zero = row <= 0
+        if not zero.any():
+            continue
+        if totals[i] <= 0:
+            out[i] = delta
+            continue
+        removed = delta[zero].sum()
+        scale = 1.0 - removed / totals[i]
+        if scale <= 0:
+            out[i, zero] = delta[zero]
+            continue
+        out[i, ~zero] = row[~zero] * scale
+        out[i, zero] = delta[zero]
+    return out
+
+
+def _apply_clr(matrix, zero_replacement='additive'):
+    """Centred-log-ratio transform of a non-negative composition matrix.
+
+    The CLR maps a composition to log values centred on the per-row geometric
+    mean, giving coordinates suitable for Euclidean-distance clustering of
+    compositional data. Because the logarithm is undefined at zero, zeros must
+    be handled first; the strategy is selectable.
+
+    References:
+        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
+        Hall, 1986.
+        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
+        "Dealing with zeros and missing values in compositional data sets using
+        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
+        doi:10.1023/A:1023866030544.
+
+    Args:
+        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
+        zero_replacement (str): ``'additive'`` adds a fixed ``1e-10`` floor
+            (legacy behaviour, retained as the default for reproducibility);
+            ``'multiplicative'`` uses ratio-preserving, detection-limit-aware
+            replacement via :func:`multiplicative_replacement`, which is the
+            statistically preferred treatment for the sparse single-particle case.
+
     Returns:
         np.ndarray: CLR-transformed matrix.
     """
-    eps = 1e-10
-    X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
+    if zero_replacement == 'multiplicative':
+        X = multiplicative_replacement(matrix)
+    else:
+        eps = 1e-10
+        X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
     log_X = np.log(X)
     return log_X - log_X.mean(axis=1, keepdims=True)
 
 
-def _apply_ilr(matrix):
-    """
+def _apply_ilr(matrix, zero_replacement='additive'):
+    """Isometric-log-ratio transform yielding ``p - 1`` orthonormal coordinates.
+
+    The ILR expresses a composition in an orthonormal basis of the Aitchison
+    simplex, removing the singular covariance the CLR leaves behind while
+    preserving Aitchison distances. It is built on the CLR and inherits its zero
+    handling.
+
+    References:
+        J. J. Egozcue, V. Pawlowsky-Glahn, G. Mateu-Figueras and C.
+        Barceló-Vidal, "Isometric logratio transformations for compositional data
+        analysis," *Math. Geol.* 35(3), 2003, 279-300,
+        doi:10.1023/A:1023818214614.
+
     Args:
-        matrix (np.ndarray): Data matrix (n_samples, n_features), values >= 0.
+        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
+        zero_replacement (str): Passed through to :func:`_apply_clr`.
+
     Returns:
-        np.ndarray: ILR-transformed matrix with p-1 coordinates.
+        np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
     """
-    clr = _apply_clr(matrix)
+    clr = _apply_clr(matrix, zero_replacement=zero_replacement)
     p = clr.shape[1]
     if p < 2:
         return clr
@@ -687,17 +887,45 @@ def _apply_ilr(matrix):
 
 
 def _apply_robust_zscore(matrix):
-    """
+    """Robust per-column z-score using a consistent scale estimate.
+
+    Each column is centred on its median and divided by a robust estimate of its
+    standard deviation. The estimate is ``1.4826 * MAD``, where ``1.4826`` is the
+    consistency constant that makes the scaled MAD an unbiased estimator of the
+    standard deviation for Gaussian data.
+
+    The previous implementation divided by the bare MAD and, whenever the MAD was
+    below ``1e-10``, clamped it to ``1e-10``. For single-particle ICP-ToF-MS data
+    that clamp is a trap: any element detected in fewer than half the particles
+    has a median and a MAD of exactly zero, so its column was divided by
+    ``1e-10`` and inflated to magnitudes around ``1e10`` that then dominated every
+    Euclidean distance. Because sparse columns are the rule rather than the
+    exception here, most "Robust Z-score" results were dominated by that
+    artefact. This version instead falls back to the column standard deviation
+    when the MAD vanishes, and to a unit scale only when the column is genuinely
+    constant (in which case the centred column is identically zero and carries no
+    weight), so no column can explode.
+
+    References:
+        P. J. Rousseeuw and C. Croux, "Alternatives to the median absolute
+        deviation," *J. Am. Stat. Assoc.* 88(424), 1993, 1273-1283,
+        doi:10.1080/01621459.1993.10476408.
+
     Args:
-        matrix (np.ndarray): Data matrix (n_samples, n_features).
+        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
+
     Returns:
-        np.ndarray: Robust Z-score normalised matrix (median / MAD).
+        np.ndarray: Robust z-score normalised matrix with no column inflated by a
+            near-zero scale.
     """
     X = matrix.astype(np.float64)
     med = np.median(X, axis=0)
     mad = np.median(np.abs(X - med), axis=0)
-    mad = np.where(mad < 1e-10, 1e-10, mad)
-    return (X - med) / mad
+    scale = 1.4826 * mad
+    std = np.std(X, axis=0)
+    scale = np.where(scale > 1e-10, scale, std)
+    scale = np.where(scale > 1e-10, scale, 1.0)
+    return (X - med) / scale
 
 
 def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_count):
@@ -726,16 +954,6 @@ def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_cou
 
 class _SOM:
     def __init__(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_state=42):
-        """
-        Args:
-            rows (int): Grid rows.
-            cols (int): Grid columns.
-            n_features (int): Input feature count.
-            sigma (float): Initial neighbourhood radius.
-            lr (float): Initial learning rate.
-            n_iter (int): Training iterations.
-            random_state (int): Random seed.
-        """
         rng = np.random.RandomState(random_state)
         self.weights = rng.randn(rows * cols, n_features).astype(np.float32)
         self.rows = rows
@@ -784,12 +1002,6 @@ class _SOM:
         return self
 
     def predict(self, X):
-        """
-        Args:
-            X (np.ndarray): Input data (n_samples, n_features).
-        Returns:
-            np.ndarray: BMU index per sample.
-        """
         X = np.asarray(X, dtype=np.float32)
         out = []
         for x in X:
@@ -798,19 +1010,9 @@ class _SOM:
         return np.array(out)
 
     def get_weights(self):
-        """
-        Returns:
-            np.ndarray: Neuron weight vectors (n_neurons, n_features).
-        """
         return self.weights.copy()
 
     def get_grid_labels(self, neuron_cluster_labels):
-        """
-        Args:
-            neuron_cluster_labels (np.ndarray): Cluster label per neuron.
-        Returns:
-            np.ndarray: 2-D grid of shape (rows, cols).
-        """
         return neuron_cluster_labels.reshape(self.rows, self.cols)
 
     def get_u_matrix(self):
@@ -899,6 +1101,7 @@ def _som_cluster_cmap(name, n_clusters):
     try:
         return plt.get_cmap(name, n)
     except Exception:
+        _itk_log.exception("Handled exception in _som_cluster_cmap")
         return plt.get_cmap('tab20', n)
 
 
@@ -923,6 +1126,7 @@ def _contrast_text_for(cmap_name, norm_value):
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         return '#000000' if lum > 0.6 else '#FFFFFF'
     except Exception:
+        _itk_log.exception("Handled exception in _contrast_text_for")
         return '#FFFFFF'
 
 
@@ -1118,7 +1322,7 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
             fig.text(0.99, 0.005, f"Quantization error: {qe:.4f}",
                      ha='right', va='bottom', fontproperties=qe_fp, color=col)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _draw_som_grid")
 
     fig.tight_layout(pad=1.4)
 
@@ -1735,6 +1939,7 @@ def _element_color(element, all_elements_sorted):
     try:
         idx = all_elements_sorted.index(element)
     except ValueError:
+        _itk_log.exception("Handled exception in _element_color")
 
         idx = abs(hash(element)) % len(_ELEMENT_PALETTE)
     return _ELEMENT_PALETTE[idx % len(_ELEMENT_PALETTE)]
@@ -1756,6 +1961,7 @@ def _cluster_label_short(cid):
     try:
         c = int(cid)
     except (TypeError, ValueError):
+        _itk_log.exception("Handled exception in _cluster_label_short")
         return f'C{cid}'
     return 'Noise' if c < 0 else f'C{c + 1}'
 
@@ -2902,16 +3108,6 @@ class _ClusterWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, sel_k, elements, data, enabled, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            sel_k (int): Selected number of clusters.
-            elements (list[str]): Active element list.
-            data (np.ndarray or None): Cached preprocessed matrix, or None to
-                trigger preparation inside the worker.
-            enabled (list[str]): Algorithm names to run.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._sel_k = sel_k
@@ -2963,6 +3159,7 @@ class _ClusterWorker(QThread):
                 'sel_k': self._sel_k,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -2986,12 +3183,6 @@ class _EvalWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, elements, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            elements (list[str]): Active element list.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._elements = elements
@@ -3031,6 +3222,7 @@ class _EvalWorker(QThread):
                 'per_sample_optk': per_sample_optk,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -3067,16 +3259,6 @@ class _BootstrapWorker(QThread):
 
     def __init__(self, dialog, data, enabled_algos, bootstrap_metrics,
                  n_boot, seed, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            data (np.ndarray): Prepared (scaled + reduced) data matrix.
-            enabled_algos (list[str]): Non-SOM algorithms to evaluate.
-            bootstrap_metrics (list[str]): Bootstrap-safe metric names to track.
-            n_boot (int): Number of bootstrap resamples.
-            seed (int): RNG seed for reproducible resampling.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._data = data
@@ -3111,6 +3293,7 @@ class _BootstrapWorker(QThread):
                         enabled_metrics=self._metrics, collect_som=False)
                     picks = dlg._pick_optimal_per_metric(eb)
                 except Exception:
+                    _itk_log.exception("Handled exception in run")
                     picks = {}
                 for metric, k in picks.items():
                     if metric in tally:
@@ -3143,6 +3326,7 @@ class _BootstrapWorker(QThread):
                 'n_boot': self._n_boot,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -3152,17 +3336,11 @@ class ClusteringDisplayDialog(QDialog):
     """
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.parent_window = parent_window
         self.setWindowTitle("Clustering Analysis")
         self.setMinimumSize(1200, 800)
-        # Never block the main window — always show as a free-floating window
         self.setWindowModality(Qt.NonModal)
         self.setWindowFlags(self.windowFlags() | Qt.Window)
 
@@ -3209,13 +3387,15 @@ class ClusteringDisplayDialog(QDialog):
             try:
                 _app_theme.themeChanged.connect(self._on_app_theme_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in __init__")
 
         try:
             from results.results_cluster_tools import attach_to_dialog
             attach_to_dialog(self)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in __init__")
+
+        QTimer.singleShot(0, self._restore_saved_results)
 
     def _on_app_theme_changed(self, _name=None):
         """Re-theme the dialog and redraw figures when the app theme changes.
@@ -3243,7 +3423,7 @@ class ClusteringDisplayDialog(QDialog):
                     self._draw_3d()
                 self._draw_overview()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_app_theme_changed")
 
     def _apply_theme(self):
         """Apply the active palette to the whole dialog as one stylesheet.
@@ -3371,17 +3551,13 @@ class ClusteringDisplayDialog(QDialog):
                 try:
                     canvas.draw_idle()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _apply_theme")
 
 
 
     def _is_multi(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _update_color_by_visibility(self):
         """Hide the Color-by picker for single-sample input."""
@@ -3434,7 +3610,7 @@ class ClusteringDisplayDialog(QDialog):
                 if data.shape[1] >= 3:
                     self._draw_3d()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_color_by_changed")
 
 
     def _build_ui(self):
@@ -3561,14 +3737,6 @@ class ClusteringDisplayDialog(QDialog):
         )
 
     def _make_btn(self, text, color, slot):
-        """
-        Args:
-            text (Any): Text string.
-            color (Any): Colour value.
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton(text)
         btn.setStyleSheet(self._btn_style(color))
         btn.clicked.connect(slot)
@@ -3800,11 +3968,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _ctx_menu(self, pos, tab):
-        """
-        Args:
-            pos (Any): Position point.
-            tab (Any): The tab.
-        """
         menu = QMenu(self)
 
         edit_action = menu.addAction("✎  Edit Figure…")
@@ -3832,12 +3995,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _make_popout_btn(self, slot):
-        """
-        Args:
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton("⤢")
         btn.setToolTip("Open in separate window")
         btn.setFixedSize(26, 22)
@@ -3849,10 +4006,7 @@ class ClusteringDisplayDialog(QDialog):
         return btn
 
     def _pop_out_figure(self, tab: str):
-        """Redraw the requested figure into a standalone resizable window.
-        Args:
-            tab (str): The tab.
-        """
+        """Redraw the requested figure into a standalone resizable window."""
         titles = {'eval': 'Evaluation Metrics',
                   'summary': 'Consensus Summary',
                   'cluster': 'Cluster Scatter',
@@ -4058,10 +4212,6 @@ class ClusteringDisplayDialog(QDialog):
             self._apply_display_settings()
 
     def _redraw_figure(self, tab: str):
-        """
-        Args:
-            tab (str): The tab.
-        """
         if tab == 'eval':
             self._refresh_eval_plot()
         elif tab == 'cluster':
@@ -4093,10 +4243,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _cl_drag_press(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button != 1 or event.inaxes is None:
             return
         self._cl_drag_ax    = event.inaxes
@@ -4104,10 +4250,6 @@ class ClusteringDisplayDialog(QDialog):
         self._cl_drag_pos0  = event.inaxes.get_position()
 
     def _cl_drag_motion(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._cl_drag_ax is None or event.x is None:
             return
         w_px, h_px = (self.cluster_fig.get_size_inches()
@@ -4120,20 +4262,11 @@ class ClusteringDisplayDialog(QDialog):
         self.cluster_canvas.draw_idle()
 
     def _cl_drag_release(self, _event):
-        """
-        Args:
-            _event (Any): The  event.
-        """
         self._cl_drag_ax    = None
         self._cl_drag_start = None
         self._cl_drag_pos0  = None
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._data_matrix_cache = None
         self.status.setText(f"Changed {key} → re-run evaluation for updated results")
@@ -4346,11 +4479,7 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _set_3d_view(self, elev, azim):
-        """Snap all 3D axes to a preset view angle.
-        Args:
-            elev (Any): The elev.
-            azim (Any): The azim.
-        """
+        """Snap all 3D axes to a preset view angle."""
         for ax in self._3d_fig.get_axes():
             ax.view_init(elev=elev, azim=azim)
         self._3d_canvas.draw_idle()
@@ -4394,6 +4523,7 @@ class ClusteringDisplayDialog(QDialog):
             dy = disp[:, 1] - event.y
             dist = np.hypot(dx, dy)
         except Exception:
+            _itk_log.exception("Handled exception in _on_3d_hover")
             return
 
         nearest = int(np.argmin(dist))
@@ -4437,10 +4567,6 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _draw_3d_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
 
         data    = self._data_matrix_cache
@@ -4524,7 +4650,7 @@ class ClusteringDisplayDialog(QDialog):
             try:
                 ax.set_box_aspect(None, zoom=1.2)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _draw_3d_into")
             labels_arr  = result.get('labels')
             if labels_arr is None:
                 continue
@@ -4660,10 +4786,6 @@ class ClusteringDisplayDialog(QDialog):
         self.dendro_canvas.draw()
 
     def _draw_dendrogram_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
         ax = target_fig.add_subplot(111)
 
@@ -4690,6 +4812,7 @@ class ClusteringDisplayDialog(QDialog):
                 metric=metric,
             )
         except Exception as e:
+            _itk_log.exception("Handled exception in _draw_dendrogram_into")
             ax.text(0.5, 0.5, f'Linkage failed:\n{e}',
                     ha='center', va='center',
                     fontproperties=_font_scale(self.node.config, 'tick')[0],
@@ -4751,6 +4874,7 @@ class ClusteringDisplayDialog(QDialog):
                 warnings.simplefilter('ignore')
                 scipy_dendrogram(**dkw)
         except RecursionError:
+            _itk_log.exception("Handled exception in _draw_dendrogram_into")
             sys.setrecursionlimit(old_limit)
             target_fig.clear()
             ax = target_fig.add_subplot(111)
@@ -4894,7 +5018,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             ax_right.set_ylim(ax_left.get_ylim())
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _draw_overview_into")
 
         target_fig.tight_layout(pad=1.2)
 
@@ -4952,10 +5076,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_eval_pick(self, event):
-        """Click a point on an evaluation curve to set K directly.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Click a point on an evaluation curve to set K directly."""
         if not hasattr(event, 'ind') or len(event.ind) == 0:
             return
         line = event.artist
@@ -4970,10 +5091,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_cluster_hover(self, event):
-        """Show a floating tooltip with element values when hovering scatter points.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Show a floating tooltip with element values when hovering scatter points."""
         if not self.final_results or self._data_matrix_cache is None:
             return
 
@@ -5009,6 +5127,7 @@ class ClusteringDisplayDialog(QDialog):
             ev_disp = ax.transData.transform([[x_ev, y_ev]])[0]
             dists = np.sqrt(((xy_disp - ev_disp) ** 2).sum(axis=1))
         except Exception:
+            _itk_log.exception("Handled exception in _on_cluster_hover")
             return
 
         nearest = int(np.argmin(dists))
@@ -5081,10 +5200,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _get_elements(self):
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.node.input_data:
             return []
         isotopes = self.node.input_data.get('selected_isotopes', [])
@@ -5094,21 +5209,7 @@ class ClusteringDisplayDialog(QDialog):
         return []
 
     def _prepare_data(self, elements):
-        """Prepare data matrix — identical logic to original.
-        Args:
-            elements (Any): The elements.
-        Returns:
-            object: Result of the operation.
-
-        Side effects:
-            - Sets ``self._raw_matrix`` to the pre-scaling matrix (rows already
-              filtered, columns matching the filtered element list).
-            - Sets ``self._particle_samples`` to the per-row sample name array.
-            - Sets ``self._elements_filtered`` to the elements that survived the
-              optional low-detection filter. Callers (evaluation, clustering,
-              characterisation) should use this list rather than the original
-              ``elements`` argument because the data matrix is built from it.
-        """
+        """Prepare data matrix — identical logic to original."""
         if not self.node.input_data or not elements:
             self._elements_filtered = list(elements) if elements else []
             return None
@@ -5190,14 +5291,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _run_algo(self, name, k, data):
-        """
-        Args:
-            name (Any): Name string.
-            k (Any): The k.
-            data (Any): Input data.
-        Returns:
-            None
-        """
         cfg = self.node.config
         try:
             if name == 'K-Means':
@@ -5283,7 +5376,8 @@ class ClusteringDisplayDialog(QDialog):
                 return self._run_som(k, data, cfg)
 
         except Exception as e:
-            print(f"Clustering failed for {name}: {e}")
+            _itk_log.exception("Handled exception in _run_algo")
+            _itk_log.error(f"Clustering failed for {name}: {e}")
         return None
 
     def _run_som(self, k, data, cfg, progress_cb=None):
@@ -5372,6 +5466,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             neuron_cluster_labels = _cluster_neurons(final_algo)
         except Exception:
+            _itk_log.exception("Handled exception in _run_som")
             neuron_cluster_labels = KMeans(
                 n_clusters=k_eff, random_state=42, n_init=5,
             ).fit_predict(weights)
@@ -5452,7 +5547,7 @@ class ClusteringDisplayDialog(QDialog):
                             for mk, sv in pending.items():
                                 res[mk].append(sv)
                         except Exception:
-                            pass
+                            _itk_log.exception("Handled exception in _evaluate_data")
                 step += 1
                 if progress_cb is not None:
                     progress_cb(step / total_steps)
@@ -5474,6 +5569,7 @@ class ClusteringDisplayDialog(QDialog):
                         key = METRIC_REGISTRY[metric]['key']
                         pending[key] = CVI_FUNCS[key](data, labels)
                 except Exception:
+                    _itk_log.exception("Handled exception in _evaluate_data")
                     step += 1
                     if progress_cb is not None:
                         progress_cb(step / total_steps)
@@ -5700,6 +5796,8 @@ class ClusteringDisplayDialog(QDialog):
         across resamples. The toolbar button toggles to a Stop control that
         requests cooperative cancellation from the worker.
         """
+        if self.final_results:
+            self._persist_results_to_node()
         if getattr(self, '_bootstrap_worker', None) is not None \
                 and self._bootstrap_worker.isRunning():
             return
@@ -5746,7 +5844,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
-            pass
+            _itk_log.exception("Handled exception in _run_bootstrap")
         self.bs_btn.clicked.connect(self._cancel_bootstrap)
 
         self.progress.setVisible(True)
@@ -5808,7 +5906,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
-            pass
+            _itk_log.exception("Handled exception in _on_bootstrap_thread_finished")
         self.bs_btn.setText("↻ Bootstrap K")
         self.bs_btn.setStyleSheet(self._btn_style('#7C3AED'))
         self.bs_btn.clicked.connect(self._run_bootstrap)
@@ -5819,6 +5917,8 @@ class ClusteringDisplayDialog(QDialog):
 
     def _cancel_bootstrap(self):
         """Request the running bootstrap worker to stop after the current pass."""
+        if self.final_results:
+            self._persist_results_to_node()
         worker = getattr(self, '_bootstrap_worker', None)
         if worker is not None and worker.isRunning():
             worker.cancel()
@@ -5882,15 +5982,9 @@ class ClusteringDisplayDialog(QDialog):
 
     @staticmethod
     def _elbow_k(k_vals: list, scores: list) -> int:
-        """
-        Kneedle algorithm: find the K at the elbow of a monotone curve.
+        """Kneedle algorithm: find the K at the elbow of a monotone curve.
         Normalises both axes to [0,1] and returns the point furthest from
         the straight line joining the first and last points.
-        Args:
-            k_vals (list): The k vals.
-            scores (list): The scores.
-        Returns:
-            int: Result of the operation.
         """
         k = np.array(k_vals, dtype=float)
         v = np.array(scores, dtype=float)
@@ -6118,7 +6212,120 @@ class ClusteringDisplayDialog(QDialog):
             self.som_fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             self.som_canvas.draw()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_som_snapshot")
+
+    def _persist_results_to_node(self, sel_k=None):
+        """Store the full clustering state on the workflow node so it is
+        saved with the project and restored when the dialog is reopened,
+        without re-running the analysis.
+
+        Args:
+            sel_k (int): K used for the final clustering, when known.
+        """
+        try:
+            self.node.saved_cluster_state = {
+                'final_results': self.final_results,
+                'characterisation': self.characterisation,
+                'eval_results': self.eval_results,
+                'optimal_k': self.optimal_k,
+                'optimal_algo': self.optimal_algo,
+                'optimal_per_metric': self.optimal_per_metric,
+                'optimal_algo_per_metric': self.optimal_algo_per_metric,
+                'selected_metric': self.selected_metric,
+                'bootstrap_results': self.bootstrap_results,
+                'bootstrap_stability': self.bootstrap_stability,
+                'per_sample_eval': self.per_sample_eval,
+                'per_sample_optk': self.per_sample_optk,
+                'data_matrix': self._data_matrix_cache,
+                'raw_matrix': self._raw_matrix,
+                'elements_cache': self._elements_cache,
+                'elements_filtered': self._elements_filtered,
+                'particle_samples': self._particle_samples,
+                'particle_indices': self._particle_indices,
+                'som_obj': self._som_obj,
+                'som_neuron_labels': self._som_neuron_labels,
+                'sel_k': sel_k,
+            }
+        except Exception:
+            _itk_log.exception("Handled exception in _persist_results_to_node")
+
+    def _restore_saved_results(self):
+        """Restore a previously saved clustering state from the workflow
+        node and redraw the result figures, so reopening the dialog or
+        loading a project shows the clustering without re-running it.
+        """
+        st = getattr(self.node, 'saved_cluster_state', None)
+        if not st or not st.get('final_results'):
+            return
+        try:
+            self.final_results = st.get('final_results', {})
+            self.characterisation = st.get('characterisation', {})
+            self.eval_results = st.get('eval_results', {})
+            self.optimal_k = st.get('optimal_k')
+            self.optimal_algo = st.get('optimal_algo')
+            self.optimal_per_metric = st.get('optimal_per_metric', {})
+            self.optimal_algo_per_metric = st.get('optimal_algo_per_metric', {})
+            self.selected_metric = st.get('selected_metric')
+            self.bootstrap_results = st.get('bootstrap_results', {})
+            self.bootstrap_stability = st.get('bootstrap_stability', {})
+            self.per_sample_eval = st.get('per_sample_eval', {})
+            self.per_sample_optk = st.get('per_sample_optk', {})
+            self._data_matrix_cache = st.get('data_matrix')
+            self._raw_matrix = st.get('raw_matrix')
+            self._elements_cache = st.get('elements_cache', [])
+            self._elements_filtered = st.get('elements_filtered', [])
+            self._particle_samples = st.get('particle_samples')
+            self._particle_indices = st.get('particle_indices')
+            self._som_obj = st.get('som_obj')
+            self._som_neuron_labels = st.get('som_neuron_labels')
+
+            data = self._data_matrix_cache
+            if data is None:
+                return
+
+            _draw_clustering(self.cluster_fig, self.final_results, data,
+                             self.characterisation, self.node.config,
+                             input_data=self.node.input_data)
+            self.cluster_canvas.draw()
+
+            if self.eval_results:
+                try:
+                    self._refresh_eval_plot()
+                except Exception:
+                    _itk_log.exception("Handled exception in _restore_saved_results")
+
+            self.ov_algo.blockSignals(True)
+            self.ov_algo.clear()
+            for a in self.characterisation:
+                self.ov_algo.addItem(a)
+            if self.optimal_algo and self.optimal_algo in self.characterisation:
+                self.ov_algo.setCurrentText(self.optimal_algo)
+            self.ov_algo.blockSignals(False)
+            self._refresh_overview_elem_btn()
+            self._draw_overview()
+
+            self.export_btn.setEnabled(True)
+            sel_k = st.get('sel_k')
+            self.status.setText(
+                f"Restored clustering results — K={sel_k}" if sel_k
+                else "Restored clustering results")
+
+            if data.shape[1] >= 3:
+                self._draw_3d()
+
+            if ('SOM' in self.final_results and self._som_obj is not None
+                    and self._som_neuron_labels is not None):
+                som_labels = self.final_results['SOM'].get('labels')
+                if som_labels is not None:
+                    _draw_som_grid(self.som_fig, self._som_obj,
+                                   self._som_neuron_labels, som_labels,
+                                   self.node.config,
+                                   sample_labels=self._particle_samples,
+                                   input_data=self.node.input_data)
+                    self.som_canvas.draw()
+        except Exception:
+            _itk_log.exception("Handled exception in _restore_saved_results")
+            self.status.setText("Could not restore saved clustering results")
 
     def _on_cluster_done(self, payload):
         """Finalise clustering results on the main thread and draw all figures.
@@ -6165,6 +6372,7 @@ class ClusteringDisplayDialog(QDialog):
             self.export_btn.setEnabled(True)
             self._set_progress(100.0)
             self.status.setText(f"Clustering complete — K={sel_k}")
+            self._persist_results_to_node(sel_k)
 
             if data.shape[1] >= 3:
                 self._draw_3d()
@@ -6267,6 +6475,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             k = int(text)
         except ValueError:
+            _itk_log.exception("Handled exception in _on_k_combo_changed")
             return
         if self.k_slider.value() != k:
             self.k_slider.blockSignals(True)
@@ -6349,6 +6558,7 @@ class ClusteringDisplayDialog(QDialog):
             n_cl = self.final_results[algo]['n_clusters']
             self.status.setText(f"Live K = {k}  →  {n_cl} clusters")
         except Exception as e:
+            _itk_log.exception("Handled exception in _do_live_k")
             self.status.setText(f"Live K failed: {e}")
 
     def _hier_recut(self, data, k, cfg):
@@ -6683,10 +6893,6 @@ class ClusteringPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Clustering Analysis"
         self.node_type = "clustering_plot"
@@ -6701,31 +6907,16 @@ class ClusteringPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
-        # Keep a reference so the dialog isn't garbage-collected after show()
         self._active_dialog = ClusteringDisplayDialog(self, parent_window)
         self._active_dialog.show()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data

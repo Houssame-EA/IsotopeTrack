@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QGroupBox,
-                              QCheckBox, QRadioButton, QScrollArea, QWidget,
-                              QDialogButtonBox, QFileDialog, QMessageBox,
-                              QHBoxLayout, QLabel, QDoubleSpinBox, QFrame,
-                              QPushButton, QButtonGroup, QSizePolicy)
+                              QCheckBox, QScrollArea, QWidget, QDialogButtonBox,
+                              QFileDialog, QMessageBox, QHBoxLayout,
+                              QLabel, QFrame, QPushButton, QButtonGroup,
+                              QSizePolicy)
 from PySide6.QtCore import Qt
 import time
 import numpy as np
@@ -11,6 +11,9 @@ import time
 
 from tools.theme import theme, dialog_qss
 from tools.unit import ExportUnits, load_units, show_advanced_dialog
+from tools.app_version import __version__ as APP_VERSION
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
 
 
@@ -73,10 +76,6 @@ def export_data(main_window):
     def _build_dialog_qss(palette):
         """Dialog-wide QSS: the generic dialog styling plus the extras we
         need for the segmented Data Type toggle and the count/link row.
-        Args:
-            palette (Any): Colour palette object.
-        Returns:
-            object: Result of the operation.
         """
         extras = f"""
             QPushButton#segLeft, QPushButton#segRight {{
@@ -116,10 +115,6 @@ def export_data(main_window):
         return dialog_qss(palette) + extras
 
     def _apply_dialog_theme(*_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         export_dialog.setStyleSheet(_build_dialog_qss(theme.palette))
 
     _apply_dialog_theme()
@@ -236,12 +231,7 @@ def export_data(main_window):
         "uses these factors.")
 
     def _open_dilution_editor():
-        """
-        Open the shared dilution factor dialog from the export dialog.
-
-        Returns:
-            None
-        """
+        """Open the shared dilution factor dialog from the export dialog."""
         import tools.dilution_utils
         samples = list(main_window.sample_to_folder_map.keys())
         dlg = tools.dilution_utils.DilutionFactorDialog(main_window, samples)
@@ -394,8 +384,9 @@ def export_data(main_window):
                 successful_exports += 1
                 
             except Exception as e:
+                _itk_log.exception("Handled exception in export_data")
                 failed_exports.append(("Summary file", str(e)))
-                print(f"Error creating summary file: {str(e)}")
+                _itk_log.error(f"Error creating summary file: {str(e)}")
 
         if export_type in ["all", "samples"]:
             for sample_name in selected_samples:
@@ -415,8 +406,9 @@ def export_data(main_window):
                     successful_exports += 1
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in export_data")
                     failed_exports.append((sample_name, str(e)))
-                    print(f"Error exporting {sample_name}: {str(e)}")
+                    _itk_log.error(f"Error exporting {sample_name}: {str(e)}")
                     continue
 
         if successful_exports > 0:
@@ -434,21 +426,51 @@ def export_data(main_window):
 
     except Exception as e:
         QMessageBox.critical(main_window, "Export Error", f"Error during export: {str(e)}")
-        print(f"Export error: {str(e)}")
+        _itk_log.error(f"Export error: {str(e)}")
         return False
 
-def export_mass_fraction_info(main_window, file_handle, selected_samples, data_type):
+def export_saturation_filter_info(main_window, summary_file, selected_samples):
+    """Write the detector non-linearity filter status to the summary
+    export: criteria in use and, per sample, the number of excluded
+    particle events and the analysis time removed. Concentrations in
+    this export are already computed on the corrected analysis time.
+
+    Args:
+        main_window: MainWindow instance.
+        summary_file: Open text file handle of the summary export.
+        selected_samples (list): Samples included in the export.
     """
-    Export mass fraction configuration information with data type and molecular weights.
-    
+    enabled = getattr(main_window, 'saturation_filter_enabled', False)
+    summary_file.write("Detector Non-linearity Filter:\n")
+    summary_file.write(f"Status,{'ON' if enabled else 'OFF'}\n")
+    if enabled:
+        summary_file.write(
+            f"Max peak FWHM (ms),{getattr(main_window, 'saturation_filter_ms', 0):g}\n")
+        summary_file.write(
+            f"Min peak SNR,{getattr(main_window, 'saturation_min_snr', 0):g}\n")
+        summary_file.write(
+            f"Min flat-top ratio,{getattr(main_window, 'saturation_flat_ratio', 0):g}\n")
+        summary_file.write(
+            f"Top width level (% of max),{getattr(main_window, 'saturation_top_frac', 0.9) * 100:.0f}\n")
+        summary_file.write(
+            "Sample,Excluded Events,Excluded Time (ms),Analysis Time Correction Applied\n")
+        for sample_name in selected_samples:
+            store = getattr(main_window, 'saturation_filtered_peaks', {}).get(sample_name, {})
+            n_events = sum(len(plist) for plist in store.values())
+            excl_s = getattr(main_window, 'saturation_excluded_time_s', {}).get(sample_name, 0.0)
+            summary_file.write(
+                f"{sample_name},{n_events},{excl_s * 1000.0:.2f},Yes\n")
+    summary_file.write("\n")
+
+
+def export_mass_fraction_info(main_window, file_handle, selected_samples, data_type):
+    """Export mass fraction configuration information with data type and molecular weights.
+
     Args:
         main_window (object): Main window object
         file_handle (file): Open file handle for writing
         selected_samples (list): List of selected sample names
         data_type (str): Data type ('element' or 'particle')
-        
-    Returns:
-        None
     """
     file_handle.write("Mass Fraction Configuration:\n")
     file_handle.write(f"Data Type: {data_type.capitalize()} Type\n")
@@ -497,9 +519,8 @@ def export_mass_fraction_info(main_window, file_handle, selected_samples, data_t
     file_handle.write("\n")
 
 def export_summary_file_with_mass_fractions(main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions, data_type, units=None):
-    """
-    Export summary file with mixed element/particle calculations based on mass fractions and molecular weights.
-    
+    """Export summary file with mixed element/particle calculations based on mass fractions and molecular weights.
+
     Args:
         main_window (object): Main window object
         summary_file (file): Open file handle for writing
@@ -509,13 +530,11 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
         sample_dilutions (dict): Dictionary of sample dilution factors
         data_type (str): Data type ('element' or 'particle')
         units (ExportUnits | None): Unit preferences. If None, uses defaults (fg/fmol/nm).
-
-    Returns:
-        None
     """
     if units is None:
         units = ExportUnits()
     summary_file.write("IsotopeTrack Summary Results\n")
+    summary_file.write(f"Software: IsotopeTrack v{APP_VERSION}\n")
     summary_file.write(f"Date: {time.strftime('%Y-%m-%d')}\n")
     summary_file.write(f"Time: {time.strftime('%H:%M:%S')}\n")
     summary_file.write(f"Data Type: {data_type.capitalize()} Type\n\n")
@@ -524,6 +543,8 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
     summary_file.write("-----------------------\n\n")
     
     export_mass_fraction_info(main_window, summary_file, selected_samples, data_type)
+    
+    export_saturation_filter_info(main_window, summary_file, selected_samples)
     
     summary_file.write("Dilution Factors Applied:\n")
     summary_file.write("Sample,Dilution Factor\n")
@@ -763,7 +784,8 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
             mean_diameter_data.append(mean_diameter_row)
                                     
         except Exception as e:
-            print(f"Error processing {sample_name} for summary: {str(e)}")
+            _itk_log.exception("Handled exception in export_summary_file_with_mass_fractions")
+            _itk_log.error(f"Error processing {sample_name} for summary: {str(e)}")
             continue
     
     for row in total_particles_data:
@@ -872,9 +894,8 @@ def export_summary_file_with_mass_fractions(main_window, summary_file, selected_
 
 
 def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor, data_type, units=None):
-    """
-    Export individual sample file with mixed element/particle calculations based on mass fractions and molecular weights.
-    
+    """Export individual sample file with mixed element/particle calculations based on mass fractions and molecular weights.
+
     Args:
         main_window (object): Main window object
         sample_name (str): Sample name
@@ -885,9 +906,6 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
         dilution_factor (float): Dilution factor
         data_type (str): Data type ('element' or 'particle')
         units (ExportUnits | None): Unit preferences. If None, uses defaults (fg/fmol/nm).
-        
-    Returns:
-        None
     """
     if units is None:
         units = ExportUnits()
@@ -903,9 +921,10 @@ def export_sample_file_with_mass_fractions(main_window, sample_name, file_path, 
             if 'time' in date_info:
                 f.write(f"Analysis Time: {date_info['time']}\n")
                 
+        f.write(f"Software: IsotopeTrack v{APP_VERSION}\n")
         f.write(f"Export Date: {time.strftime('%Y-%m-%d')}\n")
         f.write(f"Export Time: {time.strftime('%H:%M:%S')}\n")
-        
+
         f.write("-" * 50 + "\n\n")
 
         f.write("Calibration Information:\n")

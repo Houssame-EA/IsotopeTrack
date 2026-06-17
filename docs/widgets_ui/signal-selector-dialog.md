@@ -6,8 +6,8 @@
 
 | Name | Value |
 |------|-------|
-| `DEFAULT_SAMPLE_COLORS` | `['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#...` |
-| `DEFAULT_ELEMENT_COLORS` | `['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#...` |
+| `DEFAULT_SAMPLE_COLORS` | `['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '…` |
+| `DEFAULT_ELEMENT_COLORS` | `['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '…` |
 
 ## Classes
 
@@ -17,7 +17,7 @@ Custom color picker button widget.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, color = '#1f77b4')` | Initialize the color button. |
+| `__init__` | `(self, color='#1f77b4')` | Initialize the color button. |
 | `_apply_style` | `(self)` | Apply stylesheet to reflect the current color. |
 | `pick_color` | `(self)` | Open the color picker dialog and emit colorChanged if a new color is chosen. |
 | `get_color` | `(self)` | Return the current color. |
@@ -27,13 +27,9 @@ Custom color picker button widget.
 
 Dialog for selecting and configuring multiple signals for simultaneous display.
 
-Supports overlaying signals from multiple samples and multiple elements.
-Each sample has a configurable color. Each element has a configurable color.
-All traces use solid lines.
-
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, main_window, parent = None)` | Initialize the signal selector dialog. |
+| `__init__` | `(self, main_window, parent=None)` | Initialize the signal selector dialog. |
 | `apply_theme` | `(self)` | Re-apply all theme-aware styling. |
 | `showEvent` | `(self, event)` | Args: |
 | `_apply_element_scroll_style` | `(self)` |  |
@@ -45,7 +41,7 @@ All traces use solid lines.
 | `_build_element_group` | `(self)` | Build the element/signal selection group box. |
 | `_build_button_bar` | `(self)` | Bottom row with Cancel and Plot Signals buttons. |
 | `_utility_btn` | `(self, text, slot)` | Create a small utility button (Select All / Deselect All). |
-| `_build_row` | `(self, label_text, color, checked = True, on_check_changed = None)` | Build a single checkbox + label + color-picker row widget. |
+| `_build_row` | `(self, label_text, color, checked=True, on_check_changed=None)` | Build a single checkbox + label + color-picker row widget. |
 | `populate_samples` | `(self)` | Populate the sample list from loaded data. Current sample is checked by default. |
 | `populate_signals` | `(self)` | Populate the signals list ordered by isotope mass. |
 | `select_all` | `(self)` | Select all element checkboxes that are currently visible. |
@@ -63,79 +59,12 @@ All traces use solid lines.
 
 ## Functions
 
-### `_style_group_box`
-
-```python
-def _style_group_box() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_scroll_area`
-
-```python
-def _style_scroll_area() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_checkbox`
-
-```python
-def _style_checkbox() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_row_widget`
-
-```python
-def _style_row_widget() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_utility_btn`
-
-```python
-def _style_utility_btn() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_plot_btn`
-
-```python
-def _style_plot_btn() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_style_cancel_btn`
-
-```python
-def _style_cancel_btn() → str
-```
-
-
-**Returns:**
-
-- `str: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_style_group_box` | `() → str` | Returns: |
+| `_style_scroll_area` | `() → str` | Returns: |
+| `_style_checkbox` | `() → str` | Returns: |
+| `_style_row_widget` | `() → str` | Returns: |
+| `_style_utility_btn` | `() → str` | Returns: |
+| `_style_plot_btn` | `() → str` | Returns: |
+| `_style_cancel_btn` | `() → str` | Returns: |

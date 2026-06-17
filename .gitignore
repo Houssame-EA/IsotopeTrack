@@ -1,28 +1,24 @@
-nano .gitignore
-```
-
-.DS_Store
-
-build/
-dist/*.zip
-
-```
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# ── Environments ──────────────────────────────────────────────────────────────
+.conda/
 env/
 venv/
+.venv/
 ENV/
+
+# ── Build / packaging ─────────────────────────────────────────────────────────
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
 parts/
 sdist/
 var/
@@ -31,19 +27,27 @@ wheels/
 .installed.cfg
 *.egg
 
+# ── Editors ───────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
+# ── OS junk ───────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 
+# ── App data & logs ───────────────────────────────────────────────────────────
+logs/
+test_data/logs/
 *.h5
 *.csv
 *.xlsx
-test_data/logs/
+.Rhistory
+.coverage
 
+# ── Generated ─────────────────────────────────────────────────────────────────
 _rth_no_pyarrow.py
-logs/
+example_data/
+site/
