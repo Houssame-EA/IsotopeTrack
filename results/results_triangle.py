@@ -520,8 +520,6 @@ class TernarySettingsDialog(QDialog):
             self.show_colorbar = QCheckBox()
             self.show_colorbar.setChecked(self._cfg.get('show_colorbar', True))
             fl.addRow("Show Color Bar:", self.show_colorbar)
-            self.cbar_label = QLineEdit(self._cfg.get('colorbar_label', 'Density'))
-            fl.addRow("Color Bar Label:", self.cbar_label)
             layout.addWidget(g)
             self._on_plot_type_changed()
 
@@ -753,8 +751,6 @@ class TernarySettingsDialog(QDialog):
             out['colormap'] = self.colormap.currentText()
         if self.show_colorbar is not None:
             out['show_colorbar'] = self.show_colorbar.isChecked()
-        if self.cbar_label is not None:
-            out['colorbar_label'] = self.cbar_label.text()
         if self.show_avg is not None:
             out['show_average_point'] = self.show_avg.isChecked()
         if self.avg_only_all is not None:
@@ -1904,7 +1900,18 @@ class TriangleDisplayDialog(QDialog):
                     pending is not None,
                 )
                 if layout_key != self._last_layout_key:
-                    rect = [0, 0, 0.87, 1] if (pending is not None) else [0, 0, 1, 1]
+                    _dmode = cfg.get('display_mode', '')
+                    _n_ax = len(self.figure.get_axes())
+                    if _dmode == 'Overlaid Samples' and _n_ax > 1:
+                        # Left legend + right density colorbar
+                        rect = [0.18, 0, 0.87, 1]
+                    elif _dmode == 'Overlaid Samples':
+                        # Left legend, no colorbar on right
+                        rect = [0.18, 0, 1, 1]
+                    elif pending is not None:
+                        rect = [0, 0, 0.87, 1]
+                    else:
+                        rect = [0, 0, 1, 1]
                     self.figure.tight_layout(
                         pad=0.3, h_pad=0.1, w_pad=0.1, rect=rect)
                     # Clamp inter-subplot gaps — tight_layout is over-generous
@@ -2091,12 +2098,9 @@ class TriangleDisplayDialog(QDialog):
 
         row_labels = [
             'Particles (all 3 elements)',
-            f'{ea} mean (%)',
-            f'{ea} std (%)',
-            f'{eb} mean (%)',
-            f'{eb} std (%)',
-            f'{ec} mean (%)',
-            f'{ec} std (%)',
+            f'{ea} mean ± std (%)',
+            f'{eb} mean ± std (%)',
+            f'{ec} mean ± std (%)',
         ]
         col_labels = [s['dname'] for s in stats]
         n_rows = len(row_labels)
@@ -2137,14 +2141,12 @@ class TriangleDisplayDialog(QDialog):
         tbl.setVerticalHeaderLabels(row_labels)
 
         for ci, s in enumerate(stats):
+            pm = '±'
             cell_vals = [
                 f"{s['n']:,}",
-                f"{s['ma'] * 100:.2f}",
-                f"{s['sa'] * 100:.2f}",
-                f"{s['mb'] * 100:.2f}",
-                f"{s['sb'] * 100:.2f}",
-                f"{s['mc'] * 100:.2f}",
-                f"{s['sc'] * 100:.2f}",
+                f"{s['ma']*100:.2f} {pm} {s['sa']*100:.2f}",
+                f"{s['mb']*100:.2f} {pm} {s['sb']*100:.2f}",
+                f"{s['mc']*100:.2f} {pm} {s['sc']*100:.2f}",
             ]
             for ri, v in enumerate(cell_vals):
                 item = QTableWidgetItem(v)
@@ -2153,6 +2155,29 @@ class TriangleDisplayDialog(QDialog):
 
         if not dlg.isVisible():
             dlg.show()
+
+    def _auto_colorbar_label(self, cfg, is_hexbin=False):
+        """Return an automatic colorbar label based on plot mode and color element.
+
+        Args:
+            cfg: Node config dict.
+            is_hexbin: True when generating a label for a hexbin plot (uses "Mean" prefix
+                       when a color element is selected; "Count per bin" otherwise).
+
+        Returns:
+            str: Colorbar label suitable for ``apply_font_to_colorbar_standalone``.
+        """
+        color_elem = cfg.get('color_element', '')
+        label_mode = cfg.get('label_mode', 'Symbol')
+        if color_elem:
+            elem_label = format_element_label(
+                color_elem, label_mode, Renderer.MATHTEXT, cfg)
+            if is_hexbin:
+                return f"Mean {elem_label}"
+            return elem_label
+        if is_hexbin:
+            return "Count per bin"
+        return "Point Index"
 
     def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
                      return_mappable=False):
@@ -2230,7 +2255,7 @@ class TriangleDisplayDialog(QDialog):
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
-                        cbar, cfg, cfg.get('colorbar_label', color_elem))
+                        cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=False))
             elif sample_color:
                 scatter = ax.scatter(
                     c_vals, a_vals, b_vals,
@@ -2243,19 +2268,27 @@ class TriangleDisplayDialog(QDialog):
                     edgecolors='white', linewidth=0.5)
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-                    apply_font_to_colorbar_standalone(
-                        cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
+                    apply_font_to_colorbar_standalone(cbar, cfg, "Point Index")
         else:
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
-            hexbin = ax.hexbin(
-                c_vals, a_vals, b_vals,
-                gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+            if color_elem:
+                # Show mean of the selected data value per hexbin cell
+                color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
+                hexbin = ax.hexbin(
+                    c_vals, a_vals, b_vals,
+                    C=color_vals, reduce_C_function=np.mean,
+                    gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+            else:
+                # No color element selected — show particle count density per cell
+                hexbin = ax.hexbin(
+                    c_vals, a_vals, b_vals,
+                    gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
             _mappable = hexbin
             if show_cbar:
                 cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
                 apply_font_to_colorbar_standalone(
-                    cbar, cfg, cfg.get('colorbar_label', 'Density'))
+                    cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=True))
 
         self._draw_average_arrays(ax, a_orig, b_orig, c_orig, a_vals, b_vals, c_vals,
                                    cfg, title, viewport)
@@ -2491,7 +2524,9 @@ class TriangleDisplayDialog(QDialog):
                     cmap=cfg.get('colormap', 'YlGn'), norm=norm)
                 sm.set_array([])
                 self._pending_shared_cbar = (
-                    sm, cfg.get('colorbar_label', 'Density'))
+                    sm, self._auto_colorbar_label(
+                        cfg,
+                        is_hexbin=(cfg.get('plot_type', 'Scatter Plot') != 'Scatter Plot')))
 
     def _draw_combined(self, plot_data, cfg):
         """
@@ -2622,24 +2657,15 @@ class TriangleDisplayDialog(QDialog):
 
         fp = make_font_properties(cfg)
         if legend_handles:
-            if density_cbar_shown:
-                # Colorbar occupies the right; put legend below to avoid overlap
-                ax.legend(
-                    handles=legend_handles,
-                    loc='upper center',
-                    bbox_to_anchor=(0.5, -0.06),
-                    ncol=min(4, len(legend_handles)),
-                    framealpha=0.9,
-                    prop=fp,
-                )
-            else:
-                ax.legend(
-                    handles=legend_handles,
-                    bbox_to_anchor=(1.05, 1.0),
-                    loc='upper left',
-                    framealpha=0.9,
-                    prop=fp,
-                )
+            # Left-side vertical legend; tight_layout rect reserves left margin.
+            ax.legend(
+                handles=legend_handles,
+                loc='upper right',
+                bbox_to_anchor=(-0.02, 1.0),
+                ncol=1,
+                framealpha=0.9,
+                prop=fp,
+            )
 
         apply_font_to_ternary(ax, cfg)
 
@@ -2671,7 +2697,6 @@ class TrianglePlotNode(QObject):
         'axis_c_color': '#2980B9',
         'colormap': 'YlGn',
         'show_colorbar': True,
-        'colorbar_label': 'Density',
         'min_total': 0.0,
         'max_particles': 100_000_000,
         'show_average_point': True,
