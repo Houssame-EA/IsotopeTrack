@@ -1263,15 +1263,6 @@ class TriangleDisplayDialog(QDialog):
         """
         return True
 
-    def _apply_test_triangle_viewport(self):
-        """Apply a temporary single-sample ternary viewport for manual QA."""
-        self._triangle_viewport = _validate_triangle_viewport({
-            'a_min': 0.20,
-            'b_min': 0.10,
-            'c_min': 0.10,
-        })
-        self._refresh()
-
     def _triangle_viewport_summary(self) -> str:
         """Return a short human-readable summary of the active single-sample viewport."""
         vp = _validate_triangle_viewport(self._triangle_viewport)
@@ -1628,11 +1619,6 @@ class TriangleDisplayDialog(QDialog):
                 action.setToolTip(reason)
             else:
                 action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
-
-        if not self._is_multi():
-            menu.addSeparator()
-            menu.addAction("Apply test ternary viewport").triggered.connect(
-                self._apply_test_triangle_viewport)
 
         menu.exec(QCursor.pos())
     def _add_toggle(self, menu, label, key):
