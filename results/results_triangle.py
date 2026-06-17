@@ -176,15 +176,25 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
     #   L vertex: (−1/√3,   0.0)
     #   R vertex: (+1/√3,   0.0)
     _s   = 1.0 / math.sqrt(3.0)   # ≈ 0.5774
-    _pad = 0.14                    # outward offset in data units
+    _pad = 0.1            # outward offset in data units
 
-    # bottom edge midpoint (0, 0) — element_c; outward = (0, −1)
+    # Resolve per-axis colors.  When colored_axes is off every axis uses the
+    # global font color so the rest of the rendering path is identical.
+    colored = config.get('colored_axes', False)
+    if colored:
+        axis_a_color = config.get('axis_a_color', '#E74C3C')
+        axis_b_color = config.get('axis_b_color', '#2980B9')
+        axis_c_color = config.get('axis_c_color', '#27AE60')
+    else:
+        axis_a_color = axis_b_color = axis_c_color = fc['color']
+
+    # bottom edge midpoint (0, 0) — element_b; outward = (0, −1)
     ax.text(
         0.0, -_pad,
-        fmt[2],
+        fmt[1],
         transform=ax.transData,
         ha='center', va='top', rotation=0,
-        fontproperties=fp, color=fc['color'],
+        fontproperties=fp, color=axis_b_color,
     )
     # left edge midpoint (−_s/2, 0.5) — element_a; outward normal ≈ (−√3/2, +½)
     ax.text(
@@ -193,35 +203,68 @@ def setup_ternary_axes(ax, element_labels, config, viewport=None):
         fmt[0],
         transform=ax.transData,
         ha='right', va='center', rotation=60,
-        fontproperties=fp, color=fc['color'],
+        fontproperties=fp, color=axis_a_color,
     )
-    # right edge midpoint (+_s/2, 0.5) — element_b; outward normal ≈ (+√3/2, +½)
+    # right edge midpoint (+_s/2, 0.5) — element_c; outward normal ≈ (+√3/2, +½)
     ax.text(
         _s * 0.5 + _pad * (math.sqrt(3) / 2),
         0.5 + _pad * 0.5,
-        fmt[1],
+        fmt[2],
         transform=ax.transData,
         ha='left', va='center', rotation=-60,
-        fontproperties=fp, color=fc['color'],
+        fontproperties=fp, color=axis_c_color,
     )
 
-    if config.get('show_grid', True):
-        ax.grid(True, alpha=0.3)
+    show_grid = config.get('show_grid', True)
+    if colored:
+        # Color triangle border spines.
+        # mpltern spine keys confirmed from _base.py: tside/tcorner registered with taxis,
+        # lside/lcorner with laxis, rside/rcorner with raxis.
+        _spine_map = {
+            'tside':   axis_c_color, 'tcorner': axis_c_color,
+            'lside':   axis_a_color, 'lcorner': axis_a_color,
+            'rside':   axis_b_color, 'rcorner': axis_b_color,
+        }
+        for _key, _col in _spine_map.items():
+            if _key in ax.spines:
+                ax.spines[_key].set_color(_col)
+        # Color tick marks. TernaryAxis inherits Axis.set_tick_params (NOT tick_params).
+        # Use color= (tick marks only); label colors are set in the axis_specs loop below.
+        ax.taxis.set_tick_params(which='major', color=axis_c_color)
+        ax.laxis.set_tick_params(which='major', color=axis_a_color)
+        ax.raxis.set_tick_params(which='major', color=axis_b_color)
+        # Per-axis gridlines — always solid lines when colored.
+        # TernaryAxis.grid() is inherited from Axis and prepends 'grid_' to kwargs internally.
+        if show_grid:
+            ax.taxis.grid(True, color=axis_c_color, alpha=0.4, linestyle='-')
+            ax.laxis.grid(True, color=axis_a_color, alpha=0.4, linestyle='-')
+            ax.raxis.grid(True, color=axis_b_color, alpha=0.4, linestyle='-')
+        else:
+            ax.taxis.grid(False)
+            ax.laxis.grid(False)
+            ax.raxis.grid(False)
     else:
-        ax.grid(False)
+        if show_grid:
+            ax.grid(True, alpha=0.3)
+        else:
+            ax.grid(False)
 
     ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    # axis_specs: (mpltern axis, viewport component key, label/tick color)
+    # taxis tick labels appear on the right edge (adjacent to element_c label) so
+    # they use axis_c_color; raxis tick labels appear at the bottom (adjacent to
+    # element_b label) so they use axis_b_color.
     axis_specs = (
-        (ax.taxis, 'c_min'),
-        (ax.laxis, 'a_min'),
-        (ax.raxis, 'b_min'),
+        (ax.taxis, 'c_min', axis_c_color),
+        (ax.laxis, 'a_min', axis_a_color),
+        (ax.raxis, 'b_min', axis_b_color),
     )
-    for axis, component_key in axis_specs:
+    for axis, component_key, tick_color in axis_specs:
         axis.set_ticks(ticks)
         axis.set_ticklabels(_viewport_tick_labels(viewport, component_key, ticks))
         for lbl in axis.get_ticklabels():
             lbl.set_fontproperties(fp)
-            lbl.set_color(fc['color'])
+            lbl.set_color(tick_color)
 
     ax.set_title('')
 
@@ -326,6 +369,13 @@ class TernarySettingsDialog(QDialog):
         self._hexbin_frame = None
         self._color_btns = {}
         self._name_edits = {}
+        self.colored_axes_cb = None
+        self.axis_a_btn = None
+        self.axis_b_btn = None
+        self.axis_c_btn = None
+        self._axis_a_color = self._cfg.get('axis_a_color', '#E74C3C')
+        self._axis_b_color = self._cfg.get('axis_b_color', '#27AE60')
+        self._axis_c_color = self._cfg.get('axis_c_color', '#2980B9')
         self._build_ui()
 
     def _build_ui(self):
@@ -474,6 +524,31 @@ class TernarySettingsDialog(QDialog):
             layout.addWidget(g)
             self._on_plot_type_changed()
 
+            g = QGroupBox("Axis Colors")
+            fl = QFormLayout(g)
+            self.colored_axes_cb = QCheckBox()
+            self.colored_axes_cb.setChecked(self._cfg.get('colored_axes', False))
+            fl.addRow("Color Axes:", self.colored_axes_cb)
+            elem_a = self._cfg.get('element_a', 'A') or 'A'
+            elem_b = self._cfg.get('element_b', 'B') or 'B'
+            elem_c = self._cfg.get('element_c', 'C') or 'C'
+            self.axis_a_btn = QPushButton()
+            self.axis_a_btn.setStyleSheet(
+                f"background-color: {self._axis_a_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_a_btn.clicked.connect(lambda: self._pick_axis_color('a'))
+            fl.addRow(f"Element A ({elem_a}) color:", self.axis_a_btn)
+            self.axis_b_btn = QPushButton()
+            self.axis_b_btn.setStyleSheet(
+                f"background-color: {self._axis_b_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_b_btn.clicked.connect(lambda: self._pick_axis_color('b'))
+            fl.addRow(f"Element B ({elem_b}) color:", self.axis_b_btn)
+            self.axis_c_btn = QPushButton()
+            self.axis_c_btn.setStyleSheet(
+                f"background-color: {self._axis_c_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_c_btn.clicked.connect(lambda: self._pick_axis_color('c'))
+            fl.addRow(f"Element C ({elem_c}) color:", self.axis_c_btn)
+            layout.addWidget(g)
+
             g = QGroupBox("Average Point")
             fl = QFormLayout(g)
             self.show_avg = QCheckBox()
@@ -557,6 +632,22 @@ class TernarySettingsDialog(QDialog):
         if c.isValid():
             self._avg_color = c
             self.avg_color_btn.setStyleSheet(
+                f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
+
+    def _pick_axis_color(self, which):
+        """Pick color for a single ternary axis (a, b, or c)."""
+        from PySide6.QtWidgets import QColorDialog
+        cur_map = {'a': self._axis_a_color, 'b': self._axis_b_color, 'c': self._axis_c_color}
+        btn_map  = {'a': self.axis_a_btn,   'b': self.axis_b_btn,   'c': self.axis_c_btn}
+        c = QColorDialog.getColor(QColor(cur_map[which]), self, f"Axis {which.upper()} Color")
+        if c.isValid():
+            if which == 'a':
+                self._axis_a_color = c.name()
+            elif which == 'b':
+                self._axis_b_color = c.name()
+            else:
+                self._axis_c_color = c.name()
+            btn_map[which].setStyleSheet(
                 f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
 
     def _pick_sample_color(self, name, btn):
@@ -646,6 +737,11 @@ class TernarySettingsDialog(QDialog):
             out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
         if self._is_multi and self._name_edits:
             out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
+        if self.colored_axes_cb is not None:
+            out['colored_axes'] = self.colored_axes_cb.isChecked()
+        out['axis_a_color'] = self._axis_a_color
+        out['axis_b_color'] = self._axis_b_color
+        out['axis_c_color'] = self._axis_c_color
         if self._font_group is not None:
             out.update(self._font_group.collect())
         if self._legend_grp is not None:
@@ -1949,7 +2045,7 @@ class TriangleDisplayDialog(QDialog):
             if color_elem and not sample_color:
                 color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
                 scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
+                    c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, c=color_vals, cmap=cmap,
                     edgecolors='white', linewidth=0.5)
                 _mappable = scatter
@@ -1959,13 +2055,13 @@ class TriangleDisplayDialog(QDialog):
                         cbar, cfg, cfg.get('colorbar_label', color_elem))
             elif sample_color:
                 scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
+                    c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, color=sample_color,
                     edgecolors='white', linewidth=0.5, label=title)
             else:
                 scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
-                    s=size, alpha=alpha, c=np.arange(len(b_vals)), cmap=cmap,
+                    c_vals, a_vals, b_vals,
+                    s=size, alpha=alpha, c=np.arange(len(c_vals)), cmap=cmap,
                     edgecolors='white', linewidth=0.5)
                 if cfg.get('show_colorbar', True):
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
@@ -1975,7 +2071,7 @@ class TriangleDisplayDialog(QDialog):
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
             hexbin = ax.hexbin(
-                b_vals, c_vals, a_vals,
+                c_vals, a_vals, b_vals,
                 gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
             _mappable = hexbin
             if show_cbar:
@@ -2029,7 +2125,7 @@ class TriangleDisplayDialog(QDialog):
         suffix = f" ({n_filt}/{n_total})" if n_filt < n_total else ""
 
         ax.scatter(
-            [mb_local], [mc_local], [ma_local],
+            [mc_local], [ma_local], [mb_local],
             s=avg_size, marker='*', color=avg_color,
             edgecolors='black', linewidth=1.5, zorder=10,
             label=f'Average{" (" + sample_name + ")" if sample_name else ""}{suffix}')
@@ -2104,7 +2200,7 @@ class TriangleDisplayDialog(QDialog):
         label = f'Average{(" (" + sample_name + ")") if sample_name else ""}{suffix}'
 
         ax.scatter(
-            [mb_local], [mc_local], [ma_local],
+            [mc_local], [ma_local], [mb_local],
             s=avg_size, marker='*', color=avg_color,
             edgecolors='black', linewidth=1.5, zorder=10,
             label=label)
@@ -2254,7 +2350,7 @@ class TriangleDisplayDialog(QDialog):
             c_vals = np.array([p['c'] for p in sd])
 
             ax.scatter(
-                b_vals, c_vals, a_vals,
+                c_vals, a_vals, b_vals,
                 s=size, alpha=alpha, color=color, label=dname,
                 edgecolors='white', linewidth=0.5)
 
@@ -2294,6 +2390,10 @@ class TrianglePlotNode(QObject):
         'hexbin_gridsize': 30,
         'hexbin_alpha': 0.8,
         'show_grid': True,
+        'colored_axes': False,
+        'axis_a_color': '#E74C3C',
+        'axis_b_color': '#27AE60',
+        'axis_c_color': '#2980B9',
         'colormap': 'YlGn',
         'show_colorbar': True,
         'colorbar_label': 'Density',

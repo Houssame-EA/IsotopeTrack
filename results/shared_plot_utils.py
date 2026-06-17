@@ -1089,13 +1089,22 @@ def apply_font_to_ternary(ax, config: dict):
         fp = make_font_properties(config)
         fc = get_font_config(config)
 
+        # When colored_axes is active each mpltern axis keeps its own color.
+        # taxis → element_c color, laxis → element_a color, raxis → element_b color.
+        colored = config.get('colored_axes', False)
+        axis_tick_colors = {
+            'taxis': config.get('axis_c_color', fc['color']) if colored else fc['color'],
+            'laxis': config.get('axis_a_color', fc['color']) if colored else fc['color'],
+            'raxis': config.get('axis_b_color', fc['color']) if colored else fc['color'],
+        }
         for axis_name in ('taxis', 'laxis', 'raxis'):
             axis = getattr(ax, axis_name, None)
             if axis is None:
                 continue
+            tick_color = axis_tick_colors[axis_name]
             for lbl in axis.get_ticklabels():
                 lbl.set_fontproperties(fp)
-                lbl.set_color(fc['color'])
+                lbl.set_color(tick_color)
 
         legend = ax.get_legend()
         if legend is not None:
