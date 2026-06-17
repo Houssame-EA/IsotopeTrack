@@ -5,10 +5,10 @@ from collections import namedtuple
 from typing import Any, Self
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
-    QDialog, QComboBox, QFormLayout, QLineEdit, QAbstractItemView
+    QDialog, QComboBox, QFormLayout, QLineEdit, QAbstractItemView, QMessageBox, QSizePolicy
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QAbstractItemModel
 
-from tools.mass_fraction_calculator import canonicalize_preserve_user_order
+from tools.mass_fraction_calculator_utils.formula_utils import canonicalize_preserve_user_order
 from tools.theme import primary_button_qss, theme, results_title_qss
 
 
@@ -17,9 +17,9 @@ class ValidationInfos:
 
     def __init__(self,
                  messages: list[str] | None = None,
-                 errors: list[RuntimeError] | None = None):
-        self.messages = messages or []
-        self.errors = errors or []
+                 errors: list[str] | None = None):
+        self.messages: list[str] = messages or []
+        self.errors: list[str] = errors or []
 
     def has_errors(self) -> bool:
         """
@@ -46,8 +46,11 @@ class ValidationInfos:
         if not isinstance(other, ValidationInfos):
             return self
         self.messages = self.messages + other.messages
-        self.errors = self.errors + other.messages
+        self.errors = self.errors + other.errors
         return self
+
+    def __repr__(self):
+        return f"<{self.__module__}.{self.__class__.__name__} errors={self.errors} messages={self.messages}>"
 
 
 class IValidation(ABC):
@@ -62,7 +65,7 @@ class IValidation(ABC):
         Cleanup (strip, reformat, etc.) and validation of all fields.
 
         Returns: `ValidationInfos` that lists all invalid fields in `errors`
-        (`list[RuntimeError]`) and list of all cleanups as `messages`
+        (`list[str]`) and list of all cleanups as `messages`
         (`list[str]`).
         """
         pass
@@ -71,7 +74,7 @@ class IValidation(ABC):
 def validate_stoichiometry(formula: str, represents: str | None = None) -> tuple[str, ValidationInfos]:
     """
     Validates the stoichiometry of a formula, and returns it reduced, with a
-    `ValidationInfos` message (if needed).
+    `ValidationInfos` message (or error if the result is empty).
     Args:
         formula: The formula to reduce.
         represents: What the formula represents (or is associated with) for the
@@ -82,14 +85,21 @@ def validate_stoichiometry(formula: str, represents: str | None = None) -> tuple
         the reduced formula and the second field is the `ValidationInfos` of
         the operation
     """
-    messages = []
     reduced_formula = canonicalize_preserve_user_order(formula)
-    if reduced_formula != formula:
-        formated_represents = f" ({represents})" if represents else ''
-        messages.append(f"\"{formula}\"{formated_represents} was "
-                        f"stoichiometrically reduced to \"{reduced_formula}\"")
+    formated_represents = f" ({represents})" if represents else ''
 
-    return reduced_formula, ValidationInfos(messages=messages)
+    if not reduced_formula:
+        return reduced_formula, ValidationInfos(
+            errors=[f"\"{formula}\"{formated_represents} was stoichiometrically "
+                    f"reduced to an empty formula"]
+        )
+    if reduced_formula != formula:
+        return reduced_formula, ValidationInfos(
+            messages=[f"\"{formula}\"{formated_represents} was "
+                      f"stoichiometrically reduced to \"{reduced_formula}\""]
+        )
+
+    return reduced_formula, ValidationInfos()
 
 
 def validate_required(value: Any, represents: str | None = None):
@@ -106,9 +116,9 @@ def validate_required(value: Any, represents: str | None = None):
     """
     if not value:
         if represents:
-            return ValidationInfos(errors=[RuntimeError(f"{represents} is/are required.")])
+            return ValidationInfos(errors=[f"{represents} is/are required."])
         else:
-            return ValidationInfos(errors=[RuntimeError(f"Required field(s) is/are missing.")])
+            return ValidationInfos(errors=[f"Required field(s) is/are missing."])
     return ValidationInfos()
 
 
@@ -146,7 +156,7 @@ class NanoParticleShape(IValidation):
         Cleanup (strip, reformat, etc.) and validation of all fields.
 
         Returns: `ValidationInfos` that lists all invalid fields in `errors`
-        (`list[RuntimeError]`) and list of all cleanups as `messages`
+        (`list[str]`) and list of all cleanups as `messages`
         (`list[str]`).
         """
         messages: list[str] = []
@@ -178,9 +188,13 @@ class CoreShellNPS(NanoParticleShape):
         return "Core-Shell"
 
     def validate(self) -> ValidationInfos:
-        return (self._validate_core()
-                .merge(self._validate_shell())
-                .merge(super().validate()))
+
+        validation = self._validate_core().merge(self._validate_shell())
+
+        if not validation.has_errors():
+            validation.merge(super().validate())
+
+        return validation
 
     def _validate_core(self) -> ValidationInfos:
         if not self.core:
@@ -192,7 +206,7 @@ class CoreShellNPS(NanoParticleShape):
 
     def _validate_shell(self) -> ValidationInfos:
         if not self.shell:
-            return validate_required(self.core, represents="Shell formula")
+            return validate_required(self.shell, represents="Shell formula")
 
         self.shell, shell_validation_infos = validate_stoichiometry(self.shell,
                                                                     represents="Shell")
@@ -212,10 +226,13 @@ class SphereNPS(NanoParticleShape):
 
     def validate(self) -> ValidationInfos:
         if not self.formula:
-            sphere_validation = validate_required(self.formula, "Formula")
+            validation = validate_required(self.formula, "Formula")
         else:
-            self.formula, sphere_validation = validate_stoichiometry(self.formula)
-        return sphere_validation.merge(super().validate())
+            self.formula, validation = validate_stoichiometry(self.formula)
+
+            if not validation.has_errors():
+                validation.merge(super().validate())
+        return validation
 
 
 class RodNPS(NanoParticleShape):
@@ -444,8 +461,9 @@ class NPSEditor(QDialog):
                                        placeholderText="Name (default: shape formula)")
 
         self.current_form_widget = None
-
         self.nps_form_layout_index = 0
+
+        self.error_label = None
 
         self.accept_with_nps.connect(self.accept)
 
@@ -490,12 +508,13 @@ class NPSEditor(QDialog):
 
         return header
 
-    def emit_accept_with_nps(self):
-        """
-        Makes final preparation before emitting `accept_with_nps`.
-        """
-        self.nps.name = self.nps_name_edit.text()
-        self.accept_with_nps.emit(self.nps)
+
+    def _build_name_form(self):
+        widget = QWidget(parent=self)
+        layout = QFormLayout()
+        widget.setLayout(layout)
+        layout.addRow("Name", self.nps_name_edit)
+        return widget
 
     def display_form_for_nps(self, nps: NanoParticleShape):
         """
@@ -529,27 +548,6 @@ class NPSEditor(QDialog):
             case obj:
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
 
-    @staticmethod
-    def get_default_shape():
-        """Defines a default `NanoParticleShape` to display."""
-        return SphereNPS()  # TODO: Could we add a setting for that
-
-    def handle_nps_selection_change(self, index: int):
-        """
-        Handles a user changing nps selection by displaying the new form.
-
-        Args:
-            index: index of the item in the `self.nps_combo_box`.
-        """
-        self.nps = self.nps_combo_box.itemData(index)
-        self.display_form_for_nps(self.nps)
-
-    def _build_name_form(self):
-        widget = QWidget(parent=self)
-        layout = QFormLayout()
-        widget.setLayout(layout)
-        layout.addRow("Name", self.nps_name_edit)
-        return widget
 
     def _build_footer(self):
         widget = QWidget()
@@ -565,6 +563,101 @@ class NPSEditor(QDialog):
         reject_btn.clicked.connect(self.close)
         layout.addWidget(reject_btn)
         return widget
+
+
+    def handle_nps_selection_change(self, index: int):
+        """
+        Handles a user changing nps selection by displaying the new form.
+
+        Args:
+            index: index of the item in the `self.nps_combo_box`.
+        """
+        self.nps = self.nps_combo_box.itemData(index)
+        self.display_form_for_nps(self.nps)
+
+    def emit_accept_with_nps(self):
+        """
+        Makes final preparation before emitting `accept_with_nps`.
+        """
+        self.nps.name = self.nps_name_edit.text()
+        validation = self.nps.validate()
+
+        if validation.has_errors() or validation.has_messages():
+            self._exec_validation_message_box(validation)
+
+        if validation.has_errors():
+            self.handle_errors(validation.errors)
+        else:
+            self.accept_with_nps.emit(self.nps)
+
+    def _exec_validation_message_box(self, validation: ValidationInfos):
+        message_box = QMessageBox(parent=self)
+        message_box.setIcon(QMessageBox.Icon.Critical if validation.has_errors()
+                            else QMessageBox.Icon.NoIcon)
+        message_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        title_list = []
+        text_message = ""
+        if validation.has_errors():
+            title_list.append("Errors")
+            text_message += self._get_error_list_html(validation.errors)
+
+        if validation.has_messages():
+            title_list.append("Messages")
+            text_message += self._get_message_list_html(validation.messages)
+
+        message_box.setWindowTitle(" and ".join(title_list) + " List(s)")
+        message_box.setText(text_message)
+
+        message_box.exec()
+
+    @staticmethod
+    def _get_message_list_html(messages: list[str]) -> str:
+        return ("<p>Messages:</p>"
+                + "<ul>"
+                + "".join([f"<li>{message}</li>" for message in messages])
+                + "</ul>")
+
+    @staticmethod
+    def _get_error_list_html(errors: list[str]) -> str:
+        return ("<p>Errors:</p>"
+                + "<ul>"
+                + "".join([f"<li>{error}</li>" for error in errors])
+                + "</ul>")
+
+    def handle_errors(self, errors: list[str]):
+        """
+        Shows the errors to the user while making sure the latest info is
+        available.
+        Args:
+            errors (list[str]): list of error messages to be displayed to
+            the user.
+        """
+        self._update_forms()
+        self._add_or_replace_error_label(errors)
+
+    def _update_forms(self):
+        self.nps_name_edit.setText(self.nps.get_name())
+        self.display_form_for_nps(self.nps)
+
+    def _add_or_replace_error_label(self, errors: list[str]):
+        layout = self.layout()
+        if not isinstance(layout, QVBoxLayout):
+            raise Exception("the NPSEditor Layout is not of QVBoxLayout as expected")
+
+        if isinstance(self.error_label, QLabel):
+            self.error_label.setText(self._get_error_list_html(errors))
+            return
+
+        self.error_label = QLabel(self._get_error_list_html(errors))
+        self.error_label.setStyleSheet("color: red;")
+        layout.insertWidget(layout.count() - 1, self.error_label)
+
+    @staticmethod
+    def get_default_shape():
+        """Defines a default `NanoParticleShape` to display."""
+        return SphereNPS()  # TODO: Could we add a setting for that
+
 
 
 class QTableViewKeyEvents(QTableView):
