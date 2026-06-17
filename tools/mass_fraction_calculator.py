@@ -6,168 +6,21 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QGroupBox, QMessageBox,
     QHeaderView, QSplitter, QFileDialog, QListWidget,
     QListWidgetItem, QWidget, QRadioButton, QButtonGroup,
-    QStyledItemDelegate, QCompleter,
-)
+    QStyledItemDelegate, )
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtCore import QUrl
 import logging
-import re
 import pandas as pd
 from pathlib import Path
-from functools import reduce
-from math import gcd
 
+from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_counts, reduce_counts, \
+    signature_from_counts, canonicalize_preserve_user_order
 from tools.np_shape import NanoParticleShapeWidget
 from tools.theme import theme
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Formula parsing – supports parentheses, e.g. Ca(OH)2, Al2(SO4)3
-# ---------------------------------------------------------------------------
-
-_TOKEN_RE = re.compile(r'([A-Z][a-z]?|\(|\))(\d*(?:\.\d+)?)')
-
-
-def _parse_formula_to_counts(formula: str) -> dict:
-    """Parse a chemical formula string into {element: integer_count}.
-
-    Handles parenthesised groups such as Ca(OH)2 → {'Ca': 1, 'O': 2, 'H': 2}.
-    Nested parentheses are supported.
-
-    Args:
-        formula: Chemical formula string.
-
-    Returns:
-        dict mapping element symbols to positive integer counts.
-    """
-    if not formula or not isinstance(formula, str):
-        return {}
-
-    stack: list[dict] = [{}]
-
-    for token, num_str in _TOKEN_RE.findall(formula):
-        if token == '(':
-            stack.append({})
-        elif token == ')':
-            if len(stack) < 2:
-                continue
-            multiplier = _safe_int(num_str, default=1)
-            top = stack.pop()
-            for el, cnt in top.items():
-                stack[-1][el] = stack[-1].get(el, 0) + cnt * multiplier
-        else:
-            n = _safe_int(num_str, default=1)
-            stack[-1][token] = stack[-1].get(token, 0) + n
-
-    while len(stack) > 1:
-        top = stack.pop()
-        for el, cnt in top.items():
-            stack[-1][el] = stack[-1].get(el, 0) + cnt
-
-    return {k: v for k, v in stack[0].items() if v > 0}
-
-
-def _safe_int(s: str, *, default: int = 1) -> int:
-    """Convert a numeric string to a positive int, rounding floats.
-    Args:
-        s (str): The s.
-        default (int): The default.
-    Returns:
-        int: Result of the operation.
-    """
-    if not s:
-        return default
-    try:
-        return max(int(round(float(s))), 0) or default
-    except (ValueError, TypeError):
-        return default
-
-
-_ELEMENT_ORDER_RE = re.compile(r'([A-Z][a-z]?)')
-
-
-def _element_order_in_formula(formula: str) -> list[str]:
-    """Return elements in the order they first appear in *formula*.
-    Args:
-        formula (str): The formula.
-    Returns:
-        list[str]: Result of the operation.
-    """
-    seen: set[str] = set()
-    order: list[str] = []
-    for el in _ELEMENT_ORDER_RE.findall(str(formula)):
-        if el not in seen:
-            seen.add(el)
-            order.append(el)
-    return order
-
-
-def _reduce_counts(counts: dict) -> dict:
-    """Divide all counts by their GCD to get the empirical formula.
-    Args:
-        counts (dict): The counts.
-    Returns:
-        dict: Result of the operation.
-    """
-    if not counts:
-        return counts
-    nums = [abs(int(v)) for v in counts.values() if int(v) != 0]
-    if not nums:
-        return counts
-    g = reduce(gcd, nums)
-    if g <= 1:
-        return counts
-    return {k: v // g for k, v in counts.items()}
-
-
-def _signature_from_counts(counts: dict) -> str:
-    """Order-independent canonical key for matching equivalent formulas.
-    Args:
-        counts (dict): The counts.
-    Returns:
-        str: Result of the operation.
-    """
-    if not counts:
-        return ''
-    return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
-
-
-def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = None) -> str:
-    """Build a human-readable formula string from counts.
-    Args:
-        counts (dict): The counts.
-        prefer_order (list[str] | None): The prefer order.
-    Returns:
-        str: Result of the operation.
-    """
-    if not counts:
-        return ''
-    if prefer_order:
-        rest = sorted(e for e in counts if e not in prefer_order)
-        ordered = list(dict.fromkeys(list(prefer_order) + rest))
-    else:
-        ordered = sorted(counts)
-    parts = []
-    for el in ordered:
-        n = counts.get(el, 0)
-        if n <= 0:
-            continue
-        parts.append(el if n == 1 else f'{el}{n}')
-    return ''.join(parts)
-
-
-def canonicalize_preserve_user_order(formula: str) -> str:
-    """Reduce stoichiometry but preserve the user's element order.
-    Args:
-        formula (str): The formula.
-    Returns:
-        str: Result of the operation.
-    """
-    counts = _reduce_counts(_parse_formula_to_counts(formula))
-    order = _element_order_in_formula(formula)
-    return _join_formula_from_counts(counts, prefer_order=order)
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +134,10 @@ class CSVCompoundDatabase:
 
                     self.formula_to_data.setdefault(raw_formula, []).append(material_data)
 
-                    counts = _reduce_counts(_parse_formula_to_counts(raw_formula))
+                    counts = reduce_counts(parse_formula_to_counts(raw_formula))
                     if not counts:
                         continue
-                    sig = _signature_from_counts(counts)
+                    sig = signature_from_counts(counts)
 
                     self.signature_to_formula.setdefault(sig, raw_formula)
                     self.signature_to_data.setdefault(sig, []).append(material_data)
@@ -322,7 +175,7 @@ class CSVCompoundDatabase:
         Returns:
             str: Result of the operation.
         """
-        return _signature_from_counts(_reduce_counts(_parse_formula_to_counts(formula)))
+        return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
 
     def get_data_by_formula_or_signature(self, formula: str) -> list[dict]:
         """
@@ -500,7 +353,6 @@ class FormulaComboBox(QComboBox):
         self._setup_compounds()
 
         # TODO: `[int]` is legacy so it should be removed... but examples still uses it
-        # TODO: Is activated necessary because the completer is desactivated anyawy
         self.activated[int].connect(self._on_item_activated)
         self.lineEdit().editingFinished.connect(self._on_editing_finished)
         self.lineEdit().textChanged.connect(self._on_text_changed)
@@ -660,7 +512,7 @@ class FormulaComboBox(QComboBox):
         dens = picked_density if picked_density > 0 else self.csv_database.best_density_for_formula(user_canon)
         self._set_editor_text(user_canon)
 
-        counts = _reduce_counts(_parse_formula_to_counts(user_canon))
+        counts = reduce_counts(parse_formula_to_counts(user_canon))
         if len(counts) >= 2:
             self.filter_to_formula(user_canon)
         else:
@@ -684,7 +536,7 @@ class FormulaComboBox(QComboBox):
         dens = self.csv_database.best_density_for_formula(user_canon)
         self._set_editor_text(user_canon)
 
-        counts = _reduce_counts(_parse_formula_to_counts(user_canon))
+        counts = reduce_counts(parse_formula_to_counts(user_canon))
         if len(counts) >= 2:
             self.filter_to_formula(user_canon)
         else:
@@ -1421,7 +1273,7 @@ class MassFractionCalculator(QDialog):
         element = el_item.text()
 
         # Get the elements count with reduced values
-        counts = _reduce_counts(_parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         # Defines the mass fraction (mf) for the element
         if not counts:
             mf = 1.0
@@ -1451,7 +1303,7 @@ class MassFractionCalculator(QDialog):
             formula (str): The formula.
         """
         # Get the elements count with reduced values
-        counts = _reduce_counts(_parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         # Calculate molecular weight (MW) while checking if the molecule is
         # valid (all elements exists in `_element_data`).
         mw = 0.0
@@ -1490,7 +1342,7 @@ class MassFractionCalculator(QDialog):
         self._calc_molecular_weight(row, formula)
 
         # reduce counts
-        counts = _reduce_counts(_parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         # If the counts are only tracking the element
         if len(counts) <= 1:
             el_item = self.table.item(row, self.CalculatorColumn.ELEMENT.col_index)
@@ -1511,7 +1363,7 @@ class MassFractionCalculator(QDialog):
             row (int): Row index.
             formula (str): The formula.
         """
-        counts = _parse_formula_to_counts(formula)
+        counts = parse_formula_to_counts(formula)
         tracked_in = sorted(set(counts.keys()) & self.tracked_elements)
         other = sorted(set(counts.keys()) - self.tracked_elements)
 
