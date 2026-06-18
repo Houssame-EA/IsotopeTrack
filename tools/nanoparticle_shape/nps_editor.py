@@ -1,4 +1,4 @@
-import logging
+"""Defines the editor ui"""
 from typing import Any
 
 from PySide6.QtCore import Signal, QModelIndex, QAbstractItemModel, Qt

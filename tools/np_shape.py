@@ -1,5 +1,4 @@
 """Manages user defined nanoparticles shapes"""
-import logging
 from collections import namedtuple
 from typing import Any
 
@@ -179,7 +178,7 @@ class NanoParticleShapeWidget(QWidget):
         layout.addWidget(self._setup_header())
         layout.addWidget(self.nps_table)
 
-        self.nps_table.on_edit.connect(self.open_nps_editor_with_index)
+        self.nps_table.on_edit.connect(self.open_nps_editor_for_modification)
 
     def _setup_header(self):
         header = QWidget(self)
@@ -196,11 +195,11 @@ class NanoParticleShapeWidget(QWidget):
 
         new_shape_btn = QPushButton("New Shape")
         header.layout().addWidget(new_shape_btn)
-        new_shape_btn.clicked.connect(self.open_nps_editor)
+        new_shape_btn.clicked.connect(self.open_nps_editor_for_new)
 
         return header
 
-    def open_nps_editor_with_index(self, index: QModelIndex):
+    def open_nps_editor_for_modification(self, index: QModelIndex):
         """
         Opens the nps editor at a certain index of the model (using `QTableView`).
         Args:
@@ -223,8 +222,8 @@ class NanoParticleShapeWidget(QWidget):
         self.nps_model.setData(index, nps)
         self.nps_editor = None
 
-    def open_nps_editor(self):
-        """"""
+    def open_nps_editor_for_new(self):
+        """ Opens the nps editor with the goal of creating a new NPS. """
         self.nps_editor = self._create_and_open_nps_editor()
         self.nps_editor.accept_with_nps.connect(self.handle_new_nps)
 
