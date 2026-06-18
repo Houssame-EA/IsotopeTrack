@@ -46,3 +46,8 @@ if __name__ == "__main__":
         except Exception:
             _itk_log.exception("Handled exception in <module>")
     app.main_windows.clear()
+
+    logging.shutdown()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code if isinstance(exit_code, int) else 0)

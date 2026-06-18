@@ -95,8 +95,26 @@ class AutosaveManager(QObject):
             self._timer.start()
 
     def stop(self):
-        """Stop the autosave timer."""
+        """Stop the autosave timer and wait for any in-flight snapshot write.
+
+        Critically, this blocks until a running ``SaveProjectThread`` has
+        finished. If it didn't, the background thread would still be
+        serializing project data while the interpreter tears down on exit,
+        and the final GC pass would crash walking that half-freed state.
+        """
         self._timer.stop()
+        thread = self._thread
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(10000):
+                        thread.terminate()
+                        thread.wait(2000)
+            except RuntimeError:
+                # Underlying C++ thread object already deleted — nothing to wait on.
+                pass
+        self._writing = False
 
     def _recovery_path(self) -> Path:
         wid = getattr(self.main_window, "window_id", "W1")

@@ -78,13 +78,13 @@ class _SafeFigureCanvas(FigureCanvas):
         try:
             super().showEvent(event)
         except AttributeError:
-            _itk_log.exception("Handled exception in showEvent")
+            _itk_log.debug("Suppressed benign matplotlib/PySide6 showEvent AttributeError")
 
     def resizeEvent(self, event):
         try:
             super().resizeEvent(event)
         except AttributeError:
-            _itk_log.exception("Handled exception in resizeEvent")
+            _itk_log.debug("Suppressed benign matplotlib/PySide6 resizeEvent AttributeError")
 
 
 ALGORITHMS = [
@@ -6418,12 +6418,16 @@ class ClusteringDisplayDialog(QDialog):
         Args:
             event (QCloseEvent): The close event forwarded by Qt.
         """
-        worker = getattr(self, '_cluster_worker', None)
-        if worker is not None and worker.isRunning():
-            worker.wait(5000)
-        ev = getattr(self, '_eval_worker', None)
-        if ev is not None and ev.isRunning():
-            ev.wait(5000)
+        for attr in ('_cluster_worker', '_eval_worker', '_bootstrap_worker'):
+            w = getattr(self, attr, None)
+            if w is not None and w.isRunning():
+                w.requestInterruption()
+                w.quit()
+                if not w.wait(5000):
+                    # Last resort: force-stop a stuck worker so it cannot run
+                    # into interpreter teardown and crash the GC on exit.
+                    w.terminate()
+                    w.wait(2000)
         super().closeEvent(event)
 
     def _live_k_supported(self):

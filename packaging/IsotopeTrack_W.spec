@@ -28,8 +28,14 @@ with open(_rth, 'w') as _f:
         "        pass\n"
         "    class _ChunkedArray:\n"
         "        pass\n"
+        "    class _Table:\n"
+        "        pass\n"
+        "    class _RecordBatch:\n"
+        "        pass\n"
         "    m.Array = _Array\n"
         "    m.ChunkedArray = _ChunkedArray\n"
+        "    m.Table = _Table\n"
+        "    m.RecordBatch = _RecordBatch\n"
         "    sys.modules['pyarrow'] = m\n"
     )
 
