@@ -2637,7 +2637,8 @@ class FontSettingsGroup:
 
         self.color_btn = QPushButton()
         self.color_btn.setStyleSheet(
-            f"background-color: {self._color.name()}; min-height: 25px;")
+            f"QPushButton {{ background-color: {self._color.name()}; "
+            f"border: 1px solid #888; border-radius: 2px; min-height: 25px; }}")
         self.color_btn.clicked.connect(self._pick_color)
         if on_change:
             self.color_btn.clicked.connect(on_change)
@@ -2646,11 +2647,16 @@ class FontSettingsGroup:
         return group
 
     def _pick_color(self):
-        c = QColorDialog.getColor(self._color)
-        if c.isValid():
-            self._color = c
+        new_hex = pick_color_hex(
+            self._color.name() if self._color.isValid() else DEFAULT_FONT_COLOR,
+            owner=self.color_btn,
+            title="Select font colour",
+        )
+        if new_hex is not None:
+            self._color = QColor(new_hex)
             self.color_btn.setStyleSheet(
-                f"background-color: {c.name()}; min-height: 25px;")
+                f"QPushButton {{ background-color: {new_hex}; "
+                f"border: 1px solid #888; border-radius: 2px; min-height: 25px; }}")
 
     def collect(self) -> dict:
         """
@@ -2761,7 +2767,8 @@ class ExportSettingsGroup:
         self._bg_btn = QPushButton()
         self._bg_btn.setFixedHeight(24)
         self._bg_btn.setStyleSheet(
-            f'background-color:{self._bg_color}; border:1px solid #666; border-radius:2px;')
+            f'QPushButton {{ background-color:{self._bg_color}; '
+            f'border:1px solid #666; border-radius:2px; }}')
         self._bg_btn.clicked.connect(self._pick_bg)
         layout.addRow("Background:", self._bg_btn)
 
@@ -2804,11 +2811,16 @@ class ExportSettingsGroup:
         return group
 
     def _pick_bg(self):
-        c = QColorDialog.getColor(QColor(self._bg_color))
-        if c.isValid():
-            self._bg_color = c.name()
+        new_hex = pick_color_hex(
+            self._bg_color if self._bg_color else '#FFFFFF',
+            owner=self._bg_btn,
+            title="Select background colour",
+        )
+        if new_hex is not None:
+            self._bg_color = new_hex
             self._bg_btn.setStyleSheet(
-                f'background-color:{self._bg_color}; border:1px solid #666; border-radius:2px;')
+                f'QPushButton {{ background-color:{self._bg_color}; '
+                f'border:1px solid #666; border-radius:2px; }}')
 
     def collect(self) -> dict:
         """

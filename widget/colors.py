@@ -23,17 +23,17 @@ colorheatmap = [
     'Spectral',    
     'RdYlBu',     
     
-    'YlGnBu',      
-    'YlOrRd',      
-    'viridis_r',   
-    'mako',         
-    'rocket',       
-    
-    'flare',        
-    'crest',      
-    'cubehelix',    
-    'Greens',      
-    'Blues'        
+    'YlGnBu',
+    'YlOrRd',
+    'viridis_r',
+    'inferno',
+    'afmhot',
+
+    'YlOrBr',
+    'ocean',
+    'cubehelix',
+    'Greens',
+    'Blues',
 ]
 
 element_colors = {
