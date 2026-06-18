@@ -1,15 +1,18 @@
+import logging
 from typing import Any
 
 from PySide6.QtCore import Signal, QModelIndex, QAbstractItemModel, Qt
 from PySide6.QtWidgets import QWidget, QLineEdit, QFormLayout, QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, \
     QPushButton, QMessageBox, QSizePolicy
 
-from tools.nano_particle_shape.nano_particle_shapes import SphereNPS, CoreShellNPS, NanoParticleShape
+from tools.logging_utils import logging_manager
+from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS, NanoParticleShape
 from tools.theme import results_title_qss, theme, primary_button_qss
 from utils.validation import ValidationInfos
 
 
 class SphereNPSEditor(QWidget):
+    """Sphere part of the `NPSEditor`"""
     def __init__(self, sphere: SphereNPS):
         super().__init__()
         self.sphere = sphere
@@ -26,10 +29,14 @@ class SphereNPSEditor(QWidget):
         layout.addRow("Formula", self.formula_edit)
 
     def set_formula(self):
+        """
+        Keeps the `nps` formula in sync with the `QLineEdit`.
+        """
         self.sphere.formula = self.formula_edit.text()
 
 
 class CoreShellNPSEditor(QWidget):
+    """Core-Shell part of the `NPSEditor"""
     def __init__(self, core_shell: CoreShellNPS, /):
         super().__init__()
         self.core_shell = core_shell
@@ -49,13 +56,12 @@ class CoreShellNPSEditor(QWidget):
         layout.addRow("Shell", self.shell_edit)
 
     def set_core(self):
+        """Keeps the `nps` core in sync with the `QLineEdit`"""
         self.core_shell.core = self.core_edit.text()
 
     def set_shell(self):
+        """Keeps the `nps` shell in sync with the `QLineEdit`"""
         self.core_shell.shell = self.shell_edit.text()
-
-    def get_nps(self):
-        return self.core_shell
 
 
 class NPSEditor(QDialog):
@@ -64,10 +70,11 @@ class NPSEditor(QDialog):
 
     def __init__(self, index: QModelIndex | None, model: QAbstractItemModel, parent: QWidget | Any):
         super().__init__(parent=parent)
+        self.logger = logging_manager.get_logger(self.__class__.__name__)
         self.model = model
         self.index = index
         self.nps = (model.data(index, Qt.ItemDataRole.EditRole) if index is not None
-                    else self.get_default_shape())  # TODO: Make this flexible for None NPS
+                    else self.get_default_shape())
         self.nps_name = self.nps.get_name() or ""
         self.nps_name_edit = QLineEdit(str(self.nps_name),
                                        placeholderText="Name (default: shape formula)")
@@ -129,7 +136,7 @@ class NPSEditor(QDialog):
 
     def display_form_for_nps(self, nps: NanoParticleShape):
         """
-        Display the form with the right fields for the parameter's
+        Displays the form with the right fields for the parameter's
         `NanoParticleShape` variation.
 
         Args:
@@ -141,7 +148,6 @@ class NPSEditor(QDialog):
         assert isinstance(layout, QVBoxLayout)
 
         if isinstance(self.current_form_widget, QWidget):
-            print("Widget removed")
             layout.removeWidget(self.current_form_widget)
             self.current_form_widget.hide()
             self.current_form_widget.deleteLater()
@@ -149,14 +155,15 @@ class NPSEditor(QDialog):
 
         match nps:
             case CoreShellNPS():
-                print("Form for CoreShellNPS")
+                self.logger.info("Displays core-shell form")
                 self.current_form_widget = CoreShellNPSEditor(nps)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case SphereNPS():
-                print("Form for ShperesNPS")
+                self.logger.info("Displays sphere form")
                 self.current_form_widget = SphereNPSEditor(nps)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case obj:
+                self.logger.critical(f"Class ({obj.__class__}) doesn't have a form")
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
 
     def _build_footer(self):
@@ -181,6 +188,7 @@ class NPSEditor(QDialog):
         Args:
             index: index of the item in the `self.nps_combo_box`.
         """
+        self.logger.info("NPS selection changed")
         self.nps = self.nps_combo_box.itemData(index)
         self.display_form_for_nps(self.nps)
 
@@ -192,11 +200,13 @@ class NPSEditor(QDialog):
         validation = self.nps.validate()
 
         if validation.has_errors() or validation.has_messages():
+            self.logger.info("Display nps errors and/or messages")
             self._exec_validation_message_box(validation)
 
         if validation.has_errors():
             self.handle_errors(validation.errors)
         else:
+            self.logger.info("Nps accepted")
             self.accept_with_nps.emit(self.nps)
 
     def _exec_validation_message_box(self, validation: ValidationInfos):
@@ -242,6 +252,7 @@ class NPSEditor(QDialog):
             errors (list[str]): list of error messages to be displayed to
             the user.
         """
+        self.logger.info("Handling errors")
         self._update_forms()
         self._add_or_replace_error_label(errors)
 

@@ -1,4 +1,5 @@
-"""Manages user defined nano particles shapes"""
+"""Manages user defined nanoparticles shapes"""
+import logging
 from collections import namedtuple
 from typing import Any
 
@@ -6,9 +7,11 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLay
     QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal
 
-from tools.nano_particle_shape.nano_particle_shapes import NanoParticleShape, CoreShellNPS, SphereNPS
-from tools.nano_particle_shape.nps_editor import NPSEditor
-from tools.nano_particle_shape.nps_service import NanoParticleShapeService
+from tools.logging_utils import logging_manager
+from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape, CoreShellNPS, SphereNPS
+from tools.nanoparticle_shape.nps_editor import NPSEditor
+from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
+from utils.validation import ValidationErrorException
 
 
 class NanoParticleShapeModel(QAbstractTableModel):
@@ -16,12 +19,6 @@ class NanoParticleShapeModel(QAbstractTableModel):
     ColumnInfo = namedtuple('ColumnInfo', ['title'])
 
     def __init__(self, nps_service: NanoParticleShapeService, parent: QObject | Any = None):
-        """
-
-        Args:
-            nps_service:
-            parent:
-        """
         super().__init__(parent=parent)
         self.nps_service = nps_service
 
@@ -30,6 +27,7 @@ class NanoParticleShapeModel(QAbstractTableModel):
             self.ColumnInfo("Formula"),
             self.ColumnInfo("Shape"),
         ]
+        self.logger = logging_manager.get_logger(self.__class__.__name__)
 
     def rowCount(self, parent=None):
         return self.nps_service.shape_count()
@@ -54,14 +52,22 @@ class NanoParticleShapeModel(QAbstractTableModel):
                     if column < len(self.columns_info):
                         raise NotImplementedError(f"There's no implementation for column # {column}")
                     return ""
-        if role == Qt.ItemDataRole.EditRole:  # TODO: stop using that
+        if role == Qt.ItemDataRole.EditRole:
             # returns the entire shape because the editor is a model.
+            self.logger.info(f"data(..., role=Qt.ItemDataRole.EditRole): "
+                             f"Getting the shape from the service")
             return self.nps_service.get_shape(index.row())
         return None
 
     def setData(self, index, value, /, role=Qt.ItemDataRole.EditRole):
         if role == Qt.ItemDataRole.EditRole:
-            self.nps_service.update_shape(index.row(), value)
+            self.logger.info("setData: Setting data with the service")
+            try:
+                self.nps_service.update_shape(index.row(), value)
+            except ValidationErrorException as err:
+                self.logger.exception(err)
+            except IndexError as err:
+                self.logger.exception(err)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal:
@@ -70,22 +76,27 @@ class NanoParticleShapeModel(QAbstractTableModel):
         return None
 
     def removeRows(self, position, row, parent=QModelIndex()):
-        print("Remove row")
+        self.logger.info("removeRows: Removing rows with the service")
         self.beginRemoveRows(parent, position, position + row - 1)
         for i in range(row):
-            self.nps_service.delete_shape(position)
+            self.nps_service.delete_shape(position)  # TODO: Manage exceptions
 
         self.endRemoveRows()
         self.layoutChanged.emit()
         return True
 
     def addData(self, nps: NanoParticleShape):
+        self.logger.info("addData: adding data from the model")
         insert_index = self.rowCount()
         index = self.index(insert_index, 0)
         self.beginInsertRows(index, insert_index, insert_index)
 
-        print("Row inserted")
-        self.nps_service.update_shape(insert_index, nps)
+        try:
+            self.nps_service.update_shape(insert_index, nps)
+        except ValidationErrorException as err:
+            self.logger.exception(err)
+        except IndexError as err:
+            self.logger.exception(err)
 
         self.endInsertRows()
 
@@ -147,6 +158,7 @@ class NanoParticleShapeWidget(QWidget):
                      CoreShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
                  ]), /):
         super().__init__(parent=parent)
+        self.logger = logging_manager.get_logger(self.__class__.__name__)
         self.nps_editor = None
 
         self.nps_table = QTableViewKeyEvents(parent=self)
@@ -160,6 +172,7 @@ class NanoParticleShapeWidget(QWidget):
         """
         Sets up the widget ui.
         """
+        self.logger.info("Setting up UI")
         layout = QVBoxLayout()
         self.setLayout(layout)
 
@@ -173,7 +186,7 @@ class NanoParticleShapeWidget(QWidget):
         layout = QHBoxLayout()
         header.setLayout(layout)
 
-        title = QLabel("Nano Particule Shape")
+        title = QLabel("NanoParticle Shape")
         title.setStyleSheet("font-size: 16px; font-weight: bold; margin: 10px 0;")  # TODO: make a common style
         layout.addWidget(title)
 
@@ -188,32 +201,47 @@ class NanoParticleShapeWidget(QWidget):
         return header
 
     def open_nps_editor_with_index(self, index: QModelIndex):
-        print("Editor edit")
-        print(index)
+        """
+        Opens the nps editor at a certain index of the model (using `QTableView`).
+        Args:
+            index: index of the nps in the model
+        """
+        self.logger.info("Opening NPS editor")
         self.nps_editor = self._create_and_open_nps_editor(index)
         self.nps_editor.accept_with_nps.connect(
             lambda nps: self.handle_modify_nps(nps, index)
         )
 
     def handle_modify_nps(self, nps: NanoParticleShape, index: QModelIndex):
-        print("Modify nps")
+        """
+        Calls the model to set the `nps` of a specific `index.
+        Args:
+            nps: `NanoParticleShape` that will take the place of the one at
+                `index` in the model.
+            index: index of the `nps` to switch.
+        """
         self.nps_model.setData(index, nps)
         self.nps_editor = None
 
     def open_nps_editor(self):
+        """"""
         self.nps_editor = self._create_and_open_nps_editor()
         self.nps_editor.accept_with_nps.connect(self.handle_new_nps)
 
     def handle_new_nps(self, nps: NanoParticleShape):
-        print("New nps")
+        """
+        Calls the model to add a new nps.
+        Args:
+            nps: new nps to be added
+        """
         self.nps_model.addData(nps)
         self.nps_editor = None
 
     def _create_and_open_nps_editor(self, index: QModelIndex | None = None):
         """
-        Opens the NPS editor with the required model and parent.
+        Opens the NPS editor with the required information.
         Args:
-            index:
+            index: index of the data in the model if nps already exists.
         """
         if not isinstance(index, QModelIndex):
             index = None

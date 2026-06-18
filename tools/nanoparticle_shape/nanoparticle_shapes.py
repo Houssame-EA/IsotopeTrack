@@ -1,10 +1,11 @@
-from tools.nano_particle_shape.nps_validators import validate_required, validate_stoichiometry
+"""The available shapes classes (subclasses of `NanoParticleShape`)."""
+from tools.nanoparticle_shape.nps_validators import validate_required, validate_stoichiometry, validate_trim
 from utils.validation import IValidation, ValidationInfos
 
 
 class NanoParticleShape(IValidation):
     """
-    Base class for nano particle shapes.
+    Base class for nanoparticle shapes.
     """
 
     def __init__(self, name=None):
@@ -13,14 +14,14 @@ class NanoParticleShape(IValidation):
     def get_name(self):
         """
         Returns:
-            (str) string of the informal way of calling the nano particle shape.
+            string of the informal way of calling the nanoparticle shape.
         """
         return self.name
 
     def get_formula(self):
         """
         Returns:
-            (str) string that represents the nano particle.
+            string that represents the nanoparticle.
         """
         return "No formula"
 
@@ -35,17 +36,18 @@ class NanoParticleShape(IValidation):
         """
         Cleanup (strip, reformat, etc.) and validation of all fields.
 
-        Returns: `ValidationInfos` that lists all invalid fields in `errors`
-        (`list[str]`) and list of all cleanups as `messages`
-        (`list[str]`).
+        Returns:
+            `ValidationInfos` that lists all invalid fields in `errors`
+            (`list[str]`) and list of all cleanups as `messages`
+            (`list[str]`).
         """
-        messages: list[str] = []
+        self.name, trim_validation = validate_trim(self.name, represents="Name")
         if not self.name:
             self.name = self.get_formula()
-            messages.append(f"No name was given to the shape, so the formula "
-                            f"\"{self.get_formula()}\" was taken instead")
-
-        return ValidationInfos(messages=messages)
+            return ValidationInfos(messages=[f"No name was given to the shape, "
+                                             f"so the formula \"{self.get_formula()}\" "
+                                             f"was taken instead"])
+        return trim_validation
 
     def __repr__(self):
         return f"<{self.__module__}.{self.__class__.__name__} formula={self.get_formula()}, shape={self.get_shape()}>"
@@ -64,7 +66,6 @@ class CoreShellNPS(NanoParticleShape):
         return "Core-Shell"
 
     def validate(self) -> ValidationInfos:
-
         validation = self._validate_core().merge(self._validate_shell())
 
         if not validation.has_errors():
@@ -98,13 +99,13 @@ class SphereNPS(NanoParticleShape):
         return self.formula
 
     def get_shape(self):
-        return "Shpere"
+        return "Sphere"
 
     def validate(self) -> ValidationInfos:
         if not self.formula:
             validation = validate_required(self.formula, "Formula")
         else:
-            self.formula, validation = validate_stoichiometry(self.formula)
+            self.formula, validation = validate_stoichiometry(self.formula, "Formula")
 
             if not validation.has_errors():
                 validation.merge(super().validate())

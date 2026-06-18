@@ -745,7 +745,7 @@ class MassFractionCalculator(QDialog):
         }}
 
         /* Table */
-        QTableWidget {{
+        QTableWidget, QTableView {{
             gridline-color: {p.border};
             background-color: {p.bg_secondary};
             color: {p.text_primary};
@@ -755,11 +755,11 @@ class MassFractionCalculator(QDialog):
             selection-background-color: {p.accent};
             selection-color: {p.text_inverse};
         }}
-        QTableWidget::item {{
+        QTableWidget::item, QTableView::item {{
             padding: 4px;
             color: {p.text_primary};
         }}
-        QTableWidget::item:selected {{
+        QTableWidget::item:selected, QTableView::item:selected {{
             background-color: {p.accent};
             color: {p.text_inverse};
         }}

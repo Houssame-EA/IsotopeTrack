@@ -59,3 +59,17 @@ class IValidation(ABC):
         (`list[str]`).
         """
         pass
+
+
+class ValidationErrorException(RuntimeError):
+    """Custom error for failed validations."""
+    def __init__(self, validation_infos:ValidationInfos, *args):
+        super().__init__(*args)
+        self.validation_infos = validation_infos
+
+    def __str__(self):
+        return (f"Validation Error: the following errors where raised: "
+                f"{', '.join(self.validation_infos.errors)}")
+
+    def __repr__(self):
+        return f"<{self.__module__}.{self.__class__} validation_infos={self.validation_infos}, args={self.args}>"
