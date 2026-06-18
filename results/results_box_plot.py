@@ -8,25 +8,23 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
-    QPushButton, QLineEdit, QFrame, QScrollArea, QWidget, QMenu,
-    QDialogButtonBox, QMessageBox, QFileDialog, QListWidget,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
+    QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QDialogButtonBox,
+    QListWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QPen, QFont, QAction
+from PySide6.QtGui import QColor
 import pyqtgraph as pg
 import numpy as np
 import math
 from scipy.stats import gaussian_kde
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_qfont, apply_font_to_pyqtgraph, set_axis_labels,
-    FontSettingsGroup, get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
-    SHADE_TYPES, _QT_LINE, apply_outlier_filter, _apply_box,
-    _add_hband, _add_det_limit_h, apply_plot_title_style,
+    DEFAULT_SAMPLE_COLORS, apply_font_to_pyqtgraph,
+    FontSettingsGroup, get_display_name, download_pyqtgraph_figure, format_element_label,
+    LABEL_MODES, Renderer, HtmlAxisItem,
+    SHADE_TYPES,
+    _apply_box, _add_hband, _add_det_limit_h, apply_plot_title_style,
     apply_axis_label_style,
 )
 from results.utils_sort import (
@@ -34,6 +32,8 @@ from results.utils_sort import (
     sort_element_dict_by_mass,
     element_alphabetical_key,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_box_plot")
 
 try:
     from results.results_bar_charts import (
@@ -43,9 +43,11 @@ try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
         _CUSTOM_PLOT_AVAILABLE = True
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _PlotSettingsDialog = None
         _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
@@ -169,57 +171,24 @@ _DISPLAY_MODE_ALIASES = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _y_label(cfg):
-    """
-    Args:
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
     base = BOX_LABEL_MAP.get(cfg.get('data_type_display', 'Counts'), 'Values')
     return BOX_LABEL_MAP.get(cfg.get('data_type_display', 'Counts'), 'Values')
 
 
 def _element_color(element, index, cfg):
-    """
-    Args:
-        element (Any): The element.
-        index (Any): Row or item index.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
     return cfg.get('element_colors', {}).get(
         element, DEFAULT_ELEMENT_COLORS[index % len(DEFAULT_ELEMENT_COLORS)])
 
 
 def _fmt_elem(elem, cfg):
-    """
-    Args:
-        elem (Any): The elem.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
     return format_element_label(elem, cfg.get('label_mode', 'Symbol'), Renderer.HTML)
 
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return (input_data and input_data.get('type') == 'multiple_sample_data')
 
 
 def _available_elements(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        list: Result of the operation.
-    """
     if not input_data:
         return []
     sel = input_data.get('selected_isotopes', [])
@@ -229,15 +198,6 @@ def _available_elements(input_data):
 
 
 def _filter_values(values, data_type, log_y, cfg=None):
-    """
-    Args:
-        values (Any): Array or sequence of values.
-        data_type (Any): The data type.
-        log_y (Any): The log y.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
     if data_type != 'Counts':
         vals = [v for v in values if v > 0 and not np.isnan(v)]
     else:
@@ -257,12 +217,7 @@ def _filter_values(values, data_type, log_y, cfg=None):
 
 
 def _apply_box_overlays(plot_item, all_values_flat, cfg):
-    """Apply horizontal band + detection limit + figure box to a finished plot.
-    Args:
-        plot_item (Any): The plot item.
-        all_values_flat (Any): The all values flat.
-        cfg (Any): The cfg.
-    """
+    """Apply horizontal band + detection limit + figure box to a finished plot."""
     shade_type = cfg.get('shade_type', 'None')
     if shade_type != 'None' and all_values_flat:
         arr = np.array(all_values_flat)
@@ -422,12 +377,6 @@ class BoxPlotSettingsDialog(QDialog):
 
     def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
-        Args:
-            cfg (Any): The cfg.
-            input_data (Any): The input data.
-            parent (Any): Parent widget or object.
-            scope (str): ``'format'``, ``'quantities'``, or ``'all'``.
-
         Preserved behavior:
             Under ``all`` scope this dialog remains backward compatible with
             the legacy combined settings route. Scoped routes collect only
@@ -770,10 +719,6 @@ class BoxPlotSettingsDialog(QDialog):
             self._shade_clr_btn.setStyleSheet(f"background:{self._shade_color};")
 
     def _on_shade_type_changed(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        """
         is_user = (text == 'User-defined range')
         self._user_range_frame.setVisible(is_user)
 
@@ -862,16 +807,6 @@ class BoxPlotSettingsDialog(QDialog):
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
 def _draw_box(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     if len(values) < 2:
         return
     q1, median, q3 = np.percentile(values, [25, 50, 75])
@@ -910,16 +845,6 @@ def _draw_box(plot_item, x, values, color, alpha, width, cfg):
 
 
 def _draw_violin(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     if len(values) < 2:
         return
     try:
@@ -953,36 +878,17 @@ def _draw_violin(plot_item, x, values, color, alpha, width, cfg):
                 x=[x], y=[np.mean(values)], pen=pg.mkPen('white', width=2),
                 brush=pg.mkBrush('red'), size=8, symbol='d'))
     except Exception:
+        _itk_log.exception("Handled exception in _draw_violin")
         _draw_box(plot_item, x, values, color, alpha, width, cfg)
 
 
 def _draw_box_violin(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     _draw_violin(plot_item, x, values, color, alpha // 2, width, cfg)
     box_cfg = dict(cfg); box_cfg['show_median'] = True; box_cfg['show_mean'] = False
     _draw_box(plot_item, x, values, color, alpha, width * 0.3, box_cfg)
 
 
 def _draw_strip(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     jitter = cfg.get('strip_jitter', 0.2)
     np.random.seed(42)
     xj = x + np.random.uniform(-jitter, jitter, len(values))
@@ -999,16 +905,6 @@ def _draw_strip(plot_item, x, values, color, alpha, width, cfg):
 
 
 def _draw_half_violin_box(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     co = QColor(color)
     try:
         bw = cfg.get('violin_bandwidth', 0.2)
@@ -1022,7 +918,7 @@ def _draw_half_violin_box(plot_item, x, values, color, alpha, width, cfg):
         plot_item.addItem(pg.PlotDataItem(x=x - nd, y=yv, pen=pg.mkPen(color, width=2),
             fillLevel=x, brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha // 2)))
     except Exception:
-        pass
+        _itk_log.exception("Handled exception in _draw_half_violin_box")
 
     q1, med, q3 = np.percentile(values, [25, 50, 75])
     box = pg.QtWidgets.QGraphicsRectItem(x, q1, width/2, q3 - q1)
@@ -1035,16 +931,6 @@ def _draw_half_violin_box(plot_item, x, values, color, alpha, width, cfg):
 
 
 def _draw_notched_box(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     q1, med, q3 = np.percentile(values, [25, 50, 75])
     iqr = q3 - q1
     n = len(values)
@@ -1073,16 +959,6 @@ def _draw_notched_box(plot_item, x, values, color, alpha, width, cfg):
 
 
 def _draw_bar_errors(plot_item, x, values, color, alpha, width, cfg):
-    """
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        color (Any): Colour value.
-        alpha (Any): The alpha.
-        width (Any): Width in pixels.
-        cfg (Any): The cfg.
-    """
     mean_v = np.mean(values)
     sem = np.std(values) / np.sqrt(len(values))
     co = QColor(color)
@@ -1115,15 +991,6 @@ _SHAPE_DRAWERS = {
 
 def _draw_single_element(plot_item, x, values, sample_name, element, cfg, is_multi):
     """Dispatch one series to the configured Box Plot shape drawer.
-    Args:
-        plot_item (Any): The plot item.
-        x (Any): Input array or value.
-        values (Any): Array or sequence of values.
-        sample_name (Any): The sample name.
-        element (Any): The element.
-        cfg (Any): The cfg.
-        is_multi (Any): The is multi.
-    
     Preserved behavior:
         In combined multi-sample modes (``is_multi=True``), color identity
         remains sample-based. In single-sample/per-sample panels
@@ -1158,12 +1025,7 @@ def _add_empty_panel_message(plot_item, message="No valid data"):
 
 
 def _add_stats_text(plot_item, plot_data, cfg):
-    """Add statistics text box.
-    Args:
-        plot_item (Any): The plot item.
-        plot_data (Any): The plot data.
-        cfg (Any): The cfg.
-    """
+    """Add statistics text box."""
     dt = cfg.get('data_type_display', 'Counts')
     shape = cfg.get('plot_shape', PLOT_SHAPES[0])
     lines = [f"Statistics ({dt}):", f"Plot: {shape}"]
@@ -1199,6 +1061,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
         txt.setPos(vb[0][0] + 0.02*(vb[0][1]-vb[0][0]),
                    vb[1][0] + 0.98*(vb[1][1]-vb[1][0]))
     except Exception:
+        _itk_log.exception("Handled exception in _add_stats_text")
         txt.setPos(0.02, 0.98)
 
 
@@ -1208,11 +1071,6 @@ class BoxPlotDisplayDialog(QDialog):
     """Main dialog with PyQtGraph plot and right-click context menu."""
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self._subplot_context_by_plotitem = {}
@@ -1269,9 +1127,6 @@ class BoxPlotDisplayDialog(QDialog):
     def _ctx_menu(self, pos):
         """Show Box Plot custom right-click menu with Box-specific quick actions.
 
-        Args:
-            pos (Any): Position point.
-
         Preserved behavior:
             Keeps only lightweight visual toggles plus Box-specific ``Plot
             Shape`` and ``Show Outliers`` actions in right-click. Quantity,
@@ -1289,13 +1144,14 @@ class BoxPlotDisplayDialog(QDialog):
                     try:
                         rect = pi.mapRectToScene(pi.boundingRect())
                     except Exception:
+                        _itk_log.exception("Handled exception in _ctx_menu")
                         continue
                     if rect.contains(scene_pos):
                         clicked_plot = pi
                         subplot_ctx = ctx
                         break
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _ctx_menu")
         menu = QMenu(self)
 
         tm = menu.addMenu("Quick Toggles")
@@ -1366,12 +1222,14 @@ class BoxPlotDisplayDialog(QDialog):
         try:
             scene_pos = self.pw.mapToScene(pos)
         except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
             return None
         for item in self.pw.scene().items():
             if isinstance(item, pg.PlotItem):
                 try:
                     rect = item.mapRectToScene(item.boundingRect())
                 except Exception:
+                    _itk_log.exception("Handled exception in _plot_item_at")
                     continue
                 if rect is not None and rect.contains(scene_pos):
                     return item
@@ -1414,19 +1272,10 @@ class BoxPlotDisplayDialog(QDialog):
         )
 
     def _toggle(self, key):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-        """
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -1512,13 +1361,13 @@ class BoxPlotDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
 
     def _reset_layout(self):
         """Reset Box Plot view ranges to auto layout without changing data.
@@ -1536,7 +1385,7 @@ class BoxPlotDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _reset_layout")
         self._refresh()
 
     def _get_custom_title_map(self):
@@ -1611,9 +1460,6 @@ class BoxPlotDisplayDialog(QDialog):
         Args:
             plot_item (Any): Target ``pg.PlotItem``.
             title_text (str): Effective title text to render.
-
-        Returns:
-            None
         """
         apply_plot_title_style(plot_item, title_text, config=self.node.config)
 
@@ -1623,9 +1469,6 @@ class BoxPlotDisplayDialog(QDialog):
         Args:
             plot_key (str): Stable raw key for the target plot panel.
             title_text (str): User-entered display title text.
-
-        Returns:
-            None
         """
         clean_text = (title_text or '').strip()
         custom_titles = dict(self._get_custom_title_map())
@@ -1645,9 +1488,6 @@ class BoxPlotDisplayDialog(QDialog):
             title_text (str): User-entered display title text.
             default_title (str): Default title used when the override is
                 cleared or blank.
-
-        Returns:
-            None
         """
         self._store_custom_title_text(plot_key, title_text)
         self._apply_title_text_to_plot(
@@ -1660,9 +1500,6 @@ class BoxPlotDisplayDialog(QDialog):
             plot_item (Any): Target ``pg.PlotItem``.
             plot_key (str): Stable raw key for the target plot panel.
             default_title (str): Default title used when no override exists.
-
-        Returns:
-            None
         """
         def _title_apply_callback(text, _plot_item=plot_item, _plot_key=plot_key,
                                   _default_title=default_title):
@@ -1732,9 +1569,6 @@ class BoxPlotDisplayDialog(QDialog):
                 ``'left'``.
             text (str): User-entered axis-label text.
             units (str | None): Optional units text from the editor.
-
-        Returns:
-            None
         """
         clean_text = (text or '').strip()
         custom_axis_labels = dict(self._get_custom_axis_label_map())
@@ -1761,9 +1595,6 @@ class BoxPlotDisplayDialog(QDialog):
             plot_key (str): Stable raw key for the target plot panel.
             default_axis_labels (dict): Default axis-label mapping with
                 ``bottom`` and ``left`` entries.
-
-        Returns:
-            None
         """
         effective_labels = self._effective_axis_labels_for_key(
             plot_key, default_axis_labels)
@@ -1860,7 +1691,8 @@ class BoxPlotDisplayDialog(QDialog):
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data, multi)
         except Exception as e:
-            print(f"Error updating distribution plot: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error updating distribution plot: {e}")
             import traceback; traceback.print_exc()
     def _draw_single_sample(self, pi, data, cfg):
         """Draw one sample panel with element-only x-axis labels.
@@ -1868,11 +1700,6 @@ class BoxPlotDisplayDialog(QDialog):
         In ``Subplots by sample``, sample identity is conveyed by panel title.
         X-axis ticks stay isotope/element-only for readability, and element
         colors are applied per series inside the sample panel.
-
-        Args:
-            pi (Any): The pi.
-            data (Any): Input data.
-            cfg (Any): The cfg.
 
         Returns:
             bool: ``True`` when at least one element distribution was drawn.
@@ -1941,11 +1768,6 @@ class BoxPlotDisplayDialog(QDialog):
         This mode remains a single-plot view where each tick combines element
         and sample name. Font and grid style are still applied from config so
         format settings remain consistent with subplot modes.
-
-        Args:
-            pi (Any): The pi.
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
         """
         min_count = cfg.get('min_particle_count', 0)
         sort_mode = self._category_sort_mode(cfg)
@@ -2006,10 +1828,6 @@ class BoxPlotDisplayDialog(QDialog):
         repeated sample names in tick labels and keeps sample identity in panel
         position/title. Empty sample panels show a visible ``No valid data``
         note.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
         """
         sample_order = cfg.get('sample_order', [])
         if sample_order:
@@ -2065,10 +1883,6 @@ class BoxPlotDisplayDialog(QDialog):
         boxes differently from another without changing any extracted values or
         computed statistics. Axis/tick font, grid styling, and figure overlays
         (including frame) are applied per subplot from config.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
         """
         min_count = cfg.get('min_particle_count', 0)
         sort_mode = self._category_sort_mode(cfg)
@@ -2160,10 +1974,6 @@ class BoxPlotDisplayDialog(QDialog):
             This renderer is retained for backward safety, but current config
             normalization aliases legacy ``By Sample (Ordered)`` to
             ``Subplots by isotope`` before draw dispatch.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
         """
         min_count = cfg.get('min_particle_count', 0)
         sample_order = cfg.get('sample_order', [])
@@ -2224,11 +2034,6 @@ class BoxPlotDisplayDialog(QDialog):
             apply_font_to_pyqtgraph(pi, cfg)
 
     def _update_stats(self, plot_data, multi):
-        """
-        Args:
-            plot_data (Any): The plot data.
-            multi (Any): The multi.
-        """
         if multi:
             total = sum(sum(len(v) for v in sd.values()) for sd in plot_data.values() if sd)
             ns = len(plot_data)
@@ -2246,10 +2051,6 @@ class BoxPlotNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Distribution Plot"
         self.node_type = "box_plot"
@@ -2263,40 +2064,22 @@ class BoxPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = BoxPlotDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         data_key = BOX_DATA_KEY_MAP.get(
@@ -2309,12 +2092,6 @@ class BoxPlotNode(QObject):
         return None
 
     def _extract_single(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -2330,12 +2107,6 @@ class BoxPlotNode(QObject):
         return sort_element_dict_by_mass(result) if result else None
 
     def _extract_multi(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:

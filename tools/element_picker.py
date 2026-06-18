@@ -13,8 +13,9 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QPushButton,
     QScrollArea, QVBoxLayout, QWidget,
 )
-
-import tools.theme as _theme_module   # import the module so we always get the live palette
+from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.element_picker")
 
 
 class ElementGridPopup(QWidget):
@@ -109,7 +110,7 @@ class ElementPicker(QWidget):
         self._labels = []
         self._current_index = -1
         self._chip_qss = ""
-        self._current_popup = None   # track open popup
+        self._current_popup = None   
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -219,7 +220,6 @@ class ElementPicker(QWidget):
     def _open_popup(self):
         if not self._keys:
             return
-        # Close any previously open popup
         if self._current_popup is not None:
             self._current_popup.close()
             self._current_popup = None
@@ -227,7 +227,7 @@ class ElementPicker(QWidget):
         items = list(zip(self._keys, self._labels))
         popup = ElementGridPopup(
             items, self._current_index, self._columns,
-            self._chip_qss, _theme_module.palette, self,
+            self._chip_qss, theme.palette, self,
         )
         popup.setAttribute(Qt.WA_DeleteOnClose)
         popup.selected.connect(self._on_popup_selected)
@@ -249,12 +249,11 @@ class ElementPicker(QWidget):
             if y + popup.height() > geom.bottom():
                 y = btn_global.y() - popup.height() - 4
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _open_popup")
         popup.move(x, y)
         popup.show()
         self._current_popup = popup
 
-        # Close popup if the main window moves (it would be left behind)
         top = self.window()
         if top and top is not self:
             top.installEventFilter(self)

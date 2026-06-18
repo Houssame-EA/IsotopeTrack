@@ -4,39 +4,37 @@ import numpy as np
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-                               QFileDialog, QMessageBox, QDialog, QListWidget, QListWidgetItem,
-                               QListView, QAbstractItemView, QTreeView, QComboBox, QLabel,
-                               QScrollArea, QSplitter, QGroupBox, QMenu, QTabWidget,
-                               QToolBar, QStatusBar, QMainWindow, QFrame, QToolButton, QRadioButton, QDoubleSpinBox,
-                               QLineEdit, QCheckBox, QProgressDialog)
-from PySide6.QtCore import Qt, QSize, Signal, QTimer, QEvent
-from PySide6.QtGui import QIcon, QKeySequence, QFont, QColor, QBrush, QPalette, QDoubleValidator, QAction, QShortcut
+                               QFileDialog, QMessageBox, QDialog, QListView, QAbstractItemView,
+                               QTreeView, QComboBox, QLabel, QSplitter, QGroupBox,
+                               QMenu, QTabWidget, QToolBar, QStatusBar, QMainWindow,
+                               QFrame, QRadioButton, QDoubleSpinBox, QCheckBox, QProgressDialog)
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QKeySequence, QFont, QColor, QBrush, QAction, QShortcut
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import BasicPlotWidget, CalibrationPlotWidget, EnhancedPlotWidget
+from widget.custom_plot_widget import CalibrationPlotWidget, EnhancedPlotWidget
 import os
-import pandas as pd
 import qtawesome as qta
 import loading.tofwerk_loading
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, NumericDelegate, RETURN_BUTTON_STYLE,
-    base_stylesheet, return_button_style,
+    NumericDelegate, return_button_style,
 )
 
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.ionic_CAL")
+from tools.logging_utils import log_context
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
-    """Return the UserActionLogger, or None if logging isn't ready.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return the UserActionLogger, or None if logging isn't ready."""
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
-    except Exception:
+    except (ImportError, AttributeError):
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 
@@ -44,10 +42,6 @@ def _build_ionic_qss(p) -> str:
     """Full stylesheet for the Ionic Calibration window, built from a
     theme Palette.  Covers main window, toolbar, tabs, tables, buttons,
     inputs, group boxes, scroll areas, and the status bar.
-    Args:
-        p (Any): The p.
-    Returns:
-        str: Result of the operation.
     """
     return f"""
         /* Base window + widgets ---------------------------------------- */
@@ -385,10 +379,6 @@ def _build_ionic_status_colors(p) -> dict:
         selected  — manually selected by user (was #e6f3ff blue)
         base      — neutral background for unhighlighted cells
         text      — foreground color that reads on all three backgrounds
-    Args:
-        p (Any): The p.
-    Returns:
-        dict: Result of the operation.
     """
     if p.name == "dark":
         return {
@@ -539,8 +529,6 @@ class IonicCalibrationWindow(QMainWindow):
         theme palette.  Called on init and whenever the user toggles light/
         dark — any widgets that show dynamic colors (e.g. the results table
         status cells) are refreshed via refresh_status_colors().
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(_build_ionic_qss(p))
@@ -576,14 +564,15 @@ class IonicCalibrationWindow(QMainWindow):
                 try:
                     label = widget.getAxis(axis).label.toPlainText()
                 except Exception:
+                    _itk_log.exception("Handled exception in _refresh_plot_label_colors")
                     label = ""
                 widget.setLabel(axis, label, color=fg)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _refresh_plot_label_colors")
 
     def _refresh_results_table_colors(self):
         """When the theme changes, any existing background QBrush() values
-        on results-table items are stale.  Re-run display_results() to
+        on results-table items are stale.  Re-run update_results_table() to
         re-paint them with the new palette, if the data is available.
         """
         if not hasattr(self, "results_table"):
@@ -591,9 +580,9 @@ class IonicCalibrationWindow(QMainWindow):
 
         try:
             if getattr(self, "calibration_results", None):
-                self.display_results()
+                self.update_results_table()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _refresh_results_table_colors")
 
     def setup_toolbar(self):
         """
@@ -987,10 +976,7 @@ class IonicCalibrationWindow(QMainWindow):
         splitter.setSizes([500, 300])
         
     def _log_tab_switch(self, index):
-        """Log which tab the user switches to.
-        Args:
-            index (Any): Row or item index.
-        """
+        """Log which tab the user switches to."""
         tab_names = ["Data Management", "Manual Sensitivity", "Calibration Results"]
         name = tab_names[index] if index < len(tab_names) else str(index)
         ual = _ual()
@@ -1322,6 +1308,7 @@ class IonicCalibrationWindow(QMainWindow):
                     return str(concentration_value)
                     
                 except ValueError:
+                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         number_matches = re.findall(r'\b(\d+(?:\.\d+)?)\b', sample_name_lower)
@@ -1334,6 +1321,7 @@ class IonicCalibrationWindow(QMainWindow):
                     if value in common_concentrations or (0.01 <= value <= 10000):
                         return str(value)
                 except ValueError:
+                    _itk_log.exception("Handled exception in extract_concentration_from_sample_name")
                     continue
         
         return "-1"
@@ -1438,7 +1426,7 @@ class IonicCalibrationWindow(QMainWindow):
             element, mass = isotope_key.split('-')
             isotope_label = self.get_isotope_label(element, float(mass))
             best_r2 = r_squared_values[best_method_key]
-            print(f"Auto-selected {best_method_display} for {isotope_label} (R² = {best_r2:.4f})")
+            _itk_log.debug(f"Auto-selected {best_method_display} for {isotope_label} (R² = {best_r2:.4f})")
 
     def apply_method_to_all_isotopes(self, method_name):
         """
@@ -1453,7 +1441,7 @@ class IonicCalibrationWindow(QMainWindow):
                 
             self.isotope_method_preferences[isotope_key] = method_name
         
-        print(f"Applied {method_name} to applicable isotopes")
+        _itk_log.debug(f"Applied {method_name} to applicable isotopes")
 
     def auto_fill_concentrations(self):
         """
@@ -1812,7 +1800,7 @@ class IonicCalibrationWindow(QMainWindow):
                 if folder and isotope_key:
                     return folder, isotope_key
             except (IndexError, AttributeError):
-                pass
+                _itk_log.exception("Handled exception in _current_time_plot_context")
         s_idx = self.sample_combo.currentIndex()
         i_idx = self.plot_isotope_combo.currentIndex()
         if s_idx >= 0 and i_idx >= 0 and s_idx < len(self.folder_paths):
@@ -1848,9 +1836,6 @@ class IonicCalibrationWindow(QMainWindow):
     def _restore_time_exclusions(self, folder, isotope_key):
         """Load the stored regions for (folder, isotope_key) into the
         count_vs_time_widget, replacing whatever was there before.
-        Args:
-            folder (Any): The folder.
-            isotope_key (Any): The isotope key.
         """
         key = (folder, isotope_key)
         elem_regions   = self._time_exclusions_element.get(key, [])
@@ -1919,7 +1904,8 @@ class IonicCalibrationWindow(QMainWindow):
             self._restore_time_exclusions(folder, isotope_key)
             
         except Exception as e:
-            print(f"Error updating time plot: {str(e)}")
+            _itk_log.exception("Handled exception in update_time_plot")
+            _itk_log.error(f"Error updating time plot: {str(e)}")
             self.statusBar.showMessage(f"Error updating plot: {str(e)}", 3000)
 
     def show_periodic_table(self):
@@ -2153,7 +2139,7 @@ class IonicCalibrationWindow(QMainWindow):
             
             summary_stats = load_summary_stats_from_csv(file_path)
             if summary_stats:
-                print(f"Loaded summary statistics for {len(summary_stats)} samples")
+                _itk_log.debug(f"Loaded summary statistics for {len(summary_stats)} samples")
                 self.summary_stats_5sec = summary_stats
             
             self.update_element_isotope_combo()
@@ -2252,7 +2238,8 @@ class IonicCalibrationWindow(QMainWindow):
                     
                 self.sample_combo.addItem(sample_name, folder)
                 
-            except Exception:
+            except (OSError, ValueError, KeyError):
+                _itk_log.exception("Handled exception in update_sample_combo")
                 self.sample_combo.addItem(Path(folder).name, folder)
 
     def table_key_press_event(self, event):
@@ -2396,6 +2383,7 @@ class IonicCalibrationWindow(QMainWindow):
                                     self.table.setItem(row_idx, col_idx, 
                                                     QTableWidgetItem(str(value)))
                                 except ValueError:
+                                    _itk_log.exception("Handled exception in paste_cells")
                                     continue
         finally:
             self.ignore_item_changed = False
@@ -2428,7 +2416,8 @@ class IonicCalibrationWindow(QMainWindow):
                 with open(run_info_path, "r") as fp:
                     run_info = json.load(fp)
                 sample_name = run_info.get("SampleName", Path(folder).name)
-            except:
+            except (OSError, ValueError, KeyError):
+                _itk_log.exception("Handled exception in update_table_rows")
                 sample_name = Path(folder).name
                 
             item = QTableWidgetItem(sample_name)
@@ -2544,8 +2533,8 @@ class IonicCalibrationWindow(QMainWindow):
             if len(parts) == 2:
                 return parts[0], float(parts[1]), unit
                 
-        except Exception:
-            pass
+        except (ValueError, KeyError, IndexError, AttributeError):
+            _itk_log.exception("Handled exception in parse_header_for_element_isotope_and_unit")
         return None
 
     def plot_count_vs_time(self, selected_row=None, selected_col=None):
@@ -2619,7 +2608,8 @@ class IonicCalibrationWindow(QMainWindow):
                 else:
                     self.count_vs_time_widget.setTitle("Count vs Time - Invalid column selection")
             except Exception as e:
-                print(f"Error plotting count vs time: {str(e)}")
+                _itk_log.exception("Handled exception in plot_count_vs_time")
+                _itk_log.error(f"Error plotting count vs time: {str(e)}")
                 self.count_vs_time_widget.setTitle("Count vs Time - Error in plotting")
         else:
             self.count_vs_time_widget.setTitle("Count vs Time - No cell selected")
@@ -2697,6 +2687,7 @@ class IonicCalibrationWindow(QMainWindow):
                     try:
                         displayed_conc = float(value)
                     except ValueError:
+                        _itk_log.exception("Handled exception in calculate_calibration")
                         continue
                     
                     if displayed_conc != -1:
@@ -3089,16 +3080,12 @@ class IonicCalibrationWindow(QMainWindow):
             self.update_results_table_with_method(isotope_key, data, current_unit)
                     
     def convert_concentration(self, value, from_unit, to_unit):
-        """
-        Convert concentration between different units.
-        
+        """Convert concentration between different units.
+
         Args:
             value: Concentration value to convert
             from_unit: Source unit (ppb, ppm, ppt)
             to_unit: Target unit (ppb, ppm, ppt)
-            
-        Returns:
-            Converted concentration value
         """
         if from_unit == to_unit:
             return value
@@ -3140,6 +3127,7 @@ class IonicCalibrationWindow(QMainWindow):
                             new_value = self.convert_concentration(old_value, old_unit, new_unit)
                             self.table.setItem(row, col, QTableWidgetItem(f"{new_value:.4g}"))
                         except ValueError:
+                            _itk_log.exception("Handled exception in update_concentration_unit")
                             continue
         finally:
             self.ignore_item_changed = False
@@ -3272,7 +3260,6 @@ class IonicCalibrationWindow(QMainWindow):
         Args:
             element: Selected element data
         """
-        pass
 
     def _fit_zero(self, x, y):
         """
@@ -3469,13 +3456,6 @@ class IonicCalibrationWindow(QMainWindow):
         fit_weighted = self._fit_weighted(xi, yi, si)
         
         def eval_line(slope, intercept):
-            """
-            Args:
-                slope (Any): The slope.
-                intercept (Any): The intercept.
-            Returns:
-                object: Result of the operation.
-            """
             return (slope * x + intercept).tolist()
 
         y_fit_zero     = eval_line(fit_zero["slope"],     0.0)
@@ -3519,19 +3499,13 @@ class IonicCalibrationWindow(QMainWindow):
 
     def _compute_outlier_indices(self, y, y_fit, included_mask,
                                  z_threshold=1.5):
-        """
-        Flag included points whose standardized residual exceeds ``z_threshold``.
+        """Flag included points whose standardized residual exceeds ``z_threshold``.
 
         Standardization uses the sample standard deviation of the *included*
         residuals (ddof=1). With too few points the flag is disabled.
 
         Returns:
             set[int]: indices into the full ``y`` array.
-        Args:
-            y (Any): Input array or value.
-            y_fit (Any): The y fit.
-            included_mask (Any): The included mask.
-            z_threshold (Any): The z threshold.
         """
         import numpy as np
         y = np.asarray(y, dtype=float)
@@ -3554,14 +3528,11 @@ class IonicCalibrationWindow(QMainWindow):
         }
 
     def refit_isotope(self, isotope_key):
-        """
-        Re-run the three fits for a single isotope using the current
+        """Re-run the three fits for a single isotope using the current
         exclusion set. Called after every exclusion toggle.
 
         Returns True on success, False if the fit couldn't be performed
         (e.g. fewer than 2 points would remain included).
-        Args:
-            isotope_key (Any): The isotope key.
         """
         import numpy as np
         data = self.calibration_results.get(isotope_key)
@@ -3601,8 +3572,6 @@ class IonicCalibrationWindow(QMainWindow):
     def on_calibration_point_exclusion_toggled(self, index):
         """Toggle exclusion of the clicked point for the current isotope,
         refit, and redraw.
-        Args:
-            index (Any): Row or item index.
         """
         current_index = self.element_isotope_combo.currentIndex()
         if current_index < 0:
@@ -3671,11 +3640,7 @@ class IonicCalibrationWindow(QMainWindow):
                 3000)
 
     def _update_exclusion_status_label(self, isotope_key, total_points):
-        """Refresh the small status label next to the plot controls.
-        Args:
-            isotope_key (Any): The isotope key.
-            total_points (Any): The total points.
-        """
+        """Refresh the small status label next to the plot controls."""
         if not hasattr(self, 'exclusion_status_label'):
             return
         excluded = self.excluded_points.get(isotope_key, set())
@@ -3708,10 +3673,6 @@ class IonicCalibrationWindow(QMainWindow):
         The input is shown only when the active method is Manual. Its
         value is read from self.sensitivity_overrides when available,
         otherwise seeded from the Simple-linear fit.
-        Args:
-            isotope_key (Any): The isotope key.
-            data (Any): Input data.
-            current_unit (Any): The current unit.
         """
         is_manual = (self.calibration_method_combo.currentText() == 'Manual')
         self._set_manual_slope_controls_visible(is_manual)
@@ -3836,7 +3797,7 @@ class IonicCalibrationWindow(QMainWindow):
             try:
                 self.update_sensitivity_table()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in on_manual_slope_changed")
 
         element, mass = isotope_key.split('-')
         self.display_calibration(element, float(mass))
@@ -3913,121 +3874,122 @@ class IonicCalibrationWindow(QMainWindow):
         for element, isotopes in self.selected_isotopes.items():
             for isotope in isotopes:
                 isotope_key = f"{element}-{isotope:.4f}"
-                mass_index  = isotope_indices[isotope_key]
+                with log_context(isotope=isotope_key):
+                    mass_index  = isotope_indices[isotope_key]
     
-                # ── Progress update ───────────────────────────────────────────
-                if progress:
-                    isotope_count += 1
-                    progress.setValue(30 + int(60 * isotope_count / total_isotopes))
-                    progress.setLabelText(
-                        f"Calculating: {self.get_isotope_label(element, isotope)}"
-                    )
-                    QApplication.processEvents()
+                    # ── Progress update ───────────────────────────────────────────
+                    if progress:
+                        isotope_count += 1
+                        progress.setValue(30 + int(60 * isotope_count / total_isotopes))
+                        progress.setLabelText(
+                            f"Calculating: {self.get_isotope_label(element, isotope)}"
+                        )
+                        QApplication.processEvents()
     
-                x_list, y_list, y_std_list = [], [], []
-                folders_list = []
+                    x_list, y_list, y_std_list = [], [], []
+                    folders_list = []
     
-                for folder, folder_data in self.data.items():
-                    if isotope_key not in concentrations.get(folder, {}):
-                        continue
+                    for folder, folder_data in self.data.items():
+                        if isotope_key not in concentrations.get(folder, {}):
+                            continue
     
-                    conc = concentrations[folder][isotope_key]
-                    if conc == -1:
-                        continue
+                        conc = concentrations[folder][isotope_key]
+                        if conc == -1:
+                            continue
     
-                    run_info      = folder_data['run_info']
-                    acq_ns        = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"]
-                    dwell_time    = (acq_ns * 1e-9
-                                    * run_info["NumAccumulations1"]
-                                    * run_info["NumAccumulations2"])
+                        run_info      = folder_data['run_info']
+                        acq_ns        = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"]
+                        dwell_time    = (acq_ns * 1e-9
+                                        * run_info["NumAccumulations1"]
+                                        * run_info["NumAccumulations2"])
     
-                    local_masses = folder_data['masses']
-                    local_idx    = int(np.argmin(np.abs(local_masses - isotope)))
+                        local_masses = folder_data['masses']
+                        local_idx    = int(np.argmin(np.abs(local_masses - isotope)))
     
-                    counts = folder_data['signals'][:, local_idx]
-                    cps    = counts / dwell_time
+                        counts = folder_data['signals'][:, local_idx]
+                        cps    = counts / dwell_time
 
          
-                    time_values = np.arange(len(cps)) * dwell_time
-                    time_mask   = np.ones(len(cps), dtype=bool)
-                    for lo, hi in self._time_exclusions_element.get(
-                            (folder, isotope_key), []):
-                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
-                    for lo, hi in self._time_exclusions_sample.get(folder, []):
-                        time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        time_values = np.arange(len(cps)) * dwell_time
+                        time_mask   = np.ones(len(cps), dtype=bool)
+                        for lo, hi in self._time_exclusions_element.get(
+                                (folder, isotope_key), []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
+                        for lo, hi in self._time_exclusions_sample.get(folder, []):
+                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
 
               
-                    if not time_mask.any():
+                        if not time_mask.any():
+                            continue
+
+                        cps_for_stats = cps[time_mask]
+
+                        x_list.append(conc)
+                        y_list.append(float(np.mean(cps_for_stats)))
+                        y_std_list.append(float(np.std(cps_for_stats)))
+                        folders_list.append(folder)
+    
+                    if len(x_list) == 0:
                         continue
 
-                    cps_for_stats = cps[time_mask]
-
-                    x_list.append(conc)
-                    y_list.append(float(np.mean(cps_for_stats)))
-                    y_std_list.append(float(np.std(cps_for_stats)))
-                    folders_list.append(folder)
-    
-                if len(x_list) == 0:
-                    continue
-
-                # ── Element density from periodic table ───────────────────────
-                element_data = next(
-                    (e for e in self.periodic_table.get_elements()
-                    if e['symbol'] == element),
-                    None
-                )
-                density = element_data['density'] if element_data else 'N/A'
-
-                if len(x_list) == 1:
-           
-                    x1 = np.array(x_list)
-                    y1 = np.array(y_list)
-                    s1 = np.array(y_std_list)
-                    fit_zero = self._fit_zero(x1, y1)
-                    fom = self._compute_figures_of_merit(
-                        fit_zero["slope"], 0.0, float(s1[0])
+                    # ── Element density from periodic table ───────────────────────
+                    element_data = next(
+                        (e for e in self.periodic_table.get_elements()
+                        if e['symbol'] == element),
+                        None
                     )
-                    y_fit = (fit_zero["slope"] * x1).tolist()
-   
-                    shared = {
-                        'slope':     fit_zero["slope"],
-                        'intercept': 0.0,
-                        'r_squared': 1.0,
-                        'y_fit':     y_fit,
-                        **fom,
-                    }
-                    results[isotope_key] = {
-                        'zero':             shared.copy(),
-                        'simple':           shared.copy(),
-                        'weighted':         shared.copy(),
-                        'x':                x1.tolist(),
-                        'y':                y1.tolist(),
-                        'y_std':            s1.tolist(),
-                        'density':          density,
-                        'folders':          list(folders_list),
-                        'excluded_folders': [],
-                        'single_point':     True,
-                    }
-                    continue
+                    density = element_data['density'] if element_data else 'N/A'
 
-                x     = np.array(x_list)
-                y     = np.array(y_list)
-                y_std = np.array(y_std_list)
-
-
-                excluded_folders = self.excluded_points.get(isotope_key, set())
-                included_mask = np.array(
-                    [f not in excluded_folders for f in folders_list])
-
-                isotope_result = self._run_all_fits_on_subset(
-                    x, y, y_std, included_mask, density)
-                if isotope_result is None:
-        
-                    continue
-                isotope_result['folders'] = list(folders_list)
+                    if len(x_list) == 1:
            
-                isotope_result['excluded_folders'] = sorted(excluded_folders)
-                results[isotope_key] = isotope_result
+                        x1 = np.array(x_list)
+                        y1 = np.array(y_list)
+                        s1 = np.array(y_std_list)
+                        fit_zero = self._fit_zero(x1, y1)
+                        fom = self._compute_figures_of_merit(
+                            fit_zero["slope"], 0.0, float(s1[0])
+                        )
+                        y_fit = (fit_zero["slope"] * x1).tolist()
+   
+                        shared = {
+                            'slope':     fit_zero["slope"],
+                            'intercept': 0.0,
+                            'r_squared': 1.0,
+                            'y_fit':     y_fit,
+                            **fom,
+                        }
+                        results[isotope_key] = {
+                            'zero':             shared.copy(),
+                            'simple':           shared.copy(),
+                            'weighted':         shared.copy(),
+                            'x':                x1.tolist(),
+                            'y':                y1.tolist(),
+                            'y_std':            s1.tolist(),
+                            'density':          density,
+                            'folders':          list(folders_list),
+                            'excluded_folders': [],
+                            'single_point':     True,
+                        }
+                        continue
+
+                    x     = np.array(x_list)
+                    y     = np.array(y_list)
+                    y_std = np.array(y_std_list)
+
+
+                    excluded_folders = self.excluded_points.get(isotope_key, set())
+                    included_mask = np.array(
+                        [f not in excluded_folders for f in folders_list])
+
+                    isotope_result = self._run_all_fits_on_subset(
+                        x, y, y_std, included_mask, density)
+                    if isotope_result is None:
+        
+                        continue
+                    isotope_result['folders'] = list(folders_list)
+           
+                    isotope_result['excluded_folders'] = sorted(excluded_folders)
+                    results[isotope_key] = isotope_result
 
         return results
 
@@ -4278,7 +4240,7 @@ class IonicCalibrationWindow(QMainWindow):
         """
         try:
             try:
-                from loading.import_csv_dialogs import show_csv_structure_dialog
+                pass
             except ImportError:
                 QMessageBox.critical(self, "Import Error", 
                     "Data file import functionality is not available. Please ensure the import_csv_dialogs.py file is present.")

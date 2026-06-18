@@ -10,16 +10,17 @@ import pandas as pd
 from PySide6.QtCore import Qt, QTimer, Signal, QThread
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
-    QFrame, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-    QProgressDialog, QPushButton, QRadioButton, QButtonGroup, QSizePolicy,
-    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
-    QToolButton, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMenu, QMessageBox, QPushButton, QRadioButton, QButtonGroup,
+    QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from widget.periodic_table_widget import PeriodicTableWidget
 from tools.theme import theme, dialog_qss
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.loading.import_csv_dialogs")
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +50,6 @@ def file_type_of(path: str | Path) -> str:
     """Return 'delimited', 'excel', or 'unknown' for a given file path.
     Args:
         path (str | Path): File or directory path.
-    Returns:
-        str: Result of the operation.
     """
     ext = Path(path).suffix.lower()
     if ext in DELIMITED_EXTS:
@@ -61,8 +60,7 @@ def file_type_of(path: str | Path) -> str:
 
 
 def find_first_stopping_row(df: pd.DataFrame) -> int:
-    """
-    Return the index of the first row that is empty or contains text-heavy
+    """Return the index of the first row that is empty or contains text-heavy
     cells (2+ consecutive letters).
 
     Dtype-aware fast path: numeric columns are checked with ``isna()`` (fast),
@@ -70,8 +68,6 @@ def find_first_stopping_row(df: pd.DataFrame) -> int:
     all-numeric frame this runs in ~5 ms versus ~7 s for a naive per-cell scan.
     Args:
         df (pd.DataFrame): Pandas DataFrame.
-    Returns:
-        int: Result of the operation.
     """
     if df.empty:
         return 0
@@ -116,10 +112,6 @@ class CSVPreviewTableWidget(QTableWidget):
     """Themed preview table; column selection enabled for mapping."""
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QTableWidget.SelectColumns)
@@ -136,13 +128,9 @@ class CSVPreviewTableWidget(QTableWidget):
         try:
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
-            pass 
+            _itk_log.exception("Handled exception in cleanup")
 
     def _apply_theme(self, *_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         p = theme.palette
         self.setStyleSheet(f"""
             QTableWidget {{
@@ -180,10 +168,7 @@ class CSVPreviewTableWidget(QTableWidget):
                 item.setBackground(color)
 
     def clear_column_highlight(self, column: int):
-        """Reset column cells to the default (alternating) background.
-        Args:
-            column (int): The column.
-        """
+        """Reset column cells to the default (alternating) background."""
         for row in range(self.rowCount()):
             item = self.item(row, column)
             if item:
@@ -206,10 +191,6 @@ class IsotopeBadgeBar(QWidget):
     unmap_requested   = Signal(int)
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 4)
@@ -218,10 +199,7 @@ class IsotopeBadgeBar(QWidget):
         self._isotopes: list[dict | None] = []
 
     def sync_with_columns(self, column_widths: list[int]):
-        """Create one badge per column, with widths matching the preview table.
-        Args:
-            column_widths (list[int]): The column widths.
-        """
+        """Create one badge per column, with widths matching the preview table."""
         for b in self._badges:
             b.setParent(None)
             b.deleteLater()
@@ -246,30 +224,19 @@ class IsotopeBadgeBar(QWidget):
         self._layout.addStretch(1)
 
     def set_mapping(self, column_index: int, isotope: dict | None):
-        """Update the badge for one column (None = unmapped).
-        Args:
-            column_index (int): The column index.
-            isotope (dict | None): The isotope.
-        """
+        """Update the badge for one column (None = unmapped)."""
         if 0 <= column_index < len(self._isotopes):
             self._isotopes[column_index] = isotope
             self._refresh_badge(column_index)
 
     def update_widths(self, column_widths: list[int]):
-        """Re-apply widths after the preview table resizes its columns.
-        Args:
-            column_widths (list[int]): The column widths.
-        """
+        """Re-apply widths after the preview table resizes its columns."""
         for i, w in enumerate(column_widths):
             if i < len(self._badges):
                 self._badges[i].setMinimumWidth(max(w, 60))
                 self._badges[i].setMaximumWidth(max(w, 60))
 
     def _refresh_badge(self, column_index: int):
-        """
-        Args:
-            column_index (int): The column index.
-        """
         btn = self._badges[column_index]
         iso = self._isotopes[column_index]
         p = theme.palette
@@ -309,10 +276,6 @@ class IsotopeBadgeBar(QWidget):
             """)
 
     def _show_context_menu(self, column_index: int):
-        """
-        Args:
-            column_index (int): The column index.
-        """
         if not (0 <= column_index < len(self._isotopes)):
             return
         iso = self._isotopes[column_index]
@@ -342,12 +305,6 @@ class IsotopePickerDialog(QDialog):
 
     def __init__(self, periodic_table_data: list,
                  initial_filter: str = "", parent=None):
-        """
-        Args:
-            periodic_table_data (list): The periodic table data.
-            initial_filter (str): The initial filter.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("Select Isotope")
         self.setModal(True)
@@ -387,7 +344,7 @@ class IsotopePickerDialog(QDialog):
         try:
             self.setStyleSheet(dialog_qss(theme.palette))
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in __init__")
 
     def _populate(self):
         self.list.clear()
@@ -418,10 +375,6 @@ class IsotopePickerDialog(QDialog):
             self.list.addItem(item)
 
     def _filter(self, text: str):
-        """
-        Args:
-            text (str): Text string.
-        """
         needle = text.lower().strip()
         first_visible = None
         for i in range(self.list.count()):
@@ -436,20 +389,12 @@ class IsotopePickerDialog(QDialog):
             self.list.setCurrentRow(first_visible)
 
     def _accept_current(self, *_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         item = self.list.currentItem()
         if item and not item.isHidden():
             self._selected = item.data(Qt.UserRole)
             self.accept()
 
     def selected_isotope(self) -> dict | None:
-        """
-        Returns:
-            dict | None: Result of the operation.
-        """
         return self._selected
 
 
@@ -465,11 +410,6 @@ class DataProcessThread(QThread):
     error    = Signal(str)
 
     def __init__(self, config, parent=None):
-        """
-        Args:
-            config (Any): Configuration dictionary.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.config = config
 
@@ -490,23 +430,18 @@ class DataProcessThread(QThread):
                             sample_data.get('datetime', ''),
                         )
                 except Exception as e:
+                    _itk_log.exception("Handled exception in run")
                     self.error.emit(
                         f"Error processing file {file_config['name']}: {e}")
                     continue
             self.progress.emit(100)
         except Exception as e:
+            _itk_log.exception("Handled exception in run")
             self.error.emit(f"Data processing error: {e}")
 
     # -- per-file pipeline ------------------------------------------------
 
     def process_file(self, file_config, file_index):
-        """
-        Args:
-            file_config (Any): The file config.
-            file_index (Any): The file index.
-        Returns:
-            tuple: Result of the operation.
-        """
         try:
             file_path = file_config['path']
             settings = self.config['settings']
@@ -532,17 +467,11 @@ class DataProcessThread(QThread):
                 'datetime': '',
             }
         except Exception as e:
+            _itk_log.exception("Handled exception in process_file")
             self.error.emit(f"Error processing {file_path}: {e}")
             return None
 
     def _load_delimited(self, file_path, settings):
-        """
-        Args:
-            file_path (Any): Path to the file.
-            settings (Any): Settings dictionary.
-        Returns:
-            object: Result of the operation.
-        """
         delim = settings['delimiter']
         if delim == "\\t":
             delim = "\t"
@@ -559,15 +488,8 @@ class DataProcessThread(QThread):
         return df
 
     def _load_excel(self, file_path, settings):
-        """
-        Args:
-            file_path (Any): Path to the file.
-            settings (Any): Settings dictionary.
-        Returns:
-            object: Result of the operation.
-        """
         try:
-            import openpyxl
+            pass
         except ImportError:
             raise ImportError(
                 "openpyxl is required for Excel files. "
@@ -589,6 +511,7 @@ class DataProcessThread(QThread):
         try:
             df = pd.read_excel(file_path, **read_args)
         except Exception:
+            _itk_log.exception("Handled exception in _load_excel")
             df = pd.read_excel(file_path, header=None, engine='openpyxl')
 
         stop = find_first_stopping_row(df)
@@ -597,13 +520,6 @@ class DataProcessThread(QThread):
         return df
 
     def _process_time(self, df, settings):
-        """
-        Args:
-            df (Any): Pandas DataFrame.
-            settings (Any): Settings dictionary.
-        Returns:
-            tuple: Result of the operation.
-        """
         time_column = settings.get('time_column')
         use_calc    = settings.get('use_calculated_dwell', False)
         manual_ms   = settings['dwell_time_ms']
@@ -626,15 +542,6 @@ class DataProcessThread(QThread):
         return time_data, dwell_s
 
     def _process_isotopes(self, df, mappings, settings, dwell_s):
-        """
-        Args:
-            df (Any): Pandas DataFrame.
-            mappings (Any): The mappings.
-            settings (Any): Settings dictionary.
-            dwell_s (Any): The dwell s.
-        Returns:
-            object: Result of the operation.
-        """
         signals = {}
         is_cps = settings['data_type'] == "Counts per second (CPS)"
         for mapping in mappings.values():
@@ -648,16 +555,6 @@ class DataProcessThread(QThread):
         return signals
 
     def _run_info(self, df, settings, file_path, dwell_s, ext):
-        """
-        Args:
-            df (Any): Pandas DataFrame.
-            settings (Any): Settings dictionary.
-            file_path (Any): Path to the file.
-            dwell_s (Any): The dwell s.
-            ext (Any): The ext.
-        Returns:
-            dict: Result of the operation.
-        """
         n = len(df)
         duration = (n - 1) * dwell_s if n > 1 else 0
         data_type = ('Excel' if ext in EXCEL_EXTS
@@ -696,11 +593,6 @@ class FileStructureDialog(QDialog):
     # -- init ------------------------------------------------------------
 
     def __init__(self, file_paths, parent=None):
-        """
-        Args:
-            file_paths (Any): The file paths.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.file_paths = file_paths if isinstance(file_paths, list) else [file_paths]
         self.current_file_index = 0
@@ -726,19 +618,13 @@ class FileStructureDialog(QDialog):
         try:
             theme.themeChanged.disconnect(self._apply_theme)
         except RuntimeError:
-            pass
+            _itk_log.exception("Handled exception in closeEvent")
         if hasattr(self, 'preview_table'):
             self.preview_table.cleanup()
         super().closeEvent(event)
 
     @staticmethod
     def _load_periodic_table(parent) -> list:
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        Returns:
-            list: Result of the operation.
-        """
         for getter in (
             lambda: parent.periodic_table_widget.get_elements()
                     if parent and getattr(parent, 'periodic_table_widget', None)
@@ -750,6 +636,7 @@ class FileStructureDialog(QDialog):
                 if data:
                     return data
             except Exception:
+                _itk_log.exception("Handled exception in _load_periodic_table")
                 continue
         return []
 
@@ -769,10 +656,6 @@ class FileStructureDialog(QDialog):
         root.addLayout(self._build_button_row())
 
     def _build_file_header(self) -> QFrame:
-        """
-        Returns:
-            QFrame: Result of the operation.
-        """
         frame = QFrame()
         frame.setFrameStyle(QFrame.Box)
         self._header_frame = frame
@@ -788,10 +671,6 @@ class FileStructureDialog(QDialog):
         return frame
 
     def _build_left_panel(self) -> QWidget:
-        """
-        Returns:
-            QWidget: Result of the operation.
-        """
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -911,10 +790,6 @@ class FileStructureDialog(QDialog):
         return w
 
     def _build_right_panel(self) -> QWidget:
-        """
-        Returns:
-            QWidget: Result of the operation.
-        """
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -944,10 +819,6 @@ class FileStructureDialog(QDialog):
         return w
 
     def _build_button_row(self) -> QHBoxLayout:
-        """
-        Returns:
-            QHBoxLayout: Result of the operation.
-        """
         row = QHBoxLayout()
         row.addStretch()
 
@@ -969,10 +840,6 @@ class FileStructureDialog(QDialog):
     # -- Theming ---------------------------------------------------------
 
     def _apply_theme(self, *_):
-        """
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
         p = theme.palette
         self.setStyleSheet(dialog_qss(p))
 
@@ -1066,10 +933,6 @@ class FileStructureDialog(QDialog):
     # -- Per-file loading pipeline ---------------------------------------
 
     def _switch_file(self, index: int):
-        """
-        Args:
-            index (int): Row or item index.
-        """
         if 0 <= index < len(self.file_paths):
             self.current_file_index = index
             self._load_file(self.file_paths[index])
@@ -1107,8 +970,9 @@ class FileStructureDialog(QDialog):
             self._validate_configuration()
 
         except Exception as e:
+            _itk_log.exception("Handled exception in _load_file")
             error_msg = f"Error loading {Path(file_path).name}: {e}"
-            print(error_msg)
+            _itk_log.error(error_msg)
             self.current_df = pd.DataFrame({
                 'Error':  [f'Could not load: {Path(file_path).name}'],
                 'Reason': [str(e)[:80]],
@@ -1117,13 +981,10 @@ class FileStructureDialog(QDialog):
                 self._refresh_preview()
                 self._refresh_file_info()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _load_file")
 
     def _update_settings_visibility(self, ftype: str):
-        """Enable the settings relevant to the current file type.
-        Args:
-            ftype (str): The ftype.
-        """
+        """Enable the settings relevant to the current file type."""
         is_delim = ftype == 'delimited'
         is_xl    = ftype == 'excel'
         self.delimiter_combo.setEnabled(is_delim)
@@ -1131,10 +992,6 @@ class FileStructureDialog(QDialog):
         self.sheet_combo.setEnabled(is_xl)
 
     def _populate_sheet_list(self, file_path: str):
-        """
-        Args:
-            file_path (str): Path to the file.
-        """
         self.sheet_combo.blockSignals(True)
         try:
             self.sheet_combo.clear()
@@ -1146,17 +1003,12 @@ class FileStructureDialog(QDialog):
                     self.sheet_combo.addItem(name)
                 wb.close()
             except Exception:
+                _itk_log.exception("Handled exception in _populate_sheet_list")
                 self.sheet_combo.addItem("Sheet1")
         finally:
             self.sheet_combo.blockSignals(False)
 
     def _load_delimited_preview(self, file_path: str) -> pd.DataFrame:
-        """
-        Args:
-            file_path (str): Path to the file.
-        Returns:
-            pd.DataFrame: Result of the operation.
-        """
         delim = self.delimiter_combo.currentText() or ","
         if delim == "\\t":
             delim = "\t"
@@ -1175,6 +1027,7 @@ class FileStructureDialog(QDialog):
         try:
             df = pd.read_csv(file_path, **read_args)
         except UnicodeDecodeError:
+            _itk_log.exception("Handled exception in _load_delimited_preview")
             read_args['encoding'] = 'utf-8'
             read_args['encoding_errors'] = 'replace'
             df = pd.read_csv(file_path, **read_args)
@@ -1185,12 +1038,6 @@ class FileStructureDialog(QDialog):
         return df
 
     def _load_excel_preview(self, file_path: str) -> pd.DataFrame:
-        """
-        Args:
-            file_path (str): Path to the file.
-        Returns:
-            pd.DataFrame: Result of the operation.
-        """
         sheet = max(0, self.sheet_combo.currentIndex())
         skip  = self.skip_rows_spin.value()
         read_args: dict[str, Any] = {
@@ -1202,6 +1049,7 @@ class FileStructureDialog(QDialog):
         try:
             df = pd.read_excel(file_path, **read_args)
         except Exception:
+            _itk_log.exception("Handled exception in _load_excel_preview")
             df = pd.read_excel(file_path, header=None, engine='openpyxl',
                                nrows=LOAD_SAMPLE_ROWS)
         stop = find_first_stopping_row(df)
@@ -1230,10 +1078,6 @@ class FileStructureDialog(QDialog):
         self._sync_badge_widths(rebuild=True)
 
     def _sync_badge_widths(self, rebuild: bool = False):
-        """
-        Args:
-            rebuild (bool): The rebuild.
-        """
         if self.current_df is None:
             return
         header = self.preview_table.horizontalHeader()
@@ -1293,10 +1137,6 @@ class FileStructureDialog(QDialog):
             self._updating_selection = False
 
     def _on_time_column_changed(self, text: str):
-        """
-        Args:
-            text (str): Text string.
-        """
         if self.time_column_combo.currentIndex() > 0:
             self.calc_dwell_radio.setEnabled(True)
             if not self.manual_dwell_radio.isChecked():
@@ -1308,10 +1148,7 @@ class FileStructureDialog(QDialog):
         self._refresh_time_column_options_if_needed(text)
 
     def _refresh_time_column_options_if_needed(self, selected_time_col: str):
-        """If the time column was previously mapped, remove that mapping.
-        Args:
-            selected_time_col (str): The selected time col.
-        """
+        """If the time column was previously mapped, remove that mapping."""
         if self.current_df is None or selected_time_col in (
                 "", "None — generate from dwell"):
             return
@@ -1335,10 +1172,7 @@ class FileStructureDialog(QDialog):
     # -- Mapping operations ---------------------------------------------
 
     def _open_picker_for_column(self, column_index: int):
-        """Open the isotope picker for ``column_index`` and commit the result.
-        Args:
-            column_index (int): The column index.
-        """
+        """Open the isotope picker for ``column_index`` and commit the result."""
         if self.current_df is None:
             return
         if not (0 <= column_index < len(self.current_df.columns)):
@@ -1366,12 +1200,6 @@ class FileStructureDialog(QDialog):
                 self._commit_mapping(column_index, col_name, iso)
 
     def _commit_mapping(self, column_index: int, column_name: str, isotope: dict):
-        """
-        Args:
-            column_index (int): The column index.
-            column_name (str): The column name.
-            isotope (dict): The isotope.
-        """
         key = f"{self.current_file_index}_{column_index}"
         self.column_mappings[key] = {
             'file_index': self.current_file_index,
@@ -1386,10 +1214,6 @@ class FileStructureDialog(QDialog):
         self._validate_configuration()
 
     def _unmap_column(self, column_index: int):
-        """
-        Args:
-            column_index (int): The column index.
-        """
         key = f"{self.current_file_index}_{column_index}"
         if key in self.column_mappings:
             del self.column_mappings[key]
@@ -1480,12 +1304,7 @@ class FileStructureDialog(QDialog):
                 f"Detected {detected} isotope(s) from column names.")
 
     def _detect_isotope_from_name(self, col_name: str) -> dict | None:
-        """Match a column name against the isotope regex and the periodic table.
-        Args:
-            col_name (str): The col name.
-        Returns:
-            dict | None: Result of the operation.
-        """
+        """Match a column name against the isotope regex and the periodic table."""
         if not self.periodic_table_data:
             return None
         m = _ISOTOPE_RE.search(col_name)
@@ -1502,6 +1321,7 @@ class FileStructureDialog(QDialog):
         try:
             mass = float(mass_str)
         except ValueError:
+            _itk_log.exception("Handled exception in _detect_isotope_from_name")
             return None
         element = element.capitalize()
 
@@ -1565,12 +1385,7 @@ class FileStructureDialog(QDialog):
         self._validate_configuration()
 
     def _perform_apply_to_all(self, source_mappings: list[dict]) -> int:
-        """For each other file, map columns by matching name (case-insensitive).
-        Args:
-            source_mappings (list[dict]): The source mappings.
-        Returns:
-            int: Result of the operation.
-        """
+        """For each other file, map columns by matching name (case-insensitive)."""
         applied = 0
         for tgt in range(len(self.file_paths)):
             if tgt == self.current_file_index:
@@ -1578,7 +1393,8 @@ class FileStructureDialog(QDialog):
             try:
                 target_cols = self._read_columns_only(self.file_paths[tgt])
             except Exception as e:
-                print(f"Cannot read columns of {self.file_paths[tgt]}: {e}")
+                _itk_log.exception("Handled exception in _perform_apply_to_all")
+                _itk_log.error(f"Cannot read columns of {self.file_paths[tgt]}: {e}")
                 continue
 
             stale = [k for k, v in self.column_mappings.items()
@@ -1609,8 +1425,6 @@ class FileStructureDialog(QDialog):
         Args:
             name (str): Name string.
             columns (list[str]): The columns.
-        Returns:
-            int | None: Result of the operation.
         """
         name_s = name.strip()
         for i, c in enumerate(columns):
@@ -1631,8 +1445,6 @@ class FileStructureDialog(QDialog):
         """Return the column names of ``file_path`` without loading data.
         Args:
             file_path (str): Path to the file.
-        Returns:
-            list[str]: Result of the operation.
         """
         ftype = file_type_of(file_path)
         if ftype == 'delimited':
@@ -1646,6 +1458,7 @@ class FileStructureDialog(QDialog):
                                  nrows=0,
                                  skiprows=range(skip) if skip > 0 else None)
             except UnicodeDecodeError:
+                _itk_log.exception("Handled exception in _read_columns_only")
                 df = pd.read_csv(file_path, delimiter=delim, encoding='utf-8',
                                  encoding_errors='replace', nrows=0,
                                  skiprows=range(skip) if skip > 0 else None)
@@ -1662,10 +1475,7 @@ class FileStructureDialog(QDialog):
     # -- Reload debouncing ----------------------------------------------
 
     def _debounced_reload(self, *_):
-        """Coalesce rapid settings changes into a single reload.
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
+        """Coalesce rapid settings changes into a single reload."""
         if not hasattr(self, '_reload_timer'):
             self._reload_timer = QTimer(self)
             self._reload_timer.setSingleShot(True)
@@ -1677,7 +1487,8 @@ class FileStructureDialog(QDialog):
             if self.file_paths:
                 self._load_file(self.file_paths[self.current_file_index])
         except Exception as e:
-            print(f"Reload failed: {e}")
+            _itk_log.exception("Handled exception in _do_reload")
+            _itk_log.error(f"Reload failed: {e}")
 
     # -- Validation / config emission -----------------------------------
 
@@ -1703,10 +1514,6 @@ class FileStructureDialog(QDialog):
         self.import_button.setEnabled(total > 0)
 
     def _build_import_config(self) -> dict:
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         import copy
         ftype_current = file_type_of(self.file_paths[self.current_file_index])
         config: dict[str, Any] = {
@@ -1750,21 +1557,11 @@ CSVStructureDialog = FileStructureDialog
 
 
 def show_csv_structure_dialog(file_paths, parent=None) -> dict | None:
-    """Open the import dialog; return the config dict or None if cancelled.
-    Args:
-        file_paths (Any): The file paths.
-        parent (Any): Parent widget or object.
-    Returns:
-        dict | None: Result of the operation.
-    """
+    """Open the import dialog; return the config dict or None if cancelled."""
     dialog = FileStructureDialog(file_paths, parent)
     config: dict | None = None
 
     def on_configured(cfg):
-        """
-        Args:
-            cfg (Any): The cfg.
-        """
         nonlocal config
         config = cfg
 

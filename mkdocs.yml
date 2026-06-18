@@ -90,6 +90,7 @@ nav:
 - Entry Points:
     - Overview: entry_points/index.md
     - "Run.py": entry_points/run.md
+    - "cli_utils.py": entry_points/cli-utils.md
     - "progressive_main_window.py": entry_points/progressive-main-window.md
     - "splash_screen.py": entry_points/splash-screen.md
 - Main Window:
@@ -98,37 +99,47 @@ nav:
 - Theme System:
     - Overview: theme/index.md
     - "theme.py": theme/theme.md
+    - "colors.py": theme/colors.md
+- Data Loading:
+    - Overview: loading/index.md
+    - "SIA_manager.py": loading/sia-manager.md
+    - "data_thread.py": loading/data-thread.md
+    - "import_csv_dialogs.py": loading/import-csv-dialogs.md
+    - "tofwerk_loading.py": loading/tofwerk-loading.md
+    - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
     - Overview: project_io/index.md
-    - "fast_project_io.py": project_io/fast-project-io.md
-    - "project_manager.py": project_io/project-manager.md
     - "export_utils.py": project_io/export-utils.md
-    - "import_csv_dialogs.py": project_io/import-csv-dialogs.md
+    - "fast_project_io.py": project_io/fast-project-io.md
+    - "ionic_session.py": project_io/ionic-session.md
+    - "project_manager.py": project_io/project-manager.md
     - "unit.py": project_io/unit.md
 - Peak Detection:
     - Overview: peak_detection/index.md
     - "peak_detection.py": peak_detection/peak-detection.md
-    - "SIA_manager.py": peak_detection/sia-manager.md
 - Calibration:
     - Overview: calibration/index.md
-    - "ionic_CAL.py": calibration/ionic-cal.md
     - "TE.py": calibration/te.md
     - "TE_input.py": calibration/te-input.md
     - "TE_mass.py": calibration/te-mass.md
     - "TE_number.py": calibration/te-number.md
+    - "ionic_CAL.py": calibration/ionic-cal.md
     - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
     - "canvas_widgets.py": canvas_shared/canvas-widgets.md
+    - "custom_plot_widget.py": canvas_shared/custom-plot-widget.md
     - "shared_plot_utils.py": canvas_shared/shared-plot-utils.md
     - "shared_annotation.py": canvas_shared/shared-annotation.md
-    - "custom_plot_widget.py": canvas_shared/custom-plot-widget.md
+    - "utils_sort.py": canvas_shared/utils-sort.md
 - Results:
     - Overview: results/index.md
     - "results_AI.py": results/results-ai.md
     - "results_bar_charts.py": results/results-bar-charts.md
     - "results_box_plot.py": results/results-box-plot.md
     - "results_cluster.py": results/results-cluster.md
+    - "results_cluster_tools.py": results/results-cluster-tools.md
+    - "results_composition_wheel.py": results/results-composition-wheel.md
     - "results_concentration.py": results/results-concentration.md
     - "results_correlation.py": results/results-correlation.md
     - "results_dashboard.py": results/results-dashboard.md
@@ -139,21 +150,31 @@ nav:
     - "results_network.py": results/results-network.md
     - "results_periodic.py": results/results-periodic.md
     - "results_pie_charts.py": results/results-pie-charts.md
+    - "results_reader.py": results/results-reader.md
     - "results_single_multiple.py": results/results-single-multiple.md
     - "results_triangle.py": results/results-triangle.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
     - "batch_parameters.py": widgets_ui/batch-parameters.md
     - "calibration_info.py": widgets_ui/calibration-info.md
+    - "drag_table.py": widgets_ui/drag-table.md
+    - "interference_database.py": widgets_ui/interference-database.md
+    - "isobaric_correction_dialog.py": widgets_ui/isobaric-correction-dialog.md
+    - "numeric_table.py": widgets_ui/numeric-table.md
+    - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
     - "help_dialogs.py": widgets_ui/help-dialogs.md
+    - "tutorial.py": widgets_ui/tutorial.md
+    - "element_picker.py": widgets_ui/element-picker.md
+    - "parameters_table.py": widgets_ui/parameters-table.md
     - "Info_table.py": widgets_ui/info-table.md
     - "info_file.py": widgets_ui/info-file.md
-    - "periodic_table_widget.py": widgets_ui/periodic-table-widget.md
     - "signal_selector_dialog.py": widgets_ui/signal-selector-dialog.md
-    - "tutorial.py": widgets_ui/tutorial.md
 - Tools & Utilities:
     - Overview: tools_utilities/index.md
-    - "interference_database.py": tools_utilities/interference-database.md
+    - "app_version.py": tools_utilities/app-version.md
+    - "dilution_utils.py": tools_utilities/dilution-utils.md
+    - "isobaric_correction.py": tools_utilities/isobaric-correction.md
     - "logging_utils.py": tools_utilities/logging-utils.md
     - "mass_fraction_calculator.py": tools_utilities/mass-fraction-calculator.md
-    - "utils_sort.py": tools_utilities/utils-sort.md
+    - "particle_filter.py": tools_utilities/particle-filter.md
+    - "update_checker.py": tools_utilities/update-checker.md

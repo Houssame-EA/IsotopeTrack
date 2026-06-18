@@ -6,11 +6,46 @@ import platform
 import os
 import subprocess
 from pathlib import Path
-from PySide6.QtWidgets import QMessageBox, QFileDialog, QProgressDialog, QApplication
-from PySide6.QtCore import Qt, QPointF
+from PySide6.QtWidgets import QMessageBox, QFileDialog, QApplication
+from PySide6.QtCore import QPointF, QThread, Signal
 from save_export.fast_project_io import (
-    save_project_v2, load_project_auto, detect_format, estimate_project_size
+    save_project_v2, load_project_auto
 )
+from calibration_methods import calibration_registry
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
+
+
+class SaveProjectThread(QThread):
+    """Run the heavy project-save work off the UI thread."""
+
+    progress = Signal(int, str)
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, filepath, main_window):
+        """Store the destination path and the window whose state is saved.
+
+        Args:
+            filepath (str): Destination .itproj path.
+            main_window: The MainWindow whose project state is written.
+        """
+        super().__init__()
+        self._filepath = filepath
+        self._main_window = main_window
+
+    def run(self) -> None:
+        """Write the project, emitting progress and a final success/failure signal."""
+        try:
+            save_project_v2(
+                self._filepath,
+                self._main_window,
+                lambda pct, msg="": self.progress.emit(int(pct), msg),
+            )
+            self.succeeded.emit(self._filepath)
+        except Exception as exc:
+            _itk_log.exception("Handled exception in SaveProjectThread.run")
+            self.failed.emit(str(exc))
 
 
 class ProjectManager:
@@ -20,17 +55,13 @@ class ProjectManager:
     """
     
     def __init__(self, main_window):
-        """
-        Initialize the ProjectManager with a reference to the main window.
-        
+        """Initialize the ProjectManager with a reference to the main window.
+
         Args:
             main_window (object): Reference to the MainWindow instance
-            
-        Returns:
-            None
         """
         self.main_window = main_window
-        self.project_version = '1.0.9'
+        self.project_version = '1.10.3'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -51,7 +82,7 @@ class ProjectManager:
             bool: True if successful, False otherwise
         """
         if not Path(self.icon_path).exists():
-            print(f"Icon file not found at: {self.icon_path}")
+            _itk_log.warning(f"Icon file not found at: {self.icon_path}")
             return False
         
         system = platform.system()
@@ -64,7 +95,8 @@ class ProjectManager:
             else:  
                 return self._set_icon_linux(file_path)
         except Exception as e:
-            print(f"Error setting file icon: {str(e)}")
+            _itk_log.exception("Handled exception in _set_file_icon_cross_platform")
+            _itk_log.error(f"Error setting file icon: {str(e)}")
             return False
     
     def _set_icon_macos(self, file_path):
@@ -93,7 +125,7 @@ class ProjectManager:
                     if success:
                         return True
             except ImportError:
-                pass
+                _itk_log.debug("Handled exception in _set_icon_macos")
             
             applescript = f'''
             use framework "Foundation"
@@ -122,7 +154,8 @@ class ProjectManager:
             return result.returncode == 0
             
         except Exception as e:
-            print(f"macOS icon setting error: {str(e)}")
+            _itk_log.exception("Handled exception in _set_icon_macos")
+            _itk_log.error(f"macOS icon setting error: {str(e)}")
             return False
     
     def _set_icon_windows(self, file_path):
@@ -154,13 +187,14 @@ class ProjectManager:
                 SHCNE_ASSOCCHANGED = 0x08000000
                 SHCNF_IDLIST = 0x0000
                 ctypes.windll.shell32.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None)
-            except:
-                pass
+            except Exception:
+                _itk_log.exception("Handled exception in _set_icon_windows")
             
             return True
             
         except Exception as e:
-            print(f"Windows icon setting error: {str(e)}")
+            _itk_log.exception("Handled exception in _set_icon_windows")
+            _itk_log.error(f"Windows icon setting error: {str(e)}")
             return False
     
     def _set_icon_linux(self, file_path):
@@ -177,7 +211,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.0.9
+Version=1.10.3
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -191,18 +225,24 @@ Terminal=false
             return True
             
         except Exception as e:
-            print(f"Linux icon setting error: {str(e)}")
+            _itk_log.exception("Handled exception in _set_icon_linux")
+            _itk_log.error(f"Linux icon setting error: {str(e)}")
             return False
     
-    def save_project(self):
+    def save_project(self, on_complete=None, blocking=False):
         """
         Save the current project state to a compressed file.
-        
+
+        Interactive saves run on a background thread so the UI stays responsive;
+        the quit-before-close path passes blocking=True for a synchronous result.
+
         Args:
-            None
-            
+            on_complete (callable | None): Called with a single bool (success)
+                when the save finishes.
+            blocking (bool): When True, save synchronously and return the result.
+
         Returns:
-            bool: True if save was successful, False otherwise
+            bool | None: The success flag when blocking; None when threaded.
         """
         filepath, _ = QFileDialog.getSaveFileName(
             self.main_window,
@@ -211,43 +251,109 @@ Terminal=false
             "IsotopeTrack Project (*.itproj)"
         )
         if not filepath:
-            return False
+            if on_complete:
+                on_complete(False)
+            return False if blocking else None
 
         if not filepath.endswith('.itproj'):
             filepath += '.itproj'
 
+        self.main_window.save_current_parameters()
+        self.main_window.progress_bar.setVisible(True)
+        self.main_window.progress_bar.setValue(0)
+
+        if blocking:
+            return self._save_blocking(filepath, on_complete)
+
+        if getattr(self, '_save_thread', None) is not None and self._save_thread.isRunning():
+            self.main_window.status_label.setText("A save is already in progress…")
+            if on_complete:
+                on_complete(False)
+            return None
+
+        self._save_on_complete = on_complete
+        self._save_thread = SaveProjectThread(filepath, self.main_window)
+        self._save_thread.progress.connect(self._on_save_progress)
+        self._save_thread.succeeded.connect(self._on_save_succeeded)
+        self._save_thread.failed.connect(self._on_save_failed)
+        self._save_thread.start()
+        return None
+
+    def _on_save_progress(self, pct, msg):
+        """Update the progress bar and status label during a threaded save.
+
+        Args:
+            pct (int): Progress percentage (0–100).
+            msg (str): Status message.
+        """
+        self.main_window.progress_bar.setValue(pct)
+        self.main_window.status_label.setText(msg)
+
+    def _finalize_save_success(self, filepath):
+        """Apply the post-save UI updates after a successful write."""
+        self._set_file_icon_cross_platform(filepath)
+        self.main_window.progress_bar.setVisible(False)
+        self.main_window.unsaved_changes = False
+        self.main_window.status_label.setText(f"Project saved: {filepath}")
+        self.main_window.update_window_title(filepath)
+        # The project is now safely on disk; drop the autosave recovery snapshot.
+        autosave = getattr(self.main_window, '_autosave', None)
+        if autosave is not None:
+            autosave.clear()
+
+    def _on_save_succeeded(self, filepath):
+        """Handle the worker thread's success signal on the UI thread."""
+        self._finalize_save_success(filepath)
+        callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
+        if callback:
+            callback(True)
+
+    def _on_save_failed(self, message):
+        """Handle the worker thread's failure signal on the UI thread."""
+        self.main_window.progress_bar.setVisible(False)
+        QMessageBox.critical(
+            self.main_window, "Save Error",
+            f"Error saving project: {message}"
+        )
+        callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
+        if callback:
+            callback(False)
+
+    def _save_blocking(self, filepath, on_complete):
+        """Save synchronously on the calling thread and return the result.
+
+        Args:
+            filepath (str): Destination .itproj path.
+            on_complete (callable | None): Called with the success flag.
+        Returns:
+            bool: True on success, False on failure.
+        """
+        def progress_callback(pct, msg=""):
+            """Update progress widgets during the blocking save.
+
+            Args:
+                pct (int): Progress percentage (0–100).
+                msg (str): Status message.
+            """
+            self.main_window.progress_bar.setValue(int(pct))
+            self.main_window.status_label.setText(msg)
+            QApplication.processEvents()
+
         try:
-            self.main_window.save_current_parameters()
-
-            self.main_window.progress_bar.setVisible(True)
-            self.main_window.progress_bar.setValue(0)
-
-            def progress_callback(pct, msg):
-                """
-                Args:
-                    pct (Any): Progress percentage (0–100).
-                    msg (Any): Message string.
-                """
-                self.main_window.progress_bar.setValue(pct)
-                self.main_window.status_label.setText(msg)
-                QApplication.processEvents()
-
             save_project_v2(filepath, self.main_window, progress_callback)
-
-            self._set_file_icon_cross_platform(filepath)
-
-            self.main_window.progress_bar.setVisible(False)
-            self.main_window.unsaved_changes = False
-            self.main_window.status_label.setText(f"Project saved: {filepath}")
-            self.main_window.update_window_title(filepath)
+            self._finalize_save_success(filepath)
+            if on_complete:
+                on_complete(True)
             return True
-
         except Exception as e:
             self.main_window.progress_bar.setVisible(False)
+            _itk_log.exception("Handled exception in _save_blocking")
             QMessageBox.critical(
                 self.main_window, "Save Error",
                 f"Error saving project: {str(e)}"
             )
+            if on_complete:
+                on_complete(False)
             return False
         
     def load_project(self, filepath=None):
@@ -278,11 +384,6 @@ Terminal=false
             self.main_window.progress_bar.setValue(0)
 
             def progress_callback(pct, msg):
-                """
-                Args:
-                    pct (Any): Progress percentage (0–100).
-                    msg (Any): Message string.
-                """
                 self.main_window.progress_bar.setValue(pct)
                 self.main_window.status_label.setText(msg)
                 QApplication.processEvents()
@@ -369,7 +470,8 @@ Terminal=false
             try:
                 self._deserialize_canvas_state(canvas_state)
             except Exception as e:
-                print(f"Warning: Could not restore canvas workflow: {e}")
+                _itk_log.exception("Handled exception in _finalize_load")
+                _itk_log.error(f"Warning: Could not restore canvas workflow: {e}")
             finally:
                 mw._pending_canvas_workflow = None
 
@@ -436,16 +538,17 @@ Terminal=false
             'calibration_results': self.main_window.calibration_results,
             'average_transport_rate': self.main_window.average_transport_rate,
             'selected_transport_rate_methods': self.main_window.selected_transport_rate_methods,
-            'transport_rate_methods': getattr(self.main_window, 'transport_rate_methods', ["Liquid weight", "Number based", "Mass based"]),
+            'transport_rate_methods': getattr(self.main_window, 'transport_rate_methods', calibration_registry.default_transport_labels()),
             
             'element_mass_fractions': getattr(self.main_window, 'element_mass_fractions', {}),
             'element_densities': getattr(self.main_window, 'element_densities', {}),
             'element_molecular_weights': getattr(self.main_window, 'element_molecular_weights', {}),  
             'sample_mass_fractions': getattr(self.main_window, 'sample_mass_fractions', {}),
             'sample_densities': getattr(self.main_window, 'sample_densities', {}),
-            'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}), 
+            'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}),
+            'sample_dilutions': getattr(self.main_window, 'sample_dilutions', {}),
             
-            'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 50.0),
+            'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 75.0),
             '_global_sigma': getattr(self.main_window, '_global_sigma', 0.55),
             '_sigma_mode': getattr(self.main_window, '_sigma_mode', 'global'),
             '_exclusion_regions_by_sample': getattr(self.main_window, '_exclusion_regions_by_sample', {}),
@@ -475,18 +578,14 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.0.9',
+            'application_version': '1.10.3',
         }
     
     def _restore_project_data(self, project_data):
-        """
-        Restore project data from loaded file.
-        
+        """Restore project data from loaded file.
+
         Args:
             project_data (dict): Dictionary containing project data
-            
-        Returns:
-            None
         """
         self.main_window.selected_isotopes = project_data.get('selected_isotopes', {})
         self.main_window.data_by_sample = project_data.get('data_by_sample', {})
@@ -507,16 +606,17 @@ Terminal=false
         self.main_window.calibration_results = project_data.get('calibration_results', {})
         self.main_window.average_transport_rate = project_data.get('average_transport_rate', 0)
         self.main_window.selected_transport_rate_methods = project_data.get('selected_transport_rate_methods', [])
-        self.main_window.transport_rate_methods = project_data.get('transport_rate_methods', ["Liquid weight", "Number based", "Mass based"])
+        self.main_window.transport_rate_methods = project_data.get('transport_rate_methods', calibration_registry.default_transport_labels())
         
         self.main_window.element_mass_fractions = project_data.get('element_mass_fractions', {})
         self.main_window.element_densities = project_data.get('element_densities', {})
         self.main_window.element_molecular_weights = project_data.get('element_molecular_weights', {})  
         self.main_window.sample_mass_fractions = project_data.get('sample_mass_fractions', {})
         self.main_window.sample_densities = project_data.get('sample_densities', {})
-        self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})  
+        self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})
+        self.main_window.sample_dilutions = project_data.get('sample_dilutions', {})
         
-        self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 50.0)
+        self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 75.0)
         self.main_window._global_sigma = project_data.get('_global_sigma', 0.55)
         self.main_window._sigma_mode = project_data.get('_sigma_mode', 'global')
         self.main_window._exclusion_regions_by_sample = project_data.get('_exclusion_regions_by_sample', {})
@@ -589,6 +689,7 @@ Terminal=false
         try:
             from widget.canvas_widgets import StickyNoteItem
         except ImportError:
+            _itk_log.debug("Handled exception in _serialize_canvas_state")
             StickyNoteItem = None
         
         canvas_state = {
@@ -654,20 +755,16 @@ Terminal=false
         return canvas_state
     
     def _serialize_node_config(self, node, node_data):
-        """
-        Serialize node-specific configuration.
-        
+        """Serialize node-specific configuration.
+
         Args:
             node (object): Workflow node to serialize
             node_data (dict): Dictionary to store node data
-            
-        Returns:
-            None
         """
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
-            'sample_config',
+            'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
@@ -682,18 +779,15 @@ Terminal=false
                         import pickle
                         pickle.dumps(value)
                     except Exception:
+                        _itk_log.exception("Handled exception in _serialize_node_config")
                         continue
                 node_data[attr] = value
     
     def _deserialize_canvas_state(self, canvas_state):
-        """
-        Recreate the canvas state from saved data.
-        
+        """Recreate the canvas state from saved data.
+
         Args:
             canvas_state (dict): Serialized canvas state dictionary
-            
-        Returns:
-            None
         """
         if not canvas_state:
             return
@@ -705,6 +799,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
+                ParticleFilterNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -742,6 +837,7 @@ Terminal=false
             "batch_sample_selector": BatchSampleSelectorNode,
             "sample_selector": SampleSelectorNode,
             "multiple_sample_selector": MultipleSampleSelectorNode,
+            "particle_filter": ParticleFilterNode,
             
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
@@ -804,7 +900,8 @@ Terminal=false
                 note.resize(w, h)
                 scene.addItem(note)
             except Exception as e:
-                print(f"Warning: Could not restore sticky note: {e}")
+                _itk_log.exception("Handled exception in _deserialize_canvas_state")
+                _itk_log.error(f"Warning: Could not restore sticky note: {e}")
 
         saved_zoom = canvas_state.get('zoom', None)
         if saved_zoom is not None:
@@ -812,23 +909,20 @@ Terminal=false
                 canvas_view = self.main_window.canvas_results_dialog.canvas
                 canvas_view.set_zoom(saved_zoom)
             except Exception as e:
-                print(f"Warning: Could not restore canvas zoom: {e}")
+                _itk_log.exception("Handled exception in _deserialize_canvas_state")
+                _itk_log.error(f"Warning: Could not restore canvas zoom: {e}")
     
     def _deserialize_node_config(self, workflow_node, node_data):
-        """
-        Restore node configuration from saved data.
-        
+        """Restore node configuration from saved data.
+
         Args:
             workflow_node (object): Node to configure
             node_data (dict): Saved node configuration
-            
-        Returns:
-            None
         """
         config_attributes = [
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
-            'sample_config',
+            'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
@@ -841,13 +935,9 @@ Terminal=false
                 setattr(workflow_node, attr, value)
     
     def _reset_data_structures(self):
-        """
-        Reset all data structures before loading a saved project.
-        
+        """Reset all data structures before loading a saved project.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         data_structures = [
@@ -856,8 +946,9 @@ Terminal=false
             'sample_results_data', 'isotope_method_preferences', 'sample_particle_data',
             'sample_analysis_dates', 'sample_to_folder_map', 'element_thresholds',
             'element_limits', 'sample_run_info', 'sample_method_info',
-            'element_mass_fractions', 'element_densities', 'element_molecular_weights', 
-            'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights'  
+            'element_mass_fractions', 'element_densities', 'element_molecular_weights',
+            'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
+            'sample_dilutions'
         ]
         
         for attr in data_structures:
@@ -903,7 +994,7 @@ Terminal=false
         }
         self.main_window.average_transport_rate = 0
         self.main_window.selected_transport_rate_methods = []
-        self.main_window.transport_rate_methods = ["Liquid weight", "Number based", "Mass based"]
+        self.main_window.transport_rate_methods = calibration_registry.default_transport_labels()
         
         self.main_window.sample_table.setRowCount(0)
         self.main_window.parameters_table.setRowCount(0)
@@ -916,13 +1007,9 @@ Terminal=false
             self.main_window.summary_label.setText("Select an element to view summary statistics")
     
     def _update_ui_after_load(self):
-        """
-        Update UI components after loading project.
-        
+        """Update UI components after loading project.
+
         Args:
-            None
-            
-        Returns:
             None
         """
         if hasattr(self.main_window, 'sigma_spinbox'):
@@ -992,6 +1079,7 @@ Terminal=false
             return True
             
         except (ValueError, AttributeError):
+            _itk_log.exception("Handled exception in _check_version_compatibility")
             return True
     
     def get_project_info(self, file_path):
@@ -1018,5 +1106,6 @@ Terminal=false
                 'file_size_mb': Path(file_path).stat().st_size / (1024 * 1024)
             }
         except Exception as e:
-            print(f"Error reading project info: {str(e)}")
+            _itk_log.exception("Handled exception in get_project_info")
+            _itk_log.error(f"Error reading project info: {str(e)}")
             return None

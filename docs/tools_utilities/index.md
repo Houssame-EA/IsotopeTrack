@@ -1,13 +1,23 @@
 # Tools & Utilities
 
-Interference database, logging framework, mass-fraction calculator, and sort helpers.
+Support utilities: logging, materials database, filters, updates.
 
 ---
 
-### [`interference_database.py`](interference-database.md)
-ICP-MS Interference Database for spICP-ToF-MS
+### [`app_version.py`](app-version.md)
+tools/app_version.py — single source of truth for the running app's version.
 
-**0** classes &nbsp;·&nbsp; **8** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **0** methods
+
+### [`dilution_utils.py`](dilution-utils.md)
+
+
+**1** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **6** methods
+
+### [`isobaric_correction.py`](isobaric-correction.md)
+Isobaric correction engine for spICP-ToF-MS.
+
+**2** classes &nbsp;·&nbsp; **23** functions &nbsp;·&nbsp; **7** methods
 
 ### [`logging_utils.py`](logging-utils.md)
 
@@ -19,7 +29,12 @@ ICP-MS Interference Database for spICP-ToF-MS
 
 **5** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **58** methods
 
-### [`utils_sort.py`](utils-sort.md)
+### [`particle_filter.py`](particle-filter.md)
+Particle Filter node for the Workflow Canvas.
 
+**2** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **38** methods
 
-**0** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **0** methods
+### [`update_checker.py`](update-checker.md)
+tools/update_checker.py
+
+**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **6** methods

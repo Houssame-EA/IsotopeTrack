@@ -2,17 +2,19 @@ import sys
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QComboBox, QMessageBox, QFormLayout, QApplication, QGroupBox,
-    QMainWindow, QFrame
+    QMainWindow
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QDoubleValidator
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PREVIEW_STYLES, create_scrollable_container,
+    create_scrollable_container,
     weight_method_transport_rate,
     base_stylesheet, preview_styles,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_input")
 
 
 class InputMethodCalibration(QMainWindow):
@@ -39,8 +41,6 @@ class InputMethodCalibration(QMainWindow):
         """Re-apply styling from the current theme palette.  Covers the
         window QSS, the preview label (which is driven by palette-aware
         preview_styles), and the calculate button.
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(base_stylesheet(p))
@@ -58,12 +58,7 @@ class InputMethodCalibration(QMainWindow):
     # ── UI construction ──────────────────────────────────────────────────
 
     def _init_ui(self):
-        """
-        Build and wire all UI elements.
-
-        Returns:
-            None
-        """
+        """Build and wire all UI elements."""
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
@@ -86,14 +81,10 @@ class InputMethodCalibration(QMainWindow):
         self.time_unit.currentIndexChanged.connect(self._update_preview)
 
     def _create_intro_section(self, parent_layout):
-        """
-        Add the introductory description group box.
+        """Add the introductory description group box.
 
         Args:
             parent_layout (QVBoxLayout): Layout to append the section to.
-
-        Returns:
-            None
         """
         group = QGroupBox("1. Weight Method Calibration")
         layout = QVBoxLayout(group)
@@ -108,14 +99,10 @@ class InputMethodCalibration(QMainWindow):
         parent_layout.addWidget(group)
 
     def _create_measurement_section(self, parent_layout):
-        """
-        Add the measurement-input group box (units + four fields).
+        """Add the measurement-input group box (units + four fields).
 
         Args:
             parent_layout (QVBoxLayout): Layout to append the section to.
-
-        Returns:
-            None
         """
         group = QGroupBox("2. Enter Measurements")
         group_layout = QVBoxLayout(group)
@@ -154,14 +141,10 @@ class InputMethodCalibration(QMainWindow):
         parent_layout.addWidget(group)
 
     def _create_calculation_section(self, parent_layout):
-        """
-        Add the calculation group box (preview, calculate, direct entry).
+        """Add the calculation group box (preview, calculate, direct entry).
 
         Args:
             parent_layout (QVBoxLayout): Layout to append the section to.
-
-        Returns:
-            None
         """
         group = QGroupBox("3. Calculate Transport Rate")
         group_layout = QVBoxLayout(group)
@@ -248,16 +231,12 @@ class InputMethodCalibration(QMainWindow):
         return w_i, w_f, w_w, t
 
     def _set_preview(self, text, style_key="default"):
-        """
-        Update the preview label's text and style.
+        """Update the preview label's text and style.
 
         Args:
             text (str): Message to display.
             style_key (str): One of the keys in preview_styles()
                 ('default', 'error', 'warning', 'success').
-
-        Returns:
-            None
         """
         self.result_preview.setText(text)
         self._preview_key = style_key
@@ -269,13 +248,9 @@ class InputMethodCalibration(QMainWindow):
     # ── Slots ─────────────────────────────────────────────────────────────
 
     def _update_preview(self):
-        """
-        Recalculate and display the transport rate in the preview label.
+        """Recalculate and display the transport rate in the preview label.
 
         Connected to every input widget's change signal for real-time feedback.
-
-        Returns:
-            None
         """
         try:
             w_i, w_f, w_w, t = self._read_inputs()
@@ -285,6 +260,7 @@ class InputMethodCalibration(QMainWindow):
                 f"Calculated transport rate: {rate:.6f} μL/s", "success"
             )
         except ValueError as exc:
+            _itk_log.exception("Handled exception in _update_preview")
             msg = str(exc)
             if "fill in" in msg.lower():
                 self._set_preview(
@@ -294,12 +270,7 @@ class InputMethodCalibration(QMainWindow):
                 self._set_preview(f"{msg}", "error")
 
     def _calculate(self):
-        """
-        Compute the transport rate, emit the result, and show a detail dialog.
-
-        Returns:
-            None
-        """
+        """Compute the transport rate, emit the result, and show a detail dialog."""
         try:
             w_i, w_f, w_w, t = self._read_inputs()
             result = weight_method_transport_rate(w_i, w_f, w_w, t)
@@ -320,12 +291,7 @@ class InputMethodCalibration(QMainWindow):
             QMessageBox.warning(self, "Input Error", str(exc))
 
     def _submit_direct(self):
-        """
-        Validate and emit a user-supplied transport rate.
-
-        Returns:
-            None
-        """
+        """Validate and emit a user-supplied transport rate."""
         try:
             rate = float(self.direct_rate.text())
             if rate <= 0:

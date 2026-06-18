@@ -2,46 +2,36 @@
 
 Ternary Plot Node — full-figure view with right-click context menu.
 
-Features:
-- Three-element ternary composition diagram (mpltern)
-- Scatter and density (hexbin) plot types
-- Color-by-fourth-element option for scatter plots
-- Average point with optional 2σ confidence ellipse
-- Particle statistics bar (total, filtered, per-sample)
-- Multiple sample support (overlaid, subplots, side-by-side, combined)
-- Right-click context menu replaces sidebar for all settings
-- Shared font, color, and export utilities via shared_plot_utils
-
 ---
 
 ## Constants
 
 | Name | Value |
 |------|-------|
-| `DISPLAY_MODES` | `['Individual Subplots', 'Side by Side Subplots'...` |
+| `DISPLAY_MODES` | `['Individual Subplots', 'Side by Side Subplots', 'Combine…` |
 | `PLOT_TYPES` | `['Scatter Plot', 'Density Plot (Hexbin)']` |
-| `COLORMAPS` | `['YlGn', 'viridis', 'plasma', 'inferno', 'magma...` |
-| `ANNOTATION_MARKERS` | `[('● Circle', 'o'), ('■ Square', 's'), ('▲ Tria...` |
+| `COLORMAPS` | `['YlGn', 'viridis', 'plasma', 'inferno', 'magma', 'cividi…` |
+| `ANNOTATION_MARKERS` | `[('● Circle', 'o'), ('■ Square', 's'), ('▲ Triangle ▲', '…` |
 | `_MARKER_NAMES` | `[m[0] for m in ANNOTATION_MARKERS]` |
 | `_MARKER_CODES` | `[m[1] for m in ANNOTATION_MARKERS]` |
 | `ANN_TYPES` | `['Text', 'Marker', 'Marker + Text']` |
-| `_ANN_DEFAULTS` | `{'type': 'Text', 'x_frac': 0.5, 'y_frac': 0.5, ...` |
+| `_ANN_DEFAULTS` | `{'type': 'Text', 'x_frac': 0.5, 'y_frac': 0.5, 't': 0.33,…` |
 
 ## Classes
 
 ### `TernarySettingsDialog` *(extends `QDialog`)*
 
-Full settings dialog opened from right-click → Configure.
+Scoped settings dialog for triangle plot format and quantity configuration.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, config, available_elements, is_multi, sample_names, parent = No` | Args: |
-| `_build_ui` | `(self)` |  |
-| `_on_plot_type_changed` | `(self)` |  |
-| `_pick_avg_color` | `(self)` |  |
-| `_pick_sample_color` | `(self, name, btn)` | Args: |
-| `_reset_name` | `(self, original)` | Args: |
-| `collect` | `(self) → dict` | Returns: |
+| `__init__` | `(self, config, available_elements, is_multi, sample_names, parent=None` | Initialize the triangle settings dialog. |
+| `_build_ui` | `(self)` | Build the dialog UI based on scope while preserving existing control behavior. |
+| `_on_plot_type_changed` | `(self)` | Toggle scatter/hexbin sub-sections for format controls. |
+| `_pick_avg_color` | `(self)` | Pick average-point color used for plot formatting only. |
+| `_pick_sample_color` | `(self, name, btn)` | Pick visual color for a sample in multi-sample format settings. |
+| `_reset_name` | `(self, original)` | Reset user-facing sample display name to the raw original sample name. |
+| `collect` | `(self) → dict` | Collect dialog values for the active scope and preserve untouched config fields. |
 
 ### `_ColorSwatch` *(extends `QPushButton`)*
 
@@ -49,11 +39,11 @@ Compact colour-picker button.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, color = '#FFFFFF', parent = None)` | Args: |
-| `_update` | `(self)` |  |
+| `__init__` | `(self, color='#FFFFFF', parent=None)` | Args: |
+| `_update` | `(self)` | Refresh the swatch preview without styling any parent dialog. |
 | `color` | `(self)` | Returns: |
-| `set_color` | `(self, c)` | Args: |
-| `mousePressEvent` | `(self, event)` | Args: |
+| `set_color` | `(self, c)` | Store one validated triangle-preview color and refresh the swatch. |
+| `mousePressEvent` | `(self, event)` | Open the shared safe color picker for this swatch on left click. |
 
 ### `AnnotationDialog` *(extends `QDialog`)*
 
@@ -61,7 +51,7 @@ Add or edit a single ternary-plot annotation (Text / Marker / Marker+Text).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, ann: dict | None = None, parent = None)` | Args: |
+| `__init__` | `(self, ann: dict \| None=None, parent=None)` | Args: |
 | `_build` | `(self)` |  |
 | `_on_type_changed` | `(self, t)` | Args: |
 | `_update_sum` | `(self)` |  |
@@ -74,7 +64,7 @@ View, edit, reorder and delete existing annotations.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, annotations: list, parent = None)` | Args: |
+| `__init__` | `(self, annotations: list, parent=None)` | Args: |
 | `_build` | `(self)` |  |
 | `_reload` | `(self)` |  |
 | `_selected_row` | `(self)` | Returns: |
@@ -91,25 +81,27 @@ Full-figure dialog with right-click context menu for all settings.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, triangle_node, parent_window = None)` | Args: |
+| `__init__` | `(self, triangle_node, parent_window=None)` | Args: |
 | `_is_multi` | `(self) → bool` | Returns: |
 | `_sample_names` | `(self) → list` | Returns: |
 | `_available_elements` | `(self) → list` | Returns: |
-| `_setup_ui` | `(self)` |  |
-| `_show_context_menu` | `(self, pos)` | Args: |
+| `_setup_ui` | `(self)` | Build the triangle display UI and wire bottom actions without altering plot logic. |
+| `_show_context_menu` | `(self, pos)` | Build the intentionally minimal Triangle right-click menu. |
 | `_add_toggle` | `(self, menu, label, key)` | Args: |
 | `_toggle` | `(self, key, value)` | Args: |
 | `_set` | `(self, key, value)` | Args: |
-| `_add_annotation` | `(self)` |  |
-| `_manage_annotations` | `(self)` |  |
-| `_open_settings` | `(self)` |  |
-| `_reset_layout` | `(self)` |  |
-| `_export_figure` | `(self)` |  |
+| `_add_annotation` | `(self)` | Open annotation creator; preserves existing annotation data model/behavior. |
+| `_manage_annotations` | `(self)` | Open annotation manager; preserves existing annotation ordering/edit behavior. |
+| `_open_settings` | `(self)` | Open legacy combined settings dialog to preserve backward-compatible entry point. |
+| `_open_plot_format_settings` | `(self)` | Open format-scoped settings dialog. |
+| `_open_configure_plot_quantities` | `(self)` | Open quantities-scoped settings dialog. |
+| `_reset_layout` | `(self)` | Reset subplot layout/view positions; same behavior as prior reset action. |
+| `_export_figure` | `(self)` | Open the existing figure export workflow for the ternary figure. |
 | `_refresh` | `(self)` |  |
 | `_draw_annotations` | `(self, ax, cfg)` | Render all custom annotations onto a ternary axes. |
-| `_save_ann_positions` | `(self, event = None)` | Called on mouse button release — persist dragged text positions back to config. |
+| `_save_ann_positions` | `(self, event=None)` | Called on mouse button release — persist dragged text positions back to config. |
 | `_update_stats` | `(self, plot_data)` | Update the bottom statistics label. |
-| `_draw_sample` | `(self, ax, sample_data, cfg, title, sample_color = None)` | Draw a ternary scatter or hexbin for one sample. |
+| `_draw_sample` | `(self, ax, sample_data, cfg, title, sample_color=None)` | Draw a ternary scatter or hexbin for one sample. |
 | `_draw_average` | `(self, ax, sample_data, cfg, sample_name)` | Draw average point with optional stats text and confidence ellipse. |
 | `_draw_subplots` | `(self, plot_data, cfg)` | Args: |
 | `_draw_side_by_side` | `(self, plot_data, cfg)` | Args: |
@@ -122,7 +114,7 @@ Ternary plot node with right-click driven configuration.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `set_position` | `(self, pos)` | Args: |
 | `configure` | `(self, parent_window)` | Args: |
 | `process_data` | `(self, input_data)` | Args: |
@@ -134,60 +126,8 @@ Ternary plot node with right-click driven configuration.
 
 ## Functions
 
-### `setup_ternary_axes`
-
-```python
-def setup_ternary_axes(ax, element_labels, config)
-```
-
-Configure mpltern axes with labels, grid, and font settings.
-
-Ternary coordinate mapping (mpltern convention):
-L (left)   = element A = bottom-left vertex
-R (right)  = element B = bottom-right vertex
-T (top)    = element C = top vertex
-
-
-**Args:**
-
-- `ax:             mpltern axes (projection='ternary')`
-- `element_labels: [elem_a, elem_b, elem_c]`
-- `config:         node config dict`
-
-### `confidence_ellipse_params`
-
-```python
-def confidence_ellipse_params(data_x, data_y, n_std = 2.0)
-```
-
-Compute 2D confidence ellipse parameters from data.
-
-Performs eigendecomposition of the covariance matrix to get the orientation
-and semi-axes of the n_std confidence region.
-
-
-**Args:**
-
-- `data_x:  array of x-coordinates (e.g. b_vals in ternary space)`
-- `data_y:  array of y-coordinates (e.g. c_vals in ternary space)`
-- `n_std:   number of standard deviations (2.0 ≈ 95% for bivariate normal)`
-
-
-**Returns:**
-
-- `dict with cx, cy, width, height, angle_deg — or None if < 3 points.`
-
-### `_hbox_widget`
-
-```python
-def _hbox_widget(hbox: QHBoxLayout) → QWidget
-```
-
-
-**Args:**
-
-- `hbox (QHBoxLayout): The hbox.`
-
-**Returns:**
-
-- `QWidget: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `setup_ternary_axes` | `(ax, element_labels, config)` | Configure mpltern axes with labels, grid, and font settings. |
+| `confidence_ellipse_params` | `(data_x, data_y, n_std=2.0)` | Compute 2D confidence ellipse parameters from data. |
+| `_hbox_widget` | `(hbox: QHBoxLayout) → QWidget` | Args: |

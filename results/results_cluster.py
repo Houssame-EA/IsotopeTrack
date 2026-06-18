@@ -2,11 +2,11 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QFrame, QScrollArea, QWidget, QMenu, QTabWidget,
-    QDialogButtonBox, QMessageBox, QTableWidget, QTableWidgetItem,
-    QProgressBar, QStackedWidget, QSlider,
+    QDialogButtonBox, QMessageBox, QProgressBar, QStackedWidget,
+    QSlider,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtGui import QCursor
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
@@ -15,6 +15,8 @@ import numpy as np
 import math
 import sys
 import warnings
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster")
 warnings.filterwarnings('ignore')
 
 from sklearn.cluster import (
@@ -29,11 +31,13 @@ try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
     _HDBSCAN_OK = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     try:
         import hdbscan as _hm
         _HDBSCAN_CLS = _hm.HDBSCAN
         _HDBSCAN_OK = True
     except ImportError:
+        _itk_log.debug("Handled exception in <module>")
         _HDBSCAN_CLS = None
         _HDBSCAN_OK = False
 from sklearn.metrics import (
@@ -47,16 +51,16 @@ from scipy.cluster.hierarchy import (
 )
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
-    get_font_config, make_font_properties,
-    apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
-    FontSettingsGroup,
-    download_matplotlib_figure,
-    format_element_label, Renderer,
-    per_ml_active, per_ml_factor, conc_meta_available, format_per_ml,
+    DEFAULT_SAMPLE_COLORS, get_font_config,
+    make_font_properties, FontSettingsGroup,
+    download_matplotlib_figure, format_element_label,
+    Renderer,
+    per_ml_active,
+    per_ml_factor, conc_meta_available,
+    format_per_ml,
 )
 from results.utils_sort import (
-    extract_mass_and_element, sort_elements_by_mass,
+    sort_elements_by_mass,
 )
 from results.results_heatmap import draw_combinations_heatmap
 
@@ -71,24 +75,16 @@ class _SafeFigureCanvas(FigureCanvas):
     """
 
     def showEvent(self, event):
-        """
-        Args:
-            event (QShowEvent): The show event forwarded by Qt.
-        """
         try:
             super().showEvent(event)
         except AttributeError:
-            pass
+            _itk_log.debug("Suppressed benign matplotlib/PySide6 showEvent AttributeError")
 
     def resizeEvent(self, event):
-        """
-        Args:
-            event (QResizeEvent): The resize event forwarded by Qt.
-        """
         try:
             super().resizeEvent(event)
         except AttributeError:
-            pass
+            _itk_log.debug("Suppressed benign matplotlib/PySide6 resizeEvent AttributeError")
 
 
 ALGORITHMS = [
@@ -659,9 +655,11 @@ CLUSTER_COLORS = [
 try:
     from tools.theme import theme as _app_theme
 except Exception: 
+    _itk_log.exception("Handled exception in <module>")
     try:
         from ..tools.theme import theme as _app_theme
     except Exception:
+        _itk_log.exception("Handled exception in <module>")
         _app_theme = None
 
 
@@ -722,7 +720,7 @@ def _current_plot_palette():
         try:
             return _palette_to_plot(_app_theme.palette)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _current_plot_palette")
     return _palette_to_plot(None)
 
 ALGO_LINE_STYLES = {
@@ -956,16 +954,6 @@ def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_cou
 
 class _SOM:
     def __init__(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_state=42):
-        """
-        Args:
-            rows (int): Grid rows.
-            cols (int): Grid columns.
-            n_features (int): Input feature count.
-            sigma (float): Initial neighbourhood radius.
-            lr (float): Initial learning rate.
-            n_iter (int): Training iterations.
-            random_state (int): Random seed.
-        """
         rng = np.random.RandomState(random_state)
         self.weights = rng.randn(rows * cols, n_features).astype(np.float32)
         self.rows = rows
@@ -1014,12 +1002,6 @@ class _SOM:
         return self
 
     def predict(self, X):
-        """
-        Args:
-            X (np.ndarray): Input data (n_samples, n_features).
-        Returns:
-            np.ndarray: BMU index per sample.
-        """
         X = np.asarray(X, dtype=np.float32)
         out = []
         for x in X:
@@ -1028,19 +1010,9 @@ class _SOM:
         return np.array(out)
 
     def get_weights(self):
-        """
-        Returns:
-            np.ndarray: Neuron weight vectors (n_neurons, n_features).
-        """
         return self.weights.copy()
 
     def get_grid_labels(self, neuron_cluster_labels):
-        """
-        Args:
-            neuron_cluster_labels (np.ndarray): Cluster label per neuron.
-        Returns:
-            np.ndarray: 2-D grid of shape (rows, cols).
-        """
         return neuron_cluster_labels.reshape(self.rows, self.cols)
 
     def get_u_matrix(self):
@@ -1129,6 +1101,7 @@ def _som_cluster_cmap(name, n_clusters):
     try:
         return plt.get_cmap(name, n)
     except Exception:
+        _itk_log.exception("Handled exception in _som_cluster_cmap")
         return plt.get_cmap('tab20', n)
 
 
@@ -1153,6 +1126,7 @@ def _contrast_text_for(cmap_name, norm_value):
         lum = 0.299 * r + 0.587 * g + 0.114 * b
         return '#000000' if lum > 0.6 else '#FFFFFF'
     except Exception:
+        _itk_log.exception("Handled exception in _contrast_text_for")
         return '#FFFFFF'
 
 
@@ -1348,7 +1322,7 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
             fig.text(0.99, 0.005, f"Quantization error: {qe:.4f}",
                      ha='right', va='bottom', fontproperties=qe_fp, color=col)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _draw_som_grid")
 
     fig.tight_layout(pad=1.4)
 
@@ -1965,6 +1939,7 @@ def _element_color(element, all_elements_sorted):
     try:
         idx = all_elements_sorted.index(element)
     except ValueError:
+        _itk_log.exception("Handled exception in _element_color")
 
         idx = abs(hash(element)) % len(_ELEMENT_PALETTE)
     return _ELEMENT_PALETTE[idx % len(_ELEMENT_PALETTE)]
@@ -1986,6 +1961,7 @@ def _cluster_label_short(cid):
     try:
         c = int(cid)
     except (TypeError, ValueError):
+        _itk_log.exception("Handled exception in _cluster_label_short")
         return f'C{cid}'
     return 'Noise' if c < 0 else f'C{c + 1}'
 
@@ -3132,16 +3108,6 @@ class _ClusterWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, sel_k, elements, data, enabled, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            sel_k (int): Selected number of clusters.
-            elements (list[str]): Active element list.
-            data (np.ndarray or None): Cached preprocessed matrix, or None to
-                trigger preparation inside the worker.
-            enabled (list[str]): Algorithm names to run.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._sel_k = sel_k
@@ -3193,6 +3159,7 @@ class _ClusterWorker(QThread):
                 'sel_k': self._sel_k,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -3216,12 +3183,6 @@ class _EvalWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, dialog, elements, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            elements (list[str]): Active element list.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._elements = elements
@@ -3261,6 +3222,7 @@ class _EvalWorker(QThread):
                 'per_sample_optk': per_sample_optk,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -3297,16 +3259,6 @@ class _BootstrapWorker(QThread):
 
     def __init__(self, dialog, data, enabled_algos, bootstrap_metrics,
                  n_boot, seed, parent=None):
-        """
-        Args:
-            dialog (ClusteringDisplayDialog): Owning dialog (for compute helpers).
-            data (np.ndarray): Prepared (scaled + reduced) data matrix.
-            enabled_algos (list[str]): Non-SOM algorithms to evaluate.
-            bootstrap_metrics (list[str]): Bootstrap-safe metric names to track.
-            n_boot (int): Number of bootstrap resamples.
-            seed (int): RNG seed for reproducible resampling.
-            parent (QObject): Optional Qt parent.
-        """
         super().__init__(parent)
         self._dlg = dialog
         self._data = data
@@ -3341,6 +3293,7 @@ class _BootstrapWorker(QThread):
                         enabled_metrics=self._metrics, collect_som=False)
                     picks = dlg._pick_optimal_per_metric(eb)
                 except Exception:
+                    _itk_log.exception("Handled exception in run")
                     picks = {}
                 for metric, k in picks.items():
                     if metric in tally:
@@ -3373,6 +3326,7 @@ class _BootstrapWorker(QThread):
                 'n_boot': self._n_boot,
             })
         except Exception as exc: 
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 
@@ -3382,11 +3336,6 @@ class ClusteringDisplayDialog(QDialog):
     """
 
     def __init__(self, node, parent_window=None):
-        """
-        Args:
-            node (Any): Tree or graph node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = node
         self.parent_window = parent_window
@@ -3438,13 +3387,13 @@ class ClusteringDisplayDialog(QDialog):
             try:
                 _app_theme.themeChanged.connect(self._on_app_theme_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in __init__")
 
         try:
             from results.results_cluster_tools import attach_to_dialog
             attach_to_dialog(self)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in __init__")
 
         QTimer.singleShot(0, self._restore_saved_results)
 
@@ -3474,7 +3423,7 @@ class ClusteringDisplayDialog(QDialog):
                     self._draw_3d()
                 self._draw_overview()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_app_theme_changed")
 
     def _apply_theme(self):
         """Apply the active palette to the whole dialog as one stylesheet.
@@ -3602,17 +3551,13 @@ class ClusteringDisplayDialog(QDialog):
                 try:
                     canvas.draw_idle()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _apply_theme")
 
 
 
     def _is_multi(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _update_color_by_visibility(self):
         """Hide the Color-by picker for single-sample input."""
@@ -3665,7 +3610,7 @@ class ClusteringDisplayDialog(QDialog):
                 if data.shape[1] >= 3:
                     self._draw_3d()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_color_by_changed")
 
 
     def _build_ui(self):
@@ -3792,14 +3737,6 @@ class ClusteringDisplayDialog(QDialog):
         )
 
     def _make_btn(self, text, color, slot):
-        """
-        Args:
-            text (Any): Text string.
-            color (Any): Colour value.
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton(text)
         btn.setStyleSheet(self._btn_style(color))
         btn.clicked.connect(slot)
@@ -4031,11 +3968,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _ctx_menu(self, pos, tab):
-        """
-        Args:
-            pos (Any): Position point.
-            tab (Any): The tab.
-        """
         menu = QMenu(self)
 
         edit_action = menu.addAction("✎  Edit Figure…")
@@ -4063,12 +3995,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _make_popout_btn(self, slot):
-        """
-        Args:
-            slot (Any): The slot.
-        Returns:
-            object: Result of the operation.
-        """
         btn = QPushButton("⤢")
         btn.setToolTip("Open in separate window")
         btn.setFixedSize(26, 22)
@@ -4080,10 +4006,7 @@ class ClusteringDisplayDialog(QDialog):
         return btn
 
     def _pop_out_figure(self, tab: str):
-        """Redraw the requested figure into a standalone resizable window.
-        Args:
-            tab (str): The tab.
-        """
+        """Redraw the requested figure into a standalone resizable window."""
         titles = {'eval': 'Evaluation Metrics',
                   'summary': 'Consensus Summary',
                   'cluster': 'Cluster Scatter',
@@ -4289,10 +4212,6 @@ class ClusteringDisplayDialog(QDialog):
             self._apply_display_settings()
 
     def _redraw_figure(self, tab: str):
-        """
-        Args:
-            tab (str): The tab.
-        """
         if tab == 'eval':
             self._refresh_eval_plot()
         elif tab == 'cluster':
@@ -4324,10 +4243,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _cl_drag_press(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button != 1 or event.inaxes is None:
             return
         self._cl_drag_ax    = event.inaxes
@@ -4335,10 +4250,6 @@ class ClusteringDisplayDialog(QDialog):
         self._cl_drag_pos0  = event.inaxes.get_position()
 
     def _cl_drag_motion(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._cl_drag_ax is None or event.x is None:
             return
         w_px, h_px = (self.cluster_fig.get_size_inches()
@@ -4351,20 +4262,11 @@ class ClusteringDisplayDialog(QDialog):
         self.cluster_canvas.draw_idle()
 
     def _cl_drag_release(self, _event):
-        """
-        Args:
-            _event (Any): The  event.
-        """
         self._cl_drag_ax    = None
         self._cl_drag_start = None
         self._cl_drag_pos0  = None
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._data_matrix_cache = None
         self.status.setText(f"Changed {key} → re-run evaluation for updated results")
@@ -4577,11 +4479,7 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _set_3d_view(self, elev, azim):
-        """Snap all 3D axes to a preset view angle.
-        Args:
-            elev (Any): The elev.
-            azim (Any): The azim.
-        """
+        """Snap all 3D axes to a preset view angle."""
         for ax in self._3d_fig.get_axes():
             ax.view_init(elev=elev, azim=azim)
         self._3d_canvas.draw_idle()
@@ -4625,6 +4523,7 @@ class ClusteringDisplayDialog(QDialog):
             dy = disp[:, 1] - event.y
             dist = np.hypot(dx, dy)
         except Exception:
+            _itk_log.exception("Handled exception in _on_3d_hover")
             return
 
         nearest = int(np.argmin(dist))
@@ -4668,10 +4567,6 @@ class ClusteringDisplayDialog(QDialog):
         self._3d_canvas.draw_idle()
 
     def _draw_3d_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
 
         data    = self._data_matrix_cache
@@ -4755,7 +4650,7 @@ class ClusteringDisplayDialog(QDialog):
             try:
                 ax.set_box_aspect(None, zoom=1.2)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _draw_3d_into")
             labels_arr  = result.get('labels')
             if labels_arr is None:
                 continue
@@ -4891,10 +4786,6 @@ class ClusteringDisplayDialog(QDialog):
         self.dendro_canvas.draw()
 
     def _draw_dendrogram_into(self, target_fig):
-        """
-        Args:
-            target_fig (Any): The target fig.
-        """
         target_fig.clear()
         ax = target_fig.add_subplot(111)
 
@@ -4921,6 +4812,7 @@ class ClusteringDisplayDialog(QDialog):
                 metric=metric,
             )
         except Exception as e:
+            _itk_log.exception("Handled exception in _draw_dendrogram_into")
             ax.text(0.5, 0.5, f'Linkage failed:\n{e}',
                     ha='center', va='center',
                     fontproperties=_font_scale(self.node.config, 'tick')[0],
@@ -4982,6 +4874,7 @@ class ClusteringDisplayDialog(QDialog):
                 warnings.simplefilter('ignore')
                 scipy_dendrogram(**dkw)
         except RecursionError:
+            _itk_log.exception("Handled exception in _draw_dendrogram_into")
             sys.setrecursionlimit(old_limit)
             target_fig.clear()
             ax = target_fig.add_subplot(111)
@@ -5125,7 +5018,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             ax_right.set_ylim(ax_left.get_ylim())
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _draw_overview_into")
 
         target_fig.tight_layout(pad=1.2)
 
@@ -5183,10 +5076,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_eval_pick(self, event):
-        """Click a point on an evaluation curve to set K directly.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Click a point on an evaluation curve to set K directly."""
         if not hasattr(event, 'ind') or len(event.ind) == 0:
             return
         line = event.artist
@@ -5201,10 +5091,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _on_cluster_hover(self, event):
-        """Show a floating tooltip with element values when hovering scatter points.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Show a floating tooltip with element values when hovering scatter points."""
         if not self.final_results or self._data_matrix_cache is None:
             return
 
@@ -5240,6 +5127,7 @@ class ClusteringDisplayDialog(QDialog):
             ev_disp = ax.transData.transform([[x_ev, y_ev]])[0]
             dists = np.sqrt(((xy_disp - ev_disp) ** 2).sum(axis=1))
         except Exception:
+            _itk_log.exception("Handled exception in _on_cluster_hover")
             return
 
         nearest = int(np.argmin(dists))
@@ -5312,10 +5200,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _get_elements(self):
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if not self.node.input_data:
             return []
         isotopes = self.node.input_data.get('selected_isotopes', [])
@@ -5325,21 +5209,7 @@ class ClusteringDisplayDialog(QDialog):
         return []
 
     def _prepare_data(self, elements):
-        """Prepare data matrix — identical logic to original.
-        Args:
-            elements (Any): The elements.
-        Returns:
-            object: Result of the operation.
-
-        Side effects:
-            - Sets ``self._raw_matrix`` to the pre-scaling matrix (rows already
-              filtered, columns matching the filtered element list).
-            - Sets ``self._particle_samples`` to the per-row sample name array.
-            - Sets ``self._elements_filtered`` to the elements that survived the
-              optional low-detection filter. Callers (evaluation, clustering,
-              characterisation) should use this list rather than the original
-              ``elements`` argument because the data matrix is built from it.
-        """
+        """Prepare data matrix — identical logic to original."""
         if not self.node.input_data or not elements:
             self._elements_filtered = list(elements) if elements else []
             return None
@@ -5421,14 +5291,6 @@ class ClusteringDisplayDialog(QDialog):
 
 
     def _run_algo(self, name, k, data):
-        """
-        Args:
-            name (Any): Name string.
-            k (Any): The k.
-            data (Any): Input data.
-        Returns:
-            None
-        """
         cfg = self.node.config
         try:
             if name == 'K-Means':
@@ -5514,7 +5376,8 @@ class ClusteringDisplayDialog(QDialog):
                 return self._run_som(k, data, cfg)
 
         except Exception as e:
-            print(f"Clustering failed for {name}: {e}")
+            _itk_log.exception("Handled exception in _run_algo")
+            _itk_log.error(f"Clustering failed for {name}: {e}")
         return None
 
     def _run_som(self, k, data, cfg, progress_cb=None):
@@ -5603,6 +5466,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             neuron_cluster_labels = _cluster_neurons(final_algo)
         except Exception:
+            _itk_log.exception("Handled exception in _run_som")
             neuron_cluster_labels = KMeans(
                 n_clusters=k_eff, random_state=42, n_init=5,
             ).fit_predict(weights)
@@ -5683,7 +5547,7 @@ class ClusteringDisplayDialog(QDialog):
                             for mk, sv in pending.items():
                                 res[mk].append(sv)
                         except Exception:
-                            pass
+                            _itk_log.exception("Handled exception in _evaluate_data")
                 step += 1
                 if progress_cb is not None:
                     progress_cb(step / total_steps)
@@ -5705,6 +5569,7 @@ class ClusteringDisplayDialog(QDialog):
                         key = METRIC_REGISTRY[metric]['key']
                         pending[key] = CVI_FUNCS[key](data, labels)
                 except Exception:
+                    _itk_log.exception("Handled exception in _evaluate_data")
                     step += 1
                     if progress_cb is not None:
                         progress_cb(step / total_steps)
@@ -5979,7 +5844,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
-            pass
+            _itk_log.exception("Handled exception in _run_bootstrap")
         self.bs_btn.clicked.connect(self._cancel_bootstrap)
 
         self.progress.setVisible(True)
@@ -6041,7 +5906,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             self.bs_btn.clicked.disconnect()
         except (RuntimeError, TypeError):
-            pass
+            _itk_log.exception("Handled exception in _on_bootstrap_thread_finished")
         self.bs_btn.setText("↻ Bootstrap K")
         self.bs_btn.setStyleSheet(self._btn_style('#7C3AED'))
         self.bs_btn.clicked.connect(self._run_bootstrap)
@@ -6117,15 +5982,9 @@ class ClusteringDisplayDialog(QDialog):
 
     @staticmethod
     def _elbow_k(k_vals: list, scores: list) -> int:
-        """
-        Kneedle algorithm: find the K at the elbow of a monotone curve.
+        """Kneedle algorithm: find the K at the elbow of a monotone curve.
         Normalises both axes to [0,1] and returns the point furthest from
         the straight line joining the first and last points.
-        Args:
-            k_vals (list): The k vals.
-            scores (list): The scores.
-        Returns:
-            int: Result of the operation.
         """
         k = np.array(k_vals, dtype=float)
         v = np.array(scores, dtype=float)
@@ -6353,19 +6212,15 @@ class ClusteringDisplayDialog(QDialog):
             self.som_fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             self.som_canvas.draw()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _on_som_snapshot")
 
     def _persist_results_to_node(self, sel_k=None):
-        """
-        Store the full clustering state on the workflow node so it is
+        """Store the full clustering state on the workflow node so it is
         saved with the project and restored when the dialog is reopened,
         without re-running the analysis.
 
         Args:
             sel_k (int): K used for the final clustering, when known.
-
-        Returns:
-            None
         """
         try:
             self.node.saved_cluster_state = {
@@ -6392,16 +6247,12 @@ class ClusteringDisplayDialog(QDialog):
                 'sel_k': sel_k,
             }
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _persist_results_to_node")
 
     def _restore_saved_results(self):
-        """
-        Restore a previously saved clustering state from the workflow
+        """Restore a previously saved clustering state from the workflow
         node and redraw the result figures, so reopening the dialog or
         loading a project shows the clustering without re-running it.
-
-        Returns:
-            None
         """
         st = getattr(self.node, 'saved_cluster_state', None)
         if not st or not st.get('final_results'):
@@ -6441,7 +6292,7 @@ class ClusteringDisplayDialog(QDialog):
                 try:
                     self._refresh_eval_plot()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _restore_saved_results")
 
             self.ov_algo.blockSignals(True)
             self.ov_algo.clear()
@@ -6473,6 +6324,7 @@ class ClusteringDisplayDialog(QDialog):
                                    input_data=self.node.input_data)
                     self.som_canvas.draw()
         except Exception:
+            _itk_log.exception("Handled exception in _restore_saved_results")
             self.status.setText("Could not restore saved clustering results")
 
     def _on_cluster_done(self, payload):
@@ -6566,12 +6418,16 @@ class ClusteringDisplayDialog(QDialog):
         Args:
             event (QCloseEvent): The close event forwarded by Qt.
         """
-        worker = getattr(self, '_cluster_worker', None)
-        if worker is not None and worker.isRunning():
-            worker.wait(5000)
-        ev = getattr(self, '_eval_worker', None)
-        if ev is not None and ev.isRunning():
-            ev.wait(5000)
+        for attr in ('_cluster_worker', '_eval_worker', '_bootstrap_worker'):
+            w = getattr(self, attr, None)
+            if w is not None and w.isRunning():
+                w.requestInterruption()
+                w.quit()
+                if not w.wait(5000):
+                    # Last resort: force-stop a stuck worker so it cannot run
+                    # into interpreter teardown and crash the GC on exit.
+                    w.terminate()
+                    w.wait(2000)
         super().closeEvent(event)
 
     def _live_k_supported(self):
@@ -6623,6 +6479,7 @@ class ClusteringDisplayDialog(QDialog):
         try:
             k = int(text)
         except ValueError:
+            _itk_log.exception("Handled exception in _on_k_combo_changed")
             return
         if self.k_slider.value() != k:
             self.k_slider.blockSignals(True)
@@ -6705,6 +6562,7 @@ class ClusteringDisplayDialog(QDialog):
             n_cl = self.final_results[algo]['n_clusters']
             self.status.setText(f"Live K = {k}  →  {n_cl} clusters")
         except Exception as e:
+            _itk_log.exception("Handled exception in _do_live_k")
             self.status.setText(f"Live K failed: {e}")
 
     def _hier_recut(self, data, k, cfg):
@@ -7039,10 +6897,6 @@ class ClusteringPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Clustering Analysis"
         self.node_type = "clustering_plot"
@@ -7057,30 +6911,16 @@ class ClusteringPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         self._active_dialog = ClusteringDisplayDialog(self, parent_window)
         self._active_dialog.show()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data

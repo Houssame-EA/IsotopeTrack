@@ -6,8 +6,9 @@
 
 | Name | Value |
 |------|-------|
-| `_NODE_FACTORIES` | `{'sample_selector': SampleSelectorNode, 'multip...` |
-| `_NODE_ITEM_MAP` | `{'sample_selector': SampleSelectorNodeItem, 'mu...` |
+| `_PENDING_DRAG_NODE_TYPE` | `None` |
+| `_NODE_FACTORIES` | `{'sample_selector': SampleSelectorNode, 'multiple_sample_…` |
+| `_NODE_ITEM_MAP` | `{'sample_selector': SampleSelectorNodeItem, 'multiple_sam…` |
 
 ## Classes
 
@@ -15,8 +16,8 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `font` | `(size = None, bold = False)` | Args: |
-| `pen` | `(color, width = 1.0)` | Args: |
+| `font` | `(size=None, bold=False)` | Args: |
+| `pen` | `(color, width=1.0)` | Args: |
 | `brush` | `(color)` | Args: |
 
 ### `WorkflowLink` *(extends `QObject`)*
@@ -40,8 +41,8 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent, channel_name, is_input = True)` | Args: |
-| `_apply_style` | `(self, hover = False)` | Args: |
+| `__init__` | `(self, parent, channel_name, is_input=True)` | Args: |
+| `_apply_style` | `(self, hover=False)` | Args: |
 | `itemChange` | `(self, change, value)` | Args: |
 | `shape` | `(self)` | Creates an invisible, larger hitbox for easier clicking and dragging. |
 | `hoverEnterEvent` | `(self, event)` | Args: |
@@ -51,9 +52,9 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, workflow_node, parent = None)` | Args: |
-| `paint_icon_node` | `(self, painter, grad_colors, icon_name, label_text, badge_text = '', b` | Args: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
+| `__init__` | `(self, workflow_node, parent=None)` | Args: |
+| `paint_icon_node` | `(self, painter, grad_colors, icon_name, label_text, badge_text='', bad` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
 | `_create_anchors` | `(self)` |  |
 | `get_anchor` | `(self, channel_name)` | Args: |
 | `boundingRect` | `(self)` | Returns: |
@@ -73,12 +74,12 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `_advance_dots` | `(self)` |  |
 | `set_curve_path` | `(self, path)` | Args: |
 | `set_pen` | `(self, pen)` | Args: |
 | `boundingRect` | `(self)` | Returns: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
 | `hoverEnterEvent` | `(self, event)` | Args: |
 | `hoverLeaveEvent` | `(self, event)` | Args: |
 
@@ -86,7 +87,7 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `set_source_anchor` | `(self, anchor)` | Args: |
 | `set_sink_anchor` | `(self, anchor)` | Args: |
 | `set_workflow_link` | `(self, link)` | Args: |
@@ -107,7 +108,7 @@ Simplified single-sample configurator: samples on left, isotope chips on right.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent, samples, current_selection = None, current_isotopes = N` | Args: |
+| `__init__` | `(self, parent, samples, current_selection=None, current_isotopes=None,` | Args: |
 | `_build` | `(self)` |  |
 | `_make_section_label` | `(self, text)` | Args: |
 | `_build_sample_list` | `(self, samples)` | Args: |
@@ -125,7 +126,7 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent, samples, current_selection = None, current_isotopes = N` | Args: |
+| `__init__` | `(self, parent, samples, current_selection=None, current_isotopes=None,` | Args: |
 | `_build` | `(self)` |  |
 | `_make_section_label` | `(self, text)` | Args: |
 | `_build_sample_list` | `(self, samples)` | Args: |
@@ -144,7 +145,7 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `process_data` | `(self, input_data)` | Args: |
 | `get_output_data` | `(self)` | Returns: |
 | `_get_particles` | `(self)` | Returns: |
@@ -156,7 +157,7 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `process_data` | `(self, input_data)` | Args: |
 | `get_output_data` | `(self)` | Returns: |
 | `_add_individual` | `(self, name, src, out)` | Args: |
@@ -169,7 +170,7 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `get_output_data` | `(self)` | Returns: |
 | `configure` | `(self, parent_window)` | Args: |
 
@@ -177,10 +178,19 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window, previously_selected = None)` | Args: |
+| `__init__` | `(self, parent_window, previously_selected=None)` | Args: |
 | `_build` | `(self)` |  |
 | `_preview` | `(self)` |  |
 | `get_selection` | `(self)` | Returns: |
+
+### `_CalculationWorker` *(extends `QThread`)*
+
+Runs a node's ``get_output_data()`` off the GUI thread.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, compute_fn, parent=None)` | Args: |
+| `run` | `(self)` | Execute the calculation and report the result via a signal. |
 
 ### `_StatusNodeMixin`
 
@@ -190,6 +200,11 @@ Adds status badge rendering to icon nodes.
 |--------|-----------|-------------|
 | `_status_text` | `(self)` | Returns: |
 | `_status_color` | `(self)` | Returns: |
+| `_is_calc_busy` | `(self)` | Return True while a background calculation is running. |
+| `_run_calculation_async` | `(self)` | Compute this node's output in a background thread, then push the |
+| `_on_calc_done` | `(self, result)` | Deliver the freshly computed output to every connected sink. |
+| `_on_calc_failed` | `(self, message)` | Handle a failed background calculation. |
+| `_cleanup_worker` | `(self, worker)` | Drop a finished worker so it can be garbage-collected. |
 
 ### `SampleSelectorNodeItem` *(extends `NodeItem, _StatusNodeMixin`)*
 
@@ -197,9 +212,9 @@ Single beaker icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, wf, pw = None)` | Args: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
-| `_trigger` | `(self)` |  |
+| `__init__` | `(self, wf, pw=None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
+| `_trigger` | `(self)` | Run the node calculation in a background thread on (re)configure. |
 | `configure_node` | `(self)` |  |
 | `_build_tooltip_lines` | `(self)` | Returns: |
 | `_show_tooltip` | `(self)` |  |
@@ -213,8 +228,8 @@ Custom floating tooltip with glow effect.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
-| `set_content` | `(self, lines, accent_color = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
+| `set_content` | `(self, lines, accent_color=None)` | Args: |
 | `_recompute_size` | `(self)` |  |
 | `_title_font` | `(self)` | Returns: |
 | `_body_font` | `(self)` | Returns: |
@@ -223,14 +238,13 @@ Custom floating tooltip with glow effect.
 ### `StickyNoteItem` *(extends `QGraphicsWidget`)*
 
 A movable, editable sticky note with color, font-size and transparency support.
-Right-click empty canvas → Add Note. Double-click to edit.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, text = 'Double-click to edit…', parent = None)` | Args: |
+| `__init__` | `(self, text='Double-click to edit…', parent=None)` | Args: |
 | `_current_colors` | `(self)` | Return (bg_color, border_color, text_color) based on current settings. |
 | `boundingRect` | `(self)` | Returns: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
 | `hoverEnterEvent` | `(self, event)` | Args: |
 | `hoverLeaveEvent` | `(self, event)` | Args: |
 | `mouseDoubleClickEvent` | `(self, event)` | Args: |
@@ -245,9 +259,9 @@ Right-click empty canvas → Add Note. Double-click to edit.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, wf, pw = None)` | Args: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
-| `_trigger` | `(self)` |  |
+| `__init__` | `(self, wf, pw=None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
+| `_trigger` | `(self)` | Run the node calculation in a background thread on (re)configure. |
 | `configure_node` | `(self)` |  |
 | `_build_tooltip_lines` | `(self)` | Returns: |
 | `_show_tooltip` | `(self)` |  |
@@ -261,8 +275,8 @@ Globe / multi-window icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, wf, pw = None)` | Args: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
+| `__init__` | `(self, wf, pw=None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
 | `_trigger` | `(self)` |  |
 | `configure_node` | `(self)` |  |
 
@@ -272,15 +286,15 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, wf, pw = None)` | Args: |
-| `paint` | `(self, painter, option, widget = None)` | Args: |
+| `__init__` | `(self, wf, pw=None)` | Args: |
+| `paint` | `(self, painter, option, widget=None)` | Args: |
 | `configure_node` | `(self)` |  |
 
 ### `DraggableNodeButton` *(extends `QPushButton`)*
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, text, node_type, icon_name = None, color = None)` | Args: |
+| `__init__` | `(self, text, node_type, icon_name=None, color=None)` | Args: |
 | `_refresh_style` | `(self)` |  |
 | `mousePressEvent` | `(self, event)` | Args: |
 
@@ -288,7 +302,7 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title, parent = None)` | Args: |
+| `__init__` | `(self, title, parent=None)` | Args: |
 | `_apply_theme` | `(self)` |  |
 | `addWidget` | `(self, w)` | Args: |
 | `toggle` | `(self)` |  |
@@ -297,7 +311,7 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `_setup` | `(self)` |  |
 | `_apply_palette_theme` | `(self)` |  |
 | `_filter` | `(self, text)` | Args: |
@@ -306,7 +320,7 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `_on_selection` | `(self)` |  |
 | `keyPressEvent` | `(self, event)` | Args: |
 | `undo` | `(self)` | Reverse the last tracked action (add/delete node or link). |
@@ -330,7 +344,7 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window = None)` | Args: |
+| `__init__` | `(self, parent_window=None)` | Args: |
 | `_apply_view_theme` | `(self)` |  |
 | `_safe_apply_view_theme` | `(self)` |  |
 | `_view_disconnect_theme` | `(self)` |  |
@@ -342,6 +356,7 @@ AI sparkle icon.
 | `mouseMoveEvent` | `(self, event)` | Args: |
 | `mouseReleaseEvent` | `(self, event)` | Args: |
 | `drawBackground` | `(self, painter, rect)` | Args: |
+| `_drag_node_type` | `(self, event)` | Return the node type carried by a drag/drop event, or None. |
 | `dragEnterEvent` | `(self, event)` | Args: |
 | `dragMoveEvent` | `(self, event)` | Args: |
 | `dropEvent` | `(self, event)` | Args: |
@@ -351,7 +366,7 @@ AI sparkle icon.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Args: |
+| `__init__` | `(self, parent=None)` | Args: |
 | `_apply_chrome_theme` | `(self)` |  |
 | `_build` | `(self)` |  |
 | `_update_sel` | `(self, count)` | Args: |
@@ -360,72 +375,13 @@ AI sparkle icon.
 
 ## Functions
 
-### `_ual`
-
-```python
-def _ual()
-```
-
-Return the UserActionLogger, or None if logging isn't ready.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_dialog_base_style`
-
-```python
-def _dialog_base_style()
-```
-
-Dialog stylesheet synced to the current app theme. The canvas itself
-(nodes, links, grid) keeps the DS design system — those are intentionally
-always-dark like the canvas in Figma or Final Cut. But pop-up dialogs
-should match whichever theme the user has chosen.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_canvas_chrome_style`
-
-```python
-def _canvas_chrome_style()
-```
-
-Stylesheet for the canvas dialog chrome (header, palette, statusbar).
-The canvas itself (nodes/links/grid) stays always-dark like Figma.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_make_viz_icon_node`
-
-```python
-def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class)
-```
-
-Factory: creates a circular icon node for each visualization type.
-
-**Args:**
-
-- `grad_colors (Any): The grad colors.`
-- `icon_name (Any): The icon name.`
-- `label (Any): Label text.`
-- `dialog_class (Any): The dialog class.`
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `show_canvas_results`
-
-```python
-def show_canvas_results(parent_window)
-```
-
-
-**Args:**
-
-- `parent_window (Any): The parent window.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_ual` | `()` | Return the UserActionLogger, or None if logging isn't ready. |
+| `_collect_main_windows` | `()` | Return every visible MainWindow in this process. |
+| `_sample_concentration_meta` | `(window, sample_name)` | Build the per sample concentration metadata for a source window. |
+| `_combine_concentration_meta` | `(metas)` | Combine per member concentration metadata into a single entry. |
+| `_dialog_base_style` | `()` | Dialog stylesheet synced to the current app theme. The canvas itself |
+| `_canvas_chrome_style` | `()` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
+| `_make_viz_icon_node` | `(grad_colors, icon_name, label, dialog_class)` | Factory: creates a circular icon node for each visualization type. |
+| `show_canvas_results` | `(parent_window)` | Args: |

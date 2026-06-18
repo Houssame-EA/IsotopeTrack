@@ -1,26 +1,20 @@
 from PySide6.QtWidgets import (
     QDialog, QMenu, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QGraphicsView, QGraphicsScene,
-    QGraphicsItem, QGraphicsProxyWidget, QLabel, QTableWidget,
-    QComboBox, QListWidget, QListWidgetItem, QCheckBox,
-    QFrame, QScrollArea, QSplitter, QGroupBox, QTableWidgetItem,
-    QGraphicsWidget, QGraphicsEllipseItem, QApplication, QMainWindow,
-    QDialogButtonBox, QFormLayout, QSpinBox, QDoubleSpinBox, QTabWidget,
-    QLineEdit, QAbstractItemView, QTextEdit, QToolTip, QGraphicsDropShadowEffect,
-    QGraphicsOpacityEffect, QSlider, QToolButton, QSizePolicy, QHeaderView,
-    QMessageBox, QInputDialog, QGraphicsRectItem
+    QGraphicsItem, QLabel, QCheckBox,
+    QFrame, QScrollArea, QSplitter, QGraphicsWidget,
+    QGraphicsEllipseItem, QApplication, QDialogButtonBox, QLineEdit, QToolTip,
+    QSizePolicy
 )
 from PySide6.QtCore import (
     Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject,
-    QPropertyAnimation, QEasingCurve, QTimer, QSize, QTimeLine, QThread
+    QTimer, QSize, QThread
 )
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath,
     QLinearGradient, QFont, QPainterPathStroker, QRadialGradient,QFontMetrics,
-    QShortcut, QKeySequence, QIcon, QTransform, QCursor, QFontDatabase,
-    QWheelEvent, QConicalGradient
+    QShortcut, QKeySequence, QIcon, QTransform, QCursor, QWheelEvent
 )
-import math
 import numpy as np
 from collections import deque
 from pathlib import Path
@@ -43,7 +37,7 @@ from results.results_correlation import CorrelationPlotDisplayDialog, Correlatio
 from results.results_isotope import IsotopicRatioDisplayDialog, IsotopicRatioPlotNode
 from results.results_cluster import ClusteringDisplayDialog, ClusteringPlotNode
 from results.results_triangle import TriangleDisplayDialog, TrianglePlotNode
-from results.results_AI import AIAssistantNode, AIChatDialog
+from results.results_AI import AIAssistantNode
 from results.results_box_plot import BoxPlotDisplayDialog, BoxPlotNode
 from results.results_molar_ratio import MolarRatioDisplayDialog, MolarRatioPlotNode
 from results.results_single_multiple import (
@@ -59,21 +53,23 @@ from results.results_network import (
     NetworkDisplayDialog, NetworkDiagramNode)
 from results.results_dashboard import DashboardDisplayDialog, DashboardNode
 from results.results_periodic import IsotopeChipSelector
+from tools.particle_filter import (
+    ParticleFilterNode, build_particle_filter_node_item)
 
 import qtawesome as qta
 
 from tools.theme import theme as _app_theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
-    """Return the UserActionLogger, or None if logging isn't ready.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return the UserActionLogger, or None if logging isn't ready."""
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
     except Exception:
+        _itk_log.exception("Handled exception in _ual")
         return None
 
 def _collect_main_windows():
@@ -120,6 +116,7 @@ def _sample_concentration_meta(window, sample_name):
             'te_available': window.has_transport_rate(),
         }
     except Exception:
+        _itk_log.exception("Handled exception in _sample_concentration_meta")
         return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
 
 
@@ -212,13 +209,6 @@ class DS:
 
     @staticmethod
     def font(size=None, bold=False):
-        """
-        Args:
-            size (Any): Size value.
-            bold (Any): The bold.
-        Returns:
-            object: Result of the operation.
-        """
         f = QFont(DS.FONT_FAMILY, size or DS.FONT_BODY)
         if bold:
             f.setWeight(QFont.Weight.DemiBold)
@@ -226,36 +216,16 @@ class DS:
 
     @staticmethod
     def pen(color, width=1.0):
-        """
-        Args:
-            color (Any): Colour value.
-            width (Any): Width in pixels.
-        Returns:
-            object: Result of the operation.
-        """
         return QPen(QColor(color), width)
 
     @staticmethod
     def brush(color):
-        """
-        Args:
-            color (Any): Colour value.
-        Returns:
-            object: Result of the operation.
-        """
         return QBrush(QColor(color))
 
 class WorkflowLink(QObject):
     state_changed = Signal(int)
 
     def __init__(self, source_node, source_channel, sink_node, sink_channel):
-        """
-        Args:
-            source_node (Any): The source node.
-            source_channel (Any): The source channel.
-            sink_node (Any): The sink node.
-            sink_channel (Any): The sink channel.
-        """
         super().__init__()
         self.source_node = source_node
         self.source_channel = source_channel
@@ -264,10 +234,6 @@ class WorkflowLink(QObject):
         self.enabled = True
 
     def get_data(self):
-        """
-        Returns:
-            None
-        """
         if hasattr(self.source_node, 'get_output_data'):
             return self.source_node.get_output_data()
         return None
@@ -278,11 +244,6 @@ class WorkflowNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, title, node_type):
-        """
-        Args:
-            title (Any): Window or dialog title.
-            node_type (Any): The node type.
-        """
         super().__init__()
         self.title = title
         self.node_type = node_type
@@ -293,10 +254,6 @@ class WorkflowNode(QObject):
         self.output_channels = []
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
@@ -306,7 +263,6 @@ class WorkflowNode(QObject):
         Args:
             parent_window (Any): The parent window.
         """
-        pass
 
 class AnchorPointSignals(QObject):
     position_changed = Signal(QPointF)
@@ -315,12 +271,6 @@ class AnchorPointSignals(QObject):
 class AnchorPoint(QGraphicsEllipseItem):
 
     def __init__(self, parent, channel_name, is_input=True):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-            channel_name (Any): The channel name.
-            is_input (Any): The is input.
-        """
         super().__init__(parent)
         self.channel_name = channel_name
         self.is_input = is_input
@@ -341,10 +291,6 @@ class AnchorPoint(QGraphicsEllipseItem):
         self.setCursor(QCursor(Qt.CrossCursor))
 
     def _apply_style(self, hover=False):
-        """
-        Args:
-            hover (Any): The hover.
-        """
         c = self._base_color
         r = self.radius * (1.2 if hover else 1.0)
         grad = QRadialGradient(0, 0, r)
@@ -355,32 +301,18 @@ class AnchorPoint(QGraphicsEllipseItem):
         self.setPen(QPen(border, 2.0 if hover else 1.5))
 
     def itemChange(self, change, value):
-        """
-        Args:
-            change (Any): The change.
-            value (Any): Value to set or process.
-        Returns:
-            object: Result of the operation.
-        """
         if change == QGraphicsItem.ItemScenePositionHasChanged:
             self.position_changed.emit(value)
         return super().itemChange(change, value)
     
     def shape(self):
-        """Creates an invisible, larger hitbox for easier clicking and dragging.
-        Returns:
-            object: Result of the operation.
-        """
+        """Creates an invisible, larger hitbox for easier clicking and dragging."""
         path = QPainterPath()
         hitbox_radius = self.radius + 7
         path.addEllipse(QRectF(-hitbox_radius, -hitbox_radius, hitbox_radius * 2, hitbox_radius * 2))
         return path
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._apply_style(hover=True)
         self.setScale(1.3)
         label = "Input (Connect here)" if self.is_input else "Output (Drag to connect to multiple nodes)"
@@ -388,10 +320,6 @@ class AnchorPoint(QGraphicsEllipseItem):
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._apply_style(hover=False)
         self.setScale(1.0)
         super().hoverLeaveEvent(event)
@@ -399,11 +327,6 @@ class AnchorPoint(QGraphicsEllipseItem):
 class NodeItem(QGraphicsWidget):
 
     def __init__(self, workflow_node, parent=None):
-        """
-        Args:
-            workflow_node (Any): The workflow node.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.workflow_node = workflow_node
         self.setFlag(QGraphicsItem.ItemIsMovable, True)
@@ -425,15 +348,6 @@ class NodeItem(QGraphicsWidget):
 
     def paint_icon_node(self, painter, grad_colors, icon_name, label_text,
                         badge_text="", badge_color=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            grad_colors (Any): The grad colors.
-            icon_name (Any): The icon name.
-            label_text (Any): The label text.
-            badge_text (Any): The badge text.
-            badge_color (Any): The badge color.
-        """
         painter.setRenderHint(QPainter.Antialiasing)
 
         d = self.icon_d
@@ -502,6 +416,7 @@ class NodeItem(QGraphicsWidget):
                 px = ico.pixmap(QSize(icon_size, icon_size))
                 self._icon_cache[cache_key] = px
             except Exception:
+                _itk_log.exception("Handled exception in paint_icon_node")
                 self._icon_cache[cache_key] = None
 
         px = self._icon_cache.get(cache_key)
@@ -528,12 +443,6 @@ class NodeItem(QGraphicsWidget):
             painter.drawEllipse(QPointF(dot_x, dot_y), 6, 6)
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         self.paint_icon_node(
             painter, DS.HDR_DATA, "fa6s.cube",
             self.workflow_node.title,
@@ -552,27 +461,13 @@ class NodeItem(QGraphicsWidget):
             self.anchors["output"] = a
 
     def get_anchor(self, channel_name):
-        """
-        Args:
-            channel_name (Any): The channel name.
-        Returns:
-            object: Result of the operation.
-        """
         return self.anchors.get(channel_name)
 
     def boundingRect(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         m = 20
         return QRectF(-m, -m, self.width + 2 * m, self.height + 2 * m)
 
     def shape(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         p = QPainterPath()
         cx = self.width / 2
         cy = self.icon_d / 2 + 4
@@ -583,28 +478,16 @@ class NodeItem(QGraphicsWidget):
 
     # ── interaction ─────────────────────────────────────────────────────────
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.is_hovered = True
         self.update()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.is_hovered = False
         self.update()
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.LeftButton:
             if not (event.modifiers() & Qt.ControlModifier):
                 if self.scene() and not self.isSelected():
@@ -615,10 +498,6 @@ class NodeItem(QGraphicsWidget):
         super().mousePressEvent(event)
 
     def show_context_menu(self, global_pos):
-        """
-        Args:
-            global_pos (Any): The global pos.
-        """
         menu = QMenu()
         menu.setStyleSheet(self._ctx_menu_style())
         dup = menu.addAction(qta.icon('fa6s.copy', color=DS.ACCENT), "  Duplicate")
@@ -630,10 +509,6 @@ class NodeItem(QGraphicsWidget):
 
     @staticmethod
     def _ctx_menu_style():
-        """
-        Returns:
-            object: Result of the operation.
-        """
         p = _app_theme.palette
         return f"""
         QMenu {{
@@ -669,13 +544,6 @@ class NodeItem(QGraphicsWidget):
             self.scene().delete_node(self)
 
     def itemChange(self, change, value):
-        """
-        Args:
-            change (Any): The change.
-            value (Any): Value to set or process.
-        Returns:
-            object: Result of the operation.
-        """
         if change == QGraphicsItem.ItemPositionHasChanged:
             if hasattr(self.workflow_node, 'set_position'):
                 self.workflow_node.set_position(value)
@@ -684,10 +552,6 @@ class NodeItem(QGraphicsWidget):
         return super().itemChange(change, value)
 
     def mouseDoubleClickEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.configure_node()
         super().mouseDoubleClickEvent(event)
 
@@ -697,10 +561,6 @@ class NodeItem(QGraphicsWidget):
 class LinkCurveItem(QGraphicsWidget):
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setAcceptedMouseButtons(Qt.NoButton)
         self.setAcceptHoverEvents(True)
@@ -723,29 +583,17 @@ class LinkCurveItem(QGraphicsWidget):
             self.update()
 
     def set_curve_path(self, path):
-        """
-        Args:
-            path (Any): File or directory path.
-        """
         if path != self.__curve_path:
             self.prepareGeometryChange()
             self.__curve_path = path
             self.update()
 
     def set_pen(self, pen):
-        """
-        Args:
-            pen (Any): QPen object.
-        """
         if pen != self.__pen:
             self.__pen = pen
             self.update()
 
     def boundingRect(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if self.__curve_path.isEmpty():
             return QRectF()
         stroke = QPainterPathStroker()
@@ -753,12 +601,6 @@ class LinkCurveItem(QGraphicsWidget):
         return stroke.createStroke(self.__curve_path).boundingRect()
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         if self.__curve_path.isEmpty():
             return
         painter.setRenderHint(QPainter.Antialiasing)
@@ -790,19 +632,11 @@ class LinkCurveItem(QGraphicsWidget):
             painter.drawEllipse(pt, 2.5, 2.5)
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.hover = True
         self.update()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.hover = False
         self.update()
         super().hoverLeaveEvent(event)
@@ -812,10 +646,6 @@ class LinkItem(QGraphicsWidget):
     activated = Signal()
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setAcceptedMouseButtons(Qt.RightButton | Qt.LeftButton)
         self.setAcceptHoverEvents(True)
@@ -831,36 +661,26 @@ class LinkItem(QGraphicsWidget):
         self.__update_curve()
 
     def set_source_anchor(self, anchor):
-        """
-        Args:
-            anchor (Any): The anchor.
-        """
         if self.source_anchor:
             try: self.source_anchor.position_changed.disconnect(self.__update_curve)
-            except: pass
+            except Exception:
+                _itk_log.exception("Handled exception in set_source_anchor")
         self.source_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
         self.__update_curve()
 
     def set_sink_anchor(self, anchor):
-        """
-        Args:
-            anchor (Any): The anchor.
-        """
         if self.sink_anchor:
             try: self.sink_anchor.position_changed.disconnect(self.__update_curve)
-            except: pass
+            except Exception:
+                _itk_log.exception("Handled exception in set_sink_anchor")
         self.sink_anchor = anchor
         if anchor:
             anchor.position_changed.connect(self.__update_curve)
         self.__update_curve()
 
     def set_workflow_link(self, link):
-        """
-        Args:
-            link (Any): The link.
-        """
         self.workflow_link = link
 
     def __update_curve(self):
@@ -901,20 +721,13 @@ class LinkItem(QGraphicsWidget):
             pen.setCapStyle(Qt.RoundCap)
             self.curve_item.set_pen(pen)
         except Exception as e:
-            print(f"Link update error: {e}")
+            _itk_log.exception("Handled exception in __update_curve")
+            _itk_log.error(f"Link update error: {e}")
 
     def boundingRect(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self.curve_item.boundingRect()
 
     def shape(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if self.curve_item and not self.curve_item._LinkCurveItem__curve_path.isEmpty():
             s = QPainterPathStroker()
             s.setWidth(18)
@@ -923,10 +736,6 @@ class LinkItem(QGraphicsWidget):
 
     def mousePressEvent(self, event):
 
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         scene = self.scene()
         if scene:
             items_under_cursor = scene.items(event.scenePos())
@@ -942,10 +751,6 @@ class LinkItem(QGraphicsWidget):
             super().mousePressEvent(event)
 
     def _show_ctx(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         menu = QMenu()
         menu.setStyleSheet(NodeItem._ctx_menu_style())
         d = menu.addAction(qta.icon('fa6s.link-slash', color=DS.ERROR), "  Remove Connection")
@@ -957,40 +762,21 @@ class LinkItem(QGraphicsWidget):
             self.scene().delete_link(self)
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.is_hovered = True
         self.__update_curve()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.is_hovered = False
         self.__update_curve()
         super().hoverLeaveEvent(event)
 
     def itemChange(self, change, value):
-        """
-        Args:
-            change (Any): The change.
-            value (Any): Value to set or process.
-        Returns:
-            object: Result of the operation.
-        """
         if change == QGraphicsItem.ItemSelectedHasChanged:
             self.__update_curve()
         return super().itemChange(change, value)
 
     def mouseDoubleClickEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.activated.emit()
         super().mouseDoubleClickEvent(event)
 
@@ -999,8 +785,6 @@ def _dialog_base_style():
     (nodes, links, grid) keeps the DS design system — those are intentionally
     always-dark like the canvas in Figma or Final Cut. But pop-up dialogs
     should match whichever theme the user has chosen.
-    Returns:
-        object: Result of the operation.
     """
     from tools.theme import theme as _app_theme
     p = _app_theme.palette
@@ -1086,8 +870,6 @@ def _dialog_base_style():
 def _canvas_chrome_style():
     """Stylesheet for the canvas dialog chrome (header, palette, statusbar).
     The canvas itself (nodes/links/grid) stays always-dark like Figma.
-    Returns:
-        object: Result of the operation.
     """
     p = _app_theme.palette
     return f"""
@@ -1151,15 +933,6 @@ class SampleSelectorDialog(QDialog):
     def __init__(self, parent, samples, current_selection=None,
                  current_isotopes=None, current_sum_replicates=False,
                  current_replicate_samples=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-            samples (Any): The samples.
-            current_selection (Any): The current selection.
-            current_isotopes (Any): The current isotopes.
-            current_sum_replicates (Any): The current sum replicates.
-            current_replicate_samples (Any): The current replicate samples.
-        """
         super().__init__(parent)
         self.setWindowTitle("Single Sample Configuration")
         self.setModal(True)
@@ -1267,12 +1040,6 @@ class SampleSelectorDialog(QDialog):
         self._update_preview()
 
     def _make_section_label(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        Returns:
-            object: Result of the operation.
-        """
         lbl = QLabel(text.upper())
         lbl.setStyleSheet(
             f"font-size:10px; font-weight:700; letter-spacing:1px;"
@@ -1280,10 +1047,6 @@ class SampleSelectorDialog(QDialog):
         return lbl
 
     def _build_sample_list(self, samples):
-        """
-        Args:
-            samples (Any): The samples.
-        """
         while self._sample_layout.count():
             child = self._sample_layout.takeAt(0)
             if child.widget():
@@ -1325,18 +1088,10 @@ class SampleSelectorDialog(QDialog):
             self._chip_selector.set_selected(self.current_isotopes)
 
     def _on_check(self, sample):
-        """
-        Args:
-            sample (Any): The sample.
-        """
         self.sample_config[sample] = self._checkboxes[sample].isChecked()
         self._update_preview()
 
     def _filter_samples(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        """
         q = text.lower()
         for s, cb in self._checkboxes.items():
             cb.setVisible(q in s.lower())
@@ -1366,10 +1121,6 @@ class SampleSelectorDialog(QDialog):
             f" border-radius:6px; color:{p.text_primary}; font-size:12px; font-weight:600;")
 
     def get_selection(self):
-        """
-        Returns:
-            tuple: Result of the operation.
-        """
         selected = [s for s, c in self.sample_config.items() if c]
         raw_iso = self._chip_selector.get_selected()
         isotopes = []
@@ -1390,14 +1141,6 @@ class MultipleSampleSelectorDialog(QDialog):
 
     def __init__(self, parent, samples, current_selection=None,
                  current_isotopes=None, current_sample_config=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-            samples (Any): The samples.
-            current_selection (Any): The current selection.
-            current_isotopes (Any): The current isotopes.
-            current_sample_config (Any): The current sample config.
-        """
         super().__init__(parent)
         self.setWindowTitle("Multi-Sample Configuration")
         self.setModal(True)
@@ -1522,12 +1265,6 @@ class MultipleSampleSelectorDialog(QDialog):
         self._update_preview()
 
     def _make_section_label(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        Returns:
-            object: Result of the operation.
-        """
         lbl = QLabel(text.upper())
         lbl.setStyleSheet(
             f"font-size:10px; font-weight:700; letter-spacing:1px;"
@@ -1535,10 +1272,6 @@ class MultipleSampleSelectorDialog(QDialog):
         return lbl
 
     def _build_sample_list(self, samples):
-        """
-        Args:
-            samples (Any): The samples.
-        """
         while self._sample_layout.count():
             child = self._sample_layout.takeAt(0)
             if child.widget():
@@ -1612,10 +1345,6 @@ class MultipleSampleSelectorDialog(QDialog):
             self._chip_selector.set_selected(self.current_isotopes)
 
     def _on_change(self, sample):
-        """
-        Args:
-            sample (Any): The sample.
-        """
         row_w, cb, group_edit = self._row_widgets[sample]
         self.current_sample_config[sample] = {
             'included': cb.isChecked(),
@@ -1625,10 +1354,6 @@ class MultipleSampleSelectorDialog(QDialog):
         self._update_preview()
 
     def _filter_samples(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        """
         q = text.lower()
         for s, (row_w, cb, ge) in self._row_widgets.items():
             row_w.setVisible(q in s.lower())
@@ -1656,27 +1381,18 @@ class MultipleSampleSelectorDialog(QDialog):
                 ge.setText(g)
 
     def _auto_group(self):
-        """
-        Detect sample groups by stripping common replicate suffixes and numeric endings.
+        """Detect sample groups by stripping common replicate suffixes and numeric endings.
         Handles patterns like:
           sample_1, sample_2         → "sample"
           ctrl_R1, ctrl_R2           → "ctrl"
           liver_rep1, liver_rep2     → "liver"
           2024_Au_A, 2024_Au_B       → "2024_Au"
           HgSe_1mg_r1, HgSe_1mg_r2  → "HgSe_1mg"
-        Returns:
-            object: Result of the operation.
         """
         import re
         from collections import defaultdict
 
         def extract_root(name):
-            """
-            Args:
-                name (Any): Name string.
-            Returns:
-                object: Result of the operation.
-            """
             patterns = [
                 r'[_\-\s]?(?:replicate|replica|rep|r)[\s_\-]?\d+$',
                 r'[_\-\s]?\d+[_\-\s]?(?:replicate|replica|rep|r)$',
@@ -1732,10 +1448,6 @@ class MultipleSampleSelectorDialog(QDialog):
             f" border-radius:6px; color:{p.text_primary}; font-size:12px; font-weight:600;")
 
     def get_selection(self):
-        """
-        Returns:
-            tuple: Result of the operation.
-        """
         for s, (row_w, cb, ge) in self._row_widgets.items():
             self.current_sample_config[s] = {
                 'included': cb.isChecked(),
@@ -1753,10 +1465,6 @@ class MultipleSampleSelectorDialog(QDialog):
 
 class SampleSelectorNode(WorkflowNode):
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__("Single Sample", "sample_selector")
         self.parent_window = parent_window
         self._has_input = True
@@ -1775,10 +1483,6 @@ class SampleSelectorNode(WorkflowNode):
         self.batch_concentration_meta = None
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         self.input_data = input_data
         if input_data:
             dt = input_data.get('type', 'unknown')
@@ -1790,10 +1494,6 @@ class SampleSelectorNode(WorkflowNode):
                 self.batch_concentration_meta = input_data.get('concentration_meta', {})
 
     def get_output_data(self):
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
             return self.input_data
         if not self.selected_sample and not (self.sum_replicates and self.replicate_samples):
@@ -1831,10 +1531,6 @@ class SampleSelectorNode(WorkflowNode):
         }
 
     def _get_particles(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if self.batch_particle_data is not None:
             key = self.replicate_samples if (self.sum_replicates and self.replicate_samples) else [self.selected_sample]
             return [p for p in self.batch_particle_data if p.get('source_sample') in key]
@@ -1852,12 +1548,6 @@ class SampleSelectorNode(WorkflowNode):
         return combined
 
     def _filter(self, particles):
-        """
-        Args:
-            particles (Any): The particles.
-        Returns:
-            object: Result of the operation.
-        """
         if not self.selected_isotopes:
             return particles
         labels = [i['label'] for i in self.selected_isotopes]
@@ -1877,10 +1567,6 @@ class SampleSelectorNode(WorkflowNode):
         return out
 
     def _sample_data(self):
-        """
-        Returns:
-            None
-        """
         if self.batch_sample_data:
             return self.batch_sample_data.get(self.selected_sample)
         if not self.parent_window or not self.selected_sample:
@@ -1890,12 +1576,6 @@ class SampleSelectorNode(WorkflowNode):
         return None
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         samples = (self.batch_samples if self.batch_samples
                    else list(getattr(parent_window, 'sample_to_folder_map', {}).keys()))
         dlg = SampleSelectorDialog(
@@ -1928,10 +1608,6 @@ class SampleSelectorNode(WorkflowNode):
 
 class MultipleSampleSelectorNode(WorkflowNode):
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__("Multi-Sample", "multiple_sample_selector")
         self.parent_window = parent_window
         self._has_input = True
@@ -1950,10 +1626,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         self.batch_concentration_meta = None
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         self.input_data = input_data
         if input_data:
             dt = input_data.get('type', 'unknown')
@@ -1965,10 +1637,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
                 self.batch_concentration_meta = input_data.get('concentration_meta', {})
 
     def get_output_data(self):
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
             return self.input_data
         included = ([s for s, c in self.sample_config.items() if c.get('included')]
@@ -2044,14 +1712,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         }
 
     def _add_individual(self, name, src, out):
-        """
-        Args:
-            name (Any): Name string.
-            src (Any): Source string or data.
-            out (Any): The out.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self._raw_particles(src)
         n = len(particles)
         for p in self._filter(particles):
@@ -2061,14 +1721,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         return n
 
     def _add_group(self, gname, members, out):
-        """
-        Args:
-            gname (Any): The gname.
-            members (Any): The members.
-            out (Any): The out.
-        Returns:
-            object: Result of the operation.
-        """
         total = 0
         for s in members:
             particles = self._raw_particles(s)
@@ -2082,12 +1734,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         return total
 
     def _raw_particles(self, sample):
-        """
-        Args:
-            sample (Any): The sample.
-        Returns:
-            list: Result of the operation.
-        """
         if self.batch_particle_data is not None:
             return [p for p in self.batch_particle_data if p.get('source_sample') == sample]
         if hasattr(self.parent_window, 'sample_particle_data'):
@@ -2095,12 +1741,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         return []
 
     def _filter(self, particles):
-        """
-        Args:
-            particles (Any): The particles.
-        Returns:
-            object: Result of the operation.
-        """
         if not self.selected_isotopes:
             return particles
         labels = [i['label'] for i in self.selected_isotopes]
@@ -2120,12 +1760,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
         return out
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         samples = (self.batch_samples if self.batch_samples
                    else list(getattr(parent_window, 'sample_to_folder_map', {}).keys()))
         dlg = MultipleSampleSelectorDialog(
@@ -2144,10 +1778,6 @@ class MultipleSampleSelectorNode(WorkflowNode):
 
 class BatchSampleSelectorNode(WorkflowNode):
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__("Batch Windows", "batch_sample_selector")
         self.parent_window = parent_window
         self._has_output = True
@@ -2155,10 +1785,6 @@ class BatchSampleSelectorNode(WorkflowNode):
         self.selected_windows = []
 
     def get_output_data(self):
-        """
-        Returns:
-            dict: Result of the operation.
-        """
         if not self.selected_windows:
             return None
         names, particles, data, isos = [], [], {}, {}
@@ -2194,12 +1820,6 @@ class BatchSampleSelectorNode(WorkflowNode):
         }
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = BatchSampleSelectorDialog(parent_window,
                                         previously_selected=self.selected_windows)
         if dlg.exec() == QDialog.Accepted:
@@ -2213,11 +1833,6 @@ class BatchSampleSelectorNode(WorkflowNode):
 
 class BatchSampleSelectorDialog(QDialog):
     def __init__(self, parent_window, previously_selected=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-            previously_selected (Any): The previously selected.
-        """
         super().__init__(parent_window)
         self.setWindowTitle("Batch Window Selector")
         self.setModal(True)
@@ -2299,10 +1914,6 @@ class BatchSampleSelectorDialog(QDialog):
                 f" border-radius:6px; color:{p.text_primary}; font-weight:bold;")
 
     def get_selection(self):
-        """
-        Returns:
-            list: Result of the operation.
-        """
         return [cb.window_ref for cb in self.window_checkboxes if cb.isChecked()]
 
 class _CalculationWorker(QThread):
@@ -2322,11 +1933,6 @@ class _CalculationWorker(QThread):
     failed = Signal(str)
 
     def __init__(self, compute_fn, parent=None):
-        """
-        Args:
-            compute_fn (Any): Zero-arg callable that performs the calculation.
-            parent (Any): Parent QObject.
-        """
         super().__init__(parent)
         self._compute_fn = compute_fn
 
@@ -2335,6 +1941,7 @@ class _CalculationWorker(QThread):
         try:
             result = self._compute_fn()
         except Exception as exc:
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
             return
         self.finished_ok.emit(result)
@@ -2344,17 +1951,9 @@ class _StatusNodeMixin:
     """Adds status badge rendering to icon nodes."""
 
     def _status_text(self):
-        """
-        Returns:
-            str: Result of the operation.
-        """
         return ""
 
     def _status_color(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return DS.TEXT_SECONDARY
 
     def _is_calc_busy(self):
@@ -2397,9 +1996,6 @@ class _StatusNodeMixin:
         """Deliver the freshly computed output to every connected sink.
 
         Runs back on the GUI thread, so calling ``process_data`` here is safe.
-
-        Args:
-            result (Any): The value returned by ``get_output_data()``.
         """
         s = self.scene()
         if s:
@@ -2409,7 +2005,8 @@ class _StatusNodeMixin:
                         if hasattr(lk.sink_node, "process_data"):
                             lk.sink_node.process_data(result)
                     except Exception as exc:
-                        print(f"Data flow error: {exc}")
+                        _itk_log.exception("Handled exception in _on_calc_done")
+                        _itk_log.error(f"Data flow error: {exc}")
         self.update()
 
     def _on_calc_failed(self, message):
@@ -2418,15 +2015,11 @@ class _StatusNodeMixin:
         Args:
             message (str): Error text from the worker thread.
         """
-        print(f"Calculation error: {message}")
+        _itk_log.error(f"Calculation error: {message}")
         self.update()
 
     def _cleanup_worker(self, worker):
-        """Drop a finished worker so it can be garbage-collected.
-
-        Args:
-            worker (Any): The _CalculationWorker that just finished.
-        """
+        """Drop a finished worker so it can be garbage-collected."""
         workers = getattr(self, "_calc_workers", None)
         if workers is not None:
             workers.discard(worker)
@@ -2437,11 +2030,6 @@ class _StatusNodeMixin:
 class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     """Single beaker icon."""
     def __init__(self, wf, pw=None):
-        """
-        Args:
-            wf (Any): The wf.
-            pw (Any): The pw.
-        """
         super().__init__(wf)
         self.parent_window = pw
         wf.configuration_changed.connect(self.update)
@@ -2458,12 +2046,6 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         self.hover_pos = None
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         wf = self.workflow_node
         badge, bc = "", None
         if wf.selected_sample or (wf.sum_replicates and wf.replicate_samples):
@@ -2499,10 +2081,6 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             self.workflow_node.configure(self.parent_window)
 
     def _build_tooltip_lines(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         wf = self.workflow_node
         lines = ["Single Sample"]
         if wf.selected_sample:
@@ -2536,10 +2114,6 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         tw.raise_()
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().hoverEnterEvent(event)
         self._hovered = True
         self.hover_pos = event.screenPos()
@@ -2547,20 +2121,12 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         self.update()
 
     def hoverMoveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().hoverMoveEvent(event)
         self.hover_pos = event.screenPos()
         if not self._tooltip_widget.isVisible():
             self.hover_timer.start(400)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.hover_timer.stop()
         self._tooltip_widget.hide()
         self._hovered = False
@@ -2572,10 +2138,6 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
 class ModernNodeTooltip(QWidget):
     """Custom floating tooltip with glow effect."""
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
@@ -2583,11 +2145,6 @@ class ModernNodeTooltip(QWidget):
         self._accent = QColor("#8B5CF6")
 
     def set_content(self, lines, accent_color=None):
-        """
-        Args:
-            lines (Any): The lines.
-            accent_color (Any): The accent color.
-        """
         self._lines = lines
         if accent_color:
             self._accent = QColor(accent_color)
@@ -2610,10 +2167,6 @@ class ModernNodeTooltip(QWidget):
         self.setFixedSize(max_w + pad_x * 2, total_h + 6)
 
     def _title_font(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         f = QFont()
         f.setPixelSize(12)
         f.setWeight(QFont.Bold)
@@ -2621,19 +2174,11 @@ class ModernNodeTooltip(QWidget):
         return f
 
     def _body_font(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         f = QFont()
         f.setPixelSize(11)
         return f
 
     def paintEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
@@ -2718,11 +2263,6 @@ class StickyNoteItem(QGraphicsWidget):
     ]
 
     def __init__(self, text="Double-click to edit…", parent=None):
-        """
-        Args:
-            text (Any): Text string.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._text = text
         self._color_index = 0
@@ -2737,10 +2277,7 @@ class StickyNoteItem(QGraphicsWidget):
 
     # ── helpers ────────────────────────────────────────────────────────────
     def _current_colors(self):
-        """Return (bg_color, border_color, text_color) based on current settings.
-        Returns:
-            tuple: Result of the operation.
-        """
+        """Return (bg_color, border_color, text_color) based on current settings."""
         _, light_bg, dark_bg, border_hex = self.COLOR_PRESETS[self._color_index]
         if self._transparent:
             bg = QColor(0, 0, 0, 0)
@@ -2758,20 +2295,10 @@ class StickyNoteItem(QGraphicsWidget):
         return bg, border, txt
 
     def boundingRect(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         m = 6
         return QRectF(-m, -m, self.size().width() + 2*m, self.size().height() + 2*m)
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         painter.setRenderHint(QPainter.Antialiasing)
         w, h = self.size().width(), self.size().height()
         body = QRectF(0, 0, w, h)
@@ -2806,24 +2333,12 @@ class StickyNoteItem(QGraphicsWidget):
                          Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, self._text)
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._hovered = True; self.update(); super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self._hovered = False; self.update(); super().hoverLeaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         from PySide6.QtWidgets import QInputDialog
         parent_widget = None
         if self.scene() and self.scene().views():
@@ -2840,10 +2355,6 @@ class StickyNoteItem(QGraphicsWidget):
         super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.RightButton:
             self._show_context_menu(event.screenPos())
             return
@@ -2854,10 +2365,6 @@ class StickyNoteItem(QGraphicsWidget):
         super().mousePressEvent(event)
 
     def _show_context_menu(self, global_pos):
-        """
-        Args:
-            global_pos (Any): The global pos.
-        """
         menu = QMenu()
         menu.setStyleSheet(NodeItem._ctx_menu_style())
 
@@ -2899,18 +2406,10 @@ class StickyNoteItem(QGraphicsWidget):
         menu.exec(global_pos)
 
     def _set_color(self, index):
-        """
-        Args:
-            index (Any): Row or item index.
-        """
         self._color_index = index
         self.update()
 
     def _set_font_size(self, size):
-        """
-        Args:
-            size (Any): Size value.
-        """
         self._font_size = size
         fm = QFontMetrics(QFont(DS.FONT_FAMILY, size))
         lines = max(2, self._text.count("\n") + 1 +
@@ -2928,11 +2427,6 @@ class StickyNoteItem(QGraphicsWidget):
 
 class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     def __init__(self, wf, pw=None):
-        """
-        Args:
-            wf (Any): The wf.
-            pw (Any): The pw.
-        """
         super().__init__(wf)
         self.parent_window = pw
         wf.configuration_changed.connect(self.update)
@@ -2949,12 +2443,6 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         self.hover_pos = None
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         wf = self.workflow_node
         badge, bc = "", None
         if wf.selected_samples:
@@ -2980,10 +2468,6 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             self.workflow_node.configure(self.parent_window)
 
     def _build_tooltip_lines(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         wf = self.workflow_node
         lines = ["Multi-Sample"]
         if wf.selected_samples:
@@ -3023,29 +2507,17 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         tw.raise_()
 
     def hoverEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().hoverEnterEvent(event)
         self.hover_pos = event.screenPos()
         self.hover_timer.start(400)
 
     def hoverMoveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         super().hoverMoveEvent(event)
         self.hover_pos = event.screenPos()
         if not self._tooltip_widget.isVisible():
             self.hover_timer.start(400)
 
     def hoverLeaveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.hover_timer.stop()
         self._tooltip_widget.hide()
         super().hoverLeaveEvent(event)
@@ -3054,23 +2526,12 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
 class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     """Globe / multi-window icon."""
     def __init__(self, wf, pw=None):
-        """
-        Args:
-            wf (Any): The wf.
-            pw (Any): The pw.
-        """
         super().__init__(wf)
         self.parent_window = pw
         wf.configuration_changed.connect(self.update)
         wf.configuration_changed.connect(self._trigger)
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         wf = self.workflow_node
         badge, bc = "", None
         if wf.selected_windows:
@@ -3095,34 +2556,15 @@ class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             self.workflow_node.configure(self.parent_window)
 
 def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class):
-    """Factory: creates a circular icon node for each visualization type.
-    Args:
-        grad_colors (Any): The grad colors.
-        icon_name (Any): The icon name.
-        label (Any): Label text.
-        dialog_class (Any): The dialog class.
-    Returns:
-        object: Result of the operation.
-    """
+    """Factory: creates a circular icon node for each visualization type."""
 
     class VizIconNodeItem(NodeItem):
         def __init__(self, wf, pw=None):
-            """
-            Args:
-                wf (Any): The wf.
-                pw (Any): The pw.
-            """
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
 
         def paint(self, painter, option, widget=None):
-            """
-            Args:
-                painter (Any): QPainter instance.
-                option (Any): The option.
-                widget (Any): Target widget.
-            """
             self.paint_icon_node(painter, grad_colors, icon_name, label)
 
         def configure_node(self):
@@ -3205,22 +2647,11 @@ DashboardNodeItem = _make_viz_icon_node(
 class AIAssistantNodeItem(NodeItem):
     """AI sparkle icon."""
     def __init__(self, wf, pw=None):
-        """
-        Args:
-            wf (Any): The wf.
-            pw (Any): The pw.
-        """
         super().__init__(wf)
         self.parent_window = pw
         wf.configuration_changed.connect(self.update)
 
     def paint(self, painter, option, widget=None):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            option (Any): The option.
-            widget (Any): Target widget.
-        """
         st = "✓" if self.workflow_node.input_data else ""
         sc = DS.SUCCESS if self.workflow_node.input_data else None
         self.paint_icon_node(
@@ -3239,13 +2670,6 @@ _PENDING_DRAG_NODE_TYPE = None
 class DraggableNodeButton(QPushButton):
 
     def __init__(self, text, node_type, icon_name=None, color=None):
-        """
-        Args:
-            text (Any): Text string.
-            node_type (Any): The node type.
-            icon_name (Any): The icon name.
-            color (Any): Colour value.
-        """
         super().__init__(text)
         self.node_type = node_type
         self._icon_name = icon_name
@@ -3279,38 +2703,29 @@ class DraggableNodeButton(QPushButton):
         """)
 
     def mousePressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.LeftButton:
             ual = _ual()
             if ual:
                 ual.log_action('CLICK',
                                f'Dragged node from palette: {self.text().strip()}',
                                {'node_type': self.node_type})
-            drag = QDrag(self)
-            mime = QMimeData()
-            mime.setText(self.node_type)
-            drag.setMimeData(mime)
+            self._drag = QDrag(self)
+            self._mime = QMimeData()
+            self._mime.setText(self.node_type)
+            self._drag.setMimeData(self._mime)
             px = self.grab()
-            drag.setPixmap(px)
-            drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
+            self._drag.setPixmap(px)
+            self._drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
             global _PENDING_DRAG_NODE_TYPE
             _PENDING_DRAG_NODE_TYPE = self.node_type
             try:
-                drag.exec_(Qt.CopyAction)
+                self._drag.exec_(Qt.CopyAction)
             finally:
                 _PENDING_DRAG_NODE_TYPE = None
         super().mousePressEvent(event)
 
 class _CollapsibleGroup(QWidget):
     def __init__(self, title, parent=None):
-        """
-        Args:
-            title (Any): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._expanded = True
         self._title = title
@@ -3348,10 +2763,6 @@ class _CollapsibleGroup(QWidget):
         """)
 
     def addWidget(self, w):
-        """
-        Args:
-            w (Any): The w.
-        """
         self._layout.addWidget(w)
 
     def toggle(self):
@@ -3364,10 +2775,6 @@ class _CollapsibleGroup(QWidget):
 class NodePalette(QWidget):
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.parent_window = parent_window
         self._all_buttons = []
@@ -3405,6 +2812,7 @@ class NodePalette(QWidget):
             ("Single Sample",    "sample_selector",          'fa6s.flask',           DS.INDIGO),
             ("Multiple Sample",  "multiple_sample_selector", 'fa6s.flask-vial',          DS.PURPLE),
             ("Batch Windows",    "batch_sample_selector",    'fa6s.window-restore',  DS.TEAL),
+            ("Particle Filter",  "particle_filter",          'fa6s.filter',          DS.TEAL),
         ]:
             b = DraggableNodeButton(txt, ntype, icon, color)
             dg.addWidget(b)
@@ -3488,10 +2896,6 @@ class NodePalette(QWidget):
                 f" border-top: 1px solid {p.border};"
             )
     def _filter(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        """
         q = text.lower()
         for btn, name in self._all_buttons:
             btn.setVisible(q in name.lower())
@@ -3501,10 +2905,6 @@ class EnhancedCanvasScene(QGraphicsScene):
     node_selection_changed = Signal(int)
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.parent_window = parent_window
         self.dragging_connection = False
@@ -3527,10 +2927,6 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.node_selection_changed.emit(n)
 
     def keyPressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.key() == Qt.Key_Z and (event.modifiers() & Qt.ControlModifier):
             self.undo()
         elif event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
@@ -3585,10 +2981,6 @@ class EnhancedCanvasScene(QGraphicsScene):
             self.removeItem(note)
 
     def delete_node(self, ni):
-        """
-        Args:
-            ni (Any): The ni.
-        """
         if not isinstance(ni, NodeItem):
             return
         wn = ni.workflow_node
@@ -3609,10 +3001,6 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.removeItem(ni)
 
     def delete_link(self, li):
-        """
-        Args:
-            li (Any): The li.
-        """
         if not isinstance(li, LinkItem):
             return
         wl = li.workflow_link
@@ -3641,12 +3029,6 @@ class EnhancedCanvasScene(QGraphicsScene):
                 d.setSelected(True)
 
     def duplicate_node(self, ni):
-        """
-        Args:
-            ni (Any): The ni.
-        Returns:
-            object: Result of the operation.
-        """
         import copy
         wf = ni.workflow_node
         factory = _NODE_FACTORIES.get(wf.node_type)
@@ -3656,12 +3038,13 @@ class EnhancedCanvasScene(QGraphicsScene):
         for attr in ('config', 'selected_sample', 'selected_isotopes',
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
+                     'sample_filters', 'selected_sources', 'merged_name',
                      'saved_cluster_state'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
-                except:
-                    pass
+                except Exception:
+                    _itk_log.exception("Handled exception in duplicate_node")
         pos = ni.pos() + QPointF(DS.NODE_W + 30, 20)
         _, item = self.add_node(new_wf, pos)
         ual = _ual()
@@ -3677,13 +3060,6 @@ class EnhancedCanvasScene(QGraphicsScene):
                 i.setSelected(True)
 
     def add_node(self, wf_node, pos):
-        """
-        Args:
-            wf_node (Any): The wf node.
-            pos (Any): Position point.
-        Returns:
-            tuple: Result of the operation.
-        """
         wf_node.set_position(pos)
         self.workflow_nodes.append(wf_node)
         item_cls = _NODE_ITEM_MAP.get(wf_node.node_type, NodeItem)
@@ -3704,15 +3080,6 @@ class EnhancedCanvasScene(QGraphicsScene):
         return wf_node, ni
 
     def add_link(self, src_node, src_ch, snk_node, snk_ch):
-        """
-        Args:
-            src_node (Any): The src node.
-            src_ch (Any): The src ch.
-            snk_node (Any): The snk node.
-            snk_ch (Any): The snk ch.
-        Returns:
-            None
-        """
         for lk in self.workflow_links:
             if (lk.source_node == src_node and lk.sink_node == snk_node
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
@@ -3749,22 +3116,16 @@ class EnhancedCanvasScene(QGraphicsScene):
         return None
 
     def _trigger_data_flow(self, wl):
-        """
-        Args:
-            wl (Any): The wl.
-        """
         try:
             data = wl.get_data()
             if hasattr(wl.sink_node, 'process_data'):
                 wl.sink_node.process_data(data)
         except Exception as e:
-            print(f"Data flow error: {e}")
+            _itk_log.exception("Handled exception in _trigger_data_flow")
+            _itk_log.error(f"Data flow error: {e}")
 
     def contextMenuEvent(self, event):
-        """Right-click on empty canvas space → canvas context menu.
-        Args:
-            event (Any): Qt event object.
-        """
+        """Right-click on empty canvas space → canvas context menu."""
         items = self.items(event.scenePos())
         if any(isinstance(i, (NodeItem, LinkItem, StickyNoteItem)) for i in items):
             super().contextMenuEvent(event)
@@ -3786,10 +3147,6 @@ class EnhancedCanvasScene(QGraphicsScene):
             self.undo()
 
     def mousePressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.LeftButton:
             item = self.itemAt(event.scenePos(), self.views()[0].transform() if self.views() else QTransform())
             cur = item
@@ -3801,10 +3158,6 @@ class EnhancedCanvasScene(QGraphicsScene):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self.dragging_connection and self.temp_link_item:
             if self.temp_link_item.sink_anchor:
                 self.temp_link_item.sink_anchor.setPos(event.scenePos())
@@ -3812,21 +3165,12 @@ class EnhancedCanvasScene(QGraphicsScene):
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self.dragging_connection:
             self._end_drag(event.scenePos())
         else:
             super().mouseReleaseEvent(event)
 
     def _start_drag(self, anchor, pos):
-        """
-        Args:
-            anchor (Any): The anchor.
-            pos (Any): Position point.
-        """
         self.dragging_connection = True
         self.drag_start_anchor = anchor
         self.temp_link_item = LinkItem()
@@ -3839,10 +3183,6 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.addItem(self.temp_link_item)
 
     def _end_drag(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.temp_link_item:
             if self.temp_link_item.sink_anchor:
                 self.removeItem(self.temp_link_item.sink_anchor)
@@ -3873,10 +3213,6 @@ class EnhancedCanvasView(QGraphicsView):
     zoom_changed = Signal(float)
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.parent_window = parent_window
         self.scene = EnhancedCanvasScene(parent_window)
@@ -3910,13 +3246,13 @@ class EnhancedCanvasView(QGraphicsView):
         try:
             self._apply_view_theme()
         except RuntimeError:
-            pass
+            _itk_log.exception("Handled exception in _safe_apply_view_theme")
 
     def _view_disconnect_theme(self):
         try:
             _app_theme.themeChanged.disconnect(self._view_theme_handler)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _view_disconnect_theme")
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence.Delete, self).activated.connect(
@@ -3931,10 +3267,6 @@ class EnhancedCanvasView(QGraphicsView):
             self.scene.undo)
 
     def wheelEvent(self, event: QWheelEvent):
-        """
-        Args:
-            event (QWheelEvent): Qt event object.
-        """
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
         new_zoom = self._zoom * factor
         if 0.15 < new_zoom < 5.0:
@@ -3943,10 +3275,6 @@ class EnhancedCanvasView(QGraphicsView):
             self.zoom_changed.emit(self._zoom)
 
     def set_zoom(self, value):
-        """
-        Args:
-            value (Any): Value to set or process.
-        """
         factor = value / self._zoom
         self._zoom = value
         self.scale(factor, factor)
@@ -3961,10 +3289,6 @@ class EnhancedCanvasView(QGraphicsView):
         self.zoom_changed.emit(self._zoom)
 
     def mousePressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.MiddleButton:
             self._panning = True
             self._pan_start = event.pos()
@@ -3973,10 +3297,6 @@ class EnhancedCanvasView(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._panning:
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
@@ -3988,10 +3308,6 @@ class EnhancedCanvasView(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if event.button() == Qt.MiddleButton:
             self._panning = False
             self.setCursor(Qt.ArrowCursor)
@@ -3999,11 +3315,6 @@ class EnhancedCanvasView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def drawBackground(self, painter, rect):
-        """
-        Args:
-            painter (Any): QPainter instance.
-            rect (Any): Rectangle geometry.
-        """
         p = _app_theme.palette
         painter.fillRect(rect, QColor(p.bg_primary))
 
@@ -4024,6 +3335,39 @@ class EnhancedCanvasView(QGraphicsView):
                 x += gs
             y += gs
 
+    def drawForeground(self, painter, rect):
+        """Draw a centered hint while the canvas has no result blocks yet."""
+        super().drawForeground(painter, rect)
+        try:
+            scene = self.scene
+            if getattr(scene, 'workflow_nodes', None):
+                return
+            if any(isinstance(i, (NodeItem, StickyNoteItem)) for i in scene.items()):
+                return
+            p = _app_theme.palette
+            center = self.mapToScene(self.viewport().rect().center())
+            cx, cy = center.x(), center.y()
+            painter.save()
+            painter.setPen(QPen(QColor(p.text_secondary)))
+            f = painter.font()
+            f.setPointSize(15)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.drawText(
+                QRectF(cx - 240, cy - 30, 480, 30),
+                Qt.AlignCenter, "Drag a result block onto the canvas to begin")
+            f.setPointSize(11)
+            f.setBold(False)
+            painter.setFont(f)
+            painter.setPen(QPen(QColor(p.text_muted)))
+            painter.drawText(
+                QRectF(cx - 240, cy + 4, 480, 24),
+                Qt.AlignCenter,
+                "Choose a visualization from the panel on the left, then connect a sample")
+            painter.restore()
+        except Exception:
+            _itk_log.debug("canvas empty hint skipped")
+
     def _drag_node_type(self, event):
         """Return the node type carried by a drag/drop event, or None.
 
@@ -4032,9 +3376,6 @@ class EnhancedCanvasView(QGraphicsView):
         guarded because PySide6 can hand back a wrapper of the wrong type
         here; letting that raise inside the event handler leaves Qt's drag
         state half-initialised ("drag leave received before drag enter").
-
-        Args:
-            event (Any): The drag or drop event.
 
         Returns:
             str | None: The dragged node type, or None if not a node drag.
@@ -4048,34 +3389,22 @@ class EnhancedCanvasView(QGraphicsView):
                     if text:
                         return text
             except (AttributeError, RuntimeError):
-                pass
+                _itk_log.exception("Handled exception in _drag_node_type")
         return _PENDING_DRAG_NODE_TYPE
 
     def dragEnterEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._drag_node_type(event):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         if self._drag_node_type(event):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         ntype = self._drag_node_type(event)
         if not ntype:
             event.ignore()
@@ -4093,18 +3422,18 @@ class EnhancedCanvasView(QGraphicsView):
             event.ignore()
 
     def keyPressEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         self.scene.keyPressEvent(event)
         super().keyPressEvent(event)
+
+
+ParticleFilterNodeItem = build_particle_filter_node_item()
 
 
 _NODE_FACTORIES = {
     "sample_selector":              SampleSelectorNode,
     "multiple_sample_selector":     MultipleSampleSelectorNode,
     "batch_sample_selector":        BatchSampleSelectorNode,
+    "particle_filter":              ParticleFilterNode,
     "histogram_plot":               HistogramPlotNode,
     "element_bar_chart_plot":       ElementBarChartPlotNode,
     "correlation_plot":             CorrelationPlotNode,
@@ -4128,6 +3457,7 @@ _NODE_ITEM_MAP = {
     "sample_selector":              SampleSelectorNodeItem,
     "multiple_sample_selector":     MultipleSampleSelectorNodeItem,
     "batch_sample_selector":        BatchSampleSelectorNodeItem,
+    "particle_filter":              ParticleFilterNodeItem,
     "histogram_plot":               HistogramPlotNodeItem,
     "element_bar_chart_plot":       ElementBarChartPlotNodeItem,
     "correlation_plot":             CorrelationPlotNodeItem,
@@ -4151,10 +3481,6 @@ _NODE_ITEM_MAP = {
 class CanvasResultsDialog(QDialog):
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.parent = parent
         self.setWindowTitle("IsotopeTrack — Workflow Builder")
@@ -4256,14 +3582,11 @@ class CanvasResultsDialog(QDialog):
             QPushButton:hover {{ background: {DS.ACCENT_HOVER}; }}
         """)
         back.clicked.connect(_close_and_log)
-    
-        # The Insights button is inserted between the separator and Clear All.
-        # We create it after the splitter so we can pass the splitter reference.
-        # Use a placeholder slot that will be replaced below.
+
         self._insights_placeholder = QPushButton("✦  Insights")
         self._insights_placeholder.setFixedHeight(30)
         self._insights_placeholder.setStyleSheet(self._tool_btn_style())
-        hl.addWidget(self._insights_placeholder)   # temporary
+        hl.addWidget(self._insights_placeholder)  
     
         hl.addWidget(clr)
         hl.addWidget(back)
@@ -4318,10 +3641,6 @@ class CanvasResultsDialog(QDialog):
         
 
     def _update_sel(self, count):
-        """
-        Args:
-            count (Any): The count.
-        """
         if count:
             self.sel_label.setText(f"{count} node{'s' if count > 1 else ''} selected")
         else:
@@ -4329,10 +3648,6 @@ class CanvasResultsDialog(QDialog):
 
     @staticmethod
     def _tool_btn_style():
-        """
-        Returns:
-            object: Result of the operation.
-        """
         p = _app_theme.palette
         return f"""
             QPushButton {{
@@ -4358,9 +3673,5 @@ class CanvasResultsDialog(QDialog):
 
 
 def show_canvas_results(parent_window):
-    """
-    Args:
-        parent_window (Any): The parent window.
-    """
     dialog = CanvasResultsDialog(parent_window)
     dialog.exec_()

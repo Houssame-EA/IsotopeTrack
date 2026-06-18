@@ -8,7 +8,7 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, calibration_results, selected_methods, method_preferences = Non` | Initialize the calibration information dialog. |
+| `__init__` | `(self, calibration_results, selected_methods, method_preferences=None,` | Initialize the calibration information dialog. |
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
 | `closeEvent` | `(self, event)` | Args: |
 | `get_modern_stylesheet` | `(self)` | Stylesheet parameterized on the active theme palette. |
@@ -30,9 +30,9 @@
 | `populate_ionic_calibration_table` | `(self)` |  |
 | `_apply_ionic_row_tints` | `(self)` | Apply theme-aware row tints to the ionic calibration table. |
 | `_repaint_rows_for_theme` | `(self)` | Re-apply row tints after a theme change. |
-| `create_item` | `(self, value, editable = True)` | Args: |
+| `create_item` | `(self, value, editable=True)` | Args: |
 | `create_scientific_item` | `(self, value)` | Args: |
-| `create_decimal_item` | `(self, value, decimals = 2)` | Args: |
+| `create_decimal_item` | `(self, value, decimals=2)` | Args: |
 | `create_quality_item` | `(self, r_squared)` | Args: |
 | `create_status_item` | `(self, r_squared, method_data, limit_data)` | Args: |
 | `filter_ionic_table` | `(self)` |  |

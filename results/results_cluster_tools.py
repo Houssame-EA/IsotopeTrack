@@ -46,16 +46,20 @@ from sklearn.metrics import (
     normalized_mutual_info_score, fowlkes_mallows_score,
     homogeneity_completeness_v_measure,
 )
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster_tools")
 
 try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
     _HDBSCAN_OK = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     try:
         import hdbscan as _hm
         _HDBSCAN_CLS = _hm.HDBSCAN
         _HDBSCAN_OK = True
     except ImportError:
+        _itk_log.debug("Handled exception in <module>")
         _HDBSCAN_CLS = None
         _HDBSCAN_OK = False
 
@@ -465,9 +469,6 @@ def parse_components(text):
     capital-letter boundaries).  ``Name=El1+El2`` gives an explicit label; for a
     fused token the label is kept exactly as typed.
 
-    Args:
-        text (str): The raw component string.
-
     Returns:
         list[tuple[str, list[str]]]: Ordered component definitions.
     """
@@ -797,8 +798,10 @@ def run_algorithm(name, params, data, som_runner=None):
             try:
                 return som_runner(k, data, som_params)
             except TypeError:
+                _itk_log.exception("Handled exception in run_algorithm")
                 return som_runner(k, data)
     except Exception:
+        _itk_log.exception("Handled exception in run_algorithm")
         return None
     return None
 
@@ -981,6 +984,7 @@ def run_sweep(particle_data, elements, components, *,
         try:
             data = pre.matrix(dt, sc, dr)
         except Exception:
+            _itk_log.exception("Handled exception in run_sweep")
             for a, s in algo_selections.items():
                 n_grid = len(build_param_grid(a, s))
                 done += n_grid
@@ -1035,6 +1039,7 @@ def run_sweep(particle_data, elements, components, *,
                     try:
                         row[m] = EXTERNAL_METRICS[m]['func'](truth_labels, labels)
                     except Exception:
+                        _itk_log.exception("Handled exception in run_sweep")
                         row[m] = float('nan')
                 for m in internal_metrics:
                     spec = METRIC_REGISTRY.get(m)
@@ -1048,6 +1053,7 @@ def run_sweep(particle_data, elements, components, *,
                         else:
                             row[m] = CVI_FUNCS[spec['key']](data[mask], labels[mask])
                     except Exception:
+                        _itk_log.exception("Handled exception in run_sweep")
                         row[m] = float('nan')
                 results.append(row)
             if cancelled:
@@ -1407,6 +1413,7 @@ def per_cluster_silhouette(data, labels):
     try:
         sample_sil = silhouette_samples(data[mask], labels[mask])
     except Exception:
+        _itk_log.exception("Handled exception in per_cluster_silhouette")
         return {}
     out = {}
     masked_labels = labels[mask]
@@ -1423,9 +1430,10 @@ try:
         QComboBox, QTabWidget, QMessageBox, QFileDialog, QAbstractItemView,
     )
     from PySide6.QtCore import Qt, Signal, QThread
-    from PySide6.QtGui import QColor, QFont
+    from PySide6.QtGui import QColor
     _QT_OK = True
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     _QT_OK = False
 
 
@@ -1616,6 +1624,7 @@ if _QT_OK:
                                 **self._kwargs)
                 self.done.emit(res)
             except Exception as exc:
+                _itk_log.exception("Handled exception in run")
                 self.failed.emit(str(exc))
 
     class CustomClusterTestDialog(QDialog):
@@ -2199,6 +2208,7 @@ if _QT_OK:
                                        som_runner=self._som_runner)
                 return data, labels
             except Exception:
+                _itk_log.exception("Handled exception in _labels_for_row")
                 return None, None
 
         def _on_row_selected(self):
@@ -2305,7 +2315,7 @@ if _QT_OK:
             try:
                 self.node.configuration_changed.emit()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _apply_config")
 
         def _prepare_host_for_cluster(self, result):
             """Set the host's K and enable Cluster/Bootstrap without evaluation.
@@ -2313,9 +2323,6 @@ if _QT_OK:
             This removes the requirement to run K-evaluation first: the chosen K
             is pushed into the host's combo and the trigger buttons are enabled,
             so the host's own Cluster button works directly.
-
-            Args:
-                result (dict): The applied result row.
 
             Returns:
                 bool: True if the host was prepared successfully.
@@ -2340,6 +2347,7 @@ if _QT_OK:
                     host.bs_btn.setEnabled(True)
                 return True
             except Exception:
+                _itk_log.exception("Handled exception in _prepare_host_for_cluster")
                 return False
 
         def _host_cluster(self):
@@ -2348,6 +2356,7 @@ if _QT_OK:
                 self.host._run_clustering()
                 return True
             except Exception:
+                _itk_log.exception("Handled exception in _host_cluster")
                 return False
 
         def _host_bootstrap(self):
@@ -2459,7 +2468,7 @@ if _QT_OK:
                 try:
                     self.node._cluster_test_state = self._collect_state()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _save_state")
 
         def _restore_state(self):
             """Restore setup and results from the node, if any were saved."""
@@ -2497,7 +2506,7 @@ if _QT_OK:
                 if self._last:
                     self._show_results(self._last)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _restore_state")
 
         def _set_axis(self, boxes, values):
             """Check exactly the boxes whose option appears in ``values``."""
@@ -2520,7 +2529,7 @@ if _QT_OK:
                 try:
                     self.node._cluster_test_state = None
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _clear_data")
             self.table.setRowCount(0)
             self.detail_table.setRowCount(0)
             self.trust_table.setRowCount(0)
@@ -2550,7 +2559,7 @@ if _QT_OK:
         try:
             btn.setStyleSheet(host_dialog._btn_style("#2D839A"))
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in attach_to_dialog")
 
         def _open():
             """Open the custom-test dialog wired to the host's data and SOM."""
@@ -2572,5 +2581,5 @@ if _QT_OK:
                 idx = lay.indexOf(export)
                 lay.insertWidget(max(idx, 0), btn)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in attach_to_dialog")
         return btn

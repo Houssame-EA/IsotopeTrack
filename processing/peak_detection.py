@@ -9,6 +9,10 @@ import os
 from functools import lru_cache
 from scipy.stats import poisson
 from scipy.signal import find_peaks
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.processing.peak_detection")
+from tools.logging_utils import log_context
+from processing import detection_registry
 
 os.environ['NUMBA_THREADING_LAYER'] = 'safe'
 
@@ -17,41 +21,24 @@ try:
     config.THREADING_LAYER = 'safe'
     NUMBA_AVAILABLE = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     NUMBA_AVAILABLE = False
-    print("numba not available - install with 'pip install numba'")
+    _itk_log.error("numba not available - install with 'pip install numba'")
     def jit(*args, **kwargs):
-        """
-        Args:
-            *args (Any): Additional positional arguments.
-            **kwargs (Any): Additional keyword arguments.
-        Returns:
-            object: Result of the operation.
-        """
         def decorator(func):
-            """
-            Args:
-                func (Any): Callable to invoke.
-            Returns:
-                object: Result of the operation.
-            """
             return func
         return decorator
     def prange(x):
-        """
-        Args:
-            x (Any): Input array or value.
-        Returns:
-            object: Result of the operation.
-        """
         return range(x)
 
 try:
     from scipy.ndimage import uniform_filter1d
-    from scipy.interpolate import interp1d, RegularGridInterpolator
+    from scipy.interpolate import RegularGridInterpolator
     SCIPY_AVAILABLE = True
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     SCIPY_AVAILABLE = False
-    print("scipy not available - using fallback smoothing")
+    _itk_log.error("scipy not available - using fallback smoothing")
 
 from scipy import stats, special
 from numba import jit
@@ -377,8 +364,9 @@ class CompoundPoissonLognormal:
                 quantile, lambda_bkgd, mu, sigma
             )
             return float(threshold)
-        except Exception as e:
-            print(f"Lognormal approximation error: {e}, using simple approximation")
+        except (ArithmeticError, ValueError) as e:
+            _itk_log.exception("Handled exception in get_threshold")
+            _itk_log.error(f"Lognormal approximation error: {e}, using simple approximation")
             return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
 
 
@@ -417,8 +405,9 @@ class CompoundPoissonLognormalOptimized:
             result = float(threshold)
             self._threshold_cache[cache_key] = result
             return result
-        except Exception as e:
-            print(f"Lognormal approximation error: {e}, using simple approximation")
+        except (ArithmeticError, ValueError) as e:
+            _itk_log.exception("Handled exception in get_threshold")
+            _itk_log.error(f"Lognormal approximation error: {e}, using simple approximation")
             result = lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
             self._threshold_cache[cache_key] = result
             return result
@@ -464,11 +453,6 @@ class CompoundPoissonLognormaltable:
     _lut_cache: dict = {}
 
     def __init__(self, lut_path: str | None = None):
-        """
-        Args:
-            lut_path (str | None): Path to cpln_quantiles.npz.
-                Defaults to cpln_quantiles.npz in the same directory as this file.
-        """
         self._ready   = False
         self._interp  = None
         self._lam_min = 0.0
@@ -497,7 +481,7 @@ class CompoundPoissonLognormaltable:
             return
 
         if not os.path.isfile(path):
-            print(f"[CompoundPoissonLognormaltable] Table not found at {path} — "
+            _itk_log.warning(f"[CompoundPoissonLognormaltable] Table not found at {path} — "
                   f"using fallback (CompoundPoissonLognormalOptimized).")
             return
 
@@ -530,8 +514,9 @@ class CompoundPoissonLognormaltable:
                 self._sig_min, self._sig_max,
                 self._y_min,   self._y_max,
             )
-        except Exception as exc:
-            print(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
+        except (OSError, ValueError, KeyError, EOFError) as exc:
+            _itk_log.exception("Handled exception in _load_table")
+            _itk_log.error(f"[CompoundPoissonLognormaltable] Failed to load table: {exc} "
                   f"— using fallback.")
 
     def get_threshold(self, lambda_bkgd: float, alpha: float, sigma: float = 0.55) -> float:
@@ -578,8 +563,9 @@ class CompoundPoissonLognormaltable:
             if np.isnan(result) or result < 0.0:
                 return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
             return result
-        except Exception as exc:
-            print(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
+        except (ValueError, ArithmeticError, IndexError) as exc:
+            _itk_log.exception("Handled exception in get_threshold")
+            _itk_log.error(f"[CompoundPoissonLognormaltable] interp failed, falling back: {exc}")
             return self._fallback.get_threshold(lambda_bkgd, alpha, sigma)
 
     def clear_cache(self) -> None:
@@ -779,17 +765,8 @@ class PeakDetection:
     @jit(nopython=True, nogil=True)
     def _find_particles_numba_dynamic(raw_signal, threshold_arr, lambda_bkgd_arr,
                                       min_continuous_points, integration_level_arr):
-        """
-        JIT-compiled particle detection for dynamic array thresholds (window)
+        """JIT-compiled particle detection for dynamic array thresholds (window)
         with configurable integration baseline array.
-        Args:
-            raw_signal (Any): The raw signal.
-            threshold_arr (Any): The threshold arr.
-            lambda_bkgd_arr (Any): The lambda bkgd arr.
-            min_continuous_points (Any): The min continuous points.
-            integration_level_arr (Any): The integration level arr.
-        Returns:
-            tuple: Result of the operation.
         """
         n = len(raw_signal)
         particles_start = []
@@ -872,7 +849,7 @@ class PeakDetection:
         """
         overall_mean_signal = np.mean(signal)
 
-        if method == "Manual":
+        if detection_registry.get(method).is_manual:
             threshold = manual_threshold
             if use_window_size:
                 lambda_bkgd = self._rolling_background(signal, threshold, window_size)
@@ -970,15 +947,8 @@ class PeakDetection:
         }
 
     def _rolling_background(self, signal, threshold, window_size):
-        """
-        Calculates a dynamic rolling background excluding peaks above threshold.
+        """Calculates a dynamic rolling background excluding peaks above threshold.
         Uses uniform_filter1d — O(n) regardless of window_size.
-        Args:
-            signal (Any): The signal.
-            threshold (Any): The threshold.
-            window_size (Any): The window size.
-        Returns:
-            object: Result of the operation.
         """
         valid_mask = signal < threshold
         valid_signal = signal * valid_mask
@@ -990,33 +960,11 @@ class PeakDetection:
         return local_bg[:len(signal)]
 
     def _calculate_array_threshold(self, lambda_bkgd_array, method, alpha, sigma=0.55):
-        """
-        Fast threshold calculation for moving window arrays.
+        """Fast threshold calculation for moving window arrays.
         Adaptive interpolation grid size.
-        Args:
-            lambda_bkgd_array (Any): The lambda bkgd array.
-            method (Any): The method.
-            alpha (Any): The alpha.
-            sigma (Any): Standard deviation (sigma) value.
-        Returns:
-            object: Result of the operation.
         """
-        if method in ["Manual"]:
-            return self._calculate_single_threshold(lambda_bkgd_array, method, alpha, sigma)
-        elif method in ["Compound Poisson LogNormal", "CPLN table"]:
-            min_bg = np.min(lambda_bkgd_array)
-            max_bg = np.max(lambda_bkgd_array)
-            if min_bg == max_bg:
-                single_thresh = self._calculate_single_threshold(min_bg, method, alpha, sigma)
-                return np.full_like(lambda_bkgd_array, single_thresh)
-            n_eval = min(30, max(5, int((max_bg - min_bg) / 0.5)))
-            eval_bg = np.linspace(min_bg, max_bg, n_eval)
-            eval_thresh = np.array([
-                self._calculate_single_threshold(bg, method, alpha, sigma) for bg in eval_bg
-            ])
-            return np.interp(lambda_bkgd_array, eval_bg, eval_thresh)
-        else:
-            return lambda_bkgd_array + 3.0 * np.sqrt(np.maximum(lambda_bkgd_array, 1))
+        return detection_registry.get(method).array_threshold(
+            self, lambda_bkgd_array, alpha, sigma)
 
     def _calculate_single_threshold(self, lambda_bkgd, method, alpha, sigma=0.55):
         """
@@ -1032,12 +980,7 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "CPLN table":
-            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma)
-        elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        else:
-            return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
+        return detection_registry.get(method).single_threshold(self, lambda_bkgd, alpha, sigma)
 
     @lru_cache(maxsize=512)
     def _cached_threshold_calculation(self, lambda_bkgd, method, alpha, isotope_key):
@@ -1053,12 +996,7 @@ class PeakDetection:
         Returns:
             float: Calculated threshold
         """
-        if method == "CPLN table":
-            return self.compound_poisson_lognormal_lut.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        elif method == "Compound Poisson LogNormal":
-            return self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=0.55)
-        else:
-            return lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
+        return detection_registry.get(method).single_threshold(self, lambda_bkgd, alpha, 0.55)
 
     def calculate_thresholds_batch_safe(self, signals_dict, params_dict,
                                         method_groups=None, isotope_mapping=None):
@@ -1101,52 +1039,47 @@ class PeakDetection:
                 isotope_key = (isotope_mapping.get(element_key, element_key)
                                if isotope_mapping else element_key)
 
-                try:
-                    threshold_data = self.calculate_iterative_threshold(
-                        signal=signal,
-                        method=method,
-                        alpha=alpha,
-                        max_iters=max_iters,
-                        manual_threshold=manual_threshold,
-                        element_key=isotope_key,
-                        sigma=sigma,
-                        use_window_size=use_window_size,
-                        window_size=window_size,
-                    )
-                    threshold_data['isotope_key'] = isotope_key
-                    threshold_data['iterative_used'] = use_iterative
-                    all_threshold_data[element_key] = threshold_data
+                with log_context(element=element_key, method=method, isotope=isotope_key):
+                    try:
+                        threshold_data = self.calculate_iterative_threshold(
+                            signal=signal,
+                            method=method,
+                            alpha=alpha,
+                            max_iters=max_iters,
+                            manual_threshold=manual_threshold,
+                            element_key=isotope_key,
+                            sigma=sigma,
+                            use_window_size=use_window_size,
+                            window_size=window_size,
+                        )
+                        threshold_data['isotope_key'] = isotope_key
+                        threshold_data['iterative_used'] = use_iterative
+                        all_threshold_data[element_key] = threshold_data
 
-                except Exception as e:
-                    print(f"Error calculating iterative threshold for {element_key} using {method}: {e}")
-                    working_signal = self.apply_window_size(signal, use_window_size, window_size)
-                    lambda_bkgd = np.mean(working_signal)
-                    threshold = lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
-                    all_threshold_data[element_key] = {
-                        'threshold': threshold,
-                        'background': lambda_bkgd,
-                        'LOD_counts': threshold,
-                        'LOD_MDL': max(0, threshold - lambda_bkgd),
-                        'iterations': 0,
-                        'convergence': 'fallback_due_to_error',
-                        'method_used': method,
-                        'isotope_key': isotope_key,
-                        'iterative_used': False,
-                        'window_applied': use_window_size,
-                        'window_size_used': window_size if use_window_size else None,
-                    }
+                    except (ArithmeticError, ValueError, KeyError) as e:
+                        _itk_log.exception("Handled exception in calculate_thresholds_batch_safe")
+                        _itk_log.error(f"Error calculating iterative threshold for {element_key} using {method}: {e}")
+                        working_signal = self.apply_window_size(signal, use_window_size, window_size)
+                        lambda_bkgd = np.mean(working_signal)
+                        threshold = lambda_bkgd + 3.0 * np.sqrt(lambda_bkgd)
+                        all_threshold_data[element_key] = {
+                            'threshold': threshold,
+                            'background': lambda_bkgd,
+                            'LOD_counts': threshold,
+                            'LOD_MDL': max(0, threshold - lambda_bkgd),
+                            'iterations': 0,
+                            'convergence': 'fallback_due_to_error',
+                            'method_used': method,
+                            'isotope_key': isotope_key,
+                            'iterative_used': False,
+                            'window_applied': use_window_size,
+                            'window_size_used': window_size if use_window_size else None,
+                        }
 
         return all_threshold_data
 
     def calculate_thresholds_batch(self, signals_dict, params_dict, method_groups=None):
-        """Wrapper for safe batch threshold processing.
-        Args:
-            signals_dict (Any): The signals dict.
-            params_dict (Any): The params dict.
-            method_groups (Any): The method groups.
-        Returns:
-            object: Result of the operation.
-        """
+        """Wrapper for safe batch threshold processing."""
         return self.calculate_thresholds_batch_safe(signals_dict, params_dict, method_groups)
 
     # ----------------------------------------------------------------------------------------------------------
@@ -1217,8 +1150,9 @@ class PeakDetection:
                     **kwargs)
             else:
                 return [(start_idx, end_idx)]
-        except Exception as exc:
-            print(f"split_peak_region ({split_method}) error: {exc}")
+        except (ValueError, IndexError, ArithmeticError) as exc:
+            _itk_log.exception("Handled exception in split_peak_region")
+            _itk_log.error(f"split_peak_region ({split_method}) error: {exc}")
             return [(start_idx, end_idx)]
 
 
@@ -1226,15 +1160,7 @@ class PeakDetection:
 
     @staticmethod
     def _split_no_split(signal, start_idx, end_idx, **kwargs):
-        """Baseline: return the region unchanged.
-        Args:
-            signal (Any): The signal.
-            start_idx (Any): The start idx.
-            end_idx (Any): The end idx.
-            **kwargs (Any): Additional keyword arguments.
-        Returns:
-            list: Result of the operation.
-        """
+        """Baseline: return the region unchanged."""
         return [(start_idx, end_idx)]
 
     # ── Method 2 — 1D Watershed ──────────────────────────────────────────────
@@ -1614,21 +1540,7 @@ class PeakDetection:
                        split_method="1D Watershed",
                        sigma=0.55,
                        min_valley_ratio=0.50):
-        """Wrapper for safe particle detection.
-        Args:
-            time (Any): The time.
-            raw_signal (Any): The raw signal.
-            lambda_bkgd (Any): The lambda bkgd.
-            threshold (Any): The threshold.
-            min_width (Any): The min width.
-            min_continuous_points (Any): The min continuous points.
-            integration_method (Any): The integration method.
-            split_method (Any): The split method.
-            sigma (Any): Standard deviation (sigma) value.
-            min_valley_ratio (Any): The min valley ratio.
-        Returns:
-            object: Result of the operation.
-        """
+        """Wrapper for safe particle detection."""
         return self.find_particles_safe(
             time, raw_signal, lambda_bkgd, threshold,
             min_width, min_continuous_points,
@@ -1643,13 +1555,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def process_single_sample_safe(self, main_window, sample_name):
-        """Threading-safe sample processing with iterative calculation.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            dict: Result of the operation.
-        """
+        """Threading-safe sample processing with iterative calculation."""
         try:
             local_data = main_window.data_by_sample[sample_name]
             local_time = main_window.time_array_by_sample[sample_name]
@@ -1695,43 +1601,45 @@ class PeakDetection:
                 sigma = params.get('sigma', 0.55)
                 min_valley_ratio = params.get('valley_ratio', 0.50)
 
-                try:
-                    detected_particles = self.find_particles_safe(
-                        local_time, signal,
-                        threshold_data['background'], threshold_data['threshold'],
-                        min_continuous_points=int(params['min_continuous']),
-                        integration_method=integration_method,
-                        split_method=split_method,
-                        sigma=sigma,
-                        min_valley_ratio=min_valley_ratio,
-                    )
+                with log_context(sample=sample_name, element=element, isotope=f"{isotope:.4f}"):
+                    try:
+                        detected_particles = self.find_particles_safe(
+                            local_time, signal,
+                            threshold_data['background'], threshold_data['threshold'],
+                            min_continuous_points=int(params['min_continuous']),
+                            integration_method=integration_method,
+                            split_method=split_method,
+                            sigma=sigma,
+                            min_valley_ratio=min_valley_ratio,
+                        )
 
-                    detected_peaks_for_sample[(element, isotope)] = detected_particles
-                    local_thresholds[element_key] = threshold_data
+                        detected_peaks_for_sample[(element, isotope)] = detected_particles
+                        local_thresholds[element_key] = threshold_data
 
-                    display_label = main_window.get_formatted_label(element_key)
-                    if detected_particles:
-                        all_particles.append({
-                            'element': element,
-                            'isotope': isotope,
-                            'signal': signal,
-                            'clusters': [(p['left_idx'], p['right_idx']) for p in detected_particles],
-                        })
-                        for particle in detected_particles:
-                            if particle is None:
-                                continue
-                            results_data.append([
-                                display_label,
-                                f"{local_time[particle['left_idx']]:.4f}",
-                                f"{local_time[particle['right_idx']]:.4f}",
-                                f"{particle['total_counts']:.0f}",
-                                f"{particle['max_height']:.0f}",
-                                f"{particle['SNR']:.2f}",
-                            ])
+                        display_label = main_window.get_formatted_label(element_key)
+                        if detected_particles:
+                            all_particles.append({
+                                'element': element,
+                                'isotope': isotope,
+                                'signal': signal,
+                                'clusters': [(p['left_idx'], p['right_idx']) for p in detected_particles],
+                            })
+                            for particle in detected_particles:
+                                if particle is None:
+                                    continue
+                                results_data.append([
+                                    display_label,
+                                    f"{local_time[particle['left_idx']]:.4f}",
+                                    f"{local_time[particle['right_idx']]:.4f}",
+                                    f"{particle['total_counts']:.0f}",
+                                    f"{particle['max_height']:.0f}",
+                                    f"{particle['SNR']:.2f}",
+                                ])
 
-                except Exception as e:
-                    print(f"Error processing {element}-{isotope}: {str(e)}")
-                    continue
+                    except (ValueError, KeyError, IndexError, ArithmeticError) as e:
+                        _itk_log.exception("Handled exception in process_single_sample_safe")
+                        _itk_log.error(f"Error processing {element}-{isotope}: {str(e)}")
+                        continue
 
             return {
                 'sample_name': sample_name,
@@ -1742,17 +1650,11 @@ class PeakDetection:
             }
 
         except Exception as e:
-            print(f"Error processing sample {sample_name}: {str(e)}")
+            _itk_log.exception("Handled exception in process_single_sample_safe")
+            _itk_log.error(f"Error processing sample {sample_name}: {str(e)}")
             return None
 
     def process_single_sample(self, main_window, sample_name):
-        """
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            object: Result of the operation.
-        """
         return self.process_single_sample_safe(main_window, sample_name)
 
     def detect_peaks_with_poisson(self, signal, alpha=0.000001,
@@ -1797,11 +1699,12 @@ class PeakDetection:
             lambda_bkgd = threshold_data['background']
             threshold = threshold_data['threshold']
 
-        except Exception as e:
+        except (ArithmeticError, ValueError, KeyError) as e:
+            _itk_log.exception("Handled exception in detect_peaks_with_poisson")
             working_signal = self.apply_window_size(signal, use_window_size, window_size)
             lambda_bkgd = np.mean(working_signal) if len(working_signal) > 0 else 0
 
-            if method == "Manual":
+            if detection_registry.get(method).is_manual:
                 threshold = manual_threshold
                 threshold_data = {
                     'threshold': threshold,
@@ -1813,7 +1716,7 @@ class PeakDetection:
                     'window_applied': use_window_size,
                     'window_size_used': window_size if use_window_size else None,
                 }
-            elif method == "Compound Poisson LogNormal":
+            elif detection_registry.get(method).id == "Compound Poisson LogNormal":
                 threshold = self.compound_poisson_lognormal.get_threshold(lambda_bkgd, alpha, sigma=sigma)
                 threshold_data = {
                     'threshold': threshold,
@@ -1834,10 +1737,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def detect_particles_incremental(self, main_window):
-        """Incremental particle detection for changed elements only.
-        Args:
-            main_window (Any): The main window.
-        """
+        """Incremental particle detection for changed elements only."""
         original_sample = main_window.current_sample
         overlay = None
 
@@ -1910,7 +1810,8 @@ class PeakDetection:
             )
 
         except Exception as e:
-            print(f"Error in incremental detect_particles: {str(e)}")
+            _itk_log.exception("Handled exception in detect_particles_incremental")
+            _itk_log.error(f"Error in incremental detect_particles: {str(e)}")
             import traceback
             traceback.print_exc()
             main_window.status_label.setText("Error during incremental detection")
@@ -1923,14 +1824,7 @@ class PeakDetection:
         main_window.unsaved_changes = True
 
     def process_sample_incremental(self, main_window, sample_name, changed_elements):
-        """Process only changed elements for a sample incrementally.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-            changed_elements (Any): The changed elements.
-        Returns:
-            dict: Result of the operation.
-        """
+        """Process only changed elements for a sample incrementally."""
         try:
             local_data = main_window.data_by_sample[sample_name]
             local_time = main_window.time_array_by_sample[sample_name]
@@ -2001,8 +1895,9 @@ class PeakDetection:
                                     f"{particle['SNR']:.2f}",
                                 ])
 
-                    except Exception as e:
-                        print(f"Error processing {element}-{isotope}: {str(e)}")
+                    except (ValueError, KeyError, IndexError, ArithmeticError) as e:
+                        _itk_log.exception("Handled exception in process_sample_incremental")
+                        _itk_log.error(f"Error processing {element}-{isotope}: {str(e)}")
                         continue
 
             for element, isotope, element_key in excluded_elements:
@@ -2026,17 +1921,12 @@ class PeakDetection:
             }
 
         except Exception as e:
-            print(f"Error in incremental processing for {sample_name}: {str(e)}")
+            _itk_log.exception("Handled exception in process_sample_incremental")
+            _itk_log.error(f"Error in incremental processing for {sample_name}: {str(e)}")
             return None
 
     def merge_detection_results(self, main_window, sample_name, new_results, changed_elements):
-        """Merge new detection results with existing results.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-            new_results (Any): The new results.
-            changed_elements (Any): The changed elements.
-        """
+        """Merge new detection results with existing results."""
         try:
             if sample_name not in main_window.sample_detected_peaks:
                 main_window.sample_detected_peaks[sample_name] = {}
@@ -2089,17 +1979,14 @@ class PeakDetection:
             )
             main_window.sample_particle_data[sample_name] = updated_multi_element_particles
 
-        except Exception as e:
-            print(f"Error merging results for {sample_name}: {str(e)}")
+        except (KeyError, ValueError, IndexError) as e:
+            _itk_log.exception("Handled exception in merge_detection_results")
+            _itk_log.error(f"Error merging results for {sample_name}: {str(e)}")
             import traceback
             traceback.print_exc()
 
     def update_current_sample_display(self, main_window, sample_name):
-        """Update display for currently selected sample.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        """
+        """Update display for currently selected sample."""
         if sample_name == main_window.current_sample:
             main_window.detected_peaks = main_window.sample_detected_peaks.get(sample_name, {})
             if sample_name in main_window.sample_particle_data:
@@ -2110,14 +1997,7 @@ class PeakDetection:
                 main_window.parameters_table_clicked(current_row, 0)
 
     def apply_window_size(self, signal, use_window_size, window_size):
-        """Apply window size limitation to signal if enabled.
-        Args:
-            signal (Any): The signal.
-            use_window_size (Any): The use window size.
-            window_size (Any): The window size.
-        Returns:
-            object: Result of the operation.
-        """
+        """Apply window size limitation to signal if enabled."""
         if not use_window_size or window_size <= 0:
             return signal
         signal_length = len(signal)
@@ -2128,13 +2008,7 @@ class PeakDetection:
         return signal[start_idx:end_idx]
 
     def get_changed_elements(self, main_window, sample_name):
-        """Determine which elements need reprocessing for a sample.
-        Args:
-            main_window (Any): The main window.
-            sample_name (Any): The sample name.
-        Returns:
-            tuple: Result of the operation.
-        """
+        """Determine which elements need reprocessing for a sample."""
         changed_elements = []
         new_file_elements = []
 
@@ -2173,20 +2047,7 @@ class PeakDetection:
                                         selected_isotopes, get_formatted_label_func,
                                         current_sample, element_thresholds, parameters_table,
                                         min_overlap_percentage=75.0):
-        """Process and identify multi-element particles.
-        Args:
-            all_particles (Any): The all particles.
-            time_array (Any): The time array.
-            sample_detected_peaks (Any): The sample detected peaks.
-            selected_isotopes (Any): The selected isotopes.
-            get_formatted_label_func (Any): The get formatted label func.
-            current_sample (Any): The current sample.
-            element_thresholds (Any): The element thresholds.
-            parameters_table (Any): The parameters table.
-            min_overlap_percentage (Any): The min overlap percentage.
-        Returns:
-            object: Result of the operation.
-        """
+        """Process and identify multi-element particles."""
         multi_element_particles = []
 
         included_elements = {}
@@ -2263,7 +2124,8 @@ class PeakDetection:
         all_ranges.sort(key=lambda x: x['start_time'])
 
         for range_data in all_ranges:
-            if not multi_element_particles or not self.is_overlapping(range_data, multi_element_particles[-1]):
+            if not multi_element_particles or not self.is_overlapping(
+                    range_data, multi_element_particles[-1], min_overlap_percentage):
                 multi_element_particles.append({
                     'start_time': range_data['start_time'],
                     'end_time': range_data['end_time'],
@@ -2280,13 +2142,15 @@ class PeakDetection:
 
         return multi_element_particles
 
-    def is_overlapping(self, particle, multi_particle):
-        """Check if particles overlap by at least 50 percent.
+    def is_overlapping(self, particle, multi_particle, min_overlap_percentage=75.0):
+        """Check if particles overlap by at least `min_overlap_percentage` percent.
         Args:
             particle (Any): The particle.
             multi_particle (Any): The multi particle.
+            min_overlap_percentage (float): Minimum overlap (as a percentage of
+                either particle's duration) required to merge the two.
         Returns:
-            object: Result of the operation.
+            bool: True if the time ranges overlap sufficiently.
         """
         start1, end1 = particle['start_time'], particle['end_time']
         start2, end2 = multi_particle['start_time'], multi_particle['end_time']
@@ -2306,17 +2170,14 @@ class PeakDetection:
 
         overlap_percent1 = (overlap_duration / duration1) * 100
         overlap_percent2 = (overlap_duration / duration2) * 100
-        return max(overlap_percent1, overlap_percent2) >= 75.0
+        return max(overlap_percent1, overlap_percent2) >= min_overlap_percentage
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------main detection-------------------------------------------------------
     # ----------------------------------------------------------------------------------------------------------
 
     def detect_particles(self, main_window):
-        """Main threading-safe particle detection function.
-        Args:
-            main_window (Any): The main window.
-        """
+        """Main threading-safe particle detection function."""
         original_sample = main_window.current_sample
         overlay = None
 
@@ -2413,8 +2274,9 @@ class PeakDetection:
                             QApplication.processEvents()
 
                     except Exception as e:
+                        _itk_log.exception("Handled exception in detect_particles")
        
-                        print(f"Error processing {sample_name}: {str(e)}")
+                        _itk_log.error(f"Error processing {sample_name}: {str(e)}")
                         del e 
 
                 del future_to_sample
@@ -2450,7 +2312,8 @@ class PeakDetection:
                 main_window.calculate_mass_limits()
 
         except Exception as e:
-            print(f"Error in detect_particles: {str(e)}")
+            _itk_log.exception("Handled exception in detect_particles")
+            _itk_log.error(f"Error in detect_particles: {str(e)}")
             main_window.status_label.setText("Error during iterative peak detection")
             main_window.progress_bar.setVisible(False)
         finally:
@@ -2465,12 +2328,7 @@ class PeakDetection:
     # ----------------------------------------------------------------------------------------------------------
 
     def get_snr_color(self, snr):
-        """Get color based on signal-to-noise ratio.
-        Args:
-            snr (Any): The snr.
-        Returns:
-            object: Result of the operation.
-        """
+        """Get color based on signal-to-noise ratio."""
         if snr <= 1.1:
             return QColor(231, 76, 60)
         elif snr <= 1.2:

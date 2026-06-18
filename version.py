@@ -10,8 +10,8 @@ import re
 from pathlib import Path
 
 FILES = [
-    # ── tools/app_version.py — single source of truth for the running app ─────
-    ("tools/app_version.py", [
+    # ── utils/app_version.py — single source of truth for the running app ─────
+    ("utils/app_version.py", [
         (r'__version__\s*=\s*"[\d\.]+"',
          '__version__ = "{v}"'),
     ]),
@@ -31,7 +31,7 @@ FILES = [
     ]),
 
     # ── PyInstaller spec — macOS ──────────────────────────────────────────────
-    ("IsotopeTrack_M.spec", [
+    ("packaging/IsotopeTrack_M.spec", [
         (r"'CFBundleShortVersionString':\s*'[\d\.]+'",
          "'CFBundleShortVersionString': '{v}'"),
         (r"'CFBundleVersion':\s*'[\d\.]+'",
@@ -39,7 +39,7 @@ FILES = [
     ]),
 
     # ── Inno Setup installer ──────────────────────────────────────────────────
-    ("IsotopeTrack_Setup.iss", [
+    ("packaging/IsotopeTrack_Setup.iss", [
         (r'#define AppVersion\s+"[\d\.]+"',
          '#define AppVersion     "{v}"'),
     ]),
@@ -70,6 +70,12 @@ FILES = [
     ("tools/tutorial.py", [
         (r"IsotopeTrack v[\d\.]+</h2>",
          "IsotopeTrack v{v}</h2>"),
+    ]),
+
+    # ── welcome.py — Home / Welcome screen version label ──────────────────────
+    ("tools/welcome.py", [
+        (r'APP_VERSION = "[\d\.]+"',
+         'APP_VERSION = "{v}"'),
     ]),
 ]
 

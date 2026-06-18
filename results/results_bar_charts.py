@@ -5,23 +5,20 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QMessageBox, QListWidget, QListWidgetItem,
-    QAbstractItemView, QInputDialog
+    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor, QCursor, QFont
+from PySide6.QtGui import QColor, QFont
 import pyqtgraph as pg
 import numpy as np
-import math
 from scipy import stats
 from scipy.stats import gaussian_kde
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_bar_charts")
 
 
 def _ensure_project_root_on_sys_path():
     """Ensure package-style imports work when this file is run directly.
-
-    Returns:
-        None
 
     Preserved behavior:
         Normal application startup through ``Run.py`` already has the correct
@@ -42,13 +39,12 @@ from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style,
-    FontSettingsGroup,
-    get_sample_color, get_display_name,
-    download_pyqtgraph_figure,
-    format_element_label, LABEL_MODES, Renderer, HtmlAxisItem,
-    SHADE_TYPES, _QT_LINE, _apply_box,
-    _add_shaded_region_hist, _add_stat_lines_hist, _add_det_limit_v, _add_det_limit_h,
-    format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
+    get_sample_color,
+    get_display_name, download_pyqtgraph_figure,
+    format_element_label,
+    LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
+    _apply_box, _add_shaded_region_hist, _add_stat_lines_hist,
+    _add_det_limit_v, _add_det_limit_h, format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
 )
 try:
     from widget.custom_plot_widget import (
@@ -57,6 +53,7 @@ try:
     )
     _CUSTOM_PLOT_AVAILABLE = True
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     _PlotSettingsDialog = None
     _get_system_font_families = lambda: FONT_FAMILIES[:]
     _CUSTOM_PLOT_AVAILABLE = False
@@ -151,11 +148,6 @@ def _fmt_elem(elem: str, cfg: dict) -> str:
 
     'Symbol'        → strip leading mass number  (e.g. '107Ag' → 'Ag')
     'Mass + Symbol' → keep as-is                 (e.g. '107Ag')
-    Args:
-        elem (str): The elem.
-        cfg (dict): The cfg.
-    Returns:
-        str: Result of the operation.
     """
     return format_element_label(elem, cfg.get('label_mode', 'Symbol'), Renderer.HTML)
 
@@ -252,15 +244,11 @@ def _bar_value_textitem(value, per_ml, anchor=(0.5, 1), color='#374151', cfg=Non
 
 
 def _apply_sci_y_axis(plot_item, cfg=None):
-    """
-    Render the left axis tick labels of a plot as ten-to-a-power.
+    """Render the left axis tick labels of a plot as ten-to-a-power.
 
     Args:
         plot_item (Any): Target pyqtgraph PlotItem.
         cfg (dict): Optional font config applied to the tick labels.
-
-    Returns:
-        None
     """
     _shared_apply_sci_y_axis(plot_item, cfg)
 
@@ -276,11 +264,6 @@ class _PlotWidgetAdapter:
     """
 
     def __init__(self, glw, plot_item):
-        """
-        Args:
-            glw (Any): The glw.
-            plot_item (Any): The plot item.
-        """
         self._glw = glw
         self._pi = plot_item
         self.legend = getattr(plot_item, 'legend', None)
@@ -289,71 +272,43 @@ class _PlotWidgetAdapter:
 
     @property
     def custom_axis_labels(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if not hasattr(self._pi, '_custom_axis_labels'):
             self._pi._custom_axis_labels = {}
         return self._pi._custom_axis_labels
 
     @custom_axis_labels.setter
     def custom_axis_labels(self, val):
-        """
-        Args:
-            val (Any): The val.
-        """
         self._pi._custom_axis_labels = val
 
     @property
     def persistent_dialog_settings(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         if not hasattr(self._pi, '_persistent_dialog_settings'):
             self._pi._persistent_dialog_settings = {}
         return self._pi._persistent_dialog_settings
 
     @persistent_dialog_settings.setter
     def persistent_dialog_settings(self, val):
-        """
-        Args:
-            val (Any): The val.
-        """
         self._pi._persistent_dialog_settings = val
 
     # ── PlotWidget interface ─────────────────────────────────────────
 
     def getPlotItem(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._pi
 
     def backgroundBrush(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._glw.backgroundBrush()
 
     def setBackground(self, color):
-        """
-        Args:
-            color (Any): Colour value.
-        """
         try:
             self._glw.setBackground(color)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in setBackground")
 
     def repaint(self):
         try:
             self._glw.repaint()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in repaint")
 
     def notify_bar_group_color_changed(self, items, color_hex):
         """Forward shared bar-color edits to a plot-specific sync callback.
@@ -362,25 +317,19 @@ class _PlotWidgetAdapter:
             items (list[pg.BarGraphItem]): Edited bar items from the Plot
                 Settings dialog.
             color_hex (str): Selected bar color in ``#RRGGBB`` form.
-
-        Returns:
-            None
         """
         callback = getattr(self._pi, '_bar_group_color_sync_callback', None)
         if callable(callback):
             try:
                 callback(items, color_hex)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in notify_bar_group_color_changed")
 
     def parent(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         try:
             return self._glw.parent()
         except Exception:
+            _itk_log.exception("Handled exception in parent")
             return None
 
 
@@ -399,21 +348,12 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
     """
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent=parent)
 
     # ── Helpers ──────────────────────────────────────────────────────
 
     def _plot_item_at(self, scene_pos):
-        """Return the PlotItem whose bounding rect contains scene_pos.
-        Args:
-            scene_pos (Any): The scene pos.
-        Returns:
-            None
-        """
+        """Return the PlotItem whose bounding rect contains scene_pos."""
         for item in self.scene().items():
             if isinstance(item, pg.PlotItem):
                 try:
@@ -421,29 +361,16 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     if rect.contains(scene_pos):
                         return item
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _plot_item_at")
         return None
 
     def _adapter_for(self, plot_item):
-        """Build an adapter for plot_item, syncing legend from it.
-        Args:
-            plot_item (Any): The plot item.
-        Returns:
-            object: Result of the operation.
-        """
+        """Build an adapter for plot_item, syncing legend from it."""
         adapter = _PlotWidgetAdapter(self, plot_item)
         adapter.legend = getattr(plot_item, 'legend', None)
         return adapter
 
     def _closest_scatter(self, pi, scene_pos, threshold_px=20):
-        """
-        Args:
-            pi (Any): The pi.
-            scene_pos (Any): The scene pos.
-            threshold_px (Any): The threshold px.
-        Returns:
-            object: Result of the operation.
-        """
         try:
             vb = pi.getViewBox()
             dp = vb.mapSceneToView(scene_pos)
@@ -464,9 +391,11 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     xd = np.array([p[0] for p in pts])
                     yd = np.array([p[1] for p in pts])
                 except (IndexError, TypeError):
+                    _itk_log.exception("Handled exception in _closest_scatter")
                     try:
                         xd = pts['x']; yd = pts['y']
                     except Exception:
+                        _itk_log.exception("Handled exception in _closest_scatter")
                         continue
                 dx = (xd - mx) / xr; dy = (yd - my) / yr
                 dists = np.sqrt(dx**2 + dy**2)
@@ -475,17 +404,10 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     best_d = md; best = item
             return best
         except Exception:
+            _itk_log.exception("Handled exception in _closest_scatter")
             return None
 
     def _closest_curve(self, pi, scene_pos, threshold_px=15):
-        """
-        Args:
-            pi (Any): The pi.
-            scene_pos (Any): The scene pos.
-            threshold_px (Any): The threshold px.
-        Returns:
-            object: Result of the operation.
-        """
         try:
             vb = pi.getViewBox()
             dp = vb.mapSceneToView(scene_pos)
@@ -514,16 +436,12 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     best_d = md; best = item
             return best
         except Exception:
+            _itk_log.exception("Handled exception in _closest_curve")
             return None
 
     def _bar_at(self, pi, scene_pos):
         """Return the BarGraphItem the cursor is inside (data-space test).
         Skips legend swatches (width == 0).
-        Args:
-            pi (Any): The pi.
-            scene_pos (Any): The scene pos.
-        Returns:
-            None
         """
         try:
             vb = pi.getViewBox()
@@ -549,19 +467,13 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                             and y_lo <= cy <= y_hi):
                         return item
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _bar_at")
         return None
 
     # ── Double-click ─────────────────────────────────────────────────
 
     def mouseDoubleClickEvent(self, event):
         """Route double-click editing to the most specific plot item hit.
-
-        Args:
-            event (Any): Qt event object.
-
-        Returns:
-            None
 
         Preserved behavior:
             Existing shared editor dialogs remain available. Individual
@@ -623,7 +535,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         LegendEditorDialog(adapter, dlg_parent).exec()
                         event.accept(); return
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in mouseDoubleClickEvent")
 
             scat = self._closest_scatter(pi, scene_pos)
             if scat is not None:
@@ -642,6 +554,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     cur = pg.mkBrush(
                         bar_item.opts.get('brush', 'b')).color()
                 except Exception:
+                    _itk_log.exception("Handled exception in mouseDoubleClickEvent")
                     cur = QColor(100, 120, 220)
                 new_c = QColorDialog.getColor(cur, self, "Bar Color")
                 if new_c.isValid():
@@ -657,7 +570,8 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             event.accept()
 
         except Exception as e:
-            print(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
+            _itk_log.exception("Handled exception in mouseDoubleClickEvent")
+            _itk_log.error(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
             import traceback; traceback.print_exc()
             super().mouseDoubleClickEvent(event)
 
@@ -671,15 +585,6 @@ class _ClickableLegendSwatch(pg.BarGraphItem):
     """
 
     def __init__(self, *args, raw_key=None, toggle_callback=None, **kwargs):
-        """
-        Args:
-            *args: Forwarded positional args for ``pg.BarGraphItem``.
-            raw_key (str | None): Raw isotope/element key represented by this
-                legend swatch.
-            toggle_callback (Callable[[str], None] | None): Callback invoked on
-                left-click to toggle raw-key visibility.
-            **kwargs: Forwarded keyword args for ``pg.BarGraphItem``.
-        """
         super().__init__(*args, **kwargs)
         self._raw_key = raw_key
         self._toggle_callback = toggle_callback
@@ -697,7 +602,7 @@ class _ClickableLegendSwatch(pg.BarGraphItem):
                 ev.accept()
                 return
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in mouseClickEvent")
         super().mouseClickEvent(ev)
 
 
@@ -725,6 +630,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
             return False
         sample_item, label_item = legend.items[-1]
     except Exception:
+        _itk_log.exception("Handled exception in _attach_histogram_legend_toggle")
         return False
 
     def _bind_click(target):
@@ -748,7 +654,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
                             ev.accept()
                             return
                         except Exception:
-                            pass
+                            _itk_log.exception("Handled exception in _wrapped_click")
                 if callable(_orig):
                     _orig(ev)
 
@@ -756,6 +662,7 @@ def _attach_histogram_legend_toggle(legend, raw_key, toggle_callback):
             target._hist_toggle_bound = True
             return True
         except Exception:
+            _itk_log.exception("Handled exception in _bind_click")
             return False
 
     hooked = _bind_click(sample_item)
@@ -786,6 +693,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
             return False
         sample_item, label_item = legend.items[-1]
     except Exception:
+        _itk_log.exception("Handled exception in _attach_bar_chart_legend_toggle")
         return False
 
     def _bind_click(target):
@@ -809,7 +717,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
                             ev.accept()
                             return
                         except Exception:
-                            pass
+                            _itk_log.exception("Handled exception in _wrapped_click")
                 if callable(_orig):
                     _orig(ev)
 
@@ -817,6 +725,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
             target._bar_toggle_bound = True
             return True
         except Exception:
+            _itk_log.exception("Handled exception in _bind_click")
             return False
 
     hooked = _bind_click(sample_item)
@@ -825,14 +734,7 @@ def _attach_bar_chart_legend_toggle(legend, raw_key, toggle_callback):
 
 
 def _get_element_color(element, index, cfg):
-    """Get color for an element from config or defaults.
-    Args:
-        element (Any): The element.
-        index (Any): Row or item index.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
+    """Get color for an element from config or defaults."""
     colors = cfg.get('element_colors', {})
     if element in colors:
         return colors[element]
@@ -840,13 +742,7 @@ def _get_element_color(element, index, cfg):
 
 
 def _get_element_display_name(element, cfg):
-    """Get display name for an element (renamed or original).
-    Args:
-        element (Any): The element.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
+    """Get display name for an element (renamed or original)."""
     mappings = cfg.get('element_name_mappings', {})
     return mappings.get(element, element)
 
@@ -858,9 +754,6 @@ def _tag_element_color_item(item, raw_element_key, trace_name):
         item (Any): Bar or legend-swatch graphics item to annotate.
         raw_element_key (str): Canonical raw element key such as ``Fe``.
         trace_name (str): Display-only trace label shown to users.
-
-    Returns:
-        None
     """
     if item is None or not raw_element_key:
         return
@@ -872,9 +765,6 @@ def _tag_element_color_item(item, raw_element_key, trace_name):
 def _get_legend_sample_graphics_item(legend_sample_item):
     """Resolve the live swatch graphics item stored in a legend row.
 
-    Args:
-        legend_sample_item (Any): Sample-side entry from ``legend.items``.
-
     Returns:
         Any: Underlying swatch graphics item when exposed by PyQtGraph,
             otherwise ``legend_sample_item`` itself.
@@ -883,12 +773,7 @@ def _get_legend_sample_graphics_item(legend_sample_item):
 
 
 def _get_xy_labels(cfg):
-    """Build x/y label strings.
-    Args:
-        cfg (Any): The cfg.
-    Returns:
-        tuple: Result of the operation.
-    """
+    """Build x/y label strings."""
     dt = cfg.get('data_type_display', 'Counts')
     x_base = HIST_LABEL_MAP.get(dt, 'Value')
     y_base = 'Number of Particles'
@@ -896,34 +781,17 @@ def _get_xy_labels(cfg):
 
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _sample_names(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        list: Result of the operation.
-    """
     if input_data and input_data.get('type') == 'multiple_sample_data':
         return input_data.get('sample_names', [])
     return []
 
 
 def _can_sum(cfg):
-    """Check if current data type supports per-particle summation.
-    Args:
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
+    """Check if current data type supports per-particle summation."""
     return cfg.get('data_type_display', 'Counts') in SUMMABLE_DATA_TYPES
 
 
@@ -978,11 +846,6 @@ def _apply_element_groups_multi(particles, sample_names, dk, groups):
 
     Returns:
         dict {sample_name: {display_label: [values]}}
-    Args:
-        particles (Any): The particles.
-        sample_names (Any): The sample names.
-        dk (Any): The dk.
-        groups (Any): The groups.
     """
     if not particles:
         return {}
@@ -1026,12 +889,6 @@ class ElementGroupEditor(QGroupBox):
     """Widget for defining element groups (sum per particle)."""
 
     def __init__(self, groups, available_elements, parent=None):
-        """
-        Args:
-            groups (Any): The groups.
-            available_elements (Any): The available elements.
-            parent (Any): Parent widget or object.
-        """
         super().__init__("Element Groups (Sum per Particle)", parent)
         self._groups = [dict(g) for g in groups]
         self._available = available_elements or []
@@ -1103,10 +960,6 @@ class ElementGroupEditor(QGroupBox):
             self._group_list.addItem(f"{name}  [{elems}]")
 
     def _on_group_selected(self, row):
-        """
-        Args:
-            row (Any): Row index.
-        """
         has = 0 <= row < len(self._groups)
         self._remove_btn.setEnabled(has)
         self._detail_frame.setVisible(has)
@@ -1162,10 +1015,6 @@ class ElementGroupEditor(QGroupBox):
                     min(row, len(self._groups) - 1))
 
     def _on_name_changed(self, text):
-        """
-        Args:
-            text (Any): Text string.
-        """
         row = self._group_list.currentRow()
         if 0 <= row < len(self._groups):
             self._groups[row]['name'] = text.strip() or f'Group {row + 1}'
@@ -1197,10 +1046,7 @@ class ElementGroupEditor(QGroupBox):
                     f"border: 1px solid black;")
 
     def collect(self):
-        """Return list of valid groups (with ≥1 element and a name).
-        Returns:
-            list: Result of the operation.
-        """
+        """Return list of valid groups (with ≥1 element and a name)."""
         return [g for g in self._groups
                 if g.get('elements') and g.get('name')]
 
@@ -1212,17 +1058,6 @@ class HistogramSettingsDialog(QDialog):
                  available_elements=None, lock_data_type=False,
                  data_type_lock_message="", te_available=False):
         """
-        Args:
-            config (Any): Configuration dictionary.
-            is_multi (Any): The is multi.
-            sample_names (Any): The sample names.
-            parent (Any): Parent widget or object.
-            available_elements (Any): The available elements.
-            lock_data_type (bool): When True, keep data-type selection
-                read-only in this dialog.
-            data_type_lock_message (str): Optional explanatory text shown near
-                the data-type control when locked.
-
         Preserved behavior:
             Parent histogram can still fully change data type. The lock is used
             by decomposition child views that redraw from already-extracted
@@ -1241,10 +1076,6 @@ class HistogramSettingsDialog(QDialog):
         self._build_ui()
 
     def _build_ui(self):
-        """
-        Returns:
-            tuple: Result of the operation.
-        """
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1368,24 +1199,12 @@ class HistogramSettingsDialog(QDialog):
         fl = QFormLayout(g)
 
         def _color_row(cfg_key, label, default_color):
-            """Return (row_widget, color_holder, style_combo, width_spin).
-            Args:
-                cfg_key (Any): The cfg key.
-                label (Any): Label text.
-                default_color (Any): The default color.
-            Returns:
-                tuple: Result of the operation.
-            """
+            """Return (row_widget, color_holder, style_combo, width_spin)."""
             rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
             holder = [self._cfg.get(cfg_key, default_color)]
             btn = QPushButton(); btn.setFixedSize(26, 22)
             btn.setStyleSheet(f"background:{holder[0]};")
             def _pick(h=holder, b=btn):
-                """
-                Args:
-                    h (Any): The h.
-                    b (Any): The b.
-                """
                 from PySide6.QtWidgets import QColorDialog as _CD
                 c = _CD.getColor(QColor(h[0]), self)
                 if c.isValid():
@@ -1565,9 +1384,6 @@ class HistogramSettingsDialog(QDialog):
 
     def collect(self) -> dict:
         """
-        Returns:
-            dict: Result of the operation.
-
         Preserved behavior:
             When data type is locked (decomposition child safety mode), this
             method preserves inherited ``data_type_display`` and collects other
@@ -1876,14 +1692,7 @@ class HistogramFormatSettingsDialog(QDialog):
 
 
 def _get_label_color(label, idx, cfg):
-    """Get color for a label: check element_colors → group color → default.
-    Args:
-        label (Any): Label text.
-        idx (Any): The idx.
-        cfg (Any): The cfg.
-    Returns:
-        object: Result of the operation.
-    """
+    """Get color for a label: check element_colors → group color → default."""
     ec = cfg.get('element_colors', {})
     if label in ec:
         return ec[label]
@@ -1905,11 +1714,6 @@ class HistogramDisplayDialog(QDialog):
     """
 
     def __init__(self, histogram_node, parent_window=None):
-        """
-        Args:
-            histogram_node (Any): The histogram node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = histogram_node
         self.parent_window = parent_window
@@ -1972,11 +1776,7 @@ class HistogramDisplayDialog(QDialog):
 
 
     def _ctx_menu(self, pos):
-        """
-        Show lightweight histogram quick actions.
-
-        Args:
-            pos (Any): Position point.
+        """Show lightweight histogram quick actions.
 
         Preserved behavior:
             Keeps right-click focused on visual quick toggles and isotope label
@@ -2160,9 +1960,9 @@ class HistogramDisplayDialog(QDialog):
                         if rect.contains(scene_pos):
                             return item
                     except Exception:
-                        pass
+                        _itk_log.exception("Handled exception in _plot_item_at")
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _plot_item_at")
         return None
 
     def _get_hist_display_mode(self):
@@ -2401,19 +2201,11 @@ class HistogramDisplayDialog(QDialog):
         self._refresh()
 
     def _set(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
     def _get_available_elements(self):
-        """Get raw element names from input (before grouping).
-        Returns:
-            object: Result of the operation.
-        """
+        """Get raw element names from input (before grouping)."""
         try:
             data = self.node.input_data
             if not data:
@@ -2425,6 +2217,7 @@ class HistogramDisplayDialog(QDialog):
                 elems.update(p.get(dk, {}).keys())
             return sorted(elems)
         except Exception:
+            _itk_log.exception("Handled exception in _get_available_elements")
             return []
 
     def _open_settings(self, title_override=None):
@@ -2506,7 +2299,7 @@ class HistogramDisplayDialog(QDialog):
                 try:
                     dlg.setWindowTitle(title_override)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _open_plot_settings")
             dlg.exec()
 
     def _download_figure(self):
@@ -2541,7 +2334,8 @@ class HistogramDisplayDialog(QDialog):
                 if rows:
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
-            print(f"Warning: could not build CSV data: {e}")
+            _itk_log.exception("Handled exception in _download_figure")
+            _itk_log.error(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
             self.pw, self, default_name='histogram', csv_data=csv_df)
@@ -2563,13 +2357,13 @@ class HistogramDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
 
     def _reset_layout(self):
         """
@@ -2589,7 +2383,7 @@ class HistogramDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _reset_layout")
         self._refresh()
 
 
@@ -2665,17 +2459,13 @@ class HistogramDisplayDialog(QDialog):
             self._update_stats(plot_data)
 
         except Exception as e:
-            print(f"Error updating histogram: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error updating histogram: {e}")
             import traceback
             traceback.print_exc()
 
     def _draw_subplots(self, plot_data, cfg):
-        """
-        Draw one subplot per sample using per-element color encoding.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+        """Draw one subplot per sample using per-element color encoding.
 
         Preserved behavior:
             Histogram calculations are unchanged. When enabled, statistics text
@@ -2709,12 +2499,7 @@ class HistogramDisplayDialog(QDialog):
                     _add_stats_text(pi, sd, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
-        """
-        Draw side-by-side sample subplots using per-element color encoding.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
+        """Draw side-by-side sample subplots using per-element color encoding.
 
         Preserved behavior:
             Statistical overlays keep existing semantics; stats text is added
@@ -2762,10 +2547,6 @@ class HistogramDisplayDialog(QDialog):
 
     def _draw_overlaid(self, plot_data, cfg):
         """Draw multi-sample overlaid histogram view.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
 
         Preserved behavior:
             Scientific aggregation and sample-color encoding are unchanged.
@@ -2859,6 +2640,7 @@ class HistogramDisplayDialog(QDialog):
                 xr, yr = vb.viewRange()
                 ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
             except Exception:
+                _itk_log.exception("Handled exception in _draw_overlaid")
                 ti.setPos(0, 0)
 
         xl, yl = _get_xy_labels(cfg)
@@ -2883,20 +2665,10 @@ class HistogramDisplayDialog(QDialog):
             _apply_sci_y_axis(pi, cfg)
 
     def _draw_combined(self, plot_data, cfg):
-        """
-        Legacy wrapper for historical ``Combined with Legend`` mode values.
-
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-        """
+        """Legacy wrapper for historical ``Combined with Legend`` mode values."""
         self._draw_overlaid(plot_data, cfg)
 
     def _update_stats(self, plot_data):
-        """
-        Args:
-            plot_data (Any): The plot data.
-        """
         cfg = self.node.config
         groups = cfg.get('element_groups', [])
         group_info = ""
@@ -2930,17 +2702,6 @@ class HistogramDecompositionDialog(QDialog):
     def __init__(self, config_snapshot, panel_label, panel_element_data, parent=None,
                  per_ml=False, y_scale=1.0):
         """
-        Args:
-            config_snapshot (dict): Copied parent histogram config.
-            panel_label (str): Human-readable source sample/panel label.
-            panel_element_data (dict): Copied per-element arrays for one panel.
-            parent (QWidget | None): Qt parent for window ownership only.
-            per_ml (bool): Whether the parent panel is rendering the
-                particles-per-mL y-axis unit. Inherited so the decomposition
-                view respects the same y-axis selection.
-            y_scale (float): Multiplier converting raw bin counts to particles
-                per mL for this panel's sample. Defaults to 1.0 (raw counts).
-
         Preserved behavior:
             Child owns local rendering/config and reuses existing histogram
             drawing helpers without changing scientific extraction semantics.
@@ -3022,9 +2783,9 @@ class HistogramDecompositionDialog(QDialog):
                         if rect.contains(scene_pos):
                             return item
                     except Exception:
-                        pass
+                        _itk_log.exception("Handled exception in _plot_item_at")
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _plot_item_at")
         return None
 
     @staticmethod
@@ -3143,7 +2904,7 @@ class HistogramDecompositionDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _reset_layout")
         self._refresh()
 
     def _download_figure(self):
@@ -3205,13 +2966,13 @@ class HistogramDecompositionDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
 
     def _get_custom_title_map(self):
         """Return the child-local custom title mapping for decomposed subplots.
@@ -3262,9 +3023,6 @@ class HistogramDecompositionDialog(QDialog):
             raw_element_key (str): Canonical raw isotope/element key.
             title_text (str): User-entered title text for the subplot.
 
-        Returns:
-            None
-
         Preserved behavior:
             Blank text removes the override so the subplot falls back to the
             normal isotope display name on future redraws.
@@ -3284,9 +3042,6 @@ class HistogramDecompositionDialog(QDialog):
             raw_element_key (str): Canonical raw isotope/element key.
             title_text (str): User-entered title text from the editor dialog.
 
-        Returns:
-            None
-
         Preserved behavior:
             This updates only display text. Title styling continues to be owned
             by the existing live editor and histogram format settings.
@@ -3300,9 +3055,6 @@ class HistogramDecompositionDialog(QDialog):
         Args:
             plot_item (Any): Target ``pg.PlotItem`` for the isotope subplot.
             raw_element_key (str): Canonical raw isotope/element key.
-
-        Returns:
-            None
 
         Preserved behavior:
             Double-click title editing remains available through the shared
@@ -3389,9 +3141,6 @@ class HistogramDecompositionDialog(QDialog):
     def _add_density_unavailable_note(self, plot_item):
         """Add a minimal per-panel note when density curve cannot be rendered.
 
-        Args:
-            plot_item: The child subplot PlotItem.
-
         Preserved behavior:
             This is non-modal UI feedback only. It does not alter density
             calculations, value preparation, or histogram semantics. Note
@@ -3421,6 +3170,7 @@ class HistogramDecompositionDialog(QDialog):
                 y_pos,
             )
         except Exception:
+            _itk_log.exception("Handled exception in _add_density_unavailable_note")
             ti.setPos(0, 0)
 
 
@@ -3485,10 +3235,6 @@ class HistogramPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Histogram"
         self.node_type = "histogram_plot"
@@ -3503,30 +3249,16 @@ class HistogramPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = HistogramDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
@@ -3539,8 +3271,6 @@ class HistogramPlotNode(QObject):
         particle has Fe=10fg, Si=5fg, Ti=3fg and group "FeSiTi"
         includes [Fe, Si, Ti], that particle contributes 18fg to
         the "FeSiTi" histogram. Ungrouped elements stay separate.
-        Returns:
-            None
         """
         if not self.input_data:
             return None
@@ -3571,12 +3301,6 @@ class HistogramPlotNode(QObject):
         return None
 
     def _extract_single(self, dk):
-        """
-        Args:
-            dk (Any): The dk.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -3593,12 +3317,6 @@ class HistogramPlotNode(QObject):
         return out or None
 
     def _extract_multi(self, dk):
-        """
-        Args:
-            dk (Any): The dk.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -3813,9 +3531,6 @@ class BarChartSettingsDialog(QDialog):
             layout (QVBoxLayout): Target vertical layout inside the dialog's
                 scroll container.
 
-        Returns:
-            None
-
         Preserved behavior:
             This dialog remains Element-Bar-Chart-specific and writes only
             canonical bar-chart config keys instead of mutating live first-plot
@@ -3981,9 +3696,6 @@ class BarChartSettingsDialog(QDialog):
         Args:
             button (QPushButton): Target swatch button.
             color (QColor): Current selected color.
-
-        Returns:
-            None
         """
         button.setStyleSheet(
             f"background-color: {color.name()}; border: 1px solid black;")
@@ -4009,9 +3721,6 @@ class BarChartSettingsDialog(QDialog):
 
         Args:
             element (str): Canonical raw element key to recolor.
-
-        Returns:
-            None
         """
         from PySide6.QtWidgets import QColorDialog
         button = self._elem_color_btns.get(element)
@@ -4027,9 +3736,6 @@ class BarChartSettingsDialog(QDialog):
 
         Args:
             sample_name (str): Canonical raw sample key to recolor.
-
-        Returns:
-            None
         """
         from PySide6.QtWidgets import QColorDialog
         button = self._sample_color_btns.get(sample_name)
@@ -4155,14 +3861,7 @@ class BarChartSettingsDialog(QDialog):
         return out
 
 def _prepare_values(values, data_type, log_x):
-    """Filter and optionally log-transform histogram values.
-    Args:
-        values (Any): Array or sequence of values.
-        data_type (Any): The data type.
-        log_x (Any): The log x.
-    Returns:
-        object: Result of the operation.
-    """
+    """Filter and optionally log-transform histogram values."""
     if not values:
         return None
     v = np.array(values, dtype=float)
@@ -4240,7 +3939,6 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
                          name='', y_scale=1.0):
     """Draw histogram bars using PyQtGraph BarGraphItem.
 
-    Returns: (processed_values, bin_edges, counts)
     Args:
         plot_item (Any): The plot item.
         values (Any): Array or sequence of values.
@@ -4299,12 +3997,6 @@ def _apply_histogram_grid(plot_item, cfg):
 
 def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
     """Add density curve overlay scaled to match count histogram.
-    Args:
-        plot_item (Any): The plot item.
-        values (Any): Array or sequence of values.
-        cfg (Any): The cfg.
-        bin_edges (Any): The bin edges.
-        total_count (Any): The total count.
     Returns:
         bool: ``True`` when a density curve item was added, otherwise ``False``.
 
@@ -4347,7 +4039,8 @@ def _add_density_curve(plot_item, values, cfg, bin_edges, total_count):
             pen=pg.mkPen(color=curve_color, width=2.5)))
         return True
     except Exception as e:
-        print(f"Density curve error: {e}")
+        _itk_log.exception("Handled exception in _add_density_curve")
+        _itk_log.error(f"Density curve error: {e}")
         return False
 
 
@@ -4385,12 +4078,7 @@ def _density_curve_status(values, cfg):
 
 
 def _add_median_line(plot_item, values, cfg):
-    """Add median vertical line with annotation.
-    Args:
-        plot_item (Any): The plot item.
-        values (Any): Array or sequence of values.
-        cfg (Any): The cfg.
-    """
+    """Add median vertical line with annotation."""
     fc = get_font_config(cfg)
     median = np.median(values)
 
@@ -4409,16 +4097,12 @@ def _add_median_line(plot_item, values, cfg):
         y_top = rng[1][1] if rng[1][1] > 0 else 10
         ti.setPos(median + (rng[0][1] - rng[0][0]) * 0.01, y_top * 0.92)
     except Exception:
+        _itk_log.exception("Handled exception in _add_median_line")
         ti.setPos(median, 0)
 
 
 def _add_stats_text(plot_item, plot_data, cfg):
     """Add statistics text box to histogram plot.
-
-    Args:
-        plot_item (Any): The plot item.
-        plot_data (Any): The plot data.
-        cfg (Any): The cfg.
 
     Preserved behavior:
         This is informational UI only. The visible statistics box remains
@@ -4466,6 +4150,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
             ti.setPos(rng[0][0] + (rng[0][1] - rng[0][0]) * 0.02,
                       rng[1][1] * 0.98)
         except Exception:
+            _itk_log.exception("Handled exception in _add_stats_text")
             ti.setPos(0, 0)
 
 
@@ -4485,9 +4170,6 @@ def _draw_single_histogram(
         legend_click_callback (Callable[[str], None] | None): Optional callback
             used to make element legend swatches clickable for visibility
             toggling in parent histogram views.
-    Returns:
-        object: Result of the operation.
-
     Preserved behavior:
         Histogram/stat calculations are unchanged. Optional density status is
         observational metadata only and does not affect rendering logic.
@@ -4608,19 +4290,13 @@ def _draw_single_histogram(
             xr, yr = vb.viewRange()
             ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
         except Exception:
+            _itk_log.exception("Handled exception in _draw_single_histogram")
             ti.setPos(0, 0)
     return sorted_data
 
 
 def _sort_elements_for_display(elements, counts, sort_option):
-    """Sort elements by user preference.
-    Args:
-        elements (Any): The elements.
-        counts (Any): The counts.
-        sort_option (Any): The sort option.
-    Returns:
-        tuple: Result of the operation.
-    """
+    """Sort elements by user preference."""
     mass_sorted = sort_elements_by_mass(elements)
     if sort_option == 'No Sorting':
         ec = dict(zip(elements, counts))
@@ -4718,13 +4394,7 @@ class ElementBarChartDisplayDialog(QDialog):
     """Full-figure bar chart dialog with controlled custom context menu."""
 
     def __init__(self, bar_node, parent_window=None):
-        """
-        Initialize the element bar chart display dialog.
-
-        Args:
-            bar_node (Any): Plot node providing config and extracted plot data.
-            parent_window (Any): Parent window reference.
-        """
+        """Initialize the element bar chart display dialog."""
         super().__init__(parent_window)
         self.node = bar_node
         self.parent_window = parent_window
@@ -4782,11 +4452,7 @@ class ElementBarChartDisplayDialog(QDialog):
         layout.addLayout(bb)
 
     def _ctx_menu(self, pos):
-        """
-        Show the custom bar-chart right-click menu.
-
-        Args:
-            pos (Any): Local click position within the graphics widget.
+        """Show the custom bar-chart right-click menu.
 
         Preserved behavior:
             Keeps lightweight visual toggles plus plot-specific quick sorting while
@@ -4851,9 +4517,6 @@ class ElementBarChartDisplayDialog(QDialog):
             raw_sample_key (str): Canonical raw sample key represented by the
                 clicked legend row.
 
-        Returns:
-            None
-
         Preserved behavior:
             This updates only render-layer visibility state for the current
             Element Bar Chart dialog. Scientific data extraction, counts, and
@@ -4884,9 +4547,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_item (Any): Target ``pg.PlotItem`` receiving the empty-state
                 message.
 
-        Returns:
-            None
-
         Preserved behavior:
             This is informational UI only and does not change scientific data,
             bar heights, or extraction behavior.
@@ -4901,6 +4561,7 @@ class ElementBarChartDisplayDialog(QDialog):
             xr, yr = vb.viewRange()
             ti.setPos((xr[0] + xr[1]) * 0.5, (yr[0] + yr[1]) * 0.5)
         except Exception:
+            _itk_log.exception("Handled exception in _add_no_visible_samples_message")
             ti.setPos(0, 0)
 
     def _open_settings(self):
@@ -5003,7 +4664,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     dlg.setWindowTitle(title_override)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _open_plot_settings")
             try:
                 result = dlg.exec()
                 if result == QDialog.Accepted:
@@ -5012,7 +4673,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     delattr(pi, '_bar_group_color_sync_callback')
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _open_plot_settings")
 
     def _plot_items(self):
         """Return all current PyQtGraph plot items in the dialog canvas.
@@ -5099,9 +4760,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_item (Any): Target ``pg.PlotItem``.
             title_text (str): Title text that should be rendered.
 
-        Returns:
-            None
-
         Preserved behavior:
             This does not create a second title-style system. When shared plot
             settings are active on the live plot, their current title font
@@ -5141,9 +4799,6 @@ class ElementBarChartDisplayDialog(QDialog):
             source_plot_item (Any): Plot item whose shared dialog just stored
                 the accepted persistent text-format settings.
 
-        Returns:
-            None
-
         Preserved behavior:
             This propagates formatting only. Custom title content remains owned
             by ``custom_titles`` and each subplot keeps its own title text.
@@ -5157,11 +4812,7 @@ class ElementBarChartDisplayDialog(QDialog):
             self._apply_plot_text_settings_to_plot_item(plot_item, settings)
 
     def _reapply_saved_plot_format_settings(self):
-        """Reapply saved Element Bar Chart plot-format settings after redraw.
-
-        Returns:
-            None
-        """
+        """Reapply saved Element Bar Chart plot-format settings after redraw."""
         settings = self.node.config.get('plot_format_settings')
         if not isinstance(settings, dict) or not settings:
             return
@@ -5170,7 +4821,7 @@ class ElementBarChartDisplayDialog(QDialog):
             try:
                 self.pw.setBackground(bg_color)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _reapply_saved_plot_format_settings")
         for plot_item in self._plot_items():
             plot_item._persistent_dialog_settings = dict(settings)
             self._apply_plot_text_settings_to_plot_item(plot_item, settings)
@@ -5182,9 +4833,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_item (Any): Target ``pg.PlotItem``.
             settings (dict): Saved Element Bar Chart format state from
                 ``plot_format_settings`` / ``persistent_dialog_settings``.
-
-        Returns:
-            None
 
         Preserved behavior:
             Custom title text remains independent. This applies only appearance
@@ -5248,9 +4896,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_key (str): Stable custom-title identifier for a plot.
             title_text (str): User-entered title text. Blank text removes the
                 custom override and restores default title behavior.
-
-        Returns:
-            None
         """
         custom_titles = dict(self._get_custom_title_map())
         clean_text = (title_text or '').strip()
@@ -5267,9 +4912,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_item (Any): Target ``pg.PlotItem`` being edited.
             plot_key (str): Stable custom-title identifier for that plot.
             title_text (str): User-entered title text.
-
-        Returns:
-            None
         """
         self._store_custom_title_text(plot_key, title_text)
         effective_title = self._effective_title_for_key(
@@ -5284,9 +4926,6 @@ class ElementBarChartDisplayDialog(QDialog):
             plot_key (str): Stable custom-title identifier for that plot.
             default_title (str): Default title text for the plot when no custom
                 override exists.
-
-        Returns:
-            None
         """
         plot_item._title_editor_options = {
             'text_only': True,
@@ -5305,9 +4944,6 @@ class ElementBarChartDisplayDialog(QDialog):
             items (list[pg.BarGraphItem]): Edited bar items from the Plot
                 Settings dialog.
             color_hex (str): Selected color for the edited element group.
-
-        Returns:
-            None
 
         Preserved behavior:
             Only presentation-layer color config is updated. Element keys remain
@@ -5337,9 +4973,6 @@ class ElementBarChartDisplayDialog(QDialog):
             raw_keys (set[str]): Canonical raw element keys whose legend
                 swatches should be recolored.
             color_hex (str): Selected color for those legend entries.
-
-        Returns:
-            None
         """
         plot_item = next(
             (item for item in self.pw.scene().items() if isinstance(item, pg.PlotItem)),
@@ -5363,7 +4996,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 swatch_item.setOpts(brush=brush)
                 swatch_item.update()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _update_element_legend_swatches")
 
     def _download_figure(self):
         """Export bar chart as image or CSV via existing PyQtGraph export path."""
@@ -5394,7 +5027,8 @@ class ElementBarChartDisplayDialog(QDialog):
                 if rows:
                     csv_df = pd.DataFrame(rows)
         except Exception as e:
-            print(f"Warning: could not build CSV data: {e}")
+            _itk_log.exception("Handled exception in _download_figure")
+            _itk_log.error(f"Warning: could not build CSV data: {e}")
 
         download_pyqtgraph_figure(
             self.pw, self,
@@ -5419,13 +5053,13 @@ class ElementBarChartDisplayDialog(QDialog):
                 try:
                     item.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
                 try:
                     vb = item.getViewBox()
                     if vb is not None:
                         vb.setMenuEnabled(False)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _disable_native_pyqtgraph_context_menu")
 
     def _reset_layout(self):
         """
@@ -5442,14 +5076,11 @@ class ElementBarChartDisplayDialog(QDialog):
                     if vb is not None:
                         vb.autoRange()
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _reset_layout")
     # ── Refresh ─────────────────────────────
 
     def _refresh(self):
         """Rebuild the Element Bar Chart canvas from node config and data.
-
-        Returns:
-            None
 
         Preserved behavior:
             Scientific/data extraction and display-mode logic remain unchanged.
@@ -5509,7 +5140,8 @@ class ElementBarChartDisplayDialog(QDialog):
             self._update_stats(plot_data)
 
         except Exception as e:
-            print(f"Error updating bar chart: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error updating bar chart: {e}")
             import traceback
             traceback.print_exc()
 
@@ -5565,12 +5197,7 @@ class ElementBarChartDisplayDialog(QDialog):
                 default_title=get_display_name(sn, cfg))
 
     def _draw_grouped(self, plot_data, cfg):
-        """Draw the combined grouped-bars multi-sample view.
-
-        Args:
-            plot_data (Any): Multi-sample element-count data.
-            cfg (Any): Element Bar Chart config snapshot.
-        """
+        """Draw the combined grouped-bars multi-sample view."""
         pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
@@ -5681,12 +5308,7 @@ class ElementBarChartDisplayDialog(QDialog):
             pi, self._title_key_for_combined_plot('grouped'))
 
     def _draw_stacked(self, plot_data, cfg):
-        """Draw the combined stacked-bars multi-sample view.
-
-        Args:
-            plot_data (Any): Multi-sample element-count data.
-            cfg (Any): Element Bar Chart config snapshot.
-        """
+        """Draw the combined stacked-bars multi-sample view."""
         pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
         fc = get_font_config(cfg)
         log_y = cfg.get('log_y', False)
@@ -5792,10 +5414,6 @@ class ElementBarChartDisplayDialog(QDialog):
 
         X-axis = samples, one bar per element per sample, colors = elements.
         Respects sample_order for time-series use.
-        Args:
-            plot_data (Any): The plot data.
-            cfg (Any): The cfg.
-
         Preserved behavior:
             Element ordering, counts, particles-per-mL scaling, and label
             rendering are unchanged. Live bars and draggable legend swatches are
@@ -5898,10 +5516,6 @@ class ElementBarChartDisplayDialog(QDialog):
             pi, self._title_key_for_combined_plot('by_sample'))
 
     def _update_stats(self, plot_data):
-        """
-        Args:
-            plot_data (Any): The plot data.
-        """
         if _is_multi(self.node.input_data):
             total = sum(sum(v for v in sd.values()) for sd in plot_data.values())
             self.stats_label.setText(
@@ -5948,10 +5562,6 @@ class ElementBarChartPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Element Bar Chart"
         self.node_type = "element_bar_chart_plot"
@@ -5966,40 +5576,23 @@ class ElementBarChartPlotNode(QObject):
         self.plot_widget = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = ElementBarChartDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
-        """Extract element particle counts from input.
-        Returns:
-            None
-        """
+        """Extract element particle counts from input."""
         if not self.input_data:
             return None
 

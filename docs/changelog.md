@@ -4,15 +4,48 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
-## v1.0.10 — (dev)
+## v1.10.3 — 2026-06-17
 
-### New Features (in development)
-- Filter non-linear particles
+### New Features
+
+- Add home screen, utils package split
+- Add Welcome/Home screen (recent projects, docs/paper/GitHub links, show-on-startup) + recent-projects tracking
+- Add toast notifications for project save, load, autosave, and clean export
+- Add home panel on the empty plot area: recent saved projects + recover-unsaved-session card (replaces startup recovery modal)
+- Add canvas empty-state hint ('drag a result block onto the canvas')
+- new non-visual utils/ package; move app_version + isobaric_correction; split logic out of unit.py (utils/unit.py) and dilution_utils.py (utils/dilution.py)
+- Fix: Compound Poisson LogNormal now uses the per-isotope sigma from the parameters table instead of a hardcoded 0.55 (falls back to 0.55 when sigma <= 0)
+
+## v1.10.2 — 2026-06-16
+
+### New Features
+
+- Add test files for some function (need more to be added in new version)
+- Log file improve you can trace output for each window open
+- fix bug with the bundle pyarrow 
+
+## v1.10.1 — 2026-06-13
+
+### New Features
+- "Results" button is highlighted when there are unsaved modifications
+- All application `print()` output replaced with structured logging (`logs/*.jsonl`)
+- Example datasets moved to a dedicated [GitHub release](https://github.com/Houssame-EA/IsotopeTrack/releases/tag/example-data), slimming the repository
+- Developer/build dependencies split into `requirements-dev.txt`
+- Documentation reference pages now auto-generated from source (`docs_gen.py`)
+
+
+## v1.10.0 — 2026-06-11
+
+### New Features
+- Particle filter added to the results
 - Isobaric correction module
+- Filter for non-linear peaks
+- Import multiple folders inside a main folder at once
 
 ### Improvements
 - Added legend to network results figure
 - Cluster results now saved with project
+
 
 ## v1.0.9 — 2026-06-09
 
@@ -43,20 +76,6 @@ All notable changes to IsotopeTrack are documented here.
 ### Improvements
 - Particle concentration per mL now reported in results figures
 - UI improvements in the main window
-
-## v1.0.7 — (dev)
-
-### New Features
-- Cluster analysis added option to test all clustering methods at once
-
-### Improvements
-- UI improvements in the mainwindow
-
-## v1.0.7 — 2026-05-31 (dev)
-
-### Improvements
-
-- Particle concentration per mL now reported in results figures
 
 ## v1.0.6 — 2026-05-30
 New Features

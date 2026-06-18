@@ -20,12 +20,14 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
+          # Pinned to 3.11 to match requirements.txt, the local .conda env,
+          # and the Windows job — the pinned deps only ship 3.11 wheels.
           python-version: '3.11'
 
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Install macOS-only dependencies
         run: pip install pyobjc-core pyobjc-framework-Cocoa
@@ -34,15 +36,28 @@ jobs:
         run: brew install create-dmg
 
       - name: Build .app with PyInstaller
-        run: pyinstaller --noconfirm --clean IsotopeTrack_M.spec
+        run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_M.spec
 
       - name: Clean dist for DMG (keep only .app)
         run: rm -rf dist/IsotopeTrack
 
+      # The hardened runtime is applied to the .app automatically on Apple
+      # Silicon, but without entitlements it blocks the executable-memory
+      # allocations numba/llvmlite need to JIT-compile — which crashes the
+      # packaged app even though running from source is fine. Re-sign ad-hoc
+      # with the project entitlements so JIT memory is permitted.
+      - name: Re-sign .app with entitlements (allow numba/llvmlite JIT)
+        run: |
+          codesign --force --deep --options runtime \
+            --entitlements packaging/entitlements.plist \
+            --sign - dist/IsotopeTrack.app
+          echo "Entitlements now embedded in the app:"
+          codesign -d --entitlements - dist/IsotopeTrack.app || true
+
       - name: Build DMG
         run: |
-          chmod +x create_dmg.sh
-          ./create_dmg.sh
+          chmod +x packaging/create_dmg.sh
+          ./packaging/create_dmg.sh
 
       - name: Verify DMG exists
         run: ls -lh IsotopeTrack_M.dmg
@@ -70,10 +85,10 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Build .exe with PyInstaller
-        run: pyinstaller --noconfirm --clean IsotopeTrack_W.spec
+        run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_W.spec
 
       - name: List dist contents (debug)
         shell: cmd
@@ -86,7 +101,7 @@ jobs:
       - name: Build Windows installer with Inno Setup
         shell: cmd
         run: |
-          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" IsotopeTrack_Setup.iss
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" packaging\IsotopeTrack_Setup.iss
 
       - name: Find installer output
         shell: cmd

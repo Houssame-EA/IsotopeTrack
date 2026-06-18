@@ -1,17 +1,14 @@
 import numpy as np
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-                               QLabel, QLineEdit, QComboBox, QMessageBox, QFileDialog,
-                               QTableWidget, QTableWidgetItem, QSplitter, QHeaderView,
-                               QDoubleSpinBox, QGroupBox, QFormLayout, QSpinBox,
-                               QMainWindow, QScrollArea, QApplication, QTabWidget,
-                               QCheckBox, QDialog, QFrame, QProgressBar, QGridLayout,
-                               QListView, QTreeView, QAbstractItemView, QProgressDialog,
-                               QRadioButton, QListWidget)
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QIcon, QColor
+                               QLabel, QComboBox, QMessageBox, QFileDialog, QTableWidget,
+                               QTableWidgetItem, QSplitter, QHeaderView, QDoubleSpinBox,
+                               QGroupBox, QSpinBox, QMainWindow, QScrollArea,
+                               QApplication, QCheckBox, QDialog, QFrame,
+                               QListView, QTreeView, QAbstractItemView, QProgressDialog)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from widget.periodic_table_widget import PeriodicTableWidget
 import loading.vitesse_loading
-import pyqtgraph as pg
 from widget.numeric_table import NumericTableWidgetItem
 from widget.custom_plot_widget import EnhancedPlotWidget
 from processing.peak_detection import PeakDetection
@@ -21,18 +18,21 @@ from loading.data_thread import DataProcessThread
 
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PLOT_STYLES,
-    create_scrollable_container, export_table_to_csv,
-    populate_detection_row, read_detection_row, apply_global_method,
-    plot_detection_results, highlight_particle, snr_to_color,
-    number_method_transport_rate,
-    base_stylesheet, show_data_source_dialog,
+    PLOT_STYLES,
+    export_table_to_csv, populate_detection_row,
+    read_detection_row, apply_global_method, plot_detection_results,
+    highlight_particle, snr_to_color, number_method_transport_rate,
+    base_stylesheet,
+    show_data_source_dialog,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_number")
 
 try:
     from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
+    _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
     CSVDataProcessThread = None
     show_csv_structure_dialog = None
@@ -46,11 +46,6 @@ class CollapsibleSection(QWidget):
     """
 
     def __init__(self, title: str, parent=None):
-        """
-        Args:
-            title (str): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._expanded = True
 
@@ -98,10 +93,6 @@ class CollapsibleSection(QWidget):
         self._arrow.setText("▼" if self._expanded else "▶")
 
     def collapse(self, status: str = ""):
-        """
-        Args:
-            status (str): Status message string.
-        """
         if status:
             self._status_lbl.setText(status)
         if self._expanded:
@@ -116,48 +107,28 @@ class CollapsibleSection(QWidget):
             self._arrow.setText("▼")
 
     def set_status(self, text: str):
-        """
-        Args:
-            text (str): Text string.
-        """
         self._status_lbl.setText(text)
 
     @property
     def is_expanded(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return self._expanded
 
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
 class NoWheelIntSpinBox(QSpinBox):
     """QSpinBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
 class NoWheelComboBox(QComboBox):
     """QComboBox that ignores mouse-wheel events to prevent accidental changes."""
     def wheelEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         event.ignore()
 
 
@@ -196,10 +167,7 @@ class NumberMethodWidget(QMainWindow):
         self.destroyed.connect(lambda *_: self._theme_cleanup())
 
     def apply_theme(self, *_):
-        """Re-apply the themed stylesheet and refresh dynamic labels.
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
+        """Re-apply the themed stylesheet and refresh dynamic labels."""
         p = theme.palette
 
         section_qss = f"""
@@ -241,7 +209,7 @@ class NumberMethodWidget(QMainWindow):
                 try:
                     w.setBackground(p.plot_bg)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in apply_theme")
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -445,10 +413,7 @@ class NumberMethodWidget(QMainWindow):
         layout.addWidget(self.detect_button)
 
     def _build_plot(self, parent_layout):
-        """Add the always-visible signal visualization plot to parent_layout.
-        Args:
-            parent_layout (Any): Layout to which widgets are added.
-        """
+        """Add the always-visible signal visualization plot to parent_layout."""
         plot_group = QGroupBox("Signal Visualization")
         plot_layout = QVBoxLayout(plot_group)
         plot_layout.setSpacing(6)
@@ -475,7 +440,8 @@ class NumberMethodWidget(QMainWindow):
             self.plot_widget.exclusionRegionsChanged.connect(
                 self._on_exclusion_regions_changed)
         except Exception as e:
-            print(f"Could not connect exclusionRegionsChanged: {e}")
+            _itk_log.exception("Handled exception in _build_plot")
+            _itk_log.error(f"Could not connect exclusionRegionsChanged: {e}")
 
         parent_layout.addWidget(plot_group)
 
@@ -668,7 +634,8 @@ class NumberMethodWidget(QMainWindow):
                         masses = DataProcessThread.get_masses_only(str(h5_path))
                         all_masses_from_files.extend(masses)
                     except Exception as mass_error:
-                        print(f"Warning: Could not get masses from {h5_path}: {mass_error}")
+                        _itk_log.exception("Handled exception in handle_tofwerk_import")
+                        _itk_log.error(f"Warning: Could not get masses from {h5_path}: {mass_error}")
                         masses = []
                     
                     self.folder_data[h5_path] = {
@@ -683,6 +650,7 @@ class NumberMethodWidget(QMainWindow):
                     valid_files.append(h5_path)
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in handle_tofwerk_import")
                     sample_name = h5_file.stem
                     self.folder_data[h5_path] = {
                         'status': f'Error: {str(e)}',
@@ -692,7 +660,7 @@ class NumberMethodWidget(QMainWindow):
                     }
                     self.sample_name_to_folder[sample_name] = h5_path
                     
-                    print(f"Warning: Error loading {sample_name}: {str(e)}")
+                    _itk_log.error(f"Warning: Error loading {sample_name}: {str(e)}")
                     continue
             
             progress.setValue(80)
@@ -840,7 +808,8 @@ class NumberMethodWidget(QMainWindow):
                         masses = DataProcessThread.get_masses_only(str(folder_path))
                         all_masses_from_folders.extend(masses)
                     except Exception as mass_error:
-                        print(f"Warning: Could not get masses from {folder_path}: {mass_error}")
+                        _itk_log.exception("Handled exception in handle_folder_import")
+                        _itk_log.error(f"Warning: Could not get masses from {folder_path}: {mass_error}")
                         masses = []
                     
                     self.folder_data[folder_path] = {
@@ -854,6 +823,7 @@ class NumberMethodWidget(QMainWindow):
                     valid_folders.append(folder_path)
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in handle_folder_import")
                     sample_name = Path(folder_path).name
                     self.folder_data[folder_path] = {
                         'status': f'Error: {str(e)}',
@@ -862,7 +832,7 @@ class NumberMethodWidget(QMainWindow):
                     }
                     self.sample_name_to_folder[sample_name] = folder_path
                     
-                    print(f"Warning: Error loading {sample_name}: {str(e)}")
+                    _itk_log.error(f"Warning: Error loading {sample_name}: {str(e)}")
                     continue
             
             progress.setValue(80)
@@ -1011,15 +981,11 @@ class NumberMethodWidget(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error processing CSV files: {str(e)}")
 
     def filter_csv_config_by_isotopes(self, config, selected_isotopes):
-        """
-        Filter CSV configuration to only include selected isotopes.
-        
+        """Filter CSV configuration to only include selected isotopes.
+
         Args:
             config: Original CSV configuration dictionary
             selected_isotopes: Dictionary mapping element symbols to selected isotope masses
-            
-        Returns:
-            Filtered configuration containing only mappings for selected isotopes
         """
         filtered_config = config.copy()
         filtered_config['files'] = []
@@ -1074,7 +1040,7 @@ class NumberMethodWidget(QMainWindow):
             self.sample_name_to_folder[sample_name] = csv_file_path
             self.folder_paths.append(csv_file_path)
             
-            print(f"CSV sample '{sample_name}' processed successfully")
+            _itk_log.debug(f"CSV sample '{sample_name}' processed successfully")
             
             expected_files = len(self.csv_config['files']) if self.csv_config else 0
             processed_files = len([s for s in self.sample_name_to_folder.values() if str(s).endswith('.csv')])
@@ -1086,10 +1052,11 @@ class NumberMethodWidget(QMainWindow):
                 self.update_sample_table()
                 self.enable_ui_elements()
                 
-                print(f"All CSV files processed successfully ({processed_files} samples)")
+                _itk_log.debug(f"All CSV files processed successfully ({processed_files} samples)")
                 
         except Exception as e:
-            print(f"Error processing CSV data for {sample_name}: {str(e)}")
+            _itk_log.exception("Handled exception in handle_csv_finished")
+            _itk_log.error(f"Error processing CSV data for {sample_name}: {str(e)}")
 
     def handle_csv_error(self, error_message):
         """
@@ -1215,10 +1182,12 @@ class NumberMethodWidget(QMainWindow):
                                 self.all_masses = sorted(list(set(masses)))
                                 break
                         except Exception as e:
-                            print(f"Could not get masses from {folder_path}: {e}")
+                            _itk_log.exception("Handled exception in show_periodic_table")
+                            _itk_log.error(f"Could not get masses from {folder_path}: {e}")
                             continue
             except Exception as e:
-                print(f"Error getting masses for periodic table: {e}")
+                _itk_log.exception("Handled exception in show_periodic_table")
+                _itk_log.error(f"Error getting masses for periodic table: {e}")
         
         if not self.all_masses or len(self.all_masses) == 0:
             QMessageBox.warning(
@@ -1443,7 +1412,7 @@ class NumberMethodWidget(QMainWindow):
                     
             except Exception as e:
                 error_msg = f"Error loading data for {sample_name}: {str(e)}"
-                print(error_msg)
+                _itk_log.error(error_msg)
                 QMessageBox.warning(self, "Data Loading Error", error_msg)
                 self.folder_data[folder_path]['status'] = f'Error: {str(e)}'
                 continue
@@ -1459,8 +1428,6 @@ class NumberMethodWidget(QMainWindow):
 
         Each entry is a dict ``{'bounds': (x0, x1), 'scope': 'sample',
         'element_key': None}``.  Returns an empty list when there are none.
-        Args:
-            sample_name (Any): The sample name.
         """
         return self._exclusion_regions_by_sample.get(sample_name, [])
 
@@ -1478,7 +1445,8 @@ class NumberMethodWidget(QMainWindow):
         try:
             plot_regions = self.plot_widget.get_exclusion_regions()
         except Exception as e:
-            print(f"get_exclusion_regions failed: {e}")
+            _itk_log.exception("Handled exception in _on_exclusion_regions_changed")
+            _itk_log.error(f"get_exclusion_regions failed: {e}")
             return
 
         new_store = []
@@ -1506,14 +1474,14 @@ class NumberMethodWidget(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.disconnect(
                     self._on_exclusion_regions_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
             self.plot_widget.set_exclusion_regions(regions)
         finally:
             try:
                 self.plot_widget.exclusionRegionsChanged.connect(
                     self._on_exclusion_regions_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
 
     def on_detection_params_selection_changed(self):
         """
@@ -1559,10 +1527,10 @@ class NumberMethodWidget(QMainWindow):
             try:
                 self._rebuild_plot_exclusion_regions()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in on_detection_params_selection_changed")
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
-            print(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")
+            _itk_log.error(f"Debug: Could not find data for sample '{sample_name}'. Available samples: {list(self.sample_name_to_folder.keys())}")
 
     def plot_raw_signal_preview(self, folder_path, sample_name):
         """
@@ -1598,14 +1566,10 @@ class NumberMethodWidget(QMainWindow):
         self.plot_widget.enableAutoRange()
 
     def update_detection_parameters_table(self):
-        """
-        Update detection parameters table with all samples.
-        
+        """Update detection parameters table with all samples.
+
         Populates the detection parameters table with default values for each sample
         including detection method, and threshold parameters.
-
-        Returns:
-            None
         """
         if not self.selected_element:
             return
@@ -1708,14 +1672,10 @@ class NumberMethodWidget(QMainWindow):
         self.detect_button.setEnabled(True)
 
     def apply_global_detection_params(self, method):
-        """
-        Apply global detection method to all samples.
-        
+        """Apply global detection method to all samples.
+
         Args:
             method (str): Detection method name to apply to all sample rows.
-
-        Returns:
-            None
         """
         apply_global_method(self.detection_params_table, method)
             
@@ -1963,15 +1923,11 @@ class NumberMethodWidget(QMainWindow):
             self.highlight_particle_in_plot(particle, results)
 
     def highlight_particle_in_plot(self, particle, results):
-        """
-        Add highlighting to a specific particle in the plot.
-        
+        """Add highlighting to a specific particle in the plot.
+
         Args:
             particle (dict): Particle dictionary containing detection information.
             results (dict): Detection results dictionary for the sample.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = highlight_particle(
             self.plot_widget, particle,
@@ -2005,9 +1961,8 @@ class NumberMethodWidget(QMainWindow):
         )
 
     def plot_sample_results(self, sample_name, signal, particles, lambda_bkgd, threshold, time_array):
-        """
-        Plot results for a specific sample.
-        
+        """Plot results for a specific sample.
+
         Args:
             sample_name (str): Display name of the sample.
             signal (np.ndarray): Raw signal array.
@@ -2015,9 +1970,6 @@ class NumberMethodWidget(QMainWindow):
             lambda_bkgd (float): Background level value.
             threshold (float): Detection threshold value.
             time_array (np.ndarray): Time array corresponding to signal data.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = None
         plot_detection_results(
@@ -2158,12 +2110,14 @@ class NumberMethodWidget(QMainWindow):
                     })
                 
             except Exception as e:
+                _itk_log.exception("Handled exception in calculate_transport_rates")
                 result_row = self.calibration_results_table.rowCount()
                 self.calibration_results_table.insertRow(result_row)
                 
                 try:
                     sample_name = self.calibration_data_table.item(row, 0).text()
-                except:
+                except (AttributeError, IndexError):
+                    _itk_log.exception("Handled exception in calculate_transport_rates")
                     sample_name = f"Sample {row+1}"
                 
                 self.calibration_results_table.setItem(result_row, 0, QTableWidgetItem(sample_name))
@@ -2198,12 +2152,7 @@ class NumberMethodWidget(QMainWindow):
             self.summary_label.setText("<div style='text-align: center; color: red;'><h3>No successful calculations</h3></div>")
 
     def export_results_to_csv(self):
-        """
-        Export detection results to CSV file.
-
-        Returns:
-            None
-        """
+        """Export detection results to CSV file."""
         export_table_to_csv(self.results_table, self)
 
 

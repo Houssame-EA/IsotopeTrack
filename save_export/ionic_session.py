@@ -3,6 +3,8 @@ import csv
 import numpy as np
 from typing import Dict, Any
 from pathlib import Path
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.save_export.ionic_session")
 
 class NumpyEncoder(json.JSONEncoder):
     """
@@ -11,12 +13,8 @@ class NumpyEncoder(json.JSONEncoder):
     Converts NumPy arrays and numeric types to JSON-serializable Python types.
     """
     def default(self, obj):
-        """
-        Default encoder for NumPy types.
-        
-        Args:
-            obj (Any): Object to encode
-            
+        """Default encoder for NumPy types.
+
         Returns:
             Any: JSON-serializable representation of the object
         """
@@ -31,12 +29,8 @@ class NumpyEncoder(json.JSONEncoder):
         return super(NumpyEncoder, self).default(obj)
 
 def convert_numpy_types(obj):
-    """
-    Recursively convert NumPy types to Python native types.
-    
-    Args:
-        obj (Any): Object to convert (dict, list, np.ndarray, or scalar)
-        
+    """Recursively convert NumPy types to Python native types.
+
     Returns:
         Any: Object with NumPy types converted to Python native types
     """
@@ -56,16 +50,12 @@ def convert_numpy_types(obj):
         return obj
 
 def save_session_to_csv(file_path: str, session_data: Dict[str, Any], ionic_window=None) -> None:
-    """
-    Save session data to CSV format including summary statistics for first 5 seconds.
-    
+    """Save session data to CSV format including summary statistics for first 5 seconds.
+
     Args:
         file_path (str): Path to save the CSV file
         session_data (Dict[str, Any]): Session data dictionary
         ionic_window (object, optional): Ionic window object for extracting statistics
-        
-    Returns:
-        None
     """
     try:
         session_data_clean = convert_numpy_types(session_data)
@@ -98,7 +88,7 @@ def save_session_to_csv(file_path: str, session_data: Dict[str, Any], ionic_wind
         if summary_stats_5sec:
             save_summary_csv(file_path, summary_stats_5sec)
             
-        print(f"Session saved successfully to {main_csv_path}")
+        _itk_log.debug(f"Session saved successfully to {main_csv_path}")
         
     except Exception as e:
         raise Exception(f"Failed to save session: {str(e)}")
@@ -181,21 +171,18 @@ def extract_5sec_summary_stats(ionic_window) -> Dict[str, Any]:
                     }
         
     except Exception as e:
-        print(f"Error extracting summary statistics: {str(e)}")
+        _itk_log.exception("Handled exception in extract_5sec_summary_stats")
+        _itk_log.error(f"Error extracting summary statistics: {str(e)}")
         return {}
     
     return summary_stats
 
 def save_summary_csv(base_file_path: str, summary_stats: Dict[str, Any]) -> None:
-    """
-    Save summary statistics to a separate CSV file.
-    
+    """Save summary statistics to a separate CSV file.
+
     Args:
         base_file_path (str): Base file path for the summary CSV
         summary_stats (Dict[str, Any]): Summary statistics dictionary
-        
-    Returns:
-        None
     """
     try:
         base_path = Path(base_file_path).with_suffix('')
@@ -236,10 +223,11 @@ def save_summary_csv(base_file_path: str, summary_stats: Dict[str, Any]) -> None
                 writer = csv.DictWriter(csvfile, fieldnames=summary_rows[0].keys())
                 writer.writeheader()
                 writer.writerows(summary_rows)
-            print(f"Saved summary statistics: {summary_csv_path}")
+            _itk_log.debug(f"Saved summary statistics: {summary_csv_path}")
         
     except Exception as e:
-        print(f"Error saving summary statistics: {str(e)}")
+        _itk_log.exception("Handled exception in save_summary_csv")
+        _itk_log.error(f"Error saving summary statistics: {str(e)}")
 
 def load_session_from_csv(file_path: str) -> Dict[str, Any]:
     """
@@ -308,5 +296,6 @@ def load_summary_stats_from_csv(base_file_path: str) -> Dict[str, Any]:
         return summary_data
         
     except Exception as e:
-        print(f"Error loading summary statistics: {str(e)}")
+        _itk_log.exception("Handled exception in load_summary_stats_from_csv")
+        _itk_log.error(f"Error loading summary statistics: {str(e)}")
         return {}

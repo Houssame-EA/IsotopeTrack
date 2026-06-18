@@ -8,7 +8,7 @@
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent = None)` | Initialize the Ionic Calibration Window. |
+| `__init__` | `(self, parent=None)` | Initialize the Ionic Calibration Window. |
 | `initUI` | `(self)` | Initialize and configure the user interface. |
 | `apply_theme` | `(self, *_)` | Re-apply the full ionic-calibration stylesheet from the current |
 | `_refresh_return_button` | `(self)` | Apply the current theme's return-button style + a readable icon |
@@ -66,7 +66,7 @@
 | `update_table_columns` | `(self)` | Update table columns with sorted isotope labels while preserving existing data. |
 | `update_periodic_table` | `(self)` | Update periodic table with available masses. |
 | `parse_header_for_element_isotope_and_unit` | `(self, header)` | Parse header text to extract element, mass, and unit information. |
-| `plot_count_vs_time` | `(self, selected_row = None, selected_col = None)` | Plot count vs time data with proper isotope labels. |
+| `plot_count_vs_time` | `(self, selected_row=None, selected_col=None)` | Plot count vs time data with proper isotope labels. |
 | `on_table_cell_clicked` | `(self, row, col)` | Handle table cell click events. |
 | `calculate_calibration` | `(self)` | Calculate calibration with proper isotope matching. |
 | `get_table_data` | `(self)` | Get table data with both display and internal formats. |
@@ -85,7 +85,7 @@
 | `_fit_weighted` | `(self, x, y, y_std)` | Weighted least squares (WLS) linear regression. |
 | `_compute_figures_of_merit` | `(self, slope, intercept, sigma_blank)` | Compute analytical figures of merit from regression results. |
 | `_run_all_fits_on_subset` | `(self, x, y, y_std, included_mask, density)` | Run the three calibration fits on the subset of points selected by |
-| `_compute_outlier_indices` | `(self, y, y_fit, included_mask, z_threshold = 2.5)` | Flag included points whose standardized residual exceeds ``z_threshold``. |
+| `_compute_outlier_indices` | `(self, y, y_fit, included_mask, z_threshold=1.5)` | Flag included points whose standardized residual exceeds ``z_threshold``. |
 | `refit_isotope` | `(self, isotope_key)` | Re-run the three fits for a single isotope using the current |
 | `on_calibration_point_exclusion_toggled` | `(self, index)` | Toggle exclusion of the clicked point for the current isotope, |
 | `reset_current_isotope_exclusions` | `(self)` | Clear all exclusions for the currently-displayed isotope and refit. |
@@ -96,7 +96,7 @@
 | `on_manual_slope_changed` | `(self)` | Apply the inline manual slope to the current isotope. |
 | `next_isotope` | `(self)` |  |
 | `prev_isotope` | `(self)` |  |
-| `perform_calibration` | `(self, concentrations, progress = None)` | Orchestrate calibration calculations for all selected isotopes. |
+| `perform_calibration` | `(self, concentrations, progress=None)` | Orchestrate calibration calculations for all selected isotopes. |
 | `load_folders` | `(self)` | Load folders or CSV files for calibration with improved dialog structure. |
 | `select_tofwerk_files` | `(self)` | Handle TOFWERK .h5 file selection for calibration. |
 | `handle_tofwerk_import` | `(self, h5_file_paths)` | Handle TOFWERK .h5 file import for calibration. |
@@ -110,58 +110,8 @@
 
 ## Functions
 
-### `_ual`
-
-```python
-def _ual()
-```
-
-Return the UserActionLogger, or None if logging isn't ready.
-
-**Returns:**
-
-- `object: Result of the operation.`
-
-### `_build_ionic_qss`
-
-```python
-def _build_ionic_qss(p) → str
-```
-
-Full stylesheet for the Ionic Calibration window, built from a
-theme Palette.  Covers main window, toolbar, tabs, tables, buttons,
-inputs, group boxes, scroll areas, and the status bar.
-
-**Args:**
-
-- `p (Any): The p.`
-
-**Returns:**
-
-- `str: Result of the operation.`
-
-### `_build_ionic_status_colors`
-
-```python
-def _build_ionic_status_colors(p) → dict
-```
-
-Row-highlight colors used to indicate calibration method status in
-the results table.  Keeps the orange/green/blue semantics across light
-and dark themes — in dark mode they're muted so they don't blind the
-user while still being distinguishable at a glance.
-
-Keys:
-manual    — manual override (was #ffe6cc orange)
-auto      — auto-selected / best R² (was #e8f5e8 green)
-selected  — manually selected by user (was #e6f3ff blue)
-base      — neutral background for unhighlighted cells
-text      — foreground color that reads on all three backgrounds
-
-**Args:**
-
-- `p (Any): The p.`
-
-**Returns:**
-
-- `dict: Result of the operation.`
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_ual` | `()` | Return the UserActionLogger, or None if logging isn't ready. |
+| `_build_ionic_qss` | `(p) → str` | Full stylesheet for the Ionic Calibration window, built from a |
+| `_build_ionic_status_colors` | `(p) → dict` | Row-highlight colors used to indicate calibration method status in |

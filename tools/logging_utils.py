@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import logging.handlers
@@ -7,10 +8,10 @@ import os
 import sys
 import time
 import traceback
+from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
@@ -20,6 +21,87 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 import qtawesome as qta
+_itk_log = logging.getLogger("IsotopeTrack.tools.logging_utils")
+
+
+_LOG_CONTEXT: contextvars.ContextVar[dict] = contextvars.ContextVar(
+    "isotopetrack_log_context", default={}
+)
+
+
+def push_log_context(**fields) -> contextvars.Token:
+    """Merge domain fields into the active logging context.
+
+    Args:
+        **fields: Context key/values to attach to subsequent log records,
+            such as sample, isotope, element, or method. None values are
+            ignored.
+    Returns:
+        contextvars.Token: Token to pass to reset_log_context to undo this push.
+    """
+    current = dict(_LOG_CONTEXT.get())
+    current.update({k: v for k, v in fields.items() if v is not None})
+    return _LOG_CONTEXT.set(current)
+
+
+def reset_log_context(token: contextvars.Token) -> None:
+    """Restore the logging context to the state captured by a push token.
+
+    Args:
+        token (contextvars.Token): Token returned by push_log_context.
+    """
+    try:
+        _LOG_CONTEXT.reset(token)
+    except (ValueError, LookupError):
+        pass
+
+
+@contextmanager
+def log_context(**fields):
+    """Stamp domain context onto every log record emitted inside the block.
+
+    Args:
+        **fields: Context key/values such as sample, isotope, element, method.
+    """
+    token = push_log_context(**fields)
+    try:
+        yield
+    finally:
+        reset_log_context(token)
+
+
+def set_current_window(window_id) -> None:
+    """Set or clear the window identifier stamped on every log record.
+
+    Unlike log_context, this persists for the GUI thread until changed, so all
+    activity from the active window is attributed to it.
+
+    Args:
+        window_id: Identifier for the active window, or None to clear it.
+    """
+    current = dict(_LOG_CONTEXT.get())
+    if window_id is None:
+        current.pop("window", None)
+    else:
+        current["window"] = window_id
+    _LOG_CONTEXT.set(current)
+
+
+class _ContextFilter(logging.Filter):
+    """Attaches the active domain context to every log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Set record.context and record.context_str from the active context.
+
+        Returns:
+            bool: Always True so the record is never dropped.
+        """
+        ctx = _LOG_CONTEXT.get()
+        record.context = dict(ctx)
+        record.context_str = (
+            "  " + " ".join(f"[{k}={v}]" for k, v in ctx.items()) if ctx else ""
+        )
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -27,10 +109,7 @@ import qtawesome as qta
 # ---------------------------------------------------------------------------
 
 def _get_log_dir() -> Path:
-    """Return a writable log directory for all platforms and packaging modes.
-    Returns:
-        Path: Result of the operation.
-    """
+    """Return a writable log directory for all platforms and packaging modes."""
     if getattr(sys, 'frozen', False):
         if sys.platform == "darwin":
             log_dir = Path.home() / "Library" / "Logs" / "IsotopeTrack"
@@ -136,18 +215,14 @@ _GUI_REFRESH_MS  = 80
 
 
 def _mode(palette=None) -> str:
-    """Return 'dark' or 'light' given a Palette object or the live ThemeManager.
-    Args:
-        palette (Any): Colour palette object.
-    Returns:
-        str: Result of the operation.
-    """
+    """Return 'dark' or 'light' given a Palette object or the live ThemeManager."""
     if palette is not None:
         return palette.name if hasattr(palette, "name") else str(palette)
     try:
         from tools.theme import ThemeManager
         return "dark" if ThemeManager().is_dark else "light"
     except Exception:
+        _itk_log.exception("Handled exception in _mode")
         return "dark"
 
 
@@ -167,10 +242,6 @@ class EnhancedQtLogHandler(logging.Handler):
     """Routes Python log records to the GUI log window via Qt signals."""
 
     def __init__(self, log_window: "EnhancedLogWindow | None" = None):
-        """
-        Args:
-            log_window ('EnhancedLogWindow | None'): The log window.
-        """
         super().__init__()
         self._signaller  = _LogSignaller()
         self._log_window = log_window
@@ -178,14 +249,12 @@ class EnhancedQtLogHandler(logging.Handler):
             self._signaller.log_record.connect(log_window._receive_entry)
 
     def emit(self, record: logging.LogRecord) -> None:
-        """
-        Args:
-            record (logging.LogRecord): The record.
-        Returns:
-            None
-        """
         try:
             self._signaller.log_record.emit(_build_entry(record))
+        except RuntimeError:
+            # Qt signal source already deleted (app teardown) — drop the GUI
+            # echo silently; file/console handlers still receive the record.
+            pass
         except Exception:
             self.handleError(record)
 
@@ -195,12 +264,7 @@ class EnhancedQtLogHandler(logging.Handler):
 # ---------------------------------------------------------------------------
 
 def _build_entry(record: logging.LogRecord) -> dict:
-    """Convert a LogRecord to a rich entry dict used by the GUI and JSONL.
-    Args:
-        record (logging.LogRecord): The record.
-    Returns:
-        dict: Result of the operation.
-    """
+    """Convert a LogRecord to a rich entry dict used by the GUI and JSONL."""
     ts      = datetime.fromtimestamp(record.created)
     context = getattr(record, "context", {}) or {}
     exc_text = ""
@@ -232,20 +296,10 @@ class JsonlFileHandler(logging.Handler):
     """Appends structured JSON-lines to a .jsonl log file."""
 
     def __init__(self, filepath: Path):
-        """
-        Args:
-            filepath (Path): The filepath.
-        """
         super().__init__()
         self._fp = open(filepath, "a", encoding="utf-8")
 
     def emit(self, record: logging.LogRecord) -> None:
-        """
-        Args:
-            record (logging.LogRecord): The record.
-        Returns:
-            None
-        """
         try:
             self._fp.write(json.dumps(_build_entry(record), default=str) + "\n")
             self._fp.flush()
@@ -253,10 +307,6 @@ class JsonlFileHandler(logging.Handler):
             self.handleError(record)
 
     def close(self) -> None:
-        """
-        Returns:
-            None
-        """
         try:
             self._fp.close()
         except Exception:
@@ -271,20 +321,10 @@ class _BufferHandler(logging.Handler):
     """Fills a shared list with entry dicts until the GUI window takes over."""
 
     def __init__(self, buffer: list):
-        """
-        Args:
-            buffer (list): The buffer.
-        """
         super().__init__()
         self._buffer = buffer
 
     def emit(self, record: logging.LogRecord) -> None:
-        """
-        Args:
-            record (logging.LogRecord): The record.
-        Returns:
-            None
-        """
         try:
             self._buffer.append(_build_entry(record))
         except Exception:
@@ -299,10 +339,6 @@ class _LogStatsBar(QFrame):
     """Live counters at the bottom of the log window."""
 
     def __init__(self, parent: QWidget | None = None):
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
         self.setFixedHeight(28)
@@ -351,12 +387,6 @@ class _LogStatsBar(QFrame):
     # -- public ------------------------------------------------------------
 
     def apply_theme(self, palette=None) -> None:
-        """
-        Args:
-            palette (Any): Colour palette object.
-        Returns:
-            None
-        """
         mode = _mode(palette)
         if mode == "dark":
             bg, border, muted = "#252526", "#3c3c3c", "#777"
@@ -371,21 +401,11 @@ class _LogStatsBar(QFrame):
         )
 
     def increment(self, key: str) -> None:
-        """
-        Args:
-            key (str): Dictionary or storage key.
-        Returns:
-            None
-        """
         if key in self._counts:
             self._counts[key] += 1
             self._labels[key].setText(str(self._counts[key]))
 
     def reset(self) -> None:
-        """
-        Returns:
-            None
-        """
         for k in self._counts:
             self._counts[k] = 0
             self._labels[k].setText("0")
@@ -394,10 +414,6 @@ class _LogStatsBar(QFrame):
     # -- private -----------------------------------------------------------
 
     def _tick(self) -> None:
-        """
-        Returns:
-            None
-        """
         elapsed = int((datetime.now() - self._t0).total_seconds())
         h, r    = divmod(elapsed, 3600)
         m, s    = divmod(r, 60)
@@ -412,10 +428,6 @@ class _ContextPanel(QFrame):
     """Formatted key-value display for a selected log entry's context."""
 
     def __init__(self, parent: QWidget | None = None):
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
-        """
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
         self.setMaximumHeight(180)
@@ -449,12 +461,6 @@ class _ContextPanel(QFrame):
     # -- public ------------------------------------------------------------
 
     def apply_theme(self, palette=None) -> None:
-        """
-        Args:
-            palette (Any): Colour palette object.
-        Returns:
-            None
-        """
         mode = _mode(palette)
         if mode == "dark":
             frame_bg   = "#252526"
@@ -482,12 +488,6 @@ class _ContextPanel(QFrame):
         self._copy_btn.setIcon(qta.icon("fa6s.copy", color=icon_color))
 
     def show_entry(self, entry: dict) -> None:
-        """
-        Args:
-            entry (dict): The entry.
-        Returns:
-            None
-        """
         lines: list[str] = []
         ctx = entry.get("context") or {}
         if ctx:
@@ -517,19 +517,11 @@ class _ContextPanel(QFrame):
         self._text.setPlainText("\n".join(lines) if lines else "(no context)")
 
     def clear(self) -> None:
-        """
-        Returns:
-            None
-        """
         self._text.clear()
 
     # -- private -----------------------------------------------------------
 
     def _copy_text(self) -> None:
-        """
-        Returns:
-            None
-        """
         QApplication.clipboard().setText(self._text.toPlainText())
 
 
@@ -556,10 +548,6 @@ class EnhancedLogWindow(QDialog):
     """
 
     def __init__(self, parent: QWidget | None = None):
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("IsotopeTrack — Application Log")
         self.setWindowIcon(qta.icon("fa6s.file-lines", color="#007acc"))
@@ -583,7 +571,7 @@ class EnhancedLogWindow(QDialog):
             from tools.theme import ThemeManager
             ThemeManager().themeChanged.connect(self._on_theme_changed)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in __init__")
 
         self._flush_timer = QTimer(self)
         self._flush_timer.timeout.connect(self._flush_pending)
@@ -594,10 +582,6 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        """
-        Returns:
-            None
-        """
         root = QVBoxLayout(self)
         root.setSpacing(0)
         root.setContentsMargins(0, 0, 0, 0)
@@ -735,22 +719,12 @@ class EnhancedLogWindow(QDialog):
 
     @staticmethod
     def _muted_lbl(text: str) -> QLabel:
-        """
-        Args:
-            text (str): Text string.
-        Returns:
-            QLabel: Result of the operation.
-        """
         lbl = QLabel(text + ":")
         lbl.setObjectName("MutedLabel")
         return lbl
 
     @staticmethod
     def _vline() -> QFrame:
-        """
-        Returns:
-            QFrame: Result of the operation.
-        """
         f = QFrame()
         f.setFrameShape(QFrame.VLine)
         f.setFixedHeight(20)
@@ -759,14 +733,6 @@ class EnhancedLogWindow(QDialog):
 
     @staticmethod
     def _flat_btn(icon_name: str, color: str, tooltip: str) -> QPushButton:
-        """
-        Args:
-            icon_name (str): The icon name.
-            color (str): Colour value.
-            tooltip (str): The tooltip.
-        Returns:
-            QPushButton: Result of the operation.
-        """
         btn = QPushButton()
         btn.setIcon(qta.icon(icon_name, color=color))
         btn.setToolTip(tooltip)
@@ -782,34 +748,23 @@ class EnhancedLogWindow(QDialog):
         """Called by ThemeManager.themeChanged — re-theme and re-render.
         Args:
             name (str): Name string.
-        Returns:
-            None
         """
         self._mode = name
         self.apply_theme()
         self._full_render()
 
     def _toggle_theme(self) -> None:
-        """
-        Returns:
-            None
-        """
         try:
             from tools.theme import ThemeManager
             ThemeManager().toggle()
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _toggle_theme")
 
     def apply_theme(self, palette=None) -> None:
-        """
-        Apply dark or light stylesheet to every component.
+        """Apply dark or light stylesheet to every component.
 
         Call this at startup and whenever the theme changes.
         Accepts an optional Palette object; otherwise reads ThemeManager.
-        Args:
-            palette (Any): Colour palette object.
-        Returns:
-            None
         """
         if palette is not None:
             self._mode = _mode(palette)
@@ -979,19 +934,11 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _receive_entry(self, entry: dict) -> None:
-        """Buffer incoming entries; actual rendering is done by rate-limiter.
-        Args:
-            entry (dict): The entry.
-        Returns:
-            None
-        """
+        """Buffer incoming entries; actual rendering is done by rate-limiter."""
         self._pending.append(entry)
 
     def _flush_pending(self) -> None:
-        """Batch-render all buffered entries at most every _GUI_REFRESH_MS.
-        Returns:
-            None
-        """
+        """Batch-render all buffered entries at most every _GUI_REFRESH_MS."""
         if not self._pending:
             return
 
@@ -1029,13 +976,7 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _render_entry(self, entry: dict, cursor: QTextCursor) -> None:
-        """Append one formatted entry at *cursor*.
-        Args:
-            entry (dict): The entry.
-            cursor (QTextCursor): The cursor.
-        Returns:
-            None
-        """
+        """Append one formatted entry at *cursor*."""
         level       = entry["level"]
         is_ua       = entry["is_user_action"]
         action_type = entry.get("context", {}).get("action_type", "")
@@ -1079,6 +1020,15 @@ class EnhancedLogWindow(QDialog):
         cursor.setCharFormat(fmt_badge)
         cursor.insertText(badge)
 
+        win = (entry.get("context") or {}).get("window")
+        if win:
+            fmt_win = QTextCharFormat()
+            fmt_win.setForeground(QColor("#c8a020" if mode == "dark" else "#8a6d00"))
+            fmt_win.setBackground(QColor(bg))
+            fmt_win.setFontWeight(700)
+            cursor.setCharFormat(fmt_win)
+            cursor.insertText(f" {win} ")
+
         if level == "DEBUG":
             fmt_mod = QTextCharFormat()
             fmt_mod.setForeground(
@@ -1112,10 +1062,7 @@ class EnhancedLogWindow(QDialog):
             self._error_positions.append(pos_before)
 
     def _full_render(self) -> None:
-        """Re-render all entries from scratch (used after trim or theme change).
-        Returns:
-            None
-        """
+        """Re-render all entries from scratch (used after trim or theme change)."""
         self._log_text.clear()
         self._error_positions.clear()
         cursor = self._log_text.textCursor()
@@ -1127,12 +1074,6 @@ class EnhancedLogWindow(QDialog):
             self._log_text.ensureCursorVisible()
 
     def _update_stats(self, entry: dict) -> None:
-        """
-        Args:
-            entry (dict): The entry.
-        Returns:
-            None
-        """
         key = "USER" if entry["is_user_action"] else entry["level"]
         if key in self._stats._counts:
             self._stats.increment(key)
@@ -1140,12 +1081,6 @@ class EnhancedLogWindow(QDialog):
             self._stats.increment("INFO")
 
     def _update_module_filter(self, entry: dict) -> None:
-        """
-        Args:
-            entry (dict): The entry.
-        Returns:
-            None
-        """
         mod = entry.get("module", "")
         if mod and self._module_filter.findText(mod) < 0:
             self._module_filter.addItem(mod)
@@ -1155,10 +1090,6 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _apply_filter(self) -> None:
-        """
-        Returns:
-            None
-        """
         level_sel   = self._level_filter.currentText()
         action_sel  = self._action_filter.currentText()
         module_sel  = self._module_filter.currentText()
@@ -1200,10 +1131,6 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _on_cursor_moved(self) -> None:
-        """
-        Returns:
-            None
-        """
         line_no = self._log_text.textCursor().blockNumber()
         if 0 <= line_no < len(self._entries):
             self._ctx_panel.show_entry(self._entries[line_no])
@@ -1215,10 +1142,6 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _jump_to_next_error(self) -> None:
-        """
-        Returns:
-            None
-        """
         if not self._error_positions:
             return
         pos = self._error_positions[self._error_jump_idx % len(self._error_positions)]
@@ -1235,12 +1158,6 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def _on_autoscroll_toggled(self, checked: bool) -> None:
-        """
-        Args:
-            checked (bool): Whether the item is checked.
-        Returns:
-            None
-        """
         self._auto_scroll = checked
         if checked:
             cursor = self._log_text.textCursor()
@@ -1248,30 +1165,16 @@ class EnhancedLogWindow(QDialog):
             self._log_text.setTextCursor(cursor)
 
     def _on_wrap_toggled(self, checked: bool) -> None:
-        """
-        Args:
-            checked (bool): Whether the item is checked.
-        Returns:
-            None
-        """
         self._log_text.setLineWrapMode(
             QTextEdit.WidgetWidth if checked else QTextEdit.NoWrap
         )
 
     def _copy_selected(self) -> None:
-        """
-        Returns:
-            None
-        """
         text = self._log_text.textCursor().selectedText()
         if text:
             QApplication.clipboard().setText(text)
 
     def _clear(self) -> None:
-        """
-        Returns:
-            None
-        """
         self._entries.clear()
         self._pending.clear()
         self._error_positions.clear()
@@ -1283,10 +1186,6 @@ class EnhancedLogWindow(QDialog):
         self.setWindowTitle("IsotopeTrack — Application Log")
 
     def _save_txt(self) -> None:
-        """
-        Returns:
-            None
-        """
         from PySide6.QtWidgets import QFileDialog
         fname, _ = QFileDialog.getSaveFileName(
             self, "Save Log",
@@ -1309,10 +1208,6 @@ class EnhancedLogWindow(QDialog):
                 )
 
     def _export_jsonl(self) -> None:
-        """
-        Returns:
-            None
-        """
         from PySide6.QtWidgets import QFileDialog
         fname, _ = QFileDialog.getSaveFileName(
             self, "Export JSONL",
@@ -1330,12 +1225,7 @@ class EnhancedLogWindow(QDialog):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
-        """Hide instead of destroying so the full log history is always kept.
-        Args:
-            event (Any): Qt event object.
-        Returns:
-            None
-        """
+        """Hide instead of destroying so the full log history is always kept."""
         event.ignore()
         self.hide()
 
@@ -1356,8 +1246,6 @@ class EnhancedLogWindow(QDialog):
             message (str): Message string.
             timestamp (str): The timestamp.
             context (dict | None): The context.
-        Returns:
-            None
         """
         self._receive_entry({
             "timestamp":      timestamp,
@@ -1382,10 +1270,6 @@ class UserActionLogger:
     """Tracks user interactions and analysis workflow steps."""
 
     def __init__(self, logger: logging.Logger):
-        """
-        Args:
-            logger (logging.Logger): The logger.
-        """
         self._logger        = logger
         self._session_start = datetime.now()
         self._action_count  = 0
@@ -1398,14 +1282,6 @@ class UserActionLogger:
         description: str,
         context: dict | None = None,
     ) -> None:
-        """
-        Args:
-            action_type (str): The action type.
-            description (str): The description.
-            context (dict | None): The context.
-        Returns:
-            None
-        """
         self._action_count += 1
         ctx = dict(context or {})
         ctx.update(
@@ -1425,57 +1301,20 @@ class UserActionLogger:
     # -- convenience wrappers ──────────────────────────────────────────
 
     def log_click(self, widget_name: str, widget_type: str = "", extra: dict | None = None) -> None:
-        """
-        Args:
-            widget_name (str): The widget name.
-            widget_type (str): The widget type.
-            extra (dict | None): The extra.
-        Returns:
-            None
-        """
         self.log_action("CLICK", f"Clicked {widget_name}",
                         {"widget_name": widget_name, "widget_type": widget_type, **(extra or {})})
 
     def log_menu_action(self, menu: str, action: str) -> None:
-        """
-        Args:
-            menu (str): QMenu object.
-            action (str): QAction object.
-        Returns:
-            None
-        """
         self.log_action("MENU", f"{menu} → {action}", {"menu": menu, "action": action})
 
     def log_dialog_open(self, name: str, kind: str = "") -> None:
-        """
-        Args:
-            name (str): Name string.
-            kind (str): The kind.
-        Returns:
-            None
-        """
         self.log_action("DIALOG_OPEN", f"Opened {name}", {"dialog_name": name, "dialog_type": kind})
 
     def log_file_operation(self, op: str, path: str | Path, success: bool = True) -> None:
-        """
-        Args:
-            op (str): The op.
-            path (str | Path): File or directory path.
-            success (bool): The success.
-        Returns:
-            None
-        """
         self.log_action("FILE_OP", f"{op}: {path}",
                         {"operation": op, "file": str(path), "success": success})
 
     def log_data_operation(self, op: str, details: dict | None = None) -> None:
-        """
-        Args:
-            op (str): The op.
-            details (dict | None): The details.
-        Returns:
-            None
-        """
         self.log_action("DATA_OP", f"Data op: {op}",
                         {"operation": op, "details": details or {}})
 
@@ -1485,14 +1324,6 @@ class UserActionLogger:
         parameters: dict | None = None,
         results: dict | None = None,
     ) -> None:
-        """
-        Args:
-            step (str): The step.
-            parameters (dict | None): The parameters.
-            results (dict | None): The results.
-        Returns:
-            None
-        """
         self.log_action(
             "ANALYSIS", f"Analysis: {step}",
             {"step": step, "parameters": parameters or {}, "results": results or {}},
@@ -1517,10 +1348,6 @@ class EnhancedLoggingManager:
     _pre_window_buffer: list[dict] = []
 
     def __init__(self) -> None:
-        """
-        Returns:
-            None
-        """
         self._log_window:         EnhancedLogWindow | None  = None
         self._qt_handler:         EnhancedQtLogHandler | None = None
         self._buffer_handler:     _BufferHandler | None     = None
@@ -1531,19 +1358,18 @@ class EnhancedLoggingManager:
     # -- setup ─────────────────────────────────────────────────────────
 
     def _setup_logging(self) -> None:
-        """
-        Returns:
-            None
-        """
         self._logger = logging.getLogger("IsotopeTrack")
         self._logger.setLevel(logging.DEBUG)
         self._logger.handlers.clear()
 
+        self._context_filter = _ContextFilter()
+
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
         ch.setFormatter(logging.Formatter(
-            "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s"
+            "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s%(context_str)s"
         ))
+        ch.addFilter(self._context_filter)
         self._logger.addHandler(ch)
 
         stamp    = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -1555,39 +1381,35 @@ class EnhancedLoggingManager:
             fh.setLevel(logging.DEBUG)
             fh.setFormatter(logging.Formatter(
                 "%(asctime)s  %(levelname)-8s  %(name)s  "
-                "%(module)s.%(funcName)s:%(lineno)d  %(message)s"
+                "%(module)s.%(funcName)s:%(lineno)d  %(message)s%(context_str)s"
             ))
+            fh.addFilter(self._context_filter)
             self._logger.addHandler(fh)
         except Exception as exc:
-            print(f"[logging_utils] Could not create rotating log file: {exc}")
+            _itk_log.exception("Handled exception in _setup_logging")
+            _itk_log.error(f"[logging_utils] Could not create rotating log file: {exc}")
 
         jsonl_path = LOG_DIR / f"isotope_track_{stamp}.jsonl"
         try:
-            self._logger.addHandler(JsonlFileHandler(jsonl_path))
+            jsonl_handler = JsonlFileHandler(jsonl_path)
+            jsonl_handler.addFilter(self._context_filter)
+            self._logger.addHandler(jsonl_handler)
         except Exception as exc:
-            print(f"[logging_utils] Could not create JSONL log file: {exc}")
+            _itk_log.exception("Handled exception in _setup_logging")
+            _itk_log.error(f"[logging_utils] Could not create JSONL log file: {exc}")
 
         self._buffer_handler = _BufferHandler(self._pre_window_buffer)
         self._buffer_handler.setLevel(logging.DEBUG)
+        self._buffer_handler.addFilter(self._context_filter)
         self._logger.addHandler(self._buffer_handler)
 
         self._prune_old_logs(keep=50)
         self._user_action_logger = UserActionLogger(self._logger)
 
     def _install_exception_hook(self) -> None:
-        """
-        Returns:
-            None
-        """
         _orig = sys.excepthook
 
         def _hook(exc_type, exc_value, exc_tb):
-            """
-            Args:
-                exc_type (Any): The exc type.
-                exc_value (Any): The exc value.
-                exc_tb (Any): The exc tb.
-            """
             if issubclass(exc_type, KeyboardInterrupt):
                 _orig(exc_type, exc_value, exc_tb)
                 return
@@ -1606,12 +1428,6 @@ class EnhancedLoggingManager:
 
     @staticmethod
     def _prune_old_logs(keep: int = 50) -> None:
-        """
-        Args:
-            keep (int): The keep.
-        Returns:
-            None
-        """
         try:
             files = sorted(
                 list(LOG_DIR.glob("isotope_track_*.log")) +
@@ -1621,59 +1437,73 @@ class EnhancedLoggingManager:
             while len(files) > keep * 2:
                 files.pop(0).unlink(missing_ok=True)
         except Exception:
-            pass
+            _itk_log.exception("Handled exception in _prune_old_logs")
 
     # -- public API ────────────────────────────────────────────────────
 
     def get_logger(self, name: str | None = None) -> logging.Logger:
-        """
-        Args:
-            name (str | None): Name string.
-        Returns:
-            logging.Logger: Result of the operation.
-        """
         if name:
             return logging.getLogger(f"IsotopeTrack.{name}")
         return self._logger
 
     def get_user_action_logger(self) -> UserActionLogger:
-        """
-        Returns:
-            UserActionLogger: Result of the operation.
-        """
         return self._user_action_logger
 
-    def create_log_window(self, parent: QWidget | None = None) -> EnhancedLogWindow:
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
+    def _log_window_is_alive(self) -> bool:
+        """Return whether the cached log window exists and its Qt object is still valid.
+
         Returns:
-            EnhancedLogWindow: Result of the operation.
+            bool: True if the log window can still be shown and updated.
         """
         if self._log_window is None:
-            self._log_window = EnhancedLogWindow(parent)
+            return False
+        try:
+            self._log_window.objectName()
+            return True
+        except RuntimeError:
+            return False
+
+    def _discard_log_window(self) -> None:
+        """Drop the cached log window and detach its Qt log handler."""
+        if self._qt_handler is not None:
+            try:
+                self._logger.removeHandler(self._qt_handler)
+            except (ValueError, RuntimeError):
+                pass
+        self._qt_handler = None
+        self._log_window = None
+
+    def create_log_window(self, parent: QWidget | None = None) -> EnhancedLogWindow:
+        """Return the shared log window, rebuilding it if it was destroyed.
+
+        The window is created top-level (no parent) so it outlives any single
+        MainWindow; the parent argument is accepted for compatibility only.
+
+        Args:
+            parent (QWidget | None): Ignored; retained for call-site compatibility.
+        Returns:
+            EnhancedLogWindow: The live log window instance.
+        """
+        if not self._log_window_is_alive():
+            self._discard_log_window()
+            self._log_window = EnhancedLogWindow(None)
+            self._log_window.destroyed.connect(self._discard_log_window)
 
             self._qt_handler = EnhancedQtLogHandler(self._log_window)
             self._qt_handler.setLevel(logging.DEBUG)
             self._qt_handler.setFormatter(logging.Formatter("%(name)s — %(message)s"))
+            self._qt_handler.addFilter(self._context_filter)
             self._logger.addHandler(self._qt_handler)
 
             if self._buffer_handler:
                 self._logger.removeHandler(self._buffer_handler)
                 self._buffer_handler = None
-
-            for entry in self._pre_window_buffer:
-                self._log_window._receive_entry(entry)
+                for entry in self._pre_window_buffer:
+                    self._log_window._receive_entry(entry)
 
         return self._log_window
 
     def show_log_window(self, parent: QWidget | None = None) -> EnhancedLogWindow:
-        """
-        Args:
-            parent (QWidget | None): Parent widget or object.
-        Returns:
-            EnhancedLogWindow: Result of the operation.
-        """
         win = self.create_log_window(parent)
         win.show()
         win.raise_()
@@ -1693,35 +1523,16 @@ logging_manager = EnhancedLoggingManager()
 # ---------------------------------------------------------------------------
 
 def log_user_action(action_type: str, description: str | None = None):
-    """
-    Decorator: automatically log a user action when the decorated method is called.
+    """Decorator: automatically log a user action when the decorated method is called.
 
     Usage::
 
         @log_user_action('CLICK', 'Detect Peaks button')
         def detect_particles(self): ...
-    Args:
-        action_type (str): The action type.
-        description (str | None): The description.
-    Returns:
-        object: Result of the operation.
     """
     def decorator(func):
-        """
-        Args:
-            func (Any): Callable to invoke.
-        Returns:
-            object: Result of the operation.
-        """
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            """
-            Args:
-                *args (Any): Additional positional arguments.
-                **kwargs (Any): Additional keyword arguments.
-            Returns:
-                object: Result of the operation.
-            """
             ual: UserActionLogger | None = getattr(self, "user_action_logger", None)
             if ual:
                 ctx: dict = {}
@@ -1736,8 +1547,7 @@ def log_user_action(action_type: str, description: str | None = None):
 
 
 def log_performance(threshold_ms: float = 0):
-    """
-    Decorator: log wall-clock execution time.
+    """Decorator: log wall-clock execution time.
 
     Only logs if elapsed time >= *threshold_ms* (default 0 = always log).
 
@@ -1745,27 +1555,10 @@ def log_performance(threshold_ms: float = 0):
 
         @log_performance(threshold_ms=200)
         def detect_particles(self): ...
-    Args:
-        threshold_ms (float): The threshold ms.
-    Returns:
-        object: Result of the operation.
     """
     def decorator(func):
-        """
-        Args:
-            func (Any): Callable to invoke.
-        Returns:
-            object: Result of the operation.
-        """
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            """
-            Args:
-                *args (Any): Additional positional arguments.
-                **kwargs (Any): Additional keyword arguments.
-            Returns:
-                object: Result of the operation.
-            """
             t0 = time.perf_counter()
             try:
                 result = func(self, *args, **kwargs)

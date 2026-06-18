@@ -10,28 +10,26 @@ from calibration_methods.TE_input import InputMethodCalibration
 from calibration_methods.TE_number import NumberMethodWidget
 from calibration_methods.TE_mass import MassMethodWidget
 from calibration_methods.te_common import (
-    RETURN_BUTTON_STYLE,
     base_stylesheet, return_button_style,
 )
 from tools.theme import theme
+from calibration_methods import calibration_registry
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE")
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
-    """Return the UserActionLogger, or None if logging isn't ready.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return the UserActionLogger, or None if logging isn't ready."""
     try:
         from tools.logging_utils import logging_manager
         return logging_manager.get_user_action_logger()
-    except Exception:
+    except (ImportError, AttributeError):
+        _itk_log.exception("Handled exception in _ual")
         return None
 
-_METHOD_SIGNAL_MAP = {
-    "Liquid weight": "Weight Method",
-    "Number based": "Particle Method",
-    "Mass based": "Mass Method",
-}
+# Display label -> signal name. Sourced from the calibration registry so the
+# mapping lives in one place (see calibration_methods/calibration_registry.py).
+_METHOD_SIGNAL_MAP = calibration_registry.label_to_signal_map()
 
 
 class TransportRateCalibrationWindow(QDialog):
@@ -65,15 +63,7 @@ class TransportRateCalibrationWindow(QDialog):
     # ── Event overrides ──────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        """
-        Hide the window instead of destroying it on close.
-
-        Args:
-            event (QCloseEvent): The close event to intercept.
-
-        Returns:
-            None
-        """
+        """Hide the window instead of destroying it on close."""
         event.ignore()
         self.hide()
 
@@ -82,8 +72,6 @@ class TransportRateCalibrationWindow(QDialog):
     def apply_theme(self, *_):
         """Re-apply all stylesheets from the current theme palette.
         Runs on init and whenever theme.themeChanged fires.
-        Args:
-            *_ (Any): Additional positional arguments.
         """
         p = theme.palette
         self.setStyleSheet(
@@ -106,12 +94,7 @@ class TransportRateCalibrationWindow(QDialog):
     # ── UI construction ──────────────────────────────────────────────────
 
     def _build_ui(self):
-        """
-        Construct the header, method selector, content area, and scroll wrapper.
-
-        Returns:
-            None
-        """
+        """Construct the header, method selector, content area, and scroll wrapper."""
         main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
         main_layout.setSpacing(15)
@@ -175,14 +158,10 @@ class TransportRateCalibrationWindow(QDialog):
     # ── Slots ─────────────────────────────────────────────────────────────
 
     def _show_selected_method(self, index):
-        """
-        Swap the visible calibration widget to match the combo-box selection.
+        """Swap the visible calibration widget to match the combo-box selection.
 
         Args:
             index (int): Combo-box index of the newly selected method.
-
-        Returns:
-            None
         """
         if 0 <= index < len(self.selected_methods):
             _method_key = self.selected_methods[index]
@@ -206,18 +185,14 @@ class TransportRateCalibrationWindow(QDialog):
         if widget:
             self._content_layout.addWidget(widget)
         else:
-            print(f"Warning: no widget for method '{key}'")
+            _itk_log.warning(f"Warning: no widget for method '{key}'")
 
     def _on_calibration_completed(self, method, transport_rate):
-        """
-        Re-emit the calibration result with a standardised method name.
+        """Re-emit the calibration result with a standardised method name.
 
         Args:
             method (str): Method name as emitted by the child widget.
             transport_rate (float): Calculated transport rate in µL/s.
-
-        Returns:
-            None
         """
         standardised = _METHOD_SIGNAL_MAP.get(method, method)
         ual = _ual()
@@ -232,7 +207,7 @@ class TransportRateCalibrationWindow(QDialog):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = TransportRateCalibrationWindow(
-        ["Liquid weight", "Number based", "Mass based"]
+        calibration_registry.default_transport_labels()
     )
     window.showMaximized()
     sys.exit(app.exec())

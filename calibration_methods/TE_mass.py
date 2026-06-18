@@ -3,13 +3,12 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 import pyqtgraph as pg
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QGridLayout,
-                               QLabel, QComboBox, QMessageBox, QFileDialog, QTabWidget,
-                               QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
-                               QDoubleSpinBox, QGroupBox, QFormLayout, QDialog, QMenu,
-                               QListView, QAbstractItemView, QTreeView, QSpinBox, QApplication, QScrollArea, QListWidget,QRadioButton,
-                               QMainWindow, QFrame, QProgressBar, QSplitter, QProgressDialog, QLineEdit)
-from PySide6.QtGui import QFont, QColor, QIcon, QDoubleValidator
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
+                               QMessageBox, QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
+                               QCheckBox, QDoubleSpinBox, QGroupBox, QDialog,
+                               QMenu, QListView, QAbstractItemView, QTreeView, QSpinBox,
+                               QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter,QProgressDialog)
+from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -19,15 +18,18 @@ from processing.peak_detection import PeakDetection
 
 
 from calibration_methods.te_common import (
-    BASE_STYLESHEET, PLOT_STYLES, HISTOGRAM_COLORS,
+    PLOT_STYLES, HISTOGRAM_COLORS,
     NumericDelegate,
-    create_scrollable_container, export_table_to_csv,
-    populate_detection_row, read_detection_row, apply_global_method,
-    plot_detection_results, highlight_particle, snr_to_color,
-    particle_mass_from_diameter,
-    base_stylesheet, show_data_source_dialog,
+    export_table_to_csv, populate_detection_row,
+    read_detection_row, apply_global_method, plot_detection_results,
+    highlight_particle, snr_to_color, particle_mass_from_diameter,
+    base_stylesheet,
+    show_data_source_dialog,
 )
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_mass")
+from tools.logging_utils import log_context
 
 class NoWheelDoubleSpinBox(QDoubleSpinBox):
     """QDoubleSpinBox that ignores mouse-wheel to prevent accidental changes."""
@@ -46,11 +48,6 @@ class CollapsibleSection(QWidget):
     """Themed collapsible panel. Click header to expand/collapse."""
 
     def __init__(self, title: str, parent=None):
-        """
-        Args:
-            title (str): Window or dialog title.
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self._expanded = True
         outer = QVBoxLayout(self)
@@ -87,10 +84,6 @@ class CollapsibleSection(QWidget):
         self._arrow.setText("▼" if self._expanded else "▶")
 
     def collapse(self, status: str = ""):
-        """
-        Args:
-            status (str): Status message string.
-        """
         if status: self._status_lbl.setText(status)
         if self._expanded:
             self._expanded = False
@@ -163,10 +156,7 @@ class MassMethodWidget(QMainWindow):
         self.destroyed.connect(lambda *_: self._theme_cleanup())
     
     def apply_theme(self, *_):
-        """Re-apply themed stylesheet; refresh plots and dynamic labels.
-        Args:
-            *_ (Any): Additional positional arguments.
-        """
+        """Re-apply themed stylesheet; refresh plots and dynamic labels."""
         p = theme.palette
         section_qss = f"""
             QWidget#collapsibleHeader {{
@@ -193,7 +183,7 @@ class MassMethodWidget(QMainWindow):
                 try:
                     w.setBackground(p.plot_bg)
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in apply_theme")
         for attr in ("folder_status_label", "element_selection_label"):
             lbl = getattr(self, attr, None)
             if lbl is None:
@@ -209,9 +199,6 @@ class MassMethodWidget(QMainWindow):
         """Toggle the 'warning' look on a button to indicate unsaved /
         modified state.  Uses the themed #warningBtn object name so the
         color follows light/dark themes.
-        Args:
-            button (Any): The button.
-            modified (Any): The modified.
         """
         if button is None:
             return
@@ -399,10 +386,7 @@ class MassMethodWidget(QMainWindow):
         layout.addWidget(self.detect_button)
 
     def _build_plot(self, parent_layout):
-        """Always-visible signal visualization plot.
-        Args:
-            parent_layout (Any): Layout to which widgets are added.
-        """
+        """Always-visible signal visualization plot."""
         plot_group = QGroupBox("Signal Visualization")
         plot_layout = QVBoxLayout(plot_group)
         plot_layout.setSpacing(6)
@@ -427,7 +411,8 @@ class MassMethodWidget(QMainWindow):
             self.plot_widget.exclusionRegionsChanged.connect(
                 self._on_exclusion_regions_changed)
         except Exception as e:
-            print(f"Could not connect plot exclusionRegionsChanged: {e}")
+            _itk_log.exception("Handled exception in _build_plot")
+            _itk_log.error(f"Could not connect plot exclusionRegionsChanged: {e}")
         parent_layout.addWidget(plot_group)
 
     def _build_detection_results_content(self):
@@ -490,8 +475,6 @@ class MassMethodWidget(QMainWindow):
         """Convenience: create a styled hint label.
         Args:
             text (str): Text string.
-        Returns:
-            QLabel: Result of the operation.
         """
         lbl = QLabel(text)
         lbl.setWordWrap(True)
@@ -648,7 +631,8 @@ class MassMethodWidget(QMainWindow):
             self.calibration_raw_plot.exclusionRegionsChanged.connect(
                 self._on_ionic_calibration_exclusion_changed)
         except Exception as e:
-            print(f"Could not connect calibration_raw_plot exclusionRegionsChanged: {e}")
+            _itk_log.exception("Handled exception in _build_ionic_calibration_content")
+            _itk_log.error(f"Could not connect calibration_raw_plot exclusionRegionsChanged: {e}")
         
 
     def show_periodic_table(self):
@@ -903,14 +887,10 @@ class MassMethodWidget(QMainWindow):
         
     
     def update_detection_parameters_table(self):
-        """
-        Update detection parameters table with all samples.
-        
+        """Update detection parameters table with all samples.
+
         Populates table with default detection parameters for each valid sample including
         method selection, thresholds and statistical parameters.
-
-        Returns:
-            None
         """
         if not self.selected_element:
             return
@@ -976,26 +956,17 @@ class MassMethodWidget(QMainWindow):
         self.detect_button.setEnabled(True)
 
     def apply_global_detection_params(self, method):
-        """
-        Apply global detection method to all samples.
-        
+        """Apply global detection method to all samples.
+
         Args:
             method (str): Detection method name to apply to all sample rows.
-
-        Returns:
-            None
         """
         apply_global_method(self.detection_params_table, method)
 
     # ── Exclusion region helpers — particle detection plot ───────────────
 
     def _visible_exclusion_entries_for(self, sample_name):
-        """Return stored exclusion entries for *sample_name* (empty list if none).
-        Args:
-            sample_name (Any): The sample name.
-        Returns:
-            object: Result of the operation.
-        """
+        """Return stored exclusion entries for *sample_name* (empty list if none)."""
         return self._exclusion_regions_by_sample.get(sample_name, [])
 
     def _on_exclusion_regions_changed(self):
@@ -1006,7 +977,8 @@ class MassMethodWidget(QMainWindow):
         try:
             plot_regions = self.plot_widget.get_exclusion_regions()
         except Exception as e:
-            print(f"get_exclusion_regions failed: {e}")
+            _itk_log.exception("Handled exception in _on_exclusion_regions_changed")
+            _itk_log.error(f"get_exclusion_regions failed: {e}")
             return
         self._exclusion_regions_by_sample[sample_name] = [
             {'bounds': (float(lo), float(hi)), 'scope': 'sample', 'element_key': None}
@@ -1025,14 +997,14 @@ class MassMethodWidget(QMainWindow):
                 self.plot_widget.exclusionRegionsChanged.disconnect(
                     self._on_exclusion_regions_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
             self.plot_widget.set_exclusion_regions(regions)
         finally:
             try:
                 self.plot_widget.exclusionRegionsChanged.connect(
                     self._on_exclusion_regions_changed)
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in _rebuild_plot_exclusion_regions")
 
     # ── Exclusion region helpers — ionic calibration plot ────────────────
 
@@ -1045,7 +1017,8 @@ class MassMethodWidget(QMainWindow):
         try:
             regions = self.calibration_raw_plot.get_exclusion_regions()
         except Exception as e:
-            print(f"calibration_raw_plot.get_exclusion_regions failed: {e}")
+            _itk_log.exception("Handled exception in _on_ionic_calibration_exclusion_changed")
+            _itk_log.error(f"calibration_raw_plot.get_exclusion_regions failed: {e}")
             return
 
         elem_regions   = [(float(lo), float(hi)) for lo, hi, sc in regions if sc == 'element']
@@ -1063,11 +1036,7 @@ class MassMethodWidget(QMainWindow):
             self._ionic_cal_exclusions_sample.pop(folder, None)
 
     def _restore_ionic_calibration_exclusions(self, folder_path, isotope_key):
-        """Reload stored ionic-calibration exclusion bands onto the plot.
-        Args:
-            folder_path (Any): The folder path.
-            isotope_key (Any): The isotope key.
-        """
+        """Reload stored ionic-calibration exclusion bands onto the plot."""
         key = (folder_path, isotope_key)
         elem_regions   = self._ionic_cal_exclusions_element.get(key, [])
         sample_regions = self._ionic_cal_exclusions_sample.get(folder_path, [])
@@ -1076,7 +1045,8 @@ class MassMethodWidget(QMainWindow):
         try:
             self.calibration_raw_plot.set_exclusion_regions(combined)
         except Exception as e:
-            print(f"set_exclusion_regions failed: {e}")
+            _itk_log.exception("Handled exception in _restore_ionic_calibration_exclusions")
+            _itk_log.error(f"set_exclusion_regions failed: {e}")
 
     def on_detection_params_selection_changed(self):
         """
@@ -1122,7 +1092,7 @@ class MassMethodWidget(QMainWindow):
             try:
                 self._rebuild_plot_exclusion_regions()
             except Exception:
-                pass
+                _itk_log.exception("Handled exception in on_detection_params_selection_changed")
         else:
             self.visualization_status_label.setText(f"No signal data available for: {sample_name}")
 
@@ -1276,7 +1246,8 @@ class MassMethodWidget(QMainWindow):
                     self.view_toggle_button.setText("📈 Show Calibration")
                 self.refresh_current_raw_data_view()
         except RuntimeError as e:
-            print(f"Warning: Widget access error in toggle: {e}")
+            _itk_log.exception("Handled exception in toggle_calibration_view")
+            _itk_log.error(f"Warning: Widget access error in toggle: {e}")
             self.current_calibration_view = "raw"
 
     def show_calibration_plot_in_raw_area(self):
@@ -1355,6 +1326,7 @@ class MassMethodWidget(QMainWindow):
                         signals.append(avg_count_per_second)
                         
                 except (ValueError, KeyError, AttributeError):
+                    _itk_log.exception("Handled exception in show_calibration_plot_in_raw_area")
                     continue
         
         if concentrations and signals:
@@ -1549,15 +1521,11 @@ class MassMethodWidget(QMainWindow):
             self.highlight_particle_in_plot(particle, results)
 
     def highlight_particle_in_plot(self, particle, results):
-        """
-        Add highlighting to a specific particle in the plot.
-        
+        """Add highlighting to a specific particle in the plot.
+
         Args:
             particle (dict): Particle dictionary containing detection information.
             results (dict): Detection results dictionary for the sample.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = highlight_particle(
             self.plot_widget, particle,
@@ -1590,9 +1558,8 @@ class MassMethodWidget(QMainWindow):
         )
 
     def plot_sample_results(self, sample_name, signal, particles, lambda_bkgd, threshold, time_array):
-        """
-        Plot results for a specific sample.
-        
+        """Plot results for a specific sample.
+
         Args:
             sample_name (str): Display name of the sample.
             signal (np.ndarray): Raw signal array.
@@ -1600,9 +1567,6 @@ class MassMethodWidget(QMainWindow):
             lambda_bkgd (float): Background level value.
             threshold (float): Detection threshold value.
             time_array (np.ndarray): Time array corresponding to signal data.
-
-        Returns:
-            None
         """
         self.current_highlighted_particle = None
         plot_detection_results(
@@ -1645,7 +1609,8 @@ class MassMethodWidget(QMainWindow):
             self.file_info_table.setAlternatingRowColors(True)
             
         except Exception as e:
-            print(f"Error updating file info table: {str(e)}")
+            _itk_log.exception("Handled exception in update_file_info_table")
+            _itk_log.error(f"Error updating file info table: {str(e)}")
 
     def on_folder_selected(self, item):
         """
@@ -2170,6 +2135,7 @@ class MassMethodWidget(QMainWindow):
                                 masses.append(mass)
                                 signals_list.append(df[col].values)
                             except ValueError:
+                                _itk_log.exception("Handled exception in process_calibration_csv_import")
                                 continue
                     
                     masses = np.array(masses)
@@ -2340,7 +2306,8 @@ class MassMethodWidget(QMainWindow):
                         masses = DataProcessThread.get_masses_only(str(h5_path))
                         all_masses_from_files.extend(masses)
                     except Exception as mass_error:
-                        print(f"Warning: Could not get masses from {h5_path}: {mass_error}")
+                        _itk_log.exception("Handled exception in handle_tofwerk_import")
+                        _itk_log.error(f"Warning: Could not get masses from {h5_path}: {mass_error}")
                         masses = []
                     
                     self.folder_data[h5_path] = {
@@ -2355,6 +2322,7 @@ class MassMethodWidget(QMainWindow):
                     valid_files.append(h5_path)
                     
                 except Exception as e:
+                    _itk_log.exception("Handled exception in handle_tofwerk_import")
                     sample_name = h5_file.stem
                     self.folder_data[h5_path] = {
                         'status': f'Error: {str(e)}',
@@ -2364,7 +2332,7 @@ class MassMethodWidget(QMainWindow):
                     }
                     self.sample_name_to_folder[sample_name] = h5_path
                     
-                    print(f"Warning: Error loading {sample_name}: {str(e)}")
+                    _itk_log.error(f"Warning: Error loading {sample_name}: {str(e)}")
                     continue
             
             progress.setValue(80)
@@ -2507,7 +2475,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV structure configuration dialog and initiates import.
         """
-        from loading.import_csv_dialogs import show_csv_structure_dialog, CSVDataProcessThread
+        from loading.import_csv_dialogs import show_csv_structure_dialog
         
         config = show_csv_structure_dialog(file_paths, self)
         
@@ -2788,6 +2756,7 @@ class MassMethodWidget(QMainWindow):
             self.calibration_sample_label.setText(f"{sample_name} - Avg: {avg_signal:.1f} counts [{source_type}]")
             
         except Exception as e:
+            _itk_log.exception("Handled exception in show_calibration_sample_raw_data")
             self.calibration_sample_label.setText(f"Error displaying data: {str(e)}")
             import traceback
             traceback.print_exc()
@@ -2865,7 +2834,8 @@ class MassMethodWidget(QMainWindow):
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
                 else:
                     sample_name = Path(folder_path).name
-            except:
+            except (OSError, ValueError, KeyError):
+                _itk_log.exception("Handled exception in update_concentration_table")
                 sample_name = Path(folder_path).name
             
             sample_item = QTableWidgetItem(sample_name)
@@ -2883,14 +2853,10 @@ class MassMethodWidget(QMainWindow):
         self.concentration_table.itemChanged.connect(self.on_concentration_data_changed)
 
     def validate_calibration_folders(self, folders):
-        """
-        Validate that calibration folders have compatible mass ranges.
-        
+        """Validate that calibration folders have compatible mass ranges.
+
         Args:
             folders: List of folder paths to validate
-            
-        Returns:
-            List of valid folder paths with compatible mass ranges
         """
         valid_folders = []
         mass_tolerance = 0.1
@@ -2904,12 +2870,13 @@ class MassMethodWidget(QMainWindow):
                     if np.all(mass_differences <= mass_tolerance):
                         valid_folders.append(folder)
                     else:
-                        print(f"Warning: Folder {Path(folder).name} has incompatible masses")
+                        _itk_log.warning(f"Warning: Folder {Path(folder).name} has incompatible masses")
                 else:
-                    print(f"Warning: Folder {Path(folder).name} has different number of masses")
+                    _itk_log.warning(f"Warning: Folder {Path(folder).name} has different number of masses")
                     
             except Exception as e:
-                print(f"Error validating folder {folder}: {e}")
+                _itk_log.exception("Handled exception in validate_calibration_folders")
+                _itk_log.error(f"Error validating folder {folder}: {e}")
                 
         return valid_folders
 
@@ -3061,26 +3028,23 @@ class MassMethodWidget(QMainWindow):
                 try:
                     self.view_toggle_button.setEnabled(True)
                 except RuntimeError:
-                    print("Warning: Toggle button was deleted, skipping enable")
+                    _itk_log.exception("Handled exception in calculate_calibration")
+                    _itk_log.error("Warning: Toggle button was deleted, skipping enable")
             
         except Exception as e:
             if 'progress' in locals():
                 progress.close()
             QMessageBox.critical(self, "Calibration Error", f"Error during calibration: {str(e)}")
             import traceback
-            print("Full error traceback:")
+            _itk_log.error("Full error traceback:")
             traceback.print_exc()
 
     def convert_concentration_to_ppb(self, value, unit):
-        """
-        Convert concentration to ppb.
-        
+        """Convert concentration to ppb.
+
         Args:
             value: Concentration value
             unit: Unit string (ppb, ppm, ppt, etc.)
-            
-        Returns:
-            Concentration value in ppb
         """
         conversion_factors = {
             "ppt": 0.001,
@@ -3131,7 +3095,8 @@ class MassMethodWidget(QMainWindow):
                 ss_res = np.sum(weights * (y - y_fit)**2)
                 ss_tot = np.sum(weights * (y - np.mean(y))**2)
                 r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-            except:
+            except (ArithmeticError, ValueError):
+                _itk_log.exception("Handled exception in perform_ionic_calibration")
                 from scipy import stats
                 slope, intercept, r_value, _, _ = stats.linregress(x, y)
                 r_squared = r_value**2
@@ -3204,53 +3169,61 @@ class MassMethodWidget(QMainWindow):
             
             for folder_index, folder_path in enumerate(self.particle_folder_paths):
                 folder_name = Path(folder_path).name
-                progress_label.setText(f"Processing folder {folder_index+1}/{folder_count}: {folder_name}")
-                progress_bar.setValue(40 + (40 * folder_index // folder_count))
-                QApplication.processEvents()
+                with log_context(sample=folder_name, method="transport_rate_mass"):
+                    progress_label.setText(f"Processing folder {folder_index+1}/{folder_count}: {folder_name}")
+                    progress_bar.setValue(40 + (40 * folder_index // folder_count))
+                    QApplication.processEvents()
                 
-                if folder_path not in self.detected_particles or not self.detected_particles[folder_path]:
-                    continue
+                    if folder_path not in self.detected_particles or not self.detected_particles[folder_path]:
+                        continue
                 
-                density = self.folder_densities.get(folder_path, self.default_density)
+                    density = self.folder_densities.get(folder_path, self.default_density)
         
-                if density <= 0:
-                    density = default_element_density
+                    if density <= 0:
+                        density = default_element_density
 
-                if density <= 0:
-                    print(f"Warning: Skipping folder {folder_name} - no valid density available")
-                    continue
-                    
-                folder_diameters = []
-                
-                particles = self.detected_particles[folder_path]
-                for particle in particles:
-                    if particle is None:
-                        continue
-                        
-                    total_counts = particle['total_counts']
-                    
-                    if total_counts <= 0:
+                    if density <= 0:
+                        _itk_log.warning(f"Warning: Skipping folder {folder_name} - no valid density available")
                         continue
                     
-                    try:
-                        mass_fg = total_counts / conversion_factor
-                        
-                        volume_cm3 = (mass_fg * 1e-15) / density
-                        
-                        if volume_cm3 <= 0:
+                    folder_diameters = []
+                    skipped_particles = 0
+
+                    particles = self.detected_particles[folder_path]
+                    for particle in particles:
+                        if particle is None:
                             continue
+                        
+                        total_counts = particle['total_counts']
+                    
+                        if total_counts <= 0:
+                            continue
+                    
+                        try:
+                            mass_fg = total_counts / conversion_factor
+                        
+                            volume_cm3 = (mass_fg * 1e-15) / density
+                        
+                            if volume_cm3 <= 0:
+                                continue
                             
-                        diameter_nm = 2 * (3 * volume_cm3 / (4 * np.pi))**(1/3) * 1e7
+                            diameter_nm = 2 * (3 * volume_cm3 / (4 * np.pi))**(1/3) * 1e7
                         
-                        if diameter_nm > 0 and not np.isnan(diameter_nm) and not np.isinf(diameter_nm):
-                            folder_diameters.append(diameter_nm)
+                            if diameter_nm > 0 and not np.isnan(diameter_nm) and not np.isinf(diameter_nm):
+                                folder_diameters.append(diameter_nm)
                         
-                    except (ZeroDivisionError, ValueError, OverflowError) as e:
-                        print(f"Warning: Error calculating diameter for particle in {folder_name}: {e}")
-                        continue
-                        
-                if folder_diameters:
-                    all_diameters[folder_name] = folder_diameters
+                        except (ZeroDivisionError, ValueError, OverflowError):
+                            skipped_particles += 1
+                            continue
+
+                    if skipped_particles:
+                        _itk_log.warning(
+                            f"{folder_name}: skipped {skipped_particles} particle(s) "
+                            f"with invalid diameter (zero/negative/overflow)."
+                        )
+
+                    if folder_diameters:
+                        all_diameters[folder_name] = folder_diameters
             
             progress_label.setText("Generating diameter distribution plot...")
             progress_bar.setValue(90)
@@ -3363,12 +3336,7 @@ class MassMethodWidget(QMainWindow):
         self.diameter_distribution_plot.setXRange(global_min - x_padding, global_max + x_padding)
 
     def export_to_csv(self):
-        """
-        Export detection results to CSV file.
-
-        Returns:
-            None
-        """
+        """Export detection results to CSV file."""
         export_table_to_csv(self.results_table, self)
     
 

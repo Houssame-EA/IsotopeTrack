@@ -40,6 +40,8 @@ from PySide6.QtWidgets import (
 )
 
 from tools.cli_utils import get_argument_parser
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.splash_screen")
 
 
 # ---------------------------------------------------------------------------
@@ -101,29 +103,14 @@ class AnimatedValue(QObject):
     """Animatable float that triggers a widget repaint on every change."""
 
     def __init__(self, widget: QWidget, initial: float = 0.0):
-        """
-        Args:
-            widget (QWidget): Target widget.
-            initial (float): The initial.
-        """
         super().__init__(widget)
         self._widget = widget
         self._value = initial
 
     def _get(self) -> float:
-        """
-        Returns:
-            float: Result of the operation.
-        """
         return self._value
 
     def _set(self, value: float) -> None:
-        """
-        Args:
-            value (float): Value to set or process.
-        Returns:
-            None
-        """
         self._value = value
         self._widget.update()
 
@@ -149,13 +136,6 @@ class Particle:
 
     @classmethod
     def random(cls, center: QPointF, orbit_radius: float) -> "Particle":
-        """
-        Args:
-            center (QPointF): The center.
-            orbit_radius (float): The orbit radius.
-        Returns:
-            'Particle': Result of the operation.
-        """
         return cls(
             center=center,
             orbit_radius=orbit_radius + random.uniform(-20, 20),
@@ -168,22 +148,12 @@ class Particle:
         )
 
     def update(self, time_factor: float) -> None:
-        """
-        Args:
-            time_factor (float): The time factor.
-        Returns:
-            None
-        """
         self.angle = (self.angle + self.speed * time_factor) % (2 * math.pi)
         pulse = math.sin(time_factor * 0.05 + self.pulse_offset) * 0.3 + 0.7
         self.current_size = self.base_size * pulse
         self.current_opacity = self.base_opacity * pulse
 
     def position(self) -> QPointF:
-        """
-        Returns:
-            QPointF: Result of the operation.
-        """
         return QPointF(
             self.center.x() + self.orbit_radius * math.cos(self.angle),
             self.center.y() + self.orbit_radius * math.sin(self.angle),
@@ -201,13 +171,7 @@ class SplashScreen(QWidget):
     def __init__(self,
                  logo_path: Optional[str] = None,
                  app_name: str = "IsotopeTrack",
-                 version: str = "Version 1.0.9:Beta"):
-        """
-        Args:
-            logo_path (Optional[str]): The logo path.
-            app_name (str): The app name.
-            version (str): The version.
-        """
+                 version: str = "Version 1.10.3:Beta"):
         super().__init__()
         self.app_name = app_name
         self.version = version
@@ -234,20 +198,12 @@ class SplashScreen(QWidget):
     # ---------- Setup ----------
 
     def _configure_window(self) -> None:
-        """
-        Returns:
-            None
-        """
         self.setWindowTitle("sp-IsotopeTrack")
         self.setFixedSize(Config.SIZE, Config.SIZE)
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
     def _build_particles(self) -> None:
-        """
-        Returns:
-            None
-        """
         self.particles: list[Particle] = []
         for ratio in Config.ORBIT_RATIOS:
             orbit = Config.PROGRESS_RADIUS * ratio
@@ -257,10 +213,6 @@ class SplashScreen(QWidget):
             )
 
     def _build_ui(self) -> None:
-        """
-        Returns:
-            None
-        """
         cx = int(self.center.x())
         cy = int(self.center.y())
 
@@ -314,10 +266,7 @@ class SplashScreen(QWidget):
         self.version_label.setGraphicsEffect(self._version_opacity)
 
     def _build_gradients(self) -> None:
-        """Pre-compute gradients that never change between frames.
-        Returns:
-            None
-        """
+        """Pre-compute gradients that never change between frames."""
         self._bg_gradient = QRadialGradient(self.center, Config.PROGRESS_RADIUS)
         for stop, color in Config.BG_RING_STOPS:
             self._bg_gradient.setColorAt(stop, color)
@@ -333,10 +282,6 @@ class SplashScreen(QWidget):
         self._progress_gradient.setColorAt(1.0, c3)
 
     def _build_animations(self) -> None:
-        """
-        Returns:
-            None
-        """
         logo_anim = QPropertyAnimation(self._logo_scale, b"value", self)
         logo_anim.setDuration(Config.LOGO_ANIM_MS)
         logo_anim.setStartValue(0.0)
@@ -378,8 +323,6 @@ class SplashScreen(QWidget):
         Args:
             progress (float): Progress value (0–100).
             status_text (str): The status text.
-        Returns:
-            None
         """
         self._progress = max(0.0, min(100.0, progress))
         if status_text:
@@ -388,10 +331,7 @@ class SplashScreen(QWidget):
         self.update()
 
     def set_loading_complete(self) -> None:
-        """Mark loading complete and schedule the close.
-        Returns:
-            None
-        """
+        """Mark loading complete and schedule the close."""
         self._progress = 100.0
         self.current_status = "Loading complete!"
         self.status_label.setText(self.current_status)
@@ -399,19 +339,9 @@ class SplashScreen(QWidget):
         QTimer.singleShot(Config.COMPLETE_DELAY_MS, self._finish)
 
     def get_progress(self) -> float:
-        """
-        Returns:
-            float: Result of the operation.
-        """
         return self._progress
 
     def set_progress(self, value: float) -> None:
-        """
-        Args:
-            value (float): Value to set or process.
-        Returns:
-            None
-        """
         self._progress = value
         self.update()
 
@@ -420,10 +350,6 @@ class SplashScreen(QWidget):
     # ---------- Animation loop ----------
 
     def _tick(self) -> None:
-        """
-        Returns:
-            None
-        """
         self.time_factor = (self.time_factor + 1) % Config.TIME_WRAP
 
         for particle in self.particles:
@@ -450,12 +376,6 @@ class SplashScreen(QWidget):
     # ---------- Painting ----------
 
     def paintEvent(self, event) -> None:
-        """
-        Args:
-            event (Any): Qt event object.
-        Returns:
-            None
-        """
         if not self.isVisible():
             return
 
@@ -471,12 +391,6 @@ class SplashScreen(QWidget):
             painter.end()
 
     def _paint_glow(self, painter: QPainter) -> None:
-        """
-        Args:
-            painter (QPainter): QPainter instance.
-        Returns:
-            None
-        """
         intensity = self._glow_intensity.value
         if intensity <= 0:
             return
@@ -494,12 +408,6 @@ class SplashScreen(QWidget):
         painter.drawEllipse(self.center, radius, radius)
 
     def _paint_rings(self, painter: QPainter) -> None:
-        """
-        Args:
-            painter (QPainter): QPainter instance.
-        Returns:
-            None
-        """
         painter.setBrush(self._bg_gradient)
         painter.setPen(QPen(Config.RING_BORDER, 2))
         painter.drawEllipse(self.center, Config.PROGRESS_RADIUS, Config.PROGRESS_RADIUS)
@@ -509,12 +417,6 @@ class SplashScreen(QWidget):
         painter.drawEllipse(self.center, Config.INNER_RADIUS, Config.INNER_RADIUS)
 
     def _paint_particles(self, painter: QPainter) -> None:
-        """
-        Args:
-            painter (QPainter): QPainter instance.
-        Returns:
-            None
-        """
         painter.setPen(Qt.NoPen)
         for p in self.particles:
             color = QColor(p.color)
@@ -523,12 +425,6 @@ class SplashScreen(QWidget):
             painter.drawEllipse(p.position(), p.current_size, p.current_size)
 
     def _paint_progress_arc(self, painter: QPainter) -> None:
-        """
-        Args:
-            painter (QPainter): QPainter instance.
-        Returns:
-            None
-        """
         if self._progress <= 0:
             return
         arc_radius = Config.PROGRESS_RADIUS - Config.RING_INSET
@@ -557,12 +453,6 @@ class SplashScreen(QWidget):
         painter.drawPath(path)
 
     def _paint_progress_text(self, painter: QPainter) -> None:
-        """
-        Args:
-            painter (QPainter): QPainter instance.
-        Returns:
-            None
-        """
         if self._progress <= 0:
             return
         painter.setFont(QFont("Arial", 18, QFont.Bold))
@@ -582,22 +472,12 @@ class SplashScreen(QWidget):
     # ---------- Lifecycle ----------
 
     def _finish(self) -> None:
-        """
-        Returns:
-            None
-        """
         self._timer.stop()
         self._animations.stop()
         self.close()
         self.finished.emit()
 
     def closeEvent(self, event) -> None:
-        """
-        Args:
-            event (Any): Qt event object.
-        Returns:
-            None
-        """
         self._timer.stop()
         self._animations.stop()
         super().closeEvent(event)
@@ -613,11 +493,6 @@ class SplashCoordinator(QObject):
                  logo_path: Optional[str] = None,
                  main_window_class: Optional[type] = None,
                  cli_parser: ArgumentParser = get_argument_parser()):
-        """
-        Args:
-            logo_path (Optional[str]): The logo path.
-            main_window_class (Optional[type]): The main window class.
-        """
         super().__init__()
         self.splash = SplashScreen(logo_path=logo_path)
         self.main_window_class = main_window_class
@@ -627,10 +502,6 @@ class SplashCoordinator(QObject):
         self.cli_parser = cli_parser
 
     def start(self) -> None:
-        """
-        Returns:
-            None
-        """
         self.splash.show()
 
         if self.main_window_class is None:
@@ -641,6 +512,7 @@ class SplashCoordinator(QObject):
         try:
             from tools.progressive_main_window import ProgressiveMainWindow
         except ImportError:
+            _itk_log.debug("Handled exception in start")
             self.splash.update_progress(100, "Ready!")
             QTimer.singleShot(2000, self.splash.set_loading_complete)
             return
@@ -651,19 +523,11 @@ class SplashCoordinator(QObject):
         QTimer.singleShot(100, self.progressive_loader.start_loading)
 
     def _on_loading_complete(self) -> None:
-        """
-        Returns:
-            None
-        """
         if self.progressive_loader:
             self.main_window = self.progressive_loader.get_main_window()
         self.splash.set_loading_complete()
 
     def _on_splash_finished(self) -> None:
-        """
-        Returns:
-            None
-        """
         if self.main_window:
             self.main_window.show()
         else:

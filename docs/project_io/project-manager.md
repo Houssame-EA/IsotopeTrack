@@ -7,7 +7,6 @@
 ### `ProjectManager`
 
 Handles saving and loading of IsotopeTrack project files.
-Manages project state serialization/deserialization including canvas workflows.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -17,7 +16,7 @@ Manages project state serialization/deserialization including canvas workflows.
 | `_set_icon_windows` | `(self, file_path)` | Set custom icon for Windows by registering file type. |
 | `_set_icon_linux` | `(self, file_path)` | Set custom icon for Linux. |
 | `save_project` | `(self)` | Save the current project state to a compressed file. |
-| `load_project` | `(self)` | Load a previously saved project. |
+| `load_project` | `(self, filepath=None)` | Load a previously saved project. |
 | `_finalize_load` | `(self)` | Common post-load setup for both v1 and v2 formats. |
 | `_migrate_sample_parameters` | `(self)` | Ensure all per-element parameter dicts contain every field that the |
 | `_collect_project_data` | `(self, canvas_state)` | Collect all project data for saving. |

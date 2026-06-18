@@ -16,10 +16,13 @@ import urllib.request
 from PySide6.QtCore import QThread, Signal, QObject, QSettings, QUrl
 from PySide6.QtWidgets import QMessageBox
 from PySide6.QtGui import QDesktopServices
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.update_checker")
 
 try:
-    from tools.app_version import __version__ as CURRENT_VERSION
+    from utils.app_version import __version__ as CURRENT_VERSION
 except Exception:
+    _itk_log.exception("Handled exception in <module>")
     CURRENT_VERSION = "0.0.0"
 
 # ---------------------------------------------------------------------------
@@ -68,6 +71,7 @@ def _ssl_context():
         import certifi
         return ssl.create_default_context(cafile=certifi.where())
     except Exception:
+        _itk_log.exception("Handled exception in _ssl_context")
         return ssl.create_default_context()
 
 
@@ -127,6 +131,7 @@ class _UpdateWorker(QThread):
                 "download_url": _pick_asset(data.get("assets") or []),
             })
         except Exception as exc:
+            _itk_log.exception("Handled exception in run")
             self.failed.emit(str(exc))
 
 

@@ -26,10 +26,10 @@ from results.shared_plot_utils import (
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
     LABEL_MODES, format_element_label, Renderer,
     get_display_name, download_matplotlib_figure,
-    per_ml_active, per_ml_factor, conc_meta_available, single_sample_name,
-    format_per_ml, pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_network")
 
 
 # ── Constants ──────────────────────────────────────────────────────────
@@ -89,26 +89,11 @@ DEFAULT_CONFIG = {
 # ── Helpers ────────────────────────────────────────────────────────────
 
 def _is_multi(input_data):
-    """
-    Args:
-        input_data (Any): The input data.
-    Returns:
-        object: Result of the operation.
-    """
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
 def _compute_edges(particles, elements, data_key, r_threshold, min_n):
-    """Return list of (i, j, r) where |r| >= threshold.
-    Args:
-        particles (Any): The particles.
-        elements (Any): The elements.
-        data_key (Any): The data key.
-        r_threshold (Any): The r threshold.
-        min_n (Any): The min n.
-    Returns:
-        object: Result of the operation.
-    """
+    """Return list of (i, j, r) where |r| >= threshold."""
     n = len(elements)
     vectors = {el: [] for el in elements}
     for p in particles:
@@ -131,7 +116,7 @@ def _compute_edges(particles, elements, data_key, r_threshold, min_n):
                     if abs(r) >= r_threshold:
                         edges.append((i, j, r))
                 except Exception:
-                    pass
+                    _itk_log.exception("Handled exception in _compute_edges")
     return edges
 
 
@@ -165,6 +150,7 @@ def _compute_node_amounts(particles, elements, data_key, aggregation="Sum"):
             try:
                 numeric_value = float(value)
             except (TypeError, ValueError):
+                _itk_log.exception("Handled exception in _compute_node_amounts")
                 numeric_value = 0.0
             if mode == "Sum":
                 if np.isfinite(numeric_value):
@@ -184,9 +170,6 @@ def _compute_node_amounts(particles, elements, data_key, aggregation="Sum"):
 
 def _normalize_node_size_aggregation(value):
     """Normalize node-size aggregation config values to supported options.
-
-    Args:
-        value (Any): Raw config or UI value to normalize.
 
     Returns:
         str: ``Sum`` or ``Mean``, defaulting to ``Sum`` for unsupported values.
@@ -1049,7 +1032,8 @@ class NetworkDisplayDialog(QDialog):
             self.canvas.snapshot_positions()
 
         except Exception as e:
-            print(f"Error refreshing network diagram: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error refreshing network diagram: {e}")
             import traceback; traceback.print_exc()
 
     def _draw_network(self, ax, net_data, cfg):
@@ -1307,6 +1291,7 @@ class NetworkDisplayDialog(QDialog):
             width_px = max(4.0, float(bbox.width))
             return width_px * 72.0 / self.figure.dpi
         except Exception:
+            _itk_log.exception("Handled exception in _measure_reference_node_diameter_points")
             return fallback_diameter_points
 
     def _apply_node_size_visual_legend(self, cfg, network_payloads, reference_ax, top_layout):
@@ -1414,10 +1399,6 @@ class NetworkDiagramNode(QObject):
     configuration_changed = Signal()
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title           = "Network"
         self.node_type       = "network_diagram"
@@ -1431,40 +1412,22 @@ class NetworkDiagramNode(QObject):
         self.input_data      = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = NetworkDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def _get_elements(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         sel = self.input_data.get('selected_isotopes', [])
         if sel:
             return sort_elements_by_mass([i['label'] for i in sel])
@@ -1475,10 +1438,6 @@ class NetworkDiagramNode(QObject):
         return sort_elements_by_mass(list(all_elems))
 
     def extract_network_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         data_key    = NET_DATA_KEY_MAP.get(

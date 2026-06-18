@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from tools.theme import theme as _theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_reader")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Category metadata — icon + label only; colour comes from palette
@@ -54,6 +56,7 @@ def _safe_float(v) -> float | None:
         f = float(v)
         return f if (f > 0 and not math.isnan(f)) else None
     except Exception:
+        _itk_log.exception("Handled exception in _safe_float")
         return None
 
 
@@ -200,6 +203,7 @@ class _AnalysisWorker(QThread):
                     if abs(r3) > abs(best_r3):
                         best_r3, best_el3 = r3, el3
                 except Exception:
+                    _itk_log.exception("Handled exception in run")
                     continue
 
             cfg: dict = {
@@ -449,7 +453,8 @@ def _get_data_context(scene) -> dict:
                 if isinstance(d, dict):
                     candidates.append(d)
             except Exception as exc:
-                print(f"[Insights] get_output_data failed on '{getattr(node,'title',node)}': {exc}")
+                _itk_log.exception("Handled exception in _get_data_context")
+                _itk_log.error(f"[Insights] get_output_data failed on '{getattr(node,'title',node)}': {exc}")
         raw = getattr(node, "input_data", None)
         if isinstance(raw, dict):
             candidates.append(raw)
@@ -458,7 +463,7 @@ def _get_data_context(scene) -> dict:
             if cnt > best_n:
                 best, best_n = d, cnt
     if best_n:
-        print(f"[Insights] {best_n:,} particles (type={best.get('type','?')})")
+        _itk_log.debug(f"[Insights] {best_n:,} particles (type={best.get('type','?')})")
     return best or {}
 
 
@@ -821,12 +826,13 @@ class SmartInsightsPanel(QWidget):
         try:
             from widget.canvas_widgets import _NODE_FACTORIES
         except ImportError:
-            print("[Insights] Could not import _NODE_FACTORIES")
+            _itk_log.debug("Handled exception in _add_suggestion")
+            _itk_log.error("[Insights] Could not import _NODE_FACTORIES")
             return
 
         factory = _NODE_FACTORIES.get(s.node_type)
         if factory is None:
-            print(f"[Insights] Unknown node_type: {s.node_type}")
+            _itk_log.debug(f"[Insights] Unknown node_type: {s.node_type}")
             return
 
         scene = self._scene

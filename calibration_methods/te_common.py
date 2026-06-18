@@ -1,18 +1,17 @@
 import csv
 import numpy as np
 import pyqtgraph as pg
-from pathlib import Path
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QGroupBox,
-    QMainWindow, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QFileDialog, QComboBox, QLabel, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QProgressDialog, QApplication, QAbstractItemView, QStyledItemDelegate,
+    QWidget, QVBoxLayout, QScrollArea, QFrame, QTableWidgetItem, QMessageBox,
+    QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox, QStyledItemDelegate,
     QLineEdit
 )
 from PySide6.QtGui import QColor, QDoubleValidator
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 
 from tools.theme import theme, LIGHT
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -684,7 +683,7 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
         )
         return file_path
 
-    except Exception as exc:
+    except (OSError, UnicodeError, ValueError) as exc:
         QMessageBox.critical(
             parent_widget, "Export Error", f"Error exporting results: {exc}"
         )
@@ -705,8 +704,7 @@ DEFAULT_DETECTION_PARAMS = {
 
 def populate_detection_row(table, row, sample_name, element_label,
                            defaults=None):
-    """
-    Populate a single row in a detection-parameters QTableWidget.
+    """Populate a single row in a detection-parameters QTableWidget.
 
     Inserts read-only sample/element labels and configurable spin-box/combo
     widgets for detection method, threshold etc.
@@ -717,9 +715,6 @@ def populate_detection_row(table, row, sample_name, element_label,
         sample_name (str): Display name for the sample.
         element_label (str): Isotope label (e.g. '208Pb').
         defaults (dict | None): Override keys from DEFAULT_DETECTION_PARAMS.
-
-    Returns:
-        None
     """
     cfg = {**DEFAULT_DETECTION_PARAMS, **(defaults or {})}
 
@@ -797,21 +792,18 @@ def read_detection_row(table, row):
             "min_continuous": minpts_w.value(),
             "alpha": alpha_w.value(),
         }
-    except Exception as exc:
-        print(f"Warning: falling back to defaults for row {row}: {exc}")
+    except (ValueError, AttributeError, RuntimeError) as exc:
+        _itk_log.exception("Handled exception in read_detection_row")
+        _itk_log.error(f"Warning: falling back to defaults for row {row}: {exc}")
         return dict(DEFAULT_DETECTION_PARAMS)
 
 
 def apply_global_method(table, method_name):
-    """
-    Set the detection method combo box on every row to *method_name*.
+    """Set the detection method combo box on every row to *method_name*.
 
     Args:
         table (QTableWidget): The detection parameters table.
         method_name (str): Method string to set (e.g. 'Currie').
-
-    Returns:
-        None
     """
     for row in range(table.rowCount()):
         combo = table.cellWidget(row, 2)
@@ -826,8 +818,7 @@ def apply_global_method(table, method_name):
 def plot_detection_results(plot_widget, sample_name, signal,
                            particles, lambda_bkgd, threshold, time_array,
                            peak_detector=None):
-    """
-    Render a comprehensive particle-detection visualisation on *plot_widget*.
+    """Render a comprehensive particle-detection visualisation on *plot_widget*.
 
     Draws raw signal, background/threshold lines, and
     detected peaks colour-coded by SNR.
@@ -842,9 +833,6 @@ def plot_detection_results(plot_widget, sample_name, signal,
         time_array (np.ndarray): Time array (seconds).
         peak_detector (PeakDetection | None): If provided, its
             ``get_snr_color`` method is used for scatter colouring.
-
-    Returns:
-        None
     """
     plot_widget.clear()
 

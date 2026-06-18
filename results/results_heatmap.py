@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QFrame,
-    QScrollArea, QWidget, QMenu, QDialogButtonBox, QMessageBox, QInputDialog
+    QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QScrollArea,
+    QWidget, QMenu, QDialogButtonBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QCursor
@@ -10,18 +10,20 @@ import numpy as np
 import math
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DATA_KEY_MAPPING,
-    FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
-    get_font_config, apply_font_to_matplotlib,
-    apply_font_to_colorbar_standalone, get_display_name,
-    download_matplotlib_figure, LABEL_MODES, format_element_label, format_combination_label, Renderer,
-    per_ml_factor, conc_meta_available, format_per_ml, single_sample_name,
+    DATA_KEY_MAPPING, FontSettingsGroup,
+    ExportSettingsGroup, MplDraggableCanvas, get_font_config,
+    apply_font_to_matplotlib, apply_font_to_colorbar_standalone,
+    get_display_name, download_matplotlib_figure,
+    LABEL_MODES, format_element_label, format_combination_label, Renderer, per_ml_factor,
+    conc_meta_available, format_per_ml, single_sample_name,
 )
 
 from results.utils_sort import (
     sort_elements_by_mass
 )
 from widget.colors import colorheatmap
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.results.results_heatmap")
 
 
 HEATMAP_DATA_TYPES = [
@@ -64,15 +66,6 @@ class HeatmapSettingsDialog(QDialog):
 
     def __init__(self, config: dict, is_multi: bool,
                  sample_names: list, parent=None, scope='all', input_data=None):
-        """
-        Args:
-            config (dict): Configuration dictionary.
-            is_multi (bool): The is multi.
-            sample_names (list): The sample names.
-            parent (Any): Parent widget or object.
-            input_data (dict | None): Node input payload used to detect whether
-                a transport rate is available for particles-per-mL output.
-        """
         super().__init__(parent)
         if scope == 'format':
             self.setWindowTitle("Heatmap plot format settings")
@@ -399,11 +392,6 @@ class HeatmapDisplayDialog(QDialog):
     """
 
     def __init__(self, heatmap_node, parent_window=None):
-        """
-        Args:
-            heatmap_node (Any): The heatmap node.
-            parent_window (Any): The parent window.
-        """
         super().__init__(parent_window)
         self.node = heatmap_node
         self.parent_window = parent_window
@@ -414,18 +402,10 @@ class HeatmapDisplayDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def _is_multi(self) -> bool:
-        """
-        Returns:
-            bool: Result of the operation.
-        """
-        return (self.node.input_data and
-                self.node.input_data.get('type') == 'multiple_sample_data')
+        return bool(self.node.input_data and
+                    self.node.input_data.get('type') == 'multiple_sample_data')
 
     def _sample_names(self) -> list:
-        """
-        Returns:
-            list: Result of the operation.
-        """
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
@@ -487,8 +467,7 @@ class HeatmapDisplayDialog(QDialog):
     # ── Context menu ────────────────────────
 
     def _show_context_menu(self, pos):
-        """
-        Build a minimal Heatmap right-click menu with quick controls only.
+        """Build a minimal Heatmap right-click menu with quick controls only.
 
         The context menu is intentionally limited to `Quick Toggles` and
         `Isotope Label`. Full format/quantity configuration, reset, and export
@@ -497,9 +476,6 @@ class HeatmapDisplayDialog(QDialog):
         Preserved behavior:
         - Toggle and label-mode actions still update the same config keys.
         - Heatmap calculations and search-safe label behavior remain unchanged.
-
-        Args:
-            pos (Any): Position point (unused; menu opens at cursor).
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -578,23 +554,12 @@ class HeatmapDisplayDialog(QDialog):
         self._refresh()
 
     def _add_toggle(self, menu, label, key):
-        """
-        Args:
-            menu (Any): QMenu object.
-            label (Any): Label text.
-            key (Any): Dictionary or storage key.
-        """
         a = menu.addAction(label)
         a.setCheckable(True)
         a.setChecked(self.node.config.get(key, False))
         a.triggered.connect(lambda checked, k=key: self._toggle(k, checked))
 
     def _toggle(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -607,11 +572,6 @@ class HeatmapDisplayDialog(QDialog):
         self._refresh()
 
     def _set_and_refresh(self, key, value):
-        """
-        Args:
-            key (Any): Dictionary or storage key.
-            value (Any): Value to set or process.
-        """
         self.node.config[key] = value
         self._refresh()
 
@@ -714,18 +674,14 @@ class HeatmapDisplayDialog(QDialog):
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
-            print(f"Error refreshing heatmap: {e}")
+            _itk_log.exception("Handled exception in _refresh")
+            _itk_log.error(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
 
     # ── Multi-sample dispatch ───────────────
 
     def _draw_multi(self, data, cfg, display_mode):
         """Draw the active multi-sample Heatmap layout.
-
-        Args:
-            data (Any): Multi-sample Heatmap data keyed by raw sample name.
-            cfg (Any): Active Heatmap configuration.
-            display_mode (Any): Requested multi-sample display mode.
 
         Preserved behavior:
             This changes only panel layout and display-only sample titles.
@@ -759,12 +715,6 @@ class HeatmapDisplayDialog(QDialog):
 
     @staticmethod
     def _combine_data(data):
-        """
-        Args:
-            data (Any): Input data.
-        Returns:
-            object: Result of the operation.
-        """
         combined = {}
         for sample_data in data.values():
             for combo, d in sample_data.items():
@@ -798,13 +748,7 @@ class HeatmapDisplayDialog(QDialog):
 
 
 def _combo_matches(combination: str, search_elements: list) -> bool:
-    """Check if a combination string contains all search elements (order-independent).
-    Args:
-        combination (str): The combination.
-        search_elements (list): The search elements.
-    Returns:
-        bool: Result of the operation.
-    """
+    """Check if a combination string contains all search elements (order-independent)."""
     combo_parts = [p.strip() for p in combination.split(',')]
     for se in search_elements:
         found = False
@@ -1069,10 +1013,6 @@ class HeatmapPlotNode(QObject):
     }
 
     def __init__(self, parent_window=None):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        """
         super().__init__()
         self.title = "Element Heatmap"
         self.node_type = "heatmap_plot"
@@ -1086,40 +1026,22 @@ class HeatmapPlotNode(QObject):
         self.input_data = None
 
     def set_position(self, pos):
-        """
-        Args:
-            pos (Any): Position point.
-        """
         if self.position != pos:
             self.position = pos
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        """
-        Args:
-            parent_window (Any): The parent window.
-        Returns:
-            bool: Result of the operation.
-        """
         dlg = HeatmapDisplayDialog(self, parent_window)
         dlg.exec()
         return True
 
     def process_data(self, input_data):
-        """
-        Args:
-            input_data (Any): The input data.
-        """
         if not input_data:
             return
         self.input_data = input_data
         self.configuration_changed.emit()
 
     def extract_combinations_data(self):
-        """
-        Returns:
-            None
-        """
         if not self.input_data:
             return None
         dt = self.config.get('data_type_display', 'Counts')
@@ -1133,12 +1055,6 @@ class HeatmapPlotNode(QObject):
         return None
 
     def _extract_single(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
@@ -1147,12 +1063,6 @@ class HeatmapPlotNode(QObject):
                                    per_ml_factor(self.input_data, sname))
 
     def _extract_multi(self, data_key):
-        """
-        Args:
-            data_key (Any): The data key.
-        Returns:
-            object: Result of the operation.
-        """
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -1180,8 +1090,6 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
         data_key (Any): The data key.
         pml_factor (float): Multiplier converting a particle count to
             particles per mL for the sample these particles belong to.
-    Returns:
-        object: Result of the operation.
     """
     try:
         combos = {}
@@ -1214,6 +1122,7 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
 
         return combos or None
     except Exception as e:
-        print(f"Error building combinations: {e}")
+        _itk_log.exception("Handled exception in _build_combinations")
+        _itk_log.error(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None

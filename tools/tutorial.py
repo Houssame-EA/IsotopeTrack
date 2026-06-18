@@ -1,39 +1,32 @@
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QVBoxLayout, QPushButton,
-    QLabel, QScrollArea, QWidget, QHBoxLayout, QSizePolicy,
+    QLabel, QScrollArea, QWidget,
 )
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QMovie, QPixmap
+from PySide6.QtGui import QMovie
 from pathlib import Path
 import sys
 
 from tools.theme import theme
+import logging
+_itk_log = logging.getLogger("IsotopeTrack.tools.tutorial")
 
 
 def get_resource_path(relative_path):
-    """
-    Args:
-        relative_path (Any): The relative path.
-    Returns:
-        object: Result of the operation.
-    """
-    try:
-        base_path = Path(sys._MEIPASS)
-    except AttributeError:
+    # sys._MEIPASS only exists inside a PyInstaller bundle; in dev we resolve
+    # relative to the project root. Use getattr so the dev case is normal
+    # control flow rather than a logged AttributeError on every call.
+    base_path = getattr(sys, "_MEIPASS", None)
+    if base_path is None:
         base_path = Path(__file__).parent.parent
-    return base_path / relative_path
+    return Path(base_path) / relative_path
 
 
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
 def _section(html: str) -> QLabel:
-    """Rich-text section label with consistent styling.
-    Args:
-        html (str): The html.
-    Returns:
-        QLabel: Result of the operation.
-    """
+    """Rich-text section label with consistent styling."""
     lbl = QLabel(html)
     lbl.setWordWrap(True)
     lbl.setOpenExternalLinks(True)
@@ -44,14 +37,11 @@ def _section(html: str) -> QLabel:
 
 
 def _gif_widget(filename: str, width: int = 680) -> QWidget:
-    """
-    Return a widget displaying an animated GIF from the images/ folder.
+    """Return a widget displaying an animated GIF from the images/ folder.
     Falls back to a styled placeholder if the file is not found.
     Args:
         filename (str): The filename.
         width (int): Width in pixels.
-    Returns:
-        QWidget: Result of the operation.
     """
     path = get_resource_path(f"images/{filename}")
 
@@ -84,12 +74,7 @@ def _gif_widget(filename: str, width: int = 680) -> QWidget:
 
 
 def _scroll_tab(*widgets) -> QScrollArea:
-    """Wrap a list of widgets in a scrollable tab.
-    Args:
-        *widgets (Any): Additional positional arguments.
-    Returns:
-        QScrollArea: Result of the operation.
-    """
+    """Wrap a list of widgets in a scrollable tab."""
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QScrollArea.NoFrame)
@@ -112,10 +97,6 @@ def _scroll_tab(*widgets) -> QScrollArea:
 
 
 def _hr() -> QLabel:
-    """
-    Returns:
-        QLabel: Result of the operation.
-    """
     lbl = QLabel("<hr>")
     lbl.setTextFormat(Qt.RichText)
     return lbl
@@ -130,10 +111,6 @@ class UserGuideDialog(QDialog):
     """
 
     def __init__(self, parent=None):
-        """
-        Args:
-            parent (Any): Parent widget or object.
-        """
         super().__init__(parent)
         self.setWindowTitle("IsotopeTrack — User Guide")
         self.resize(820, 740)
@@ -256,27 +233,19 @@ class UserGuideDialog(QDialog):
                 )
 
     def closeEvent(self, event):
-        """
-        Args:
-            event (Any): Qt event object.
-        """
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
-            pass
+            _itk_log.exception("Handled exception in closeEvent")
         super().closeEvent(event)
 
     # ------------------------------------------------------------------ #
     # Tab: Overview
     # ------------------------------------------------------------------ #
     def _tab_overview(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.0.9</h2>
+            <h2>IsotopeTrack v1.10.3</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 
@@ -321,10 +290,6 @@ class UserGuideDialog(QDialog):
     # Tab: Workflow                                                         #
     # ------------------------------------------------------------------ #
     def _tab_workflow(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
             <h2>Recommended Workflow</h2>
@@ -373,10 +338,6 @@ class UserGuideDialog(QDialog):
     # Tab: Data Loading                                                    #
     # ------------------------------------------------------------------ #
     def _tab_data(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
             <h2>Data Loading</h2>
@@ -437,10 +398,6 @@ class UserGuideDialog(QDialog):
     # Tab: Calibration                                                     #
     # ------------------------------------------------------------------ #
     def _tab_calibration(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
             <h2>Calibration Methods</h2>
@@ -506,10 +463,6 @@ class UserGuideDialog(QDialog):
     # Tab: Parameters                                                      #
     # ------------------------------------------------------------------ #
     def _tab_parameters(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
             <h2>Detection Parameters</h2>
@@ -563,10 +516,6 @@ class UserGuideDialog(QDialog):
 
 
     def _tab_results(self):
-        """
-        Returns:
-            object: Result of the operation.
-        """
         return _scroll_tab(
             _section("""
             <h2>Results Canvas &amp; Visualization</h2>
