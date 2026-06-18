@@ -2169,15 +2169,18 @@ class TriangleDisplayDialog(QDialog):
         """
         color_elem = cfg.get('color_element', '')
         label_mode = cfg.get('label_mode', 'Symbol')
+        data_type = cfg.get('data_type_display', 'Counts (%)')
         if color_elem:
             elem_label = format_element_label(
                 color_elem, label_mode, Renderer.MATHTEXT, cfg)
             if is_hexbin:
-                return f"Mean {elem_label}"
-            return elem_label
+                return f"Mean {elem_label}\n({data_type})"
+            return f"{elem_label}\n({data_type})"
         if is_hexbin:
             return "Count per bin"
-        return "Point Index"
+        # No color element: scatter is colored by the composition total,
+        # which is in the selected data type units.
+        return f"Total {data_type}"
 
     def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
                      return_mappable=False):
@@ -2207,14 +2210,13 @@ class TriangleDisplayDialog(QDialog):
         c_raw = np.array([p['c'] for p in sample_data])
 
         tol = 1e-9
+        # Base mask: viewport bounds only — used for scatter/hexbin rendering so
+        # that particles with zero in one element still appear on ternary edges.
         mask = (
             (a_raw >= viewport['a_min'] - tol) &
             (b_raw >= viewport['b_min'] - tol) &
             (c_raw >= viewport['c_min'] - tol)
         )
-
-        if cfg.get('average_only_with_all_elements', True):
-            mask &= (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
 
         if not mask.any():
             ax.text(
@@ -2234,6 +2236,20 @@ class TriangleDisplayDialog(QDialog):
         a_vals = (a_orig - viewport['a_min']) / remaining
         b_vals = (b_orig - viewport['b_min']) / remaining
         c_vals = (c_orig - viewport['c_min']) / remaining
+
+        # Separate average mask: optionally require all three elements non-zero.
+        # This is applied only to the average/stats computation, NOT to
+        # scatter/hexbin rendering — so edge-particles still show in the plot.
+        if cfg.get('average_only_with_all_elements', True):
+            avg_only = mask & (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
+        else:
+            avg_only = mask
+        a_orig_avg = a_raw[avg_only]
+        b_orig_avg = b_raw[avg_only]
+        c_orig_avg = c_raw[avg_only]
+        a_vals_avg = (a_orig_avg - viewport['a_min']) / remaining
+        b_vals_avg = (b_orig_avg - viewport['b_min']) / remaining
+        c_vals_avg = (c_orig_avg - viewport['c_min']) / remaining
 
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
@@ -2262,13 +2278,20 @@ class TriangleDisplayDialog(QDialog):
                     s=size, alpha=alpha, color=sample_color,
                     edgecolors='white', linewidth=0.5, label=title)
             else:
+                # No specific color element chosen: color by the composition total
+                # (sum of all three element values in the selected data type units).
+                # This gives a scientifically meaningful scale that updates when
+                # the data type changes (counts, mass, moles, etc.).
+                total_vals = np.array([p.get('total', 0) for p in sample_data])[mask]
                 scatter = ax.scatter(
                     c_vals, a_vals, b_vals,
-                    s=size, alpha=alpha, c=np.arange(len(c_vals)), cmap=cmap,
+                    s=size, alpha=alpha, c=total_vals, cmap=cmap,
                     edgecolors='white', linewidth=0.5)
+                _mappable = scatter
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-                    apply_font_to_colorbar_standalone(cbar, cfg, "Point Index")
+                    apply_font_to_colorbar_standalone(
+                        cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=False))
         else:
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
@@ -2290,7 +2313,10 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=True))
 
-        self._draw_average_arrays(ax, a_orig, b_orig, c_orig, a_vals, b_vals, c_vals,
+        # Use avg_only arrays for average/stats so the all-elements filter only
+        # affects the mean marker and stats box, not the scatter/hexbin render.
+        self._draw_average_arrays(ax, a_orig_avg, b_orig_avg, c_orig_avg,
+                                   a_vals_avg, b_vals_avg, c_vals_avg,
                                    cfg, title, viewport)
 
         if return_mappable:
@@ -2856,16 +2882,18 @@ class TrianglePlotNode(QObject):
             vb = d.get(eb, 0)
             vc = d.get(ec, 0)
 
-            if dk == 'elements':
-                if va <= 0 or vb <= 0 or vc <= 0:
+            # Allow particles where only some elements are detected —
+            # they plot on the edges/vertices of the ternary.
+            # Only require non-negative values and that the total is > 0
+            # (handled below). The average_only_with_all_elements config flag
+            # governs whether zero-element particles are excluded from the
+            # average calculation at render time.
+            try:
+                if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
+                        or va < 0 or vb < 0 or vc < 0):
                     continue
-            else:
-                try:
-                    if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
-                            or va < 0 or vb < 0 or vc < 0):
-                        continue
-                except TypeError:
-                    continue
+            except TypeError:
+                continue
 
             total = va + vb + vc
             if total < min_total or total <= 0:
