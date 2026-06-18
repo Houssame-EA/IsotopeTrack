@@ -59,6 +59,38 @@ COLORMAPS = [
     'coolwarm', 'RdYlBu', 'Spectral', 'turbo', 'jet',
 ]
 
+# ── Scatter color-encoding options ──────────────────────────────────────────
+# Mode A: whole-particle aggregate quantities
+COLOR_PARTICLE_QUANTITY_OPTIONS = [
+    ('Total Counts',                'total_counts'),
+    ('Total Isotope Mass (fg)',     'total_element_mass_fg'),
+    ('Total Isotope Moles (fmol)', 'total_element_moles_fmol'),
+    ('Total Particle Mass (fg)',   'total_particle_mass_fg'),
+    ('Total Particle Moles (fmol)', 'total_particle_moles_fmol'),
+]
+COLOR_PARTICLE_QUANTITY_LABELS = [x[0] for x in COLOR_PARTICLE_QUANTITY_OPTIONS]
+COLOR_PARTICLE_QUANTITY_KEYS   = [x[1] for x in COLOR_PARTICLE_QUANTITY_OPTIONS]
+
+# Mode B: per-isotope measurement data types
+COLOR_ISOTOPE_DATA_TYPE_OPTIONS = [
+    ('Counts',                  'counts'),
+    ('Isotope Mass (fg)',       'element_mass_fg'),
+    ('Isotope Moles (fmol)',   'element_moles_fmol'),
+    ('Particle Mass (fg)',     'particle_mass_fg'),
+    ('Particle Moles (fmol)', 'particle_moles_fmol'),
+]
+COLOR_ISOTOPE_DATA_TYPE_LABELS = [x[0] for x in COLOR_ISOTOPE_DATA_TYPE_OPTIONS]
+COLOR_ISOTOPE_DATA_TYPE_KEYS   = [x[1] for x in COLOR_ISOTOPE_DATA_TYPE_OPTIONS]
+
+# Mapping from COLOR_ISOTOPE_DATA_TYPE key → particle dict key for extraction
+_COLOR_ISOTOPE_DK_MAP = {
+    'counts':              'elements',
+    'element_mass_fg':    'element_mass_fg',
+    'element_moles_fmol': 'element_moles_fmol',
+    'particle_mass_fg':   'particle_mass_fg',
+    'particle_moles_fmol': 'particle_moles_fmol',
+}
+
 
 def _full_triangle_viewport() -> dict:
     """Return the default full ternary viewport."""
@@ -357,7 +389,7 @@ class TernarySettingsDialog(QDialog):
         self.show_colorbar = None
         self.cbar_label = None
         self.show_avg = None
-        self.avg_only_all = None
+        self.element_filter_mode = None
         self.show_avg_text = None
         self.show_ellipse = None
         self.avg_size = None
@@ -370,6 +402,15 @@ class TernarySettingsDialog(QDialog):
         self._export_grp = None
         self._scatter_frame = None
         self._hexbin_frame = None
+        # Scatter color-encoding widgets (new two-mode system)
+        self._scatter_color_group = None
+        self._hexbin_color_group = None
+        self.color_source_combo = None
+        self._scatter_color_particle_frame = None
+        self._scatter_color_isotope_frame = None
+        self.color_particle_quantity_combo = None
+        self.color_isotope_combo = None
+        self.color_isotope_data_type_combo = None
         self._color_btns = {}
         self._mean_color_btns = {}
         self._name_edits = {}
@@ -435,21 +476,86 @@ class TernarySettingsDialog(QDialog):
             if ec in self._elems:
                 self.elem_c.setCurrentText(ec)
             fl.addRow("Element C (Top):", self.elem_c)
+            layout.addWidget(g)
 
+            # ── Plot Type (moved here from Format Settings) ─────────────────
+            g_pt = QGroupBox("Plot Type")
+            fl_pt = QFormLayout(g_pt)
+            self.plot_type = QComboBox()
+            self.plot_type.addItems(PLOT_TYPES)
+            self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
+            self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
+            fl_pt.addRow("Plot Type:", self.plot_type)
+            layout.addWidget(g_pt)
+
+            # ── Hexbin Color (shown only for Hexbin) ────────────────────────
+            self._hexbin_color_group = QGroupBox("Hexbin Color")
+            hcfl = QFormLayout(self._hexbin_color_group)
             self.color_elem = QComboBox()
-            self.color_elem.addItems(['(None - use index)'] + self._elems)
+            self.color_elem.addItems(['(None — density)'] + self._elems)
             ce = self._cfg.get('color_element', '')
             if ce in self._elems:
                 self.color_elem.setCurrentText(ce)
-            fl.addRow("Color By Element:", self.color_elem)
-            layout.addWidget(g)
+            hcfl.addRow("Color By Isotope:", self.color_elem)
+            layout.addWidget(self._hexbin_color_group)
 
-            g = QGroupBox("Data Type")
+            # ── Scatter Color Encoding (shown only for Scatter) ─────────────
+            self._scatter_color_group = QGroupBox("Scatter Color Encoding")
+            scfl = QFormLayout(self._scatter_color_group)
+
+            self.color_source_combo = QComboBox()
+            self.color_source_combo.addItem("Particle quantity", "particle_quantity")
+            self.color_source_combo.addItem("Isotope measurement", "isotope_measurement")
+            _cur_source = self._cfg.get('color_source', 'particle_quantity')
+            _si = self.color_source_combo.findData(_cur_source)
+            self.color_source_combo.setCurrentIndex(max(0, _si))
+            self.color_source_combo.currentIndexChanged.connect(self._on_color_mode_changed)
+            scfl.addRow("Color Mode:", self.color_source_combo)
+
+            # Frame A: particle quantity
+            self._scatter_color_particle_frame = QFrame()
+            pqfl = QFormLayout(self._scatter_color_particle_frame)
+            pqfl.setContentsMargins(0, 0, 0, 0)
+            self.color_particle_quantity_combo = QComboBox()
+            for lbl, key in COLOR_PARTICLE_QUANTITY_OPTIONS:
+                self.color_particle_quantity_combo.addItem(lbl, key)
+            _cur_pq = self._cfg.get('color_particle_quantity', 'total_counts')
+            _pqi = self.color_particle_quantity_combo.findData(_cur_pq)
+            self.color_particle_quantity_combo.setCurrentIndex(max(0, _pqi))
+            pqfl.addRow("Quantity:", self.color_particle_quantity_combo)
+            scfl.addRow(self._scatter_color_particle_frame)
+
+            # Frame B: isotope measurement
+            self._scatter_color_isotope_frame = QFrame()
+            isfl = QFormLayout(self._scatter_color_isotope_frame)
+            isfl.setContentsMargins(0, 0, 0, 0)
+            self.color_isotope_combo = QComboBox()
+            self.color_isotope_combo.addItems(['(None)'] + self._elems)
+            _cur_iso = self._cfg.get('color_isotope', '')
+            if _cur_iso in self._elems:
+                self.color_isotope_combo.setCurrentText(_cur_iso)
+            isfl.addRow("Isotope:", self.color_isotope_combo)
+            self.color_isotope_data_type_combo = QComboBox()
+            for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
+                self.color_isotope_data_type_combo.addItem(lbl, key)
+            _cur_idt = self._cfg.get('color_isotope_data_type', 'counts')
+            _idti = self.color_isotope_data_type_combo.findData(_cur_idt)
+            self.color_isotope_data_type_combo.setCurrentIndex(max(0, _idti))
+            isfl.addRow("Data Type:", self.color_isotope_data_type_combo)
+            scfl.addRow(self._scatter_color_isotope_frame)
+
+            layout.addWidget(self._scatter_color_group)
+
+            # Trigger visibility for both color groups and sub-frames
+            self._on_plot_type_changed()
+            self._on_color_mode_changed()
+
+            g = QGroupBox("Composition Basis")
             fl = QFormLayout(g)
             self.data_type = QComboBox()
             self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
             self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
-            fl.addRow("Data:", self.data_type)
+            fl.addRow("Composition Basis:", self.data_type)
             layout.addWidget(g)
 
             g = QGroupBox("Filtering")
@@ -463,9 +569,20 @@ class TernarySettingsDialog(QDialog):
             self.max_particles.setRange(1, 100_000_000)
             self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
             fl.addRow("Max Particles:", self.max_particles)
-            self.avg_only_all = QCheckBox()
-            self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
-            fl.addRow("Only particles with all 3 elements:", self.avg_only_all)
+            self.element_filter_mode = QComboBox()
+            self.element_filter_mode.addItem(
+                "Show particles with at least 1 selected element", "any_one")
+            self.element_filter_mode.addItem(
+                "Show selected elements present (partial match)", "partial")
+            self.element_filter_mode.addItem(
+                "Show selected elements only (exact match)", "exact")
+            # Migrate legacy boolean config to the new string key
+            _legacy = self._cfg.get('average_only_with_all_elements', True)
+            _mode = self._cfg.get('element_filter_mode',
+                                  'partial' if _legacy else 'any_one')
+            _idx = self.element_filter_mode.findData(_mode)
+            self.element_filter_mode.setCurrentIndex(max(0, _idx))
+            fl.addRow("Element filter:", self.element_filter_mode)
             layout.addWidget(g)
 
         if self._scope in ('all', 'format'):
@@ -479,11 +596,6 @@ class TernarySettingsDialog(QDialog):
 
             g = QGroupBox("Plot Style")
             fl = QFormLayout(g)
-            self.plot_type = QComboBox()
-            self.plot_type.addItems(PLOT_TYPES)
-            self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
-            self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
-            fl.addRow("Plot Type:", self.plot_type)
 
             self._scatter_frame = QFrame()
             sfl = QFormLayout(self._scatter_frame)
@@ -643,17 +755,34 @@ class TernarySettingsDialog(QDialog):
         outer.addWidget(btns)
 
     def _on_plot_type_changed(self):
-        """
-        Toggle scatter/hexbin sub-sections for format controls.
+        """Toggle scatter/hexbin sub-sections for both format controls and color encoding groups."""
+        # Determine plot type from the quantities-scope combo or fall back to saved config.
+        if self.plot_type is not None:
+            is_scatter = self.plot_type.currentText() == 'Scatter Plot'
+        else:
+            is_scatter = self._cfg.get('plot_type', 'Scatter Plot') == 'Scatter Plot'
 
-        This method only affects visibility of visual control widgets and preserves
-        all scientific/data semantics.
-        """
-        if self.plot_type is None or self._scatter_frame is None or self._hexbin_frame is None:
+        # Format-scope frames (exist when scope is 'format' or 'all')
+        if self._scatter_frame is not None:
+            self._scatter_frame.setVisible(is_scatter)
+        if self._hexbin_frame is not None:
+            self._hexbin_frame.setVisible(not is_scatter)
+
+        # Quantities-scope color groups (exist when scope is 'quantities' or 'all')
+        if self._scatter_color_group is not None:
+            self._scatter_color_group.setVisible(is_scatter)
+        if self._hexbin_color_group is not None:
+            self._hexbin_color_group.setVisible(not is_scatter)
+
+    def _on_color_mode_changed(self):
+        """Toggle particle-quantity vs isotope-measurement sub-frames inside scatter color group."""
+        if self.color_source_combo is None:
             return
-        is_scatter = self.plot_type.currentText() == 'Scatter Plot'
-        self._scatter_frame.setVisible(is_scatter)
-        self._hexbin_frame.setVisible(not is_scatter)
+        is_particle_qty = self.color_source_combo.currentData() == 'particle_quantity'
+        if self._scatter_color_particle_frame is not None:
+            self._scatter_color_particle_frame.setVisible(is_particle_qty)
+        if self._scatter_color_isotope_frame is not None:
+            self._scatter_color_isotope_frame.setVisible(not is_particle_qty)
 
     def _pick_avg_color(self):
         """Pick average-point color used for plot formatting only."""
@@ -734,6 +863,16 @@ class TernarySettingsDialog(QDialog):
         if self.color_elem is not None:
             ce = self.color_elem.currentText()
             out['color_element'] = '' if ce.startswith('(') else ce
+        # ── New scatter color encoding keys ─────────────────────────────────
+        if self.color_source_combo is not None:
+            out['color_source'] = self.color_source_combo.currentData()
+        if self.color_particle_quantity_combo is not None:
+            out['color_particle_quantity'] = self.color_particle_quantity_combo.currentData()
+        if self.color_isotope_combo is not None:
+            ci = self.color_isotope_combo.currentText()
+            out['color_isotope'] = '' if ci.startswith('(') else ci
+        if self.color_isotope_data_type_combo is not None:
+            out['color_isotope_data_type'] = self.color_isotope_data_type_combo.currentData()
         if self.data_type is not None:
             out['data_type_display'] = self.data_type.currentText()
         if self.label_mode_combo is not None:
@@ -756,8 +895,8 @@ class TernarySettingsDialog(QDialog):
             out['show_colorbar'] = self.show_colorbar.isChecked()
         if self.show_avg is not None:
             out['show_average_point'] = self.show_avg.isChecked()
-        if self.avg_only_all is not None:
-            out['average_only_with_all_elements'] = self.avg_only_all.isChecked()
+        if self.element_filter_mode is not None:
+            out['element_filter_mode'] = self.element_filter_mode.currentData()
         if self.show_avg_text is not None:
             out['show_average_text'] = self.show_avg_text.isChecked()
         if self.show_ellipse is not None:
@@ -1561,7 +1700,8 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
         self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
         self._add_toggle(toggle_menu, "Show 2s Ellipse", 'show_confidence_ellipse')
-        self._add_toggle(toggle_menu, "Only particles with all 3 elements", 'average_only_with_all_elements')
+        # Element filter mode is a 3-way dropdown — not a simple boolean toggle.
+        # It is exposed in Configure Plot Quantities instead.
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
@@ -1970,29 +2110,33 @@ class TriangleDisplayDialog(QDialog):
     def _update_stats(self, plot_data):
         """Update the bottom statistics label."""
         cfg = self.node.config
+        mode = cfg.get('element_filter_mode', 'partial')
+        if 'element_filter_mode' not in cfg:
+            mode = 'partial' if cfg.get('average_only_with_all_elements', True) else 'any_one'
+
+        def _n_avg(points):
+            """Count points that pass the element filter for avg/stats."""
+            if mode == 'any_one':
+                return sum(1 for p in points
+                           if p['a'] > 0 or p['b'] > 0 or p['c'] > 0)
+            # partial and exact both require all three non-zero at render time
+            return sum(1 for p in points
+                       if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
 
         if self._is_multi():
             total = sum(len(sd) for sd in plot_data.values())
             n_samples = len(plot_data)
             parts = [f"{n_samples} samples", f"{total:,} particles plotted"]
-
-            if cfg.get('average_only_with_all_elements', True):
-                n_all = 0
-                for sd in plot_data.values():
-                    n_all += sum(1 for p in sd if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
-                if n_all < total:
-                    parts.append(f"{n_all:,} with all 3 elements")
-
+            n_avg = sum(_n_avg(sd) for sd in plot_data.values())
+            if n_avg < total:
+                parts.append(f"{n_avg:,} used for averages")
             self.stats_label.setText("  ·  ".join(parts))
         else:
             total = len(plot_data)
             parts = [f"{total:,} particles plotted"]
-
-            if cfg.get('average_only_with_all_elements', True):
-                n_all = sum(1 for p in plot_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
-                if n_all < total:
-                    parts.append(f"{n_all:,} with all 3 elements")
-
+            n_avg = _n_avg(plot_data)
+            if n_avg < total:
+                parts.append(f"{n_avg:,} used for averages")
             if not _is_full_triangle_viewport(self._triangle_viewport):
                 parts.append(self._triangle_viewport_summary())
             self.stats_label.setText("  ·  ".join(parts))
@@ -2068,8 +2212,32 @@ class TriangleDisplayDialog(QDialog):
         if not dlg.isVisible():
             dlg.show()
 
+    @staticmethod
+    def _element_filter_mask(a_raw, b_raw, c_raw, cfg):
+        """Return a boolean mask for the element filter mode.
+
+        Modes:
+            'any_one'  – particle has at least one of the three elements > 0
+            'partial'  – particle has ALL three elements > 0 (legacy "with all 3")
+            'exact'    – particle has ALL three elements > 0 AND no other elements
+                         (exact logic is enforced at extraction time; here same as partial)
+
+        The 'exact' case is handled during data extraction in _extract_particles
+        so that only exact-match particles enter the point list at all.  At render
+        time the mask is therefore identical to 'partial'.
+        """
+        mode = cfg.get('element_filter_mode', 'partial')
+        # Legacy migration: honour old boolean key if new key absent
+        if 'element_filter_mode' not in cfg:
+            legacy = cfg.get('average_only_with_all_elements', True)
+            mode = 'partial' if legacy else 'any_one'
+        if mode == 'any_one':
+            return (a_raw > 0) | (b_raw > 0) | (c_raw > 0)
+        # 'partial' and 'exact' both require all three non-zero at render time
+        return (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
+
     def _auto_colorbar_label(self, cfg, is_hexbin=False):
-        """Return an automatic colorbar label based on plot mode and color element.
+        """Return an automatic colorbar label based on plot mode and color encoding config.
 
         Args:
             cfg: Node config dict.
@@ -2079,20 +2247,46 @@ class TriangleDisplayDialog(QDialog):
         Returns:
             str: Colorbar label suitable for ``apply_font_to_colorbar_standalone``.
         """
-        color_elem = cfg.get('color_element', '')
-        label_mode = cfg.get('label_mode', 'Symbol')
-        data_type = cfg.get('data_type_display', 'Counts (%)')
-        if color_elem:
-            elem_label = format_element_label(
-                color_elem, label_mode, Renderer.MATHTEXT, cfg)
-            if is_hexbin:
-                return f"Mean {elem_label}\n({data_type})"
-            return f"{elem_label}\n({data_type})"
+        # ── Hexbin: legacy color-element system (unchanged) ─────────────────
         if is_hexbin:
+            color_elem = cfg.get('color_element', '')
+            label_mode = cfg.get('label_mode', 'Symbol')
+            data_type = cfg.get('data_type_display', 'Counts (%)')
+            if color_elem:
+                elem_label = format_element_label(
+                    color_elem, label_mode, Renderer.MATHTEXT, cfg)
+                return f"Mean {elem_label}\n({data_type})"
             return "Count per bin"
-        # No color element: scatter is colored by the composition total,
-        # which is in the selected data type units.
-        return f"Total {data_type}"
+
+        # ── Scatter: new two-mode color encoding system ──────────────────────
+        color_source = cfg.get('color_source', 'particle_quantity')
+        if color_source == 'particle_quantity':
+            qty_key = cfg.get('color_particle_quantity', 'total_counts')
+            label_map = {
+                'total_counts':              'Total Counts',
+                'total_element_mass_fg':     'Total Isotope Mass (fg)',
+                'total_element_moles_fmol': 'Total Isotope Moles (fmol)',
+                'total_particle_mass_fg':   'Total Particle Mass (fg)',
+                'total_particle_moles_fmol': 'Total Particle Moles (fmol)',
+            }
+            return label_map.get(qty_key, 'Total Counts')
+        else:  # 'isotope_measurement'
+            label_mode = cfg.get('label_mode', 'Symbol')
+            color_isotope = cfg.get('color_isotope', '')
+            color_isotope_dt = cfg.get('color_isotope_data_type', 'counts')
+            dt_label_map = {
+                'counts':              'Counts',
+                'element_mass_fg':     'Mass (fg)',
+                'element_moles_fmol': 'Moles (fmol)',
+                'particle_mass_fg':   'Particle Mass (fg)',
+                'particle_moles_fmol': 'Particle Moles (fmol)',
+            }
+            dt_label = dt_label_map.get(color_isotope_dt, 'Counts')
+            if color_isotope:
+                elem_label = format_element_label(
+                    color_isotope, label_mode, Renderer.MATHTEXT, cfg)
+                return f"{elem_label} · {dt_label}"
+            return dt_label
 
     def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
                      return_mappable=False):
@@ -2101,7 +2295,7 @@ class TriangleDisplayDialog(QDialog):
 
         Args:
             ax:           mpltern axes
-            sample_data:  list of dicts with keys 'a', 'b', 'c' (and optionally 'color_val')
+            sample_data:  list of dicts with keys 'a', 'b', 'c', 'color_val'
             cfg:          config dict
             title:        plot title string
             sample_color: if provided, all markers use this color (for overlaid mode)
@@ -2116,7 +2310,7 @@ class TriangleDisplayDialog(QDialog):
         viewport = _validate_triangle_viewport(viewport)
         setup_ternary_axes(ax, [ea, eb, ec], cfg, viewport)
 
-        # --- vectorized extraction & viewport filtering (replaces O(n) Python loop) ---
+        # Vectorised extraction & viewport filtering
         a_raw = np.array([p['a'] for p in sample_data])
         b_raw = np.array([p['b'] for p in sample_data])
         c_raw = np.array([p['c'] for p in sample_data])
@@ -2149,13 +2343,10 @@ class TriangleDisplayDialog(QDialog):
         b_vals = (b_orig - viewport['b_min']) / remaining
         c_vals = (c_orig - viewport['c_min']) / remaining
 
-        # Separate average mask: optionally require all three elements non-zero.
-        # This is applied only to the average/stats computation, NOT to
-        # scatter/hexbin rendering — so edge-particles still show in the plot.
-        if cfg.get('average_only_with_all_elements', True):
-            avg_only = mask & (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
-        else:
-            avg_only = mask
+        # Separate average mask: applies element filter mode.
+        # Only used for average/stats — scatter/hexbin render uses the plain
+        # viewport mask so edge-particles still appear.
+        avg_only = mask & self._element_filter_mask(a_raw, b_raw, c_raw, cfg)
         a_orig_avg = a_raw[avg_only]
         b_orig_avg = b_raw[avg_only]
         c_orig_avg = c_raw[avg_only]
@@ -2173,31 +2364,18 @@ class TriangleDisplayDialog(QDialog):
             size = cfg.get('marker_size', 20)
             alpha = cfg.get('marker_alpha', 0.7)
 
-            if color_elem and not sample_color:
-                color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
-                scatter = ax.scatter(
-                    c_vals, a_vals, b_vals,
-                    s=size, alpha=alpha, c=color_vals, cmap=cmap,
-                    edgecolors='white', linewidth=0.5)
-                _mappable = scatter
-                if show_cbar:
-                    cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-                    apply_font_to_colorbar_standalone(
-                        cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=False))
-            elif sample_color:
+            if sample_color:
+                # Overlaid multi-sample mode: use per-sample solid color, no colorbar
                 scatter = ax.scatter(
                     c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, color=sample_color,
                     edgecolors='white', linewidth=0.5, label=title)
             else:
-                # No specific color element chosen: color by the composition total
-                # (sum of all three element values in the selected data type units).
-                # This gives a scientifically meaningful scale that updates when
-                # the data type changes (counts, mass, moles, etc.).
-                total_vals = np.array([p.get('total', 0) for p in sample_data])[mask]
+                # New two-mode color encoding: color_val always populated by _extract_particles
+                color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
                 scatter = ax.scatter(
                     c_vals, a_vals, b_vals,
-                    s=size, alpha=alpha, c=total_vals, cmap=cmap,
+                    s=size, alpha=alpha, c=color_vals, cmap=cmap,
                     edgecolors='white', linewidth=0.5)
                 _mappable = scatter
                 if show_cbar:
@@ -2225,7 +2403,7 @@ class TriangleDisplayDialog(QDialog):
                 apply_font_to_colorbar_standalone(
                     cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=True))
 
-        # Use avg_only arrays for average/stats so the all-elements filter only
+        # Use avg_only arrays for average/stats so the element filter only
         # affects the mean marker and stats box, not the scatter/hexbin render.
         self._draw_average_arrays(ax, a_orig_avg, b_orig_avg, c_orig_avg,
                                    a_vals_avg, b_vals_avg, c_vals_avg,
@@ -2235,22 +2413,16 @@ class TriangleDisplayDialog(QDialog):
             return _mappable
 
     def _draw_average(self, ax, sample_data, cfg, sample_name, viewport=None):
-        """Draw average point with optional stats text and confidence ellipse.
-        Args:
-            ax (Any): The ax.
-            sample_data (Any): The sample data.
-            cfg (Any): The cfg.
-            sample_name (Any): The sample name.
-            viewport (Any): Optional lower-bound ternary viewport.
-        """
+        """Draw average point with optional stats text and confidence ellipse."""
         if not cfg.get('show_average_point', True) or not sample_data:
             return
         viewport = _validate_triangle_viewport(viewport)
 
-        if cfg.get('average_only_with_all_elements', True):
-            data = [p for p in sample_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
-        else:
-            data = sample_data
+        a_arr = np.array([p['a'] for p in sample_data])
+        b_arr = np.array([p['b'] for p in sample_data])
+        c_arr = np.array([p['c'] for p in sample_data])
+        avg_mask = self._element_filter_mask(a_arr, b_arr, c_arr, cfg)
+        data = [p for p, m in zip(sample_data, avg_mask) if m]
 
         if not data:
             return
@@ -2551,10 +2723,7 @@ class TriangleDisplayDialog(QDialog):
                 legend_handles.append(
                     Patch(facecolor=sample_color, label=dname))
 
-            if cfg.get('average_only_with_all_elements', True):
-                avg_mask = (a_vals > 0) & (b_vals > 0) & (c_vals > 0)
-            else:
-                avg_mask = np.ones(len(a_vals), dtype=bool)
+            avg_mask = self._element_filter_mask(a_vals, b_vals, c_vals, cfg)
 
             if avg_mask.any():
                 a_avg = a_vals[avg_mask]
@@ -2616,7 +2785,12 @@ class TrianglePlotNode(QObject):
         'element_a': '',
         'element_b': '',
         'element_c': '',
-        'color_element': '',
+        'color_element': '',          # hexbin: color-by-isotope (legacy system)
+        # Scatter color encoding (new two-mode system)
+        'color_source': 'particle_quantity',   # 'particle_quantity' | 'isotope_measurement'
+        'color_particle_quantity': 'total_counts',  # MODE A key
+        'color_isotope': '',                   # MODE B: isotope label
+        'color_isotope_data_type': 'counts',   # MODE B: data type key
         'data_type_display': 'Counts (%)',
         'plot_type': 'Scatter Plot',
         'marker_size': 20,
@@ -2636,7 +2810,7 @@ class TrianglePlotNode(QObject):
         'average_point_color': '#FF0000',
         'average_point_size': 100,
         'show_average_text': True,
-        'average_only_with_all_elements': True,
+        'element_filter_mode': 'partial',
         'show_confidence_ellipse': False,
         'display_mode': 'Individual Subplots',
         'sample_colors': {},
@@ -2716,7 +2890,7 @@ class TrianglePlotNode(QObject):
 
         Returns:
             list (single sample) or dict (multi-sample) of point dicts,
-            each with keys 'a', 'b', 'c', 'total', and optionally 'color_val'.
+            each with keys 'a', 'b', 'c', 'total', and 'color_val'.
             Returns None if data is insufficient.
         """
         if not self.input_data:
@@ -2733,30 +2907,46 @@ class TrianglePlotNode(QObject):
 
         dk = TERNARY_DATA_KEY_MAPPING.get(
             self.config.get('data_type_display', 'Counts (%)'), 'elements')
-        color_elem = self.config.get('color_element', '')
         itype = self.input_data.get('type')
 
         if itype == 'sample_data':
-            return self._extract_single(dk, ea, eb, ec, color_elem)
+            return self._extract_single(dk, ea, eb, ec)
         elif itype == 'multiple_sample_data':
-            return self._extract_multi(dk, ea, eb, ec, color_elem)
+            return self._extract_multi(dk, ea, eb, ec)
         return None
 
-    def _extract_particles(self, particles, dk, ea, eb, ec, color_elem):
+    def _extract_particles(self, particles, dk, ea, eb, ec):
         """Extract ternary points from a list of particle dicts.
 
         For each particle, reads the three element values from the chosen data key,
-        normalises them to fractions summing to 1.0, and optionally reads a fourth
-        element value for color mapping.
+        normalises them to fractions summing to 1.0, and populates 'color_val'
+        based on the current color encoding config.
 
         Args:
             particles:  list of particle dicts
-            dk:         data key ('elements', 'element_mass_fg', etc.)
-            ea, eb, ec: element label strings
-            color_elem: optional fourth element label for coloring (or '')
+            dk:         composition data key ('elements', 'element_mass_fg', etc.)
+            ea, eb, ec: element label strings for the three ternary axes
         """
         min_total = self.config.get('min_total', 0.0)
         max_pts = self.config.get('max_particles', 100_000_000)
+        filter_mode = self.config.get('element_filter_mode', 'partial')
+        # Legacy migration
+        if 'element_filter_mode' not in self.config:
+            filter_mode = 'partial' if self.config.get(
+                'average_only_with_all_elements', True) else 'any_one'
+
+        plot_type = self.config.get('plot_type', 'Scatter Plot')
+
+        # Scatter color config (read once per call for efficiency)
+        color_source = self.config.get('color_source', 'particle_quantity')
+        color_particle_qty = self.config.get('color_particle_quantity', 'total_counts')
+        color_isotope = self.config.get('color_isotope', '')
+        color_isotope_dk = _COLOR_ISOTOPE_DK_MAP.get(
+            self.config.get('color_isotope_data_type', 'counts'), 'elements')
+
+        # Hexbin color config (legacy: color by a fourth element in same data type)
+        hexbin_color_elem = self.config.get('color_element', '')
+
         result = []
 
         for p in particles:
@@ -2767,12 +2957,6 @@ class TrianglePlotNode(QObject):
             vb = d.get(eb, 0)
             vc = d.get(ec, 0)
 
-            # Allow particles where only some elements are detected —
-            # they plot on the edges/vertices of the ternary.
-            # Only require non-negative values and that the total is > 0
-            # (handled below). The average_only_with_all_elements config flag
-            # governs whether zero-element particles are excluded from the
-            # average calculation at render time.
             try:
                 if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
                         or va < 0 or vb < 0 or vc < 0):
@@ -2784,6 +2968,20 @@ class TrianglePlotNode(QObject):
             if total < min_total or total <= 0:
                 continue
 
+            # 'exact' mode: particle must have ONLY the three selected elements
+            # and no others with a non-zero value in this data key.
+            if filter_mode == 'exact':
+                other_vals = [v for k, v in d.items()
+                              if k not in (ea, eb, ec) and v > 0]
+                if other_vals or va <= 0 or vb <= 0 or vc <= 0:
+                    continue
+            # 'partial' mode: all three selected elements must be present.
+            # 'any_one' mode: no extraction-time filter beyond total > 0 —
+            # the render-time mask handles which points feed the avg marker.
+            elif filter_mode == 'partial':
+                if va <= 0 or vb <= 0 or vc <= 0:
+                    continue
+
             point = {
                 'a': va / total,
                 'b': vb / total,
@@ -2791,20 +2989,37 @@ class TrianglePlotNode(QObject):
                 'total': total,
             }
 
-            if color_elem:
-                point['color_val'] = d.get(color_elem, 0)
+            # ── Color value ─────────────────────────────────────────────────
+            if plot_type == 'Scatter Plot':
+                # New two-mode system: always populate color_val for scatter
+                if color_source == 'particle_quantity':
+                    if color_particle_qty == 'total_counts':
+                        cv = float(sum(p.get('elements', {}).values()))
+                    else:
+                        cv = float(p.get('totals', {}).get(color_particle_qty) or 0)
+                else:  # 'isotope_measurement'
+                    if color_isotope:
+                        cv = float(
+                            p.get(color_isotope_dk, {}).get(color_isotope) or 0)
+                    else:
+                        cv = 0.0
+                point['color_val'] = cv
+            else:
+                # Hexbin: legacy color-by-element (same data key as composition)
+                if hexbin_color_elem:
+                    point['color_val'] = float(d.get(hexbin_color_elem) or 0)
 
             result.append(point)
 
         return result or None
 
-    def _extract_single(self, dk, ea, eb, ec, color_elem):
+    def _extract_single(self, dk, ea, eb, ec):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        return self._extract_particles(particles, dk, ea, eb, ec, color_elem)
+        return self._extract_particles(particles, dk, ea, eb, ec)
 
-    def _extract_multi(self, dk, ea, eb, ec, color_elem):
+    def _extract_multi(self, dk, ea, eb, ec):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -2818,9 +3033,8 @@ class TrianglePlotNode(QObject):
 
         result = {}
         for sn, plist in grouped.items():
-            pts = self._extract_particles(plist, dk, ea, eb, ec, color_elem)
+            pts = self._extract_particles(plist, dk, ea, eb, ec)
             if pts:
                 result[sn] = pts
         return result or None
-
 
