@@ -451,6 +451,8 @@ def _gl_bar(cx, cy, w, h, rgba):
 # ─────────────────────────────────────────────────────────────────────────
 
 class CompositionWheelSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_elements, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Composition Wheel — settings')
@@ -503,9 +505,18 @@ class CompositionWheelSettingsDialog(QDialog):
         self.font_group = FontSettingsGroup(self._cfg)
         lay.addWidget(self.font_group.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        lay.addLayout(_btn_row)
         self._sync_ratio(self.angle_cb.currentText())
 
     def _sync_ratio(self, mode):
@@ -571,11 +582,17 @@ class CompositionWheelDisplayDialog(QDialog):
             self._refresh(repopulate=False)
 
     def _settings(self):
+        _snap = dict(self.node.config)
         elements = self.node.available_elements()
         dlg = CompositionWheelSettingsDialog(
             self.node.config, None, elements, self)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _ctx_menu(self, global_pos):

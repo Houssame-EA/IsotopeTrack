@@ -64,6 +64,8 @@ def _normalize_heatmap_display_mode(display_mode: str) -> str:
 class HeatmapSettingsDialog(QDialog):
     """Scoped settings dialog for heatmap format/quantity configuration."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config: dict, is_multi: bool,
                  sample_names: list, parent=None, scope='all', input_data=None):
         super().__init__(parent)
@@ -317,10 +319,18 @@ class HeatmapSettingsDialog(QDialog):
 
         layout.addStretch()
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """Collect Heatmap settings without touching removed or missing widgets.
@@ -608,19 +618,31 @@ class HeatmapDisplayDialog(QDialog):
             self._refresh()
 
     def _open_plot_format_settings(self):
+        _snap = dict(self.node.config)
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self, scope='format',
             input_data=self.node.input_data)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
+        _snap = dict(self.node.config)
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities',
             input_data=self.node.input_data)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _reset_layout(self):

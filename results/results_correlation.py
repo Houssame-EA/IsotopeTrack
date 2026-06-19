@@ -46,6 +46,8 @@ except Exception:
 class CorrelationSettingsDialog(QDialog):
     """Full settings dialog opened from the right-click → Configure… action."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
                  scope: str = "all", parent=None):
@@ -492,10 +494,18 @@ class CorrelationSettingsDialog(QDialog):
 
         layout.addStretch()
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
         self._apply_scope_visibility()
         self._on_mode_changed()
@@ -920,20 +930,32 @@ class CorrelationPlotDisplayDialog(QDialog):
 
     def _open_plot_format_settings(self):
         """Open scoped visual formatting controls and refresh on apply."""
+        _snap = dict(self.node.config)
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), scope="format", parent=self)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         """Open scoped quantity controls and refresh on apply."""
+        _snap = dict(self.node.config)
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), scope="quantities", parent=self)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _reset_layout(self):

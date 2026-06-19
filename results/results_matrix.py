@@ -146,6 +146,8 @@ def _matrix_stats(mat):
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class MatrixSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, parent=None, scope='all'):
         super().__init__(parent)
         if scope == 'format':
@@ -237,9 +239,18 @@ class MatrixSettingsDialog(QDialog):
             self._export_grp = ExportSettingsGroup(self._cfg)
             lay.addWidget(self._export_grp.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def collect(self):
         d = {
@@ -350,17 +361,29 @@ class CorrelationMatrixDisplayDialog(QDialog):
         download_matplotlib_figure(self.figure, self, "correlation_matrix")
 
     def _open_plot_format_settings(self):
+        _snap = dict(self.node.config)
         dlg = MatrixSettingsDialog(
             self.node.config, self.node.input_data, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
+        _snap = dict(self.node.config)
         dlg = MatrixSettingsDialog(
             self.node.config, self.node.input_data, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_settings(self):

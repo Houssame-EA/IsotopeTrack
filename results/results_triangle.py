@@ -343,6 +343,8 @@ def confidence_ellipse_params(data_x, data_y, n_std=2.0):
 class TernarySettingsDialog(QDialog):
     """Scoped settings dialog for triangle plot format and quantity configuration."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config, available_elements, is_multi, sample_names, parent=None, scope='all'):
         """
         Initialize the triangle settings dialog.
@@ -411,6 +413,11 @@ class TernarySettingsDialog(QDialog):
         self.color_particle_quantity_combo = None
         self.color_isotope_combo = None
         self.color_isotope_data_type_combo = None
+        # Hexbin color-encoding widgets (new two-mode system)
+        self.hexbin_color_mode_combo = None
+        self._hexbin_color_isotope_frame = None
+        self.hexbin_color_isotope_combo = None
+        self.hexbin_color_data_type_combo = None
         self._color_btns = {}
         self._mean_color_btns = {}
         self._name_edits = {}
@@ -488,16 +495,47 @@ class TernarySettingsDialog(QDialog):
             fl_pt.addRow("Plot Type:", self.plot_type)
             layout.addWidget(g_pt)
 
-            # ── Hexbin Color (shown only for Hexbin) ────────────────────────
-            self._hexbin_color_group = QGroupBox("Hexbin Color")
+            # ── Hexbin Color Encoding (shown only for Hexbin) ───────────────
+            self._hexbin_color_group = QGroupBox("Hexbin Color Encoding")
             hcfl = QFormLayout(self._hexbin_color_group)
-            self.color_elem = QComboBox()
-            self.color_elem.addItems(['(None — density)'] + self._elems)
-            ce = self._cfg.get('color_element', '')
-            if ce in self._elems:
-                self.color_elem.setCurrentText(ce)
-            hcfl.addRow("Color By Isotope:", self.color_elem)
+
+            self.hexbin_color_mode_combo = QComboBox()
+            self.hexbin_color_mode_combo.addItem(
+                "Density (particle events per bin)", "density")
+            self.hexbin_color_mode_combo.addItem(
+                "Isotope Measurement", "isotope_measurement")
+            _cur_hcm = self._cfg.get('hexbin_color_mode', 'density')
+            _hcmi = self.hexbin_color_mode_combo.findData(_cur_hcm)
+            self.hexbin_color_mode_combo.setCurrentIndex(max(0, _hcmi))
+            self.hexbin_color_mode_combo.currentIndexChanged.connect(
+                self._on_hexbin_color_mode_changed)
+            hcfl.addRow("Color Mode:", self.hexbin_color_mode_combo)
+
+            # Sub-frame: isotope measurement controls
+            self._hexbin_color_isotope_frame = QFrame()
+            hcisfl = QFormLayout(self._hexbin_color_isotope_frame)
+            hcisfl.setContentsMargins(0, 0, 0, 0)
+
+            self.hexbin_color_isotope_combo = QComboBox()
+            self.hexbin_color_isotope_combo.addItems(['(None)'] + self._elems)
+            _cur_hci = self._cfg.get('hexbin_color_isotope', '')
+            if _cur_hci in self._elems:
+                self.hexbin_color_isotope_combo.setCurrentText(_cur_hci)
+            hcisfl.addRow("Isotope:", self.hexbin_color_isotope_combo)
+
+            self.hexbin_color_data_type_combo = QComboBox()
+            for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
+                self.hexbin_color_data_type_combo.addItem(lbl, key)
+            _cur_hcdt = self._cfg.get('hexbin_color_data_type', 'counts')
+            _hcdti = self.hexbin_color_data_type_combo.findData(_cur_hcdt)
+            self.hexbin_color_data_type_combo.setCurrentIndex(max(0, _hcdti))
+            hcisfl.addRow("Data Type:", self.hexbin_color_data_type_combo)
+
+            hcfl.addRow(self._hexbin_color_isotope_frame)
             layout.addWidget(self._hexbin_color_group)
+
+            # Set initial isotope sub-frame visibility
+            self._on_hexbin_color_mode_changed()
 
             # ── Scatter Color Encoding (shown only for Scatter) ─────────────
             self._scatter_color_group = QGroupBox("Scatter Color Encoding")
@@ -549,6 +587,7 @@ class TernarySettingsDialog(QDialog):
             # Trigger visibility for both color groups and sub-frames
             self._on_plot_type_changed()
             self._on_color_mode_changed()
+            self._on_hexbin_color_mode_changed()
 
             g = QGroupBox("Composition Basis")
             fl = QFormLayout(g)
@@ -749,10 +788,18 @@ class TernarySettingsDialog(QDialog):
             self._export_grp = ExportSettingsGroup(self._cfg)
             layout.addWidget(self._export_grp.build())
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def _on_plot_type_changed(self):
         """Toggle scatter/hexbin sub-sections for both format controls and color encoding groups."""
@@ -783,6 +830,14 @@ class TernarySettingsDialog(QDialog):
             self._scatter_color_particle_frame.setVisible(is_particle_qty)
         if self._scatter_color_isotope_frame is not None:
             self._scatter_color_isotope_frame.setVisible(not is_particle_qty)
+
+    def _on_hexbin_color_mode_changed(self):
+        """Show/hide isotope sub-frame inside the hexbin color encoding group."""
+        if self.hexbin_color_mode_combo is None:
+            return
+        is_isotope = self.hexbin_color_mode_combo.currentData() == 'isotope_measurement'
+        if self._hexbin_color_isotope_frame is not None:
+            self._hexbin_color_isotope_frame.setVisible(is_isotope)
 
     def _pick_avg_color(self):
         """Pick average-point color used for plot formatting only."""
@@ -860,10 +915,7 @@ class TernarySettingsDialog(QDialog):
         if self.elem_c is not None:
             ec = self.elem_c.currentText()
             out['element_c'] = '' if ec.startswith('--') else ec
-        if self.color_elem is not None:
-            ce = self.color_elem.currentText()
-            out['color_element'] = '' if ce.startswith('(') else ce
-        # ── New scatter color encoding keys ─────────────────────────────────
+        # ── Scatter color encoding keys ──────────────────────────────────────
         if self.color_source_combo is not None:
             out['color_source'] = self.color_source_combo.currentData()
         if self.color_particle_quantity_combo is not None:
@@ -873,6 +925,14 @@ class TernarySettingsDialog(QDialog):
             out['color_isotope'] = '' if ci.startswith('(') else ci
         if self.color_isotope_data_type_combo is not None:
             out['color_isotope_data_type'] = self.color_isotope_data_type_combo.currentData()
+        # ── Hexbin color encoding keys ───────────────────────────────────────
+        if self.hexbin_color_mode_combo is not None:
+            out['hexbin_color_mode'] = self.hexbin_color_mode_combo.currentData()
+        if self.hexbin_color_isotope_combo is not None:
+            hci = self.hexbin_color_isotope_combo.currentText()
+            out['hexbin_color_isotope'] = '' if hci.startswith('(') else hci
+        if self.hexbin_color_data_type_combo is not None:
+            out['hexbin_color_data_type'] = self.hexbin_color_data_type_combo.currentData()
         if self.data_type is not None:
             out['data_type_display'] = self.data_type.currentText()
         if self.label_mode_combo is not None:
@@ -1856,11 +1916,17 @@ class TriangleDisplayDialog(QDialog):
 
         This exposes visual controls only and preserves scientific/data selection semantics.
         """
+        _snap = dict(self.node.config)
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
@@ -1869,11 +1935,17 @@ class TriangleDisplayDialog(QDialog):
 
         This exposes element/data/filter choices only and preserves format/export behavior.
         """
+        _snap = dict(self.node.config)
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _reset_layout(self):
@@ -2247,16 +2319,27 @@ class TriangleDisplayDialog(QDialog):
         Returns:
             str: Colorbar label suitable for ``apply_font_to_colorbar_standalone``.
         """
-        # ── Hexbin: legacy color-element system (unchanged) ─────────────────
+        # ── Hexbin: new two-mode system ──────────────────────────────────────
         if is_hexbin:
-            color_elem = cfg.get('color_element', '')
-            label_mode = cfg.get('label_mode', 'Symbol')
-            data_type = cfg.get('data_type_display', 'Counts (%)')
-            if color_elem:
-                elem_label = format_element_label(
-                    color_elem, label_mode, Renderer.MATHTEXT, cfg)
-                return f"Mean {elem_label}\n({data_type})"
-            return "Count per bin"
+            hexbin_color_mode = cfg.get('hexbin_color_mode', 'density')
+            if hexbin_color_mode == 'isotope_measurement':
+                hexbin_color_isotope = cfg.get('hexbin_color_isotope', '')
+                hexbin_color_dt = cfg.get('hexbin_color_data_type', 'counts')
+                dt_label_map = {
+                    'counts':              'Counts',
+                    'element_mass_fg':     'Mass (fg)',
+                    'element_moles_fmol': 'Moles (fmol)',
+                    'particle_mass_fg':   'Particle Mass (fg)',
+                    'particle_moles_fmol': 'Particle Moles (fmol)',
+                }
+                dt_label = dt_label_map.get(hexbin_color_dt, 'Counts')
+                if hexbin_color_isotope:
+                    label_mode = cfg.get('label_mode', 'Symbol')
+                    elem_label = format_element_label(
+                        hexbin_color_isotope, label_mode, Renderer.MATHTEXT, cfg)
+                    return f"{elem_label} · {dt_label} (mean per bin)"
+                # isotope_measurement selected but no isotope chosen — fall back
+            return "Bin density (in particles)"
 
         # ── Scatter: new two-mode color encoding system ──────────────────────
         color_source = cfg.get('color_source', 'particle_quantity')
@@ -2357,7 +2440,6 @@ class TriangleDisplayDialog(QDialog):
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
         show_cbar = cfg.get('show_colorbar', True) and not return_mappable
-        color_elem = cfg.get('color_element', '')
         _mappable = None
 
         if plot_type == 'Scatter Plot':
@@ -2385,15 +2467,17 @@ class TriangleDisplayDialog(QDialog):
         else:
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
-            if color_elem:
-                # Show mean of the selected data value per hexbin cell
+            hexbin_color_mode = cfg.get('hexbin_color_mode', 'density')
+            hexbin_color_isotope = cfg.get('hexbin_color_isotope', '')
+            if (hexbin_color_mode == 'isotope_measurement' and hexbin_color_isotope):
+                # Color bins by mean of the chosen isotopic quantity
                 color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
                 hexbin = ax.hexbin(
                     c_vals, a_vals, b_vals,
                     C=color_vals, reduce_C_function=np.mean,
                     gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
             else:
-                # No color element selected — show particle count density per cell
+                # Density mode (or isotope_measurement with no isotope chosen)
                 hexbin = ax.hexbin(
                     c_vals, a_vals, b_vals,
                     gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
@@ -2785,7 +2869,11 @@ class TrianglePlotNode(QObject):
         'element_a': '',
         'element_b': '',
         'element_c': '',
-        'color_element': '',          # hexbin: color-by-isotope (legacy system)
+        'color_element': '',          # hexbin: retained for backward compat only (not used)
+        # Hexbin color encoding (new two-mode system)
+        'hexbin_color_mode': 'density',        # 'density' | 'isotope_measurement'
+        'hexbin_color_isotope': '',            # isotope label for isotope_measurement mode
+        'hexbin_color_data_type': 'counts',   # data type key for isotope_measurement mode
         # Scatter color encoding (new two-mode system)
         'color_source': 'particle_quantity',   # 'particle_quantity' | 'isotope_measurement'
         'color_particle_quantity': 'total_counts',  # MODE A key
@@ -2944,8 +3032,11 @@ class TrianglePlotNode(QObject):
         color_isotope_dk = _COLOR_ISOTOPE_DK_MAP.get(
             self.config.get('color_isotope_data_type', 'counts'), 'elements')
 
-        # Hexbin color config (legacy: color by a fourth element in same data type)
-        hexbin_color_elem = self.config.get('color_element', '')
+        # Hexbin color config (new two-mode system)
+        hexbin_color_mode = self.config.get('hexbin_color_mode', 'density')
+        hexbin_color_isotope = self.config.get('hexbin_color_isotope', '')
+        hexbin_color_dk = _COLOR_ISOTOPE_DK_MAP.get(
+            self.config.get('hexbin_color_data_type', 'counts'), 'elements')
 
         result = []
 
@@ -3005,9 +3096,11 @@ class TrianglePlotNode(QObject):
                         cv = 0.0
                 point['color_val'] = cv
             else:
-                # Hexbin: legacy color-by-element (same data key as composition)
-                if hexbin_color_elem:
-                    point['color_val'] = float(d.get(hexbin_color_elem) or 0)
+                # Hexbin: new two-mode system
+                if (hexbin_color_mode == 'isotope_measurement'
+                        and hexbin_color_isotope):
+                    point['color_val'] = float(
+                        p.get(hexbin_color_dk, {}).get(hexbin_color_isotope) or 0)
 
             result.append(point)
 

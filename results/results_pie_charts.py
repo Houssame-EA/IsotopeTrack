@@ -642,6 +642,8 @@ class MplPieCanvas(QWidget):
 
 
 class PieChartSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
         Initialize pie-chart settings with optional scope-based control filtering.
@@ -822,9 +824,18 @@ class PieChartSettingsDialog(QDialog):
             self._font_grp = FontSettingsGroup(self._cfg)
             lay.addWidget(self._font_grp.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """
@@ -1025,22 +1036,34 @@ class PieChartDisplayDialog(QDialog):
         """
         Open pie-chart format settings containing visual and presentation controls.
         """
+        _snap = dict(self.node.config)
         elems = self._get_available_elements()
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         """
         Open pie-chart quantity settings containing chart/data/threshold controls.
         """
+        _snap = dict(self.node.config)
         elems = self._get_available_elements()
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _get_available_elements(self):
@@ -1330,6 +1353,8 @@ class PieChartPlotNode(QObject):
 
 
 class ElementCompositionSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_combos, parent=None, scope='all'):
         """
         Initialize Element Composition settings dialog with optional scope filtering.
@@ -1525,9 +1550,18 @@ class ElementCompositionSettingsDialog(QDialog):
             self._font_grp = FontSettingsGroup(self._cfg)
             lay.addWidget(self._font_grp.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """
@@ -1754,11 +1788,17 @@ class ElementCompositionDisplayDialog(QDialog):
 
         This route handles visual/formatting controls only.
         """
+        _snap = dict(self.node.config)
         combos = self._get_actual_combos()
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
@@ -1767,11 +1807,17 @@ class ElementCompositionDisplayDialog(QDialog):
 
         This route handles scientific quantity/configuration controls only.
         """
+        _snap = dict(self.node.config)
         combos = self._get_actual_combos()
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _refresh(self):

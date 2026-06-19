@@ -137,6 +137,8 @@ def _fmt_val(v):
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class ConcentrationSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, parent=None, scope='all'):
         super().__init__(parent)
         if scope == 'format':
@@ -316,9 +318,18 @@ class ConcentrationSettingsDialog(QDialog):
             self._sample_colors = {}
             self._mean_marker_colors = {}
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def _pick_point_color(self, sn, btn):
         """Pick one per-sample individual-point color and refresh its preview."""
@@ -479,17 +490,29 @@ class ConcentrationDisplayDialog(QDialog):
         download_matplotlib_figure(self.figure, self, "concentration_comparison")
 
     def _open_plot_format_settings(self):
+        _snap = dict(self.node.config)
         dlg = ConcentrationSettingsDialog(
             self.node.config, self.node.input_data, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
+        _snap = dict(self.node.config)
         dlg = ConcentrationSettingsDialog(
             self.node.config, self.node.input_data, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_settings(self):

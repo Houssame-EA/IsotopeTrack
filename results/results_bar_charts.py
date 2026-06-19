@@ -1054,6 +1054,8 @@ class ElementGroupEditor(QGroupBox):
 class HistogramSettingsDialog(QDialog):
     """Full settings dialog for histogram node."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None, lock_data_type=False,
                  data_type_lock_message="", te_available=False):
@@ -1361,10 +1363,18 @@ class HistogramSettingsDialog(QDialog):
                 vl.addWidget(w3)
             layout.addWidget(g)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def _pick_curve_color(self):
         from PySide6.QtWidgets import QColorDialog
@@ -1444,6 +1454,8 @@ class HistogramFormatSettingsDialog(QDialog):
     colors) and relies on Histogram redraw to apply those settings uniformly
     across all subplot PlotItems.
     """
+
+    preview_requested = Signal(dict)
 
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None):
@@ -1623,10 +1635,18 @@ class HistogramFormatSettingsDialog(QDialog):
         else:
             self._name_edits = None
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def _refresh_font_color_btn(self):
         """Refresh the font-color swatch preview."""
@@ -2231,6 +2251,7 @@ class HistogramDisplayDialog(QDialog):
             Reuses the existing combined Histogram settings schema for this
             migration pass, keeping scientific quantity semantics unchanged.
         """
+        _snap = dict(self.node.config)
         dlg = HistogramSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
@@ -2238,8 +2259,13 @@ class HistogramDisplayDialog(QDialog):
             te_available=_meta_te_available(self.node.input_data))
         if title_override:
             dlg.setWindowTitle(title_override)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_plot_format_settings(self):
@@ -2251,6 +2277,7 @@ class HistogramDisplayDialog(QDialog):
             in canonical config and then redrawn consistently across all
             histogram subplots and legends.
         """
+        _snap = dict(self.node.config)
         dlg = HistogramFormatSettingsDialog(
             self.node.config,
             _is_multi(self.node.input_data),
@@ -2258,8 +2285,13 @@ class HistogramDisplayDialog(QDialog):
             self,
             available_elements=self._get_available_elements(),
         )
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
@@ -3339,6 +3371,8 @@ class HistogramPlotNode(QObject):
 class BarChartSettingsDialog(QDialog):
     """Scope-aware settings dialog for the element bar chart."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config, is_multi, sample_names, parent=None, scope='all',
                  te_available=False, available_elements=None):
         """
@@ -3519,10 +3553,18 @@ class BarChartSettingsDialog(QDialog):
             vl2.addLayout(btn_row)
             layout.addWidget(g2)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def _build_format_groups(self, layout):
         """Build the flat Element Bar Chart format controls.
@@ -4591,24 +4633,36 @@ class ElementBarChartDisplayDialog(QDialog):
             canonical Element Bar Chart appearance config and redraws the full
             chart so bars, legends, labels, and titles stay synchronized.
         """
+        _snap = dict(self.node.config)
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self, scope='format',
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements())
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         """Open quantities-scoped bar chart settings dialog."""
+        _snap = dict(self.node.config)
         dlg = BarChartSettingsDialog(
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self, scope='quantities',
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements())
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _get_available_bar_elements(self):
