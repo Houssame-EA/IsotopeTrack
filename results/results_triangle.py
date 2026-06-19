@@ -2442,6 +2442,21 @@ class TriangleDisplayDialog(QDialog):
         show_cbar = cfg.get('show_colorbar', True) and not return_mappable
         _mappable = None
 
+        _ZERO_THRESH = 1e-12  # values below this are treated as scientifically zero
+
+        def _warn_zero_color(ax_):
+            """Overlay a note when the active color quantity is zero for all plotted points."""
+            ax_.text(
+                0.5, 0.04,
+                "Given the chosen configuration, all plotted particles\n"
+                "have a value of 0 in the color scale quantity.",
+                transform=ax_.transAxes,
+                ha='center', va='bottom',
+                color='#6B7280', fontsize=9, style='italic',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75,
+                          edgecolor='#D1D5DB'),
+            )
+
         if plot_type == 'Scatter Plot':
             size = cfg.get('marker_size', 20)
             alpha = cfg.get('marker_alpha', 0.7)
@@ -2459,11 +2474,17 @@ class TriangleDisplayDialog(QDialog):
                     c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, c=color_vals, cmap=cmap,
                     edgecolors='white', linewidth=0.5)
+                # Force non-negative colorbar: set_clim after mpltern sets its own range
+                # Use 1.0 as clean fallback when all values are zero (avoids 1e-12 on axis)
+                _cv_max = float(np.max(color_vals)) if color_vals.size else 0.0
+                scatter.set_clim(vmin=0, vmax=_cv_max if _cv_max >= _ZERO_THRESH else 1.0)
                 _mappable = scatter
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
                         cbar, cfg, self._auto_colorbar_label(cfg, is_hexbin=False))
+                if np.all(np.abs(color_vals) < _ZERO_THRESH):
+                    _warn_zero_color(ax)
         else:
             gridsize = cfg.get('hexbin_gridsize', 30)
             alpha = cfg.get('hexbin_alpha', 0.8)
@@ -2476,11 +2497,23 @@ class TriangleDisplayDialog(QDialog):
                     c_vals, a_vals, b_vals,
                     C=color_vals, reduce_C_function=np.mean,
                     gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+                # Force non-negative colorbar; clean fallback avoids 1e-12 on axis
+                _cv_max = float(np.max(color_vals)) if color_vals.size else 0.0
+                hexbin.set_clim(vmin=0, vmax=_cv_max if _cv_max >= _ZERO_THRESH else 1.0)
+                if np.all(np.abs(color_vals) < _ZERO_THRESH):
+                    _warn_zero_color(ax)
             else:
                 # Density mode (or isotope_measurement with no isotope chosen)
                 hexbin = ax.hexbin(
                     c_vals, a_vals, b_vals,
                     gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
+                # Force non-negative colorbar for density too
+                _hb_vals = hexbin.get_array()
+                _valid = _hb_vals[np.isfinite(_hb_vals) & (_hb_vals > 0)]
+                if _valid.size > 0:
+                    hexbin.set_clim(vmin=0, vmax=float(_valid.max()))
+                else:
+                    _warn_zero_color(ax)
             _mappable = hexbin
             if show_cbar:
                 cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
