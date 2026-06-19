@@ -413,6 +413,7 @@ class TernarySettingsDialog(QDialog):
         self.color_particle_quantity_combo = None
         self.color_isotope_combo = None
         self.color_isotope_data_type_combo = None
+        self.color_log_scale_cb = None
         # Hexbin color-encoding widgets (new two-mode system)
         self.hexbin_color_mode_combo = None
         self._hexbin_color_isotope_frame = None
@@ -489,7 +490,11 @@ class TernarySettingsDialog(QDialog):
             g_pt = QGroupBox("Plot Type")
             fl_pt = QFormLayout(g_pt)
             self.plot_type = QComboBox()
-            self.plot_type.addItems(PLOT_TYPES)
+            if self._cfg.get('display_mode', '') == 'Overlaid Samples':
+                # Hexbin is not meaningful in overlaid mode — scatter only
+                self.plot_type.addItems(['Scatter Plot'])
+            else:
+                self.plot_type.addItems(PLOT_TYPES)
             self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
             self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
             fl_pt.addRow("Plot Type:", self.plot_type)
@@ -581,6 +586,10 @@ class TernarySettingsDialog(QDialog):
             self.color_isotope_data_type_combo.setCurrentIndex(max(0, _idti))
             isfl.addRow("Data Type:", self.color_isotope_data_type_combo)
             scfl.addRow(self._scatter_color_isotope_frame)
+
+            self.color_log_scale_cb = QCheckBox("Log₁₀ color scale")
+            self.color_log_scale_cb.setChecked(self._cfg.get('color_log_scale', False))
+            scfl.addRow("Color Scale:", self.color_log_scale_cb)
 
             layout.addWidget(self._scatter_color_group)
 
@@ -925,6 +934,8 @@ class TernarySettingsDialog(QDialog):
             out['color_isotope'] = '' if ci.startswith('(') else ci
         if self.color_isotope_data_type_combo is not None:
             out['color_isotope_data_type'] = self.color_isotope_data_type_combo.currentData()
+        if self.color_log_scale_cb is not None:
+            out['color_log_scale'] = self.color_log_scale_cb.isChecked()
         # ── Hexbin color encoding keys ───────────────────────────────────────
         if self.hexbin_color_mode_combo is not None:
             out['hexbin_color_mode'] = self.hexbin_color_mode_combo.currentData()
@@ -2470,14 +2481,31 @@ class TriangleDisplayDialog(QDialog):
             else:
                 # New two-mode color encoding: color_val always populated by _extract_particles
                 color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
-                scatter = ax.scatter(
-                    c_vals, a_vals, b_vals,
-                    s=size, alpha=alpha, c=color_vals, cmap=cmap,
-                    edgecolors='white', linewidth=0.5)
-                # Force non-negative colorbar: set_clim after mpltern sets its own range
-                # Use 1.0 as clean fallback when all values are zero (avoids 1e-12 on axis)
                 _cv_max = float(np.max(color_vals)) if color_vals.size else 0.0
-                scatter.set_clim(vmin=0, vmax=_cv_max if _cv_max >= _ZERO_THRESH else 1.0)
+                _use_log = (cfg.get('color_log_scale', False)
+                            and _cv_max >= _ZERO_THRESH
+                            and np.any(color_vals > 0))
+                if _use_log:
+                    _pos = color_vals[color_vals > 0]
+                    _log_vmin = float(_pos.min())
+                    _log_vmax = float(_cv_max)
+                    scatter = ax.scatter(
+                        c_vals, a_vals, b_vals,
+                        s=size, alpha=alpha, c=color_vals, cmap=cmap,
+                        norm=mcolors.LogNorm(
+                            vmin=_log_vmin,
+                            vmax=max(_log_vmax, _log_vmin)),
+                        edgecolors='white', linewidth=0.5)
+                else:
+                    # Linear: force non-negative colorbar
+                    scatter = ax.scatter(
+                        c_vals, a_vals, b_vals,
+                        s=size, alpha=alpha, c=color_vals, cmap=cmap,
+                        edgecolors='white', linewidth=0.5)
+                    # Clean fallback avoids 1e-12 on axis when all-zero
+                    scatter.set_clim(
+                        vmin=0,
+                        vmax=_cv_max if _cv_max >= _ZERO_THRESH else 1.0)
                 _mappable = scatter
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
@@ -2766,6 +2794,12 @@ class TriangleDisplayDialog(QDialog):
             apply_font_to_ternary(ax, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
+        """Render all samples on a single ternary axes.
+
+        Each sample keeps its unique solid colour; alpha (darkness) encodes
+        the chosen colour-scale quantity (same config as single-sample scatter)
+        normalised globally across all samples so the greyscale bar is shared.
+        """
         ax = self.figure.add_subplot(111, projection='ternary')
 
         ea = cfg.get('element_a', 'A')
@@ -2773,31 +2807,24 @@ class TriangleDisplayDialog(QDialog):
         ec = cfg.get('element_c', 'C')
         setup_ternary_axes(ax, [ea, eb, ec], cfg)
 
-        alpha_base = cfg.get('marker_alpha', 0.7)
         size = cfg.get('marker_size', 20)
+        alpha_base = cfg.get('marker_alpha', 0.7)
         sample_mean_colors = cfg.get('sample_mean_colors', {})
+        legend_handles = []
+        self._overlaid_stats_data = []
+        _ZERO_THRESH = 1e-12
 
-        # Global density histogram over all samples in (b, c) space
-        all_b, all_c = [], []
+        # ── Pass 1: gather all color_vals to find global range ───────────────
+        all_cv = []
         for sd in plot_data.values():
             if sd:
                 for p in sd:
-                    all_b.append(p['b'])
-                    all_c.append(p['c'])
+                    all_cv.append(p.get('color_val', 0.0))
 
-        H = None
-        b_edges = c_edges = None
-        density_max = 1.0
-        show_density = cfg.get('show_colorbar', True) and len(all_b) >= 10
-        if show_density:
-            n_bins = 40
-            H, b_edges, c_edges = np.histogram2d(
-                all_b, all_c, bins=n_bins, range=[[0.0, 1.0], [0.0, 1.0]])
-            density_max = float(H.max()) if H.max() > 0 else 1.0
+        global_max = float(max(all_cv)) if all_cv else 0.0
+        all_zero = global_max < _ZERO_THRESH
 
-        legend_handles = []
-        self._overlaid_stats_data = []
-
+        # ── Pass 2: draw each sample ─────────────────────────────────────────
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
                 continue
@@ -2808,40 +2835,34 @@ class TriangleDisplayDialog(QDialog):
             a_vals = np.array([p['a'] for p in sd])
             b_vals = np.array([p['b'] for p in sd])
             c_vals = np.array([p['c'] for p in sd])
+            color_vals = np.array([p.get('color_val', 0.0) for p in sd])
 
-            if H is not None and density_max > 0:
-                # Per-point alpha encodes local density; hue stays sample-specific
-                b_idx = np.clip(
-                    np.searchsorted(b_edges[1:], b_vals), 0, H.shape[0] - 1)
-                c_idx = np.clip(
-                    np.searchsorted(c_edges[1:], c_vals), 0, H.shape[1] - 1)
-                densities = H[b_idx, c_idx]
-                d_norm = np.clip(densities / density_max, 0.0, 1.0)
-                alphas = 0.15 + 0.80 * d_norm
-                rgb = mcolors.to_rgb(sample_color)
-                rgba = np.zeros((len(a_vals), 4))
-                rgba[:, 0] = rgb[0]
-                rgba[:, 1] = rgb[1]
-                rgba[:, 2] = rgb[2]
-                rgba[:, 3] = alphas
-                ax.scatter(c_vals, a_vals, b_vals, s=size, c=rgba,
-                           edgecolors='none', linewidth=0.0)
+            if all_zero:
+                # Flat mid-alpha when every point is zero
+                alphas = np.full(len(a_vals), 0.45)
             else:
-                ax.scatter(c_vals, a_vals, b_vals, s=size, alpha=alpha_base,
-                           color=sample_color, edgecolors='white', linewidth=0.5)
+                norm_vals = np.clip(color_vals / global_max, 0.0, 1.0)
+                # [0.10, 0.90]: faintest points still visible, darkest fully opaque
+                alphas = 0.10 + 0.80 * norm_vals
 
-            # Legend handle: line (scatter color) + star (mean color) in one entry
+            rgb = mcolors.to_rgb(sample_color)
+            rgba = np.zeros((len(a_vals), 4))
+            rgba[:, :3] = rgb
+            rgba[:, 3] = alphas
+            ax.scatter(c_vals, a_vals, b_vals, s=size, c=rgba,
+                       edgecolors='none', linewidth=0.0)
+
+            # Legend handle
             if cfg.get('show_average_point', True):
                 legend_handles.append(
                     Line2D([0], [0], marker='*', color=sample_color,
                            markerfacecolor=mean_color, markeredgecolor='black',
                            markersize=11, linewidth=3, label=dname))
             else:
-                legend_handles.append(
-                    Patch(facecolor=sample_color, label=dname))
+                legend_handles.append(Patch(facecolor=sample_color, label=dname))
 
+            # Average marker (element-filter-aware)
             avg_mask = self._element_filter_mask(a_vals, b_vals, c_vals, cfg)
-
             if avg_mask.any():
                 a_avg = a_vals[avg_mask]
                 b_avg = b_vals[avg_mask]
@@ -2853,7 +2874,6 @@ class TriangleDisplayDialog(QDialog):
                     'mb': float(b_avg.mean()), 'sb': float(b_avg.std()),
                     'mc': float(c_avg.mean()), 'sc': float(c_avg.std()),
                 })
-                # Draw mean marker only — stats text goes to the popup table
                 cfg_marker_only = dict(cfg, show_average_text=False)
                 self._draw_average_arrays(
                     ax, a_avg, b_avg, c_avg, a_avg, b_avg, c_avg,
@@ -2862,21 +2882,33 @@ class TriangleDisplayDialog(QDialog):
                     stats_box_idx=0,
                 )
 
-        # Greyscale density colorbar (lighter = sparse, darker = dense)
-        density_cbar_shown = False
-        if H is not None and density_max > 1:
-            norm = mcolors.Normalize(vmin=0, vmax=density_max)
+        # ── Shared greyscale colorbar ─────────────────────────────────────────
+        if cfg.get('show_colorbar', True):
+            _vmax = global_max if not all_zero else 1.0
+            norm = mcolors.Normalize(vmin=0, vmax=_vmax)
             sm = cm.ScalarMappable(cmap='Greys', norm=norm)
             sm.set_array([])
-            cbar = self.figure.colorbar(
-                sm, ax=ax, shrink=0.65, aspect=22, pad=0.10)
+            cbar = self.figure.colorbar(sm, ax=ax, shrink=0.65, aspect=22, pad=0.10)
+            # Label: auto-generated quantity name + overlaid note
+            qty_label = self._auto_colorbar_label(cfg, is_hexbin=False)
             apply_font_to_colorbar_standalone(
-                cbar, cfg, 'Particle density\n(count per cell)')
-            density_cbar_shown = True
+                cbar, cfg, qty_label + '\n(alpha ~ value, all samples)')
+
+        # ── All-zero warning ──────────────────────────────────────────────────
+        if all_zero:
+            ax.text(
+                0.5, 0.04,
+                'Given the chosen configuration, all plotted particles\n'
+                'have a value of 0 in the color scale quantity.',
+                transform=ax.transAxes,
+                ha='center', va='bottom',
+                color='#6B7280', fontsize=9, style='italic',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          alpha=0.75, edgecolor='#D1D5DB'),
+            )
 
         fp = make_font_properties(cfg)
         if legend_handles:
-            # Left-side vertical legend; tight_layout rect reserves left margin.
             ax.legend(
                 handles=legend_handles,
                 loc='upper right',
@@ -2887,7 +2919,6 @@ class TriangleDisplayDialog(QDialog):
             )
 
         apply_font_to_ternary(ax, cfg)
-
 
 class TrianglePlotNode(QObject):
     """
@@ -2912,6 +2943,7 @@ class TrianglePlotNode(QObject):
         'color_particle_quantity': 'total_counts',  # MODE A key
         'color_isotope': '',                   # MODE B: isotope label
         'color_isotope_data_type': 'counts',   # MODE B: data type key
+        'color_log_scale': False,              # scatter: log₁₀ colorbar
         'data_type_display': 'Counts (%)',
         'plot_type': 'Scatter Plot',
         'marker_size': 20,

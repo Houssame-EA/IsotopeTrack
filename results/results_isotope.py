@@ -1698,7 +1698,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         pg.setConfigOption('foreground', 'k')
 
         self._setup_ui()
-        self._cached_elements = []       
+        self._cached_elements = []
+        self._mouse_mode = "Cursor"
         self._auto_calc_natural()
         self._auto_calc_standard()
         self._refresh()
@@ -1875,6 +1876,12 @@ class IsotopicRatioDisplayDialog(QDialog):
             a = lm_menu.addAction(mode); a.setCheckable(True)
             a.setChecked(mode == cur_lm)
             a.triggered.connect(lambda _, m=mode: self._set_cfg('label_mode', m))
+
+        mm = menu.addMenu("Mouse mode")
+        for mode in ("Cursor", "Zoom"):
+            a = mm.addAction(mode); a.setCheckable(True)
+            a.setChecked(self._mouse_mode == mode)
+            a.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
 
         menu.addSeparator()
         menu.addAction("Isotope correction...").triggered.connect(
@@ -2302,18 +2309,37 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         self._suppress_native_pg_context_menu()
 
-    def _suppress_native_pg_context_menu(self):
-        """Disable native PyQtGraph menus on all current plot items.
+    def _set_mouse_mode(self, mode: str):
+        """Switch all ViewBoxes between Pan and Zoom (rect) mode.
 
-        The dialog uses a custom context menu contract. This prevents a stacked
-        native menu from appearing underneath it.
+        Zoom uses pg.ViewBox.RectMode (left-drag draws a zoom rectangle).
+        This works reliably on dense scatter plots because ScatterPlotItem
+        does not capture left-drag events, unlike right-drag which it can
+        intercept when particles are densely packed.
         """
+        self._mouse_mode = mode
+        self._apply_mouse_mode()
+
+    def _apply_mouse_mode(self):
+        pg_mode = (pg.ViewBox.RectMode if self._mouse_mode == "Zoom"
+                   else pg.ViewBox.PanMode)  # "Cursor" → PanMode
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.ViewBox):
+                try:
+                    item.setMouseMode(pg_mode)
+                except Exception:
+                    pass
+
+    def _suppress_native_pg_context_menu(self):
+        """Disable native PyQtGraph menus on all current plot items and
+        restore the active mouse mode after every redraw."""
         for item in self.plot_widget.scene().items():
             if isinstance(item, pg.PlotItem) and hasattr(item, "vb"):
                 try:
                     item.vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _suppress_native_pg_context_menu")
+        self._apply_mouse_mode()
 
     def _iter_samples_in_display_order(self, plot_data, cfg):
         """Yield sample items in configured display order when provided.

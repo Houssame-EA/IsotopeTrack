@@ -76,6 +76,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._mouse_mode = "Cursor"
         self._zoom_ax = None
         self._zoom_start_data = None
+        self._zoom_last_data = None
         self._zoom_rect = None
         self._zoom_background = None
         self._view_limits_enabled = False
@@ -262,15 +263,30 @@ class MplDraggableCanvas(_FigureCanvasBase):
             self._zoom_background = None
 
     def _zoom_motion(self, event):
-        """Update the active rectangle zoom overlay while dragging."""
+        """Update the active rectangle zoom overlay while dragging.
+
+        When the mouse drifts outside the starting axes (common with dense
+        plots or tight subplot spacing), matplotlib sets event.xdata=None.
+        In that case we convert the raw pixel position to data coordinates
+        and clamp to the axes limits so the rect keeps updating rather than
+        freezing at the last valid position.
+        """
         if self._zoom_ax is None or self._zoom_rect is None:
             return
-        if event.inaxes is not self._zoom_ax:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
+        if event.xdata is not None and event.ydata is not None and event.inaxes is self._zoom_ax:
+            x1, y1 = event.xdata, event.ydata
+        else:
+            try:
+                inv = self._zoom_ax.transData.inverted()
+                x1, y1 = inv.transform((event.x, event.y))
+                xlim = self._zoom_ax.get_xlim()
+                ylim = self._zoom_ax.get_ylim()
+                x1 = max(min(xlim), min(x1, max(xlim)))
+                y1 = max(min(ylim), min(y1, max(ylim)))
+            except Exception:
+                return
+        self._zoom_last_data = (x1, y1)
         x0, y0 = self._zoom_start_data
-        x1, y1 = event.xdata, event.ydata
         self._zoom_rect.set_x(min(x0, x1))
         self._zoom_rect.set_y(min(y0, y1))
         self._zoom_rect.set_width(abs(x1 - x0))
@@ -286,18 +302,26 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self.draw_idle()
 
     def _zoom_release(self, event):
-        """Apply or cancel a rectangle zoom selection on mouse release."""
+        """Apply or cancel a rectangle zoom selection on mouse release.
+
+        If the mouse is released outside the starting axes (e.g. the user
+        drifted into subplot padding), fall back to the last valid data
+        position recorded during motion instead of cancelling the zoom.
+        """
         if self._zoom_ax is None or self._zoom_start_data is None:
             return
         if event.button != 1:
             self._clear_zoom_state()
             return
-        if event.inaxes is not self._zoom_ax or event.xdata is None or event.ydata is None:
+        if event.xdata is not None and event.ydata is not None and event.inaxes is self._zoom_ax:
+            x1, y1 = event.xdata, event.ydata
+        elif self._zoom_last_data is not None:
+            x1, y1 = self._zoom_last_data
+        else:
             self._clear_zoom_state()
             return
 
         x0, y0 = self._zoom_start_data
-        x1, y1 = event.xdata, event.ydata
         cur_xlim = self._zoom_ax.get_xlim()
         cur_ylim = self._zoom_ax.get_ylim()
         x_span = abs(cur_xlim[1] - cur_xlim[0])
@@ -337,6 +361,7 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._zoom_rect = None
         self._zoom_ax = None
         self._zoom_start_data = None
+        self._zoom_last_data = None
         self._zoom_background = None
         if draw:
             self.draw_idle()
