@@ -186,10 +186,13 @@ class HomePanel(QWidget):
     def _open_recent(self, item):
         path = item.data(Qt.UserRole)
         if path and callable(self._on_open_project):
+            self._recent_list.setEnabled(False)
             try:
                 self._on_open_project(path)
             except Exception:
                 _itk_log.exception("Open recent failed")
+            finally:
+                self._recent_list.setEnabled(True)
 
     # -- styling ---------------------------------------------------------------
 

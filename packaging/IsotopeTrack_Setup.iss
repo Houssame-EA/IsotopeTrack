@@ -4,7 +4,7 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 
 #define AppName        "IsotopeTrack"
-#define AppVersion     "1.10.3"
+#define AppVersion     "1.10.4"
 #define AppPublisher   "IsotopeTrack"
 #define AppExeName     "IsotopeTrack.exe"
 #define SourceDir      "..\dist\IsotopeTrack"
@@ -52,6 +52,9 @@ UninstallDisplayName={#AppName} {#AppVersion}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
+; Refresh Explorer's icon/association cache after registering .itproj
+ChangesAssociations=yes
+
 ; ── Languages ─────────────────────────────────────────────────────────────────
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -78,3 +81,11 @@ Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait
 [Registry]
 Root: HKLM; Subkey: "Software\{#AppPublisher}\{#AppName}"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\{#AppPublisher}\{#AppName}"; ValueType: string; ValueName: "Version";     ValueData: "{#AppVersion}"
+
+; File association: .itproj project files open in IsotopeTrack on double-click.
+; The "%1" passes the clicked file path to the exe, which the app's CLI loads
+; as the project file. Keys are removed on uninstall.
+Root: HKLM; Subkey: "Software\Classes\.itproj"; ValueType: string; ValueName: ""; ValueData: "IsotopeTrack.Project"; Flags: uninsdeletevalue
+Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project"; ValueType: string; ValueName: ""; ValueData: "IsotopeTrack Project"; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""

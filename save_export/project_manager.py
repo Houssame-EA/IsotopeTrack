@@ -61,7 +61,7 @@ class ProjectManager:
             main_window (object): Reference to the MainWindow instance
         """
         self.main_window = main_window
-        self.project_version = '1.10.3'
+        self.project_version = '1.10.4'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -211,7 +211,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.10.3
+Version=1.10.4
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -229,34 +229,45 @@ Terminal=false
             _itk_log.error(f"Linux icon setting error: {str(e)}")
             return False
     
-    def save_project(self, on_complete=None, blocking=False):
+    def save_project(self, on_complete=None, blocking=False, save_as=False):
         """
         Save the current project state to a compressed file.
 
         Interactive saves run on a background thread so the UI stays responsive;
         the quit-before-close path passes blocking=True for a synchronous result.
 
+        "Save" (``save_as=False``) writes silently to the project's current file
+        when one exists, and only opens a file dialog for a project that has
+        never been saved. "Save As" (``save_as=True``) always opens the dialog so
+        the user can write a fresh copy under a new name.
+
         Args:
             on_complete (callable | None): Called with a single bool (success)
                 when the save finishes.
             blocking (bool): When True, save synchronously and return the result.
+            save_as (bool): When True, always prompt for a new filename.
 
         Returns:
             bool | None: The success flag when blocking; None when threaded.
         """
-        filepath, _ = QFileDialog.getSaveFileName(
-            self.main_window,
-            "Save Project",
-            "",
-            "IsotopeTrack Project (*.itproj)"
-        )
-        if not filepath:
-            if on_complete:
-                on_complete(False)
-            return False if blocking else None
+        current = getattr(self.main_window, '_project_filepath', None)
+        if save_as or not current:
+            filepath, _ = QFileDialog.getSaveFileName(
+                self.main_window,
+                "Save Project As" if save_as else "Save Project",
+                current or "",
+                "IsotopeTrack Project (*.itproj)"
+            )
+            if not filepath:
+                if on_complete:
+                    on_complete(False)
+                return False if blocking else None
 
-        if not filepath.endswith('.itproj'):
-            filepath += '.itproj'
+            if not filepath.endswith('.itproj'):
+                filepath += '.itproj'
+        else:
+            # Silent save over the already-open project file.
+            filepath = current
 
         self.main_window.save_current_parameters()
         self.main_window.progress_bar.setVisible(True)
@@ -578,7 +589,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.10.3',
+            'application_version': '1.10.4',
         }
     
     def _restore_project_data(self, project_data):
