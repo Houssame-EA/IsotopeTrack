@@ -6,8 +6,11 @@ All notable changes to IsotopeTrack are documented here.
 
 ## v1.10.4 — 2026-06-22
 
-Add shortcuts and project saving features
 
+- major upgrades to ternary (colors, less confusion, replace hexbin)
+- small bug fixes here and there (other results types)
+- added the Apply/done feature (great)
+- added customizable autosave, cause that makes app lag
 - Enable opening projects via double-click.
 - Implement auto-save for minor changes; restrict large data saves.
 - Add standard "Save" and "Save As" functionality.
