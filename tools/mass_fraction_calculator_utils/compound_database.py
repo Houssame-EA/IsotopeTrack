@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from tools.mass_fraction_calculator_utils.formula_utils import reduce_counts, parse_formula_to_counts, \
-    signature_from_counts, canonicalize_preserve_user_order
+    signature_from_counts, canonicalize_preserve_user_order, signature_from_formula
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class CSVCompoundDatabase:
         ])
 
         filenames = [
-            'materials_trimmed.csv.gz',
+            'materials_trimmedv2.csv.gz',  # TODO: change from v2 to v1
         ]
         for base in base_dirs:
             for fname in filenames:
@@ -69,6 +69,8 @@ class CSVCompoundDatabase:
             csv_path = Path(csv_path)
             logger.info("Loading CSV from %s", csv_path)
             self.data = pd.read_csv(csv_path)
+            if self.data is None:
+                return False
             logger.info("CSV loaded with %d rows", len(self.data))
 
             self.formula_to_data.clear()
@@ -76,11 +78,14 @@ class CSVCompoundDatabase:
             self.signature_to_formula.clear()
             self.signature_to_data.clear()
 
-            for col in ('formula', 'density', 'material_id', 'mp_url', 'space_group'):
+            for col in ('formula', 'density', 'material_id', 'space_group'):
                 if col not in self.data.columns:
                     self.data[col] = ''
 
             processed = 0
+
+            if "mp_url" not in self.data.columns:
+                self.data["mp_url"] = self.data.material_id.apply(self._mp_url_from_material_id)
 
             for row in self.data.itertuples(index=False):
                 try:
@@ -97,8 +102,7 @@ class CSVCompoundDatabase:
 
                     url_raw = getattr(row, 'mp_url', '')
                     mp_url = str(url_raw).strip() if pd.notna(url_raw) else ''
-                    if not mp_url and material_id:
-                        mp_url = f"https://materialsproject.org/materials/{material_id}"
+                    mp_url = mp_url if mp_url else self._mp_url_from_material_id(material_id)
 
                     sg_raw = getattr(row, 'space_group', '')
                     space_group = str(sg_raw) if pd.notna(sg_raw) else ''
@@ -132,6 +136,12 @@ class CSVCompoundDatabase:
                     logger.debug("Skipping row during CSV indexing", exc_info=True)
                     continue
 
+            if "signature" not in self.data.columns:
+                self.data["signature"] = self.data.formula.apply(signature_from_formula)
+
+            if "display_text" not in self.data.columns:
+                self.data["display_text"] = self.data.apply(self._get_display_text_from_row, axis=1)
+
             self.is_loaded = True
             logger.info(
                 "Database loaded: %d rows processed, %d canonical compounds indexed",
@@ -142,6 +152,26 @@ class CSVCompoundDatabase:
         except Exception:
             logger.exception("Error loading CSV")
             return False
+
+    @staticmethod
+    def _mp_url_from_material_id(material_id: str) -> str:
+        """Creates a url from the `material_id`"""
+        if material_id:
+            return f"https://materialsproject.org/materials/{material_id}"
+        else:
+            return ""
+
+    @staticmethod
+    def _get_display_text_from_row(val):
+        parts = [canonicalize_preserve_user_order(val.formula)]
+        if val.space_group:
+            parts.append(f"[{val.space_group}]")
+        if val.density > 0.0:
+            parts.append(f"({val.density:.3f} g/cm³)")
+        if val.material_id:
+            parts.append(f"- {val.material_id}")
+
+        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # Lookup helpers
