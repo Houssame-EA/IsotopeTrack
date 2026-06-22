@@ -349,10 +349,6 @@ class MainWindow(QMainWindow):
         except Exception:
             self.toasts = None
             _itk_log.exception("Could not initialize toast manager")
-
-        # Home panel: shown in the plot area only while no data is loaded, so
-        # it never covers an actual plot. Surfaces recent saved projects and
-        # any recoverable crashed session so the user can resume quickly.
         try:
             from tools.home_panel import HomePanel
             self._home_panel = HomePanel(
@@ -7194,7 +7190,7 @@ class MainWindow(QMainWindow):
         Returns:
             bool: True if load was successful
         """
-        self.user_action_logger.log_menu_action('File', 'Load Project')
+        #self.user_action_logger.log_menu_action('File', 'Load Project')
         result = self.project_manager.load_project(filepath=filepath)
 
         self.user_action_logger.log_file_operation(

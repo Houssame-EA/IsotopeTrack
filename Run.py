@@ -62,7 +62,7 @@ class IsotopeTrackApplication(QApplication):
             target.activateWindow()
         except Exception:
             _itk_log.exception("Could not open project file %s", path)
-        return True  # handled (don't requeue a file that errored)
+        return True  
 
     def flush_pending_opens(self):
         """Load any open requests that arrived before a window existed."""
