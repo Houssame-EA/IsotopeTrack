@@ -601,6 +601,8 @@ class SampleCorrectionDialog(QDialog):
 
 
 class IsotopeSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, config: dict, available_elements: list,
                  all_isotope_labels: list,
                  is_multi: bool, sample_names: list,
@@ -1100,10 +1102,18 @@ class IsotopeSettingsDialog(QDialog):
 
         tabs.addTab(corr_scroll, "Isotope Correction")
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
         self._apply_scope_visibility()
 
     def _format_correction_details(self, scfg):
@@ -1688,7 +1698,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         pg.setConfigOption('foreground', 'k')
 
         self._setup_ui()
-        self._cached_elements = []       
+        self._cached_elements = []
+        self._mouse_mode = "Cursor"
         self._auto_calc_natural()
         self._auto_calc_standard()
         self._refresh()
@@ -1866,6 +1877,12 @@ class IsotopicRatioDisplayDialog(QDialog):
             a.setChecked(mode == cur_lm)
             a.triggered.connect(lambda _, m=mode: self._set_cfg('label_mode', m))
 
+        mm = menu.addMenu("Mouse mode")
+        for mode in ("Cursor", "Zoom"):
+            a = mm.addAction(mode); a.setCheckable(True)
+            a.setChecked(self._mouse_mode == mode)
+            a.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
         menu.addSeparator()
         menu.addAction("Isotope correction...").triggered.connect(
             self._open_isotope_correction_settings)
@@ -1917,14 +1934,29 @@ class IsotopicRatioDisplayDialog(QDialog):
         - ``correction`` for isotope correction controls.
         - ``all`` for compatibility with legacy flows.
         """
+        _snap = dict(self.node.config)
+
+        def _do_preview(cfg):
+            self.node.config.update(cfg)
+            self._auto_calc_natural()
+            self._auto_calc_standard()
+            self._refresh()
+
         dlg = IsotopeSettingsDialog(
             self.node.config, self._available_elements(),
             self._all_isotope_labels(),
             self._is_multi(), self._sample_names(),
             self.parent_window, self,
             node=self.node, scope=scope, dialog_title=title)
+        dlg.preview_requested.connect(_do_preview)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._auto_calc_natural()
+            self._auto_calc_standard()
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._auto_calc_natural()
             self._auto_calc_standard()
             self._refresh()
@@ -2277,18 +2309,37 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         self._suppress_native_pg_context_menu()
 
-    def _suppress_native_pg_context_menu(self):
-        """Disable native PyQtGraph menus on all current plot items.
+    def _set_mouse_mode(self, mode: str):
+        """Switch all ViewBoxes between Pan and Zoom (rect) mode.
 
-        The dialog uses a custom context menu contract. This prevents a stacked
-        native menu from appearing underneath it.
+        Zoom uses pg.ViewBox.RectMode (left-drag draws a zoom rectangle).
+        This works reliably on dense scatter plots because ScatterPlotItem
+        does not capture left-drag events, unlike right-drag which it can
+        intercept when particles are densely packed.
         """
+        self._mouse_mode = mode
+        self._apply_mouse_mode()
+
+    def _apply_mouse_mode(self):
+        pg_mode = (pg.ViewBox.RectMode if self._mouse_mode == "Zoom"
+                   else pg.ViewBox.PanMode)  # "Cursor" → PanMode
+        for item in self.plot_widget.scene().items():
+            if isinstance(item, pg.ViewBox):
+                try:
+                    item.setMouseMode(pg_mode)
+                except Exception:
+                    pass
+
+    def _suppress_native_pg_context_menu(self):
+        """Disable native PyQtGraph menus on all current plot items and
+        restore the active mouse mode after every redraw."""
         for item in self.plot_widget.scene().items():
             if isinstance(item, pg.PlotItem) and hasattr(item, "vb"):
                 try:
                     item.vb.setMenuEnabled(False)
                 except Exception:
                     _itk_log.exception("Handled exception in _suppress_native_pg_context_menu")
+        self._apply_mouse_mode()
 
     def _iter_samples_in_display_order(self, plot_data, cfg):
         """Yield sample items in configured display order when provided.

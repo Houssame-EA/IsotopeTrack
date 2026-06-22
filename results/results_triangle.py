@@ -3,11 +3,11 @@ Ternary Plot Node — full-figure view with right-click context menu.
 
 Features:
 - Three-element ternary composition diagram (mpltern)
-- Scatter and density (hexbin) plot types
+- Scatter and density (tribin) plot types
 - Color-by-fourth-element option for scatter plots
 - Average point with optional 2σ confidence ellipse
 - Particle statistics bar (total, filtered, per-sample)
-- Multiple sample support (overlaid, subplots, side-by-side, combined)
+- Multiple sample support (overlaid, subplots, combined)
 - Right-click context menu replaces sidebar for all settings
 - Shared font, color, and export utilities via shared_plot_utils
 """
@@ -22,7 +22,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
 from matplotlib.figure import Figure
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Patch
+from matplotlib.lines import Line2D
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
 import numpy as np
 import math
 import mpltern  # noqa: F401  (side effect: registers ternary projection)
@@ -43,12 +46,11 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_triangle")
 
 DISPLAY_MODES = [
     'Individual Subplots',
-    'Side by Side Subplots',
     'Combined Plot',
     'Overlaid Samples',
 ]
 
-PLOT_TYPES = ['Scatter Plot', 'Density Plot (Hexbin)']
+PLOT_TYPES = ['Scatter Plot', 'Density Plot (Tribin)']
 
 COLORMAPS = [
     'YlGn', 'viridis', 'plasma', 'inferno', 'magma', 'cividis',
@@ -57,8 +59,116 @@ COLORMAPS = [
     'coolwarm', 'RdYlBu', 'Spectral', 'turbo', 'jet',
 ]
 
+# ── Scatter color-encoding options ──────────────────────────────────────────
+# Mode A: whole-particle aggregate quantities
+COLOR_PARTICLE_QUANTITY_OPTIONS = [
+    ('Total Counts',                'total_counts'),
+    ('Total Isotope Mass (fg)',     'total_element_mass_fg'),
+    ('Total Isotope Moles (fmol)', 'total_element_moles_fmol'),
+    ('Total Particle Mass (fg)',   'total_particle_mass_fg'),
+    ('Total Particle Moles (fmol)', 'total_particle_moles_fmol'),
+]
+COLOR_PARTICLE_QUANTITY_LABELS = [x[0] for x in COLOR_PARTICLE_QUANTITY_OPTIONS]
+COLOR_PARTICLE_QUANTITY_KEYS   = [x[1] for x in COLOR_PARTICLE_QUANTITY_OPTIONS]
 
-def setup_ternary_axes(ax, element_labels, config):
+# Mode B: per-isotope measurement data types
+COLOR_ISOTOPE_DATA_TYPE_OPTIONS = [
+    ('Counts',                  'counts'),
+    ('Isotope Mass (fg)',       'element_mass_fg'),
+    ('Isotope Moles (fmol)',   'element_moles_fmol'),
+    ('Particle Mass (fg)',     'particle_mass_fg'),
+    ('Particle Moles (fmol)', 'particle_moles_fmol'),
+]
+COLOR_ISOTOPE_DATA_TYPE_LABELS = [x[0] for x in COLOR_ISOTOPE_DATA_TYPE_OPTIONS]
+COLOR_ISOTOPE_DATA_TYPE_KEYS   = [x[1] for x in COLOR_ISOTOPE_DATA_TYPE_OPTIONS]
+
+# Mapping from COLOR_ISOTOPE_DATA_TYPE key → particle dict key for extraction
+_COLOR_ISOTOPE_DK_MAP = {
+    'counts':              'elements',
+    'element_mass_fg':    'element_mass_fg',
+    'element_moles_fmol': 'element_moles_fmol',
+    'particle_mass_fg':   'particle_mass_fg',
+    'particle_moles_fmol': 'particle_moles_fmol',
+}
+
+
+def _full_triangle_viewport() -> dict:
+    """Return the default full ternary viewport."""
+    return {'a_min': 0.0, 'b_min': 0.0, 'c_min': 0.0}
+
+
+def _validate_triangle_viewport(viewport: dict | None) -> dict:
+    """Return a sanitized valid ternary viewport or the full viewport.
+
+    Args:
+        viewport (dict | None): Lower-bound ternary viewport candidate.
+
+    Returns:
+        dict: Validated viewport with ``a_min``, ``b_min``, and ``c_min``.
+    """
+    if not isinstance(viewport, dict):
+        return _full_triangle_viewport()
+    try:
+        a_min = max(0.0, float(viewport.get('a_min', 0.0)))
+        b_min = max(0.0, float(viewport.get('b_min', 0.0)))
+        c_min = max(0.0, float(viewport.get('c_min', 0.0)))
+    except Exception:
+        return _full_triangle_viewport()
+    if a_min + b_min + c_min >= 1.0:
+        return _full_triangle_viewport()
+    return {'a_min': a_min, 'b_min': b_min, 'c_min': c_min}
+
+
+def _is_full_triangle_viewport(viewport: dict, tol: float = 1e-12) -> bool:
+    """Return whether the viewport matches the full simplex within tolerance."""
+    vp = _validate_triangle_viewport(viewport)
+    return (
+        abs(vp['a_min']) <= tol and
+        abs(vp['b_min']) <= tol and
+        abs(vp['c_min']) <= tol
+    )
+
+
+def _viewport_remaining(viewport: dict) -> float:
+    """Return the remaining simplex width for a lower-bound ternary viewport."""
+    vp = _validate_triangle_viewport(viewport)
+    return 1.0 - (vp['a_min'] + vp['b_min'] + vp['c_min'])
+
+
+def _point_in_triangle_viewport(a: float, b: float, c: float,
+                                viewport: dict, tol: float = 1e-9) -> bool:
+    """Return whether a ternary point lies inside the viewport."""
+    vp = _validate_triangle_viewport(viewport)
+    return (
+        a >= vp['a_min'] - tol and
+        b >= vp['b_min'] - tol and
+        c >= vp['c_min'] - tol
+    )
+
+
+def _remap_point_to_triangle_viewport(a: float, b: float, c: float,
+                                      viewport: dict) -> tuple[float, float, float]:
+    """Map original ternary fractions into local viewport fractions."""
+    vp = _validate_triangle_viewport(viewport)
+    remaining = _viewport_remaining(vp)
+    if remaining <= 0:
+        return a, b, c
+    a_local = (a - vp['a_min']) / remaining
+    b_local = (b - vp['b_min']) / remaining
+    c_local = (c - vp['c_min']) / remaining
+    return a_local, b_local, c_local
+
+
+def _viewport_tick_labels(viewport: dict, component_key: str,
+                          ticks: list[float]) -> list[str]:
+    """Return original-composition percentage labels for local ternary ticks."""
+    vp = _validate_triangle_viewport(viewport)
+    remaining = _viewport_remaining(vp)
+    base = vp.get(component_key, 0.0)
+    return [f'{int(round((base + tick * remaining) * 100))}%' for tick in ticks]
+
+
+def setup_ternary_axes(ax, element_labels, config, viewport=None):
     """
     Configure mpltern axes with labels, grid, and font settings.
 
@@ -71,28 +181,124 @@ def setup_ternary_axes(ax, element_labels, config):
         ax:             mpltern axes (projection='ternary')
         element_labels: [elem_a, elem_b, elem_c]
         config:         node config dict
+        viewport:       optional lower-bound ternary viewport dict
     """
     fp   = make_font_properties(config)
     fc   = get_font_config(config)
     mode = config.get('label_mode', 'Symbol')
     fmt  = [format_element_label(e, mode, Renderer.MATHTEXT, config) for e in element_labels]
+    viewport = _validate_triangle_viewport(viewport)
 
-    ax.set_llabel(fmt[0], fontproperties=fp, color=fc['color'])
-    ax.set_rlabel(fmt[1], fontproperties=fp, color=fc['color'])
-    ax.set_tlabel(fmt[2], fontproperties=fp, color=fc['color'])
+    # Clear mpltern's default vertex labels (they appear ambiguously at the
+    # 100%-composition corners, making it unclear whether they mark the
+    # start or end of the axis).
+    ax.set_llabel('')
+    ax.set_rlabel('')
+    ax.set_tlabel('')
 
-    if config.get('show_grid', True):
-        ax.grid(True, alpha=0.3)
-        ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        tick_labels = [f'{int(t * 100)}%' for t in ticks]
-        for axis in (ax.taxis, ax.laxis, ax.raxis):
-            axis.set_ticks(ticks)
-            axis.set_ticklabels(tick_labels)
-            for lbl in axis.get_ticklabels():
-                lbl.set_fontproperties(fp)
-                lbl.set_color(fc['color'])
+    # Place element labels at the midpoints of the triangle edges, outside
+    # the triangle — the same position as "X Axis"/"Y Axis"/"Z Axis" in a
+    # standard ternary diagram.  Each label sits on the edge adjacent to its
+    # component's vertex:
+    #
+    #   element_a (L, bottom-left vertex) → left  edge, rotation +60°
+    #   element_b (R, bottom-right vertex) → right edge, rotation −60°
+    #   element_c (T, top vertex)          → bottom edge, rotation   0°
+    #
+    # mpltern Cartesian data-space corners (confirmed by _ternary_xdata_to_abc):
+    #   T vertex: (0,       1.0)
+    #   L vertex: (−1/√3,   0.0)
+    #   R vertex: (+1/√3,   0.0)
+    _s   = 1.0 / math.sqrt(3.0)   # ≈ 0.5774
+    _pad = 0.12         # outward offset in data units
+
+    # Resolve per-axis colors.  When colored_axes is off every axis uses the
+    # global font color so the rest of the rendering path is identical.
+    colored = config.get('colored_axes', False)
+    if colored:
+        axis_a_color = config.get('axis_a_color', '#E74C3C')
+        axis_b_color = config.get('axis_b_color', '#2980B9')
+        axis_c_color = config.get('axis_c_color', '#27AE60')
     else:
-        ax.grid(False)
+        axis_a_color = axis_b_color = axis_c_color = fc['color']
+
+    # bottom edge midpoint (0, 0) — element_b; outward = (0, −1)
+    ax.text(
+        0.0, -_pad,
+        fmt[1],
+        transform=ax.transData,
+        ha='center', va='top', rotation=0,
+        fontproperties=fp, color=axis_b_color,
+    )
+    # left edge midpoint (−_s/2, 0.5) — element_a; outward normal ≈ (−√3/2, +½)
+    ax.text(
+        -_s * 0.5 - _pad * (math.sqrt(3) / 2),
+        0.5 + _pad * 0.5,
+        fmt[0],
+        transform=ax.transData,
+        ha='right', va='center', rotation=60,
+        fontproperties=fp, color=axis_a_color,
+    )
+    # right edge midpoint (+_s/2, 0.5) — element_c; outward normal ≈ (+√3/2, +½)
+    ax.text(
+        _s * 0.5 + _pad * (math.sqrt(3) / 2),
+        0.5 + _pad * 0.5,
+        fmt[2],
+        transform=ax.transData,
+        ha='left', va='center', rotation=-60,
+        fontproperties=fp, color=axis_c_color,
+    )
+
+    show_grid = config.get('show_grid', True)
+    if colored:
+        # Color triangle border spines.
+        # mpltern spine keys confirmed from _base.py: tside/tcorner registered with taxis,
+        # lside/lcorner with laxis, rside/rcorner with raxis.
+        _spine_map = {
+            'tside':   axis_c_color, 'tcorner': axis_c_color,
+            'lside':   axis_a_color, 'lcorner': axis_a_color,
+            'rside':   axis_b_color, 'rcorner': axis_b_color,
+        }
+        for _key, _col in _spine_map.items():
+            if _key in ax.spines:
+                ax.spines[_key].set_color(_col)
+        # Color tick marks. TernaryAxis inherits Axis.set_tick_params (NOT tick_params).
+        # Use color= (tick marks only); label colors are set in the axis_specs loop below.
+        ax.taxis.set_tick_params(which='major', color=axis_c_color)
+        ax.laxis.set_tick_params(which='major', color=axis_a_color)
+        ax.raxis.set_tick_params(which='major', color=axis_b_color)
+        # Per-axis gridlines — always solid lines when colored.
+        # TernaryAxis.grid() is inherited from Axis and prepends 'grid_' to kwargs internally.
+        if show_grid:
+            ax.taxis.grid(True, color=axis_c_color, alpha=0.4, linestyle='-')
+            ax.laxis.grid(True, color=axis_a_color, alpha=0.4, linestyle='-')
+            ax.raxis.grid(True, color=axis_b_color, alpha=0.4, linestyle='-')
+        else:
+            ax.taxis.grid(False)
+            ax.laxis.grid(False)
+            ax.raxis.grid(False)
+    else:
+        if show_grid:
+            ax.grid(True, alpha=0.3)
+        else:
+            ax.grid(False)
+
+    ticks = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    # axis_specs: (mpltern axis, viewport component key, label/tick color)
+    # taxis tick labels appear on the right edge (adjacent to element_c label) so
+    # they use axis_c_color; raxis tick labels appear at the bottom (adjacent to
+    # element_b label) so they use axis_b_color.
+    axis_specs = (
+        (ax.taxis, 'c_min', axis_c_color),
+        (ax.laxis, 'a_min', axis_a_color),
+        (ax.raxis, 'b_min', axis_b_color),
+    )
+    for axis, component_key, tick_color in axis_specs:
+        axis.set_ticks(ticks)
+        axis.set_ticklabels(_viewport_tick_labels(viewport, component_key, ticks))
+        for lbl in axis.get_ticklabels():
+            lbl.set_fontproperties(fp)
+            lbl.set_color(tick_color)
 
     ax.set_title('')
 
@@ -137,6 +343,8 @@ def confidence_ellipse_params(data_x, data_y, n_std=2.0):
 class TernarySettingsDialog(QDialog):
     """Scoped settings dialog for triangle plot format and quantity configuration."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config, available_elements, is_multi, sample_names, parent=None, scope='all'):
         """
         Initialize the triangle settings dialog.
@@ -176,14 +384,14 @@ class TernarySettingsDialog(QDialog):
         self.plot_type = None
         self.marker_size = None
         self.marker_alpha = None
-        self.hexbin_grid = None
-        self.hexbin_alpha = None
+        self.tribin_side = None
+        self.tribin_alpha = None
         self.show_grid = None
         self.colormap = None
         self.show_colorbar = None
         self.cbar_label = None
         self.show_avg = None
-        self.avg_only_all = None
+        self.element_filter_mode = None
         self.show_avg_text = None
         self.show_ellipse = None
         self.avg_size = None
@@ -195,9 +403,32 @@ class TernarySettingsDialog(QDialog):
         self._legend_grp = None
         self._export_grp = None
         self._scatter_frame = None
-        self._hexbin_frame = None
+        self._tribin_frame = None
+        # Scatter color-encoding widgets (new two-mode system)
+        self._scatter_color_group = None
+        self._tribin_color_group = None
+        self.color_source_combo = None
+        self._scatter_color_particle_frame = None
+        self._scatter_color_isotope_frame = None
+        self.color_particle_quantity_combo = None
+        self.color_isotope_combo = None
+        self.color_isotope_data_type_combo = None
+        self.color_log_scale_cb = None
+        # Tribin color-encoding widgets (new two-mode system)
+        self.tribin_color_mode_combo = None
+        self._tribin_color_isotope_frame = None
+        self.tribin_color_isotope_combo = None
+        self.tribin_color_data_type_combo = None
         self._color_btns = {}
+        self._mean_color_btns = {}
         self._name_edits = {}
+        self.colored_axes_cb = None
+        self.axis_a_btn = None
+        self.axis_b_btn = None
+        self.axis_c_btn = None
+        self._axis_a_color = self._cfg.get('axis_a_color', '#E74C3C')
+        self._axis_b_color = self._cfg.get('axis_b_color', '#27AE60')
+        self._axis_c_color = self._cfg.get('axis_c_color', '#2980B9')
         self._build_ui()
 
     def _build_ui(self):
@@ -253,21 +484,126 @@ class TernarySettingsDialog(QDialog):
             if ec in self._elems:
                 self.elem_c.setCurrentText(ec)
             fl.addRow("Element C (Top):", self.elem_c)
-
-            self.color_elem = QComboBox()
-            self.color_elem.addItems(['(None - use index)'] + self._elems)
-            ce = self._cfg.get('color_element', '')
-            if ce in self._elems:
-                self.color_elem.setCurrentText(ce)
-            fl.addRow("Color By Element:", self.color_elem)
             layout.addWidget(g)
 
-            g = QGroupBox("Data Type")
+            # ── Plot Type (moved here from Format Settings) ─────────────────
+            g_pt = QGroupBox("Plot Type")
+            fl_pt = QFormLayout(g_pt)
+            self.plot_type = QComboBox()
+            if self._cfg.get('display_mode', '') == 'Overlaid Samples':
+                # Tribin is not meaningful in overlaid mode — scatter only
+                self.plot_type.addItems(['Scatter Plot'])
+            else:
+                self.plot_type.addItems(PLOT_TYPES)
+            self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
+            self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
+            fl_pt.addRow("Plot Type:", self.plot_type)
+            layout.addWidget(g_pt)
+
+            # ── Hexbin Color Encoding (shown only for Hexbin) ───────────────
+            self._tribin_color_group = QGroupBox("Tribin Color Encoding")
+            hcfl = QFormLayout(self._tribin_color_group)
+
+            self.tribin_color_mode_combo = QComboBox()
+            self.tribin_color_mode_combo.addItem(
+                "Density (particle events per bin)", "density")
+            self.tribin_color_mode_combo.addItem(
+                "Isotope Measurement", "isotope_measurement")
+            _cur_hcm = self._cfg.get('tribin_color_mode', 'density')
+            _hcmi = self.tribin_color_mode_combo.findData(_cur_hcm)
+            self.tribin_color_mode_combo.setCurrentIndex(max(0, _hcmi))
+            self.tribin_color_mode_combo.currentIndexChanged.connect(
+                self._on_tribin_color_mode_changed)
+            hcfl.addRow("Color Mode:", self.tribin_color_mode_combo)
+
+            # Sub-frame: isotope measurement controls
+            self._tribin_color_isotope_frame = QFrame()
+            hcisfl = QFormLayout(self._tribin_color_isotope_frame)
+            hcisfl.setContentsMargins(0, 0, 0, 0)
+
+            self.tribin_color_isotope_combo = QComboBox()
+            self.tribin_color_isotope_combo.addItems(['(None)'] + self._elems)
+            _cur_hci = self._cfg.get('tribin_color_isotope', '')
+            if _cur_hci in self._elems:
+                self.tribin_color_isotope_combo.setCurrentText(_cur_hci)
+            hcisfl.addRow("Isotope:", self.tribin_color_isotope_combo)
+
+            self.tribin_color_data_type_combo = QComboBox()
+            for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
+                self.tribin_color_data_type_combo.addItem(lbl, key)
+            _cur_hcdt = self._cfg.get('tribin_color_data_type', 'counts')
+            _hcdti = self.tribin_color_data_type_combo.findData(_cur_hcdt)
+            self.tribin_color_data_type_combo.setCurrentIndex(max(0, _hcdti))
+            hcisfl.addRow("Data Type:", self.tribin_color_data_type_combo)
+
+            hcfl.addRow(self._tribin_color_isotope_frame)
+            layout.addWidget(self._tribin_color_group)
+
+            # Set initial isotope sub-frame visibility
+            self._on_tribin_color_mode_changed()
+
+            # ── Scatter Color Encoding (shown only for Scatter) ─────────────
+            self._scatter_color_group = QGroupBox("Scatter Color Encoding")
+            scfl = QFormLayout(self._scatter_color_group)
+
+            self.color_source_combo = QComboBox()
+            self.color_source_combo.addItem("Particle quantity", "particle_quantity")
+            self.color_source_combo.addItem("Isotope measurement", "isotope_measurement")
+            _cur_source = self._cfg.get('color_source', 'particle_quantity')
+            _si = self.color_source_combo.findData(_cur_source)
+            self.color_source_combo.setCurrentIndex(max(0, _si))
+            self.color_source_combo.currentIndexChanged.connect(self._on_color_mode_changed)
+            scfl.addRow("Color Mode:", self.color_source_combo)
+
+            # Frame A: particle quantity
+            self._scatter_color_particle_frame = QFrame()
+            pqfl = QFormLayout(self._scatter_color_particle_frame)
+            pqfl.setContentsMargins(0, 0, 0, 0)
+            self.color_particle_quantity_combo = QComboBox()
+            for lbl, key in COLOR_PARTICLE_QUANTITY_OPTIONS:
+                self.color_particle_quantity_combo.addItem(lbl, key)
+            _cur_pq = self._cfg.get('color_particle_quantity', 'total_counts')
+            _pqi = self.color_particle_quantity_combo.findData(_cur_pq)
+            self.color_particle_quantity_combo.setCurrentIndex(max(0, _pqi))
+            pqfl.addRow("Quantity:", self.color_particle_quantity_combo)
+            scfl.addRow(self._scatter_color_particle_frame)
+
+            # Frame B: isotope measurement
+            self._scatter_color_isotope_frame = QFrame()
+            isfl = QFormLayout(self._scatter_color_isotope_frame)
+            isfl.setContentsMargins(0, 0, 0, 0)
+            self.color_isotope_combo = QComboBox()
+            self.color_isotope_combo.addItems(['(None)'] + self._elems)
+            _cur_iso = self._cfg.get('color_isotope', '')
+            if _cur_iso in self._elems:
+                self.color_isotope_combo.setCurrentText(_cur_iso)
+            isfl.addRow("Isotope:", self.color_isotope_combo)
+            self.color_isotope_data_type_combo = QComboBox()
+            for lbl, key in COLOR_ISOTOPE_DATA_TYPE_OPTIONS:
+                self.color_isotope_data_type_combo.addItem(lbl, key)
+            _cur_idt = self._cfg.get('color_isotope_data_type', 'counts')
+            _idti = self.color_isotope_data_type_combo.findData(_cur_idt)
+            self.color_isotope_data_type_combo.setCurrentIndex(max(0, _idti))
+            isfl.addRow("Data Type:", self.color_isotope_data_type_combo)
+            scfl.addRow(self._scatter_color_isotope_frame)
+
+            self.color_log_scale_cb = QCheckBox("Log₁₀ color scale")
+            self.color_log_scale_cb.setChecked(self._cfg.get('color_log_scale', False))
+            scfl.addRow("Color Scale:", self.color_log_scale_cb)
+
+            layout.addWidget(self._scatter_color_group)
+
+            # Trigger visibility for both color groups and sub-frames
+            self._on_plot_type_changed()
+            self._on_color_mode_changed()
+            self._on_tribin_color_mode_changed()
+
+            g = QGroupBox("Composition Basis")
             fl = QFormLayout(g)
             self.data_type = QComboBox()
             self.data_type.addItems(TERNARY_DATA_TYPE_OPTIONS)
             self.data_type.setCurrentText(self._cfg.get('data_type_display', 'Counts (%)'))
-            fl.addRow("Data:", self.data_type)
+            fl.addRow("Composition Basis:", self.data_type)
             layout.addWidget(g)
 
             g = QGroupBox("Filtering")
@@ -281,6 +617,20 @@ class TernarySettingsDialog(QDialog):
             self.max_particles.setRange(1, 100_000_000)
             self.max_particles.setValue(self._cfg.get('max_particles', 100_000_000))
             fl.addRow("Max Particles:", self.max_particles)
+            self.element_filter_mode = QComboBox()
+            self.element_filter_mode.addItem(
+                "Show particles with at least 1 selected element", "any_one")
+            self.element_filter_mode.addItem(
+                "Show selected elements present (partial match)", "partial")
+            self.element_filter_mode.addItem(
+                "Show selected elements only (exact match)", "exact")
+            # Migrate legacy boolean config to the new string key
+            _legacy = self._cfg.get('average_only_with_all_elements', True)
+            _mode = self._cfg.get('element_filter_mode',
+                                  'partial' if _legacy else 'any_one')
+            _idx = self.element_filter_mode.findData(_mode)
+            self.element_filter_mode.setCurrentIndex(max(0, _idx))
+            fl.addRow("Element filter:", self.element_filter_mode)
             layout.addWidget(g)
 
         if self._scope in ('all', 'format'):
@@ -294,11 +644,6 @@ class TernarySettingsDialog(QDialog):
 
             g = QGroupBox("Plot Style")
             fl = QFormLayout(g)
-            self.plot_type = QComboBox()
-            self.plot_type.addItems(PLOT_TYPES)
-            self.plot_type.setCurrentText(self._cfg.get('plot_type', 'Scatter Plot'))
-            self.plot_type.currentTextChanged.connect(self._on_plot_type_changed)
-            fl.addRow("Plot Type:", self.plot_type)
 
             self._scatter_frame = QFrame()
             sfl = QFormLayout(self._scatter_frame)
@@ -313,18 +658,20 @@ class TernarySettingsDialog(QDialog):
             sfl.addRow("Transparency:", self.marker_alpha)
             fl.addRow(self._scatter_frame)
 
-            self._hexbin_frame = QFrame()
-            hfl = QFormLayout(self._hexbin_frame)
+            self._tribin_frame = QFrame()
+            hfl = QFormLayout(self._tribin_frame)
             hfl.setContentsMargins(0, 0, 0, 0)
-            self.hexbin_grid = QSpinBox()
-            self.hexbin_grid.setRange(10, 100)
-            self.hexbin_grid.setValue(self._cfg.get('hexbin_gridsize', 30))
-            hfl.addRow("Grid Size:", self.hexbin_grid)
-            self.hexbin_alpha = QSlider(Qt.Horizontal)
-            self.hexbin_alpha.setRange(10, 100)
-            self.hexbin_alpha.setValue(int(self._cfg.get('hexbin_alpha', 0.8) * 100))
-            hfl.addRow("Transparency:", self.hexbin_alpha)
-            fl.addRow(self._hexbin_frame)
+            self.tribin_side = QDoubleSpinBox()
+            self.tribin_side.setRange(1.0, 25.0)
+            self.tribin_side.setSingleStep(0.5)
+            self.tribin_side.setDecimals(1)
+            self.tribin_side.setValue(self._cfg.get('tribin_side_pct', 5.0))
+            hfl.addRow("Triangle Side (%):", self.tribin_side)
+            self.tribin_alpha = QSlider(Qt.Horizontal)
+            self.tribin_alpha.setRange(10, 100)
+            self.tribin_alpha.setValue(int(self._cfg.get('tribin_alpha', 0.8) * 100))
+            hfl.addRow("Transparency:", self.tribin_alpha)
+            fl.addRow(self._tribin_frame)
 
             self.show_grid = QCheckBox()
             self.show_grid.setChecked(self._cfg.get('show_grid', True))
@@ -338,19 +685,39 @@ class TernarySettingsDialog(QDialog):
             self.show_colorbar = QCheckBox()
             self.show_colorbar.setChecked(self._cfg.get('show_colorbar', True))
             fl.addRow("Show Color Bar:", self.show_colorbar)
-            self.cbar_label = QLineEdit(self._cfg.get('colorbar_label', 'Density'))
-            fl.addRow("Color Bar Label:", self.cbar_label)
             layout.addWidget(g)
             self._on_plot_type_changed()
+
+            g = QGroupBox("Axis Colors")
+            fl = QFormLayout(g)
+            self.colored_axes_cb = QCheckBox()
+            self.colored_axes_cb.setChecked(self._cfg.get('colored_axes', False))
+            fl.addRow("Color Axes:", self.colored_axes_cb)
+            elem_a = self._cfg.get('element_a', 'A') or 'A'
+            elem_b = self._cfg.get('element_b', 'B') or 'B'
+            elem_c = self._cfg.get('element_c', 'C') or 'C'
+            self.axis_a_btn = QPushButton()
+            self.axis_a_btn.setStyleSheet(
+                f"background-color: {self._axis_a_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_a_btn.clicked.connect(lambda: self._pick_axis_color('a'))
+            fl.addRow(f"Element A ({elem_a}) color:", self.axis_a_btn)
+            self.axis_b_btn = QPushButton()
+            self.axis_b_btn.setStyleSheet(
+                f"background-color: {self._axis_b_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_b_btn.clicked.connect(lambda: self._pick_axis_color('b'))
+            fl.addRow(f"Element B ({elem_b}) color:", self.axis_b_btn)
+            self.axis_c_btn = QPushButton()
+            self.axis_c_btn.setStyleSheet(
+                f"background-color: {self._axis_c_color}; min-height: 25px; border: 1px solid black;")
+            self.axis_c_btn.clicked.connect(lambda: self._pick_axis_color('c'))
+            fl.addRow(f"Element C ({elem_c}) color:", self.axis_c_btn)
+            layout.addWidget(g)
 
             g = QGroupBox("Average Point")
             fl = QFormLayout(g)
             self.show_avg = QCheckBox()
             self.show_avg.setChecked(self._cfg.get('show_average_point', True))
             fl.addRow("Show Average:", self.show_avg)
-            self.avg_only_all = QCheckBox()
-            self.avg_only_all.setChecked(self._cfg.get('average_only_with_all_elements', True))
-            fl.addRow("Only Particles With All 3:", self.avg_only_all)
             self.show_avg_text = QCheckBox()
             self.show_avg_text.setChecked(self._cfg.get('show_average_text', True))
             fl.addRow("Show Stats Text:", self.show_avg_text)
@@ -397,6 +764,34 @@ class TernarySettingsDialog(QDialog):
                     vl.addWidget(w)
                 layout.addWidget(g)
 
+                g2 = QGroupBox("Mean Marker Colors (Overlaid Mode)")
+                vl2 = QVBoxLayout(g2)
+                mean_colors_cfg = self._cfg.get('sample_mean_colors', {})
+                sc_map = self._cfg.get('sample_colors', {})
+                for i2, sn in enumerate(self._sample_names):
+                    row2 = QHBoxLayout()
+                    name_text = (self._name_edits[sn].text()
+                                 if sn in self._name_edits else sn)
+                    lbl2 = QLabel(name_text)
+                    lbl2.setFixedWidth(180)
+                    row2.addWidget(lbl2)
+                    def_c = sc_map.get(
+                        sn, DEFAULT_SAMPLE_COLORS[i2 % len(DEFAULT_SAMPLE_COLORS)])
+                    mc = mean_colors_cfg.get(sn, def_c)
+                    mcb = QPushButton()
+                    mcb.setFixedSize(30, 22)
+                    mcb.setStyleSheet(
+                        f'background-color: {mc}; border: 1px solid black;')
+                    mcb.clicked.connect(
+                        lambda _, s=sn, b=mcb: self._pick_mean_color(s, b))
+                    row2.addWidget(mcb)
+                    self._mean_color_btns[sn] = (mcb, mc)
+                    row2.addStretch()
+                    w2 = QWidget()
+                    w2.setLayout(row2)
+                    vl2.addWidget(w2)
+                layout.addWidget(g2)
+
             self._font_group = FontSettingsGroup(self._cfg)
             layout.addWidget(self._font_group.build())
             self._legend_grp = LegendGroup(self._cfg)
@@ -404,23 +799,56 @@ class TernarySettingsDialog(QDialog):
             self._export_grp = ExportSettingsGroup(self._cfg)
             layout.addWidget(self._export_grp.build())
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def _on_plot_type_changed(self):
-        """
-        Toggle scatter/hexbin sub-sections for format controls.
+        """Toggle scatter/tribin sub-sections for both format controls and color encoding groups."""
+        # Determine plot type from the quantities-scope combo or fall back to saved config.
+        if self.plot_type is not None:
+            is_scatter = self.plot_type.currentText() == 'Scatter Plot'
+        else:
+            is_scatter = self._cfg.get('plot_type', 'Scatter Plot') == 'Scatter Plot'
 
-        This method only affects visibility of visual control widgets and preserves
-        all scientific/data semantics.
-        """
-        if self.plot_type is None or self._scatter_frame is None or self._hexbin_frame is None:
+        # Format-scope frames (exist when scope is 'format' or 'all')
+        if self._scatter_frame is not None:
+            self._scatter_frame.setVisible(is_scatter)
+        if self._tribin_frame is not None:
+            self._tribin_frame.setVisible(not is_scatter)
+
+        # Quantities-scope color groups (exist when scope is 'quantities' or 'all')
+        if self._scatter_color_group is not None:
+            self._scatter_color_group.setVisible(is_scatter)
+        if self._tribin_color_group is not None:
+            self._tribin_color_group.setVisible(not is_scatter)
+
+    def _on_color_mode_changed(self):
+        """Toggle particle-quantity vs isotope-measurement sub-frames inside scatter color group."""
+        if self.color_source_combo is None:
             return
-        is_scatter = self.plot_type.currentText() == 'Scatter Plot'
-        self._scatter_frame.setVisible(is_scatter)
-        self._hexbin_frame.setVisible(not is_scatter)
+        is_particle_qty = self.color_source_combo.currentData() == 'particle_quantity'
+        if self._scatter_color_particle_frame is not None:
+            self._scatter_color_particle_frame.setVisible(is_particle_qty)
+        if self._scatter_color_isotope_frame is not None:
+            self._scatter_color_isotope_frame.setVisible(not is_particle_qty)
+
+    def _on_tribin_color_mode_changed(self):
+        """Show/hide isotope sub-frame inside the tribin color encoding group."""
+        if self.tribin_color_mode_combo is None:
+            return
+        is_isotope = self.tribin_color_mode_combo.currentData() == 'isotope_measurement'
+        if self._tribin_color_isotope_frame is not None:
+            self._tribin_color_isotope_frame.setVisible(is_isotope)
 
     def _pick_avg_color(self):
         """Pick average-point color used for plot formatting only."""
@@ -429,6 +857,22 @@ class TernarySettingsDialog(QDialog):
         if c.isValid():
             self._avg_color = c
             self.avg_color_btn.setStyleSheet(
+                f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
+
+    def _pick_axis_color(self, which):
+        """Pick color for a single ternary axis (a, b, or c)."""
+        from PySide6.QtWidgets import QColorDialog
+        cur_map = {'a': self._axis_a_color, 'b': self._axis_b_color, 'c': self._axis_c_color}
+        btn_map  = {'a': self.axis_a_btn,   'b': self.axis_b_btn,   'c': self.axis_c_btn}
+        c = QColorDialog.getColor(QColor(cur_map[which]), self, f"Axis {which.upper()} Color")
+        if c.isValid():
+            if which == 'a':
+                self._axis_a_color = c.name()
+            elif which == 'b':
+                self._axis_b_color = c.name()
+            else:
+                self._axis_c_color = c.name()
+            btn_map[which].setStyleSheet(
                 f"background-color: {c.name()}; min-height: 25px; border: 1px solid black;")
 
     def _pick_sample_color(self, name, btn):
@@ -445,6 +889,16 @@ class TernarySettingsDialog(QDialog):
         if c.isValid():
             btn.setStyleSheet(f"background-color: {c.name()}; border: 1px solid black;")
             self._color_btns[name] = (btn, c.name())
+
+    def _pick_mean_color(self, name, btn):
+        """Pick mean marker color for a sample in overlaid mode."""
+        from PySide6.QtWidgets import QColorDialog
+        cur = QColor(self._mean_color_btns[name][1])
+        c = QColorDialog.getColor(cur, self, f'Mean marker color for {name}')
+        if c.isValid():
+            btn.setStyleSheet(
+                f'background-color: {c.name()}; border: 1px solid black;')
+            self._mean_color_btns[name] = (btn, c.name())
 
     def _reset_name(self, original):
         """
@@ -472,9 +926,26 @@ class TernarySettingsDialog(QDialog):
         if self.elem_c is not None:
             ec = self.elem_c.currentText()
             out['element_c'] = '' if ec.startswith('--') else ec
-        if self.color_elem is not None:
-            ce = self.color_elem.currentText()
-            out['color_element'] = '' if ce.startswith('(') else ce
+        # ── Scatter color encoding keys ──────────────────────────────────────
+        if self.color_source_combo is not None:
+            out['color_source'] = self.color_source_combo.currentData()
+        if self.color_particle_quantity_combo is not None:
+            out['color_particle_quantity'] = self.color_particle_quantity_combo.currentData()
+        if self.color_isotope_combo is not None:
+            ci = self.color_isotope_combo.currentText()
+            out['color_isotope'] = '' if ci.startswith('(') else ci
+        if self.color_isotope_data_type_combo is not None:
+            out['color_isotope_data_type'] = self.color_isotope_data_type_combo.currentData()
+        if self.color_log_scale_cb is not None:
+            out['color_log_scale'] = self.color_log_scale_cb.isChecked()
+        # ── Hexbin color encoding keys ───────────────────────────────────────
+        if self.tribin_color_mode_combo is not None:
+            out['tribin_color_mode'] = self.tribin_color_mode_combo.currentData()
+        if self.tribin_color_isotope_combo is not None:
+            hci = self.tribin_color_isotope_combo.currentText()
+            out['tribin_color_isotope'] = '' if hci.startswith('(') else hci
+        if self.tribin_color_data_type_combo is not None:
+            out['tribin_color_data_type'] = self.tribin_color_data_type_combo.currentData()
         if self.data_type is not None:
             out['data_type_display'] = self.data_type.currentText()
         if self.label_mode_combo is not None:
@@ -485,22 +956,20 @@ class TernarySettingsDialog(QDialog):
             out['marker_size'] = self.marker_size.value()
         if self.marker_alpha is not None:
             out['marker_alpha'] = self.marker_alpha.value() / 100.0
-        if self.hexbin_grid is not None:
-            out['hexbin_gridsize'] = self.hexbin_grid.value()
-        if self.hexbin_alpha is not None:
-            out['hexbin_alpha'] = self.hexbin_alpha.value() / 100.0
+        if self.tribin_side is not None:
+            out['tribin_side_pct'] = self.tribin_side.value()
+        if self.tribin_alpha is not None:
+            out['tribin_alpha'] = self.tribin_alpha.value() / 100.0
         if self.show_grid is not None:
             out['show_grid'] = self.show_grid.isChecked()
         if self.colormap is not None:
             out['colormap'] = self.colormap.currentText()
         if self.show_colorbar is not None:
             out['show_colorbar'] = self.show_colorbar.isChecked()
-        if self.cbar_label is not None:
-            out['colorbar_label'] = self.cbar_label.text()
         if self.show_avg is not None:
             out['show_average_point'] = self.show_avg.isChecked()
-        if self.avg_only_all is not None:
-            out['average_only_with_all_elements'] = self.avg_only_all.isChecked()
+        if self.element_filter_mode is not None:
+            out['element_filter_mode'] = self.element_filter_mode.currentData()
         if self.show_avg_text is not None:
             out['show_average_text'] = self.show_avg_text.isChecked()
         if self.show_ellipse is not None:
@@ -518,6 +987,14 @@ class TernarySettingsDialog(QDialog):
             out['sample_colors'] = {sn: c for sn, (_, c) in self._color_btns.items()}
         if self._is_multi and self._name_edits:
             out['sample_name_mappings'] = {sn: ne.text() for sn, ne in self._name_edits.items()}
+        if self._is_multi and self._mean_color_btns:
+            out['sample_mean_colors'] = {
+                sn: c for sn, (_, c) in self._mean_color_btns.items()}
+        if self.colored_axes_cb is not None:
+            out['colored_axes'] = self.colored_axes_cb.isChecked()
+        out['axis_a_color'] = self._axis_a_color
+        out['axis_b_color'] = self._axis_b_color
+        out['axis_c_color'] = self._axis_c_color
         if self._font_group is not None:
             out.update(self._font_group.collect())
         if self._legend_grp is not None:
@@ -941,6 +1418,18 @@ class TriangleDisplayDialog(QDialog):
         self.parent_window = parent_window
         self.setWindowTitle("Ternary Composition Analysis")
         self.setMinimumSize(1000, 750)
+        self._triangle_viewport = _full_triangle_viewport()
+        self._last_layout_key = None
+        self._pending_shared_cbar = None
+        self._overlaid_stats_dlg = None
+        self._overlaid_stats_data = []
+
+        self._ternary_zoom_active    = False
+        self._ternary_zoom_press     = None
+        self._ternary_zoom_cids      = []
+        self._ternary_zoom_rubberband = None
+        self._ternary_zoom_bg = None   # blit background captured on press
+        self._ternary_zoom_ax = None   # axes reference held during drag
 
         self._setup_ui()
         self._refresh()
@@ -956,6 +1445,259 @@ class TriangleDisplayDialog(QDialog):
         if self._is_multi():
             return self.node.input_data.get('sample_names', [])
         return []
+
+    def _single_sample_triangle_zoom_supported(self) -> bool:
+        """Return whether ternary zoom is currently supported for single-sample view.
+
+        The generic shared rectangle zoom is scientifically invalid for a single
+        ternary simplex because it crops Cartesian projection space without
+        redrawing ternary ticks/grid for a true sub-simplex viewport.
+        The ternary-aware viewport zoom is implemented via custom handlers.
+        """
+        return True
+
+    def _triangle_viewport_summary(self) -> str:
+        """Return a short human-readable summary of the active single-sample viewport."""
+        vp = _validate_triangle_viewport(self._triangle_viewport)
+        if _is_full_triangle_viewport(vp):
+            return "Full viewport"
+        return (
+            f"Viewport: A >= {vp['a_min'] * 100:.0f}%, "
+            f"B >= {vp['b_min'] * 100:.0f}%, "
+            f"C >= {vp['c_min'] * 100:.0f}%"
+        )
+
+    def _enable_ternary_zoom(self):
+        """Activate ternary zoom: connect our mouse handlers.
+        Canvas stays in Cursor so shared Cartesian zoom never fires.
+        """
+        if self._ternary_zoom_active:
+            return
+        self._ternary_zoom_active = True
+        cid_p = self.canvas.mpl_connect(
+            'button_press_event',   self._ternary_zoom_on_press)
+        cid_m = self.canvas.mpl_connect(
+            'motion_notify_event',  self._ternary_zoom_on_motion)
+        cid_r = self.canvas.mpl_connect(
+            'button_release_event', self._ternary_zoom_on_release)
+        self._ternary_zoom_cids = [cid_p, cid_m, cid_r]
+
+    def _disable_ternary_zoom(self):
+        """Deactivate ternary zoom: disconnect handlers, clear rubber-band."""
+        self._ternary_zoom_active = False
+        self._ternary_zoom_press  = None
+        for cid in self._ternary_zoom_cids:
+            self.canvas.mpl_disconnect(cid)
+        self._ternary_zoom_cids = []
+        self._ternary_zoom_clear_rubberband(redraw=False)
+
+    def _ternary_zoom_clear_rubberband(self, redraw: bool = True):
+        """Remove rubber-band artist and clear all blit state.
+
+        Args:
+            redraw: whether to call draw_idle after removal.
+        """
+        if self._ternary_zoom_rubberband is not None:
+            try:
+                self._ternary_zoom_rubberband.remove()
+            except Exception:
+                pass
+            self._ternary_zoom_rubberband = None
+        self._ternary_zoom_bg = None
+        self._ternary_zoom_ax = None
+        if redraw:
+            self.canvas.draw_idle()
+
+    @staticmethod
+    def _ternary_xdata_to_abc(xdata: float, ydata: float) -> tuple:
+        """Convert mpltern Cartesian projection coords to visual ternary (a, b, c).
+
+        mpltern 1.0.4 corner positions in data space (confirmed by probe):
+            T corner (t=1): ( 0.0,      1.0)  → physical top
+            L corner (l=1): (-1/sqrt3,  0.0)  → physical bottom-left
+            R corner (r=1): (+1/sqrt3,  0.0)  → physical bottom-right
+
+        The scatter call scatter(b, c, a) maps data elements to physical
+        corners in a way that disagrees with the axis labels. The entire
+        viewport engine (axis_specs, filtering, tick labels) operates in
+        visual/label space where:
+            a = Ag → visual bottom-left (L corner)
+            b = V  → visual bottom-right (R corner)
+            c = Cr → visual top (T corner)
+
+        Correct inverse for visual (a, b, c) from physical (xdata, ydata):
+            a = (1 - ydata - xdata * sqrt(3)) / 2    (Ag, bottom-left)
+            b = (1 - ydata + xdata * sqrt(3)) / 2    (V,  bottom-right)
+            c = ydata                                  (Cr, top)
+
+        Returns:
+            tuple: visual (a, b, c) floats; caller validates all >= 0.
+        """
+        a = (1.0 - ydata - xdata * math.sqrt(3.0)) / 2.0
+        b = (1.0 - ydata + xdata * math.sqrt(3.0)) / 2.0
+        c = ydata
+        return a, b, c
+
+    @staticmethod
+    def _ternary_abc_to_xdata(a: float, b: float, c: float) -> tuple:
+        """Convert visual ternary (a, b, c) to mpltern Cartesian (xdata, ydata).
+
+        Forward of _ternary_xdata_to_abc. See that method for derivation.
+        Visual convention: a=Ag=bottom-left, b=V=bottom-right, c=Cr=top.
+            xdata = (b - a) / sqrt(3)
+            ydata = c
+        """
+        return (b - a) / math.sqrt(3.0), c
+
+    def _ternary_main_edge_px(self, ax) -> float:
+        """Return the pixel length of the main triangle edge.
+
+        Uses the bottom edge from L corner (-1/sqrt3, 0) to
+        R corner (+1/sqrt3, 0) in mpltern's Cartesian data space.
+        Edge length = 2/sqrt3 in data units.
+
+        Args:
+            ax: the active mpltern axes after draw.
+
+        Returns:
+            float: edge length in pixels (at least 1.0).
+        """
+        s = 1.0 / math.sqrt(3.0)
+        pt_l = ax.transData.transform([-s, 0.0])
+        pt_r = ax.transData.transform([ s, 0.0])
+        return max(float(np.linalg.norm(pt_r - pt_l)), 1.0)
+
+    def _ternary_zoom_on_press(self, event):
+        """Record anchor vertex and capture blit background."""
+        if not self._ternary_zoom_active:
+            return
+        if event.button != 1:
+            if self._ternary_zoom_press is not None:
+                self._ternary_zoom_press = None
+                self._ternary_zoom_clear_rubberband()
+            return
+        if event.inaxes is None or event.xdata is None or event.ydata is None:
+            return
+        a, b, c = self._ternary_xdata_to_abc(event.xdata, event.ydata)
+        if a < -0.01 or b < -0.01 or c < -0.01:
+            return
+
+        self._ternary_zoom_press = event
+        self._ternary_zoom_ax    = event.inaxes
+
+        # Create animated Line2D at a degenerate zero-area triangle.
+        # animated=True means canvas.draw() skips it, so the captured
+        # background will not contain the rubber band.
+        xp, yp = self._ternary_abc_to_xdata(a, b, c)
+        line = Line2D([xp, xp, xp, xp], [yp, yp, yp, yp],
+                      color='black', linewidth=1.5, linestyle='--',
+                      zorder=100, animated=True)
+        self._ternary_zoom_ax.add_line(line)
+        self._ternary_zoom_rubberband = line
+
+        # Full draw (rubber band excluded by animated=True), then capture.
+        self.canvas.draw()
+        try:
+            self._ternary_zoom_bg = self.canvas.copy_from_bbox(
+                self._ternary_zoom_ax.bbox)
+        except Exception:
+            self._ternary_zoom_bg = None
+
+    def _ternary_zoom_on_motion(self, event):
+        """Update rubber-band triangle in-place using blitting."""
+        if not self._ternary_zoom_active or self._ternary_zoom_press is None:
+            return
+        if event.inaxes is None or event.xdata is None:
+            return
+        if self._ternary_zoom_rubberband is None:
+            return
+
+        press     = self._ternary_zoom_press
+        ax        = self._ternary_zoom_ax
+        drag_px   = math.sqrt((event.x - press.x)**2 + (event.y - press.y)**2)
+        edge_px   = self._ternary_main_edge_px(ax)
+        remaining = drag_px / edge_px
+
+        a1, b1, c1   = self._ternary_xdata_to_abc(press.xdata, press.ydata)
+        dominant_idx = int(np.argmax([a1, b1, c1]))
+        vals         = [a1, b1, c1]
+        dominant_val = vals[dominant_idx]
+
+        if remaining <= 0 or remaining >= dominant_val:
+            return
+
+        mins = list(vals)
+        mins[dominant_idx] = dominant_val - remaining
+        a_min, b_min, c_min = mins[0], mins[1], mins[2]
+
+        corners_abc = [
+            (1.0 - b_min - c_min, b_min,               c_min              ),
+            (a_min,               1.0 - a_min - c_min,  c_min              ),
+            (a_min,               b_min,                1.0 - a_min - b_min),
+        ]
+        xs, ys = [], []
+        for (ca, cb, cc) in corners_abc:
+            xd, yd = self._ternary_abc_to_xdata(ca, cb, cc)
+            xs.append(xd)
+            ys.append(yd)
+        xs.append(xs[0])
+        ys.append(ys[0])
+
+        self._ternary_zoom_rubberband.set_xdata(xs)
+        self._ternary_zoom_rubberband.set_ydata(ys)
+
+        if self._ternary_zoom_bg is not None:
+            try:
+                self.canvas.restore_region(self._ternary_zoom_bg)
+                ax.draw_artist(self._ternary_zoom_rubberband)
+                self.canvas.blit(ax.bbox)
+                return
+            except Exception:
+                self._ternary_zoom_bg = None
+        self.canvas.draw_idle()
+
+    def _ternary_zoom_on_release(self, event):
+        """On left release, compute final viewport and apply it."""
+        if not self._ternary_zoom_active or self._ternary_zoom_press is None:
+            return
+        if event.button != 1:
+            return
+
+        press = self._ternary_zoom_press
+        self._ternary_zoom_press = None
+        self._ternary_zoom_clear_rubberband(redraw=False)
+
+        if event.inaxes is None or event.xdata is None:
+            return
+
+        ax        = event.inaxes
+        drag_px   = math.sqrt((event.x - press.x)**2 + (event.y - press.y)**2)
+        edge_px   = self._ternary_main_edge_px(ax)
+        remaining = drag_px / edge_px
+
+        a1, b1, c1   = self._ternary_xdata_to_abc(press.xdata, press.ydata)
+        dominant_idx = int(np.argmax([a1, b1, c1]))
+        vals         = [a1, b1, c1]
+        dominant_val = vals[dominant_idx]
+
+        MIN_REMAINING = 0.05
+        if remaining < MIN_REMAINING or remaining >= dominant_val:
+            return
+
+        mins = list(vals)
+        mins[dominant_idx] = dominant_val - remaining
+
+        viewport = {
+            'a_min': max(0.0, mins[0]),
+            'b_min': max(0.0, mins[1]),
+            'c_min': max(0.0, mins[2]),
+        }
+
+        if not _validate_triangle_viewport(viewport):
+            return
+
+        self._triangle_viewport = viewport
+        self._refresh()
 
     def _available_elements(self) -> list:
         if not self.node.input_data:
@@ -973,8 +1715,9 @@ class TriangleDisplayDialog(QDialog):
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(4)
 
-        self.figure = Figure(figsize=(14, 10), dpi=140, tight_layout=True)
+        self.figure = Figure(figsize=(14, 10), dpi=100, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.enable_view_limit_tracking(True)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._show_context_menu)
         main_layout.addWidget(self.canvas, stretch=1)
@@ -1030,7 +1773,8 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
         self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
         self._add_toggle(toggle_menu, "Show 2s Ellipse", 'show_confidence_ellipse')
-        self._add_toggle(toggle_menu, "Average: All 3 Required", 'average_only_with_all_elements')
+        # Element filter mode is a 3-way dropdown — not a simple boolean toggle.
+        # It is exposed in Configure Plot Quantities instead.
 
         lm = menu.addMenu("Isotope Label")
         for mode in LABEL_MODES:
@@ -1039,7 +1783,92 @@ class TriangleDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        in_subplots = (self._is_multi()
+                       and cfg.get('display_mode', '') == 'Individual Subplots')
+        if not in_subplots:
+            mm = menu.addMenu("Mouse mode")
+            if not self._is_multi() and self._ternary_zoom_active:
+                current_mouse_mode = "Zoom"
+            else:
+                current_mouse_mode = self.canvas.mouse_mode()
+            zoom_supported = self._is_multi() or self._single_sample_triangle_zoom_supported()
+            for mode in ("Cursor", "Zoom"):
+                action = mm.addAction(mode)
+                action.setCheckable(True)
+                action.setChecked(current_mouse_mode == mode)
+                if mode == "Zoom" and not zoom_supported:
+                    action.setChecked(False)
+                    action.setEnabled(False)
+                    action.setText("Zoom (unavailable for single-sample ternary)")
+                    reason = (
+                        "Single-sample ternary zoom is disabled until a true "
+                        "ternary-aware viewport is implemented."
+                    )
+                    action.setStatusTip(reason)
+                    action.setToolTip(reason)
+                else:
+                    action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
+        # "Examine" — only in Individual Subplots mode when clicking a specific subplot
+        if (self._is_multi()
+                and cfg.get('display_mode', '') == 'Individual Subplots'):
+            sn = self._subplot_under_cursor(pos)
+            if sn is not None:
+                dname = get_display_name(sn, cfg)
+                menu.addSeparator()
+                act = menu.addAction(f"Examine  '{dname}'")
+                act.triggered.connect(lambda _=False, s=sn: self._examine_sample(s))
+
         menu.exec(QCursor.pos())
+
+    def _subplot_under_cursor(self, widget_pos):
+        """Return the sample key of the subplot under widget_pos, or None."""
+        cw = self.canvas.width()
+        ch = self.canvas.height()
+        if cw <= 0 or ch <= 0:
+            return None
+        nx = widget_pos.x() / cw
+        ny = 1.0 - widget_pos.y() / ch      # flip: Qt origin top-left, mpl bottom-left
+        for ax in self.figure.get_axes():
+            sn = getattr(ax, '_exam_sample_key', None)
+            if sn is None:
+                continue
+            bb = ax.get_position()
+            if bb.x0 <= nx <= bb.x1 and bb.y0 <= ny <= bb.y1:
+                return sn
+        return None
+
+    def _examine_sample(self, sample_key):
+        """Open a full single-sample ternary window for one subplot."""
+        all_particles = self.node.input_data.get('particle_data', [])
+        sample_particles = [p for p in all_particles
+                            if p.get('source_sample') == sample_key]
+        if not sample_particles:
+            return
+
+        single_input = {
+            'type': 'sample_data',
+            'particle_data': sample_particles,
+        }
+
+        node = TrianglePlotNode(parent_window=self.parent_window)
+        node.config = dict(self.node.config)   # inherit element choices and style
+        node.process_data(single_input)
+
+        dname = get_display_name(sample_key, self.node.config)
+        dlg = TriangleDisplayDialog(node, parent_window=self)
+        dlg.setWindowTitle(f"Ternary — {dname}")
+        dlg.setMinimumSize(1000, 750)
+        dlg.show()
+
+        # Hold a reference so the dialog isn't garbage-collected
+        if not hasattr(self, '_examine_dialogs'):
+            self._examine_dialogs = []
+        self._examine_dialogs.append(dlg)
+        dlg.finished.connect(
+            lambda _: self._examine_dialogs.remove(dlg)
+            if dlg in self._examine_dialogs else None)
+
     def _add_toggle(self, menu, label, key):
         a = menu.addAction(label)
         a.setCheckable(True)
@@ -1053,6 +1882,20 @@ class TriangleDisplayDialog(QDialog):
     def _set(self, key, value):
         self.node.config[key] = value
         self._refresh()
+
+    def _set_mouse_mode(self, mode: str):
+        """Update Triangle mouse interaction mode.
+
+        For single-sample Zoom, keeps the canvas in Cursor mode and
+        activates our own ternary zoom handlers instead of the shared
+        Cartesian zoom path, which is scientifically invalid for mpltern.
+        """
+        if mode == "Zoom" and not self._is_multi():
+            self.canvas.set_mouse_mode("TernaryZoom")
+            self._enable_ternary_zoom()
+            return
+        self._disable_ternary_zoom()
+        self.canvas.set_mouse_mode(mode)
 
     def _add_annotation(self):
         """Open annotation creator; preserves existing annotation data model/behavior."""
@@ -1086,11 +1929,17 @@ class TriangleDisplayDialog(QDialog):
 
         This exposes visual controls only and preserves scientific/data selection semantics.
         """
+        _snap = dict(self.node.config)
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
@@ -1099,16 +1948,28 @@ class TriangleDisplayDialog(QDialog):
 
         This exposes element/data/filter choices only and preserves format/export behavior.
         """
+        _snap = dict(self.node.config)
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _reset_layout(self):
         """Reset subplot layout/view positions; same behavior as prior reset action."""
+        self._last_layout_key = None
+        self._pending_shared_cbar = None
+        self._triangle_viewport = _full_triangle_viewport()
         self.canvas.reset_layout()
+        if self._is_multi():
+            self.canvas.restore_view_limits()
+        self._refresh()
 
     def _export_figure(self):
         """Open the existing figure export workflow for the ternary figure."""
@@ -1147,25 +2008,71 @@ class TriangleDisplayDialog(QDialog):
                 mode = cfg.get('display_mode', DISPLAY_MODES[0])
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
-                elif mode == 'Side by Side Subplots':
-                    self._draw_side_by_side(plot_data, cfg)
                 elif mode == 'Combined Plot':
                     self._draw_combined(plot_data, cfg)
                 else:
                     self._draw_overlaid(plot_data, cfg)
                 for ax in self.figure.get_axes():
-                    self._draw_annotations(ax, cfg)
+                    self._draw_annotations(ax, cfg, _full_triangle_viewport())
             else:
                 ax = self.figure.add_subplot(111, projection='ternary')
-                self._draw_sample(ax, plot_data, cfg, "Ternary Plot")
+                title = "Ternary Plot"
+                if not _is_full_triangle_viewport(self._triangle_viewport):
+                    title = f"{title} ({self._triangle_viewport_summary()})"
+                self._draw_sample(
+                    ax, plot_data, cfg, title,
+                    viewport=self._triangle_viewport)
                 apply_font_to_ternary(ax, cfg)
-                self._draw_annotations(ax, cfg)
+                self._draw_annotations(ax, cfg, self._triangle_viewport)
 
             self._update_stats(plot_data)
 
-            self.figure.tight_layout()
+            in_overlaid = (self._is_multi() and
+                           cfg.get('display_mode', '') == 'Overlaid Samples')
+            if in_overlaid and cfg.get('show_average_text', False):
+                self._open_or_update_stats_table()
+            elif self._overlaid_stats_dlg is not None:
+                self._overlaid_stats_dlg.hide()
+
+            if self._is_multi():
+                pending = self._pending_shared_cbar
+                layout_key = (
+                    len(self.figure.get_axes()),
+                    cfg.get('display_mode', ''),
+                    pending is not None,
+                )
+                if layout_key != self._last_layout_key:
+                    _dmode = cfg.get('display_mode', '')
+                    _n_ax = len(self.figure.get_axes())
+                    if _dmode == 'Overlaid Samples' and _n_ax > 1:
+                        # Left legend + right density colorbar
+                        rect = [0.18, 0, 0.87, 1]
+                    elif _dmode == 'Overlaid Samples':
+                        # Left legend, no colorbar on right
+                        rect = [0.18, 0, 1, 1]
+                    elif pending is not None:
+                        rect = [0, 0, 0.87, 1]
+                    else:
+                        rect = [0, 0, 1, 1]
+                    self.figure.tight_layout(
+                        pad=0.3, h_pad=0.1, w_pad=0.1, rect=rect)
+                    # Clamp inter-subplot gaps — tight_layout is over-generous
+                    # with ternary axis label room
+                    if cfg.get('display_mode', '') == 'Individual Subplots':
+                        self.figure.subplots_adjust(hspace=0.15, wspace=0.08)
+                    self._last_layout_key = layout_key
+                if pending is not None:
+                    self._pending_shared_cbar = None
+                    sm, cb_label = pending
+                    cbar_ax = self.figure.add_axes([0.89, 0.10, 0.025, 0.80])
+                    cbar = self.figure.colorbar(sm, cax=cbar_ax)
+                    apply_font_to_colorbar_standalone(cbar, cfg, cb_label)
+            else:
+                self.figure.tight_layout()
+                self._last_layout_key = None
             self.canvas.draw()
             self.canvas.snapshot_positions()
+            self.canvas.snapshot_view_limits()
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
@@ -1175,7 +2082,7 @@ class TriangleDisplayDialog(QDialog):
 
     # ── Annotation rendering ─────────────────
 
-    def _draw_annotations(self, ax, cfg):
+    def _draw_annotations(self, ax, cfg, viewport=None):
         """Render all custom annotations onto a ternary axes.
 
         Text annotations are placed in axes-fraction space (draggable).
@@ -1185,6 +2092,7 @@ class TriangleDisplayDialog(QDialog):
         anns = cfg.get('annotations', [])
         if not anns:
             return
+        viewport = _validate_triangle_viewport(viewport)
 
         fc_cfg = get_font_config(cfg)
 
@@ -1214,8 +2122,13 @@ class TriangleDisplayDialog(QDialog):
                 s = t + l + r
                 if s > 0:
                     t, l, r = t/s, l/s, r/s
+                a_val, b_val, c_val = l, r, t
+                if not _point_in_triangle_viewport(a_val, b_val, c_val, viewport):
+                    continue
+                a_local, b_local, c_local = _remap_point_to_triangle_viewport(
+                    a_val, b_val, c_val, viewport)
                 try:
-                    ax.scatter([t], [l], [r],
+                    ax.scatter([c_local], [a_local], [b_local],
                                marker=ann.get('marker', 'o'),
                                s=ann.get('marker_size', 80),
                                c=[ann.get('marker_color', '#3B82F6')],
@@ -1248,7 +2161,12 @@ class TriangleDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _draw_annotations")
 
     def _save_ann_positions(self, event=None):
-        """Called on mouse button release — persist dragged text positions back to config."""
+        """Called on mouse button release — persist dragged text positions back to config.
+        Args:
+            event (Any): Qt event object.
+        """
+        if self.canvas.mouse_mode() == "Zoom" or self._ternary_zoom_active:
+            return
         try:
             anns = self.node.config.get('annotations', [])
             changed = False
@@ -1277,42 +2195,207 @@ class TriangleDisplayDialog(QDialog):
     def _update_stats(self, plot_data):
         """Update the bottom statistics label."""
         cfg = self.node.config
+        mode = cfg.get('element_filter_mode', 'partial')
+        if 'element_filter_mode' not in cfg:
+            mode = 'partial' if cfg.get('average_only_with_all_elements', True) else 'any_one'
+
+        def _n_avg(points):
+            """Count points that pass the element filter for avg/stats."""
+            if mode == 'any_one':
+                return sum(1 for p in points
+                           if p['a'] > 0 or p['b'] > 0 or p['c'] > 0)
+            # partial and exact both require all three non-zero at render time
+            return sum(1 for p in points
+                       if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
 
         if self._is_multi():
             total = sum(len(sd) for sd in plot_data.values())
             n_samples = len(plot_data)
             parts = [f"{n_samples} samples", f"{total:,} particles plotted"]
-
-            if cfg.get('average_only_with_all_elements', True):
-                n_all = 0
-                for sd in plot_data.values():
-                    n_all += sum(1 for p in sd if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
-                if n_all < total:
-                    parts.append(f"{n_all:,} with all 3 elements")
-
+            n_avg = sum(_n_avg(sd) for sd in plot_data.values())
+            if n_avg < total:
+                parts.append(f"{n_avg:,} used for averages")
             self.stats_label.setText("  ·  ".join(parts))
         else:
             total = len(plot_data)
             parts = [f"{total:,} particles plotted"]
-
-            if cfg.get('average_only_with_all_elements', True):
-                n_all = sum(1 for p in plot_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
-                if n_all < total:
-                    parts.append(f"{n_all:,} with all 3 elements")
-
+            n_avg = _n_avg(plot_data)
+            if n_avg < total:
+                parts.append(f"{n_avg:,} used for averages")
+            if not _is_full_triangle_viewport(self._triangle_viewport):
+                parts.append(self._triangle_viewport_summary())
             self.stats_label.setText("  ·  ".join(parts))
 
+    def _open_or_update_stats_table(self):
+        """Show or refresh the per-sample statistics table for overlaid mode."""
+        stats = self._overlaid_stats_data
+        if not stats:
+            return
 
-    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None):
+        cfg = self.node.config
+        ea = cfg.get('element_a', 'A') or 'A'
+        eb = cfg.get('element_b', 'B') or 'B'
+        ec = cfg.get('element_c', 'C') or 'C'
+
+        row_labels = [
+            'Particles (all 3 elements)',
+            f'{ea} mean ± std (%)',
+            f'{eb} mean ± std (%)',
+            f'{ec} mean ± std (%)',
+        ]
+        col_labels = [s['dname'] for s in stats]
+        n_rows = len(row_labels)
+        n_cols = len(col_labels)
+
+        if self._overlaid_stats_dlg is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle('Overlaid Samples — Statistics')
+            dlg.setWindowFlags(
+                dlg.windowFlags() | Qt.Window)
+            dlg.setMinimumSize(max(320, n_cols * 140), 300)
+            lay = QVBoxLayout(dlg)
+            tbl = QTableWidget(n_rows, n_cols)
+            tbl.setHorizontalHeaderLabels(col_labels)
+            tbl.setVerticalHeaderLabels(row_labels)
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            tbl.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+            tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            tbl.setAlternatingRowColors(True)
+            lay.addWidget(tbl)
+            bb = QDialogButtonBox(QDialogButtonBox.Close)
+            def _on_close():
+                dlg.hide()
+                self.node.config['show_average_text'] = False
+                self._refresh()
+            bb.rejected.connect(_on_close)
+            lay.addWidget(bb)
+            dlg._tbl = tbl
+            self._overlaid_stats_dlg = dlg
+
+        dlg = self._overlaid_stats_dlg
+        tbl = dlg._tbl
+
+        if tbl.columnCount() != n_cols or tbl.rowCount() != n_rows:
+            tbl.setColumnCount(n_cols)
+            tbl.setRowCount(n_rows)
+        tbl.setHorizontalHeaderLabels(col_labels)
+        tbl.setVerticalHeaderLabels(row_labels)
+
+        for ci, s in enumerate(stats):
+            pm = '±'
+            cell_vals = [
+                f"{s['n']:,}",
+                f"{s['ma']*100:.2f} {pm} {s['sa']*100:.2f}",
+                f"{s['mb']*100:.2f} {pm} {s['sb']*100:.2f}",
+                f"{s['mc']*100:.2f} {pm} {s['sc']*100:.2f}",
+            ]
+            for ri, v in enumerate(cell_vals):
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(ri, ci, item)
+
+        if not dlg.isVisible():
+            dlg.show()
+
+    @staticmethod
+    def _element_filter_mask(a_raw, b_raw, c_raw, cfg):
+        """Return a boolean mask for the element filter mode.
+
+        Modes:
+            'any_one'  – particle has at least one of the three elements > 0
+            'partial'  – particle has ALL three elements > 0 (legacy "with all 3")
+            'exact'    – particle has ALL three elements > 0 AND no other elements
+                         (exact logic is enforced at extraction time; here same as partial)
+
+        The 'exact' case is handled during data extraction in _extract_particles
+        so that only exact-match particles enter the point list at all.  At render
+        time the mask is therefore identical to 'partial'.
         """
-        Draw a ternary scatter or hexbin for one sample.
+        mode = cfg.get('element_filter_mode', 'partial')
+        # Legacy migration: honour old boolean key if new key absent
+        if 'element_filter_mode' not in cfg:
+            legacy = cfg.get('average_only_with_all_elements', True)
+            mode = 'partial' if legacy else 'any_one'
+        if mode == 'any_one':
+            return (a_raw > 0) | (b_raw > 0) | (c_raw > 0)
+        # 'partial' and 'exact' both require all three non-zero at render time
+        return (a_raw > 0) & (b_raw > 0) & (c_raw > 0)
+
+    def _auto_colorbar_label(self, cfg, is_tribin=False):
+        """Return an automatic colorbar label based on plot mode and color encoding config.
+
+        Args:
+            cfg: Node config dict.
+            is_tribin: True when generating a label for a tribin plot (uses "Mean" prefix
+                       when a color element is selected; "Count per bin" otherwise).
+
+        Returns:
+            str: Colorbar label suitable for ``apply_font_to_colorbar_standalone``.
+        """
+        # ── Tribin: new two-mode system ──────────────────────────────────────
+        if is_tribin:
+            tribin_color_mode = cfg.get('tribin_color_mode', 'density')
+            if tribin_color_mode == 'isotope_measurement':
+                tribin_color_isotope = cfg.get('tribin_color_isotope', '')
+                tribin_color_dt = cfg.get('tribin_color_data_type', 'counts')
+                dt_label_map = {
+                    'counts':              'Counts',
+                    'element_mass_fg':     'Mass (fg)',
+                    'element_moles_fmol': 'Moles (fmol)',
+                    'particle_mass_fg':   'Particle Mass (fg)',
+                    'particle_moles_fmol': 'Particle Moles (fmol)',
+                }
+                dt_label = dt_label_map.get(tribin_color_dt, 'Counts')
+                if tribin_color_isotope:
+                    label_mode = cfg.get('label_mode', 'Symbol')
+                    elem_label = format_element_label(
+                        tribin_color_isotope, label_mode, Renderer.MATHTEXT, cfg)
+                    return f"{elem_label} · {dt_label} (mean per bin)"
+                # isotope_measurement selected but no isotope chosen — fall back
+            return "Bin density (in particles)"
+
+        # ── Scatter: new two-mode color encoding system ──────────────────────
+        color_source = cfg.get('color_source', 'particle_quantity')
+        if color_source == 'particle_quantity':
+            qty_key = cfg.get('color_particle_quantity', 'total_counts')
+            label_map = {
+                'total_counts':              'Total Counts',
+                'total_element_mass_fg':     'Total Isotope Mass (fg)',
+                'total_element_moles_fmol': 'Total Isotope Moles (fmol)',
+                'total_particle_mass_fg':   'Total Particle Mass (fg)',
+                'total_particle_moles_fmol': 'Total Particle Moles (fmol)',
+            }
+            return label_map.get(qty_key, 'Total Counts')
+        else:  # 'isotope_measurement'
+            label_mode = cfg.get('label_mode', 'Symbol')
+            color_isotope = cfg.get('color_isotope', '')
+            color_isotope_dt = cfg.get('color_isotope_data_type', 'counts')
+            dt_label_map = {
+                'counts':              'Counts',
+                'element_mass_fg':     'Mass (fg)',
+                'element_moles_fmol': 'Moles (fmol)',
+                'particle_mass_fg':   'Particle Mass (fg)',
+                'particle_moles_fmol': 'Particle Moles (fmol)',
+            }
+            dt_label = dt_label_map.get(color_isotope_dt, 'Counts')
+            if color_isotope:
+                elem_label = format_element_label(
+                    color_isotope, label_mode, Renderer.MATHTEXT, cfg)
+                return f"{elem_label} · {dt_label}"
+            return dt_label
+
+    def _draw_sample(self, ax, sample_data, cfg, title, sample_color=None, viewport=None,
+                     return_mappable=False):
+        """
+        Draw a ternary scatter or tribin for one sample.
 
         Args:
             ax:           mpltern axes
-            sample_data:  list of dicts with keys 'a', 'b', 'c' (and optionally 'color_val')
+            sample_data:  list of dicts with keys 'a', 'b', 'c', 'color_val'
             cfg:          config dict
             title:        plot title string
             sample_color: if provided, all markers use this color (for overlaid mode)
+            viewport:     optional lower-bound ternary viewport for single-sample redraw
         """
         if not sample_data:
             return
@@ -1320,67 +2403,254 @@ class TriangleDisplayDialog(QDialog):
         ea = cfg.get('element_a', 'A')
         eb = cfg.get('element_b', 'B')
         ec = cfg.get('element_c', 'C')
-        setup_ternary_axes(ax, [ea, eb, ec], cfg)
+        viewport = _validate_triangle_viewport(viewport)
+        setup_ternary_axes(ax, [ea, eb, ec], cfg, viewport)
 
-        a_vals = np.array([p['a'] for p in sample_data])
-        b_vals = np.array([p['b'] for p in sample_data])
-        c_vals = np.array([p['c'] for p in sample_data])
+        # Vectorised extraction & viewport filtering
+        a_raw = np.array([p['a'] for p in sample_data])
+        b_raw = np.array([p['b'] for p in sample_data])
+        c_raw = np.array([p['c'] for p in sample_data])
+
+        tol = 1e-9
+        # Base mask: viewport bounds only — used for scatter/tribin rendering so
+        # that particles with zero in one element still appear on ternary edges.
+        mask = (
+            (a_raw >= viewport['a_min'] - tol) &
+            (b_raw >= viewport['b_min'] - tol) &
+            (c_raw >= viewport['c_min'] - tol)
+        )
+
+        if not mask.any():
+            ax.text(
+                0.5, 0.5,
+                "No points in current viewport",
+                transform=ax.transAxes,
+                ha='center', va='center',
+                color='#6B7280', fontsize=11,
+            )
+            return
+
+        # Remap filtered points to local viewport coordinates
+        remaining = _viewport_remaining(viewport)
+        a_orig = a_raw[mask]
+        b_orig = b_raw[mask]
+        c_orig = c_raw[mask]
+        a_vals = (a_orig - viewport['a_min']) / remaining
+        b_vals = (b_orig - viewport['b_min']) / remaining
+        c_vals = (c_orig - viewport['c_min']) / remaining
+
+        # Separate average mask: applies element filter mode.
+        # Only used for average/stats — scatter/tribin render uses the plain
+        # viewport mask so edge-particles still appear.
+        avg_only = mask & self._element_filter_mask(a_raw, b_raw, c_raw, cfg)
+        a_orig_avg = a_raw[avg_only]
+        b_orig_avg = b_raw[avg_only]
+        c_orig_avg = c_raw[avg_only]
+        a_vals_avg = (a_orig_avg - viewport['a_min']) / remaining
+        b_vals_avg = (b_orig_avg - viewport['b_min']) / remaining
+        c_vals_avg = (c_orig_avg - viewport['c_min']) / remaining
 
         plot_type = cfg.get('plot_type', 'Scatter Plot')
         cmap = cfg.get('colormap', 'YlGn')
-        show_cbar = cfg.get('show_colorbar', True)
+        show_cbar = cfg.get('show_colorbar', True) and not return_mappable
+        _mappable = None
+
+        _ZERO_THRESH = 1e-12  # values below this are treated as scientifically zero
+
+        def _warn_zero_color(ax_):
+            """Overlay a note when the active color quantity is zero for all plotted points."""
+            ax_.text(
+                0.5, 0.04,
+                "Given the chosen configuration, all plotted particles\n"
+                "have a value of 0 in the color scale quantity.",
+                transform=ax_.transAxes,
+                ha='center', va='bottom',
+                color='#6B7280', fontsize=9, style='italic',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.75,
+                          edgecolor='#D1D5DB'),
+            )
 
         if plot_type == 'Scatter Plot':
             size = cfg.get('marker_size', 20)
             alpha = cfg.get('marker_alpha', 0.7)
-            color_elem = cfg.get('color_element', '')
 
-            if color_elem and not sample_color:
-                color_vals = np.array([p.get('color_val', 0) for p in sample_data])
+            if sample_color:
+                # Overlaid multi-sample mode: use per-sample solid color, no colorbar
                 scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
-                    s=size, alpha=alpha, c=color_vals, cmap=cmap,
-                    edgecolors='white', linewidth=0.5)
-                if show_cbar:
-                    cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-                    apply_font_to_colorbar_standalone(
-                        cbar, cfg, cfg.get('colorbar_label', color_elem))
-            elif sample_color:
-                scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
+                    c_vals, a_vals, b_vals,
                     s=size, alpha=alpha, color=sample_color,
                     edgecolors='white', linewidth=0.5, label=title)
             else:
-                scatter = ax.scatter(
-                    b_vals, c_vals, a_vals,
-                    s=size, alpha=alpha, c=range(len(b_vals)), cmap=cmap,
-                    edgecolors='white', linewidth=0.5)
+                # New two-mode color encoding: color_val always populated by _extract_particles
+                color_vals = np.array([p.get('color_val', 0) for p in sample_data])[mask]
+                _cv_max = float(np.max(color_vals)) if color_vals.size else 0.0
+                _use_log = (cfg.get('color_log_scale', False)
+                            and _cv_max >= _ZERO_THRESH
+                            and np.any(color_vals > 0))
+                if _use_log:
+                    _pos = color_vals[color_vals > 0]
+                    _log_vmin = float(_pos.min())
+                    _log_vmax = float(_cv_max)
+                    scatter = ax.scatter(
+                        c_vals, a_vals, b_vals,
+                        s=size, alpha=alpha, c=color_vals, cmap=cmap,
+                        norm=mcolors.LogNorm(
+                            vmin=_log_vmin,
+                            vmax=max(_log_vmax, _log_vmin)),
+                        edgecolors='white', linewidth=0.5)
+                else:
+                    # Linear: force non-negative colorbar
+                    scatter = ax.scatter(
+                        c_vals, a_vals, b_vals,
+                        s=size, alpha=alpha, c=color_vals, cmap=cmap,
+                        edgecolors='white', linewidth=0.5)
+                    # Clean fallback avoids 1e-12 on axis when all-zero
+                    scatter.set_clim(
+                        vmin=0,
+                        vmax=_cv_max if _cv_max >= _ZERO_THRESH else 1.0)
+                _mappable = scatter
                 if show_cbar:
                     cbar = self.figure.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
                     apply_font_to_colorbar_standalone(
-                        cbar, cfg, cfg.get('colorbar_label', 'Point Index'))
+                        cbar, cfg, self._auto_colorbar_label(cfg, is_tribin=False))
+                if np.all(np.abs(color_vals) < _ZERO_THRESH):
+                    _warn_zero_color(ax)
         else:
-            gridsize = cfg.get('hexbin_gridsize', 30)
-            alpha = cfg.get('hexbin_alpha', 0.8)
-            hexbin = ax.hexbin(
-                b_vals, c_vals, a_vals,
-                gridsize=gridsize, cmap=cmap, alpha=alpha, mincnt=1)
-            if show_cbar:
-                cbar = self.figure.colorbar(hexbin, ax=ax, shrink=0.8, aspect=20)
-                apply_font_to_colorbar_standalone(
-                    cbar, cfg, cfg.get('colorbar_label', 'Density'))
+            # ── Tribin: equilateral-triangle binning ────────────────────────
+            _side_pct = cfg.get('tribin_side_pct', 5.0)
+            _side = _side_pct / 100.0  # fraction of local viewport (0-1)
+            _tb_alpha = cfg.get('tribin_alpha', 0.8)
+            _tribin_cmode = cfg.get('tribin_color_mode', 'density')
+            _tribin_isotope = cfg.get('tribin_color_isotope', '')
+            _is_isotope = (_tribin_cmode == 'isotope_measurement'
+                           and bool(_tribin_isotope))
 
-        self._draw_average(ax, sample_data, cfg, title)
+            # ── Performance / validity warnings ──────────────────────────────────────
+            _SIDE_PERF = 1.0 / 50  # 2% -> ~2500 triangles
+            if 0 < _side < _SIDE_PERF:
+                from PySide6.QtWidgets import QMessageBox
+                _warn_box = QMessageBox()
+                _warn_box.setIcon(QMessageBox.Warning)
+                _warn_box.setWindowTitle('Tribin Performance Warning')
+                _warn_box.setText(
+                    f'Triangle side is {_side_pct:.1f}% of the viewport '
+                    f'(< 2%). This may generate over '
+                    f'{int((1.0/_side)**2):,} triangles and slow rendering.\n\n'
+                    'Consider increasing Triangle Side (%) in Configure Plot.')
+                _warn_box.exec()
 
-    def _draw_average(self, ax, sample_data, cfg, sample_name):
+            if _side <= 0 or _side >= 1.0:
+                ax.text(0.5, 0.04,
+                    'Triangle Side (%) is out of range -- adjust the setting.',
+                    transform=ax.transAxes, ha='center', va='bottom',
+                    color='#6B7280', fontsize=9, style='italic',
+                    bbox=dict(boxstyle='round,pad=0.3',
+                              facecolor='white', alpha=0.75,
+                              edgecolor='#D1D5DB'))
+                _mappable = None
+            else:
+                # ── Gather per-particle color values (isotope mode only) ────
+                _cv_arr = (np.array([p.get('color_val', 0)
+                                     for p in sample_data])[mask]
+                           if _is_isotope else None)
+
+                # ── Bin points into (i, j, tri_type) cells ─────────────
+                #  tri_type 0 = up (triangle up), 1 = down (triangle down)
+                _bins = {}
+                for _k in range(len(a_vals)):
+                    _a, _b = float(a_vals[_k]), float(b_vals[_k])
+                    if _a < 0 or _b < 0:
+                        continue
+                    _i = int(_a / _side)
+                    _j = int(_b / _side)
+                    _fa = _a / _side - _i
+                    _fb = _b / _side - _j
+                    _ttype = 0 if (_fa + _fb) < 1.0 else 1
+                    _key = (_i, _j, _ttype)
+                    if _key not in _bins:
+                        _bins[_key] = []
+                    _bins[_key].append(
+                        float(_cv_arr[_k]) if _is_isotope else 1)
+
+                if not _bins:
+                    _warn_zero_color(ax)
+                    _mappable = None
+                else:
+                    # ── Compute scalar value per bin ──────────────────────
+                    _bin_vals = {
+                        k: (float(np.mean(v)) if _is_isotope
+                            else float(len(v)))
+                        for k, v in _bins.items()
+                    }
+                    _all_tb = np.array(
+                        list(_bin_vals.values()), dtype=float)
+                    _tb_max = float(_all_tb.max())
+                    _tb_vmax = (_tb_max if _tb_max >= _ZERO_THRESH
+                                else 1.0)
+                    _tb_norm = mcolors.Normalize(
+                        vmin=0.0, vmax=_tb_vmax)
+                    _sm = cm.ScalarMappable(
+                        cmap=cfg.get('colormap', 'YlGn'),
+                        norm=_tb_norm)
+                    _sm.set_array(_all_tb)
+                    _cmap_fn = _sm.cmap  # callable colormap object
+
+                    # ── Draw each non-empty bin as a filled triangle ─────────
+                    for (_i, _j, _ttype), _val in _bin_vals.items():
+                        if _ttype == 0:  # up triangle
+                            _ca = [_i * _side, (_i + 1) * _side,
+                                   _i * _side]
+                            _cb = [_j * _side, _j * _side,
+                                   (_j + 1) * _side]
+                        else:            # down triangle
+                            _ca = [(_i + 1) * _side, _i * _side,
+                                   (_i + 1) * _side]
+                            _cb = [_j * _side, (_j + 1) * _side,
+                                   (_j + 1) * _side]
+                        _cc = [1.0 - _a - _b
+                               for _a, _b in zip(_ca, _cb)]
+                        # Skip bins whose corners fall outside the simplex
+                        if any(_c < -1e-9 for _c in _cc):
+                            continue
+                        _rgba = _cmap_fn(_tb_norm(_val))
+                        # mpltern fill: (top=c, left=a, right=b)
+                        ax.fill(_cc, _ca, _cb,
+                                color=(*_rgba[:3], _tb_alpha),
+                                linewidth=0)
+
+                    _mappable = _sm
+
+                    if _is_isotope and np.all(_all_tb < _ZERO_THRESH):
+                        _warn_zero_color(ax)
+
+                    if show_cbar:
+                        cbar = self.figure.colorbar(
+                            _sm, ax=ax, shrink=0.8, aspect=20)
+                        apply_font_to_colorbar_standalone(
+                            cbar, cfg,
+                            self._auto_colorbar_label(
+                                cfg, is_tribin=True))
+
+        # Use avg_only arrays for average/stats so the element filter only
+        # affects the mean marker and stats box, not the scatter/tribin render.
+        self._draw_average_arrays(ax, a_orig_avg, b_orig_avg, c_orig_avg,
+                                   a_vals_avg, b_vals_avg, c_vals_avg,
+                                   cfg, title, viewport)
+
+        if return_mappable:
+            return _mappable
+
+    def _draw_average(self, ax, sample_data, cfg, sample_name, viewport=None):
         """Draw average point with optional stats text and confidence ellipse."""
         if not cfg.get('show_average_point', True) or not sample_data:
             return
+        viewport = _validate_triangle_viewport(viewport)
 
-        if cfg.get('average_only_with_all_elements', True):
-            data = [p for p in sample_data if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
-        else:
-            data = sample_data
+        a_arr = np.array([p['a'] for p in sample_data])
+        b_arr = np.array([p['b'] for p in sample_data])
+        c_arr = np.array([p['c'] for p in sample_data])
+        avg_mask = self._element_filter_mask(a_arr, b_arr, c_arr, cfg)
+        data = [p for p, m in zip(sample_data, avg_mask) if m]
 
         if not data:
             return
@@ -1391,6 +2661,10 @@ class TriangleDisplayDialog(QDialog):
 
         ma, mb, mc = a_vals.mean(), b_vals.mean(), c_vals.mean()
         sa, sb, sc = a_vals.std(), b_vals.std(), c_vals.std()
+        if not _point_in_triangle_viewport(ma, mb, mc, viewport):
+            return
+        ma_local, mb_local, mc_local = _remap_point_to_triangle_viewport(
+            ma, mb, mc, viewport)
 
         avg_color = cfg.get('average_point_color', '#FF0000')
         avg_size = cfg.get('average_point_size', 100)
@@ -1400,7 +2674,7 @@ class TriangleDisplayDialog(QDialog):
         suffix = f" ({n_filt}/{n_total})" if n_filt < n_total else ""
 
         ax.scatter(
-            [mb], [mc], [ma],
+            [mc_local], [ma_local], [mb_local],
             s=avg_size, marker='*', color=avg_color,
             edgecolors='black', linewidth=1.5, zorder=10,
             label=f'Average{" (" + sample_name + ")" if sample_name else ""}{suffix}')
@@ -1415,8 +2689,8 @@ class TriangleDisplayDialog(QDialog):
                     f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
                     f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
 
-            tx = mb + 0.15
-            ty = mc + 0.01
+            tx = min(mb_local + 0.15, 0.98)
+            ty = min(mc_local + 0.01, 0.98)
             tz = max(1.0 - tx - ty, 0.01)
             ax.text(tx, ty, tz, text,
                     fontproperties=fp, color='black',
@@ -1424,8 +2698,90 @@ class TriangleDisplayDialog(QDialog):
                               alpha=0.85, edgecolor='gray'),
                     ha='left', va='bottom', zorder=11)
 
-        if cfg.get('show_confidence_ellipse', False) and len(data) >= 3:
+        if (_is_full_triangle_viewport(viewport)
+                and cfg.get('show_confidence_ellipse', False) and len(data) >= 3):
             params = confidence_ellipse_params(b_vals, c_vals, n_std=2.0)
+            if params:
+                ellipse = Ellipse(
+                    (params['cx'], params['cy']),
+                    params['width'], params['height'],
+                    angle=params['angle_deg'],
+                    fill=False, edgecolor=avg_color,
+                    linewidth=2, linestyle='--', zorder=9)
+                ax.add_patch(ellipse)
+
+    def _draw_average_arrays(self, ax, a_orig, b_orig, c_orig,
+                              a_local, b_local, c_local,
+                              cfg, sample_name, viewport=None, n_unfiltered=None,
+                              avg_color_override=None, stats_box_idx=0):
+        """Draw average point, stats text and confidence ellipse from pre-filtered numpy arrays.
+
+        Avoids list comprehension passes over already-extracted data.
+
+        Args:
+            ax:                     mpltern axes
+            a_orig, b_orig, c_orig: original ternary fractions (pre-viewport remap),
+                                    already filtered by viewport and all_elements
+            a_local, b_local, c_local: viewport-remapped local coordinates (same length)
+            cfg:                    config dict
+            sample_name:            label string for this sample
+            viewport:               ternary viewport dict (or None for full)
+            n_unfiltered:           if provided and > len(a_orig), appends
+                                    "(n_filt/n_total)" to the average point label
+        """
+        if not cfg.get('show_average_point', True) or len(a_orig) == 0:
+            return
+        viewport = _validate_triangle_viewport(viewport)
+
+        ma, mb, mc = a_orig.mean(), b_orig.mean(), c_orig.mean()
+        sa, sb, sc = a_orig.std(), b_orig.std(), c_orig.std()
+
+        if not _point_in_triangle_viewport(ma, mb, mc, viewport):
+            return
+        ma_local, mb_local, mc_local = _remap_point_to_triangle_viewport(
+            ma, mb, mc, viewport)
+
+        avg_color = (avg_color_override if avg_color_override is not None
+                     else cfg.get('average_point_color', '#FF0000'))
+        avg_size  = cfg.get('average_point_size', 100)
+
+        n_filt = len(a_orig)
+        suffix = (f" ({n_filt}/{n_unfiltered})"
+                  if n_unfiltered is not None and n_filt < n_unfiltered else "")
+        label = f'Average{(" (" + sample_name + ")") if sample_name else ""}{suffix}'
+
+        ax.scatter(
+            [mc_local], [ma_local], [mb_local],
+            s=avg_size, marker='*', color=avg_color,
+            edgecolors='black', linewidth=1.5, zorder=10,
+            label=label)
+
+        if cfg.get('show_average_text', True):
+            fp = make_font_properties(cfg)
+            label_mode = cfg.get('label_mode', 'Symbol')
+            ea = format_element_label(cfg.get('element_a', 'A') or 'A', label_mode, Renderer.MATHTEXT, cfg)
+            eb = format_element_label(cfg.get('element_b', 'B') or 'B', label_mode, Renderer.MATHTEXT, cfg)
+            ec = format_element_label(cfg.get('element_c', 'C') or 'C', label_mode, Renderer.MATHTEXT, cfg)
+
+            title_line = f'-- {sample_name} --\n' if sample_name else ''
+            text = (title_line +
+                    f"{ea}: {ma*100:.1f}±{sa*100:.1f}%\n"
+                    f"{eb}: {mb*100:.1f}±{sb*100:.1f}%\n"
+                    f"{ec}: {mc*100:.1f}±{sc*100:.1f}%")
+
+            y_pos = max(0.04, 0.97 - stats_box_idx * 0.34)
+            ax.text(
+                0.05, y_pos, text,
+                transform=ax.transAxes,
+                fontproperties=fp, color='black',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          alpha=0.85, edgecolor='gray'),
+                ha='left', va='top', zorder=11,
+            )
+
+        if (_is_full_triangle_viewport(viewport)
+                and cfg.get('show_confidence_ellipse', False) and len(a_orig) >= 3):
+            params = confidence_ellipse_params(b_orig, c_orig, n_std=2.0)
             if params:
                 ellipse = Ellipse(
                     (params['cx'], params['cy']),
@@ -1438,34 +2794,77 @@ class TriangleDisplayDialog(QDialog):
     # ── Multi-sample layouts ────────────────
 
     def _draw_subplots(self, plot_data, cfg):
+        """Draw one ternary subplot per sample in a 2-column grid
+        with a single shared density/color legend spanning the full
+        data range across all plots.
+
+        Args:
+            plot_data (Any): dict mapping sample name to point list.
+            cfg (Any): node config dict.
+        """
         samples = list(plot_data.keys())
         n = len(samples)
-        cols = min(2, n)
+        cols = 3 if n >= 5 else min(2, n)
         rows = math.ceil(n / cols)
 
+        if (cfg.get('plot_type', 'Scatter Plot') != 'Scatter Plot'
+                and cfg.get('show_colorbar', True)):
+            self.figure.subplots_adjust(
+                left=0.07, right=0.85,
+                top=0.91, bottom=0.09,
+                hspace=0.15, wspace=0.10)
+
+        mappables = []
         for idx, sn in enumerate(samples):
-            ax = self.figure.add_subplot(rows, cols, idx + 1, projection='ternary')
+            ax = self.figure.add_subplot(
+                rows, cols, idx + 1, projection='ternary')
+            ax._exam_sample_key = sn          # for "Examine this ternary" right-click
             sd = plot_data[sn]
             if sd:
                 dname = get_display_name(sn, cfg)
-                self._draw_sample(ax, sd, cfg, dname)
+                m = self._draw_sample(
+                    ax, sd, cfg, dname, return_mappable=True)
+                if m is not None:
+                    mappables.append(m)
                 fc = get_font_config(cfg)
-                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
+                ax.set_title(
+                    dname, fontsize=fc['size'] - 2,
+                    color=fc['color'])
                 apply_font_to_ternary(ax, cfg)
 
-    def _draw_side_by_side(self, plot_data, cfg):
-        samples = list(plot_data.keys())
-        n = len(samples)
+        self._pending_shared_cbar = None
+        if mappables and cfg.get('show_colorbar', True):
+            global_min = float('inf')
+            global_max = float('-inf')
+            for m in mappables:
+                try:
+                    arr = m.get_array()
+                    if arr is not None and len(arr) > 0:
+                        vmin = float(np.ma.min(arr))
+                        vmax = float(np.ma.max(arr))
+                        if np.isfinite(vmin):
+                            global_min = min(global_min, vmin)
+                        if np.isfinite(vmax):
+                            global_max = max(global_max, vmax)
+                except Exception:
+                    pass
 
-        for idx, sn in enumerate(samples):
-            ax = self.figure.add_subplot(1, n, idx + 1, projection='ternary')
-            sd = plot_data[sn]
-            if sd:
-                dname = get_display_name(sn, cfg)
-                self._draw_sample(ax, sd, cfg, dname)
-                fc = get_font_config(cfg)
-                ax.set_title(dname, fontsize=fc['size'] - 2, color=fc['color'])
-                apply_font_to_ternary(ax, cfg)
+            if (np.isfinite(global_min) and np.isfinite(global_max)
+                    and global_max > global_min):
+                norm = mcolors.Normalize(
+                    vmin=global_min, vmax=global_max)
+                for m in mappables:
+                    try:
+                        m.set_norm(norm)
+                    except Exception:
+                        pass
+                sm = cm.ScalarMappable(
+                    cmap=cfg.get('colormap', 'YlGn'), norm=norm)
+                sm.set_array([])
+                self._pending_shared_cbar = (
+                    sm, self._auto_colorbar_label(
+                        cfg,
+                        is_tribin=(cfg.get('plot_type', 'Scatter Plot') != 'Scatter Plot')))
 
     def _draw_combined(self, plot_data, cfg):
         ax = self.figure.add_subplot(111, projection='ternary')
@@ -1478,6 +2877,12 @@ class TriangleDisplayDialog(QDialog):
             apply_font_to_ternary(ax, cfg)
 
     def _draw_overlaid(self, plot_data, cfg):
+        """Render all samples on a single ternary axes.
+
+        Each sample keeps its unique solid colour; alpha (darkness) encodes
+        the chosen colour-scale quantity (same config as single-sample scatter)
+        normalised globally across all samples so the greyscale bar is shared.
+        """
         ax = self.figure.add_subplot(111, projection='ternary')
 
         ea = cfg.get('element_a', 'A')
@@ -1485,29 +2890,118 @@ class TriangleDisplayDialog(QDialog):
         ec = cfg.get('element_c', 'C')
         setup_ternary_axes(ax, [ea, eb, ec], cfg)
 
-        alpha = cfg.get('marker_alpha', 0.7)
         size = cfg.get('marker_size', 20)
+        alpha_base = cfg.get('marker_alpha', 0.7)
+        sample_mean_colors = cfg.get('sample_mean_colors', {})
+        legend_handles = []
+        self._overlaid_stats_data = []
+        _ZERO_THRESH = 1e-12
 
+        # ── Pass 1: gather all color_vals to find global range ───────────────
+        all_cv = []
+        for sd in plot_data.values():
+            if sd:
+                for p in sd:
+                    all_cv.append(p.get('color_val', 0.0))
+
+        global_max = float(max(all_cv)) if all_cv else 0.0
+        all_zero = global_max < _ZERO_THRESH
+
+        # ── Pass 2: draw each sample ─────────────────────────────────────────
         for idx, (sn, sd) in enumerate(plot_data.items()):
             if not sd:
                 continue
-            color = get_sample_color(sn, idx, cfg)
+            sample_color = get_sample_color(sn, idx, cfg)
+            mean_color = sample_mean_colors.get(sn, sample_color)
             dname = get_display_name(sn, cfg)
 
             a_vals = np.array([p['a'] for p in sd])
             b_vals = np.array([p['b'] for p in sd])
             c_vals = np.array([p['c'] for p in sd])
+            color_vals = np.array([p.get('color_val', 0.0) for p in sd])
 
-            ax.scatter(
-                b_vals, c_vals, a_vals,
-                s=size, alpha=alpha, color=color, label=dname,
-                edgecolors='white', linewidth=0.5)
+            if all_zero:
+                # Flat mid-alpha when every point is zero
+                alphas = np.full(len(a_vals), 0.45)
+            else:
+                norm_vals = np.clip(color_vals / global_max, 0.0, 1.0)
+                # [0.10, 0.90]: faintest points still visible, darkest fully opaque
+                alphas = 0.10 + 0.80 * norm_vals
 
-            self._draw_average(ax, sd, cfg, dname)
+            rgb = mcolors.to_rgb(sample_color)
+            rgba = np.zeros((len(a_vals), 4))
+            rgba[:, :3] = rgb
+            rgba[:, 3] = alphas
+            ax.scatter(c_vals, a_vals, b_vals, s=size, c=rgba,
+                       edgecolors='none', linewidth=0.0)
 
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            # Legend handle
+            if cfg.get('show_average_point', True):
+                legend_handles.append(
+                    Line2D([0], [0], marker='*', color=sample_color,
+                           markerfacecolor=mean_color, markeredgecolor='black',
+                           markersize=11, linewidth=3, label=dname))
+            else:
+                legend_handles.append(Patch(facecolor=sample_color, label=dname))
+
+            # Average marker (element-filter-aware)
+            avg_mask = self._element_filter_mask(a_vals, b_vals, c_vals, cfg)
+            if avg_mask.any():
+                a_avg = a_vals[avg_mask]
+                b_avg = b_vals[avg_mask]
+                c_avg = c_vals[avg_mask]
+                self._overlaid_stats_data.append({
+                    'sn': sn, 'dname': dname,
+                    'n': int(avg_mask.sum()),
+                    'ma': float(a_avg.mean()), 'sa': float(a_avg.std()),
+                    'mb': float(b_avg.mean()), 'sb': float(b_avg.std()),
+                    'mc': float(c_avg.mean()), 'sc': float(c_avg.std()),
+                })
+                cfg_marker_only = dict(cfg, show_average_text=False)
+                self._draw_average_arrays(
+                    ax, a_avg, b_avg, c_avg, a_avg, b_avg, c_avg,
+                    cfg_marker_only, dname, None, n_unfiltered=len(a_vals),
+                    avg_color_override=mean_color,
+                    stats_box_idx=0,
+                )
+
+        # ── Shared greyscale colorbar ─────────────────────────────────────────
+        if cfg.get('show_colorbar', True):
+            _vmax = global_max if not all_zero else 1.0
+            norm = mcolors.Normalize(vmin=0, vmax=_vmax)
+            sm = cm.ScalarMappable(cmap='Greys', norm=norm)
+            sm.set_array([])
+            cbar = self.figure.colorbar(sm, ax=ax, shrink=0.65, aspect=22, pad=0.10)
+            # Label: auto-generated quantity name + overlaid note
+            qty_label = self._auto_colorbar_label(cfg, is_tribin=False)
+            apply_font_to_colorbar_standalone(
+                cbar, cfg, qty_label + '\n(alpha ~ value, all samples)')
+
+        # ── All-zero warning ──────────────────────────────────────────────────
+        if all_zero:
+            ax.text(
+                0.5, 0.04,
+                'Given the chosen configuration, all plotted particles\n'
+                'have a value of 0 in the color scale quantity.',
+                transform=ax.transAxes,
+                ha='center', va='bottom',
+                color='#6B7280', fontsize=9, style='italic',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
+                          alpha=0.75, edgecolor='#D1D5DB'),
+            )
+
+        fp = make_font_properties(cfg)
+        if legend_handles:
+            ax.legend(
+                handles=legend_handles,
+                loc='upper right',
+                bbox_to_anchor=(-0.02, 1.0),
+                ncol=1,
+                framealpha=0.9,
+                prop=fp,
+            )
+
         apply_font_to_ternary(ax, cfg)
-
 
 class TrianglePlotNode(QObject):
     """
@@ -1522,28 +3016,42 @@ class TrianglePlotNode(QObject):
         'element_a': '',
         'element_b': '',
         'element_c': '',
-        'color_element': '',
+        'color_element': '',          # tribin: retained for backward compat only (not used)
+        # Tribin color encoding (new two-mode system)
+        'tribin_color_mode': 'density',        # 'density' | 'isotope_measurement'
+        'tribin_color_isotope': '',            # isotope label for isotope_measurement mode
+        'tribin_color_data_type': 'counts',   # data type key for isotope_measurement mode
+        # Scatter color encoding (new two-mode system)
+        'color_source': 'particle_quantity',   # 'particle_quantity' | 'isotope_measurement'
+        'color_particle_quantity': 'total_counts',  # MODE A key
+        'color_isotope': '',                   # MODE B: isotope label
+        'color_isotope_data_type': 'counts',   # MODE B: data type key
+        'color_log_scale': False,              # scatter: log₁₀ colorbar
         'data_type_display': 'Counts (%)',
         'plot_type': 'Scatter Plot',
         'marker_size': 20,
         'marker_alpha': 0.7,
-        'hexbin_gridsize': 30,
-        'hexbin_alpha': 0.8,
+        'tribin_side_pct': 5.0,
+        'tribin_alpha': 0.8,
         'show_grid': True,
+        'colored_axes': False,
+        'axis_a_color': '#E74C3C',
+        'axis_b_color': '#27AE60',
+        'axis_c_color': '#2980B9',
         'colormap': 'YlGn',
         'show_colorbar': True,
-        'colorbar_label': 'Density',
         'min_total': 0.0,
         'max_particles': 100_000_000,
         'show_average_point': True,
         'average_point_color': '#FF0000',
         'average_point_size': 100,
         'show_average_text': True,
-        'average_only_with_all_elements': True,
+        'element_filter_mode': 'partial',
         'show_confidence_ellipse': False,
         'display_mode': 'Individual Subplots',
         'sample_colors': {},
         'sample_name_mappings': {},
+        'sample_mean_colors': {},
         'font_family': 'Times New Roman',
         'font_size': 18,
         'font_bold': False,
@@ -1618,7 +3126,7 @@ class TrianglePlotNode(QObject):
 
         Returns:
             list (single sample) or dict (multi-sample) of point dicts,
-            each with keys 'a', 'b', 'c', 'total', and optionally 'color_val'.
+            each with keys 'a', 'b', 'c', 'total', and 'color_val'.
             Returns None if data is insufficient.
         """
         if not self.input_data:
@@ -1635,30 +3143,49 @@ class TrianglePlotNode(QObject):
 
         dk = TERNARY_DATA_KEY_MAPPING.get(
             self.config.get('data_type_display', 'Counts (%)'), 'elements')
-        color_elem = self.config.get('color_element', '')
         itype = self.input_data.get('type')
 
         if itype == 'sample_data':
-            return self._extract_single(dk, ea, eb, ec, color_elem)
+            return self._extract_single(dk, ea, eb, ec)
         elif itype == 'multiple_sample_data':
-            return self._extract_multi(dk, ea, eb, ec, color_elem)
+            return self._extract_multi(dk, ea, eb, ec)
         return None
 
-    def _extract_particles(self, particles, dk, ea, eb, ec, color_elem):
+    def _extract_particles(self, particles, dk, ea, eb, ec):
         """Extract ternary points from a list of particle dicts.
 
         For each particle, reads the three element values from the chosen data key,
-        normalises them to fractions summing to 1.0, and optionally reads a fourth
-        element value for color mapping.
+        normalises them to fractions summing to 1.0, and populates 'color_val'
+        based on the current color encoding config.
 
         Args:
             particles:  list of particle dicts
-            dk:         data key ('elements', 'element_mass_fg', etc.)
-            ea, eb, ec: element label strings
-            color_elem: optional fourth element label for coloring (or '')
+            dk:         composition data key ('elements', 'element_mass_fg', etc.)
+            ea, eb, ec: element label strings for the three ternary axes
         """
         min_total = self.config.get('min_total', 0.0)
         max_pts = self.config.get('max_particles', 100_000_000)
+        filter_mode = self.config.get('element_filter_mode', 'partial')
+        # Legacy migration
+        if 'element_filter_mode' not in self.config:
+            filter_mode = 'partial' if self.config.get(
+                'average_only_with_all_elements', True) else 'any_one'
+
+        plot_type = self.config.get('plot_type', 'Scatter Plot')
+
+        # Scatter color config (read once per call for efficiency)
+        color_source = self.config.get('color_source', 'particle_quantity')
+        color_particle_qty = self.config.get('color_particle_quantity', 'total_counts')
+        color_isotope = self.config.get('color_isotope', '')
+        color_isotope_dk = _COLOR_ISOTOPE_DK_MAP.get(
+            self.config.get('color_isotope_data_type', 'counts'), 'elements')
+
+        # Tribin color config (new two-mode system)
+        tribin_color_mode = self.config.get('tribin_color_mode', 'density')
+        tribin_color_isotope = self.config.get('tribin_color_isotope', '')
+        tribin_color_dk = _COLOR_ISOTOPE_DK_MAP.get(
+            self.config.get('tribin_color_data_type', 'counts'), 'elements')
+
         result = []
 
         for p in particles:
@@ -1669,21 +3196,30 @@ class TrianglePlotNode(QObject):
             vb = d.get(eb, 0)
             vc = d.get(ec, 0)
 
-            if dk == 'elements':
-                if va <= 0 or vb <= 0 or vc <= 0:
+            try:
+                if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
+                        or va < 0 or vb < 0 or vc < 0):
                     continue
-            else:
-                try:
-                    if (np.isnan(va) or np.isnan(vb) or np.isnan(vc)
-                            or va < 0 or vb < 0 or vc < 0):
-                        continue
-                except TypeError:
-                    _itk_log.exception("Handled exception in _extract_particles")
-                    continue
+            except TypeError:
+                continue
 
             total = va + vb + vc
             if total < min_total or total <= 0:
                 continue
+
+            # 'exact' mode: particle must have ONLY the three selected elements
+            # and no others with a non-zero value in this data key.
+            if filter_mode == 'exact':
+                other_vals = [v for k, v in d.items()
+                              if k not in (ea, eb, ec) and v > 0]
+                if other_vals or va <= 0 or vb <= 0 or vc <= 0:
+                    continue
+            # 'partial' mode: all three selected elements must be present.
+            # 'any_one' mode: no extraction-time filter beyond total > 0 —
+            # the render-time mask handles which points feed the avg marker.
+            elif filter_mode == 'partial':
+                if va <= 0 or vb <= 0 or vc <= 0:
+                    continue
 
             point = {
                 'a': va / total,
@@ -1692,20 +3228,39 @@ class TrianglePlotNode(QObject):
                 'total': total,
             }
 
-            if color_elem:
-                point['color_val'] = d.get(color_elem, 0)
+            # ── Color value ─────────────────────────────────────────────────
+            if plot_type == 'Scatter Plot':
+                # New two-mode system: always populate color_val for scatter
+                if color_source == 'particle_quantity':
+                    if color_particle_qty == 'total_counts':
+                        cv = float(sum(p.get('elements', {}).values()))
+                    else:
+                        cv = float(p.get('totals', {}).get(color_particle_qty) or 0)
+                else:  # 'isotope_measurement'
+                    if color_isotope:
+                        cv = float(
+                            p.get(color_isotope_dk, {}).get(color_isotope) or 0)
+                    else:
+                        cv = 0.0
+                point['color_val'] = cv
+            else:
+                # Tribin: new two-mode system
+                if (tribin_color_mode == 'isotope_measurement'
+                        and tribin_color_isotope):
+                    point['color_val'] = float(
+                        p.get(tribin_color_dk, {}).get(tribin_color_isotope) or 0)
 
             result.append(point)
 
         return result or None
 
-    def _extract_single(self, dk, ea, eb, ec, color_elem):
+    def _extract_single(self, dk, ea, eb, ec):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
-        return self._extract_particles(particles, dk, ea, eb, ec, color_elem)
+        return self._extract_particles(particles, dk, ea, eb, ec)
 
-    def _extract_multi(self, dk, ea, eb, ec, color_elem):
+    def _extract_multi(self, dk, ea, eb, ec):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -1719,9 +3274,8 @@ class TrianglePlotNode(QObject):
 
         result = {}
         for sn, plist in grouped.items():
-            pts = self._extract_particles(plist, dk, ea, eb, ec, color_elem)
+            pts = self._extract_particles(plist, dk, ea, eb, ec)
             if pts:
                 result[sn] = pts
         return result or None
-
 

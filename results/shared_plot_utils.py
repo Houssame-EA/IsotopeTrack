@@ -4,6 +4,7 @@ import math
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
+from matplotlib.patches import Rectangle
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPen, QTextDocument
 from PySide6.QtWidgets import (
     QColorDialog, QFileDialog, QMessageBox, QDialog, QVBoxLayout,
@@ -72,12 +73,77 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_ax_pos0   = None
 
         self._auto_positions: dict = {}
+        self._mouse_mode = "Cursor"
+        self._zoom_ax = None
+        self._zoom_start_data = None
+        self._zoom_last_data = None
+        self._zoom_rect = None
+        self._zoom_background = None
+        self._view_limits_enabled = False
+        self._view_limits_snapshot = []
 
         self.mpl_connect('button_press_event',   self._drag_press)
         self.mpl_connect('motion_notify_event',  self._drag_motion)
         self.mpl_connect('button_release_event', self._drag_release)
 
     # ── Public API ─────────────────────────────────────────────────────
+
+    def set_mouse_mode(self, mode: str):
+        """Set the transient mouse interaction mode for this canvas.
+
+        Args:
+            mode (str): ``"Cursor"`` enables subplot drag. ``"Zoom"``
+                enables rectangle zoom on left-drag. ``"TernaryZoom"``
+                suppresses all shared drag handling so an external owner
+                (e.g. TriangleDisplayDialog) can manage mouse events
+                directly.
+        """
+        if mode == "Zoom":
+            self._mouse_mode = "Zoom"
+        elif mode == "TernaryZoom":
+            self._mouse_mode = "TernaryZoom"
+            self._clear_zoom_state(draw=False)
+        else:
+            self._mouse_mode = "Cursor"
+            self._clear_zoom_state(draw=False)
+
+    def mouse_mode(self) -> str:
+        """Return the current transient mouse interaction mode."""
+        return self._mouse_mode
+
+    def enable_view_limit_tracking(self, enabled: bool):
+        """Opt this canvas into baseline axis-limit snapshot/restore support.
+
+        Args:
+            enabled (bool): ``True`` enables explicit limit snapshot/restore
+                helpers. ``False`` clears stored state and leaves shared reset
+                behavior unchanged for callers that do not opt in.
+        """
+        self._view_limits_enabled = bool(enabled)
+        if not self._view_limits_enabled:
+            self._view_limits_snapshot = []
+
+    def snapshot_view_limits(self):
+        """Capture current axis limits for later restoration.
+
+        This helper is inert unless the owning dialog explicitly enabled view
+        limit tracking.
+        """
+        if not self._view_limits_enabled:
+            return
+        self._view_limits_snapshot = [
+            {'xlim': ax.get_xlim(), 'ylim': ax.get_ylim()}
+            for ax in self.figure.get_axes()
+        ]
+
+    def restore_view_limits(self):
+        """Restore the last snapshotted axis limits when tracking is enabled."""
+        if not self._view_limits_enabled or not self._view_limits_snapshot:
+            return
+        for ax, limits in zip(self.figure.get_axes(), self._view_limits_snapshot):
+            ax.set_xlim(limits['xlim'])
+            ax.set_ylim(limits['ylim'])
+        self.draw_idle()
 
     def reset_layout(self):
         """Reset all axes to auto tight_layout positions."""
@@ -98,15 +164,41 @@ class MplDraggableCanvas(_FigureCanvasBase):
             id(ax): ax.get_position() for ax in self.figure.get_axes()
         }
 
+    def showEvent(self, event):
+        """Guard matplotlib's installEventFilter call against QWidgetItem parents.
+
+        matplotlib's FigureCanvasQT.showEvent calls self.window().installEventFilter(self).
+        When a dialog containing this canvas is shown while its parent chain passes
+        through a QGraphicsScene, Qt may return a QWidgetItem (a QLayoutItem, not a
+        QWidget), which has no installEventFilter method and raises AttributeError.
+
+        Catching AttributeError here is safe: the only side-effect of that call is
+        subscribing to window-level resize events, which is non-critical for dialogs
+        that manage their own sizing.
+        """
+        try:
+            super().showEvent(event)
+        except AttributeError:
+            pass
+
     # ── Drag internals ─────────────────────────────────────────────────
 
     def _drag_press(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        if self._mouse_mode == "Zoom":
+            self._zoom_press(event)
+            return
+        if self._mouse_mode == "TernaryZoom":
+            return
         if event.button != 1 or event.inaxes is None:
             return
         for ann in event.inaxes.get_children():
             try:
                 hit, _ = ann.contains(event)
-                if hit and hasattr(ann, 'draggable'):
+                if hit and getattr(ann, '_ann_idx', None) is not None:
                     return
             except Exception:
                 _itk_log.exception("Handled exception in _drag_press")
@@ -115,6 +207,15 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self._drag_ax_pos0  = event.inaxes.get_position()
 
     def _drag_motion(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        if self._mouse_mode == "Zoom":
+            self._zoom_motion(event)
+            return
+        if self._mouse_mode == "TernaryZoom":
+            return
         if self._drag_ax is None or event.x is None:
             return
         w_px, h_px = self.figure.get_size_inches() * self.figure.dpi
@@ -125,11 +226,145 @@ class MplDraggableCanvas(_FigureCanvasBase):
         self.draw_idle()
 
     def _drag_release(self, event):
+        """
+        Args:
+            event (Any): Qt event object.
+        """
+        if self._mouse_mode == "Zoom":
+            self._zoom_release(event)
+            return
+        if self._mouse_mode == "TernaryZoom":
+            return
         if event.button == 2:
             self.reset_layout()
         self._drag_ax       = None
         self._drag_start_px = None
         self._drag_ax_pos0  = None
+
+    def _zoom_press(self, event):
+        """Start a rectangle zoom drag when zoom mode is active."""
+        if event.button != 1 or event.inaxes is None:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        self._clear_zoom_state(draw=False)
+        self._zoom_ax = event.inaxes
+        self._zoom_start_data = (event.xdata, event.ydata)
+        self._zoom_rect = Rectangle(
+            (event.xdata, event.ydata), 0.0, 0.0,
+            fill=False, edgecolor="#2563EB", linewidth=1.2,
+            linestyle="--", zorder=1000, animated=True,
+        )
+        self._zoom_ax.add_patch(self._zoom_rect)
+        self.draw()
+        try:
+            self._zoom_background = self.copy_from_bbox(self._zoom_ax.bbox)
+        except Exception:
+            self._zoom_background = None
+
+    def _zoom_motion(self, event):
+        """Update the active rectangle zoom overlay while dragging.
+
+        When the mouse drifts outside the starting axes (common with dense
+        plots or tight subplot spacing), matplotlib sets event.xdata=None.
+        In that case we convert the raw pixel position to data coordinates
+        and clamp to the axes limits so the rect keeps updating rather than
+        freezing at the last valid position.
+        """
+        if self._zoom_ax is None or self._zoom_rect is None:
+            return
+        if event.xdata is not None and event.ydata is not None and event.inaxes is self._zoom_ax:
+            x1, y1 = event.xdata, event.ydata
+        else:
+            try:
+                inv = self._zoom_ax.transData.inverted()
+                x1, y1 = inv.transform((event.x, event.y))
+                xlim = self._zoom_ax.get_xlim()
+                ylim = self._zoom_ax.get_ylim()
+                x1 = max(min(xlim), min(x1, max(xlim)))
+                y1 = max(min(ylim), min(y1, max(ylim)))
+            except Exception:
+                return
+        self._zoom_last_data = (x1, y1)
+        x0, y0 = self._zoom_start_data
+        self._zoom_rect.set_x(min(x0, x1))
+        self._zoom_rect.set_y(min(y0, y1))
+        self._zoom_rect.set_width(abs(x1 - x0))
+        self._zoom_rect.set_height(abs(y1 - y0))
+        if self._zoom_background is not None:
+            try:
+                self.restore_region(self._zoom_background)
+                self._zoom_ax.draw_artist(self._zoom_rect)
+                self.blit(self._zoom_ax.bbox)
+                return
+            except Exception:
+                self._zoom_background = None
+        self.draw_idle()
+
+    def _zoom_release(self, event):
+        """Apply or cancel a rectangle zoom selection on mouse release.
+
+        If the mouse is released outside the starting axes (e.g. the user
+        drifted into subplot padding), fall back to the last valid data
+        position recorded during motion instead of cancelling the zoom.
+        """
+        if self._zoom_ax is None or self._zoom_start_data is None:
+            return
+        if event.button != 1:
+            self._clear_zoom_state()
+            return
+        if event.xdata is not None and event.ydata is not None and event.inaxes is self._zoom_ax:
+            x1, y1 = event.xdata, event.ydata
+        elif self._zoom_last_data is not None:
+            x1, y1 = self._zoom_last_data
+        else:
+            self._clear_zoom_state()
+            return
+
+        x0, y0 = self._zoom_start_data
+        cur_xlim = self._zoom_ax.get_xlim()
+        cur_ylim = self._zoom_ax.get_ylim()
+        x_span = abs(cur_xlim[1] - cur_xlim[0])
+        y_span = abs(cur_ylim[1] - cur_ylim[0])
+        if abs(x1 - x0) <= max(1e-12, x_span * 0.01) or abs(y1 - y0) <= max(1e-12, y_span * 0.01):
+            self._clear_zoom_state()
+            return
+
+        x_low, x_high = sorted((x0, x1))
+        y_low, y_high = sorted((y0, y1))
+
+        if self._zoom_ax.get_xscale() == 'log' and (x_low <= 0 or x_high <= 0):
+            self._clear_zoom_state()
+            return
+        if self._zoom_ax.get_yscale() == 'log' and (y_low <= 0 or y_high <= 0):
+            self._clear_zoom_state()
+            return
+
+        if cur_xlim[0] <= cur_xlim[1]:
+            self._zoom_ax.set_xlim(x_low, x_high)
+        else:
+            self._zoom_ax.set_xlim(x_high, x_low)
+        if cur_ylim[0] <= cur_ylim[1]:
+            self._zoom_ax.set_ylim(y_low, y_high)
+        else:
+            self._zoom_ax.set_ylim(y_high, y_low)
+        self._clear_zoom_state(draw=False)
+        self.draw_idle()
+
+    def _clear_zoom_state(self, draw: bool = True):
+        """Remove any temporary zoom overlay and clear in-progress state."""
+        if self._zoom_rect is not None:
+            try:
+                self._zoom_rect.remove()
+            except Exception:
+                pass
+        self._zoom_rect = None
+        self._zoom_ax = None
+        self._zoom_start_data = None
+        self._zoom_last_data = None
+        self._zoom_background = None
+        if draw:
+            self.draw_idle()
 
 
 
@@ -859,13 +1094,22 @@ def apply_font_to_ternary(ax, config: dict):
         fp = make_font_properties(config)
         fc = get_font_config(config)
 
+        # When colored_axes is active each mpltern axis keeps its own color.
+        # taxis → element_c color, laxis → element_a color, raxis → element_b color.
+        colored = config.get('colored_axes', False)
+        axis_tick_colors = {
+            'taxis': config.get('axis_c_color', fc['color']) if colored else fc['color'],
+            'laxis': config.get('axis_a_color', fc['color']) if colored else fc['color'],
+            'raxis': config.get('axis_b_color', fc['color']) if colored else fc['color'],
+        }
         for axis_name in ('taxis', 'laxis', 'raxis'):
             axis = getattr(ax, axis_name, None)
             if axis is None:
                 continue
+            tick_color = axis_tick_colors[axis_name]
             for lbl in axis.get_ticklabels():
                 lbl.set_fontproperties(fp)
-                lbl.set_color(fc['color'])
+                lbl.set_color(tick_color)
 
         legend = ax.get_legend()
         if legend is not None:
@@ -2305,7 +2549,8 @@ class FontSettingsGroup:
 
         self.color_btn = QPushButton()
         self.color_btn.setStyleSheet(
-            f"background-color: {self._color.name()}; min-height: 25px;")
+            f"QPushButton {{ background-color: {self._color.name()}; "
+            f"border: 1px solid #888; border-radius: 2px; min-height: 25px; }}")
         self.color_btn.clicked.connect(self._pick_color)
         if on_change:
             self.color_btn.clicked.connect(on_change)
@@ -2314,11 +2559,16 @@ class FontSettingsGroup:
         return group
 
     def _pick_color(self):
-        c = QColorDialog.getColor(self._color)
-        if c.isValid():
-            self._color = c
+        new_hex = pick_color_hex(
+            self._color.name() if self._color.isValid() else DEFAULT_FONT_COLOR,
+            owner=self.color_btn,
+            title="Select font colour",
+        )
+        if new_hex is not None:
+            self._color = QColor(new_hex)
             self.color_btn.setStyleSheet(
-                f"background-color: {c.name()}; min-height: 25px;")
+                f"QPushButton {{ background-color: {new_hex}; "
+                f"border: 1px solid #888; border-radius: 2px; min-height: 25px; }}")
 
     def collect(self) -> dict:
         return {
@@ -2405,7 +2655,8 @@ class ExportSettingsGroup:
         self._bg_btn = QPushButton()
         self._bg_btn.setFixedHeight(24)
         self._bg_btn.setStyleSheet(
-            f'background-color:{self._bg_color}; border:1px solid #666; border-radius:2px;')
+            f'QPushButton {{ background-color:{self._bg_color}; '
+            f'border:1px solid #666; border-radius:2px; }}')
         self._bg_btn.clicked.connect(self._pick_bg)
         layout.addRow("Background:", self._bg_btn)
 
@@ -2448,11 +2699,16 @@ class ExportSettingsGroup:
         return group
 
     def _pick_bg(self):
-        c = QColorDialog.getColor(QColor(self._bg_color))
-        if c.isValid():
-            self._bg_color = c.name()
+        new_hex = pick_color_hex(
+            self._bg_color if self._bg_color else '#FFFFFF',
+            owner=self._bg_btn,
+            title="Select background colour",
+        )
+        if new_hex is not None:
+            self._bg_color = new_hex
             self._bg_btn.setStyleSheet(
-                f'background-color:{self._bg_color}; border:1px solid #666; border-radius:2px;')
+                f'QPushButton {{ background-color:{self._bg_color}; '
+                f'border:1px solid #666; border-radius:2px; }}')
 
     def collect(self) -> dict:
         return {

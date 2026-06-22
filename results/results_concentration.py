@@ -137,6 +137,8 @@ def _fmt_val(v):
 # ── Settings Dialog ────────────────────────────────────────────────────
 
 class ConcentrationSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, parent=None, scope='all'):
         super().__init__(parent)
         if scope == 'format':
@@ -260,15 +262,15 @@ class ConcentrationSettingsDialog(QDialog):
                 nm = dict(self._cfg.get('sample_name_mappings', {}))
                 for i, sn in enumerate(names):
                     h = QHBoxLayout()
-                    if _is_multi(self._input_data):
-                        ed = QLineEdit(nm.get(sn, sn))
-                        ed.setFixedWidth(180)
-                        h.addWidget(ed)
-                        self._sample_edits[sn] = ed
-                    else:
-                        lbl = QLabel(get_display_name(sn, self._cfg))
-                        lbl.setFixedWidth(180)
-                        h.addWidget(lbl)
+                    ed = QLineEdit(nm.get(sn, sn))
+                    ed.setFixedWidth(180)
+                    h.addWidget(ed)
+                    self._sample_edits[sn] = ed
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sn: self._sample_edits[raw].setText(raw))
+                    h.addWidget(reset_btn)
 
                     point_color = sc.get(sn, DEFAULT_GROUP_COLORS[i % len(DEFAULT_GROUP_COLORS)])
                     mean_color = mc.get(sn, point_color)
@@ -316,9 +318,18 @@ class ConcentrationSettingsDialog(QDialog):
             self._sample_colors = {}
             self._mean_marker_colors = {}
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def _pick_point_color(self, sn, btn):
         """Pick one per-sample individual-point color and refresh its preview."""
@@ -363,7 +374,11 @@ class ConcentrationSettingsDialog(QDialog):
         if self._mean_marker_colors:
             d['mean_marker_colors'] = dict(self._mean_marker_colors)
         if self._sample_edits:
-            d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         return d
 
 
@@ -391,6 +406,7 @@ class ConcentrationDisplayDialog(QDialog):
 
         self.figure = Figure(figsize=(12, 8), dpi=120, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
+        self.canvas.enable_view_limit_tracking(True)
         self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
         self.canvas.customContextMenuRequested.connect(self._ctx_menu)
         lay.addWidget(self.canvas, stretch=1)
@@ -444,6 +460,14 @@ class ConcentrationDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        mm = menu.addMenu("Mouse mode")
+        current_mouse_mode = self.canvas.mouse_mode()
+        for mode in ("Cursor", "Zoom"):
+            action = mm.addAction(mode)
+            action.setCheckable(True)
+            action.setChecked(current_mouse_mode == mode)
+            action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
+
         menu.exec(QCursor.pos())
     def _toggle(self, key):
         self.node.config[key] = not self.node.config.get(key, False)
@@ -453,24 +477,42 @@ class ConcentrationDisplayDialog(QDialog):
         self.node.config[key] = value
         self._refresh()
 
+    def _set_mouse_mode(self, mode: str):
+        """Update the transient Concentration mouse interaction mode."""
+        self.canvas.set_mouse_mode(mode)
+
     def _reset_layout(self):
+        """Reset subplot layout and restore the baseline Concentration view limits."""
         self.canvas.reset_layout()
+        self.canvas.restore_view_limits()
 
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "concentration_comparison")
 
     def _open_plot_format_settings(self):
+        _snap = dict(self.node.config)
         dlg = ConcentrationSettingsDialog(
             self.node.config, self.node.input_data, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
+        _snap = dict(self.node.config)
         dlg = ConcentrationSettingsDialog(
             self.node.config, self.node.input_data, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_settings(self):
@@ -515,6 +557,7 @@ class ConcentrationDisplayDialog(QDialog):
             self.figure.tight_layout()
             self.canvas.draw()
             self.canvas.snapshot_positions()
+            self.canvas.snapshot_view_limits()
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
@@ -775,7 +818,7 @@ class ConcentrationComparisonNode(QObject):
                     'agg': agg_by_el,
                 }
             },
-            'title':    f"{agg_method} — {sname}",
+            'title':    f"{agg_method} — {get_display_name(sname, self.config)}",
             'subtitle': f"Open circle = {agg_method.lower()}, dots = individual · {unit}",
             'unit':     unit,
         }

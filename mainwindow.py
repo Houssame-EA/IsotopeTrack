@@ -1049,6 +1049,11 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(ionic_action)
         tools_menu.addAction(dilution_action)
 
+        tools_menu.addSeparator()
+        autosave_action = _ma('fa6s.clock', "Auto Save Settings",
+                              self.open_autosave_settings)
+        tools_menu.addAction(autosave_action)
+
         view_menu = menu_bar.addMenu("View")
         self._menu_icon_items.append((view_menu, 'fa6s.eye'))
 
@@ -6896,6 +6901,22 @@ class MainWindow(QMainWindow):
         """Open the per sample dilution factor editor dialog."""
         tools.dilution_utils.open_dilution_factor_dialog(self)
         self._mark_results_changed()
+
+    def open_autosave_settings(self):
+        """Open the Auto Save Settings dialog."""
+        from save_export.autosave import AutoSaveSettingsDialog
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QDialog
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        enabled = settings.value("autosave/enabled", True, type=bool)
+        try:
+            interval_ms = int(settings.value("autosave/interval_ms", 60_000))
+        except (TypeError, ValueError):
+            interval_ms = 60_000
+        dlg = AutoSaveSettingsDialog(enabled, interval_ms, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_enabled, new_interval_ms = dlg.result_values()
+            self._autosave.reconfigure(new_enabled, new_interval_ms)
 
     def maybe_prompt_dilution(self):
         """Show the one time dilution correction prompt when appropriate."""

@@ -152,6 +152,8 @@ def _normalize_mr_display_mode(mode):
 class MolarRatioSettingsDialog(QDialog):
     """Scope-aware settings dialog for Molar Ratio format or quantities."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
         Preserved behavior:
@@ -545,9 +547,18 @@ class MolarRatioSettingsDialog(QDialog):
                     v7.addLayout(btn_row)
                     lay.addWidget(g7)
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def _move_up(self):
         row = self._order_list.currentRow()
@@ -1121,6 +1132,7 @@ class MolarRatioDisplayDialog(QDialog):
     def _open_settings(self, scope='all', title_override=None):
         """Open scoped Molar Ratio settings and apply on accept."""
         elems = self.node.extract_available_elements()
+        _snap = dict(self.node.config)
         dlg = MolarRatioSettingsDialog(
             self.node.config,
             self.node.input_data,
@@ -1130,8 +1142,13 @@ class MolarRatioDisplayDialog(QDialog):
         )
         if title_override:
             dlg.setWindowTitle(title_override)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_plot_format_settings(self):

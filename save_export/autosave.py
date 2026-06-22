@@ -34,7 +34,9 @@ import pickle
 import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, QStandardPaths, QSettings
+from PySide6.QtCore import QObject, QTimer, QStandardPaths, QSettings, QThread
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QCheckBox,
+                                QSpinBox, QLabel, QPushButton, QFrame)
 import logging
 
 _itk_log = logging.getLogger("IsotopeTrack.save_export.autosave")
@@ -256,6 +258,10 @@ class AutosaveManager(QObject):
         thread.finished.connect(thread.deleteLater)
         self._thread = thread
         thread.start()
+        try:
+            thread.setPriority(QThread.Priority.LowPriority)
+        except Exception:
+            pass
 
     def _on_heavy_ok(self, sig):
         """Finalize a heavy write, then write the matching light file."""
@@ -319,12 +325,7 @@ class AutosaveManager(QObject):
 
     @staticmethod
     def apply_light_overlay(mw, heavy_path):
-        """Overlay the newer light snapshot onto a just-loaded heavy recovery file.
-
-        The heavy ``.itproj`` restores the raw arrays and a baseline of the rest;
-        this then applies the latest parameters, results, calibration and
-        particle data saved since that baseline.
-        """
+        """Overlay the newer light snapshot onto a just-loaded heavy recovery file."""
         light_path = Path(heavy_path).with_suffix('.light')
         if not light_path.exists():
             return
@@ -349,10 +350,7 @@ class AutosaveManager(QObject):
 
     @staticmethod
     def find_recovery_files():
-        """Heavy recovery files from crashed (not currently-running) sessions.
-
-        Returns a list of ``(Path, datetime)`` tuples, newest first.
-        """
+        """Heavy recovery files from crashed (not currently-running) sessions."""
         out = []
         for p in recovery_dir().glob(RECOVERY_GLOB):
             try:
@@ -379,3 +377,92 @@ class AutosaveManager(QObject):
                         target.unlink()
                 except OSError:
                     _itk_log.exception("Could not discard recovery file %s", target)
+
+    def reconfigure(self, enabled: bool, interval_ms: int):
+        """Apply new settings at runtime and persist to QSettings."""
+        interval_ms = max(30_000, interval_ms)
+        self._enabled = enabled
+        self._timer.setInterval(interval_ms)
+        if enabled:
+            self._timer.start()
+        else:
+            self._timer.stop()
+        settings = QSettings("IsotopeTrack", "IsotopeTrack")
+        settings.setValue("autosave/enabled", enabled)
+        settings.setValue("autosave/interval_ms", interval_ms)
+
+
+class AutoSaveSettingsDialog(QDialog):
+    """Modal dialog for configuring auto-save enable/disable and interval."""
+
+    def __init__(self, enabled: bool, interval_ms: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Auto Save Settings")
+        self.setMinimumWidth(340)
+        self.setModal(True)
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(14)
+        lay.setContentsMargins(18, 18, 18, 14)
+
+        self._enabled_cb = QCheckBox("Enable automatic saving")
+        self._enabled_cb.setChecked(enabled)
+        lay.addWidget(self._enabled_cb)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        lay.addWidget(sep)
+
+        self._interval_frame = QFrame()
+        interval_lay = QVBoxLayout(self._interval_frame)
+        interval_lay.setContentsMargins(0, 0, 0, 0)
+        interval_lay.setSpacing(8)
+
+        spinner_row = QHBoxLayout()
+        spinner_row.addWidget(QLabel("Save every:"))
+
+        self._hours_spin = QSpinBox()
+        self._hours_spin.setRange(0, 23)
+        self._hours_spin.setSuffix(" h")
+        self._hours_spin.setFixedWidth(72)
+        spinner_row.addWidget(self._hours_spin)
+
+        self._minutes_spin = QSpinBox()
+        self._minutes_spin.setRange(0, 59)
+        self._minutes_spin.setSuffix(" min")
+        self._minutes_spin.setFixedWidth(82)
+        spinner_row.addWidget(self._minutes_spin)
+        spinner_row.addStretch()
+        interval_lay.addLayout(spinner_row)
+
+        hint = QLabel("Minimum interval is 30 seconds.\nZero hours and zero minutes defaults to 30 s.")
+        hint.setStyleSheet("color: #6B7280; font-size: 11px;")
+        interval_lay.addWidget(hint)
+        lay.addWidget(self._interval_frame)
+
+        total_seconds = interval_ms // 1000
+        self._hours_spin.setValue(total_seconds // 3600)
+        self._minutes_spin.setValue((total_seconds % 3600) // 60)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        lay.addLayout(btn_row)
+
+        self._enabled_cb.toggled.connect(self._interval_frame.setEnabled)
+        self._interval_frame.setEnabled(enabled)
+
+    def result_values(self) -> tuple[bool, int]:
+        """Return (enabled, interval_ms) chosen by the user."""
+        enabled = self._enabled_cb.isChecked()
+        hours = self._hours_spin.value()
+        minutes = self._minutes_spin.value()
+        interval_ms = max(30_000, (hours * 3600 + minutes * 60) * 1000)
+        return enabled, interval_ms

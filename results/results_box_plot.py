@@ -375,6 +375,8 @@ def _sort_box_sample_records(records, sort_mode):
 class BoxPlotSettingsDialog(QDialog):
     """Scope-aware settings dialog for Box Plot format or quantity controls."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, parent=None, scope='all'):
         """
         Preserved behavior:
@@ -705,10 +707,18 @@ class BoxPlotSettingsDialog(QDialog):
             v7.addLayout(btn_row)
             lay.addWidget(g7)
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def _pick_shade_color(self):
         from PySide6.QtWidgets import QColorDialog
@@ -1290,12 +1300,18 @@ class BoxPlotDisplayDialog(QDialog):
             Reuses existing Box Plot settings schema while allowing scoped
             routes for homogenized bottom-button workflows.
         """
+        _snap = dict(self.node.config)
         dlg = BoxPlotSettingsDialog(
             self.node.config, self.node.input_data, self, scope=scope)
         if title_override:
             dlg.setWindowTitle(title_override)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_plot_settings(self):

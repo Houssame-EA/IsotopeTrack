@@ -317,7 +317,7 @@ def save_project_v2(filepath, mw, progress_callback=None):
         meta_compressed = lz4f.compress(meta_pkl)
         compression_lib = 'lz4'
     except ImportError:
-        logger.warning("lz4 not installed, falling back to gzip for metadata")
+        logger.warning("lz4 not installed, falling back to gzip for metadata. Possiblity to experience lag during autosave")
         meta_pkl = pickle.dumps(metadata, protocol=pickle.HIGHEST_PROTOCOL)
         buf = io.BytesIO()
         with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=1) as gz:
