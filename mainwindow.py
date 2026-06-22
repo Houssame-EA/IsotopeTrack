@@ -983,8 +983,6 @@ class MainWindow(QMainWindow):
             self._menu_icon_items.append((action, icon_name))
             return action
 
-        # Shortcuts use Qt StandardKeys / portable "Ctrl+…" strings, which Qt maps
-        # to Cmd on macOS and Ctrl on Windows automatically.
         new_window_action = _ma('fa6s.window-restore', "New Window",
                                 self.open_new_window,
                                 shortcut=QKeySequence(QKeySequence.StandardKey.New))
@@ -1051,7 +1049,7 @@ class MainWindow(QMainWindow):
 
         tools_menu.addSeparator()
         autosave_action = _ma('fa6s.clock', "Auto Save Settings",
-                              self.open_autosave_settings)
+                              self.open_autosave_settings, shortcut="Ctrl+Shift+S")
         tools_menu.addAction(autosave_action)
 
         view_menu = menu_bar.addMenu("View")
