@@ -1,4 +1,5 @@
 import sys
+import gc
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
@@ -11,7 +12,7 @@ from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimat
 from PySide6.QtGui import  QGuiApplication
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup
+from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QWidget
 import tools.dilution_utils
 import utils.dilution
@@ -294,6 +295,11 @@ class MainWindow(QMainWindow):
             QApplication.instance().main_windows = []
         self._project_filepath = None
         QApplication.instance().main_windows.append(self)
+        # If a .itproj was opened from Finder before any window existed, load it
+        # now that this window is ready (see IsotopeTrackApplication in Run.py).
+        _flush_opens = getattr(QApplication.instance(), 'flush_pending_opens', None)
+        if callable(_flush_opens):
+            QTimer.singleShot(0, _flush_opens)
         self.update_window_title()
         from tools.update_checker import UpdateChecker
         self._update_checker = UpdateChecker(self)
@@ -309,6 +315,18 @@ class MainWindow(QMainWindow):
         from save_export.autosave import AutosaveManager
         self._autosave = AutosaveManager(self)
         self._autosave.start()
+
+        # In-session undo/redo for editable inputs (parameters, selection,
+        # calibration, dilution, …). Snapshots the inputs only, never the raw
+        # data or computed results — see tools/undo_manager.py.
+        try:
+            from tools.undo_manager import UndoManager
+            self._undo_manager = UndoManager(self)
+            self._undo_manager.start()
+        except Exception:
+            self._undo_manager = None
+            _itk_log.exception("Could not initialize undo manager")
+
         if self.window_number == 1:
             # Crash recovery is now surfaced non-modally via the home panel
             # (a "Recover unsaved session" card), instead of a blocking prompt.
@@ -373,6 +391,7 @@ class MainWindow(QMainWindow):
         try:
             from save_export.autosave import AutosaveManager
             self.project_manager.load_project(filepath=str(path))
+            AutosaveManager.apply_light_overlay(self, str(path))
             self.unsaved_changes = True
             AutosaveManager.discard_recovery_files([path])
             self.notify("Recovered unsaved session", "success")
@@ -968,13 +987,23 @@ class MainWindow(QMainWindow):
             self._menu_icon_items.append((action, icon_name))
             return action
 
+        # Shortcuts use Qt StandardKeys / portable "Ctrl+…" strings, which Qt maps
+        # to Cmd on macOS and Ctrl on Windows automatically.
         new_window_action = _ma('fa6s.window-restore', "New Window",
-                                self.open_new_window, shortcut="Cmd+N")
-        open_action = _ma('fa6s.folder-open', "Import Data", self.select_folder)
-        save_action = _ma('fa6s.floppy-disk', "Save Project", self.save_project)
-        load_action = _ma('fa6s.folder-open', "Load Project", self.load_project)
-        export_action = _ma('fa6s.file-export', "Export", self.export_data)
-        exit_action = _ma('fa6s.right-from-bracket', "Exit", self.close_all_windows)
+                                self.open_new_window,
+                                shortcut=QKeySequence(QKeySequence.StandardKey.New))
+        open_action = _ma('fa6s.folder-open', "Import Data", self.select_folder,
+                          shortcut="Ctrl+I")
+        save_action = _ma('fa6s.floppy-disk', "Save Project", self.save_project,
+                          shortcut=QKeySequence(QKeySequence.StandardKey.Save))
+        save_as_action = _ma('fa6s.floppy-disk', "Save Project As…", self.save_project_as,
+                             shortcut=QKeySequence(QKeySequence.StandardKey.SaveAs))
+        load_action = _ma('fa6s.folder-open', "Load Project", self.load_project,
+                          shortcut=QKeySequence(QKeySequence.StandardKey.Open))
+        export_action = _ma('fa6s.file-export', "Export", self.export_data,
+                            shortcut="Ctrl+E")
+        exit_action = _ma('fa6s.right-from-bracket', "Exit", self.close_all_windows,
+                          shortcut=QKeySequence(QKeySequence.StandardKey.Quit))
 
         file_menu = menu_bar.addMenu("File")
         self._menu_icon_items.append((file_menu, 'fa6s.scale-balanced'))
@@ -982,22 +1011,41 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
+        file_menu.addAction(save_as_action)
         file_menu.addAction(load_action)
         file_menu.addAction(export_action)
         file_menu.addSeparator()
         file_menu.addAction(exit_action)
-                
+
+        edit_menu = menu_bar.addMenu("Edit")
+        self._menu_icon_items.append((edit_menu, 'fa6s.pen'))
+        undo_action = _ma('fa6s.rotate-left', "Undo", self._do_undo,
+                          shortcut=QKeySequence(QKeySequence.StandardKey.Undo))
+        redo_action = _ma('fa6s.rotate-right', "Redo", self._do_redo,
+                          shortcut=QKeySequence(QKeySequence.StandardKey.Redo))
+        undo_action.setEnabled(False)
+        redo_action.setEnabled(False)
+        self._undo_action = undo_action
+        self._redo_action = redo_action
+        edit_menu.addAction(undo_action)
+        edit_menu.addAction(redo_action)
+
         tools_menu = menu_bar.addMenu("Tools")
         self._menu_icon_items.append((tools_menu, 'fa6s.wrench'))
 
-        periodic_action = _ma('fa6s.atom', "Add/Edit Element PT", self.show_periodic_table)
-        ionic_action = _ma('fa6s.gear', "Sensitivity", self.open_ionic_calibration)
+        periodic_action = _ma('fa6s.atom', "Add/Edit Element PT", self.show_periodic_table,
+                              shortcut="Ctrl+T")
+        ionic_action = _ma('fa6s.gear', "Sensitivity", self.open_ionic_calibration,
+                           shortcut="Ctrl+Shift+I")
         mass_fraction_action = _ma('fa6s.calculator', "Mass Fraction Calculator",
-                                   self.open_mass_fraction_calculator)
+                                   self.open_mass_fraction_calculator,
+                                   shortcut="Ctrl+Shift+M")
         dilution_action = _ma('fa6s.flask', "Dilution Factor",
-                              self.open_dilution_factor_dialog)
-        
-        isobaric_action = _ma('fa6s.eraser', "Isobaric Correction", self.open_isobaric_correction)
+                              self.open_dilution_factor_dialog,
+                              shortcut="Ctrl+Shift+D")
+
+        isobaric_action = _ma('fa6s.eraser', "Isobaric Correction", self.open_isobaric_correction,
+                              shortcut="Ctrl+Shift+B")
         tools_menu.addAction(isobaric_action)
 
         tools_menu.addAction(periodic_action)
@@ -1008,11 +1056,17 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("View")
         self._menu_icon_items.append((view_menu, 'fa6s.eye'))
 
-        sidebar_action = _ma('fa6s.bars', "Toggle Sidebar", self.toggle_sidebar)
+        sidebar_action = _ma('fa6s.bars', "Toggle Sidebar", self.toggle_sidebar,
+                             shortcut="Ctrl+\\")
         view_menu.addAction(sidebar_action)
-        
+
+        results_action = _ma('fa6s.table-list', "Results", self.show_results,
+                             shortcut="Ctrl+R")
+        view_menu.addAction(results_action)
+
         view_menu.addSeparator()
-        log_action = _ma('fa6s.file-lines', "Show Application Log", self.show_log_window)
+        log_action = _ma('fa6s.file-lines', "Show Application Log", self.show_log_window,
+                         shortcut="Ctrl+Shift+L")
         view_menu.addAction(log_action)
 
         self._theme_menu_action = QAction("Toggle Dark Mode", self)
@@ -1754,9 +1808,30 @@ class MainWindow(QMainWindow):
         self.animation_group.addAnimation(self.animation)
         self.animation_group.addAnimation(self.animation_max)
         self.animation_group.finished.connect(self.on_animation_finished)
+        # Suspend the heavy plot pane's repaints while the sidebar slides; it is
+        # repainted once when the animation finishes.
+        self._set_content_frozen(True)
         self.animation_group.start()
 
         self.sidebar_visible = opening
+
+    def _set_content_frozen(self, frozen):
+        """Suspend/resume repaints of the heavy plot widget during the slide.
+
+        Re-rendering the pyqtgraph plot on every resize frame is what made the
+        sidebar toggle stutter. Suspending just the plot (not the whole pane)
+        keeps the rest of the layout live and leaves only the plot's own
+        background visible for the ~0.2 s animation; it repaints once at the end.
+        """
+        w = getattr(self, 'plot_widget', None)
+        if w is None:
+            return
+        try:
+            w.setUpdatesEnabled(not frozen)
+            if not frozen:
+                w.update()
+        except RuntimeError:
+            pass
 
     def _apply_sidebar_grip_style(self):
         """Style the resize grip's divider line and pill holder for the theme."""
@@ -1773,23 +1848,45 @@ class MainWindow(QMainWindow):
         """Begin a sidebar resize drag."""
         if event.button() == Qt.LeftButton:
             self._grip_dragging = True
+            if getattr(self, '_grip_apply_timer', None) is None:
+                # Coalesces the live resize to ~one layout pass per frame, so a
+                # fast drag doesn't fire a full relayout (and plot re-render) for
+                # every mouse-move event.
+                self._grip_apply_timer = QTimer(self)
+                self._grip_apply_timer.setSingleShot(True)
+                self._grip_apply_timer.setInterval(16)
+                self._grip_apply_timer.timeout.connect(self._apply_pending_grip_width)
             event.accept()
 
     def _sidebar_grip_move(self, event):
-        """Resize the sidebar live while dragging the grip."""
+        """Record the live drag width; applied on the next frame tick."""
         if not getattr(self, '_grip_dragging', False):
             return
         left = self.sidebar.mapToGlobal(QPoint(0, 0)).x()
         new_width = int(event.globalPosition().x()) - left
         new_width = max(self.sidebar_min_width,
                         min(self.sidebar_max_width, new_width))
-        self.sidebar_width = new_width
-        self.sidebar.setFixedWidth(new_width)
+        self._grip_pending_width = new_width
+        if not self._grip_apply_timer.isActive():
+            self._grip_apply_timer.start()
         event.accept()
+
+    def _apply_pending_grip_width(self):
+        """Apply the most recent width requested during a grip drag."""
+        w = getattr(self, '_grip_pending_width', None)
+        if w is None:
+            return
+        self.sidebar_width = w
+        self.sidebar.setFixedWidth(w)
 
     def _sidebar_grip_release(self, event):
         """End a sidebar resize drag and remember the chosen width."""
         self._grip_dragging = False
+        # Flush the final width immediately so the sidebar lands exactly where
+        # the cursor was released.
+        if getattr(self, '_grip_apply_timer', None) is not None:
+            self._grip_apply_timer.stop()
+        self._apply_pending_grip_width()
         try:
             QSettings("IsotopeTrack", "IsotopeTrack").setValue(
                 "ui/sidebar_width", self.sidebar_width)
@@ -1799,6 +1896,9 @@ class MainWindow(QMainWindow):
 
     def on_animation_finished(self):
         """Clean up after sidebar animation completes."""
+        # Resume plot repaints first, so this always runs even if the cleanup
+        # below raises.
+        self._set_content_frozen(False)
         if not self.sidebar_visible:
             self.sidebar.hide()
             self.toggle_button.hide()  
@@ -7039,7 +7139,10 @@ class MainWindow(QMainWindow):
     
     @log_user_action('MENU', 'File -> Save Project')
     def save_project(self):
-        """Save current project to file.
+        """Save the current project.
+
+        Writes silently over the project's current file when it has already been
+        saved once; falls back to a Save-As dialog for a never-saved project.
 
         Returns:
             bool: True if save was successful
@@ -7056,6 +7159,33 @@ class MainWindow(QMainWindow):
                 self.notify("Project saved", "success")
 
         self.project_manager.save_project(on_complete=_after)
+
+    def save_project_as(self):
+        """Save the current project under a new filename (always prompts)."""
+        self.user_action_logger.log_menu_action('File', 'Save Project As')
+
+        def _after(success):
+            self.user_action_logger.log_file_operation(
+                'Project Save As',
+                'project.itp',
+                success=success
+            )
+            if success:
+                self.notify("Project saved", "success")
+
+        self.project_manager.save_project(on_complete=_after, save_as=True)
+
+    def _do_undo(self):
+        """Step back to the previous editable-input state (Cmd/Ctrl+Z)."""
+        mgr = getattr(self, '_undo_manager', None)
+        if mgr is not None:
+            mgr.undo()
+
+    def _do_redo(self):
+        """Step forward again after an undo (Cmd/Ctrl+Shift+Z)."""
+        mgr = getattr(self, '_undo_manager', None)
+        if mgr is not None:
+            mgr.redo()
 
     @log_user_action('MENU', 'File -> Load Project')
     def load_project(self, filepath: str | None=None):
@@ -7748,7 +7878,7 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 self.project_manager.load_project(filepath=str(path))
-                # The recovered state is not a saved project file yet.
+                AutosaveManager.apply_light_overlay(self, str(path))
                 self.unsaved_changes = True
             except Exception:
                 _itk_log.exception("Handled exception in _offer_crash_recovery")
@@ -7778,12 +7908,12 @@ class MainWindow(QMainWindow):
             elif reply == QMessageBox.Cancel:
                 event.ignore()
                 return
-
-        # Clean exit: drop this window's recovery snapshot so the next launch
-        # doesn't treat it as a crash.
         if getattr(self, '_autosave', None) is not None:
             self._autosave.stop()
             self._autosave.clear()
+
+        if getattr(self, '_undo_manager', None) is not None:
+            self._undo_manager.stop()
 
         for timer in self.findChildren(QTimer):
             timer.stop()
@@ -7828,11 +7958,19 @@ class MainWindow(QMainWindow):
                 app.main_windows.remove(self)
             except ValueError:
                 _itk_log.exception("Handled exception in closeEvent")
-        
+
+        try:
+            self.reset_data_structures()
+        except Exception:
+            _itk_log.exception("Error releasing data on close")
+
         if not getattr(app, 'main_windows', []):
             app.quit()
 
         event.accept()
+
+        self.deleteLater()
+        QTimer.singleShot(0, gc.collect)
         
     #----------------------------------------------------------------------------------------------------------
     #------------------------------------help and documentation--------------------------------------------

@@ -391,12 +391,38 @@ app = BUNDLE(
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.10.3',
-        'CFBundleVersion': '1.10.3',
+        'CFBundleShortVersionString': '1.10.4',
+        'CFBundleVersion': '1.10.4',
         'CFBundleDisplayName': 'IsotopeTrack',
         'CFBundleName': 'IsotopeTrack',
         'NSRequiresAquaSystemAppearance': 'False',
         'NSRemovableVolumesUsageDescription':
             'IsotopeTrack needs access to read data files from external drives.',
+        # ── File association ─────────────────────────────────────────────────
+        # Register the .itproj project file so double-clicking one in Finder
+        # opens it in IsotopeTrack. With argv_emulation=True (set on the EXE
+        # above) the launch-time file arrives as a CLI argument and the existing
+        # projectfile handling loads it; the QFileOpenEvent handler in Run.py
+        # covers the case where the app is already running.
+        'CFBundleDocumentTypes': [
+            {
+                'CFBundleTypeName': 'IsotopeTrack Project',
+                'CFBundleTypeRole': 'Editor',
+                'LSHandlerRank': 'Owner',
+                'LSItemContentTypes': ['com.isotrack.itproj'],
+                'CFBundleTypeExtensions': ['itproj'],
+                'CFBundleTypeIconFile': 'icon-windowed.icns',
+            },
+        ],
+        'UTExportedTypeDeclarations': [
+            {
+                'UTTypeIdentifier': 'com.isotrack.itproj',
+                'UTTypeDescription': 'IsotopeTrack Project',
+                'UTTypeConformsTo': ['public.data'],
+                'UTTypeTagSpecification': {
+                    'public.filename-extension': ['itproj'],
+                },
+            },
+        ],
     },
 )

@@ -2242,10 +2242,13 @@ class InteractiveTableBubble(QFrame):
             for s in ax.spines.values(): s.set_edgecolor(gc)
 
         fig.tight_layout(pad=1.0)
-        self._last_fig = fig 
+        _old_fig = getattr(self, "_last_fig", None)
+        self._last_fig = fig
 
         for child in self._chart_canvas_frame.findChildren(FigureCanvasQTAgg):
             child.setParent(None); child.deleteLater()
+        if _old_fig is not None and _old_fig is not fig:
+            plt.close(_old_fig)  # release previous figure from matplotlib's global registry
         canvas = FigureCanvasQTAgg(fig)
         lay = self._chart_canvas_frame.layout() or QVBoxLayout(self._chart_canvas_frame)
         lay.setContentsMargins(0,0,0,0); lay.addWidget(canvas)
@@ -2530,10 +2533,13 @@ class ChartBubble(QFrame):
                 for s in ax.spines.values(): s.set_edgecolor(gc)
 
             fig.tight_layout(pad=1.2)
+            _old_fig = getattr(self, "_fig", None)
             self._fig = fig
 
             for child in self._canvas_frame.findChildren(FigureCanvasQTAgg):
                 child.setParent(None); child.deleteLater()
+            if _old_fig is not None and _old_fig is not fig:
+                plt.close(_old_fig)  # release previous figure from matplotlib's global registry
             canvas = FigureCanvasQTAgg(fig)
             lay = self._canvas_frame.layout() or QVBoxLayout(self._canvas_frame)
             lay.setContentsMargins(0,0,0,0); lay.addWidget(canvas)
