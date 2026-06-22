@@ -4,6 +4,15 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.10.4 — 2026-06-22
+
+Add shortcuts and project saving features
+
+- Enable opening projects via double-click.
+- Implement auto-save for minor changes; restrict large data saves.
+- Add standard "Save" and "Save As" functionality.
+
+
 ## v1.10.3 — 2026-06-17
 
 ### New Features
