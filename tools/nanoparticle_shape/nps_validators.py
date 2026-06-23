@@ -8,7 +8,8 @@ def _format_represents(represents: str | None = None):
     return f" ({represents})" if represents else ''
 
 
-def validate_stoichiometry(formula: str, represents: str | None = None) -> tuple[str, ValidationInfos]:
+def validate_stoichiometry_and_required(formula: str | None,
+                                        represents: str | None = None) -> tuple[str, ValidationInfos]:
     """
     Validates the stoichiometry of a formula, and returns it reduced, with a
     `ValidationInfos` message (or error if the result is empty).
@@ -22,6 +23,12 @@ def validate_stoichiometry(formula: str, represents: str | None = None) -> tuple
         the reduced formula and the second field is the `ValidationInfos` of
         the operation
     """
+    required_validation = validate_required(formula, represents)
+    if required_validation.has_errors():
+        return "", required_validation
+
+    assert  formula is not None  # TODO: see if we can place this in another way.
+
     reduced_formula = canonicalize_preserve_user_order(formula)
 
     if not reduced_formula:
@@ -76,3 +83,20 @@ def validate_trim(value: str, represents: str | None = None) -> tuple[str, Valid
                         f"trimmed to \"{stripped_value}\"")
 
     return stripped_value, ValidationInfos(messages=messages)
+
+def validate_strictly_positive(value: int | float, represents: str | None = None) -> ValidationInfos:
+    """
+    Validates that the given number is strictly positive.
+    Args:
+        value: Value of the number to validate.
+        represents: What the value represents to the user.
+
+    Returns:
+        `ValidationInfos` with the appropriate error messages.
+    """
+    if value <= 0:
+        if represents:
+            return ValidationInfos(errors=[f"{represents} ({value}) must be strictly positive."])
+        else:
+            return ValidationInfos(errors=[f"{value} must be strictly positive."])
+    return ValidationInfos()

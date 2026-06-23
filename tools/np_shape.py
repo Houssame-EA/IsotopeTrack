@@ -8,7 +8,7 @@ from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal
 
 from tools.logging_utils import logging_manager
 from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
-from tools.nanoparticle_shape.database_adapter import CompoundDatabaseModel, CompoundService, DirectQCompleter
+from tools.nanoparticle_shape.database_adapter import CompoundService
 from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape, CoreShellNPS, SphereNPS
 from tools.nanoparticle_shape.nps_editor import NPSEditor
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
@@ -151,7 +151,7 @@ class NanoParticleShapeWidget(QWidget):
     def __init__(self, parent: QWidget | Any,
                  nps_service: NanoParticleShapeService,
                  csv_database: CSVCompoundDatabase,
-                 tracked_elements: list[str],/):
+                 tracked_elements: list[str], /):
         super().__init__(parent=parent)
         self.logger = logging_manager.get_logger(self.__class__.__name__)
         self.nps_editor = None
@@ -176,23 +176,6 @@ class NanoParticleShapeWidget(QWidget):
 
         layout.addWidget(self._setup_header())
         layout.addWidget(self.nps_table)
-
-        # TODO: remove this example
-        line_edit_test = QLineEdit(parent=self)
-
-        model = CompoundDatabaseModel(CompoundService(self.csv_database, self.tracked_elements))
-        completer = DirectQCompleter()
-        completer.setModel(model)
-        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-        completer.setFilterMode(Qt.MatchFlag.MatchFixedString)
-
-        line_edit_test.setCompleter(completer)
-        line_edit_test.textEdited.connect(model.search)
-
-
-
-
-        layout.addWidget(line_edit_test)
 
         self.nps_table.on_edit.connect(self.open_nps_editor_for_modification)
 
@@ -236,6 +219,7 @@ class NanoParticleShapeWidget(QWidget):
             index: index of the `nps` to switch.
         """
         self.nps_model.setData(index, nps)
+        self.nps_editor.deleteLater()
         self.nps_editor = None
 
     def open_nps_editor_for_new(self):
@@ -250,6 +234,7 @@ class NanoParticleShapeWidget(QWidget):
             nps: new nps to be added
         """
         self.nps_model.addData(nps)
+        self.nps_editor.deleteLater()
         self.nps_editor = None
 
     def _create_and_open_nps_editor(self, index: QModelIndex | None = None):
@@ -261,6 +246,10 @@ class NanoParticleShapeWidget(QWidget):
         if not isinstance(index, QModelIndex):
             index = None
 
-        nps_editor = NPSEditor(index, model=self.nps_model, parent=self)
+        nps_editor = NPSEditor(index,
+                               nps_model=self.nps_model,
+                               compound_service=CompoundService(self.csv_database,
+                                                                self.tracked_elements),  # TODO: upstream this please.
+                               parent=self)
         nps_editor.open()
         return nps_editor

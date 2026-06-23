@@ -96,7 +96,7 @@ def signature_from_counts(counts: dict) -> str:
     return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
 
 
-def signature_from_formula(formula: str) -> str:
+def signature_from_formula(formula: str) -> str: # TODO: tests
     """Order-independent canonical key for matching equivalent formulas."""
     return signature_from_counts(parse_formula_to_counts(formula))
 

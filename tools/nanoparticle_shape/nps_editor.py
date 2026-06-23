@@ -1,85 +1,170 @@
 """Defines the editor ui"""
-from typing import Any
+from typing import Any, Optional
 
 from PySide6.QtCore import Signal, QModelIndex, QAbstractItemModel, Qt
 from PySide6.QtWidgets import QWidget, QLineEdit, QFormLayout, QDialog, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, \
-    QPushButton, QMessageBox, QSizePolicy
+    QPushButton, QMessageBox, QSizePolicy, QGridLayout, QCompleter
 
 from tools.logging_utils import logging_manager
-from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS, NanoParticleShape
+from tools.nanoparticle_shape.database_adapter import CompoundDatabaseModel, DirectQCompleter, CompoundService
+from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS, NanoParticleShape, Compound
 from tools.theme import results_title_qss, theme, primary_button_qss
 from utils.validation import ValidationInfos
 
+class IGetComponent:
+    def get_component(self) -> tuple[Any, ValidationInfos]:
+        pass
 
-class SphereNPSEditor(QWidget):
+class CompoundEditor(QWidget, IGetComponent):
+    def __init__(self, name: str, compound: Compound, compound_model: CompoundDatabaseModel | CompoundService, parent):
+        """Note: The database should be unique to the Compound Editor"""
+        super().__init__(parent=parent)
+
+        self.name = name
+        self.compound = compound
+
+        self.row_label = QLabel(self.name)
+        self.formula_editor = QLineEdit(text=compound.formula,
+                                        parent=parent)
+        self.density_editor = QLineEdit(text=str(compound.density),
+                                        parent=parent)
+        if isinstance(compound_model, CompoundService):
+            compound_model = compound_model.get_searchable_model()
+        self.compound_model = compound_model
+        self._setup_completion()
+
+        self._setup_ui()
+
+    def _setup_completion(self):
+        formula_completion = DirectQCompleter()
+        formula_completion.setModel(self.compound_model)
+        formula_completion.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        formula_completion.setFilterMode(Qt.MatchFlag.MatchFixedString)
+        self.formula_editor.setCompleter(formula_completion)
+        self.formula_editor.textEdited.connect(self.compound_model.search)
+
+        formula_completion.activated[QModelIndex].connect(self.handle_selected_formula)
+
+        density_completion = DirectQCompleter()
+        density_completion.setModel(self.compound_model)
+        density_completion.setCompletionRole(Qt.ItemDataRole.UserRole)
+        self.density_editor.setCompleter(density_completion)
+
+    def handle_selected_formula(self, index: QModelIndex):
+        print(index)
+        density = self.compound_model.data(index, Qt.ItemDataRole.UserRole)
+        self.density_editor.setText(str(density))
+
+    def _setup_ui(self):
+        row_layout = QGridLayout()
+        self.setLayout(row_layout)
+
+        row_layout.addWidget(self.row_label,
+                             0, 0, 2, 1,
+                             Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+
+        row_layout.addWidget(QLabel("Formula:"),
+                             0, 1, 1, 1,
+                             Qt.AlignmentFlag.AlignLeft)
+        row_layout.addWidget(self.formula_editor,
+                             1, 1, 1, 1)
+
+        row_layout.addWidget(QLabel("Density (g/cm³):"),
+                             0, 2, 1, 1,
+                             Qt.AlignmentFlag.AlignLeft)
+        row_layout.addWidget(self.density_editor,
+                             1, 2, 1, 1)
+
+    def get_component(self):
+        self.compound.formula = self.formula_editor.text()
+        try:
+            self.compound.density = float(self.density_editor.text())
+        except ValueError:
+            density_num_validation = ValidationInfos(errors=["The density wasn't a valid number."])
+        else:
+            density_num_validation = ValidationInfos()
+
+        print(self.compound)
+
+        return self.compound, density_num_validation
+
+
+class SphereNPSEditor(QWidget, IGetComponent):
     """Sphere part of the `NPSEditor`"""
-    def __init__(self, sphere: SphereNPS):
+    def __init__(self, sphere: SphereNPS, compound_serivce: CompoundService):
         super().__init__()
         self.sphere = sphere
-        self.formula_edit = QLineEdit(str(self.sphere.formula) if self.sphere.formula
-                                      else "",
-                                      placeholderText="Formula")
-        self.formula_edit.textChanged.connect(self.set_formula)
-
+        self.formula_edit = CompoundEditor("Formula",
+                                           self.sphere.formula,
+                                           compound_serivce,
+                                           parent=self)
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QFormLayout()
+        layout = QVBoxLayout()
         self.setLayout(layout)
-        layout.addRow("Formula", self.formula_edit)
+        layout.addWidget(self.formula_edit)
 
-    def set_formula(self):
-        """
-        Keeps the `nps` formula in sync with the `QLineEdit`.
-        """
-        self.sphere.formula = self.formula_edit.text()
+    def get_component(self) -> tuple[Any, ValidationInfos]:
+        self.sphere.formula, validation = self.formula_edit.get_component()
+        print(self.sphere)
+        print(self.sphere.formula)
+        return self.sphere, validation
 
 
-class CoreShellNPSEditor(QWidget):
+class CoreShellNPSEditor(QWidget, IGetComponent):
     """Core-Shell part of the `NPSEditor"""
-    def __init__(self, core_shell: CoreShellNPS, /):
+    def __init__(self, core_shell: CoreShellNPS, compound_service: CompoundService, /):
         super().__init__()
+        self.compound_service = compound_service
+
         self.core_shell = core_shell
-        self.core_edit = QLineEdit(str(core_shell.core or ""),
-                                   placeholderText="Core")
-        self.core_edit.textChanged.connect(self.set_core)
-        self.shell_edit = QLineEdit(str(core_shell.shell or ""),
-                                    placeholderText="Shell")
-        self.shell_edit.textChanged.connect(self.set_shell)
+        self.core_edit = CompoundEditor("Core",
+                                         self.core_shell.core,
+                                         self.compound_service,
+                                         parent=self)
+
+        self.shell_edit = CompoundEditor("Shell",
+                                         self.core_shell.shell,
+                                         self.compound_service,
+                                         parent=self)
+
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QFormLayout()
+        layout = QVBoxLayout()
         self.setLayout(layout)
 
-        layout.addRow("Core", self.core_edit)
-        layout.addRow("Shell", self.shell_edit)
+        layout.addWidget(self.core_edit)
+        layout.addWidget(self.shell_edit)
 
-    def set_core(self):
-        """Keeps the `nps` core in sync with the `QLineEdit`"""
-        self.core_shell.core = self.core_edit.text()
-
-    def set_shell(self):
-        """Keeps the `nps` shell in sync with the `QLineEdit`"""
-        self.core_shell.shell = self.shell_edit.text()
+    def get_component(self) -> tuple[Any, ValidationInfos]:
+        self.core_shell.core, validation_core = self.core_edit.get_component()
+        self.core_shell.shell, validation_shell = self.shell_edit.get_component()
+        return self.core_shell, validation_core.merge(validation_shell)
 
 
 class NPSEditor(QDialog):
     """The NPS Editor is the editor for a specific"""
     accept_with_nps = Signal(NanoParticleShape)
 
-    def __init__(self, index: QModelIndex | None, model: QAbstractItemModel, parent: QWidget | Any):
+    def __init__(self,
+                 index: QModelIndex | None,
+                 nps_model: QAbstractItemModel,
+                 compound_service:CompoundService,
+                 parent: QWidget | Any):
         super().__init__(parent=parent)
         self.logger = logging_manager.get_logger(self.__class__.__name__)
-        self.model = model
+        self.model = nps_model
+        self.compound_service = compound_service
         self.index = index
-        self.nps = (model.data(index, Qt.ItemDataRole.EditRole) if index is not None
+        self.nps = (nps_model.data(index, Qt.ItemDataRole.EditRole) if index is not None
                     else self.get_default_shape())
         self.nps_name = self.nps.get_name() or ""
         self.nps_name_edit = QLineEdit(str(self.nps_name),
                                        placeholderText="Name (default: shape formula)")
 
-        self.current_form_widget = None
+        self.current_form_widget: Optional[IGetComponent] = None
         self.nps_form_layout_index = 0
 
         self.error_label = None
@@ -156,11 +241,11 @@ class NPSEditor(QDialog):
         match nps:
             case CoreShellNPS():
                 self.logger.info("Displays core-shell form")
-                self.current_form_widget = CoreShellNPSEditor(nps)
+                self.current_form_widget = CoreShellNPSEditor(nps, self.compound_service)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case SphereNPS():
                 self.logger.info("Displays sphere form")
-                self.current_form_widget = SphereNPSEditor(nps)
+                self.current_form_widget = SphereNPSEditor(nps, self.compound_service)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case obj:
                 self.logger.critical(f"Class ({obj.__class__}) doesn't have a form")
@@ -196,8 +281,9 @@ class NPSEditor(QDialog):
         """
         Makes final preparation before emitting `accept_with_nps`.
         """
+        self.nps, validation = self.current_form_widget.get_component()
         self.nps.name = self.nps_name_edit.text()
-        validation = self.nps.validate()
+        validation.merge(self.nps.validate())
 
         if validation.has_errors() or validation.has_messages():
             self.logger.info("Display nps errors and/or messages")

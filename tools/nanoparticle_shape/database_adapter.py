@@ -1,4 +1,6 @@
-from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
+from typing import Any
+
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QObject
 import pandas as pd
 from PySide6.QtWidgets import QCompleter
 
@@ -66,6 +68,17 @@ class CompoundService:
         return self._dicts_to_compound(
             rows_with_formula_elements_sorted_by_length.to_dict("records"))
 
+    def get_searchable_model(self, parent: QObject | Any = None):
+        """
+        Gives a usable searchable model.
+
+        Args:
+            parent: parent of the resulting `CompoundDatabaseModel`.
+        Returns:
+            `CompoundDatabaseModel` that can be used to query the `CompoundService`.
+        """
+        return CompoundDatabaseModel(self, parent)
+
 
 class CompoundDatabaseModel(QAbstractListModel):
     """Adaptor between `CompoundService` and `QAbastractListModel`"""
@@ -82,6 +95,8 @@ class CompoundDatabaseModel(QAbstractListModel):
             return self.results[index.row()].display_text
         if role == Qt.ItemDataRole.EditRole:
             return self.results[index.row()].formula
+        if role == Qt.ItemDataRole.UserRole:
+            return self.results[index.row()].density
         return None
 
     def search(self, text: str):

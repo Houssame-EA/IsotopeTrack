@@ -39,6 +39,26 @@ class ValidationInfos:
         self.errors = self.errors + other.errors
         return self
 
+    def add_identifier(self, identifier: str):
+        """
+        Adds an identifier at the beginning of messages and errors.
+
+        Examples:
+            `identifier` = "Core":
+
+            * Messages: "Core: message..."
+            * Errors: "Core: error..."
+
+        Args:
+            identifier: String that we want to prefix to the messages.
+
+        Returns:
+            `self` for fluid programming.
+        """
+        self.messages = [f"{identifier}: {message}" for message in self.messages]
+        self.errors = [f"{identifier}: {error}" for error in self.errors]
+        return self
+
     def __repr__(self):
         return f"<{self.__module__}.{self.__class__.__name__} errors={self.errors} messages={self.messages}>"
 

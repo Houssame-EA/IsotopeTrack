@@ -1,25 +1,54 @@
 """The available shapes classes (subclasses of `NanoParticleShape`)."""
-from tools.nanoparticle_shape.nps_validators import validate_required, validate_stoichiometry, validate_trim
+from tools.nanoparticle_shape.nps_validators import validate_required, validate_stoichiometry_and_required, \
+    validate_trim, \
+    validate_strictly_positive
 from utils.validation import IValidation, ValidationInfos
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
-class Compound:
-    formula: str
-    density: float
-    material_id: str
-    mp_url: str
-    space_group: str
-    signature: str
-    display_text: str | None
-
-    def display_text_with_inner_params(self):
-        return (f"{self.formula} [{self.space_group}] ({self.density:.3f} g/cm³)"
-                             f" — {self.material_id}")
+@dataclass
+class Compound(IValidation):
+    formula: str = ""
+    density: float = 0.0
+    material_id: str = ""
+    mp_url: str = ""
+    space_group: str = ""
+    signature: str = ""
+    display_text: str | None = None
 
     def __str__(self):
-        return self.display_text
+        return self.display_text if self.display_text is not None \
+            else ""
+
+    def validate(self) -> ValidationInfos:
+        """
+        Validates formula and density only.
+
+        Validations:
+
+        * Formula and density are required.
+        * Density must not be negative or null.
+        * Formula will be stoichiometrically reformated.
+
+        Notes:
+            If others are required, user a `Validator` class to implement the
+            other validation type.
+
+        Returns:
+            `ValidationInfos` that represents the state of the object.
+        """
+        return self._validate_formula().merge(self._validate_density())
+
+    def _validate_formula(self):
+        self.formula, stoichiometry_validation = validate_stoichiometry_and_required(self.formula, "Formula")
+        return stoichiometry_validation
+
+    def _validate_density(self):
+        required_validation = validate_required(self.density, "Density")
+        if required_validation.has_errors():
+            return required_validation
+        return validate_strictly_positive(self.density, "Density")
+
 
 
 class NanoParticleShape(IValidation):
@@ -28,6 +57,8 @@ class NanoParticleShape(IValidation):
     """
 
     def __init__(self, name=None):
+        if name is None:
+            name = ""
         self.name = name
 
     def get_name(self):
@@ -73,13 +104,21 @@ class NanoParticleShape(IValidation):
 
 
 class CoreShellNPS(NanoParticleShape):
-    def __init__(self, name=None, core=None, shell=None):
+    def __init__(self,
+                 core: Compound | None = None,
+                 shell: Compound | None = None,
+                 name = None):
         super().__init__(name=name)
-        self.core: str | None = core
-        self.shell: str | None = shell
+
+        if core is None:
+            core = Compound()
+        self.core: Compound = core
+        if shell is None:
+            shell = Compound()
+        self.shell: Compound = shell
 
     def get_formula(self):
-        return f"{str(self.core)}  + {self.shell}"
+        return f"{self.core.formula}  + {self.shell.formula}"
 
     def get_shape(self):
         return "Core-Shell"
@@ -93,39 +132,31 @@ class CoreShellNPS(NanoParticleShape):
         return validation
 
     def _validate_core(self) -> ValidationInfos:
-        if not self.core:
-            return validate_required(self.core, represents="Core formula")
-
-        self.core, stoichiometry_validation = validate_stoichiometry(self.core,
-                                                                     represents="Core")
-        return stoichiometry_validation
+        return self.core.validate().add_identifier("Core")
 
     def _validate_shell(self) -> ValidationInfos:
-        if not self.shell:
-            return validate_required(self.shell, represents="Shell formula")
-
-        self.shell, shell_validation_infos = validate_stoichiometry(self.shell,
-                                                                    represents="Shell")
-        return shell_validation_infos
+        return self.shell.validate().add_identifier("Shell")
 
 
 class SphereNPS(NanoParticleShape):
-    def __init__(self, formula=None, name=None):
+    def __init__(self,
+                 formula: Compound | None = None,
+                 name=None):
         super().__init__(name=name)
-        self.formula: str | None = formula
+
+        if formula is None:
+            formula = Compound()
+        self.formula: Compound = formula
 
     def get_formula(self):
-        return self.formula
+        return self.formula.formula
 
     def get_shape(self):
         return "Sphere"
 
     def validate(self) -> ValidationInfos:
-        if not self.formula:
-            validation = validate_required(self.formula, "Formula")
-        else:
-            self.formula, validation = validate_stoichiometry(self.formula, "Formula")
+        validation = self.formula.validate().add_identifier("Formula")
 
-            if not validation.has_errors():
-                validation.merge(super().validate())
+        if not validation.has_errors():
+            validation.merge(super().validate())
         return validation
