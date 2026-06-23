@@ -1,6 +1,25 @@
 """The available shapes classes (subclasses of `NanoParticleShape`)."""
 from tools.nanoparticle_shape.nps_validators import validate_required, validate_stoichiometry, validate_trim
 from utils.validation import IValidation, ValidationInfos
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Compound:
+    formula: str
+    density: float
+    material_id: str
+    mp_url: str
+    space_group: str
+    signature: str
+    display_text: str | None
+
+    def display_text_with_inner_params(self):
+        return (f"{self.formula} [{self.space_group}] ({self.density:.3f} g/cm³)"
+                             f" — {self.material_id}")
+
+    def __str__(self):
+        return self.display_text
 
 
 class NanoParticleShape(IValidation):

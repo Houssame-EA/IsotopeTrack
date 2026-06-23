@@ -3,10 +3,12 @@ from collections import namedtuple
 from typing import Any
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
-    QAbstractItemView
-from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal
+    QAbstractItemView, QCompleter, QLineEdit
+from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QSortFilterProxyModel
 
 from tools.logging_utils import logging_manager
+from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
+from tools.nanoparticle_shape.database_adapter import CompoundDatabaseModel, CompoundService, DirectQCompleter
 from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape, CoreShellNPS, SphereNPS
 from tools.nanoparticle_shape.nps_editor import NPSEditor
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
@@ -147,22 +149,19 @@ class NanoParticleShapeWidget(QWidget):
     """
 
     def __init__(self, parent: QWidget | Any,
-                 nps_service: NanoParticleShapeService = NanoParticleShapeService(nps_list=[
-
-                     SphereNPS(name="That", formula="1O"),
-                     CoreShellNPS(name="2H", core="Ti", shell="Fe"),
-                     SphereNPS(name="This", formula="3H"),
-                     CoreShellNPS(name="4H", core="Ti", shell="Fe"),
-                     CoreShellNPS(name="5H", core="Ti", shell="Fe"),
-                     CoreShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
-                 ]), /):
+                 nps_service: NanoParticleShapeService,
+                 csv_database: CSVCompoundDatabase,
+                 tracked_elements: list[str],/):
         super().__init__(parent=parent)
         self.logger = logging_manager.get_logger(self.__class__.__name__)
         self.nps_editor = None
 
+        self.csv_database = csv_database
+        self.tracked_elements = tracked_elements
+
         self.nps_table = QTableViewKeyEvents(parent=self)
         self.nps_model = NanoParticleShapeModel(nps_service=nps_service,
-                                                parent=self.nps_table)  # TODO:  Move to __init__
+                                                parent=self.nps_table)
         self.nps_table.setModel(self.nps_model)
 
         self._setup_ui()
@@ -177,6 +176,23 @@ class NanoParticleShapeWidget(QWidget):
 
         layout.addWidget(self._setup_header())
         layout.addWidget(self.nps_table)
+
+        # TODO: remove this example
+        line_edit_test = QLineEdit(parent=self)
+
+        model = CompoundDatabaseModel(CompoundService(self.csv_database, self.tracked_elements))
+        completer = DirectQCompleter()
+        completer.setModel(model)
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.setFilterMode(Qt.MatchFlag.MatchFixedString)
+
+        line_edit_test.setCompleter(completer)
+        line_edit_test.textEdited.connect(model.search)
+
+
+
+
+        layout.addWidget(line_edit_test)
 
         self.nps_table.on_edit.connect(self.open_nps_editor_for_modification)
 

@@ -6,7 +6,6 @@ import re
 from functools import reduce
 from math import gcd
 
-
 _itk_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -91,10 +90,29 @@ def reduce_counts(counts: dict) -> dict:
 
 
 def signature_from_counts(counts: dict) -> str:
-    """Order-independent canonical key for matching equivalent formulas."""
+    """Order-independent canonical key for matching equivalent formula counts."""
     if not counts:
         return ''
     return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
+
+
+def signature_from_formula(formula: str) -> str:
+    """Order-independent canonical key for matching equivalent formulas."""
+    return signature_from_counts(parse_formula_to_counts(formula))
+
+
+def elements_with_count_from_formula(formula: str) -> list[str]:
+    """
+    Transforms a formula in a list of element-count strings.
+    Notes:
+        If the count is of 1 (or less), it won't be added to the string.
+    Args:
+        formula: Formula to convert to element-count strings.
+    Returns:
+        Element-counts of the formula.
+    """
+    return [f"{element}{'' if count <= 1 else count}"
+            for element, count in parse_formula_to_counts(formula).items()]
 
 
 def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = None) -> str:

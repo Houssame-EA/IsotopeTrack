@@ -16,6 +16,8 @@ import logging
 from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_counts, reduce_counts
 from tools.mass_fraction_calculator_utils.formula_combo_box import FormulaComboBox
 from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
+from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS
+from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
 from tools.np_shape import NanoParticleShapeWidget
 from tools.theme import theme
 
@@ -455,7 +457,14 @@ class MassFractionCalculator(QDialog):
         # Mass Fraction Calculator
         mfc_widget = self._build_mass_fraction_calculator_widget()
         # NP Shape
-        nps_widget = NanoParticleShapeWidget(self)
+        nps_widget = NanoParticleShapeWidget(self, NanoParticleShapeService(nps_list=[
+                     SphereNPS(name="That", formula="1O"),
+                     CoreShellNPS(name="2H", core="Ti", shell="Fe"),
+                     SphereNPS(name="This", formula="3H"),
+                     CoreShellNPS(name="4H", core="Ti", shell="Fe"),
+                     CoreShellNPS(name="5H", core="Ti", shell="Fe"),
+                     CoreShellNPS(name="6H", core="Ti", shell="Fe"),  # TODO: remove this atrocity
+                 ]), self.csv_database, list(self.tracked_elements))
         button_panel = self._build_dialog_control_buttons()
 
         mfc_nps_splitter = QSplitter(Qt.Orientation.Vertical)
