@@ -49,7 +49,6 @@ class FormulaComboBox(QComboBox):
 
         self._setup_compounds()
 
-        # TODO: `[int]` is legacy so it should be removed... but examples still uses it
         self.activated[int].connect(self._on_item_activated)
         self.lineEdit().editingFinished.connect(self._on_editing_finished)
         self.lineEdit().textChanged.connect(self._on_text_changed)

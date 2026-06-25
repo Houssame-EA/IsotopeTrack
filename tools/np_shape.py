@@ -3,7 +3,7 @@ from collections import namedtuple
 from typing import Any
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
-    QAbstractItemView, QCompleter, QLineEdit
+    QAbstractItemView
 from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QSortFilterProxyModel
 
 from tools.logging_utils import logging_manager

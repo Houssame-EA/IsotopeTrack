@@ -5,12 +5,14 @@ import pandas as pd
 from PySide6.QtWidgets import QCompleter
 
 from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
-from tools.mass_fraction_calculator_utils.formula_utils import elements_with_count_from_formula
+from tools.mass_fraction_calculator_utils.formula_utils import elements_with_count_from_formula, signature_from_formula
 from tools.nanoparticle_shape.nanoparticle_shapes import Compound
+from widget.periodic_table_widget import PeriodicTableWidget
 
 
 class CompoundService:
     """Service that manages the querying of the data of a `CSVCompoundDatabase`"""
+
     def __init__(self, database: CSVCompoundDatabase, tracked_elements: list[str] | None = None):
         self.analysed_elements = tracked_elements
 
@@ -19,14 +21,39 @@ class CompoundService:
 
         self._filter_by_analysed_elements()
 
+    def _elements_as_compound_df(self):
+        # TODO: Find another way
+        elements_list = []
+        elements_data = PeriodicTableWidget.create_elements_data()
+        for element in elements_data:
+            element_formula = element["symbol"]
+            element_density = element["density"]
+            element_display_text = f"{element_formula} ({element_density} g/cm³)"
+            element_signature = signature_from_formula(element_formula)
+
+            element_row = {
+                "formula": element_formula,
+                "density": element_density,
+                "material_id": "",
+                "mp_url": "",
+                "space_group": "",
+                "signature": element_signature,
+                "display_text": element_display_text
+            }
+            elements_list.append(element_row)
+        return pd.DataFrame(elements_list)
+
     def _filter_by_analysed_elements(self):
         if not self.analysed_elements:
             return
-        self.df = self.df_og[
-            self.df_og["formula"].str
+
+        self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
+        self.df = self.df[
+            self.df["formula"].str
             .contains("|".join(self.analysed_elements),
                       regex=True)
         ]
+        self._elements_as_compound_df()
 
     def get_compound(self, index: int) -> Compound:
         """
@@ -47,7 +74,7 @@ class CompoundService:
     def __len__(self):
         return len(self.df)
 
-    def search_compounds_by_formula(self, formula: str, max_count: int = 50) ->list[Compound]:
+    def search_compounds_by_formula(self, formula: str, max_count: int = 50) -> list[Compound]:
         """
         Searches for the `max_count` shortest compounds fitting the formula.
         Args:
@@ -62,8 +89,8 @@ class CompoundService:
 
         rows_with_formula_elements_sorted_by_length = self.df[
             self.df["signature"].str.contains(regex_product_of_elements, regex=True)
-        ][:max_count].sort_values(by="formula",
-                                  key=lambda x: x.str.len())
+        ].sort_values(by="formula",
+                      key=lambda x: x.str.len())[:max_count]
 
         return self._dicts_to_compound(
             rows_with_formula_elements_sorted_by_length.to_dict("records"))
@@ -82,6 +109,7 @@ class CompoundService:
 
 class CompoundDatabaseModel(QAbstractListModel):
     """Adaptor between `CompoundService` and `QAbastractListModel`"""
+
     def __init__(self, database: CompoundService, parent=None):
         super().__init__(parent=parent)
         self.db = database
@@ -112,5 +140,6 @@ class CompoundDatabaseModel(QAbstractListModel):
 
 class DirectQCompleter(QCompleter):
     """Enables a `QCompleter` to show all model results regardless of the input"""
+
     def splitPath(self, _, /):
         return [""]
