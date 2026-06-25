@@ -11,9 +11,11 @@ from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS
 from tools.theme import results_title_qss, theme, primary_button_qss
 from utils.validation import ValidationInfos
 
+
 class IGetComponent:
     def get_component(self) -> tuple[Any, ValidationInfos]:
         pass
+
 
 class CompoundEditor(QWidget, IGetComponent):
     def __init__(self, name: str, compound: Compound, compound_model: CompoundDatabaseModel | CompoundService, parent):
@@ -23,13 +25,13 @@ class CompoundEditor(QWidget, IGetComponent):
         self.name = name
         self.compound = compound
 
-        self.row_label = QLabel(self.name)
+        self.row_label = QLabel(self.name, parent=self)
         self.formula_editor = QLineEdit(text=compound.formula,
-                                        parent=parent)
+                                        parent=self)
         self.density_editor = QLineEdit(text=str(compound.density),
-                                        parent=parent)
+                                        parent=self)
         if isinstance(compound_model, CompoundService):
-            compound_model = compound_model.get_searchable_model()
+            compound_model = compound_model.get_searchable_model(parent=self)
         self.compound_model = compound_model
         self._setup_completion()
 
@@ -37,17 +39,21 @@ class CompoundEditor(QWidget, IGetComponent):
 
     def _setup_completion(self):
         formula_completion = DirectQCompleter()
+        formula_completion.setParent(self.formula_editor)
         formula_completion.setModel(self.compound_model)
         formula_completion.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         formula_completion.setFilterMode(Qt.MatchFlag.MatchFixedString)
+        formula_completion.popup().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.formula_editor.setCompleter(formula_completion)
         self.formula_editor.textEdited.connect(self.compound_model.search)
 
         formula_completion.activated[QModelIndex].connect(self.handle_selected_formula)
 
         density_completion = DirectQCompleter()
+        density_completion.setParent(self.density_editor)
         density_completion.setModel(self.compound_model)
         density_completion.setCompletionRole(Qt.ItemDataRole.UserRole)
+        density_completion.popup().setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.density_editor.setCompleter(density_completion)
 
     def handle_selected_formula(self, index: QModelIndex):
@@ -56,20 +62,20 @@ class CompoundEditor(QWidget, IGetComponent):
         self.density_editor.setText(str(density))
 
     def _setup_ui(self):
-        row_layout = QGridLayout()
+        row_layout = QGridLayout(self)
         self.setLayout(row_layout)
 
         row_layout.addWidget(self.row_label,
                              0, 0, 2, 1,
                              Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
 
-        row_layout.addWidget(QLabel("Formula:"),
+        row_layout.addWidget(QLabel("Formula:", parent=self),
                              0, 1, 1, 1,
                              Qt.AlignmentFlag.AlignLeft)
         row_layout.addWidget(self.formula_editor,
                              1, 1, 1, 1)
 
-        row_layout.addWidget(QLabel("Density (g/cm³):"),
+        row_layout.addWidget(QLabel("Density (g/cm³):", parent=self),
                              0, 2, 1, 1,
                              Qt.AlignmentFlag.AlignLeft)
         row_layout.addWidget(self.density_editor,
@@ -91,8 +97,9 @@ class CompoundEditor(QWidget, IGetComponent):
 
 class SphereNPSEditor(QWidget, IGetComponent):
     """Sphere part of the `NPSEditor`"""
-    def __init__(self, sphere: SphereNPS, compound_serivce: CompoundService):
-        super().__init__()
+
+    def __init__(self, sphere: SphereNPS, compound_serivce: CompoundService, parent=None):
+        super().__init__(parent=parent)
         self.sphere = sphere
         self.formula_edit = CompoundEditor("Formula",
                                            self.sphere.formula,
@@ -101,28 +108,27 @@ class SphereNPSEditor(QWidget, IGetComponent):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         self.setLayout(layout)
         layout.addWidget(self.formula_edit)
 
     def get_component(self) -> tuple[Any, ValidationInfos]:
         self.sphere.formula, validation = self.formula_edit.get_component()
-        print(self.sphere)
-        print(self.sphere.formula)
         return self.sphere, validation
 
 
 class CoreShellNPSEditor(QWidget, IGetComponent):
     """Core-Shell part of the `NPSEditor"""
-    def __init__(self, core_shell: CoreShellNPS, compound_service: CompoundService, /):
-        super().__init__()
+
+    def __init__(self, core_shell: CoreShellNPS, compound_service: CompoundService, /,  parent=None):
+        super().__init__(parent=parent)
         self.compound_service = compound_service
 
         self.core_shell = core_shell
         self.core_edit = CompoundEditor("Core",
-                                         self.core_shell.core,
-                                         self.compound_service,
-                                         parent=self)
+                                        self.core_shell.core,
+                                        self.compound_service,
+                                        parent=self)
 
         self.shell_edit = CompoundEditor("Shell",
                                          self.core_shell.shell,
@@ -132,7 +138,7 @@ class CoreShellNPSEditor(QWidget, IGetComponent):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         self.setLayout(layout)
 
         layout.addWidget(self.core_edit)
@@ -151,7 +157,7 @@ class NPSEditor(QDialog):
     def __init__(self,
                  index: QModelIndex | None,
                  nps_model: QAbstractItemModel,
-                 compound_service:CompoundService,
+                 compound_service: CompoundService,
                  parent: QWidget | Any):
         super().__init__(parent=parent)
         self.logger = logging_manager.get_logger(self.__class__.__name__)
@@ -174,7 +180,7 @@ class NPSEditor(QDialog):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         self.setLayout(layout)
         layout.addWidget(self._build_header())
         layout.addWidget(self._build_name_form())
@@ -185,11 +191,11 @@ class NPSEditor(QDialog):
 
     def _build_header(self):
         header = QWidget(parent=self)
-        header_layout = QHBoxLayout()
+        header_layout = QHBoxLayout(header)
         header.setLayout(header_layout)
 
         # Setting up the dropdown with all NanoParticleShape available
-        self.nps_combo_box = QComboBox(header)
+        self.nps_combo_box = QComboBox(parent=header)
 
         current_nps_index = -1
 
@@ -205,7 +211,7 @@ class NPSEditor(QDialog):
         self.nps_combo_box.setCurrentIndex(current_nps_index)
         self.nps_combo_box.currentIndexChanged.connect(self.handle_nps_selection_change)
 
-        title = QLabel("Editor")
+        title = QLabel("Editor", parent=header)
         title.setStyleSheet(results_title_qss(theme.palette))  # TODO: make a common style
         header_layout.addWidget(title)
         header_layout.addWidget(self.nps_combo_box)
@@ -214,7 +220,7 @@ class NPSEditor(QDialog):
 
     def _build_name_form(self):
         widget = QWidget(parent=self)
-        layout = QFormLayout()
+        layout = QFormLayout(widget)
         widget.setLayout(layout)
         layout.addRow("Name", self.nps_name_edit)
         return widget
@@ -241,27 +247,27 @@ class NPSEditor(QDialog):
         match nps:
             case CoreShellNPS():
                 self.logger.info("Displays core-shell form")
-                self.current_form_widget = CoreShellNPSEditor(nps, self.compound_service)
+                self.current_form_widget = CoreShellNPSEditor(nps, self.compound_service, parent=self)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case SphereNPS():
                 self.logger.info("Displays sphere form")
-                self.current_form_widget = SphereNPSEditor(nps, self.compound_service)
+                self.current_form_widget = SphereNPSEditor(nps, self.compound_service, parent=self)
                 layout.insertWidget(self.nps_form_layout_index, self.current_form_widget)
             case obj:
                 self.logger.critical(f"Class ({obj.__class__}) doesn't have a form")
                 raise NotImplementedError(f"No NPS class for the type : {obj.__class__}")
 
     def _build_footer(self):
-        widget = QWidget()
-        layout = QHBoxLayout()
+        widget = QWidget(parent=self)
+        layout = QHBoxLayout(widget)
         widget.setLayout(layout)
 
-        accept_btn = QPushButton("Apply")
+        accept_btn = QPushButton("Apply", parent=widget)
         accept_btn.setStyleSheet(primary_button_qss(theme.palette))
         accept_btn.clicked.connect(self.emit_accept_with_nps)
         layout.addWidget(accept_btn)
 
-        reject_btn = QPushButton("Cancel")
+        reject_btn = QPushButton("Cancel", parent=widget)
         reject_btn.clicked.connect(self.close)
         layout.addWidget(reject_btn)
         return widget

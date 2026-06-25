@@ -209,6 +209,7 @@ class NanoParticleShapeWidget(QWidget):
         self.nps_editor.accept_with_nps.connect(
             lambda nps: self.handle_modify_nps(nps, index)
         )
+        self.nps_editor.exec()
 
     def handle_modify_nps(self, nps: NanoParticleShape, index: QModelIndex):
         """
@@ -226,6 +227,7 @@ class NanoParticleShapeWidget(QWidget):
         """ Opens the nps editor with the goal of creating a new NPS. """
         self.nps_editor = self._create_and_open_nps_editor()
         self.nps_editor.accept_with_nps.connect(self.handle_new_nps)
+        self.nps_editor.exec()
 
     def handle_new_nps(self, nps: NanoParticleShape):
         """
@@ -251,5 +253,4 @@ class NanoParticleShapeWidget(QWidget):
                                compound_service=CompoundService(self.csv_database,
                                                                 self.tracked_elements),  # TODO: upstream this please.
                                parent=self)
-        nps_editor.open()
         return nps_editor
