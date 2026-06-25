@@ -16,7 +16,7 @@ import logging
 from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_counts, reduce_counts
 from tools.mass_fraction_calculator_utils.formula_combo_box import FormulaComboBox
 from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
-from tools.nanoparticle_shape.nanoparticle_shapes import SphereNPS, CoreShellNPS, Compound
+from tools.nanoparticle_shape.database_adapter import CompoundService
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
 from tools.np_shape import NanoParticleShapeWidget
 from tools.theme import theme
@@ -89,7 +89,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
 class MassFractionCalculator(QDialog):
     """Mass fraction calculator with sample selection and molecular weight calculations."""
 
-    mass_fractions_updated = Signal(dict)
+    mass_fractions_updated = Signal(dict, NanoParticleShapeService)
 
     class CalculatorColumn(Enum):
         """`CalculatorColumn` stores display information about the table"""
@@ -134,8 +134,13 @@ class MassFractionCalculator(QDialog):
             """
             return [column.title for column in cls]
 
-    def __init__(self, selected_isotopes: dict, periodic_table_widget, parent=None):
+    def __init__(self,
+                 selected_isotopes: dict,
+                 periodic_table_widget,
+                 nps_service: NanoParticleShapeService,
+                 parent=None):
         super().__init__(parent)
+        self.nps_service = nps_service
         self.selected_isotopes = selected_isotopes
         self.periodic_table_widget = periodic_table_widget
         self.parent_window = parent
@@ -458,12 +463,8 @@ class MassFractionCalculator(QDialog):
         # NP Shape
         nps_widget = NanoParticleShapeWidget(
             self,
-            NanoParticleShapeService(nps_list=[
-                SphereNPS(name="That", formula=Compound("AgAu", density=14.997)),
-                CoreShellNPS(name="That", core=Compound("AgAu", density=14.997), shell=Compound("AgAu", density=14.997)),
-            ]),
-            self.csv_database,
-            list(self.tracked_elements))
+            self.nps_service,
+            CompoundService(self.csv_database, list(self.tracked_elements)))
         button_panel = self._build_dialog_control_buttons()
 
         mfc_nps_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -954,13 +955,16 @@ class MassFractionCalculator(QDialog):
 
         self._save_state()
 
-        self.mass_fractions_updated.emit({
-            'mass_fractions': self.mass_fractions,
-            'densities': self.densities,
-            'molecular_weights': self.molecular_weights,
-            'apply_to_all': apply_all,
-            'selected_samples': selected if not apply_all else [],
-        })
+        self.mass_fractions_updated.emit(
+            {
+                'mass_fractions': self.mass_fractions,
+                'densities': self.densities,
+                'molecular_weights': self.molecular_weights,
+                'apply_to_all': apply_all,
+                'selected_samples': selected if not apply_all else [],
+            },
+            self.nps_service
+        )
         self.accept()
 
     def closeEvent(self, event):

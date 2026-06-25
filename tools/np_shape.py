@@ -4,12 +4,11 @@ from typing import Any
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QTableView, QHBoxLayout, QPushButton, \
     QAbstractItemView
-from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal, QSortFilterProxyModel
+from PySide6.QtCore import QAbstractTableModel, QObject, Qt, QModelIndex, Signal
 
 from tools.logging_utils import logging_manager
-from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
 from tools.nanoparticle_shape.database_adapter import CompoundService
-from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape, CoreShellNPS, SphereNPS
+from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape
 from tools.nanoparticle_shape.nps_editor import NPSEditor
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
 from utils.validation import ValidationErrorException
@@ -150,14 +149,11 @@ class NanoParticleShapeWidget(QWidget):
 
     def __init__(self, parent: QWidget | Any,
                  nps_service: NanoParticleShapeService,
-                 csv_database: CSVCompoundDatabase,
-                 tracked_elements: list[str], /):
+                 compound_service: CompoundService, /):
         super().__init__(parent=parent)
+        self.compound_service = compound_service
         self.logger = logging_manager.get_logger(self.__class__.__name__)
         self.nps_editor = None
-
-        self.csv_database = csv_database
-        self.tracked_elements = tracked_elements
 
         self.nps_table = QTableViewKeyEvents(parent=self)
         self.nps_model = NanoParticleShapeModel(nps_service=nps_service,
@@ -250,7 +246,6 @@ class NanoParticleShapeWidget(QWidget):
 
         nps_editor = NPSEditor(index,
                                nps_model=self.nps_model,
-                               compound_service=CompoundService(self.csv_database,
-                                                                self.tracked_elements),  # TODO: upstream this please.
+                               compound_service=self.compound_service,  # TODO: upstream this please.
                                parent=self)
         return nps_editor
