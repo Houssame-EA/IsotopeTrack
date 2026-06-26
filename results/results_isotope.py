@@ -16,7 +16,7 @@ import pandas as pd
 from results.utils_sort import extract_mass_and_element
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, apply_font_to_pyqtgraph,
+    FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, apply_font_to_pyqtgraph,
     LABEL_MODES, format_element_label, Renderer, apply_saturation_filter,
     build_element_matrix, get_sample_color, get_display_name,
     download_pyqtgraph_figure,
@@ -667,25 +667,8 @@ class IsotopeSettingsDialog(QDialog):
         layout.addWidget(g)
         self._grp_data_type = g
 
-        g = QGroupBox("Font")
-        fl = QFormLayout(g)
-        self.font_family_combo = QComboBox()
-        self.font_family_combo.addItems(FONT_FAMILIES)
-        self.font_family_combo.setCurrentText(self._cfg.get('font_family', 'Times New Roman'))
-        fl.addRow("Family:", self.font_family_combo)
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(6, 48)
-        self.font_size_spin.setValue(int(self._cfg.get('font_size', 18)))
-        fl.addRow("Size:", self.font_size_spin)
-        row = QHBoxLayout()
-        self._font_color_btn = QPushButton()
-        self._font_color_btn.setFixedSize(26, 22)
-        self._font_color_btn.setStyleSheet(f"background:{self._font_color};")
-        self._font_color_btn.clicked.connect(
-            lambda: self._pick_color('_font_color', self._font_color_btn))
-        row.addWidget(self._font_color_btn)
-        row.addStretch()
-        fl.addRow("Text Color:", row)
+        self._font_group = FontSettingsGroup(self._cfg)
+        g = self._font_group.build()
         layout.addWidget(g)
         self._grp_font = g
 
@@ -1653,9 +1636,7 @@ class IsotopeSettingsDialog(QDialog):
                         for i in range(self._order_list.count())]
 
         if scope in {"format", "all"}:
-            out['font_family'] = self.font_family_combo.currentText()
-            out['font_size'] = self.font_size_spin.value()
-            out['font_color'] = self._font_color
+            out.update(self._font_group.collect())
             out['show_natural_line'] = self.show_natural.isChecked()
             out['show_standard_line'] = self.show_standard.isChecked()
             out['show_mean_line'] = self.show_mean.isChecked()
@@ -2704,7 +2685,8 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         return x_label, y_label
 
-    def _add_scatter(self, pi, x, y, cfg, color, color_values=None):
+    def _add_scatter(self, pi, x, y, cfg, color, color_values=None,
+                     sample_key=None, is_single=False):
         size = cfg.get('marker_size', 8)
         alpha = int(cfg.get('marker_alpha', 0.7) * 255)
         pen = pg.mkPen(color='black', width=0.5)
@@ -2752,6 +2734,11 @@ class IsotopicRatioDisplayDialog(QDialog):
             brush = pg.mkBrush(c.red(), c.green(), c.blue(), alpha)
             scatter = pg.ScatterPlotItem(
                 x=x, y=y, size=size, pen=pen, brush=brush)
+            if is_single:
+                setattr(scatter, '_color_identity_role', 'single')
+            elif sample_key is not None:
+                setattr(scatter, '_color_identity_role', 'sample')
+                setattr(scatter, '_color_identity_key', sample_key)
             pi.addItem(scatter)
             return scatter, None, None
 
@@ -2953,7 +2940,8 @@ class IsotopicRatioDisplayDialog(QDialog):
         e1, e2 = cfg.get('element1', ''), cfg.get('element2', '')
         lm = cfg.get('label_mode', 'Symbol')
 
-        scatter, vmin, vmax = self._add_scatter(pi, x, ratios, cfg, color, color_values)
+        scatter, vmin, vmax = self._add_scatter(
+            pi, x, ratios, cfg, color, color_values, is_single=True)
         legend_items = [(scatter, f"Ratio {_format_ratio_text(e1, e2, lm)}")]
 
         self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_key)
@@ -2991,7 +2979,8 @@ class IsotopicRatioDisplayDialog(QDialog):
 
             all_corrected.extend(corrected_linear.tolist())
 
-            scatter, vmin, vmax = self._add_scatter(pi, x, ratios, cfg, color, color_values)
+            scatter, vmin, vmax = self._add_scatter(
+                pi, x, ratios, cfg, color, color_values, sample_key=sn)
             any_drawn = True
             if vmin is not None:
                 global_vmin = min(global_vmin, vmin)
@@ -3080,7 +3069,8 @@ class IsotopicRatioDisplayDialog(QDialog):
 
         x, ratios, _, color_values, corrected_linear, mean_raw = result
 
-        scatter, vmin, vmax = self._add_scatter(pi, x, ratios, cfg, color, color_values)
+        scatter, vmin, vmax = self._add_scatter(
+            pi, x, ratios, cfg, color, color_values, sample_key=sample_name)
         legend_items = [(scatter, get_display_name(sample_name, cfg))]
 
         self._add_poisson_ci(pi, cfg, mean_raw, color, x_data=x, sample_name=sample_name)
@@ -3178,9 +3168,10 @@ class IsotopicRatioPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = IsotopicRatioDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: IsotopicRatioDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

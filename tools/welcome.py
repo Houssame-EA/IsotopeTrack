@@ -27,7 +27,7 @@ try:
     from utils.app_version import __version__ as APP_VERSION
 except Exception:
     # Fallback only used if the import fails; kept in sync by version.py.
-    APP_VERSION = "1.10.4"
+    APP_VERSION = "1.10.5"
 
 _itk_log = logging.getLogger("IsotopeTrack.tools.welcome")
 
@@ -78,7 +78,7 @@ def get_recent_projects(existing_only=True):
 
 
 def should_show_on_startup():
-    return bool(_settings().value(_SHOW_KEY, True, type=bool))
+    return bool(_settings().value(_SHOW_KEY, False, type=bool))
 
 
 def set_show_on_startup(value: bool):

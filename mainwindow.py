@@ -318,17 +318,10 @@ class MainWindow(QMainWindow):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
 
-        # Autosave + crash recovery. The timer writes a background snapshot when
-        # there are unsaved changes; a leftover snapshot at startup means the
-        # last session did not exit cleanly, so offer to recover it (first
-        # window only, after the event loop starts).
         from save_export.autosave import AutosaveManager
         self._autosave = AutosaveManager(self)
         self._autosave.start()
 
-        # In-session undo/redo for editable inputs (parameters, selection,
-        # calibration, dilution, …). Snapshots the inputs only, never the raw
-        # data or computed results — see tools/undo_manager.py.
         try:
             from tools.undo_manager import UndoManager
             self._undo_manager = UndoManager(self)
@@ -338,8 +331,6 @@ class MainWindow(QMainWindow):
             _itk_log.exception("Could not initialize undo manager")
 
         if self.window_number == 1:
-            # Crash recovery is now surfaced non-modally via the home panel
-            # (a "Recover unsaved session" card), instead of a blocking prompt.
             QTimer.singleShot(1200, self._maybe_show_welcome)
 
     # ------------------------------------------------------------------ #
@@ -6936,11 +6927,11 @@ class MainWindow(QMainWindow):
         from PySide6.QtCore import QSettings
         from PySide6.QtWidgets import QDialog
         settings = QSettings("IsotopeTrack", "IsotopeTrack")
-        enabled = settings.value("autosave/enabled", True, type=bool)
+        enabled = settings.value("autosave/enabled", False, type=bool)
         try:
-            interval_ms = int(settings.value("autosave/interval_ms", 60_000))
+            interval_ms = int(settings.value("autosave/interval_ms", 120_000))
         except (TypeError, ValueError):
-            interval_ms = 60_000
+            interval_ms = 120_000
         dlg = AutoSaveSettingsDialog(enabled, interval_ms, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             new_enabled, new_interval_ms = dlg.result_values()
@@ -7931,8 +7922,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Recovery failed",
                     "The autosaved session could not be loaded.")
-                return  # keep the snapshot so it can be retried
-        # Recovered or declined: clear the leftovers so we don't prompt again.
+                return 
         from save_export.autosave import AutosaveManager
         AutosaveManager.discard_recovery_files(leftovers)
 
