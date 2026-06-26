@@ -1,7 +1,7 @@
 import copy
 
 from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape
-from utils.validation import ValidationErrorException
+from utils.validation import ValidationErrorException, ValidationInfos
 
 
 class NanoParticleShapeService:
@@ -72,3 +72,40 @@ class NanoParticleShapeService:
         if self.is_index_invalid(index):
             raise IndexError(f"IndexOutOfBound: {index} is an invalid index (max index : {len(self.nps_list)})")
         self.nps_list[index] = copy.deepcopy(nps)
+
+    def get_all_shapes(self) -> list[NanoParticleShape]:
+        """
+        Gets all shapes known to the service
+        Returns:
+            A list of all `NanoParticleShapes`
+        """
+        return copy.deepcopy(self.nps_list)
+
+    def load_shapes(self, nps_list: list[NanoParticleShape]) -> list[ValidationInfos]:
+        """
+        Batch adding of `NanoParticleShape`.
+        Args:
+            nps_list: List of `NanoParticleShape`s to be added to the service.
+        Returns:
+            A list of `ValidationInfos` identified by their indexes.
+        """
+        validation_list = []
+        for index, nps in enumerate(nps_list):
+            if not isinstance(nps, NanoParticleShape):
+                validation_list.append(
+                    ValidationInfos(errors=[f"Element {index}: is not a nanoparticle shape."])
+                )
+                continue
+
+            validation = nps.validate().add_identifier(f"Element {index}")
+
+            if validation.has_errors() or validation.has_messages():
+                validation_list.append(validation)
+
+                if validation.has_errors():
+                    continue
+
+            self.nps_list.append(copy.deepcopy(nps))
+
+        return validation_list
+

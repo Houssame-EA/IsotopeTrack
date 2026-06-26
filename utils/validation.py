@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from functools import reduce
 from typing import Self
 
 
@@ -62,6 +63,20 @@ class ValidationInfos:
     def __repr__(self):
         return f"<{self.__module__}.{self.__class__.__name__} errors={self.errors} messages={self.messages}>"
 
+    @staticmethod
+    def compact(validation_list: list["ValidationInfos"]) -> "ValidationInfos":
+        """
+        Takes a list of `ValidationInfos` and merges them into a new one.
+        Args:
+            validation_list:
+
+        Returns:
+
+        """
+        return reduce(lambda compacted, validation_info: compacted.merge(validation_info),
+                      validation_list,
+                      ValidationInfos())
+
 
 class IValidation(ABC):
     """
@@ -83,7 +98,8 @@ class IValidation(ABC):
 
 class ValidationErrorException(RuntimeError):
     """Custom error for failed validations."""
-    def __init__(self, validation_infos:ValidationInfos, *args):
+
+    def __init__(self, validation_infos: ValidationInfos, *args):
         super().__init__(*args)
         self.validation_infos = validation_infos
 
