@@ -28,12 +28,13 @@ def get_resource_path(relative_path):
     Returns:
         Path: Absolute path to the resource.
     """
-    try:
-        base_path = Path(sys._MEIPASS)
-    except AttributeError:
-        _itk_log.exception("Handled exception in get_resource_path")
+    # sys._MEIPASS only exists inside a PyInstaller bundle; in dev we resolve
+    # relative to the project root. Use getattr so the dev case is normal
+    # control flow rather than a logged AttributeError on every call.
+    base_path = getattr(sys, "_MEIPASS", None)
+    if base_path is None:
         base_path = Path(__file__).parent.parent
-    return base_path / relative_path
+    return Path(base_path) / relative_path
 
 
 # ---------------------------------------------------------------------------
@@ -3083,7 +3084,7 @@ class AboutDialog(QDialog):
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.10.2</h3>"
+            "<h3 align='center'>Version 1.10.4</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))

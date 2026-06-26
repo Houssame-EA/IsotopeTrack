@@ -230,7 +230,7 @@ class ThemeManager(QObject):
         self._follow_system = False
         self._settings = QSettings("IsotopeTrack", "IsotopeTrack")
 
-        saved = self._settings.value("theme/name", "system")   
+        saved = self._settings.value("theme/name", "system")
 
         if saved == "system":
             self._follow_system = True

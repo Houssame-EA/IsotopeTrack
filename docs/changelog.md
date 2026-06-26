@@ -4,6 +4,30 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.10.4 — 2026-06-22
+
+
+- major upgrades to ternary (colors, less confusion, replace hexbin)
+- small bug fixes here and there (other results types)
+- added the Apply/done feature (great)
+- added customizable autosave, cause that makes app lag
+- Enable opening projects via double-click.
+- Implement auto-save for minor changes; restrict large data saves.
+- Add standard "Save" and "Save As" functionality.
+
+
+## v1.10.3 — 2026-06-17
+
+### New Features
+
+- Add home screen, utils package split
+- Add Welcome/Home screen (recent projects, docs/paper/GitHub links, show-on-startup) + recent-projects tracking
+- Add toast notifications for project save, load, autosave, and clean export
+- Add home panel on the empty plot area: recent saved projects + recover-unsaved-session card (replaces startup recovery modal)
+- Add canvas empty-state hint ('drag a result block onto the canvas')
+- new non-visual utils/ package; move app_version + isobaric_correction; split logic out of unit.py (utils/unit.py) and dilution_utils.py (utils/dilution.py)
+- Fix: Compound Poisson LogNormal now uses the per-isotope sigma from the parameters table instead of a hardcoded 0.55 (falls back to 0.55 when sigma <= 0)
+
 ## v1.10.2 — 2026-06-16
 
 ### New Features

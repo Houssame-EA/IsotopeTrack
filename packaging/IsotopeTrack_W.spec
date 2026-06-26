@@ -28,8 +28,14 @@ with open(_rth, 'w') as _f:
         "        pass\n"
         "    class _ChunkedArray:\n"
         "        pass\n"
+        "    class _Table:\n"
+        "        pass\n"
+        "    class _RecordBatch:\n"
+        "        pass\n"
         "    m.Array = _Array\n"
         "    m.ChunkedArray = _ChunkedArray\n"
+        "    m.Table = _Table\n"
+        "    m.RecordBatch = _RecordBatch\n"
         "    sys.modules['pyarrow'] = m\n"
     )
 
@@ -147,6 +153,9 @@ a = Analysis(
         'lz4.frame',
         'lz4.block',
 
+        'openpyxl',
+        'pypdf',
+
         'pandas',
         'pandas.io.formats.excel',
         'pandas.io.common',
@@ -238,6 +247,7 @@ a = Analysis(
         'calibration_methods.TE_number',
         'calibration_methods.TE',
         'calibration_methods.te_common',
+        'calibration_methods.calibration_registry',
 
         'loading',
         'loading.data_thread',
@@ -248,6 +258,7 @@ a = Analysis(
 
         'processing',
         'processing.peak_detection',
+        'processing.detection_registry',
 
         'results',
         'results.results_AI',
@@ -278,9 +289,9 @@ a = Analysis(
         'save_export.fast_project_io',
         'save_export.ionic_session',
         'save_export.project_manager',
+        'save_export.autosave',
 
         'tools',
-        'tools.app_version',
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
@@ -295,10 +306,18 @@ a = Analysis(
         'tools.progressive_main_window',
         'tools.signal_selector_dialog',
         'tools.splash_screen',
-        'tools.isobaric_correction',
         'tools.tutorial',
         'tools.unit',
         'tools.cli_utils',
+        'tools.home_panel',
+        'tools.toast',
+        'tools.welcome',
+
+        'utils',
+        'utils.app_version',
+        'utils.isobaric_correction',
+        'utils.unit',
+        'utils.dilution',
 
         'widget',
         'widget.batch_parameters',
@@ -328,7 +347,6 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'plotly',
         'pyarrow',
-        'openpyxl',
         'xlsxwriter',
     ],
     noarchive=False,

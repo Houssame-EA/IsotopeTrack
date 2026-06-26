@@ -11,7 +11,7 @@ Qt settings backend; the conversion/formatting logic is pure.)
 """
 import math
 
-from tools.unit import ExportUnits, MASS_UNITS, MOLES_UNITS, DIAMETER_UNITS
+from utils.unit import ExportUnits, MASS_UNITS, MOLES_UNITS, DIAMETER_UNITS
 
 
 class TestConversionFactors:

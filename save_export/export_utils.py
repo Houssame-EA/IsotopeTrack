@@ -10,8 +10,9 @@ import math
 import time
 
 from tools.theme import theme, dialog_qss
-from tools.unit import ExportUnits, load_units, show_advanced_dialog
-from tools.app_version import __version__ as APP_VERSION
+from utils.unit import ExportUnits, load_units
+from tools.unit import show_advanced_dialog
+from utils.app_version import __version__ as APP_VERSION
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
@@ -412,11 +413,23 @@ def export_data(main_window):
                     continue
 
         if successful_exports > 0:
-            success_msg = f"Successfully exported {successful_exports} file(s) to {export_dir}"
             if failed_exports:
+                # Mixed result: keep the blocking dialog so the user sees
+                # exactly which files failed and why.
                 error_details = "\n".join([f"{name}: {error}" for name, error in failed_exports])
-                success_msg += f"\n\nFailed exports ({len(failed_exports)}):\n{error_details}"
-            QMessageBox.information(main_window, "Export Complete", success_msg)
+                success_msg = (
+                    f"Successfully exported {successful_exports} file(s) to {export_dir}"
+                    f"\n\nFailed exports ({len(failed_exports)}):\n{error_details}")
+                QMessageBox.information(main_window, "Export Complete", success_msg)
+            else:
+                # Clean success: a non-blocking toast keeps the user in flow.
+                _notify = getattr(main_window, "notify", None)
+                if callable(_notify):
+                    _notify(f"Exported {successful_exports} file(s)", "success")
+                else:
+                    QMessageBox.information(
+                        main_window, "Export Complete",
+                        f"Successfully exported {successful_exports} file(s) to {export_dir}")
         else:
             error_details = "\n".join([f"{name}: {error}" for name, error in failed_exports])
             QMessageBox.critical(main_window, "Export Error", f"Failed to export any files:\n\n{error_details}")

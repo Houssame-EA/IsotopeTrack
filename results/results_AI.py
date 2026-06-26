@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt
 from PySide6.QtGui import QPixmap, QFont, QCursor, QColor, QKeySequence
-import requests, io, re, json, time, math, threading, base64, os, uuid
+import requests, io, re, json, time, math, threading, base64, os, uuid, ast, traceback
 from collections import Counter, defaultdict
 import numpy as np
 from tools.theme import theme as global_theme
@@ -380,6 +380,40 @@ show_table(['Element','N','% total','Diam mean','Diam median','Diam p95','Mass m
     for combo, cnt in top_c[:12]:
         ctx += f"  {cnt:6,} ({cnt/n*100:.1f}%)  {combo}\n"
 
+    # ── Data availability (so the model knows what it may report) ──
+    has_conc = bool((dc or {}).get('concentration_meta'))
+    ctx += "\n── DATA AVAILABILITY ──\n"
+    if has_conc:
+        ctx += "  Concentrations: AVAILABLE — element_per_ml is valid (particles/mL).\n"
+    else:
+        ctx += ("  Concentrations: NOT AVAILABLE — element_per_ml is empty; "
+                "do not report per-mL concentrations.\n")
+
+    # ── Known spectral interferences, sourced from the validated database ──
+    # Grounds caveats in IsotopeTrack's own reference data rather than the model's
+    # training. Only flags masses with major/critical documented interferences.
+    try:
+        from widget.interference_database import (
+            get_interferences_for_mass, get_worst_severity)
+        notes = []
+        for el, _cnt in top_e:
+            mm = re.match(r'(\d+)', str(el))
+            if not mm:
+                continue
+            ints = get_interferences_for_mass(int(mm.group(1)))
+            if not ints:
+                continue
+            sev = get_worst_severity(ints)
+            if sev in ('critical', 'major'):
+                species = ', '.join(str(i.get('species', '?')) for i in ints[:3])
+                notes.append(f"  {el:<8} {sev:<9} possible: {species}")
+        if notes:
+            ctx += ("\n── KNOWN SPECTRAL INTERFERENCES ──\n"
+                    "  Documented for these masses — caveat any finding that hinges on them.\n"
+                    + "\n".join(notes[:15]) + "\n")
+    except Exception:
+        _itk_log.exception("Handled exception building interference notes")
+
     ctx += "\n── 3 REPRESENTATIVE PARTICLES ──\n"
     for label, idx in [('first', 0), ('middle', n//2), ('last', n-1)]:
         p = particles[idx]
@@ -577,6 +611,151 @@ def _sanitize_code(code):
     code = re.sub(r'^\s*plt\.savefig\(.*?\)\s*$', '', code, flags=re.MULTILINE)
     return code.strip()
 
+
+# ── AST safety screen ─────────────────────────────────────────────────────────
+# The exec namespace already removes dangerous builtins (no open/eval/exec/
+# __import__). This AST pass closes the two remaining gaps we cannot cover with a
+# builtins whitelist alone: (1) the classic introspection escape via dunder
+# attribute walking — ().__class__.__bases__[0].__subclasses__() — and (2)
+# numpy's own filesystem helpers (np.save/np.load/...), since np is pre-injected.
+# It is a *safety* screen for locally-generated code, not a hard security
+# boundary; full process isolation (resource limits / hard kill) is a separate,
+# larger change documented for follow-up.
+_BLOCKED_CALL_NAMES = frozenset({
+    'open', 'eval', 'exec', 'compile', '__import__', 'input',
+    'getattr', 'setattr', 'delattr', 'globals', 'locals', 'vars', 'memoryview',
+})
+_BLOCKED_ATTRS = frozenset({
+    # numpy / generic filesystem + serialization escape hatches
+    'save', 'savez', 'savez_compressed', 'load', 'loadtxt', 'savetxt',
+    'genfromtxt', 'fromfile', 'tofile', 'memmap', 'fromregex', 'DataSource',
+    'system', 'popen', 'remove', 'unlink', 'rename', 'rmdir', 'makedirs',
+})
+
+def _screen_code(code):
+    """Static-analyse generated code. Returns an error string if it contains a
+    disallowed construct, else None. Runs before exec()."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return f"SyntaxError: {e.msg} (line {e.lineno})"
+    for node in ast.walk(tree):
+        # Block dunder attribute access (escape via __class__/__subclasses__/...)
+        if isinstance(node, ast.Attribute) and isinstance(node.attr, str):
+            if node.attr.startswith('__') and node.attr.endswith('__'):
+                return ("Blocked: dunder attribute access "
+                        f"('{node.attr}') is not allowed in the sandbox.")
+            if node.attr in _BLOCKED_ATTRS:
+                return (f"Blocked: '{node.attr}(...)' is not allowed "
+                        "(filesystem/serialization access is disabled).")
+        # Block dunder name references and known dangerous builtins
+        if isinstance(node, ast.Name) and isinstance(node.id, str):
+            if node.id.startswith('__') and node.id.endswith('__'):
+                return f"Blocked: '{node.id}' is not allowed in the sandbox."
+            if node.id in _BLOCKED_CALL_NAMES:
+                return (f"Blocked: '{node.id}(...)' is not allowed in the sandbox.")
+    return None
+
+
+# ── Number provenance (no-fabrication guardrail) ──────────────────────────────
+# The model computes numbers via code (good) but can still restate wrong figures
+# in prose. These helpers collect every number the sandbox actually produced and
+# flag specific decimal figures in prose that are not backed by that output.
+_FLOAT_TOKEN_RE   = re.compile(r'[-+]?\d[\d,]*\.\d+')
+_ANYNUM_TOKEN_RE  = re.compile(r'[-+]?\d[\d,]*\.\d+|[-+]?\d[\d,]*')
+
+def _to_float(tok):
+    try:
+        return float(str(tok).replace(',', ''))
+    except (ValueError, TypeError):
+        return None
+
+def _floats_in_text(s):
+    """All numeric values (int or float) appearing in a string."""
+    out = []
+    for tok in _ANYNUM_TOKEN_RE.findall(str(s)):
+        v = _to_float(tok)
+        if v is not None:
+            out.append(v)
+    return out
+
+def _numbers_in_rows(rows, cap=8000):
+    out = []
+    for row in rows:
+        for cell in row:
+            out.extend(_floats_in_text(cell))
+            if len(out) >= cap:
+                return out
+    return out
+
+def _close(a, b, rel=0.005):
+    return abs(a - b) <= max(1e-9, rel * max(abs(a), abs(b)))
+
+def _unverified_numbers(prose, allowed):
+    """Decimal figures in prose with no match (within tolerance) in the set of
+    numbers the code produced. Only decimals are flagged, to avoid noise from
+    counts, percentages-as-integers, indices, etc."""
+    allowed = list(allowed)
+    bad, seen = [], set()
+    for tok in _FLOAT_TOKEN_RE.findall(str(prose)):
+        if tok in seen:
+            continue
+        seen.add(tok)
+        v = _to_float(tok)
+        if v is None:
+            continue
+        if not any(_close(v, a) for a in allowed):
+            bad.append(tok)
+    return bad
+
+
+def _compact_table(tbl, max_rows=15):
+    """Short plain-text rendering of a result table for the interpretation pass."""
+    headers = tbl.get('headers', [])
+    rows = tbl.get('rows', [])
+    lines = [f"TABLE: {tbl.get('title', '')}", " | ".join(str(h) for h in headers)]
+    for r in rows[:max_rows]:
+        lines.append(" | ".join(str(c) for c in r))
+    if len(rows) > max_rows:
+        lines.append(f"... ({len(rows) - max_rows} more rows)")
+    return "\n".join(lines)
+
+
+def _correction_hint(err, import_error=False):
+    """Build the self-correction message fed back to the model after a sandbox
+    error, so it can fix and retry (generalises the old import-only hint)."""
+    hint = (
+        "[SANDBOX CORRECTION] Your code raised an error when it ran:\n"
+        f"{err}\n\n"
+        "Rewrite the code to fix it. Reminders:\n"
+        "- No import statements — np, math, Counter, defaultdict, stats are pre-loaded.\n"
+        "- Discover elements with list(element_counts.keys()); never assume a label exists.\n"
+        "- Use .get(...) for dict access and check keys before indexing.\n"
+        "- Produce output via show_table / show_chart / show_pie / show_histogram or print().\n"
+        "- Do not use file access, dunder attributes, or imports."
+    )
+    if import_error:
+        hint += "\n- Imports are blocked; remove every import line."
+    return hint
+
+
+_MAX_STDOUT_CHARS = 20000
+
+def _format_exec_error(exc, code):
+    """Error string with the offending line from the generated code, so both the
+    user and the self-correction retry can see exactly what failed."""
+    msg = f"{type(exc).__name__}: {exc}"
+    try:
+        tb = traceback.extract_tb(exc.__traceback__)
+        lineno = next((fr.lineno for fr in reversed(tb)
+                       if fr.filename == '<string>'), None)
+        src = code.split('\n')
+        if lineno and 1 <= lineno <= len(src):
+            msg += f"\n  → line {lineno}: {src[lineno - 1].strip()}"
+    except Exception:
+        _itk_log.exception("Handled exception in _format_exec_error")
+    return msg
+
 def _execute_query_code(code, particles, dc):
     """Run code in sandbox. Returns (text_output, table_list, chart_list, error).
     table_list = [{'title':str, 'headers':[str], 'rows':[[str]]}]
@@ -584,6 +763,9 @@ def _execute_query_code(code, particles, dc):
     """
     from contextlib import redirect_stdout
     code = _sanitize_code(code)
+    screen_err = _screen_code(code)
+    if screen_err:
+        return None, [], [], screen_err
     bs = _extract_by_sample(particles, dc) if dc else {}
 
     def _safe(p, field, key): return p.get(field, {}).get(key, 0) > 0
@@ -676,13 +858,18 @@ def _execute_query_code(code, particles, dc):
             with redirect_stdout(out): exec(code, ns)
         except Exception as e:
             _itk_log.exception("Handled exception in _run")
-            err[0] = f"{type(e).__name__}: {e}"
+            err[0] = _format_exec_error(e, code)
 
     t = threading.Thread(target=_run, daemon=True)
     t.start(); t.join(timeout=CODE_EXEC_TIMEOUT)
-    if t.is_alive(): return None, [], [], "Code execution timed out."
+    if t.is_alive():
+        return None, [], [], (
+            f"Code execution timed out after {CODE_EXEC_TIMEOUT}s — "
+            "simplify the query or process fewer particles at once.")
     if err[0]: return None, _tables, _charts, err[0]
     text = out.getvalue().strip()
+    if len(text) > _MAX_STDOUT_CHARS:
+        text = text[:_MAX_STDOUT_CHARS] + "\n... [output truncated]"
     return (text if text else None), _tables, _charts, None
 
 
@@ -830,7 +1017,7 @@ class StreamWorker(QThread):
                 "messages": messages,
                 "stream":  True,
                 "options": {
-                    "temperature": self.cfg.get('temperature', 0.6),
+                    "temperature": self.cfg.get('temperature', 0.2),
                     "num_ctx":     self.cfg.get('num_ctx', 8192),
                     "num_predict": 4096,
                 },
@@ -871,7 +1058,7 @@ class StreamWorker(QThread):
             self._resp = requests.post(f"{host}/v1/chat/completions", json={
                 "messages":    messages,
                 "stream":      True,
-                "temperature": self.cfg.get('temperature', 0.6),
+                "temperature": self.cfg.get('temperature', 0.2),
                 "max_tokens":  4096,
             }, timeout=300, stream=True)
             if self._resp.status_code != 200:
@@ -920,7 +1107,7 @@ class StreamWorker(QThread):
                 f"{base}/chat/completions",
                 headers=hdrs,
                 json={"model":model,"messages":messages,"stream":True,
-                      "temperature":self.cfg.get('temperature',0.6),"max_tokens":4096},
+                      "temperature":self.cfg.get('temperature',0.2),"max_tokens":4096},
                 timeout=300, stream=True)
             if self._resp.status_code != 200:
                 try: detail = self._resp.json().get('error',{}).get('message','')
@@ -946,6 +1133,46 @@ class StreamWorker(QThread):
             self.stream_done.emit(complete)
         else:
             self.error_occurred.emit("Empty response.")
+
+
+# ── Auto-detect probe ─────────────────────────────────────────────────────────
+
+class ProbeWorker(QThread):
+    """Briefly probe localhost for a running model server so the assistant can
+    self-configure on first open — no need to visit settings. Ollama is checked
+    first, then MLX. Emits at most one signal."""
+    ready = Signal(str, str, str)     # backend, model, human-readable label
+    info  = Signal(str)               # non-fatal hint (e.g. server up, no models)
+
+    def __init__(self, mlx_host=MLX_BASE):
+        super().__init__()
+        self._mlx_host = (mlx_host or MLX_BASE).rstrip('/')
+
+    def run(self):
+        ollama_up_empty = False
+        try:
+            r = requests.get(OLLAMA_TAGS, timeout=1.5)
+            if r.status_code == 200:
+                models = sorted(m.get('name', '')
+                                for m in r.json().get('models', []) if m.get('name'))
+                if models:
+                    self.ready.emit('ollama', models[0], f"Ollama · {models[0]}")
+                    return
+                ollama_up_empty = True
+        except Exception:
+            pass    # server not running — expected, keep probing
+        try:
+            r = requests.get(f"{self._mlx_host}/v1/models", timeout=1.5)
+            if r.status_code == 200:
+                ids = [m.get('id', '') for m in r.json().get('data', []) if m.get('id')]
+                model = ids[0] if ids else ''
+                label = (model.split('/')[-1] if model else 'loaded model')
+                self.ready.emit('mlx', model, f"MLX · {label}")
+                return
+        except Exception:
+            pass
+        if ollama_up_empty:
+            self.info.emit("Ollama is running but has no models — run: ollama pull llama3.1")
 
 
 # ── Backend settings dialog ───────────────────────────────────────────────────
@@ -1063,8 +1290,11 @@ class BackendDialog(QDialog):
                     self._ollama_status.setText("⚠ No models found — run: ollama pull <model>")
             else:
                 self._ollama_status.setText(f"✗ Ollama returned HTTP {r.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            _itk_log.info("Ollama not reachable at %s — server not running.", OLLAMA_TAGS)
+            self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
         except Exception:
-            _itk_log.exception("Handled exception in _fetch_ollama_models")
+            _itk_log.exception("Unexpected error fetching Ollama models")
             self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
 
     def _test_mlx(self):
@@ -1077,8 +1307,11 @@ class BackendDialog(QDialog):
                 self._mlx_status.setText(f"✓ Connected  —  {', '.join(models[:3]) or 'no models listed'}")
             else:
                 self._mlx_status.setText(f"✗ HTTP {r.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            _itk_log.info("MLX not reachable at %s — server not running.", host)
+            self._mlx_status.setText("✗ Cannot reach MLX — start: mlx_lm.server --port 8080")
         except Exception as e:
-            _itk_log.exception("Handled exception in _test_mlx")
+            _itk_log.exception("Unexpected error testing MLX")
             self._mlx_status.setText(f"✗ {e}")
 
     def _test_custom(self):
@@ -1112,7 +1345,7 @@ class BackendDialog(QDialog):
     def get_config(self):
         idx = self._backend.currentIndex()
         base = {
-            'temperature': 0.6,
+            'temperature': 0.2,
             'num_ctx': int(self._ctx.currentText()),
             'explore_max_turns': int(self._explore_turns.currentText()),
             'mlx_host': self._mlx_host.text().strip(),
@@ -1797,12 +2030,13 @@ class InteractiveTableBubble(QFrame):
         self._numeric_cols = []
         for i, h in enumerate(headers):
             vals = [r[i] for r in rows if i < len(r) and r[i]]
-            try:
-                [float(str(v).replace(",","").replace("%","")) for v in vals[:10]]
+            sample = vals[:10]
+            # A column is numeric only if every sampled value parses as a number.
+            # Text columns (e.g. element labels like '27Al') are normal, not errors.
+            if sample and all(_to_float(str(v).replace('%', '')) is not None
+                              for v in sample):
                 self._numeric_cols.append((i, h))
                 self._stats_col.addItem(h)
-            except Exception:
-                _itk_log.exception("Handled exception in __init__")
         sl.addWidget(self._stats_col)
         self._stats_lbl = QLabel("")
         self._stats_lbl.setWordWrap(False)
@@ -2008,10 +2242,13 @@ class InteractiveTableBubble(QFrame):
             for s in ax.spines.values(): s.set_edgecolor(gc)
 
         fig.tight_layout(pad=1.0)
-        self._last_fig = fig 
+        _old_fig = getattr(self, "_last_fig", None)
+        self._last_fig = fig
 
         for child in self._chart_canvas_frame.findChildren(FigureCanvasQTAgg):
             child.setParent(None); child.deleteLater()
+        if _old_fig is not None and _old_fig is not fig:
+            plt.close(_old_fig)  # release previous figure from matplotlib's global registry
         canvas = FigureCanvasQTAgg(fig)
         lay = self._chart_canvas_frame.layout() or QVBoxLayout(self._chart_canvas_frame)
         lay.setContentsMargins(0,0,0,0); lay.addWidget(canvas)
@@ -2296,10 +2533,13 @@ class ChartBubble(QFrame):
                 for s in ax.spines.values(): s.set_edgecolor(gc)
 
             fig.tight_layout(pad=1.2)
+            _old_fig = getattr(self, "_fig", None)
             self._fig = fig
 
             for child in self._canvas_frame.findChildren(FigureCanvasQTAgg):
                 child.setParent(None); child.deleteLater()
+            if _old_fig is not None and _old_fig is not fig:
+                plt.close(_old_fig)  # release previous figure from matplotlib's global registry
             canvas = FigureCanvasQTAgg(fig)
             lay = self._canvas_frame.layout() or QVBoxLayout(self._canvas_frame)
             lay.setContentsMargins(0,0,0,0); lay.addWidget(canvas)
@@ -2695,8 +2935,13 @@ class AIChatDialog(QDialog):
         super().__init__(pw)
         self.node = ai_node; self.current_data = None; self._worker = None
         self._sb = None; self._retry = 0
-        self._pending_files = []   
-        self._user_stopped = False   
+        self._pending_files = []
+        self._user_stopped = False
+        self._interpreting  = False          # second-pass interpretation guard
+        self._code_cache    = {}             # (code, data id, n) -> exec result
+        self._interpret_allowed = []         # numbers the last result produced
+        self._autoconfigured = False         # auto-detect ran/applied
+        self._probe = None                   # background server probe
         self._exp_mode      = False
         self._exp_session   = None
         self._exp_messages  = []
@@ -2710,11 +2955,13 @@ class AIChatDialog(QDialog):
         self._conv_items    = {}   
 
         self._cfg = {'backend': 'ollama', 'model': '', 'mlx_host': MLX_BASE,
-                     'temperature': 0.6, 'num_ctx': 8192,
-                     'explore_max_turns': 10}
+                     'temperature': 0.2, 'num_ctx': 8192,
+                     'explore_max_turns': 10,
+                     'interpret_results': True, 'verify_numbers': True}
         self.setWindowTitle("AI Data Assistant")
         self.setMinimumSize(900, 650); self.resize(1240, 750)
         self._build_ui()
+        self._start_autodetect()
 
     @property
     def _cur(self):
@@ -3192,6 +3439,22 @@ class AIChatDialog(QDialog):
         if self._user_stopped: return
         if el > 0: self._speed.setText(f"{n/el:.1f} tok/s")
 
+    MAX_AI_RETRIES = 3
+
+    def _run_cached(self, code, particles):
+        """Execute sandbox code, memoising error-free results within the current
+        dataset so identical queries are deterministic and instant."""
+        key = (code, id(self.current_data), len(particles))
+        hit = self._code_cache.get(key)
+        if hit is not None:
+            return hit
+        res = _execute_query_code(code, particles, self.current_data)
+        if res[3] is None:                       # cache only successful runs
+            if len(self._code_cache) > 64:
+                self._code_cache.clear()
+            self._code_cache[key] = res
+        return res
+
     def _on_done(self, full):
         if self._user_stopped:
             self._user_stopped = False
@@ -3199,28 +3462,41 @@ class AIChatDialog(QDialog):
         self._think.setVisible(False); self._stop.setVisible(False)
         self._sendb.setVisible(True)
         if self._sb: self._sb.finalise()
-        self._history.append({"role":"assistant","content":full})
+        self._history.append({"role": "assistant", "content": full})
 
-        particles = self.current_data.get('particle_data',[]) if self.current_data else []
-        had_import_error = False
+        particles = self.current_data.get('particle_data', []) if self.current_data else []
+        exec_error   = None
+        import_error = False
+        produced     = False
+        computed_numbers = []          # every number the code actually produced
+        result_payload   = []          # compact result text for interpretation
 
         for m in _CODE_RE.finditer(full):
             if not particles: continue
-            text_out, tables, charts, err = _execute_query_code(
-                m.group(1).strip(), particles, self.current_data)
+            code = m.group(1).strip()
+            text_out, tables, charts, err = self._run_cached(code, particles)
 
             for tbl in tables:
                 if tbl['headers'] and tbl['rows']:
                     w = InteractiveTableBubble(tbl['headers'], tbl['rows'], tbl['title'])
                     self._widgets.append(w)
                     self._cl.insertWidget(self._cl.count()-1, w)
+                    produced = True
+                    computed_numbers.extend(_numbers_in_rows(tbl['rows']))
+                    result_payload.append(_compact_table(tbl))
 
             for ch in charts:
                 w = ChartBubble(ch)
                 self._widgets.append(w)
                 self._cl.insertWidget(self._cl.count()-1, w)
+                produced = True
+                computed_numbers.extend(
+                    _floats_in_text(' '.join(str(v) for v in ch.get('values', []))))
 
             if text_out:
+                produced = True
+                computed_numbers.extend(_floats_in_text(text_out))
+                result_payload.append(text_out[:1500])
                 parsed = _try_parse_table(text_out)
                 if parsed:
                     headers, rows = parsed
@@ -3231,37 +3507,106 @@ class AIChatDialog(QDialog):
                 self._cl.insertWidget(self._cl.count()-1, w)
 
             if err:
-                if '__import__' in err and self._retry < 1:
-                    had_import_error = True
-                else:
-                    eb = ErrorBubble(err); self._widgets.append(eb)
-                    self._cl.insertWidget(self._cl.count()-1, eb)
+                exec_error = err
+                if '__import__' in err:
+                    import_error = True
 
         self._sb = None; self._scrollb()
 
-        if had_import_error:
+        # ── #1 self-correction: feed ANY sandbox error back and retry ──
+        if exec_error and self._retry < self.MAX_AI_RETRIES:
             self._retry += 1
-            hint = (
-                "[SANDBOX CORRECTION] Your code used an import statement, which is blocked. "
-                "All libraries are pre-loaded — never write import. "
-                "To produce visualizations use the sandbox functions:\n"
-                "  show_pie(labels, values, title='')  ← pie chart\n"
-                "  show_chart(labels, values, kind='bar'/'barh'/'line', title='', xlabel='', ylabel='')  ← bar/line\n"
-                "  show_histogram(values, bins=30, title='', xlabel='')  ← distribution histogram\n"
-                "  show_table(headers, rows, title='')  ← sortable table\n"
-                "Pre-loaded: np, math, Counter, defaultdict, stats, particles, element_counts, "
-                "masses, diameters, moles, mass_pct, mole_pct, total_masses, sample_names, by_sample.\n"
-                "Rewrite your code now using only these. Do not include any import statements."
-            )
-            self._history.append({"role": "user", "content": hint})
-            notice = ErrorBubble("⟳ Sandbox reminder sent — retrying without imports…")
+            self._history.append({"role": "user",
+                                  "content": _correction_hint(exec_error, import_error)})
+            notice = ErrorBubble(
+                f"⟳ Fixing sandbox error (attempt {self._retry}/{self.MAX_AI_RETRIES})…")
             self._widgets.append(notice)
             self._cl.insertWidget(self._cl.count()-1, notice)
             self._scrollb()
             QTimer.singleShot(200, self._retry_send)
             return
 
+        if exec_error:                            # retries exhausted — surface it
+            eb = ErrorBubble(exec_error)
+            self._widgets.append(eb)
+            self._cl.insertWidget(self._cl.count()-1, eb)
+
         self._retry = 0
+
+        # ── #3 flag prose figures not backed by the computed output ──
+        if produced and self._cfg.get('verify_numbers', True):
+            unverified = _unverified_numbers(_CODE_RE.sub('', full), computed_numbers)
+            if unverified:
+                shown = ", ".join(unverified[:8]) + (" …" if len(unverified) > 8 else "")
+                note = OutputBubble("⚠ Unverified figures (not produced by the code): " + shown)
+                self._widgets.append(note)
+                self._cl.insertWidget(self._cl.count()-1, note)
+                self._scrollb()
+
+        # ── #2 grounded second pass when the model gave code but little prose ──
+        first_prose = _CODE_RE.sub('', full).strip()
+        if (produced and result_payload and not self._interpreting
+                and len(first_prose) < 40
+                and self._cfg.get('interpret_results', True)):
+            self._start_interpretation(result_payload, computed_numbers)
+            return
+
+        QTimer.singleShot(5000, lambda: self._speed.setVisible(False))
+        self._enable()
+
+    def _start_interpretation(self, payload, allowed):
+        """Second pass: hand the computed results back to the model for a short,
+        grounded takeaway. It may only restate numbers already produced."""
+        try:
+            b = self._cfg.get('backend', '')
+            self._interpreting = True
+            self._interpret_allowed = list(allowed)
+            self._think.setVisible(True); self._tlbl.setText("Interpreting…")
+            self._stop.setVisible(True); self._sendb.setVisible(False)
+            self._sb = StreamBubble(); self._widgets.append(self._sb)
+            self._cl.insertWidget(self._cl.count()-1, self._sb)
+            results_txt = "\n\n".join(payload)[:6000]
+            msgs = list(self._history) + [{
+                "role": "user",
+                "content": ("Here are the EXACT results your code just produced:\n\n"
+                            f"{results_txt}\n\n"
+                            "Give a 1-3 sentence plain-language takeaway for the user. "
+                            "Use ONLY numbers shown above — introduce no new figures — "
+                            "and do not write any code.")
+            }]
+            sys_prompt = _build_system_prompt(self.current_data, b)
+            max_t = max(512, self._cfg.get('num_ctx', 8192) - 2000)
+            msgs = _trim_history(msgs, max_t)
+            self._worker = StreamWorker(b, msgs, sys_prompt, self._cfg, [])
+            self._worker.token_received.connect(self._on_tok)
+            self._worker.stats_update.connect(self._on_stats)
+            self._worker.stream_done.connect(self._on_interpret_done)
+            self._worker.error_occurred.connect(self._on_err)
+            self._worker.start()
+        except Exception:
+            _itk_log.exception("Handled exception in _start_interpretation")
+            self._interpreting = False
+            self._enable()
+
+    def _on_interpret_done(self, full):
+        self._interpreting = False
+        if self._user_stopped:
+            self._user_stopped = False
+            return
+        self._think.setVisible(False); self._stop.setVisible(False)
+        self._sendb.setVisible(True)
+        if self._sb: self._sb.finalise(); self._sb = None
+        prose = _CODE_RE.sub('', full).strip()       # never execute this pass
+        if prose:
+            self._history.append({"role": "assistant", "content": prose})
+            if self._cfg.get('verify_numbers', True):
+                unv = _unverified_numbers(prose, self._interpret_allowed)
+                if unv:
+                    note = OutputBubble("⚠ Unverified figures in summary: "
+                                        + ", ".join(unv[:8]))
+                    self._widgets.append(note)
+                    self._cl.insertWidget(self._cl.count()-1, note)
+        self._scrollb()
         QTimer.singleShot(5000, lambda: self._speed.setVisible(False))
         self._enable()
 
@@ -3285,6 +3630,15 @@ class AIChatDialog(QDialog):
         self._worker.start()
 
     def _on_err(self, err):
+        # An error during the optional interpretation pass should fail quietly —
+        # the computed results are already on screen.
+        if self._interpreting:
+            self._interpreting = False
+            self._think.setVisible(False); self._stop.setVisible(False)
+            self._sendb.setVisible(True); self._speed.setVisible(False)
+            if self._sb: self._sb.finalise(); self._sb = None
+            self._enable()
+            return
         if self._user_stopped:
             self._user_stopped = False
             return
@@ -3303,6 +3657,7 @@ class AIChatDialog(QDialog):
     def _do_stop(self):
         if not self._worker: return
         self._user_stopped = True
+        self._interpreting = False
         try: self._worker.stop()
         except Exception:
             _itk_log.exception("Handled exception in _do_stop")
@@ -3550,6 +3905,7 @@ class AIChatDialog(QDialog):
 
     def update_data_context(self, data):
         self.current_data = data
+        self._code_cache.clear()        # results are dataset-specific
         if data:
             self._update_sug(data)
             dt = data.get('type','')
@@ -3715,6 +4071,34 @@ class AIChatDialog(QDialog):
         QTimer.singleShot(50, lambda:
             self._scroll.verticalScrollBar().setValue(
                 self._scroll.verticalScrollBar().maximum()))
+
+    # ── Auto-detect a running model server ─────────────────────────────────────
+
+    def _start_autodetect(self):
+        """Probe localhost for a running model server and self-configure, so the
+        user can start chatting without opening settings."""
+        try:
+            self._probe = ProbeWorker(self._cfg.get('mlx_host', MLX_BASE))
+            self._probe.ready.connect(self._on_autodetect)
+            self._probe.info.connect(self._on_autodetect_info)
+            self._probe.start()
+        except Exception:
+            _itk_log.exception("Handled exception in _start_autodetect")
+
+    def _on_autodetect(self, backend, model, label):
+        # Don't override a model the user already selected this session.
+        if self._autoconfigured or self._cfg.get('model'):
+            return
+        self._autoconfigured = True
+        self._cfg['backend'] = backend
+        self._cfg['model'] = model
+        _itk_log.info("Auto-detected model server: %s", label)
+        self._add_ai(f"✓ Connected to {label} — ask a question about your data, "
+                     "or click Explore.")
+
+    def _on_autodetect_info(self, msg):
+        if not self._autoconfigured:
+            self._add_ai(f"ℹ {msg}")
 
 
 # ── Node ──────────────────────────────────────────────────────────────────────

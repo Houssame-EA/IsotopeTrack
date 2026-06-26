@@ -1,10 +1,10 @@
 """
-tools/app_version.py — single source of truth for the running app's version.
+utils/app_version.py — single source of truth for the running app's version.
 
 This value is kept in sync automatically by version.py (the bump script).
 Other modules should import from here rather than hard-coding a version:
 
-    from tools.app_version import __version__
+    from utils.app_version import __version__
 """
 
-__version__ = "1.10.2"
+__version__ = "1.10.4"

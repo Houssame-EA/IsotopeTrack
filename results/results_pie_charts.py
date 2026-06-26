@@ -62,7 +62,7 @@ _LINE_NAMES  = ['Solid', 'Dashed', 'Dash-dot', 'Dotted']
 EXPORT_FORMATS = ['svg', 'pdf', 'png', 'eps']
 DEGREE_SIGN = "\N{DEGREE SIGN}"
 
-# â”€â”€ Small helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â"€â"€ Small helper â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 def _is_multi(input_data):
     return bool(input_data and input_data.get('type') == 'multiple_sample_data')
@@ -288,7 +288,7 @@ class MplPieCanvas(QWidget):
     â€¢ Renders one or more pie / donut subplots in a grid.
     â€¢ Every label annotation is individually draggable.
     â€¢ Drag positions are saved back to cfg['label_positions'][key][label]
-      on mouse-button release â€“ they persist across redraws.
+      on mouse-button release â€" they persist across redraws.
     â€¢ Right-click is forwarded to the parent dialog via a callback so the
       existing context-menu code works unchanged.
     """
@@ -297,6 +297,8 @@ class MplPieCanvas(QWidget):
         super().__init__(parent)
         self._cfg  = cfg
         self._anns: dict[str, dict] = {}
+        self._subplots: list[dict] = []
+        self._ax_subplot: dict = {}
 
         self.figure = Figure(tight_layout=True)
         self.canvas = FigureCanvasQTAgg(self.figure)
@@ -319,7 +321,7 @@ class MplPieCanvas(QWidget):
         self.canvas.mpl_connect('motion_notify_event',  self._pie_drag_motion)
         self.canvas.mpl_connect('button_release_event', self._pie_drag_release)
 
-    # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ Public API â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def set_context_menu_callback(self, fn):
         self._ctx_cb = fn
@@ -335,6 +337,8 @@ class MplPieCanvas(QWidget):
         """
         self.figure.clear()
         self._anns = {}
+        self._subplots = subplots
+        self._ax_subplot = {}
 
         cfg = self._cfg
         bg  = cfg.get('bg_color', '#FFFFFF')
@@ -355,6 +359,7 @@ class MplPieCanvas(QWidget):
 
         for i, sp in enumerate(subplots):
             ax = self.figure.add_subplot(rows, cols, i + 1)
+            self._ax_subplot[ax] = sp
             ax.set_facecolor(bg)
             if sp.get('labels'):
                 self._draw_one(ax, sp, cfg)
@@ -368,7 +373,7 @@ class MplPieCanvas(QWidget):
         self.canvas.draw()
 
     def reset_label_positions(self, key: str | None = None):
-        """Clear saved drag positions â€“ all subplots or one.
+        """Clear saved drag positions â€" all subplots or one.
         Args:
             key (str | None): Dictionary or storage key.
         """
@@ -391,11 +396,87 @@ class MplPieCanvas(QWidget):
                 path, dpi=dpi, bbox_inches='tight',
                 facecolor=self.figure.get_facecolor())
 
-    # â”€â”€ Internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    def subplot_at(self, canvas_pos) -> 'dict | None':
+        """Return the subplot dict for the axes under canvas_pos, or None."""
+        w = self.canvas.width()
+        h = self.canvas.height()
+        if w <= 0 or h <= 0:
+            return None
+        x_norm = canvas_pos.x() / w
+        y_norm = 1.0 - canvas_pos.y() / h
+        for ax, sp in self._ax_subplot.items():
+            try:
+                if ax.get_position().contains(x_norm, y_norm):
+                    return sp
+            except Exception:
+                pass
+        return None
+
+    def export_one_subplot(self, sp: dict, parent=None):
+        """Export one pie subplot as a standalone figure with format/DPI choice."""
+        dlg = QDialog(parent)
+        dlg.setWindowTitle(f"Export subplot: {sp.get('title', 'subplot')}")
+        vlay = QVBoxLayout(dlg)
+        from PySide6.QtWidgets import QFormLayout as _FL
+        form = _FL()
+
+        fmt_box = QComboBox()
+        fmt_box.addItems(['SVG', 'PDF', 'PNG', 'EPS'])
+        cur_fmt = self._cfg.get('export_format', 'svg').upper()
+        fmt_box.setCurrentText(cur_fmt if cur_fmt in ['SVG', 'PDF', 'PNG', 'EPS'] else 'SVG')
+        form.addRow("Format:", fmt_box)
+
+        dpi_box = QSpinBox()
+        dpi_box.setRange(72, 1200)
+        dpi_box.setSuffix(" dpi")
+        dpi_box.setValue(self._cfg.get('export_dpi', 300))
+        form.addRow("Resolution:", dpi_box)
+
+        vlay.addLayout(form)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        vlay.addWidget(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        fmt = fmt_box.currentText().lower()
+        dpi = dpi_box.value()
+        title = sp.get('title', 'subplot')
+        safe = re.sub(r'[^A-Za-z0-9._-]+', '_', title).strip('_') or 'subplot'
+        filt = ('SVG Vector (*.svg);;PDF Document (*.pdf);;'
+                'PNG Image (*.png);;EPS Vector (*.eps)')
+        path, _ = QFileDialog.getSaveFileName(
+            parent, f'Export: {title}', f'pie_{safe}.{fmt}', filt)
+        if not path:
+            return
+
+        fig = Figure(tight_layout=True)
+        fig.patch.set_facecolor(self._cfg.get('bg_color', '#FFFFFF'))
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(self._cfg.get('bg_color', '#FFFFFF'))
+        saved_anns = self._anns
+        self._anns = {}
+        try:
+            if sp.get('labels'):
+                self._draw_one(ax, sp, self._cfg)
+            else:
+                ax.text(0.5, 0.5, f"{title}\n(no data)",
+                        ha='center', va='center', transform=ax.transAxes,
+                        color='#888888', fontsize=9)
+                ax.axis('off')
+        finally:
+            self._anns = saved_anns
+        fig.savefig(path, dpi=dpi, bbox_inches='tight',
+                    facecolor=fig.get_facecolor())
+
+    # â"€â"€ Internal â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def _fwd_ctx(self, pos):
         if self._ctx_cb:
-            self._ctx_cb(self.canvas.mapToGlobal(pos))
+            subplot = self.subplot_at(pos)
+            self._ctx_cb(self.canvas.mapToGlobal(pos), subplot)
 
     def _persist_positions(self, _event):
         for sp_key, anns in self._anns.items():
@@ -406,7 +487,7 @@ class MplPieCanvas(QWidget):
                 p = ann.get_position()
                 bucket[label] = (float(p[0]), float(p[1]))
 
-    # â”€â”€ Pie-axes drag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â"€â"€ Pie-axes drag â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
     def _pie_drag_press(self, event):
         """Start dragging an axes when the user clicks on its background."""
@@ -447,14 +528,14 @@ class MplPieCanvas(QWidget):
         title    = sp['title']
         sp_key   = sp['key']
 
-        # â”€â”€ Font â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â"€â"€ Font â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         ff  = cfg.get('font_family', 'DejaVu Sans')
         fs  = int(cfg.get('font_size', 10))
         fc  = cfg.get('font_color', cfg.get('label_color', '#000000'))
         fw  = 'bold' if cfg.get('font_bold', False) else 'normal'
         fst = 'italic' if cfg.get('font_italic', False) else 'normal'
 
-        # â”€â”€ Pie geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â"€â"€ Pie geometry â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         donut     = cfg.get('donut', False)
         hole      = cfg.get('donut_hole_size', 0.4)
         start_ang = cfg.get('start_angle', 90)
@@ -485,7 +566,7 @@ class MplPieCanvas(QWidget):
         ax.set_title(title, fontsize=fs + 2, color=fc, fontfamily=ff,
                      fontweight=fw, fontstyle=fst, pad=8)
 
-        # â”€â”€ Draggable annotations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â"€â"€ Draggable annotations â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         show_lines = cfg.get('show_connection_lines', True)
         line_color = cfg.get('connection_line_color', '#888888')
         line_style = cfg.get('connection_line_style', '-')
@@ -534,7 +615,7 @@ class MplPieCanvas(QWidget):
 
         self._anns[sp_key] = anns
 
-        # â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â"€â"€ Legend â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         if cfg.get('legend_show', False):
             from matplotlib.font_manager import FontProperties
             leg_fp = FontProperties(family=ff, size=max(6, fs - 2),
@@ -549,7 +630,7 @@ class MplPieCanvas(QWidget):
             for txt in leg.get_texts():
                 txt.set_color(fc)
 
-        # â”€â”€ Donut centre label â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # â"€â"€ Donut centre label â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
         centre = cfg.get('donut_center_text', '')
         if donut and centre:
             ax.text(0, 0, centre, ha='center', va='center',
@@ -561,6 +642,8 @@ class MplPieCanvas(QWidget):
 
 
 class PieChartSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_elements, parent=None, scope='all'):
         """
         Initialize pie-chart settings with optional scope-based control filtering.
@@ -707,19 +790,29 @@ class PieChartSettingsDialog(QDialog):
                     w = QWidget(); w.setLayout(row); v4.addWidget(w)
                 lay.addWidget(g4)
 
+            sample_names = []
             if _is_multi(self._input_data):
-                names = self._input_data.get('sample_names', [])
-                if names:
-                    g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
-                    nm = dict(self._cfg.get('sample_name_mappings', {}))
-                    for sn in names:
-                        row = QHBoxLayout()
-                        row.addWidget(QLabel(sn))
-                        ed = QLineEdit(nm.get(sn, sn))
-                        row.addWidget(ed)
-                        self._sample_edits[sn] = ed
-                        w = QWidget(); w.setLayout(row); v5.addWidget(w)
-                    lay.addWidget(g5)
+                sample_names = list(self._input_data.get('sample_names', []))
+            else:
+                sample_name = single_sample_name(self._input_data)
+                if sample_name:
+                    sample_names = [sample_name]
+            if sample_names:
+                g5 = QGroupBox("Sample Display Names"); v5 = QVBoxLayout(g5)
+                nm = dict(self._cfg.get('sample_name_mappings', {}))
+                for sn in sample_names:
+                    row = QHBoxLayout()
+                    row.addWidget(QLabel(sn))
+                    ed = QLineEdit(nm.get(sn, sn))
+                    row.addWidget(ed)
+                    self._sample_edits[sn] = ed
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sn: self._sample_edits[raw].setText(raw))
+                    row.addWidget(reset_btn)
+                    w = QWidget(); w.setLayout(row); v5.addWidget(w)
+                lay.addWidget(g5)
 
             self._pie_style = PieStyleGroup(self._cfg)
             self._label_line = LabelLineGroup(self._cfg)
@@ -731,9 +824,18 @@ class PieChartSettingsDialog(QDialog):
             self._font_grp = FontSettingsGroup(self._cfg)
             lay.addWidget(self._font_grp.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """
@@ -770,7 +872,11 @@ class PieChartSettingsDialog(QDialog):
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
         if self._sample_edits:
-            d['sample_name_mappings'] = {k: v.text() for k, v in self._sample_edits.items()}
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         if self._pie_style is not None:
             d.update(self._pie_style.collect())
         if self._label_line is not None:
@@ -824,19 +930,21 @@ class PieChartDisplayDialog(QDialog):
         bb.addWidget(btn_e)
         lay.addLayout(bb)
 
-    def _ctx_menu(self, global_pos):
-        """Show minimal right-click controls for quick visual toggles and isotope labels.
+    def _ctx_menu(self, global_pos, subplot=None):
+        """
+        Show minimal right-click controls for quick visual toggles and isotope labels.
 
-        Preserved behavior:
-            Quick visual toggles and isotope-label updates are still available while
-            full settings/reset/export are intentionally delegated to bottom buttons.
+        Args:
+            global_pos (Any): Global screen position for menu placement.
+            subplot (dict | None): Subplot dict under the click, if any.
         """
         cfg = self.node.config
         menu = QMenu(self)
 
         tm = menu.addMenu("Quick Toggles")
         for key, lbl in [
-            ('show_counts', 'Show Counts'),
+            ('show_counts', 'Show Event Number'),
+            ('show_data_values', 'Data Values'),
             ('show_percentages', 'Show Percentages'),
             ('show_connection_lines', 'Connection Lines'),
             ('donut', 'Donut Mode'),
@@ -853,6 +961,15 @@ class PieChartDisplayDialog(QDialog):
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
+        menu.addSeparator()
+        if subplot is not None:
+            exp_sub = menu.addAction("Export this subplot...")
+            exp_sub.triggered.connect(lambda _, sp=subplot: self._export_subplot(sp))
+        else:
+            exp_sub = menu.addAction("Export this subplot... (unavailable)")
+            exp_sub.setEnabled(False)
+            exp_sub.setToolTip("Right-click directly over a pie subplot to export it individually.")
 
         menu.exec(global_pos)
 
@@ -876,6 +993,9 @@ class PieChartDisplayDialog(QDialog):
         """
         self.node.config[key] = value
         self._refresh()
+
+    def _export_subplot(self, sp: dict):
+        self.canvas_widget.export_one_subplot(sp, self)
 
     def _reset_labels(self):
         """
@@ -916,22 +1036,34 @@ class PieChartDisplayDialog(QDialog):
         """
         Open pie-chart format settings containing visual and presentation controls.
         """
+        _snap = dict(self.node.config)
         elems = self._get_available_elements()
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
         """
         Open pie-chart quantity settings containing chart/data/threshold controls.
         """
+        _snap = dict(self.node.config)
         elems = self._get_available_elements()
         dlg = PieChartSettingsDialog(
             self.node.config, self.node.input_data, elems, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _get_available_elements(self):
@@ -992,8 +1124,9 @@ class PieChartDisplayDialog(QDialog):
                 factor = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                 if per_ml:
                     cnt = {k: v * factor for k, v in cnt.items()}
+                title = get_display_name(sn, cfg) if sn else 'Element Distribution'
                 subplots.append(
-                    self._build_sp(d, cnt, cfg, 'Element Distribution', 'default',
+                    self._build_sp(d, cnt, cfg, title, 'default',
                                    per_ml=per_ml))
 
             self.canvas_widget.render(subplots)
@@ -1076,6 +1209,18 @@ class PieChartDisplayDialog(QDialog):
             parts = [format_combination_label(lbl, cfg.get('label_mode', 'Symbol'), Renderer.MATHTEXT, cfg)]
             if cfg.get('show_counts', True):
                 parts.append(f"({format_per_ml(count, Renderer.MATHTEXT, cfg)} P/mL)" if per_ml else f"({count:,})")
+            if cfg.get('show_data_values', False):
+                dt = cfg.get('data_type_display', 'Counts')
+                if lbl == 'Others':
+                    dv = sum(data.get(k, 0) for k in others)
+                else:
+                    dv = data.get(lbl, 0)
+                if 'Mass' in dt:
+                    parts.append(f"[{dv:.3g} fg]")
+                elif 'Moles' in dt:
+                    parts.append(f"[{dv:.3g} fmol]")
+                else:
+                    parts.append(f"[{int(round(dv)):,} counts]")
             if cfg.get('show_percentages', True):  parts.append(f"{sz:.1f}%")
             texts.append('\n'.join(parts))
 
@@ -1107,6 +1252,7 @@ class PieChartPlotNode(QObject):
             'element_colors':        {},
             'sample_name_mappings':  {},
             'show_counts':           True,
+            'show_data_values':      False,
             'show_percentages':      True,
             'label_mode':            'Symbol',
             'show_connection_lines': True,
@@ -1207,6 +1353,8 @@ class PieChartPlotNode(QObject):
 
 
 class ElementCompositionSettingsDialog(QDialog):
+    preview_requested = Signal(dict)
+
     def __init__(self, cfg, input_data, available_combos, parent=None, scope='all'):
         """
         Initialize Element Composition settings dialog with optional scope filtering.
@@ -1246,6 +1394,7 @@ class ElementCompositionSettingsDialog(QDialog):
         self._show_counts = None
         self._show_pct = None
         self._show_epct = None
+        self._sample_edits: dict[str, QLineEdit] = {}
         self._combo_color_btns: dict[str, _ColorBtn] = {}
         self._combo_explode: dict[str, QDoubleSpinBox] = {}
         self._pie_style = None
@@ -1364,6 +1513,33 @@ class ElementCompositionSettingsDialog(QDialog):
                     w = QWidget(); w.setLayout(row); v4.addWidget(w)
                 lay.addWidget(g4)
 
+            sample_names = []
+            if _is_multi(self._input_data):
+                sample_names = list(self._input_data.get('sample_names', []))
+            else:
+                sample_name = single_sample_name(self._input_data)
+                if sample_name:
+                    sample_names = [sample_name]
+            if sample_names:
+                g5 = QGroupBox("Sample Names")
+                v5 = QVBoxLayout(g5)
+                mappings = dict(self._cfg.get('sample_name_mappings', {}))
+                for sample_name in sample_names:
+                    row = QHBoxLayout()
+                    row.addWidget(QLabel(sample_name))
+                    edit = QLineEdit(mappings.get(sample_name, sample_name))
+                    row.addWidget(edit)
+                    self._sample_edits[sample_name] = edit
+                    reset_btn = QPushButton("Reset")
+                    reset_btn.setFixedWidth(50)
+                    reset_btn.clicked.connect(
+                        lambda _, raw=sample_name: self._sample_edits[raw].setText(raw))
+                    row.addWidget(reset_btn)
+                    w = QWidget()
+                    w.setLayout(row)
+                    v5.addWidget(w)
+                lay.addWidget(g5)
+
             self._pie_style = PieStyleGroup(self._cfg)
             self._label_line = LabelLineGroup(self._cfg)
             self._legend = LegendGroup(self._cfg)
@@ -1374,9 +1550,18 @@ class ElementCompositionSettingsDialog(QDialog):
             self._font_grp = FontSettingsGroup(self._cfg)
             lay.addWidget(self._font_grp.build())
 
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        root.addWidget(bb)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        root.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """
@@ -1416,6 +1601,12 @@ class ElementCompositionSettingsDialog(QDialog):
             d['explode'] = {k: sb.value() for k, sb in self._combo_explode.items()}
         if self._display_mode is not None:
             d['display_mode'] = self._display_mode.currentText()
+        if self._sample_edits:
+            d['sample_name_mappings'] = {
+                raw_name: edit.text().strip()
+                for raw_name, edit in self._sample_edits.items()
+                if edit.text().strip() and edit.text().strip() != raw_name
+            }
         if self._pie_style is not None:
             d.update(self._pie_style.collect())
         if self._label_line is not None:
@@ -1470,12 +1661,13 @@ class ElementCompositionDisplayDialog(QDialog):
         bb.addWidget(btn_e)
         lay.addLayout(bb)
 
-    def _ctx_menu(self, global_pos):
-        """Show minimal right-click controls for quick visual toggles and isotope labels.
+    def _ctx_menu(self, global_pos, subplot=None):
+        """
+        Show minimal right-click controls for quick visual toggles and isotope labels.
 
-        Preserved behavior:
-            Quick visual controls remain available, while full configuration/reset/
-            export workflows are delegated to bottom buttons.
+        Args:
+            global_pos (Any): Global screen position for menu placement.
+            subplot (dict | None): Subplot dict under the click, if any.
         """
         cfg = self.node.config
         menu = QMenu(self)
@@ -1483,7 +1675,7 @@ class ElementCompositionDisplayDialog(QDialog):
         tm = menu.addMenu("Quick Toggles")
         for key, lbl in [
             ('show_data_values', 'Data Values'),
-            ('show_counts', 'Counts'),
+            ('show_counts', 'Event Number'),
             ('show_percentages', 'Percentages'),
             ('show_connection_lines', 'Connection Lines'),
             ('donut', 'Donut Mode'),
@@ -1500,6 +1692,15 @@ class ElementCompositionDisplayDialog(QDialog):
             a = lm.addAction(mode); a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
+
+        menu.addSeparator()
+        if subplot is not None:
+            exp_sub = menu.addAction("Export this subplot...")
+            exp_sub.triggered.connect(lambda _, sp=subplot: self._export_subplot(sp))
+        else:
+            exp_sub = menu.addAction("Export this subplot... (unavailable)")
+            exp_sub.setEnabled(False)
+            exp_sub.setToolTip("Right-click directly over a pie subplot to export it individually.")
 
         menu.exec(global_pos)
 
@@ -1523,6 +1724,9 @@ class ElementCompositionDisplayDialog(QDialog):
         """
         self.node.config[key] = value
         self._refresh()
+
+    def _export_subplot(self, sp: dict):
+        self.canvas_widget.export_one_subplot(sp, self)
 
     def _reset_labels(self):
         """
@@ -1584,11 +1788,17 @@ class ElementCompositionDisplayDialog(QDialog):
 
         This route handles visual/formatting controls only.
         """
+        _snap = dict(self.node.config)
         combos = self._get_actual_combos()
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='format')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _open_configure_plot_quantities(self):
@@ -1597,11 +1807,17 @@ class ElementCompositionDisplayDialog(QDialog):
 
         This route handles scientific quantity/configuration controls only.
         """
+        _snap = dict(self.node.config)
         combos = self._get_actual_combos()
         dlg = ElementCompositionSettingsDialog(
             self.node.config, self.node.input_data, combos, self, scope='quantities')
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _refresh(self):
@@ -1648,8 +1864,9 @@ class ElementCompositionDisplayDialog(QDialog):
                 data = self._calc_data(plot_data, cfg)
                 sn = single_sample_name(self.node.input_data)
                 factor = per_ml_factor(self.node.input_data, sn) if per_ml else 0.0
+                title = get_display_name(sn, cfg) if sn else 'Element Combinations'
                 subplots.append(
-                    self._build_sp(data, cfg, 'Element Combinations', 'default',
+                    self._build_sp(data, cfg, title, 'default',
                                    per_ml=per_ml, pml_factor=factor))
 
             self.canvas_widget.render(subplots)
@@ -1754,9 +1971,13 @@ class ElementCompositionDisplayDialog(QDialog):
                     parts.append(f"({format_per_ml(pc_pml, Renderer.MATHTEXT, cfg)} P/mL)")
                 else:
                     parts.append(f"({pc:,} particles)")
-            if cfg.get('show_data_values', True) and dt != 'Counts':
-                unit = 'fg' if 'Mass' in dt else 'fmol' if 'Moles' in dt else ''
-                parts.append(f"[{dv:.2f} {unit}]".strip())
+            if cfg.get('show_data_values', True):
+                if 'Mass' in dt:
+                    parts.append(f"[{dv:.3g} fg]")
+                elif 'Moles' in dt:
+                    parts.append(f"[{dv:.3g} fmol]")
+                else:
+                    parts.append(f"[{int(round(dv)):,} counts]")
             if cfg.get('show_percentages', True):
                 parts.append(f"{sz:.1f}%")
             if cfg.get('show_element_percentages', False) and elems and len(elems) > 1:
@@ -1797,6 +2018,7 @@ class ElementCompositionPlotNode(QObject):
             'filter_zeros':              True,
             'display_mode':              'Individual Subplots',
             'combination_colors':        {},
+            'sample_name_mappings':      {},
             'show_data_values':          True,
             'show_counts':               True,
             'show_percentages':          True,

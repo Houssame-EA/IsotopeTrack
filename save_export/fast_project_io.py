@@ -210,30 +210,13 @@ def _columnar_to_particles(col_data):
 #  V2 SAVE
 # ---------------------------------------------------------------------------
 
-def save_project_v2(filepath, mw, progress_callback=None):
+def build_metadata(mw):
+    """Build the light (non-array) project metadata dict for the v2 format.
+
+    Contains every persisted attribute except the per-sample raw signal arrays
+    and the columnar particle data, which are stored separately. Shared by the
+    full project save and the lightweight autosave so the two never drift apart.
     """
-    Save project in optimized v2 format.
-    
-    Uses ZIP archive with separate numpy files per sample, lz4-compressed
-    pickle for metadata, and columnar particle storage.
-    
-    Args:
-        filepath (str or Path): Output file path (.itproj)
-        mw: MainWindow instance with all data attributes
-        progress_callback (callable, optional): func(percent, message) for progress updates
-        
-    Returns:
-        bool: True on success
-    """
-    filepath = Path(filepath)
-    t0 = time.time()
-
-    def _progress(pct, msg=""):
-        if progress_callback:
-            progress_callback(pct, msg)
-
-    _progress(0, "Preparing metadata...")
-
     metadata = {
         'format_version': 2,
         'selected_isotopes': mw.selected_isotopes,
@@ -297,6 +280,35 @@ def save_project_v2(filepath, mw, progress_callback=None):
         except Exception as e:
             logger.warning(f"Could not serialize canvas workflow: {e}")
 
+    return metadata
+
+
+def save_project_v2(filepath, mw, progress_callback=None):
+    """
+    Save project in optimized v2 format.
+
+    Uses ZIP archive with separate numpy files per sample, lz4-compressed
+    pickle for metadata, and columnar particle storage.
+
+    Args:
+        filepath (str or Path): Output file path (.itproj)
+        mw: MainWindow instance with all data attributes
+        progress_callback (callable, optional): func(percent, message) for progress updates
+
+    Returns:
+        bool: True on success
+    """
+    filepath = Path(filepath)
+    t0 = time.time()
+
+    def _progress(pct, msg=""):
+        if progress_callback:
+            progress_callback(pct, msg)
+
+    _progress(0, "Preparing metadata...")
+
+    metadata = build_metadata(mw)
+
     _progress(10, "Compressing metadata...")
 
     try:
@@ -305,7 +317,7 @@ def save_project_v2(filepath, mw, progress_callback=None):
         meta_compressed = lz4f.compress(meta_pkl)
         compression_lib = 'lz4'
     except ImportError:
-        logger.warning("lz4 not installed, falling back to gzip for metadata")
+        logger.warning("lz4 not installed, falling back to gzip for metadata. Possiblity to experience lag during autosave")
         meta_pkl = pickle.dumps(metadata, protocol=pickle.HIGHEST_PROTOCOL)
         buf = io.BytesIO()
         with gzip.GzipFile(fileobj=buf, mode='wb', compresslevel=1) as gz:

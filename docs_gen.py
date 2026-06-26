@@ -76,6 +76,10 @@ SECTIONS = [
                         "help_dialogs.py", "tutorial.py", "element_picker.py",
                         "parameters_table.py", "Info_table.py", "info_file.py",
                         "signal_selector_dialog.py")]),
+    ("Utils (Non-Visual)", "utils",
+     "Pure-logic helpers with no Qt UI: versioning, isobaric-interference math, "
+     "export units, and dilution/concentration calculations.",
+     _glob("utils/*.py")),
 ]
 
 SIG_MAX = 70

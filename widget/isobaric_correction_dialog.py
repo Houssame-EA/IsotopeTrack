@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QMessageBox, QLineEdit,
 )
 
-import tools.isobaric_correction as isobaric
+import utils.isobaric_correction as isobaric
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.widget.isobaric_correction_dialog")
 

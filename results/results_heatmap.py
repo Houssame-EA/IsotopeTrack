@@ -64,6 +64,8 @@ def _normalize_heatmap_display_mode(display_mode: str) -> str:
 class HeatmapSettingsDialog(QDialog):
     """Scoped settings dialog for heatmap format/quantity configuration."""
 
+    preview_requested = Signal(dict)
+
     def __init__(self, config: dict, is_multi: bool,
                  sample_names: list, parent=None, scope='all', input_data=None):
         super().__init__(parent)
@@ -83,8 +85,8 @@ class HeatmapSettingsDialog(QDialog):
         self.data_type = None
         self.y_axis_unit = None
         self.search_edit = None
-        self.highlight_cb = None
         self.filter_only_cb = None
+        self.filter_exact_cb = None
         self.start_spin = None
         self.end_spin = None
         self.filter_zeros = None
@@ -181,12 +183,12 @@ class HeatmapSettingsDialog(QDialog):
             self.search_edit.setPlaceholderText("e.g. Fe, Ti (order doesn't matter)")
             row.addWidget(self.search_edit)
             sl.addLayout(row)
-            self.highlight_cb = QCheckBox("Highlight matches")
-            self.highlight_cb.setChecked(self._config.get('highlight_matches', True))
-            sl.addWidget(self.highlight_cb)
-            self.filter_only_cb = QCheckBox("Show only matches")
+            self.filter_only_cb = QCheckBox("Show selected elements present (partial match)")
             self.filter_only_cb.setChecked(self._config.get('filter_combinations', False))
             sl.addWidget(self.filter_only_cb)
+            self.filter_exact_cb = QCheckBox("Show selected elements only (exact match)")
+            self.filter_exact_cb.setChecked(self._config.get('filter_exact_match', False))
+            sl.addWidget(self.filter_exact_cb)
             layout.addWidget(g)
 
             g = QGroupBox("Combination Range")
@@ -317,10 +319,18 @@ class HeatmapSettingsDialog(QDialog):
 
         layout.addStretch()
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        outer.addWidget(btns)
+        _btn_row = QHBoxLayout()
+        _btn_row.addStretch()
+        _apply_btn = QPushButton("Apply")
+        _done_btn = QPushButton("Done")
+        _cancel_btn = QPushButton("Cancel")
+        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
+        _done_btn.clicked.connect(self.accept)
+        _cancel_btn.clicked.connect(self.reject)
+        _btn_row.addWidget(_apply_btn)
+        _btn_row.addWidget(_done_btn)
+        _btn_row.addWidget(_cancel_btn)
+        outer.addLayout(_btn_row)
 
     def collect(self) -> dict:
         """Collect Heatmap settings without touching removed or missing widgets.
@@ -338,8 +348,8 @@ class HeatmapSettingsDialog(QDialog):
         if self.y_axis_unit is not None:
             cfg['y_axis_unit'] = self.y_axis_unit.currentData()
         cfg['search_element'] = self.search_edit.text().strip() if self.search_edit else self._config.get('search_element', '')
-        cfg['highlight_matches'] = self.highlight_cb.isChecked() if self.highlight_cb else self._config.get('highlight_matches', True)
         cfg['filter_combinations'] = self.filter_only_cb.isChecked() if self.filter_only_cb else self._config.get('filter_combinations', False)
+        cfg['filter_exact_match'] = self.filter_exact_cb.isChecked() if self.filter_exact_cb else self._config.get('filter_exact_match', False)
         cfg['start_range'] = self.start_spin.value() if self.start_spin else self._config.get('start_range', 1)
         cfg['end_range'] = self.end_spin.value() if self.end_spin else self._config.get('end_range', 10)
         cfg['filter_zeros'] = self.filter_zeros.isChecked() if self.filter_zeros else self._config.get('filter_zeros', True)
@@ -436,6 +446,7 @@ class HeatmapDisplayDialog(QDialog):
     # ── UI ──────────────────────────────────
 
     def _setup_ui(self):
+        self._axes_row_combos = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
@@ -484,10 +495,27 @@ class HeatmapDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Colorbar", 'show_colorbar')
         self._add_toggle(toggle_menu, "Show Mass Numbers", 'show_mass_numbers')
         self._add_toggle(toggle_menu, "Filter Zeros", 'filter_zeros')
-        self._add_toggle(toggle_menu, "Highlight Matches", 'highlight_matches')
-        self._add_toggle(toggle_menu, "Filter to Matches Only", 'filter_combinations')
+        self._add_toggle(toggle_menu, "Show Selected Elements Present (Partial Match)", 'filter_combinations')
+        self._add_toggle(toggle_menu, "Show Selected Elements Only (Exact Match)", 'filter_exact_match')
         self._add_toggle(toggle_menu, "Log Scale", 'log_scale')
         self._add_toggle(toggle_menu, "Custom Color Range", 'use_custom_range')
+
+        row_combo = self._get_row_at(pos)
+        if row_combo is not None:
+            highlighted = set(cfg.get('highlighted_combos', []))
+            menu.addSeparator()
+            if row_combo in highlighted:
+                a = menu.addAction("Remove highlight from this row")
+                a.triggered.connect(lambda _, rc=row_combo: self._toggle_row_highlight(rc, False))
+            else:
+                a = menu.addAction("Highlight this row")
+                a.triggered.connect(lambda _, rc=row_combo: self._toggle_row_highlight(rc, True))
+
+        if cfg.get('highlighted_combos', []):
+            if row_combo is None:
+                menu.addSeparator()
+            a2 = menu.addAction("Clear all row highlights")
+            a2.triggered.connect(lambda _: self._clear_all_highlights())
 
         lm_menu = menu.addMenu("Isotope Label")
         current_mode = cfg.get('label_mode', 'Mass + Symbol')
@@ -498,6 +526,43 @@ class HeatmapDisplayDialog(QDialog):
             a.triggered.connect(lambda _, m=mode: self._set_label_mode(m))
 
         menu.exec(QCursor.pos())
+    def _get_row_at(self, widget_pos):
+        """Return the raw combo key for the heatmap row at widget_pos, or None."""
+        canvas_h = self.canvas.height()
+        mpl_x = float(widget_pos.x())
+        mpl_y = float(canvas_h - widget_pos.y())
+        for ax in self.figure.get_axes():
+            row_combos = self._axes_row_combos.get(id(ax))
+            if not row_combos:
+                continue
+            try:
+                inv = ax.transData.inverted()
+                data_x, data_y = inv.transform((mpl_x, mpl_y))
+                row_idx = int(round(data_y))
+                xlim = ax.get_xlim(); ylim = ax.get_ylim()
+                x_min = min(xlim); x_max = max(xlim)
+                y_min = min(ylim); y_max = max(ylim)
+                if (x_min - 0.5 <= data_x <= x_max + 0.5
+                        and y_min - 0.5 <= data_y <= y_max + 0.5
+                        and 0 <= row_idx < len(row_combos)):
+                    return row_combos[row_idx]
+            except Exception:
+                pass
+        return None
+
+    def _toggle_row_highlight(self, combo_key, add):
+        highlighted = set(self.node.config.get('highlighted_combos', []))
+        if add:
+            highlighted.add(combo_key)
+        else:
+            highlighted.discard(combo_key)
+        self.node.config['highlighted_combos'] = list(highlighted)
+        self._refresh()
+
+    def _clear_all_highlights(self):
+        self.node.config['highlighted_combos'] = []
+        self._refresh()
+
     def _add_toggle(self, menu, label, key):
         a = menu.addAction(label)
         a.setCheckable(True)
@@ -553,19 +618,31 @@ class HeatmapDisplayDialog(QDialog):
             self._refresh()
 
     def _open_plot_format_settings(self):
+        _snap = dict(self.node.config)
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self, scope='format',
             input_data=self.node.input_data)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
+            self._refresh()
 
     def _open_configure_plot_quantities(self):
+        _snap = dict(self.node.config)
         dlg = HeatmapSettingsDialog(
             self.node.config, self._is_multi(), self._sample_names(), self, scope='quantities',
             input_data=self.node.input_data)
+        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
+            self._refresh()
+        else:
+            self.node.config.clear()
+            self.node.config.update(_snap)
             self._refresh()
 
     def _reset_layout(self):
@@ -583,6 +660,7 @@ class HeatmapDisplayDialog(QDialog):
             and reapplies display-only sample names in rendered titles.
         """
         try:
+            self._axes_row_combos = {}
             cfg = self.node.config
 
             if cfg.get('use_custom_figsize', False):
@@ -676,12 +754,19 @@ class HeatmapDisplayDialog(QDialog):
     # ── Core heatmap drawing ────────────────
 
     def _draw_heatmap(self, ax, sample_data, cfg, title):
-        # Delegate to the standalone module-level renderer so the Heatmap tab
-        # and the clustering Overview tab share one implementation.
-        draw_combinations_heatmap(
+        """
+        Args:
+            ax (Any): The ax.
+            sample_data (Any): The sample data.
+            cfg (Any): The cfg.
+            title (Any): Window or dialog title.
+        """
+        row_combos = draw_combinations_heatmap(
             ax, self.figure, sample_data, cfg, title=title,
             is_multi=self._is_multi(),
         )
+        if row_combos is not None:
+            self._axes_row_combos[id(ax)] = row_combos
 
 
 def _combo_matches(combination: str, search_elements: list) -> bool:
@@ -698,6 +783,14 @@ def _combo_matches(combination: str, search_elements: list) -> bool:
         if not found:
             return False
     return True
+
+
+def _combo_exact_matches(combination: str, search_elements: list) -> bool:
+    """Check if a combination has exactly the search elements — no more, no less."""
+    combo_parts = [p.strip() for p in combination.split(',')]
+    if len(combo_parts) != len(search_elements):
+        return False
+    return _combo_matches(combination, search_elements)
 
 
 def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
@@ -736,8 +829,9 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     dt = cfg.get('data_type_display', 'Counts')
     search_text = cfg.get('search_element', '').strip()
-    highlight = cfg.get('highlight_matches', True)
+    highlighted_combos = set(cfg.get('highlighted_combos', []))
     filter_combos = cfg.get('filter_combinations', False)
+    filter_exact = cfg.get('filter_exact_match', False)
     start = cfg.get('start_range', 1)
     end = cfg.get('end_range', 10)
     min_p = cfg.get('min_particles', 1)
@@ -747,7 +841,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                       else 'Symbol')
     elif not cfg.get('show_mass_numbers', True) and label_mode != 'Atomic Notation':
         label_mode = 'Symbol'
+    import matplotlib.cm as _cm
     cscale = cfg.get('colorscale', 'YlGnBu')
+    if cscale not in _cm._colormaps:
+        cscale = 'YlGnBu'
     show_nums = cfg.get('show_numbers', True)
     show_cbar = cfg.get('show_colorbar', True)
     log_scale = cfg.get('log_scale', False)
@@ -767,7 +864,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     sorted_combos = sorted(sample_data.items(),
                            key=lambda x: x[1]['particle_count'], reverse=True)
 
-    if search_elems and filter_combos:
+    if search_elems and filter_exact:
+        sorted_combos = [(c, d) for c, d in sorted_combos
+                         if _combo_exact_matches(c, search_elems)]
+    elif search_elems and filter_combos:
         sorted_combos = [(c, d) for c, d in sorted_combos
                          if _combo_matches(c, search_elems)]
 
@@ -790,7 +890,6 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     labels = []
     matrix = []
-    hl_rows = []
 
     for combo, d in selected:
         count = d['particle_count']
@@ -799,7 +898,6 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
             labels.append(f"{fmt} ({format_per_ml(d['pml'], Renderer.MATHTEXT, cfg)})")
         else:
             labels.append(f"{fmt} ({count})")
-        hl_rows.append(bool(search_elems and _combo_matches(combo, search_elems)))
 
         is_pct = dt.endswith('%')
         total_sum = 0
@@ -850,9 +948,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     ax.set_yticklabels(labels, fontsize=fc['size'], fontfamily=fc['family'],
                        fontweight=fw, fontstyle=fst, color=fc['color'])
 
-    if search_elems and highlight:
-        for i, hl in enumerate(hl_rows):
-            if hl:
+    if highlighted_combos:
+        combo_keys_list = [c for c, _ in selected]
+        for i, ck in enumerate(combo_keys_list):
+            if ck in highlighted_combos:
                 ax.axhline(y=i + 0.35, color='black', linewidth=2, alpha=0.9,
                            xmin=-0.15, xmax=0, clip_on=False)
                 ax.get_yticklabels()[i].set_weight('bold')
@@ -892,6 +991,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                             fontfamily=fc['family'], weight=weight,
                             style='italic' if fc['italic'] else 'normal')
 
+    return [c for c, _ in selected]
+
 
 class HeatmapPlotNode(QObject):
     """Heatmap plot node with multiple sample support."""
@@ -904,6 +1005,8 @@ class HeatmapPlotNode(QObject):
         'y_axis_unit': 'count',
         'search_element': '', 'highlight_matches': True,
         'filter_combinations': False,
+        'filter_exact_match': False,
+        'highlighted_combos': [],
         'start_range': 1, 'end_range': 10,
         'filter_zeros': True, 'min_particles': 1,
         'label_mode': 'Mass + Symbol',
