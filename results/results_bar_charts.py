@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView
+    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QFont
@@ -1282,9 +1283,38 @@ class HistogramSettingsDialog(QDialog):
         self.bin_width.setValue(self._cfg.get('bin_width', 20))
         self.bin_width.setToolTip(
             "Width of each histogram bin in data units (e.g. 20 = bins of 20 counts).\n"
-            "All samples/elements share the same bin edges for fair comparison.\n"
-            "In log-X mode a fixed 0.25-decade bin width is used instead.")
+            "Used only in Linear bin mode; Geometric mode always uses 0.25-decade bins.\n"
+            "All samples/elements share the same bin edges for fair comparison.")
         fl.addRow("Bin Width:", self.bin_width)
+        self.bin_mode_combo = QComboBox()
+        self.bin_mode_combo.addItems(['Geometric', 'Linear'])
+        _cur_bm = self._cfg.get('bin_mode', 'geometric')
+        self.bin_mode_combo.setCurrentText(_cur_bm.capitalize())
+        self.bin_mode_combo.setToolTip(
+            "Geometric: equal-width bins in log₁₀ space (0.25-decade per bin).\n"
+            "  Bars look even on a log X-axis, uneven on a linear X-axis.\n"
+            "Linear: equal-width bins in data units (using Bin Width above).\n"
+            "  Bars look even on a linear X-axis, uneven on a log X-axis.\n"
+            "All 4 combinations of Bin Mode × Log X-axis are supported.")
+        fl.addRow("Bin Mode:", self.bin_mode_combo)
+        self.y_breaks_edit = QLineEdit()
+        self.y_breaks_edit.setPlaceholderText('e.g. (100,1000),(5000,50000)')
+        _raw_yb = self._cfg.get('y_axis_breaks', [])
+        if _raw_yb:
+            if isinstance(_raw_yb, str):
+                self.y_breaks_edit.setText(_raw_yb)
+            else:
+                self.y_breaks_edit.setText(
+                    ','.join(f'({lo},{hi})' for lo, hi in _raw_yb))
+        self.y_breaks_edit.setToolTip(
+            "Y-Axis Breaks: omit sections of the Y-axis to better show\n"
+            "data at very different count scales.\n"
+            "Enter ordered, non-overlapping (low, high) pairs, e.g.\n"
+            "  (100,1000),(5000,50000)\n"
+            "Bars spanning a gap are drawn dimmed; bars whose peak falls\n"
+            "entirely inside a gap show a flat cap at their peak height.\n"
+            "Ignored when Log Y-axis is enabled.")
+        fl.addRow("Y-Axis Breaks:", self.y_breaks_edit)
         self.alpha = QSlider(Qt.Horizontal)
         self.alpha.setRange(10, 100)
         self.alpha.setValue(int(self._cfg.get('alpha', 0.7) * 100))
@@ -1424,6 +1454,8 @@ class HistogramSettingsDialog(QDialog):
         out['det_limit_label'] = self.det_label_edit.text().strip()
         out['show_box'] = self.show_box_cb.isChecked()
         out['bin_width'] = self.bin_width.value()
+        out['bin_mode'] = self.bin_mode_combo.currentText().lower()
+        out['y_axis_breaks'] = self.y_breaks_edit.text().strip()
         out['alpha'] = self.alpha.value() / 100.0
         out['log_x'] = self.log_x.isChecked()
         out['log_y'] = self.log_y.isChecked()
@@ -2469,23 +2501,25 @@ class HistogramDisplayDialog(QDialog):
                 else:
                     self._draw_overlaid(plot_data, cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
                 per_ml = _per_ml_active(cfg, self.node.input_data)
                 sn = self.node.input_data.get('sample_name') if self.node.input_data else None
                 y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_single_histogram(
-                    pi,
-                    plot_data,
-                    cfg,
-                    hidden_elements=self._hidden_histogram_elements,
-                    legend_click_callback=self._toggle_histogram_element_visibility,
-                    y_scale=y_scale,
-                    y_label='Particles/mL' if per_ml else None,
-                )
-                self._register_panel_context(
-                    pi, 'single', 'Current sample', plot_data, sample_name=sn)
-                if cfg.get('show_stats', True):
-                    _add_stats_text(pi, plot_data, cfg)
+                y_label_str = 'Particles/mL' if per_ml else None
+                breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+                if breaks and not cfg.get('log_y', False):
+                    self._draw_hist_broken_single(
+                        plot_data, cfg, breaks, y_scale, y_label_str, sn)
+                else:
+                    pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
+                    _draw_single_histogram(
+                        pi, plot_data, cfg,
+                        hidden_elements=self._hidden_histogram_elements,
+                        legend_click_callback=self._toggle_histogram_element_visibility,
+                        y_scale=y_scale, y_label=y_label_str)
+                    self._register_panel_context(
+                        pi, 'single', 'Current sample', plot_data, sample_name=sn)
+                    if cfg.get('show_stats', True):
+                        _add_stats_text(pi, plot_data, cfg)
 
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
@@ -2507,28 +2541,162 @@ class HistogramDisplayDialog(QDialog):
         samples = list(plot_data.keys())
         cols = min(2, len(samples))
         per_ml = _per_ml_active(cfg, self.node.input_data)
+        breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+        use_breaks = bool(breaks and not cfg.get('log_y', False))
         for idx, sn in enumerate(samples):
             if idx > 0 and idx % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg),
-                                 axisItems={'left': HtmlAxisItem('left')})
             sd = plot_data[sn]
-            if sd:
-                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_single_histogram(
-                    pi,
-                    sd,
-                    cfg,
-                    hidden_elements=self._hidden_histogram_elements,
-                    legend_click_callback=self._toggle_histogram_element_visibility,
-                    y_scale=y_scale,
-                    y_label='Particles/mL' if per_ml else None,
-                )
+            y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+            y_label_str = 'Particles/mL' if per_ml else None
+            if sd and use_breaks:
+                inner = self.pw.addLayout()
+                seg_panels, _ = self._build_hist_broken_panels(
+                    inner, sd, cfg, breaks, y_scale, y_label_str)
+                seg_panels[-1].setTitle(get_display_name(sn, cfg))
                 self._register_panel_context(
-                    pi, 'Individual Subplots', get_display_name(sn, cfg), sd,
-                    sample_name=sn)
+                    seg_panels[0], 'Individual Subplots',
+                    get_display_name(sn, cfg), sd, sample_name=sn)
                 if cfg.get('show_stats', True):
-                    _add_stats_text(pi, sd, cfg)
+                    _add_stats_text(seg_panels[0], sd, cfg)
+            else:
+                pi = self.pw.addPlot(title=get_display_name(sn, cfg),
+                                     axisItems={'left': HtmlAxisItem('left')})
+                if sd:
+                    _draw_single_histogram(
+                        pi, sd, cfg,
+                        hidden_elements=self._hidden_histogram_elements,
+                        legend_click_callback=self._toggle_histogram_element_visibility,
+                        y_scale=y_scale, y_label=y_label_str)
+                    self._register_panel_context(
+                        pi, 'Individual Subplots', get_display_name(sn, cfg),
+                        sd, sample_name=sn)
+                    if cfg.get('show_stats', True):
+                        _add_stats_text(pi, sd, cfg)
+
+    # ── Broken-axis helpers ──────────────────────────────────────────────────
+
+    def _build_hist_broken_panels(self, inner, element_data, cfg, breaks,
+                                   y_scale=1.0, y_label=None):
+        """Build broken-axis histogram panels inside *inner* layout.
+
+        Returns (seg_panels, gap_panels) from
+        :func:`_setup_broken_axis_panels`.
+        """
+        dt       = cfg.get('data_type_display', 'Counts')
+        log_x    = cfg.get('log_x', False)
+        bin_width = cfg.get('bin_width', 20)
+        bin_mode  = cfg.get('bin_mode', 'geometric')
+        hidden    = self._hidden_histogram_elements
+        sorted_data = sort_element_dict_by_mass(element_data)
+
+        prepared_all = []
+        for elem, raw_vals in sorted_data.items():
+            if elem in hidden:
+                continue
+            v = _prepare_values(raw_vals, dt, log_x)
+            if v is not None:
+                prepared_all.append(v)
+        global_edges = _compute_global_bin_edges(
+            prepared_all, bin_width, log_x, bin_mode=bin_mode)
+
+        all_bar_sets, all_raw_vals, data_max = [], [], 0.0
+        for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
+            if elem in hidden:
+                continue
+            vals = _prepare_values(raw_vals, dt, log_x)
+            if vals is None:
+                continue
+            color = _get_element_color(elem, idx, cfg)
+            alpha = int(cfg.get('alpha', 0.7) * 255)
+            bd = _compute_hist_bar_data(vals, cfg,
+                                        bin_edges=global_edges,
+                                        y_scale=y_scale)
+            if len(bd['heights']) == 0:
+                continue
+            all_bar_sets.append({
+                'x': bd['centres'], 'heights': bd['heights'],
+                'widths': bd['widths'], 'color': color, 'alpha': alpha,
+                'pen_color': 'w', 'pen_width': 0.5,
+                'name': _fmt_elem(elem, cfg),
+            })
+            data_max = max(data_max, float(np.max(bd['heights'])))
+            all_raw_vals.append(vals)
+
+        if not all_bar_sets:
+            # No visible bars — fall back to one empty panel.
+            pi = inner.addPlot(axisItems={'left': HtmlAxisItem('left')})
+            return [pi], []
+
+        # Warn once if any bars are swallowed by a gap.
+        if _has_swallowed_bars(all_bar_sets, breaks):
+            QMessageBox.warning(
+                self, "Y-Axis Break: Swallowed Bars",
+                "One or more histogram bins have their peak count\n"
+                "entirely inside a Y-axis break gap.\n\n"
+                "Those bins are drawn as flat caps at their peak height\n"
+                "in the gap strip. Consider adjusting your break intervals\n"
+                "so gaps do not coincide with bin peaks.")
+
+        xl, yl = _get_xy_labels(cfg)
+        if y_label:
+            yl = y_label
+        seg_panels, gap_panels = _setup_broken_axis_panels(
+            inner, all_bar_sets, breaks, data_max, cfg,
+            x_label=xl, y_label=yl)
+
+        # Add overlays (stat lines, shaded regions, det-limit) to each segment.
+        if all_raw_vals:
+            pooled = (np.concatenate(all_raw_vals)
+                      if len(all_raw_vals) > 1 else all_raw_vals[0])
+            for pi in seg_panels:
+                _add_shaded_region_hist(pi, pooled, cfg)
+                _add_stat_lines_hist(pi, pooled, cfg)
+                _add_det_limit_v(pi, cfg)
+
+        if not cfg.get('auto_x', True):
+            xn, xx = cfg.get('x_min', 0), cfg.get('x_max', 1000)
+            if cfg.get('log_x', False) and xn > 0 and xx > 0:
+                xn, xx = float(np.log10(xn)), float(np.log10(xx))
+            seg_panels[0].setXRange(xn, xx, padding=0)
+
+        # Multi-element legend on top panel.
+        if len(all_bar_sets) > 1:
+            top_pi = seg_panels[-1]
+            legend = pg.LegendItem(offset=(60, 10))
+            legend.setParentItem(top_pi.graphicsItem())
+            top_pi.legend = legend
+            for idx, elem in enumerate(sorted_data.keys()):
+                if elem in hidden:
+                    continue
+                color = _get_element_color(elem, idx, cfg)
+                co = QColor(color)
+                alpha = int(cfg.get('alpha', 0.7) * 255)
+                swatch = _ClickableLegendSwatch(
+                    x=[0], height=[0], width=0,
+                    brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                    raw_key=elem,
+                    toggle_callback=self._toggle_histogram_element_visibility)
+                legend.addItem(swatch, _fmt_elem(elem, cfg))
+                _attach_histogram_legend_toggle(
+                    legend, raw_key=elem,
+                    toggle_callback=self._toggle_histogram_element_visibility)
+
+        return seg_panels, gap_panels
+
+    def _draw_hist_broken_single(self, plot_data, cfg, breaks, y_scale,
+                                  y_label_str, sn):
+        """Render a single-sample histogram using broken Y-axis panels."""
+        inner = self.pw.addLayout(row=0, col=0)
+        seg_panels, _ = self._build_hist_broken_panels(
+            inner, plot_data, cfg, breaks, y_scale, y_label_str)
+        self._register_panel_context(
+            seg_panels[0], 'single', 'Current sample', plot_data,
+            sample_name=sn)
+        if cfg.get('show_stats', True):
+            _add_stats_text(seg_panels[0], plot_data, cfg)
+
+    # ────────────────────────────────────────────────────────────────────────
 
     def _draw_side_by_side(self, plot_data, cfg):
         """Draw side-by-side sample subplots using per-element color encoding.
@@ -3238,6 +3406,8 @@ class HistogramPlotNode(QObject):
         'mode_line_width': 2,
         'curve_color': '#2C3E50',
         'bin_width': 20,
+        'bin_mode': 'geometric',
+        'y_axis_breaks': [],
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
@@ -3499,6 +3669,24 @@ class BarChartSettingsDialog(QDialog):
                 "Hide elements with fewer particles than this threshold.\n"
                 "Set to 0 to show all elements.")
             fl.addRow("Min Particle Count:", self.min_count)
+            self.y_breaks_edit = QLineEdit()
+            self.y_breaks_edit.setPlaceholderText('e.g. (100,1000),(5000,50000)')
+            _raw_yb = self._cfg.get('y_axis_breaks', [])
+            if _raw_yb:
+                if isinstance(_raw_yb, str):
+                    self.y_breaks_edit.setText(_raw_yb)
+                else:
+                    self.y_breaks_edit.setText(
+                        ','.join(f'({lo},{hi})' for lo, hi in _raw_yb))
+            self.y_breaks_edit.setToolTip(
+                "Y-Axis Breaks: omit sections of the Y-axis to show data\n"
+                "at very different count scales.\n"
+                "Enter ordered, non-overlapping (low, high) pairs, e.g.\n"
+                "  (100,1000),(5000,50000)\n"
+                "Bars spanning a gap are drawn dimmed; bars whose peak\n"
+                "falls inside a gap show a flat cap at their peak height.\n"
+                "Ignored when Log Y-axis is enabled.")
+            fl.addRow("Y-Axis Breaks:", self.y_breaks_edit)
             layout.addWidget(g)
 
         if self._multi and self._scope in ('all', 'format'):
@@ -3844,6 +4032,8 @@ class BarChartSettingsDialog(QDialog):
             out['y_axis_unit'] = self.y_axis_unit.currentData()
         if self.log_y is not None:
             out['log_y'] = self.log_y.isChecked()
+        if getattr(self, 'y_breaks_edit', None) is not None:
+            out['y_axis_breaks'] = self.y_breaks_edit.text().strip()
         if self.label_mode is not None:
             out['label_mode'] = self.label_mode.currentText()
         if self.font_family is not None:
@@ -3919,16 +4109,20 @@ def _prepare_values(values, data_type, log_x):
     return v
 
 
-def _compute_bin_edges(values, bin_width, log_x=False):
-    """Compute fixed-width bin edges for a single array of (possibly log-transformed) values.
+def _compute_bin_edges(values, bin_width, log_x=False, bin_mode='geometric'):
+    """Compute bin edges for a single array of (possibly log-transformed) values.
 
     Args:
-        values: 1-D array of already-prepared values (log10-transformed when log_x=True).
-        bin_width: Desired bin width in raw data units (linear mode) or ignored in log mode.
-        log_x: When True, values are in log10 space; uses 0.25-decade fixed bins instead.
+        values:   1-D array of already-prepared values (log10-transformed when log_x=True).
+        bin_width: Bin width in data units for Linear mode; ignored for Geometric mode
+                   (which always uses a fixed 0.25-decade width).
+        log_x:    When True, values are already in log10 space.
+        bin_mode: 'geometric' = equal-width bins in log₁₀ space (0.25-decade fixed);
+                  'linear'    = equal-width bins in data units using bin_width.
+                  These are independent of log_x: all four (mode × axis) combos are valid.
 
     Returns:
-        np.ndarray of bin edges with at least 2 elements.
+        np.ndarray of bin edges in the same coordinate space as *values*, with ≥2 elements.
     """
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -3936,33 +4130,62 @@ def _compute_bin_edges(values, bin_width, log_x=False):
         return np.array([0.0, max(float(bin_width), 1.0)])
     v_min = float(np.nanmin(arr))
     v_max = float(np.nanmax(arr))
-    if log_x:
-        # Values are log10-transformed; use 0.25-decade bins (4 bins per decade)
-        bw = 0.25
-        start = np.floor(v_min / bw) * bw
-        stop = np.ceil(v_max / bw) * bw + bw
-        edges = np.arange(start, stop, bw)
+
+    if bin_mode == 'geometric':
+        # Equal-width bins in log₁₀ space; 0.25 decade per bin.
+        GEO_BW = 0.25
+        if log_x:
+            # Values already in log space → bin directly.
+            start = np.floor(v_min / GEO_BW) * GEO_BW
+            stop  = np.ceil(v_max  / GEO_BW) * GEO_BW + GEO_BW
+            edges = np.arange(start, stop, GEO_BW)  # log-space edges
+        else:
+            # Values in linear space → compute in log space, return as linear.
+            safe_min = max(v_min, 1e-300)
+            safe_max = max(v_max, 1e-300)
+            log_min = float(np.log10(safe_min))
+            log_max = float(np.log10(safe_max))
+            start = np.floor(log_min / GEO_BW) * GEO_BW
+            stop  = np.ceil(log_max  / GEO_BW) * GEO_BW + GEO_BW
+            log_edges = np.arange(start, stop, GEO_BW)
+            edges = 10.0 ** log_edges  # convert to linear space
     else:
+        # Linear mode: equal-width additive bins.
         bw = float(bin_width) if float(bin_width) > 0 else 1.0
-        start = np.floor(v_min / bw) * bw
-        stop = np.ceil(v_max / bw) * bw + bw
-        edges = np.arange(start, stop, bw)
+        if log_x:
+            # Values in log space → compute linear edges, return as log-space.
+            real_min = 10.0 ** v_min
+            real_max = 10.0 ** v_max
+            r_start = np.floor(real_min / bw) * bw
+            r_stop  = np.ceil(real_max  / bw) * bw + bw
+            real_edges = np.arange(r_start, r_stop, bw)
+            real_edges = real_edges[real_edges > 0]
+            if len(real_edges) < 2:
+                return np.array([v_min - 0.5, v_max + 0.5])
+            edges = np.log10(real_edges)  # log-space edges (unequal widths)
+        else:
+            # Values in linear space → pure linear edges.
+            start = np.floor(v_min / bw) * bw
+            stop  = np.ceil(v_max  / bw) * bw + bw
+            edges = np.arange(start, stop, bw)
+
     if len(edges) < 2:
-        bw = float(bin_width) if float(bin_width) > 0 else 1.0
-        edges = np.array([v_min - bw, v_max + bw])
+        fallback = float(bin_width) if float(bin_width) > 0 else 1.0
+        edges = np.array([v_min - fallback, v_max + fallback])
     return edges
 
 
-def _compute_global_bin_edges(all_values_list, bin_width, log_x=False):
-    """Compute shared fixed-width bin edges from multiple value arrays.
+def _compute_global_bin_edges(all_values_list, bin_width, log_x=False, bin_mode='geometric'):
+    """Compute shared bin edges from multiple value arrays.
 
     Ensures all histograms in a multi-element or multi-sample view share
     the same bin edges, keeping x-axis comparison scientifically valid.
 
     Args:
         all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
-        bin_width: Desired bin width in raw data units.
+        bin_width: Desired bin width (data units for Linear mode; ignored for Geometric).
         log_x: Whether values are already in log10 space.
+        bin_mode: 'geometric' or 'linear' — see _compute_bin_edges.
 
     Returns:
         np.ndarray of shared bin edges, or None when no valid data found.
@@ -3974,8 +4197,284 @@ def _compute_global_bin_edges(all_values_list, bin_width, log_x=False):
     combined = combined[np.isfinite(combined)]
     if len(combined) == 0:
         return None
-    return _compute_bin_edges(combined, bin_width, log_x)
+    return _compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
 
+
+# ─── Y-Axis Break Utilities ──────────────────────────────────────────────────
+
+def parse_y_axis_breaks(raw):
+    """Parse y-axis break intervals from config.
+
+    Args:
+        raw: Either a list/tuple of [lo, hi] pairs already stored in config,
+             or a string like ``'(100,1000),(5000,50000)'``.
+
+    Returns:
+        Sorted, non-overlapping list of ``(lo, hi)`` float tuples.
+        Returns an empty list on invalid or empty input.
+    """
+    if not raw:
+        return []
+    try:
+        import re as _re
+        if isinstance(raw, str):
+            pairs = _re.findall(
+                r'\(\s*([\d.eE+\-]+)\s*,\s*([\d.eE+\-]+)\s*\)', raw)
+            parsed = [(float(a), float(b)) for a, b in pairs]
+        else:
+            parsed = [(float(a), float(b)) for a, b in raw]
+        parsed.sort(key=lambda t: t[0])
+        valid, prev_hi = [], -1.0
+        for lo, hi in parsed:
+            if lo < 0 or lo >= hi:
+                continue
+            if lo < prev_hi:
+                continue          # overlapping – skip
+            valid.append((lo, hi))
+            prev_hi = hi
+        return valid
+    except Exception:
+        return []
+
+
+def _y_segments(breaks, data_max, padding=0.08):
+    """Compute visible y-segments from break list and data maximum.
+
+    Returns:
+        list of (lo, hi) tuples ordered **bottom → top**.
+    """
+    top = (data_max * (1.0 + padding)
+           if data_max > 0 else max(data_max + 10.0, 10.0))
+    if not breaks:
+        return [(0.0, top)]
+    segs = [(0.0, breaks[0][0])]
+    for i in range(1, len(breaks)):
+        segs.append((breaks[i - 1][1], breaks[i][0]))
+    segs.append((breaks[-1][1], top))
+    return segs
+
+
+def _compute_hist_bar_data(values, cfg, bin_edges=None, y_scale=1.0):
+    """Compute histogram bar arrays without drawing anything.
+
+    Returns:
+        dict with numpy arrays ``'centres'``, ``'heights'``, ``'widths'``,
+        ``'bin_edges'``.  Heights are log10-scaled when ``cfg['log_y']`` is
+        True.  All arrays are empty when edges cannot be computed.
+    """
+    if bin_edges is None:
+        bw = cfg.get('bin_width', 20)
+        lx = cfg.get('log_x', False)
+        bm = cfg.get('bin_mode', 'geometric')
+        bin_edges = _compute_bin_edges(values, bw, lx, bin_mode=bm)
+    if bin_edges is None or len(bin_edges) < 2:
+        empty = np.array([])
+        return {'centres': empty, 'heights': empty,
+                'widths': empty, 'bin_edges': np.array([])}
+    counts, bin_edges = np.histogram(values, bins=bin_edges)
+    scaled  = counts.astype(float) * y_scale
+    log_y   = cfg.get('log_y', False)
+    heights = np.log10(scaled + 1) if log_y else scaled
+    centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    widths  = (bin_edges[1:] - bin_edges[:-1]) * 0.95
+    return {'centres': centres, 'heights': heights,
+            'widths': widths, 'bin_edges': bin_edges}
+
+
+def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,
+                               cfg, x_ticks=None, x_label='', y_label=''):
+    """Create stacked PlotItems in *inner_layout* for a broken Y-axis.
+
+    Layout rows (row 0 = top of widget):
+        top-segment → gap_n-2 → ... → gap_0 → bottom-segment
+
+    Parameters
+    ----------
+    inner_layout : pg.GraphicsLayout
+        A nested layout obtained from
+        ``outer_widget.addLayout(row=R, col=C)``.
+    all_bar_sets : list[dict]
+        Each dict must contain:
+
+        ==================  ====================================================
+        Key                 Value
+        ==================  ====================================================
+        ``'x'``             ``np.ndarray`` of bar centres
+        ``'heights'``       ``np.ndarray`` of bar heights (display Y-coords)
+        ``'widths'``        ``np.ndarray`` or scalar bar widths
+        ``'color'``         Hex colour string (e.g. ``'#663399'``)
+        ``'alpha'``         int 0–255
+        ``'pen_color'``     (optional) pen colour, default ``'w'``
+        ``'pen_width'``     (optional) pen width, default ``0.5``
+        ``'name'``          (optional) label used in warnings / legends
+        ==================  ====================================================
+
+    breaks : list[(float, float)]
+        Sorted, non-overlapping gap intervals (output of
+        :func:`parse_y_axis_breaks`).
+    data_max : float
+        Maximum Y-value across all bars (for the top-segment ceiling).
+    cfg : dict
+        Node config dict (used for ``log_x``, font, box, and grid settings).
+    x_ticks : list[(float, str)] | None
+        Explicit tick list for the bottom panel x-axis (categorical charts).
+    x_label, y_label : str
+        Axis labels (applied to the bottom-most panel only).
+
+    Returns
+    -------
+    seg_panels : list[pg.PlotItem]
+        Segment panels ordered **bottom → top**.
+    gap_panels : list[pg.PlotItem]
+        Gap-strip panels, one per break (same order as *breaks*).
+    """
+    segments = _y_segments(breaks, data_max)
+    n_segs   = len(segments)
+    GAP_ALPHA = 45    # dimmed-bar fill opacity inside gap strip
+    GAP_MAX_H = 12    # maximum pixel height of each gap-strip row
+
+    # ── Create segment panels ────────────────────────────────────────────────
+    # seg[n_segs-1] (topmost) → layout row 0
+    # seg[0]        (bottom)  → layout row 2*(n_segs-1)
+    seg_panels = [None] * n_segs
+    gap_panels = []
+
+    for seg_idx in range(n_segs):
+        layout_row = (n_segs - 1 - seg_idx) * 2
+        s_lo, s_hi = segments[seg_idx]
+        pi = inner_layout.addPlot(
+            row=layout_row, col=0,
+            axisItems={'left': HtmlAxisItem('left')})
+        pi.setYRange(s_lo, s_hi, padding=0.04)
+        seg_panels[seg_idx] = pi
+
+    # ── Create gap-strip panels ──────────────────────────────────────────────
+    for gap_idx in range(n_segs - 1):
+        layout_row = (n_segs - 1 - gap_idx) * 2 - 1
+        g_lo, g_hi = breaks[gap_idx]
+        gp = inner_layout.addPlot(row=layout_row, col=0)
+        gp.setYRange(g_lo, g_hi, padding=0)
+        gap_panels.append(gp)
+
+    # ── Row stretch / height constraints ─────────────────────────────────────
+    for seg_idx in range(n_segs):
+        inner_layout.layout.setRowStretchFactor(
+            (n_segs - 1 - seg_idx) * 2, 10)
+    for gap_idx in range(n_segs - 1):
+        r = (n_segs - 1 - gap_idx) * 2 - 1
+        inner_layout.layout.setRowStretchFactor(r, 1)
+        try:
+            inner_layout.layout.setRowMaximumHeight(r, GAP_MAX_H)
+        except Exception:
+            pass
+
+    # ── Draw bars in segment panels ──────────────────────────────────────────
+    for bar_set in all_bar_sets:
+        x_arr   = np.asarray(bar_set['x'],       dtype=float)
+        heights = np.asarray(bar_set['heights'],  dtype=float)
+        widths_raw = bar_set['widths']
+        widths = (np.asarray(widths_raw, dtype=float)
+                  if hasattr(widths_raw, '__len__') else float(widths_raw))
+        co    = QColor(bar_set['color'])
+        alpha = int(bar_set.get('alpha', 180))
+        pen   = pg.mkPen(color=bar_set.get('pen_color', 'w'),
+                         width=float(bar_set.get('pen_width', 0.5)))
+
+        for pi, (s_lo, s_hi) in zip(seg_panels, segments):
+            mask = heights > s_lo
+            if not np.any(mask):
+                continue
+            y0_arr = np.full(int(mask.sum()), s_lo)
+            y1_arr = np.minimum(heights[mask], s_hi)
+            w_sub  = widths[mask] if isinstance(widths, np.ndarray) else widths
+            pi.addItem(pg.BarGraphItem(
+                x=x_arr[mask], y0=y0_arr, y1=y1_arr, width=w_sub,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                pen=pen))
+
+    # ── Dimmed bars + flat caps in gap strips ────────────────────────────────
+    for gp, (g_lo, g_hi) in zip(gap_panels, breaks):
+        for bar_set in all_bar_sets:
+            x_arr   = np.asarray(bar_set['x'],      dtype=float)
+            heights = np.asarray(bar_set['heights'], dtype=float)
+            widths_raw = bar_set['widths']
+            widths = (np.asarray(widths_raw, dtype=float)
+                      if hasattr(widths_raw, '__len__') else float(widths_raw))
+            co = QColor(bar_set['color'])
+
+            enters = heights > g_lo
+            if not np.any(enters):
+                continue
+            y0_arr = np.full(int(enters.sum()), g_lo)
+            y1_arr = np.minimum(heights[enters], g_hi)
+            w_sub  = widths[enters] if isinstance(widths, np.ndarray) else widths
+            gp.addItem(pg.BarGraphItem(
+                x=x_arr[enters], y0=y0_arr, y1=y1_arr, width=w_sub,
+                brush=pg.mkBrush(co.red(), co.green(), co.blue(), GAP_ALPHA),
+                pen=pg.mkPen(color='w', width=0.2)))
+
+            # Flat cap for bars whose PEAK lies entirely inside the gap.
+            swallowed = enters & (heights <= g_hi)
+            if np.any(swallowed):
+                cap_x = x_arr[swallowed]
+                cap_y = heights[swallowed]
+                cap_w = (widths[swallowed]
+                         if isinstance(widths, np.ndarray)
+                         else np.full(len(cap_x), float(widths)))
+                for xi, yi, wi in zip(cap_x, cap_y, cap_w):
+                    half = wi * 0.475
+                    gp.addItem(pg.PlotDataItem(
+                        x=[xi - half, xi + half], y=[yi, yi],
+                        pen=pg.mkPen(color='#333333', width=2.5)))
+
+    # ── Style segment panels ─────────────────────────────────────────────────
+    bottom_pi = seg_panels[0]
+    for seg_i, (pi, (_s_lo, _s_hi)) in enumerate(zip(seg_panels, segments)):
+        if seg_i != 0:
+            pi.hideAxis('bottom')
+        else:
+            if x_ticks is not None:
+                pi.getAxis('bottom').setTicks([x_ticks])
+            if x_label:
+                pi.getAxis('bottom').setLabel(x_label)
+            if y_label:
+                pi.setLabel('left', y_label)
+        if cfg.get('log_x', False):
+            pi.getAxis('bottom').setLogMode(True)
+        apply_font_to_pyqtgraph(pi, cfg)
+        _apply_box(pi, cfg)
+        _apply_histogram_grid(pi, cfg)
+
+    # ── Style gap-strip panels ───────────────────────────────────────────────
+    for gp in gap_panels:
+        gp.hideAxis('bottom')
+        gp.hideAxis('left')
+        gp.setMenuEnabled(False)
+        gp.setMouseEnabled(x=False, y=False)
+        gp.setXLink(bottom_pi)
+        try:
+            gp.getViewBox().setBackgroundColor(pg.mkColor('#DCDCDC'))
+        except Exception:
+            pass
+
+    # Link x-axes of all non-bottom segment panels to bottom panel.
+    for pi in seg_panels[1:]:
+        pi.setXLink(bottom_pi)
+
+    return seg_panels, gap_panels
+
+
+def _has_swallowed_bars(all_bar_sets, breaks):
+    """Return True if any bar peak falls entirely inside a gap interval."""
+    for bar_set in all_bar_sets:
+        heights = np.asarray(bar_set['heights'], dtype=float)
+        for g_lo, g_hi in breaks:
+            if np.any((heights > g_lo) & (heights <= g_hi)):
+                return True
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
                          name='', y_scale=1.0):
@@ -3995,7 +4494,8 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
     if bin_edges is None:
         bin_width = cfg.get('bin_width', 20)
         log_x = cfg.get('log_x', False)
-        bin_edges = _compute_bin_edges(values, bin_width, log_x)
+        bin_mode = cfg.get('bin_mode', 'geometric')
+        bin_edges = _compute_bin_edges(values, bin_width, log_x, bin_mode=bin_mode)
     alpha = int(cfg.get('alpha', 0.7) * 255)
     log_y = cfg.get('log_y', False)
 
@@ -4004,11 +4504,11 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
     y_plot = np.log10(scaled + 1) if log_y else scaled
 
     centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-    bw = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1.0
+    widths  = (bin_edges[1:] - bin_edges[:-1]) * 0.95  # per-bar widths (handles non-uniform bins)
 
     co = QColor(color_hex)
     bar = pg.BarGraphItem(
-        x=centres, height=y_plot, width=bw * 0.95,
+        x=centres, height=y_plot, width=widths,
         brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
         pen=pg.mkPen(color='w', width=0.5))
     if name:
@@ -4222,6 +4722,7 @@ def _draw_single_histogram(
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
     bin_width = cfg.get('bin_width', 20)
+    bin_mode = cfg.get('bin_mode', 'geometric')
     hidden = set(hidden_elements or set())
 
     sorted_data = sort_element_dict_by_mass(element_data)
@@ -4237,7 +4738,7 @@ def _draw_single_histogram(
         v = _prepare_values(raw_vals, dt, log_x)
         if v is not None:
             prepared_all.append(v)
-    global_edges = _compute_global_bin_edges(prepared_all, bin_width, log_x)
+    global_edges = _compute_global_bin_edges(prepared_all, bin_width, log_x, bin_mode=bin_mode)
 
     all_vals = []
     for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
@@ -4254,7 +4755,7 @@ def _draw_single_histogram(
         all_vals.append(vals)
 
         if is_single:
-            bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x)
+            bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x, bin_mode=bin_mode)
             can_attempt_density, density_reason = _density_curve_status(vals, cfg)
             density_attempted = cfg.get('show_curve', True)
             density_success = False
@@ -5233,13 +5734,26 @@ class ElementBarChartDisplayDialog(QDialog):
                 else:
                     self._draw_grouped(plot_data, cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
                 per_ml = _per_ml_active(cfg, self.node.input_data)
                 sn = self.node.input_data.get('sample_name') if self.node.input_data else None
                 y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_single_bar_chart(pi, plot_data, cfg, y_scale=y_scale, per_ml=per_ml)
-                self._configure_plot_title(
-                    pi, self._title_key_for_combined_plot('single'))
+                breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+                if breaks and not cfg.get('log_y', False):
+                    inner = self.pw.addLayout(row=0, col=0)
+                    seg_panels = self._draw_bar_chart_broken(
+                        inner, plot_data, cfg, breaks, y_scale, per_ml,
+                        single_color=None)
+                    self._configure_plot_title(
+                        seg_panels[0],
+                        self._title_key_for_combined_plot('single'))
+                else:
+                    pi = self.pw.addPlot(
+                        axisItems={'bottom': HtmlAxisItem('bottom'),
+                                   'left': HtmlAxisItem('left')})
+                    _draw_single_bar_chart(pi, plot_data, cfg,
+                                           y_scale=y_scale, per_ml=per_ml)
+                    self._configure_plot_title(
+                        pi, self._title_key_for_combined_plot('single'))
 
             self._reapply_saved_plot_format_settings()
             self._disable_native_pyqtgraph_context_menu()
@@ -5263,24 +5777,42 @@ class ElementBarChartDisplayDialog(QDialog):
         n = len(samples)
         cols = min(2, n)
         per_ml = _per_ml_active(cfg, self.node.input_data)
+        breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+        use_breaks = bool(breaks and not cfg.get('log_y', False))
         for idx, sn in enumerate(samples):
             if idx > 0 and idx % cols == 0:
                 self.pw.nextRow()
-            pi = self.pw.addPlot(title=get_display_name(sn, cfg),
-                                  axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
-            self._bar_subplot_contexts[pi] = {
-                'sample_name': sn,
-                'display_name': get_display_name(sn, cfg),
-            }
             sd = plot_data[sn]
-            if sd:
-                color = get_sample_color(sn, idx, cfg)
-                y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_single_bar_chart(pi, sd, cfg, single_color=color,
-                                        y_scale=y_scale, per_ml=per_ml)
-            self._configure_plot_title(
-                pi, self._title_key_for_sample_plot(sn),
-                default_title=get_display_name(sn, cfg))
+            color = get_sample_color(sn, idx, cfg)
+            y_scale = _pml_factor(self.node.input_data, sn) if per_ml else 1.0
+            if sd and use_breaks:
+                inner = self.pw.addLayout()
+                seg_panels = self._draw_bar_chart_broken(
+                    inner, sd, cfg, breaks, y_scale, per_ml,
+                    single_color=color)
+                seg_panels[-1].setTitle(get_display_name(sn, cfg))
+                self._bar_subplot_contexts[seg_panels[0]] = {
+                    'sample_name': sn,
+                    'display_name': get_display_name(sn, cfg),
+                }
+                self._configure_plot_title(
+                    seg_panels[-1], self._title_key_for_sample_plot(sn),
+                    default_title=get_display_name(sn, cfg))
+            else:
+                pi = self.pw.addPlot(
+                    title=get_display_name(sn, cfg),
+                    axisItems={'bottom': HtmlAxisItem('bottom'),
+                               'left': HtmlAxisItem('left')})
+                self._bar_subplot_contexts[pi] = {
+                    'sample_name': sn,
+                    'display_name': get_display_name(sn, cfg),
+                }
+                if sd:
+                    _draw_single_bar_chart(pi, sd, cfg, single_color=color,
+                                           y_scale=y_scale, per_ml=per_ml)
+                self._configure_plot_title(
+                    pi, self._title_key_for_sample_plot(sn),
+                    default_title=get_display_name(sn, cfg))
 
     def _draw_side_by_side(self, plot_data, cfg):
         """Draw horizontal sample subplots and reapply custom title text.
@@ -5305,6 +5837,59 @@ class ElementBarChartDisplayDialog(QDialog):
             self._configure_plot_title(
                 pi, self._title_key_for_sample_plot(sn),
                 default_title=get_display_name(sn, cfg))
+
+    # ── Broken-axis helper ───────────────────────────────────────────────────
+
+    def _draw_bar_chart_broken(self, inner, element_counts, cfg, breaks,
+                                y_scale, per_ml, single_color=None):
+        """Render an element bar chart using broken Y-axis panels.
+
+        Returns *seg_panels* list from :func:`_setup_broken_axis_panels`.
+        """
+        sort_opt  = cfg.get('sort_bars', 'No Sorting')
+        min_count = cfg.get('min_particle_count', 0)
+        ec = {e: c for e, c in element_counts.items()
+              if min_count == 0 or c >= min_count}
+        elems  = list(ec.keys())
+        counts = [ec[e] * y_scale for e in elems]
+        elems, counts = _sort_elements_for_display(elems, counts, sort_opt)
+        if not elems:
+            pi = inner.addPlot(axisItems={'left': HtmlAxisItem('left')})
+            return [pi]
+
+        x_arr    = np.arange(len(elems), dtype=float)
+        data_max = max(counts) if counts else 1.0
+        x_ticks  = [(float(i), _fmt_elem(e, cfg)) for i, e in enumerate(elems)]
+        all_bar_sets = []
+        for i, (xi, elem, c) in enumerate(zip(x_arr, elems, counts)):
+            color = single_color or _get_element_color(elem, i, cfg)
+            all_bar_sets.append({
+                'x': np.array([xi]), 'heights': np.array([c]),
+                'widths': 0.7, 'color': color, 'alpha': 215,
+                'pen_color': 'w', 'pen_width': 0.5,
+                'name': _fmt_elem(elem, cfg),
+            })
+
+        if _has_swallowed_bars(all_bar_sets, breaks):
+            QMessageBox.warning(
+                self, "Y-Axis Break: Swallowed Bars",
+                "One or more element bars have their peak count\n"
+                "entirely inside a Y-axis break gap.\n\n"
+                "Those bars are drawn as flat caps at their peak height\n"
+                "in the gap strip. Consider adjusting your break intervals.")
+
+        yl = 'Particles/mL' if per_ml else 'Particle Count'
+        seg_panels, _ = _setup_broken_axis_panels(
+            inner, all_bar_sets, breaks, data_max, cfg,
+            x_ticks=x_ticks, x_label='Isotope Elements', y_label=yl)
+
+        if not cfg.get('auto_x', True):
+            seg_panels[0].setXRange(
+                cfg.get('x_min', 0), cfg.get('x_max', 1000), padding=0)
+
+        return seg_panels
+
+    # ────────────────────────────────────────────────────────────────────────
 
     def _draw_grouped(self, plot_data, cfg):
         """Draw the combined grouped-bars multi-sample view."""
@@ -5648,6 +6233,7 @@ class ElementBarChartPlotNode(QObject):
         'y_axis_unit': 'count',
         'log_x': False,
         'log_y': False,
+        'y_axis_breaks': [],
         'show_box': True,
         'show_det_limit': False,
         'det_limit_value': 1.0,

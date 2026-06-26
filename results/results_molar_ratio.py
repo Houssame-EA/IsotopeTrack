@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QColorDialog,
     QPushButton, QLineEdit, QWidget, QMenu, QScrollArea, QDialogButtonBox,
-    QListWidget,
+    QListWidget, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor
@@ -26,6 +26,8 @@ try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
         _ClickableLegendSwatch, _attach_histogram_legend_toggle,
+        parse_y_axis_breaks, _y_segments, _setup_broken_axis_panels,
+        _has_swallowed_bars,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -39,6 +41,20 @@ except Exception:
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
+
+    def parse_y_axis_breaks(raw):  # noqa: E306  stub when import fails
+        return []
+
+    def _y_segments(breaks, data_max, padding=0.08):  # noqa: E306
+        top = data_max * (1.0 + padding) if data_max > 0 else max(data_max + 10.0, 10.0)
+        return [(0.0, top)]
+
+    def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,  # noqa: E306
+                                   cfg, x_ticks=None, x_label='', y_label=''):
+        return [], []
+
+    def _has_swallowed_bars(all_bar_sets, breaks):  # noqa: E306
+        return False
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -76,6 +92,7 @@ DEFAULT_CONFIG = {
     'outlier_percentile': 99.0,
     'bin_width': 0.25,
     'bin_mode': 'geometric',
+    'y_axis_breaks': [],
     'alpha': 0.7,
     'bin_borders': True,
     'log_x': True,
@@ -355,9 +372,27 @@ class MolarRatioSettingsDialog(QDialog):
             f4.addRow("Figure Box (frame):", self.box_cb)
         self.lx_cb = QCheckBox(); self.lx_cb.setChecked(self._cfg.get('log_x', True))
         self.ly_cb = QCheckBox(); self.ly_cb.setChecked(self._cfg.get('log_y', False))
+        self.y_breaks_edit = QLineEdit()
+        self.y_breaks_edit.setPlaceholderText('e.g. (50,500),(5000,50000)')
+        _raw_yb = self._cfg.get('y_axis_breaks', [])
+        if _raw_yb:
+            if isinstance(_raw_yb, str):
+                self.y_breaks_edit.setText(_raw_yb)
+            else:
+                self.y_breaks_edit.setText(
+                    ','.join(f'({lo},{hi})' for lo, hi in _raw_yb))
+        self.y_breaks_edit.setToolTip(
+            "Y-Axis Breaks: omit sections of the Y-axis to show data\n"
+            "at very different count scales.\n"
+            "Enter ordered, non-overlapping (low, high) pairs, e.g.\n"
+            "  (50,500),(5000,50000)\n"
+            "Bars spanning a gap are drawn dimmed; bars whose peak falls\n"
+            "inside a gap show a flat cap at their peak height.\n"
+            "Ignored when Log Y is enabled.")
         if self._scope in ('all', 'quantities'):
             f4.addRow("Log X:", self.lx_cb)
             f4.addRow("Log Y:", self.ly_cb)
+            f4.addRow("Y-Axis Breaks:", self.y_breaks_edit)
         if f4.rowCount() > 0:
             lay.addWidget(g4)
 
@@ -637,6 +672,8 @@ class MolarRatioSettingsDialog(QDialog):
             if self.lx_cb is not None:
                 d['log_x'] = self.lx_cb.isChecked()
                 d['log_y'] = self.ly_cb.isChecked()
+            if getattr(self, 'y_breaks_edit', None) is not None:
+                d['y_axis_breaks'] = self.y_breaks_edit.text().strip()
             if self.x_min is not None:
                 d['x_min'] = self.x_min.value()
                 d['x_max'] = self.x_max.value()
@@ -830,6 +867,35 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
                           pen=pg.mkPen(color=pc, width=pw))
     plot_item.addItem(bar)
     return pr, edges, y
+
+
+def _mr_compute_bar_data(ratios, cfg, y_scale=1.0, bin_edges=None):
+    """Compute molar-ratio histogram bar arrays without drawing.
+
+    Args:
+        ratios:     Raw (non-log) ratio values as a numpy array.
+        cfg:        Active config dict.
+        y_scale:    Multiplier converting counts to particles per mL.
+        bin_edges:  Pre-computed bin edges (np.ndarray) or None.
+
+    Returns:
+        dict with keys ``'pr'`` (plot-space values), ``'centres'``,
+        ``'heights'``, ``'widths'``, ``'bin_edges'``.
+    """
+    log_x    = cfg.get('log_x', True)
+    log_y    = cfg.get('log_y', False)
+    bin_mode = cfg.get('bin_mode', 'geometric')
+    pr = np.log10(ratios) if log_x else ratios.copy()
+    if bin_edges is None:
+        bw = cfg.get('bin_width', 0.25)
+        bin_edges = _mr_compute_bin_edges(pr, bw, log_x, bin_mode=bin_mode)
+    counts, bin_edges = np.histogram(pr, bins=bin_edges)
+    scaled  = counts.astype(float) * y_scale
+    heights = np.log10(scaled + 1) if log_y else scaled
+    centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    widths  = bin_edges[1:] - bin_edges[:-1]
+    return {'pr': pr, 'centres': centres, 'heights': heights,
+            'widths': widths, 'bin_edges': bin_edges}
 
 
 def _add_density_curve(plot_item, values, cfg, edges, total):
@@ -1426,9 +1492,13 @@ class MolarRatioDisplayDialog(QDialog):
                     self._draw_overlaid(pi, plot_data, cfg)
                     apply_font_to_pyqtgraph(pi, cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
-                self._draw_single(pi, plot_data, cfg)
-                apply_font_to_pyqtgraph(pi, cfg)
+                breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+                if breaks and not cfg.get('log_y', False):
+                    self._draw_single_broken(plot_data, cfg, breaks)
+                else:
+                    pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
+                    self._draw_single(pi, plot_data, cfg)
+                    apply_font_to_pyqtgraph(pi, cfg)
 
             # Enforce figure-frame visibility across every subplot regardless
             # of draw branch or panel data availability.
@@ -1443,6 +1513,85 @@ class MolarRatioDisplayDialog(QDialog):
             _itk_log.error(f"Error updating molar ratio: {e}")
             import traceback; traceback.print_exc()
 
+    # ── Broken-axis helpers ──────────────────────────────────────────────────
+
+    def _build_mr_broken_panels(self, inner, ratios, cfg, breaks,
+                                 color, y_scale, per_ml):
+        """Compute bar data and build broken-axis panels for one ratio dataset.
+
+        Returns *seg_panels* from :func:`_setup_broken_axis_panels`.
+        """
+        log_x    = cfg.get('log_x', True)
+        bin_width = cfg.get('bin_width', 0.25)
+        bin_mode  = cfg.get('bin_mode', 'geometric')
+        pr = np.log10(ratios) if log_x else ratios.copy()
+        global_edges = _mr_compute_bin_edges(pr, bin_width, log_x,
+                                              bin_mode=bin_mode)
+        bd = _mr_compute_bar_data(ratios, cfg, y_scale=y_scale,
+                                   bin_edges=global_edges)
+        if len(bd['heights']) == 0:
+            pi = inner.addPlot(axisItems={'left': HtmlAxisItem('left')})
+            return [pi]
+
+        co    = QColor(color)
+        alpha = int(cfg.get('alpha', 0.7) * 255)
+        bb    = cfg.get('bin_borders', True)
+        pw    = 1 if bb else 0
+        pc    = cfg.get('font_color', '#000000') if bb else color
+        all_bar_sets = [{
+            'x': bd['centres'], 'heights': bd['heights'],
+            'widths': bd['widths'], 'color': color, 'alpha': alpha,
+            'pen_color': pc, 'pen_width': pw,
+        }]
+
+        data_max = float(np.max(bd['heights'])) if len(bd['heights']) > 0 else 1.0
+
+        if _has_swallowed_bars(all_bar_sets, breaks):
+            QMessageBox.warning(
+                self, "Y-Axis Break: Swallowed Bars",
+                "One or more ratio histogram bins have their peak count\n"
+                "entirely inside a Y-axis break gap.\n\n"
+                "Those bins are drawn as flat caps at their peak height\n"
+                "in the gap strip. Consider adjusting your break intervals.")
+
+        xl, yl = _xy_labels(cfg)
+        seg_panels, gap_panels = _setup_broken_axis_panels(
+            inner, all_bar_sets, breaks, data_max, cfg,
+            x_label=xl, y_label=yl)
+
+        # Add stat lines to each segment
+        if cfg.get('show_stats', True):
+            for pi in seg_panels:
+                _add_stat_lines(pi, bd['pr'], cfg)
+
+        if not cfg.get('auto_x', True):
+            xn, xx = cfg.get('x_min', 0.01), cfg.get('x_max', 100.0)
+            if log_x and xn > 0 and xx > 0:
+                xn, xx = float(np.log10(xn)), float(np.log10(xx))
+            seg_panels[0].setXRange(xn, xx, padding=0)
+
+        for pi in seg_panels:
+            apply_font_to_pyqtgraph(pi, cfg)
+            _apply_box(pi, cfg)
+
+        return seg_panels
+
+    def _draw_single_broken(self, ratios, cfg, breaks):
+        """Render a single-sample molar ratio histogram with broken Y-axis."""
+        sc     = cfg.get('sample_colors', {})
+        color  = sc.get('single_sample', '#663399')
+        per_ml = per_ml_active(cfg, self.node.input_data)
+        sn     = single_sample_name(self.node.input_data)
+        y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+        inner  = self.pw.addLayout(row=0, col=0)
+        seg_panels = self._build_mr_broken_panels(
+            inner, ratios, cfg, breaks, color, y_scale, per_ml)
+        if cfg.get('show_stats', True) and len(seg_panels) > 0:
+            pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
+            _add_stats_text(seg_panels[0], pr, cfg)
+
+    # ────────────────────────────────────────────────────────────────────────
+
     def _draw_single(self, pi, ratios, cfg):
         """Draw single-sample ratio histogram and apply explicit axis log states."""
         sc = cfg.get('sample_colors', {})
@@ -1453,7 +1602,7 @@ class MolarRatioDisplayDialog(QDialog):
         _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
         xl, yl = _xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
-        
+
         pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
         if per_ml and not cfg.get('log_y', False):
@@ -1531,12 +1680,13 @@ class MolarRatioDisplayDialog(QDialog):
         """Draw one subplot per sample and apply explicit log + stats behavior."""
         names = list(plot_data.keys())
         cols = min(3, len(names))
-        rows = math.ceil(len(names) / cols)
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
         log_x = cfg.get('log_x', True)
         bin_width = cfg.get('bin_width', 0.25)
         bin_mode = cfg.get('bin_mode', 'geometric')
+        breaks = parse_y_axis_breaks(cfg.get('y_axis_breaks', []))
+        use_breaks = bool(breaks and not cfg.get('log_y', False))
 
         # Pool all samples to build shared bin edges before drawing any panel.
         all_prep = []
@@ -1545,30 +1695,39 @@ class MolarRatioDisplayDialog(QDialog):
             if ratios is not None and len(ratios) > 0:
                 prep = np.log10(ratios) if log_x else np.asarray(ratios, dtype=float)
                 all_prep.append(prep)
-        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x, bin_mode=bin_mode)
+        global_edges = _mr_compute_global_bin_edges(
+            all_prep, bin_width, log_x, bin_mode=bin_mode)
 
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c,
-                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
-            if ratios is not None and len(ratios) > 0:
-                color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_ratio_plot(pi, ratios, cfg, color,
-                                 bin_edges=global_edges, y_scale=y_scale)
-                pi.setTitle(get_display_name(sn, cfg))
-                xl, yl = _xy_labels(cfg)
-                set_axis_labels(pi, xl, yl, cfg)
-                
-                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
-                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
-                if per_ml and not cfg.get('log_y', False):
-                    apply_sci_y_axis(pi, cfg)
+            color  = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+            y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+            if ratios is not None and len(ratios) > 0 and use_breaks:
+                inner = self.pw.addLayout(row=r, col=c)
+                seg_panels = self._build_mr_broken_panels(
+                    inner, ratios, cfg, breaks, color, y_scale, per_ml)
+                seg_panels[-1].setTitle(get_display_name(sn, cfg))
                 if cfg.get('show_stats', True):
-                    pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
-                    _add_stats_text(pi, pr, cfg)
-            apply_font_to_pyqtgraph(pi, cfg)
+                    pr = np.log10(ratios) if log_x else ratios.copy()
+                    _add_stats_text(seg_panels[0], pr, cfg)
+            else:
+                pi = self.pw.addPlot(row=r, col=c,
+                                     axisItems={'left': HtmlAxisItem('left')})
+                if ratios is not None and len(ratios) > 0:
+                    _draw_ratio_plot(pi, ratios, cfg, color,
+                                     bin_edges=global_edges, y_scale=y_scale)
+                    pi.setTitle(get_display_name(sn, cfg))
+                    xl, yl = _xy_labels(cfg)
+                    set_axis_labels(pi, xl, yl, cfg)
+                    pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+                    pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                    if per_ml and not cfg.get('log_y', False):
+                        apply_sci_y_axis(pi, cfg)
+                    if cfg.get('show_stats', True):
+                        pr = np.log10(ratios) if log_x else ratios.copy()
+                        _add_stats_text(pi, pr, cfg)
+                apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """Draw side-by-side sample subplots with explicit log + stats behavior."""
