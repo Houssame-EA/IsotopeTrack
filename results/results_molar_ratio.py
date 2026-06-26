@@ -75,6 +75,7 @@ DEFAULT_CONFIG = {
     'filter_outliers': True,
     'outlier_percentile': 99.0,
     'bin_width': 0.25,
+    'bin_mode': 'geometric',
     'alpha': 0.7,
     'bin_borders': True,
     'log_x': True,
@@ -304,11 +305,23 @@ class MolarRatioSettingsDialog(QDialog):
         self.bin_width_spin.setValue(self._cfg.get('bin_width', 0.25))
         self.bin_width_spin.setToolTip(
             "Width of each histogram bin.\n"
-            "Linear X mode: width in ratio units (e.g. 0.25 → bins of width 0.25).\n"
-            "Log X mode: width in log₁₀ units (e.g. 0.25 → quarter-decade bins).\n"
+            "Geometric mode: width in log₁₀ units (e.g. 0.25 → quarter-decade bins).\n"
+            "Linear mode: width in ratio units (e.g. 0.25 → bins of width 0.25).\n"
             "All samples share the same bin edges so bars are directly comparable.")
         if self._scope in ('all', 'quantities'):
             f4.addRow("Bin Width:", self.bin_width_spin)
+        self.bin_mode_combo = QComboBox()
+        self.bin_mode_combo.addItems(['Geometric', 'Linear'])
+        _cur_bm = self._cfg.get('bin_mode', 'geometric')
+        self.bin_mode_combo.setCurrentText(_cur_bm.capitalize())
+        self.bin_mode_combo.setToolTip(
+            "Geometric: equal-width bins in log₁₀ space (Bin Width in log₁₀ units).\n"
+            "  Bars look even on a log X-axis, uneven on a linear X-axis.\n"
+            "Linear: equal-width bins in ratio units (Bin Width in ratio units).\n"
+            "  Bars look even on a linear X-axis, uneven on a log X-axis.\n"
+            "All 4 combinations of Bin Mode × Log X are supported.")
+        if self._scope in ('all', 'quantities'):
+            f4.addRow("Bin Mode:", self.bin_mode_combo)
         self.y_unit_combo = QComboBox()
         self.y_unit_combo.addItem("Particle", "count")
         self.y_unit_combo.addItem("Particle per mL", "per_ml")
@@ -614,6 +627,8 @@ class MolarRatioSettingsDialog(QDialog):
                 d['outlier_percentile'] = self.pct_spin.value()
             if self.bin_width_spin is not None:
                 d['bin_width'] = self.bin_width_spin.value()
+            if getattr(self, 'bin_mode_combo', None) is not None:
+                d['bin_mode'] = self.bin_mode_combo.currentText().lower()
             if getattr(self, 'y_unit_combo', None) is not None:
                 d['y_axis_unit'] = self.y_unit_combo.currentData()
             if self.curve_cb is not None:
@@ -678,25 +693,31 @@ class MolarRatioSettingsDialog(QDialog):
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
-def _mr_compute_bin_edges(values, bin_width, log_x=True):
-    """Compute fixed-width bin edges anchored to clean grid boundaries.
+def _mr_compute_bin_edges(values, bin_width, log_x=True, bin_mode='geometric'):
+    """Compute bin edges anchored to clean grid boundaries.
 
-    bin_width is honoured directly in both log and linear X modes:
-    - log_x=True:  bin_width is in log10 units  (e.g. 0.25 = quarter-decade
-                   bins, each bar spans 10^0.25 ≈ 1.78× on the ratio scale).
-    - log_x=False: bin_width is in raw ratio units (e.g. 0.25 = bins of width
-                   0.25 on the linear ratio axis).
+    bin_mode and log_x are independent — all four combinations are valid:
 
-    In all cases every sample shares the same edge grid so multi-sample
-    panels are directly comparable.
+    - bin_mode='geometric', log_x=True : values in log space; bin_width in log₁₀
+      units → equal-width log bins drawn on a log axis (bars look even).
+    - bin_mode='geometric', log_x=False: values in linear space; bin_width in
+      log₁₀ units → compute in log space, return linear edges (bars look uneven
+      on a linear axis).
+    - bin_mode='linear',    log_x=False: values in linear space; bin_width in
+      ratio units → equal-width linear bins (bars look even on a linear axis).
+    - bin_mode='linear',    log_x=True : values in log space; bin_width in ratio
+      units → compute linear edges then log-transform (bars look uneven on a log
+      axis).
 
     Args:
         values:    1-D array already in plot-space (log10 when log_x=True).
-        bin_width: Desired bin width in the coordinate space of values.
+        bin_width: Bin width in log₁₀ units (Geometric mode) or ratio units
+                   (Linear mode).
         log_x:     True when values are log10-transformed.
+        bin_mode:  'geometric' or 'linear'.
 
     Returns:
-        np.ndarray of bin edges with at least 2 elements.
+        np.ndarray of bin edges in the same coordinate space as *values*, ≥2 elements.
     """
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -704,15 +725,47 @@ def _mr_compute_bin_edges(values, bin_width, log_x=True):
         return np.array([0.0, 1.0])
     v_min, v_max = float(np.nanmin(arr)), float(np.nanmax(arr))
     bw = max(float(bin_width), 1e-9)
-    start = np.floor(v_min / bw) * bw
-    stop  = np.ceil(v_max  / bw) * bw + bw
-    edges = np.arange(start, stop, bw)
+
+    if bin_mode == 'geometric':
+        if log_x:
+            # Values already in log space; bw is in log₁₀ units.
+            start = np.floor(v_min / bw) * bw
+            stop  = np.ceil(v_max  / bw) * bw + bw
+            edges = np.arange(start, stop, bw)
+        else:
+            # Values in linear space; compute log-space edges, return linear.
+            safe_min = max(v_min, 1e-300)
+            safe_max = max(v_max, 1e-300)
+            log_min = float(np.log10(safe_min))
+            log_max = float(np.log10(safe_max))
+            start = np.floor(log_min / bw) * bw
+            stop  = np.ceil(log_max  / bw) * bw + bw
+            log_edges = np.arange(start, stop, bw)
+            edges = 10.0 ** log_edges
+    else:  # linear
+        if log_x:
+            # Values in log space; bw is in ratio units; return log-space edges.
+            real_min = 10.0 ** v_min
+            real_max = 10.0 ** v_max
+            r_start = np.floor(real_min / bw) * bw
+            r_stop  = np.ceil(real_max  / bw) * bw + bw
+            real_edges = np.arange(r_start, r_stop, bw)
+            real_edges = real_edges[real_edges > 0]
+            if len(real_edges) < 2:
+                return np.array([v_min - 0.5, v_max + 0.5])
+            edges = np.log10(real_edges)
+        else:
+            # Values in linear space; bw is in ratio units.
+            start = np.floor(v_min / bw) * bw
+            stop  = np.ceil(v_max  / bw) * bw + bw
+            edges = np.arange(start, stop, bw)
+
     if len(edges) < 2:
         edges = np.array([v_min - bw, v_max + bw])
     return edges
 
 
-def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True):
+def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True, bin_mode='geometric'):
     """Compute shared bin edges from multiple per-sample arrays.
 
     Ensures every panel in a multi-sample view uses identical bin boundaries
@@ -720,8 +773,9 @@ def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True):
 
     Args:
         all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
-        bin_width:       Desired width in ratio units (ignored in log-X mode).
+        bin_width:       Bin width in log₁₀ units (Geometric) or ratio units (Linear).
         log_x:           Whether values are already in log10 space.
+        bin_mode:        'geometric' or 'linear' — see _mr_compute_bin_edges.
 
     Returns:
         np.ndarray of shared bin edges, or None when no valid data.
@@ -734,7 +788,7 @@ def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True):
     combined = combined[np.isfinite(combined)]
     if len(combined) == 0:
         return None
-    return _mr_compute_bin_edges(combined, bin_width, log_x)
+    return _mr_compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
 
 
 def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None):
@@ -752,11 +806,12 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
     """
     log_x = cfg.get('log_x', True)
     log_y = cfg.get('log_y', False)
+    bin_mode = cfg.get('bin_mode', 'geometric')
 
     pr = np.log10(ratios) if log_x else ratios.copy()
     if bin_edges is None:
         bin_width = cfg.get('bin_width', 0.25)
-        bin_edges = _mr_compute_bin_edges(pr, bin_width, log_x)
+        bin_edges = _mr_compute_bin_edges(pr, bin_width, log_x, bin_mode=bin_mode)
     y, edges = np.histogram(pr, bins=bin_edges)
     y = y.astype(float) * y_scale
     if log_y:
@@ -769,8 +824,8 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
     pc = cfg.get('font_color', '#000000') if bb else color
 
     centres = (edges[:-1] + edges[1:]) / 2
-    bw = edges[1] - edges[0]
-    bar = pg.BarGraphItem(x=centres, height=y, width=bw,
+    widths  = (edges[1:] - edges[:-1])  # per-bar widths (handles non-uniform bins)
+    bar = pg.BarGraphItem(x=centres, height=y, width=widths,
                           brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
                           pen=pg.mkPen(color=pc, width=pw))
     plot_item.addItem(bar)
@@ -894,7 +949,8 @@ def _add_stat_lines(plot_item, values, cfg):
     if cfg.get('show_mode_marker', False) and len(values) > 3:
         try:
             bin_width = cfg.get('bin_width', 0.25)
-            mode_edges = _mr_compute_bin_edges(values, bin_width, log_x)
+            bin_mode = cfg.get('bin_mode', 'geometric')
+            mode_edges = _mr_compute_bin_edges(values, bin_width, log_x, bin_mode=bin_mode)
             counts, edges = np.histogram(values, bins=mode_edges)
             peak_idx = int(np.argmax(counts))
             peak_x = float((edges[peak_idx] + edges[peak_idx + 1]) / 2)
@@ -1415,6 +1471,7 @@ class MolarRatioDisplayDialog(QDialog):
         hidden = self._hidden_molar_samples
         log_x = cfg.get('log_x', True)
         bin_width = cfg.get('bin_width', 0.25)
+        bin_mode = cfg.get('bin_mode', 'geometric')
 
         # Compute shared bin edges from all visible samples so bars align.
         visible_prep = []
@@ -1422,7 +1479,7 @@ class MolarRatioDisplayDialog(QDialog):
             if ratios is not None and len(ratios) > 0 and sn not in hidden:
                 prep = np.log10(ratios) if log_x else np.asarray(ratios, dtype=float)
                 visible_prep.append(prep)
-        global_edges = _mr_compute_global_bin_edges(visible_prep, bin_width, log_x)
+        global_edges = _mr_compute_global_bin_edges(visible_prep, bin_width, log_x, bin_mode=bin_mode)
 
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
@@ -1479,6 +1536,7 @@ class MolarRatioDisplayDialog(QDialog):
         per_ml = per_ml_active(cfg, self.node.input_data)
         log_x = cfg.get('log_x', True)
         bin_width = cfg.get('bin_width', 0.25)
+        bin_mode = cfg.get('bin_mode', 'geometric')
 
         # Pool all samples to build shared bin edges before drawing any panel.
         all_prep = []
@@ -1487,7 +1545,7 @@ class MolarRatioDisplayDialog(QDialog):
             if ratios is not None and len(ratios) > 0:
                 prep = np.log10(ratios) if log_x else np.asarray(ratios, dtype=float)
                 all_prep.append(prep)
-        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x)
+        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x, bin_mode=bin_mode)
 
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
@@ -1519,9 +1577,10 @@ class MolarRatioDisplayDialog(QDialog):
         per_ml = per_ml_active(cfg, self.node.input_data)
         log_x = cfg.get('log_x', True)
         bin_width = cfg.get('bin_width', 0.25)
+        bin_mode = cfg.get('bin_mode', 'geometric')
         all_prep = [np.log10(plot_data[sn]) if log_x else np.asarray(plot_data[sn], dtype=float)
                     for sn in names if plot_data.get(sn) is not None and len(plot_data[sn]) > 0]
-        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x)
+        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x, bin_mode=bin_mode)
         for i, sn in enumerate(names):
             pi = self.pw.addPlot(row=0, col=i,
                                  axisItems={'left': HtmlAxisItem('left')})
