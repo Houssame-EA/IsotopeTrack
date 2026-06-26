@@ -11,7 +11,7 @@ import numpy as np
 import re
 
 from results.shared_plot_utils import (
-    FONT_FAMILIES, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
+    FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
     apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
     Renderer, build_axis_labels, apply_saturation_filter,
     apply_zero_filter, apply_log_transform,
@@ -420,23 +420,8 @@ class CorrelationSettingsDialog(QDialog):
             layout.addWidget(g)
             self._format_groups.append(g)
 
-        g = QGroupBox("Font")
-        fl = QFormLayout(g)
-        self.font_family_combo = QComboBox()
-        self.font_family_combo.addItems(FONT_FAMILIES)
-        self.font_family_combo.setCurrentText(self._config.get('font_family', 'Times New Roman'))
-        fl.addRow("Family:", self.font_family_combo)
-        self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(6, 48)
-        self.font_size_spin.setValue(int(self._config.get('font_size', 18)))
-        fl.addRow("Size:", self.font_size_spin)
-        self.font_color_btn = QPushButton()
-        self._font_color = self._config.get('font_color', '#000000')
-        self.font_color_btn.setFixedWidth(40)
-        self.font_color_btn.setStyleSheet(f"background:{self._font_color};")
-        self.font_color_btn.clicked.connect(self._pick_font_color)
-        fl.addRow("Color:", self.font_color_btn)
-        layout.addWidget(g)
+        self._font_group = FontSettingsGroup(self._config)
+        layout.addWidget(self._font_group.build())
         self._format_groups.append(g)
 
 
@@ -577,13 +562,6 @@ class CorrelationSettingsDialog(QDialog):
             self._ref_color = c.name()
             self._ref_color_btn.setStyleSheet(f"background:{self._ref_color};")
 
-    def _pick_font_color(self):
-        """Pick the font/text color used for axis labels and overlay text."""
-        c = QColorDialog.getColor(QColor(self._font_color), self)
-        if c.isValid():
-            self._font_color = c.name()
-            self.font_color_btn.setStyleSheet(f"background:{self._font_color};")
-
     def collect(self) -> dict:
         """Return scope-safe config updates for format/quantities routes.
 
@@ -639,9 +617,7 @@ class CorrelationSettingsDialog(QDialog):
             if (not self._is_multi and self._single_sample_color_btn is not None
                     and self._sample_point_colors_available()):
                 cfg['single_sample_color'] = self._single_sample_color
-            cfg['font_family'] = self.font_family_combo.currentText()
-            cfg['font_size'] = self.font_size_spin.value()
-            cfg['font_color'] = self._font_color
+            cfg.update(self._font_group.collect())
             if self._is_multi and self._sample_name_edits is not None:
                 nm = {}
                 for sn, ne in self._sample_name_edits.items():
@@ -824,6 +800,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         self.plot_widget.setBackground('w')
         self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
         self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
+        self.plot_widget._itk_on_double_click = self._open_plot_format_settings
         self._plot_container_layout.addWidget(self.plot_widget)
         self._primary_plot_item = None
         layout.addWidget(self._plot_container, stretch=1)
@@ -1150,13 +1127,8 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._cleanup_color_bars()
             self._subplot_context_by_plotitem = {}
 
-            self._plot_container_layout.removeWidget(self.plot_widget)
-            self.plot_widget.deleteLater()
-            self.plot_widget = CorrelationGraphicsLayoutWidget()
+            self.plot_widget.clear()
             self.plot_widget.setBackground('w')
-            self.plot_widget.setContextMenuPolicy(Qt.CustomContextMenu)
-            self.plot_widget.customContextMenuRequested.connect(self._show_context_menu)
-            self._plot_container_layout.addWidget(self.plot_widget)
 
             plot_data = self.node.extract_plot_data()
 
@@ -1198,6 +1170,7 @@ class CorrelationPlotDisplayDialog(QDialog):
 
             self._primary_plot_item = primary_plot
             self._suppress_native_plot_menus()
+            self.plot_widget.reapply_inline_overrides()
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
@@ -1272,6 +1245,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         correlation_label: str | None = None,
         correlation_index: int = 0,
         correlation_count: int = 1,
+        sample_key: str | None = None,
+        is_single: bool = False,
     ):
         """Add scatter + overlays to a PlotItem using already-prepared sample data.
 
@@ -1302,6 +1277,12 @@ class CorrelationPlotDisplayDialog(QDialog):
                 active_color_bars=self.active_color_bars)
         else:
             scatter = create_single_color_scatter(pi, x, y, cfg, color)
+            if scatter is not None:
+                if is_single:
+                    scatter._color_identity_role = 'single'
+                elif sample_key is not None:
+                    scatter._color_identity_role = 'sample'
+                    scatter._color_identity_key = sample_key
 
         if cfg.get('show_trendline', True) and len(x) > 1:
             add_trend_line(pi, x, y, color)
@@ -1426,7 +1407,7 @@ class CorrelationPlotDisplayDialog(QDialog):
             pi.addItem(pg.TextItem("No valid data", anchor=(0.5, 0.5), color='red'))
             return
         color = cfg.get('single_sample_color', '#3B82F6')
-        self._plot_scatter(pi, x, y, c, cfg, color)
+        self._plot_scatter(pi, x, y, c, cfg, color, is_single=True)
         self._apply_labels(pi, cfg)
 
     # ── Multiple samples ────────────────────
@@ -1446,7 +1427,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 x, y, c = self._prepare_data(sd['element_data'], cfg)
                 if len(x):
                     color = get_sample_color(sn, i, cfg)
-                    self._plot_scatter(pi, x, y, c, cfg, color)
+                    self._plot_scatter(pi, x, y, c, cfg, color, sample_key=sn)
                 else:
                     self._add_no_valid_data_message(pi)
                 title = get_display_name(sn, cfg)
@@ -1472,7 +1453,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 x, y, c = self._prepare_data(sd['element_data'], cfg)
                 if len(x):
                     color = get_sample_color(sn, i, cfg)
-                    self._plot_scatter(pi, x, y, c, cfg, color)
+                    self._plot_scatter(pi, x, y, c, cfg, color, sample_key=sn)
                 else:
                     self._add_no_valid_data_message(pi)
             title = get_display_name(sn, cfg)
@@ -1520,6 +1501,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                 correlation_label=sample_label,
                 correlation_index=idx,
                 correlation_count=len(valid_series),
+                sample_key=sn,
             )
             legend_items.append((scatter, sample_label))
 
@@ -1544,17 +1526,15 @@ class CorrelationPlotDisplayDialog(QDialog):
 
 
 class CorrelationGraphicsLayoutWidget(EnhancedGraphicsLayoutWidget):
-    """Correlation-local GraphicsLayout widget with double-click editor suppression.
+    """Correlation GraphicsLayout widget.
 
-    Correlation scatter points use per-spot brush/pen styling. The generic
-    double-click editor changes item-level style and can produce misleading
-    legend-only updates. This local override disables those editors for
-    Correlation without affecting other result plot types.
+    Uses the shared inline double-click editors, uniform with the other plots:
+    clicking a sample's scatter series opens a colour picker that persists to
+    config (``single_sample_color`` / ``sample_colors``), while the axis, title,
+    legend and background use the shared editors. The scatter series are tagged
+    with their colour identity in ``_plot_scatter`` so no override is needed.
     """
-
-    def mouseDoubleClickEvent(self, event):
-        """Consume double-click events to suppress incompatible style editors."""
-        event.accept()
+    pass
 
 
 class CorrelationPlotNode(QObject):
@@ -1619,9 +1599,10 @@ class CorrelationPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = CorrelationPlotDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: CorrelationPlotDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

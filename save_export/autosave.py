@@ -115,7 +115,7 @@ class AutosaveManager(QObject):
         self._thread = None
 
         settings = QSettings("IsotopeTrack", "IsotopeTrack")
-        self._enabled = settings.value("autosave/enabled", True, type=bool)
+        self._enabled = settings.value("autosave/enabled", False, type=bool)
 
         now = self._now_ms()
         self._heavy_sig = None

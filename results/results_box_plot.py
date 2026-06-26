@@ -122,7 +122,7 @@ DEFAULT_CONFIG = {
     'show_median': True,
     'alpha': 0.7,
     'log_y': False,
-    'show_stats': True,
+    'show_stats': False,
     'plot_width': 0.8,
     'y_min': 0,
     'y_max': 100,
@@ -534,7 +534,7 @@ class BoxPlotSettingsDialog(QDialog):
             self.median_cb.setChecked(self._cfg.get('show_median', True))
             f3.addRow("Show Median:", self.median_cb)
             self.stats_cb = QCheckBox()
-            self.stats_cb.setChecked(self._cfg.get('show_stats', True))
+            self.stats_cb.setChecked(self._cfg.get('show_stats', False))
             f3.addRow("Show Statistics:", self.stats_cb)
             self.alpha_spin = QDoubleSpinBox()
             self.alpha_spin.setRange(0.1, 1.0)
@@ -816,6 +816,23 @@ class BoxPlotSettingsDialog(QDialog):
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
+def _tag_box_color_identity(item, cfg):
+    """Tag a box rect with its colour identity so double-click edits persist.
+
+    ``cfg['_box_identity']`` is a transient ``(key, role)`` set per series by
+    ``_draw_single_element``; role is 'sample' or 'element'.
+    """
+    ident = cfg.get('_box_identity')
+    if not ident:
+        return
+    key, role = ident
+    setattr(item, '_color_identity_role', role)
+    if role == 'sample':
+        setattr(item, '_color_identity_key', key)
+    else:
+        setattr(item, '_raw_element_key', key)
+
+
 def _draw_box(plot_item, x, values, color, alpha, width, cfg):
     if len(values) < 2:
         return
@@ -826,6 +843,7 @@ def _draw_box(plot_item, x, values, color, alpha, width, cfg):
     box = pg.QtWidgets.QGraphicsRectItem(x - width/2, q1, width, q3 - q1)
     box.setBrush(pg.mkBrush(co.red(), co.green(), co.blue(), alpha))
     box.setPen(pg.mkPen(color, width=2))
+    _tag_box_color_identity(box, cfg)
     plot_item.addItem(box)
 
     if cfg.get('show_median', True):
@@ -1018,7 +1036,10 @@ def _draw_single_element(plot_item, x, values, sample_name, element, cfg, is_mul
     width = cfg.get('plot_width', 0.8)
     shape = cfg.get('plot_shape', PLOT_SHAPES[0])
     drawer = _SHAPE_DRAWERS.get(shape, _draw_box)
-    drawer(plot_item, x, values, color, alpha, width, cfg)
+    dcfg = dict(cfg)
+    dcfg['_box_identity'] = (
+        (sample_name, 'sample') if is_multi else (element, 'element'))
+    drawer(plot_item, x, values, color, alpha, width, dcfg)
 
 
 def _add_empty_panel_message(plot_item, message="No valid data"):
@@ -1168,7 +1189,7 @@ class BoxPlotDisplayDialog(QDialog):
         for key, label, default in [
             ('show_mean',       'Show Mean',            True),
             ('show_median',     'Show Median',          True),
-            ('show_stats',      'Show Statistics',      True),
+            ('show_stats',      'Show Statistics',      False),
             ('show_box',        'Figure Box (frame)',   True),
             ('show_det_limit',  'Detection Limit Line', False),
         ]:
@@ -1706,6 +1727,7 @@ class BoxPlotDisplayDialog(QDialog):
 
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data, multi)
+            self.pw.reapply_inline_overrides()
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
             _itk_log.error(f"Error updating distribution plot: {e}")
@@ -1771,7 +1793,7 @@ class BoxPlotDisplayDialog(QDialog):
             pi.getAxis('left').setLogMode(True)
         if not cfg.get('auto_y', True):
             pi.setYRange(cfg['y_min'], cfg['y_max'])
-        if cfg.get('show_stats', True) and xp:
+        if cfg.get('show_stats', False) and xp:
             _add_stats_text(pi, stats_source, cfg)
         _apply_box_overlays(pi, all_vals_flat, cfg)
         _apply_boxplot_grid(pi, cfg)
@@ -2085,9 +2107,10 @@ class BoxPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = BoxPlotDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: BoxPlotDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

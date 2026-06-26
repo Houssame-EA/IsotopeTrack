@@ -286,6 +286,19 @@ class HeatmapSettingsDialog(QDialog):
             fl.addRow("Cell border width:", self.cell_lw_spin)
             layout.addWidget(g)
 
+            g = QGroupBox("Cell Statistic")
+            fl = QFormLayout(g)
+            self.cell_stat_combo = QComboBox()
+            self.cell_stat_combo.addItems(CELL_STAT_OPTIONS)
+            self.cell_stat_combo.setCurrentText(self._config.get('cell_stat', 'Mean'))
+            fl.addRow("Cell value:", self.cell_stat_combo)
+            self.cell_spread_combo = QComboBox()
+            self.cell_spread_combo.addItems(CELL_SPREAD_OPTIONS)
+            self.cell_spread_combo.setCurrentText(
+                self._config.get('cell_spread', 'None'))
+            fl.addRow("Show spread:", self.cell_spread_combo)
+            layout.addWidget(g)
+
             self._font_group = FontSettingsGroup(self._config)
             layout.addWidget(self._font_group.build())
 
@@ -374,6 +387,12 @@ class HeatmapSettingsDialog(QDialog):
         cfg['x_rotation'] = self.x_rotation_spin.value() if self.x_rotation_spin else self._config.get('x_rotation', 0)
         cfg['annotation_fontsize'] = self.ann_fontsize_spin.value() if self.ann_fontsize_spin else self._config.get('annotation_fontsize', 0)
         cfg['cell_linewidth'] = self.cell_lw_spin.value() if self.cell_lw_spin else self._config.get('cell_linewidth', 0.5)
+        cfg['cell_stat'] = (self.cell_stat_combo.currentText()
+                            if getattr(self, 'cell_stat_combo', None)
+                            else self._config.get('cell_stat', 'Mean'))
+        cfg['cell_spread'] = (self.cell_spread_combo.currentText()
+                              if getattr(self, 'cell_spread_combo', None)
+                              else self._config.get('cell_spread', 'None'))
 
         if self._font_group is not None:
             cfg.update(self._font_group.collect())
@@ -793,6 +812,79 @@ def _combo_exact_matches(combination: str, search_elements: list) -> bool:
     return _combo_matches(combination, search_elements)
 
 
+def _mode_estimate(arr):
+    """Estimate the mode of continuous values from the densest histogram bin."""
+    if arr.size == 1:
+        return float(arr[0])
+    try:
+        bins = min(50, max(5, int(np.sqrt(arr.size))))
+        counts, edges = np.histogram(arr, bins=bins)
+        k = int(np.argmax(counts))
+        return float((edges[k] + edges[k + 1]) / 2.0)
+    except Exception:
+        return float(np.mean(arr))
+
+
+CELL_STAT_OPTIONS = ['Mean', 'Median', 'Mode', 'Geometric Mean']
+
+
+def _cell_center(vals, stat):
+    """Central value for one heatmap cell: Mean, Median, Mode, or Geo. Mean."""
+    arr = np.asarray(vals, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return 0.0
+    if stat == 'Median':
+        return float(np.median(arr))
+    if stat == 'Mode':
+        return _mode_estimate(arr)
+    if stat.startswith('Geo'):
+        pos = arr[arr > 0]
+        return float(np.exp(np.mean(np.log(pos)))) if pos.size else 0.0
+    return float(np.mean(arr))
+
+
+CELL_SPREAD_OPTIONS = ['None', 'SD', 'SEM', 'IQR (Q1–Q3)', 'Min–Max', 'CV %']
+
+
+def _cell_spread_value(vals, spread):
+    """Secondary value shown after a cell centre.
+
+    Returns a scalar (rendered as ``± x``), a ``(low, high)`` tuple (rendered as
+    ``(low–high)``), a ``('%', cv)`` marker for coefficient of variation, or
+    None. Supported: SD, SEM, IQR (Q1–Q3), Min–Max, CV %.
+    """
+    if spread in (None, 'None', ''):
+        return None
+    arr = np.asarray(vals, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return None
+    if spread == 'SD':
+        return float(np.std(arr))
+    if spread == 'SEM':
+        return float(np.std(arr) / np.sqrt(arr.size))
+    if spread.startswith('IQR'):
+        return (float(np.percentile(arr, 25)), float(np.percentile(arr, 75)))
+    if spread.startswith('Min'):
+        return (float(np.min(arr)), float(np.max(arr)))
+    if spread.startswith('CV'):
+        m = float(np.mean(arr))
+        return ('%', float(np.std(arr) / m * 100.0)) if m else None
+    return None
+
+
+def _fmt_cell_number(v, is_pct):
+    """Format one numeric cell value with the heatmap's standard precision."""
+    if is_pct:
+        return f'{v:.1f}%'
+    if v >= 1000:
+        return f'{v:.0f}'
+    if v >= 1:
+        return f'{v:.1f}'
+    return f'{v:.2f}'
+
+
 def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                              is_multi=False):
     """Draw a combinations heatmap onto an arbitrary axes/figure.
@@ -854,6 +946,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     x_rotation = cfg.get('x_rotation', 0)
     ann_fs = cfg.get('annotation_fontsize', 0) or None
     cell_lw = cfg.get('cell_linewidth', 0.5)
+    cell_stat = cfg.get('cell_stat', 'Mean')
+    cell_spread = cfg.get('cell_spread', 'None')
     fc = get_font_config(cfg)
 
     search_elems = []
@@ -890,6 +984,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     labels = []
     matrix = []
+    spread_matrix = []
 
     for combo, d in selected:
         count = d['particle_count']
@@ -907,15 +1002,20 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                     total_sum += np.sum(vals)
 
         row = []
+        spread_row = []
         for elem in all_elems:
             vals = d['total_values'].get(elem, [])
             if not vals:
                 row.append(0)
+                spread_row.append(None)
             elif is_pct:
                 row.append((np.sum(vals) / total_sum * 100) if total_sum > 0 else 0)
+                spread_row.append(None)
             else:
-                row.append(np.mean(vals))
+                row.append(_cell_center(vals, cell_stat))
+                spread_row.append(_cell_spread_value(vals, cell_spread))
         matrix.append(row)
+        spread_matrix.append(spread_row)
 
     matrix = np.nan_to_num(np.array(matrix), nan=0.0)
 
@@ -978,14 +1078,16 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                 v_orig = matrix[i, j]
                 if not np.isnan(v) and v_orig > 0:
                     tc = 'white' if v > mx * 0.5 else 'black'
-                    if is_pct:
-                        txt = f'{v_orig:.1f}%'
-                    elif v_orig >= 1000:
-                        txt = f'{v_orig:.0f}'
-                    elif v_orig >= 1:
-                        txt = f'{v_orig:.1f}'
-                    else:
-                        txt = f'{v_orig:.2f}'
+                    txt = _fmt_cell_number(v_orig, is_pct)
+                    sp = spread_matrix[i][j]
+                    if sp is not None and not is_pct:
+                        if isinstance(sp, tuple) and sp[0] == '%':
+                            txt = f'{txt} ({sp[1]:.0f}%)'
+                        elif isinstance(sp, tuple):
+                            txt = (f'{txt} ({_fmt_cell_number(sp[0], False)}'
+                                   f'–{_fmt_cell_number(sp[1], False)})')
+                        else:
+                            txt = f'{txt} ± {_fmt_cell_number(sp, False)}'
                     ax.text(j, i, txt, ha='center', va='center',
                             color=tc, fontsize=eff_fs,
                             fontfamily=fc['family'], weight=weight,
@@ -1025,6 +1127,8 @@ class HeatmapPlotNode(QObject):
         'x_rotation':        0,
         'annotation_fontsize': 0,
         'cell_linewidth':    0.5,
+        'cell_stat':         'Mean',
+        'cell_spread':       'None',
         # ── Export / appearance ──────────────────────────────────────────
         'bg_color':          '#FFFFFF',
         'export_format':     'svg',
@@ -1053,9 +1157,10 @@ class HeatmapPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = HeatmapDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: HeatmapDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

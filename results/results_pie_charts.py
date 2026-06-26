@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import math
 import traceback
 
@@ -1287,9 +1287,10 @@ class PieChartPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = PieChartDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: PieChartDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:
@@ -2056,9 +2057,10 @@ class ElementCompositionPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = ElementCompositionDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: ElementCompositionDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:
