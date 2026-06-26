@@ -4994,7 +4994,6 @@ class ClusteringDisplayDialog(QDialog):
             hm_cfg.setdefault('data_type_display',
                               cfg.get('data_type_display', 'Counts'))
             hm_cfg['label_mode'] = label_mode
-            hm_cfg['show_mass_numbers'] = (label_mode != 'Symbol')
             hm_cfg['y_axis_unit'] = cfg.get('y_axis_unit', 'count')
             draw_combinations_heatmap(
                 ax_left, target_fig, sample_data, hm_cfg,

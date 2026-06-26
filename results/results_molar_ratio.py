@@ -25,6 +25,7 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
 try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
+        _ClickableLegendSwatch, _attach_histogram_legend_toggle,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -73,7 +74,7 @@ DEFAULT_CONFIG = {
     'denominator_element': '',
     'filter_outliers': True,
     'outlier_percentile': 99.0,
-    'bins': 50,
+    'bin_width': 0.25,
     'alpha': 0.7,
     'bin_borders': True,
     'log_x': True,
@@ -180,7 +181,7 @@ class MolarRatioSettingsDialog(QDialog):
         self.dtype_combo = None
         self.mode_combo = None
         self.y_unit_combo = None
-        self.bins_spin = None
+        self.bin_width_spin = None
         self.outlier_cb = None
         self.pct_spin = None
         self.alpha_spin = None
@@ -296,10 +297,18 @@ class MolarRatioSettingsDialog(QDialog):
 
         g4 = QGroupBox("Plot Options")
         f4 = QFormLayout(g4)
-        self.bins_spin = QSpinBox(); self.bins_spin.setRange(10, 200)
-        self.bins_spin.setValue(self._cfg.get('bins', 50))
+        self.bin_width_spin = QDoubleSpinBox()
+        self.bin_width_spin.setRange(0.01, 100.0)
+        self.bin_width_spin.setDecimals(2)
+        self.bin_width_spin.setSingleStep(0.05)
+        self.bin_width_spin.setValue(self._cfg.get('bin_width', 0.25))
+        self.bin_width_spin.setToolTip(
+            "Width of each histogram bin.\n"
+            "Linear X mode: width in ratio units (e.g. 0.25 → bins of width 0.25).\n"
+            "Log X mode: width in log₁₀ units (e.g. 0.25 → quarter-decade bins).\n"
+            "All samples share the same bin edges so bars are directly comparable.")
         if self._scope in ('all', 'quantities'):
-            f4.addRow("Bins:", self.bins_spin)
+            f4.addRow("Bin Width:", self.bin_width_spin)
         self.y_unit_combo = QComboBox()
         self.y_unit_combo.addItem("Particle", "count")
         self.y_unit_combo.addItem("Particle per mL", "per_ml")
@@ -603,8 +612,8 @@ class MolarRatioSettingsDialog(QDialog):
             if self.outlier_cb is not None:
                 d['filter_outliers'] = self.outlier_cb.isChecked()
                 d['outlier_percentile'] = self.pct_spin.value()
-            if self.bins_spin is not None:
-                d['bins'] = self.bins_spin.value()
+            if self.bin_width_spin is not None:
+                d['bin_width'] = self.bin_width_spin.value()
             if getattr(self, 'y_unit_combo', None) is not None:
                 d['y_axis_unit'] = self.y_unit_combo.currentData()
             if self.curve_cb is not None:
@@ -669,21 +678,86 @@ class MolarRatioSettingsDialog(QDialog):
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
 
-def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0):
-    """Draw histogram bars for ratio values.
+def _mr_compute_bin_edges(values, bin_width, log_x=True):
+    """Compute fixed-width bin edges anchored to clean grid boundaries.
+
+    bin_width is honoured directly in both log and linear X modes:
+    - log_x=True:  bin_width is in log10 units  (e.g. 0.25 = quarter-decade
+                   bins, each bar spans 10^0.25 ≈ 1.78× on the ratio scale).
+    - log_x=False: bin_width is in raw ratio units (e.g. 0.25 = bins of width
+                   0.25 on the linear ratio axis).
+
+    In all cases every sample shares the same edge grid so multi-sample
+    panels are directly comparable.
+
     Args:
-        plot_item (Any): The plot item.
-        ratios (Any): The ratios.
-        cfg (Any): The cfg.
-        color (Any): Colour value.
-        y_scale (float): Multiplier converting bin counts to particles per mL.
+        values:    1-D array already in plot-space (log10 when log_x=True).
+        bin_width: Desired bin width in the coordinate space of values.
+        log_x:     True when values are log10-transformed.
+
+    Returns:
+        np.ndarray of bin edges with at least 2 elements.
     """
-    bins = cfg.get('bins', 50)
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if len(arr) == 0:
+        return np.array([0.0, 1.0])
+    v_min, v_max = float(np.nanmin(arr)), float(np.nanmax(arr))
+    bw = max(float(bin_width), 1e-9)
+    start = np.floor(v_min / bw) * bw
+    stop  = np.ceil(v_max  / bw) * bw + bw
+    edges = np.arange(start, stop, bw)
+    if len(edges) < 2:
+        edges = np.array([v_min - bw, v_max + bw])
+    return edges
+
+
+def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True):
+    """Compute shared bin edges from multiple per-sample arrays.
+
+    Ensures every panel in a multi-sample view uses identical bin boundaries
+    so x-axis alignment is exact and counts are directly comparable.
+
+    Args:
+        all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
+        bin_width:       Desired width in ratio units (ignored in log-X mode).
+        log_x:           Whether values are already in log10 space.
+
+    Returns:
+        np.ndarray of shared bin edges, or None when no valid data.
+    """
+    arrays = [np.asarray(v, dtype=float) for v in all_values_list
+              if v is not None and len(v) > 0]
+    if not arrays:
+        return None
+    combined = np.concatenate(arrays)
+    combined = combined[np.isfinite(combined)]
+    if len(combined) == 0:
+        return None
+    return _mr_compute_bin_edges(combined, bin_width, log_x)
+
+
+def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None):
+    """Draw histogram bars for ratio values.
+
+    Args:
+        plot_item: Target pyqtgraph PlotItem.
+        ratios:    Raw (non-log) ratio values.
+        cfg:       Active config dict.
+        color:     Bar fill colour.
+        bin_edges: Pre-computed bin edges (np.ndarray).  When None, edges are
+                   derived from the data using the cfg ``bin_width`` setting so
+                   single-sample views still get clean fixed-width bins.
+        y_scale:   Multiplier converting bin counts to particles per mL.
+    """
     log_x = cfg.get('log_x', True)
     log_y = cfg.get('log_y', False)
 
     pr = np.log10(ratios) if log_x else ratios.copy()
-    y, edges = np.histogram(pr, bins=bins)
+    if bin_edges is None:
+        bin_width = cfg.get('bin_width', 0.25)
+        bin_edges = _mr_compute_bin_edges(pr, bin_width, log_x)
+    y, edges = np.histogram(pr, bins=bin_edges)
     y = y.astype(float) * y_scale
     if log_y:
         y = np.log10(y + 1)
@@ -819,8 +893,9 @@ def _add_stat_lines(plot_item, values, cfg):
     # ── Mode marker ───────────────────────────────────────────────────
     if cfg.get('show_mode_marker', False) and len(values) > 3:
         try:
-            bins = max(10, int(cfg.get('bins', 50)))
-            counts, edges = np.histogram(values, bins=bins)
+            bin_width = cfg.get('bin_width', 0.25)
+            mode_edges = _mr_compute_bin_edges(values, bin_width, log_x)
+            counts, edges = np.histogram(values, bins=mode_edges)
             peak_idx = int(np.argmax(counts))
             peak_x = float((edges[peak_idx] + edges[peak_idx + 1]) / 2)
             peak_real = 10**peak_x if log_x else peak_x
@@ -941,18 +1016,22 @@ def _add_stats_text(plot_item, ratios, cfg):
         ti.setPos(0.02, 0.98)
 
 
-def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0):
+def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None):
     """Draw a complete ratio histogram with overlays (applied to every subplot).
+
     Args:
-        plot_item (Any): The plot item.
-        ratios (Any): The ratios.
-        cfg (Any): The cfg.
-        color (Any): Colour value.
-        y_scale (float): Multiplier converting bin counts to particles per mL.
+        plot_item: Target pyqtgraph PlotItem.
+        ratios:    Raw ratio values (positive, non-log).
+        cfg:       Active config dict.
+        color:     Bar fill colour.
+        bin_edges: Shared bin edges from the caller.  When None, edges are
+                   computed locally from this sample's data.
+        y_scale:   Multiplier for particles-per-mL y axis.
     """
     if ratios is None or len(ratios) == 0:
         return
-    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale)
+    pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color,
+                                        bin_edges=bin_edges, y_scale=y_scale)
 
     if cfg.get('show_curve', True) and len(ratios) > 5:
         _add_density_curve(plot_item, pr, cfg, edges, len(ratios) * y_scale)
@@ -990,6 +1069,7 @@ class MolarRatioDisplayDialog(QDialog):
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
 
+        self._hidden_molar_samples = set()
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
@@ -1044,7 +1124,21 @@ class MolarRatioDisplayDialog(QDialog):
         actions.addWidget(btn_export)
         lay.addLayout(actions)
 
-        
+    def _toggle_molar_sample(self, raw_key):
+        """Toggle visibility of one sample in overlaid mode and redraw."""
+        if raw_key in self._hidden_molar_samples:
+            self._hidden_molar_samples.remove(raw_key)
+        else:
+            self._hidden_molar_samples.add(raw_key)
+        self._refresh()
+
+    def _restore_hidden_molar_samples(self):
+        """Unhide all legend-hidden samples and redraw."""
+        if not self._hidden_molar_samples:
+            return
+        self._hidden_molar_samples.clear()
+        self._refresh()
+
     def _ctx_menu(self, pos):
         """Show the minimal Molar Ratio right-click menu.
 
@@ -1094,6 +1188,11 @@ class MolarRatioDisplayDialog(QDialog):
             a.setCheckable(True)
             a.setChecked(cfg.get('label_mode', 'Symbol') == label_mode)
             a.triggered.connect(lambda _, v=label_mode: self._set('label_mode', v))
+
+        if self._hidden_molar_samples:
+            menu.addSeparator()
+            ra = menu.addAction("Restore all hidden samples")
+            ra.triggered.connect(self._restore_hidden_molar_samples)
 
         menu.exec(self.pw.mapToGlobal(pos))
 
@@ -1313,15 +1412,30 @@ class MolarRatioDisplayDialog(QDialog):
         legend_items = []
         all_pr = []
         per_ml = per_ml_active(cfg, self.node.input_data)
+        hidden = self._hidden_molar_samples
+        log_x = cfg.get('log_x', True)
+        bin_width = cfg.get('bin_width', 0.25)
+
+        # Compute shared bin edges from all visible samples so bars align.
+        visible_prep = []
+        for sn, ratios in plot_data.items():
+            if ratios is not None and len(ratios) > 0 and sn not in hidden:
+                prep = np.log10(ratios) if log_x else np.asarray(ratios, dtype=float)
+                visible_prep.append(prep)
+        global_edges = _mr_compute_global_bin_edges(visible_prep, bin_width, log_x)
+
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
                 c = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c, y_scale)
                 legend_items.append((sn, c))
-                if cfg.get('show_curve', True) and len(ratios) > 5:
-                    _add_density_curve(pi, pr, cfg, edges, len(ratios) * y_scale)
-                all_pr.append(pr)
+                if sn not in hidden:
+                    y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                    pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c,
+                                                        bin_edges=global_edges,
+                                                        y_scale=y_scale)
+                    if cfg.get('show_curve', True) and len(ratios) > 5:
+                        _add_density_curve(pi, pr, cfg, edges, len(ratios) * y_scale)
+                    all_pr.append(pr)
         if all_pr:
             pooled = np.concatenate(all_pr)
             _add_shaded_region(pi, pooled, cfg)
@@ -1335,11 +1449,26 @@ class MolarRatioDisplayDialog(QDialog):
             apply_sci_y_axis(pi, cfg)
         _apply_box(pi, cfg)
         if legend_items:
-            legend = pi.addLegend()
+            legend = pg.LegendItem(offset=(60, 10))
+            legend.setParentItem(pi.graphicsItem())
+            pi.legend = legend
             for sn, c in legend_items:
                 dn = get_display_name(sn, cfg)
-                item = pg.PlotDataItem(pen=pg.mkPen(c, width=4))
-                legend.addItem(item, dn)
+                is_hidden = sn in hidden
+                co = QColor(c)
+                alpha = 55 if is_hidden else 180
+                swatch = _ClickableLegendSwatch(
+                    x=[0], height=[0], width=0,
+                    brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                    raw_key=sn,
+                    toggle_callback=self._toggle_molar_sample,
+                )
+                legend.addItem(swatch, dn)
+                _attach_histogram_legend_toggle(
+                    legend,
+                    raw_key=sn,
+                    toggle_callback=self._toggle_molar_sample,
+                )
 
     def _draw_subplots(self, plot_data, cfg):
         """Draw one subplot per sample and apply explicit log + stats behavior."""
@@ -1348,6 +1477,18 @@ class MolarRatioDisplayDialog(QDialog):
         rows = math.ceil(len(names) / cols)
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
+        log_x = cfg.get('log_x', True)
+        bin_width = cfg.get('bin_width', 0.25)
+
+        # Pool all samples to build shared bin edges before drawing any panel.
+        all_prep = []
+        for sn in names:
+            ratios = plot_data.get(sn)
+            if ratios is not None and len(ratios) > 0:
+                prep = np.log10(ratios) if log_x else np.asarray(ratios, dtype=float)
+                all_prep.append(prep)
+        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x)
+
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
             pi = self.pw.addPlot(row=r, col=c,
@@ -1356,7 +1497,8 @@ class MolarRatioDisplayDialog(QDialog):
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
                 y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
+                _draw_ratio_plot(pi, ratios, cfg, color,
+                                 bin_edges=global_edges, y_scale=y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl, cfg)
@@ -1375,6 +1517,11 @@ class MolarRatioDisplayDialog(QDialog):
         names = list(plot_data.keys())
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
+        log_x = cfg.get('log_x', True)
+        bin_width = cfg.get('bin_width', 0.25)
+        all_prep = [np.log10(plot_data[sn]) if log_x else np.asarray(plot_data[sn], dtype=float)
+                    for sn in names if plot_data.get(sn) is not None and len(plot_data[sn]) > 0]
+        global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x)
         for i, sn in enumerate(names):
             pi = self.pw.addPlot(row=0, col=i,
                                  axisItems={'left': HtmlAxisItem('left')})
@@ -1382,7 +1529,8 @@ class MolarRatioDisplayDialog(QDialog):
             if ratios is not None and len(ratios) > 0:
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
                 y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
+                _draw_ratio_plot(pi, ratios, cfg, color,
+                                 bin_edges=global_edges, y_scale=y_scale)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl if i == 0 else "", cfg)

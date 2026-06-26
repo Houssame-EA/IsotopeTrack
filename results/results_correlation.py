@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QScrollArea, QWidget, QMenu, QDialogButtonBox, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QColorDialog,
+    QColorDialog, QTabWidget,
 )
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor, QCursor
@@ -50,9 +50,10 @@ class CorrelationSettingsDialog(QDialog):
 
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
-                 scope: str = "all", parent=None):
+                 scope: str = "all", parent=None, plot_data=None):
         super().__init__(parent)
         self._scope = scope if scope in {"format", "quantities", "all"} else "all"
+        self._plot_data = plot_data
         if self._scope == "format":
             self.setWindowTitle("Correlation plot format settings")
         elif self._scope == "quantities":
@@ -70,6 +71,7 @@ class CorrelationSettingsDialog(QDialog):
         self._sample_colors = dict(self._config.get('sample_colors', {}))
         self._single_sample_color = self._config.get('single_sample_color', '#3B82F6')
         self._single_sample_color_btn = None
+        self._show_r_checkboxes = {}
         self._format_groups = []
         self._quantity_groups = []
         self._build_ui()
@@ -303,6 +305,17 @@ class CorrelationSettingsDialog(QDialog):
         layout.addWidget(g)
         self._quantity_groups.append(g)
 
+        if self._is_multi and self._plot_data:
+            g = QGroupBox("Sample Analysis")
+            gl = QVBoxLayout(g)
+            corr_btn = QPushButton("Show sample correlations…")
+            corr_btn.setToolTip(
+                "Open a table of per-sample r values and a cross-sample CDF correlation matrix.")
+            corr_btn.clicked.connect(self._open_sample_correlations)
+            gl.addWidget(corr_btn)
+            layout.addWidget(g)
+            self._quantity_groups.append(g)
+
         g = QGroupBox("SD Envelope (around trend line)")
         fl = QFormLayout(g)
         self.show_sd_band = QCheckBox()
@@ -371,6 +384,7 @@ class CorrelationSettingsDialog(QDialog):
             sl = QVBoxLayout(g)
             if self._sample_point_colors_available():
                 self._sample_color_buttons = {}
+                show_r_cfg = self._config.get('show_r_per_sample', {})
                 for index, sn in enumerate(self._sample_names):
                     row = QHBoxLayout()
                     label = QLabel(self._sample_display_label(sn)[:28])
@@ -389,6 +403,11 @@ class CorrelationSettingsDialog(QDialog):
                         lambda _, sample_name=sn, sample_index=index, swatch=btn:
                             self._reset_sample_color(sample_name, sample_index, swatch))
                     row.addWidget(rst)
+                    show_r_cb = QCheckBox("Show r")
+                    show_r_cb.setChecked(show_r_cfg.get(sn, True))
+                    show_r_cb.setToolTip("Show Pearson r label on the plot for this sample")
+                    row.addWidget(show_r_cb)
+                    self._show_r_checkboxes[sn] = show_r_cb
                     row.addStretch()
                     w = QWidget(); w.setLayout(row)
                     sl.addWidget(w)
@@ -584,6 +603,11 @@ class CorrelationSettingsDialog(QDialog):
             self._font_color = c.name()
             self.font_color_btn.setStyleSheet(f"background:{self._font_color};")
 
+    def _open_sample_correlations(self):
+        """Open the SampleCorrelationsDialog as a non-modal child window."""
+        dlg = SampleCorrelationsDialog(self._config, self._plot_data, parent=self)
+        dlg.exec()
+
     def collect(self) -> dict:
         """Return scope-safe config updates for format/quantities routes.
 
@@ -636,6 +660,10 @@ class CorrelationSettingsDialog(QDialog):
             cfg['marker_alpha'] = self.m_alpha.value()
             if self._is_multi and self._sample_color_buttons is not None:
                 cfg['sample_colors'] = dict(self._sample_colors)
+            if self._is_multi and self._show_r_checkboxes:
+                cfg['show_r_per_sample'] = {
+                    sn: cb.isChecked() for sn, cb in self._show_r_checkboxes.items()
+                }
             if (not self._is_multi and self._single_sample_color_btn is not None
                     and self._sample_point_colors_available()):
                 cfg['single_sample_color'] = self._single_sample_color
@@ -708,6 +736,217 @@ class AutoCorrelationDialog(QDialog):
             p = self._pairs[row]
             self.pair_selected.emit(p['x'], p['y'])
             self.accept()
+
+
+class SampleCorrelationsDialog(QDialog):
+    """Two-tab popup showing per-sample r and a cross-sample CDF correlation matrix.
+
+    Tab 1 — Per-sample r: Pearson r(x_element, y_element) computed within
+    each sample's own particle population.
+
+    Tab 2 — Cross-sample matrix: Pearson r between the empirical CDFs of a
+    chosen element across sample pairs. Uses np.quantile on a shared grid so
+    unequal sample sizes are handled naturally. Diagonal = 1.
+    """
+
+    _N_QUANTILES = 200  # grid resolution for ECDF comparison
+
+    def __init__(self, cfg: dict, plot_data: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Sample Correlations")
+        self.setMinimumSize(540, 460)
+        self._cfg = cfg
+        self._plot_data = plot_data or {}
+        self._build()
+
+    # ── helpers ──────────────────────────────────────────────────────────
+
+    def _valid_samples(self):
+        return [(sn, sd['element_data'])
+                for sn, sd in self._plot_data.items()
+                if sd and 'element_data' in sd]
+
+    def _get_xy(self, df):
+        """Return (x, y) arrays for current x/y elements, zero-filtered."""
+        xe = self._cfg.get('x_element', '')
+        ye = self._cfg.get('y_element', '')
+        if not (xe and ye and xe in df.columns and ye in df.columns):
+            return None, None
+        x = df[xe].values.astype(float)
+        y = df[ye].values.astype(float)
+        if self._cfg.get('filter_zeros', True):
+            mask = (x > 0) & (y > 0)
+            x, y = x[mask], y[mask]
+        return x, y
+
+    def _ecdf_corr(self, vals_a, vals_b):
+        """Pearson r between empirical CDFs evaluated on a shared quantile grid."""
+        q = np.linspace(0, 1, self._N_QUANTILES)
+        cdf_a = np.quantile(vals_a, q)
+        cdf_b = np.quantile(vals_b, q)
+        return float(np.corrcoef(cdf_a, cdf_b)[0, 1])
+
+    @staticmethod
+    def _r_color(r):
+        if np.isnan(r):
+            return QColor(245, 245, 245)
+        abs_r = abs(r)
+        if abs_r > 0.7:
+            return QColor(209, 250, 229) if r > 0 else QColor(254, 226, 226)
+        if abs_r > 0.4:
+            return QColor(236, 253, 245) if r > 0 else QColor(254, 242, 242)
+        return QColor(255, 255, 255)
+
+    # ── UI ───────────────────────────────────────────────────────────────
+
+    def _build(self):
+        layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+
+        # Tab 1: per-sample r
+        t1 = QWidget()
+        self._build_per_sample_tab(t1)
+        tabs.addTab(t1, "Per-sample r")
+
+        # Tab 2: cross-sample matrix (needs ≥ 2 samples)
+        samples = self._valid_samples()
+        if len(samples) >= 2:
+            t2 = QWidget()
+            self._build_matrix_tab(t2)
+            tabs.addTab(t2, "Cross-sample matrix")
+
+        layout.addWidget(tabs)
+        btn = QDialogButtonBox(QDialogButtonBox.Close)
+        btn.rejected.connect(self.reject)
+        layout.addWidget(btn)
+
+    def _build_per_sample_tab(self, widget):
+        layout = QVBoxLayout(widget)
+        xe = self._cfg.get('x_element', '?')
+        ye = self._cfg.get('y_element', '?')
+        lbl = QLabel(
+            f"Pearson r({xe}, {ye}) computed within each sample's particle population "
+            f"after the current zero and saturation filters.")
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color:#6B7280; font-size:11px; padding:4px;")
+        layout.addWidget(lbl)
+
+        samples = self._valid_samples()
+        table = QTableWidget(len(samples), 3)
+        table.setHorizontalHeaderLabels(["Sample", "N", f"r  ({xe} vs {ye})"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setAlternatingRowColors(True)
+
+        for i, (sn, df) in enumerate(samples):
+            x, y = self._get_xy(df)
+            if x is None or len(x) < 2:
+                r, n = float('nan'), 0
+            else:
+                r = float(np.corrcoef(x, y)[0, 1])
+                n = len(x)
+
+            dname = get_display_name(sn, self._cfg)
+            col = self._r_color(r)
+            items = [
+                QTableWidgetItem(dname),
+                QTableWidgetItem(str(n)),
+                QTableWidgetItem("—" if np.isnan(r) else f"{r:.4f}"),
+            ]
+            items[1].setTextAlignment(Qt.AlignCenter)
+            items[2].setTextAlignment(Qt.AlignCenter)
+            for c_idx, it in enumerate(items):
+                it.setBackground(col)
+                table.setItem(i, c_idx, it)
+
+        layout.addWidget(table)
+
+    def _build_matrix_tab(self, widget):
+        layout = QVBoxLayout(widget)
+
+        xe = self._cfg.get('x_element', '')
+        ye = self._cfg.get('y_element', '')
+        elements = [e for e in [xe, ye] if e]
+
+        # Element chooser row
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Element:"))
+        self._elem_combo = QComboBox()
+        self._elem_combo.addItems(elements)
+        row.addWidget(self._elem_combo)
+        row.addStretch()
+        layout.addLayout(row)
+
+        lbl = QLabel(
+            "Pearson r between empirical CDFs of the chosen element across sample pairs. "
+            "Diagonal = 1 (self-comparison). Higher r = more similar distributions.")
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("color:#6B7280; font-size:11px; padding:4px;")
+        layout.addWidget(lbl)
+
+        # Container rebuilt each time the element changes
+        self._matrix_container = QVBoxLayout()
+        layout.addLayout(self._matrix_container)
+
+        self._elem_combo.currentTextChanged.connect(self._rebuild_matrix)
+        if elements:
+            self._rebuild_matrix(elements[0])
+
+    def _rebuild_matrix(self, elem):
+        # Clear old table widget
+        while self._matrix_container.count():
+            item = self._matrix_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        if not elem:
+            return
+
+        # Collect per-sample value arrays
+        sample_vals = {}
+        for sn, df in self._valid_samples():
+            if elem not in df.columns:
+                continue
+            vals = df[elem].values.astype(float)
+            if self._cfg.get('filter_zeros', True):
+                vals = vals[vals > 0]
+            if len(vals) >= 5:
+                sample_vals[sn] = vals
+
+        sns = list(sample_vals.keys())
+        n = len(sns)
+        if n == 0:
+            self._matrix_container.addWidget(
+                QLabel("No valid data for this element."))
+            return
+
+        dnames = [get_display_name(sn, self._cfg) for sn in sns]
+        table = QTableWidget(n, n)
+        table.setHorizontalHeaderLabels(dnames)
+        table.setVerticalHeaderLabels(dnames)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    r = 1.0
+                    col = QColor(220, 220, 220)
+                else:
+                    try:
+                        r = self._ecdf_corr(sample_vals[sns[i]], sample_vals[sns[j]])
+                        col = self._r_color(r)
+                    except Exception:
+                        r = float('nan')
+                        col = QColor(245, 245, 245)
+                it = QTableWidgetItem(f"{r:.3f}")
+                it.setTextAlignment(Qt.AlignCenter)
+                it.setBackground(col)
+                table.setItem(i, j, it)
+
+        self._matrix_container.addWidget(table)
 
 
 class CorrelationPlotDisplayDialog(QDialog):
@@ -946,9 +1185,14 @@ class CorrelationPlotDisplayDialog(QDialog):
     def _open_configure_plot_quantities(self):
         """Open scoped quantity controls and refresh on apply."""
         _snap = dict(self.node.config)
+        try:
+            _plot_data = self.node.extract_plot_data() if self._is_multi() else None
+        except Exception:
+            _plot_data = None
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
-            self._is_multi(), self._sample_names(), scope="quantities", parent=self)
+            self._is_multi(), self._sample_names(), scope="quantities", parent=self,
+            plot_data=_plot_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -1272,6 +1516,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         correlation_label: str | None = None,
         correlation_index: int = 0,
         correlation_count: int = 1,
+        show_r: bool = True,
     ):
         """Add scatter + overlays to a PlotItem using already-prepared sample data.
 
@@ -1330,7 +1575,7 @@ class CorrelationPlotDisplayDialog(QDialog):
                     _itk_log.exception("Handled exception in _plot_scatter")
                     _itk_log.error(f'[SD envelope] {e}')
 
-        if cfg.get('show_correlation', True) and len(x) > 1:
+        if cfg.get('show_correlation', True) and len(x) > 1 and show_r:
             if correlation_label:
                 try:
                     r = float(np.corrcoef(x, y)[0, 1])
@@ -1512,15 +1757,22 @@ class CorrelationPlotDisplayDialog(QDialog):
             self._apply_labels(pi, cfg)
             return
 
+        show_r_cfg = cfg.get('show_r_per_sample', {})
+        r_count = sum(1 for _, sn, *_ in valid_series if show_r_cfg.get(sn, True))
+        r_index = 0
         for idx, (i, sn, x, y, c) in enumerate(valid_series):
             color = get_sample_color(sn, i, cfg)
             sample_label = get_display_name(sn, cfg)
+            show_r = show_r_cfg.get(sn, True)
             scatter = self._plot_scatter(
                 pi, x, y, c, cfg, color,
                 correlation_label=sample_label,
-                correlation_index=idx,
-                correlation_count=len(valid_series),
+                correlation_index=r_index,
+                correlation_count=r_count,
+                show_r=show_r,
             )
+            if show_r:
+                r_index += 1
             legend_items.append((scatter, sample_label))
 
         self._apply_labels(pi, cfg)
@@ -1596,6 +1848,7 @@ class CorrelationPlotNode(QObject):
         'show_box': True,
         'sample_colors': {}, 'sample_name_mappings': {},
         'sample_order': [],
+        'show_r_per_sample': {},
         'font_family': 'Times New Roman', 'font_size': 18,
         'font_bold': False, 'font_italic': False, 'font_color': '#000000',
     }

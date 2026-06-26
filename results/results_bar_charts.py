@@ -4441,6 +4441,7 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node = bar_node
         self.parent_window = parent_window
         self._hidden_bar_samples = set()
+        self._bar_subplot_contexts = {}
         self.setWindowTitle("Element Particle Count Bar Chart")
         self.setMinimumSize(1000, 700)
 
@@ -4501,6 +4502,8 @@ class ElementBarChartDisplayDialog(QDialog):
             delegating full configuration/export/reset to bottom buttons.
         """
         cfg = self.node.config
+        clicked_plot = self._plot_item_at(pos)
+        subplot_ctx = self._bar_subplot_contexts.get(clicked_plot)
         menu = QMenu(self)
 
         tg = menu.addMenu("Quick Toggles")
@@ -4529,6 +4532,17 @@ class ElementBarChartDisplayDialog(QDialog):
             a.setChecked(s == cur_sort)
             a.triggered.connect(lambda _, v=s: self._set('sort_bars', v))
 
+        mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
+        if mode == 'Individual Subplots' and clicked_plot is not None and subplot_ctx is not None:
+            exp_act = menu.addAction("Export this subplot...")
+            exp_act.triggered.connect(
+                lambda *_: self._export_subplot(clicked_plot, subplot_ctx))
+        else:
+            exp_act = menu.addAction("Export this subplot... (unavailable here)")
+            exp_act.setEnabled(False)
+            exp_act.setToolTip(
+                "Switch to Individual Subplots and right-click a panel to export it.")
+
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _toggle_key(self, key):
@@ -4551,6 +4565,27 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         self.node.config[key] = value
         self._refresh()
+
+    def _plot_item_at(self, pos):
+        """Return the PlotItem under a right-click position, or None.
+
+        Args:
+            pos: Position in ``self.pw`` widget coordinates from
+                ``customContextMenuRequested``.
+        """
+        try:
+            scene_pos = self.pw.mapToScene(pos)
+            for item in self.pw.scene().items():
+                if isinstance(item, pg.PlotItem):
+                    try:
+                        rect = item.mapRectToScene(item.boundingRect())
+                        if rect.contains(scene_pos):
+                            return item
+                    except Exception:
+                        _itk_log.exception("Handled exception in _plot_item_at")
+        except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
+        return None
 
     def _toggle_bar_sample_visibility(self, raw_sample_key):
         """Toggle one raw sample's visibility in supported multi-sample modes.
@@ -5090,6 +5125,22 @@ class ElementBarChartDisplayDialog(QDialog):
             csv_data=csv_df,
         )
 
+    def _export_subplot(self, plot_item, subplot_ctx):
+        """Export one Individual Subplots panel as a standalone figure.
+
+        Reuses the shared export dialog via download_pyqtgraph_figure so
+        format/resolution options are consistent with full-figure export.
+        """
+        disp = subplot_ctx.get('display_name', 'subplot') if subplot_ctx else 'subplot'
+        text = str(disp).strip().replace(' ', '_')
+        stem = ''.join(c if c.isalnum() or c in ('_', '-') else '_'
+                       for c in text).strip('_') or 'subplot'
+        download_pyqtgraph_figure(
+            self.pw, self,
+            default_name=stem,
+            export_item=plot_item,
+        )
+
     def _export_figure(self):
         """Route standardized export button to existing bar-chart export path."""
         self._download_figure()
@@ -5151,6 +5202,7 @@ class ElementBarChartDisplayDialog(QDialog):
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)
             parent_layout.insertWidget(idx, self.pw, stretch=1)
+            self._bar_subplot_contexts = {}
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
@@ -5216,6 +5268,10 @@ class ElementBarChartDisplayDialog(QDialog):
                 self.pw.nextRow()
             pi = self.pw.addPlot(title=get_display_name(sn, cfg),
                                   axisItems={'bottom': HtmlAxisItem('bottom'), 'left': HtmlAxisItem('left')})
+            self._bar_subplot_contexts[pi] = {
+                'sample_name': sn,
+                'display_name': get_display_name(sn, cfg),
+            }
             sd = plot_data[sn]
             if sd:
                 color = get_sample_color(sn, idx, cfg)

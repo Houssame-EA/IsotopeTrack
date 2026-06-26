@@ -92,7 +92,6 @@ class HeatmapSettingsDialog(QDialog):
         self.filter_zeros = None
         self.min_particles = None
         self.label_mode_combo = None
-        self.mass_numbers_cb = None
         self.show_numbers_cb = None
         self.show_colorbar_cb = None
         self.colorscale = None
@@ -222,15 +221,8 @@ class HeatmapSettingsDialog(QDialog):
             fl = QFormLayout(g)
             self.label_mode_combo = QComboBox()
             self.label_mode_combo.addItems(LABEL_MODES)
-            self.label_mode_combo.setCurrentText(
-                self._config.get('label_mode',
-                                 'Mass + Symbol' if self._config.get('show_mass_numbers', True) else 'Symbol'))
+            self.label_mode_combo.setCurrentText(self._config.get('label_mode', 'Mass + Symbol'))
             fl.addRow("Isotope Label:", self.label_mode_combo)
-            self.mass_numbers_cb = QCheckBox()
-            self.mass_numbers_cb.setChecked(
-                self._config.get('show_mass_numbers',
-                                 self._config.get('label_mode', 'Mass + Symbol') != 'Symbol'))
-            fl.addRow("Show mass numbers:", self.mass_numbers_cb)
             layout.addWidget(g)
 
             g = QGroupBox("Display")
@@ -356,13 +348,7 @@ class HeatmapSettingsDialog(QDialog):
         cfg['min_particles'] = self.min_particles.value() if self.min_particles else self._config.get('min_particles', 1)
 
         selected_mode = self.label_mode_combo.currentText() if self.label_mode_combo else self._config.get('label_mode', 'Mass + Symbol')
-        if selected_mode == 'Atomic Notation':
-            cfg['label_mode'] = 'Atomic Notation'
-            cfg['show_mass_numbers'] = True
-        else:
-            show_mass = self.mass_numbers_cb.isChecked() if self.mass_numbers_cb else self._config.get('show_mass_numbers', True)
-            cfg['show_mass_numbers'] = show_mass
-            cfg['label_mode'] = 'Mass + Symbol' if show_mass else 'Symbol'
+        cfg['label_mode'] = selected_mode
 
         cfg['show_numbers'] = self.show_numbers_cb.isChecked() if self.show_numbers_cb else self._config.get('show_numbers', True)
         cfg['show_colorbar'] = self.show_colorbar_cb.isChecked() if self.show_colorbar_cb else self._config.get('show_colorbar', True)
@@ -447,6 +433,7 @@ class HeatmapDisplayDialog(QDialog):
 
     def _setup_ui(self):
         self._axes_row_combos = {}
+        self._axes_sample_map = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
@@ -488,12 +475,12 @@ class HeatmapDisplayDialog(QDialog):
         - Heatmap calculations and search-safe label behavior remain unchanged.
         """
         cfg = self.node.config
+        hovered_sample = self._axes_sample_at(pos)
         menu = QMenu(self)
 
         toggle_menu = menu.addMenu("Quick Toggles")
         self._add_toggle(toggle_menu, "Show Numbers", 'show_numbers')
         self._add_toggle(toggle_menu, "Show Colorbar", 'show_colorbar')
-        self._add_toggle(toggle_menu, "Show Mass Numbers", 'show_mass_numbers')
         self._add_toggle(toggle_menu, "Filter Zeros", 'filter_zeros')
         self._add_toggle(toggle_menu, "Show Selected Elements Present (Partial Match)", 'filter_combinations')
         self._add_toggle(toggle_menu, "Show Selected Elements Only (Exact Match)", 'filter_exact_match')
@@ -525,6 +512,22 @@ class HeatmapDisplayDialog(QDialog):
             a.setChecked(mode == current_mode)
             a.triggered.connect(lambda _, m=mode: self._set_label_mode(m))
 
+        dm = _normalize_heatmap_display_mode(
+            cfg.get('display_mode', 'Individual Subplots'))
+        can_export_sub = (self._is_multi()
+                         and dm in ('Individual Subplots', 'Side by Side Subplots')
+                         and hovered_sample is not None)
+        menu.addSeparator()
+        if can_export_sub:
+            exp_act = menu.addAction("Export this subplot...")
+            exp_act.triggered.connect(
+                lambda *_: self._export_subplot(hovered_sample))
+        else:
+            exp_act = menu.addAction("Export this subplot... (unavailable here)")
+            exp_act.setEnabled(False)
+            exp_act.setToolTip(
+                "Right-click over a subplot panel in Individual or Side by Side mode.")
+
         menu.exec(QCursor.pos())
     def _get_row_at(self, widget_pos):
         """Return the raw combo key for the heatmap row at widget_pos, or None."""
@@ -546,6 +549,25 @@ class HeatmapDisplayDialog(QDialog):
                         and y_min - 0.5 <= data_y <= y_max + 0.5
                         and 0 <= row_idx < len(row_combos)):
                     return row_combos[row_idx]
+            except Exception:
+                pass
+        return None
+
+    def _axes_sample_at(self, widget_pos):
+        """Return the sample name for the heatmap axes under widget_pos, or None."""
+        w = self.canvas.width()
+        h = self.canvas.height()
+        if w <= 0 or h <= 0:
+            return None
+        x_norm = widget_pos.x() / w
+        y_norm = 1.0 - widget_pos.y() / h
+        for ax in self.figure.get_axes():
+            sn = self._axes_sample_map.get(id(ax))
+            if sn is None:
+                continue
+            try:
+                if ax.get_position().contains(x_norm, y_norm):
+                    return sn
             except Exception:
                 pass
         return None
@@ -575,10 +597,6 @@ class HeatmapDisplayDialog(QDialog):
 
     def _set_label_mode(self, mode):
         self.node.config['label_mode'] = mode
-        if mode == 'Symbol':
-            self.node.config['show_mass_numbers'] = False
-        else:
-            self.node.config['show_mass_numbers'] = True
         self._refresh()
 
     def _set_and_refresh(self, key, value):
@@ -651,6 +669,22 @@ class HeatmapDisplayDialog(QDialog):
     def _export_figure(self):
         download_matplotlib_figure(self.figure, self, "heatmap")
 
+    def _export_subplot(self, sample_name):
+        """Export one heatmap subplot as a standalone single-panel figure."""
+        data = self.node.extract_combinations_data()
+        if not data or sample_name not in data:
+            return
+        cfg = self.node.config
+        title = get_display_name(sample_name, cfg)
+        fig = Figure(tight_layout=True)
+        ax = fig.add_subplot(111)
+        draw_combinations_heatmap(ax, fig, data[sample_name], cfg,
+                                  title=title, is_multi=False)
+        apply_font_to_matplotlib(ax, cfg)
+        safe = ''.join(c if c.isalnum() or c in ('_', '-') else '_'
+                       for c in title).strip('_') or 'subplot'
+        download_matplotlib_figure(fig, self, f"heatmap_{safe}")
+
     def _refresh(self):
         """Rebuild the Heatmap figure from current config and extracted data.
 
@@ -661,6 +695,7 @@ class HeatmapDisplayDialog(QDialog):
         """
         try:
             self._axes_row_combos = {}
+            self._axes_sample_map = {}
             cfg = self.node.config
 
             if cfg.get('use_custom_figsize', False):
@@ -719,12 +754,14 @@ class HeatmapDisplayDialog(QDialog):
             rows = math.ceil(n / cols)
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(rows, cols, i + 1)
+                self._axes_sample_map[id(ax)] = sn
                 self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
                 apply_font_to_matplotlib(ax, cfg)
 
         elif display_mode == 'Side by Side Subplots':
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(1, n, i + 1)
+                self._axes_sample_map[id(ax)] = sn
                 self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
                 apply_font_to_matplotlib(ax, cfg)
 
@@ -810,13 +847,13 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
             Heatmap tab builds internally and the clustering Overview tab
             synthesises from per-cluster characterisation.
         cfg (dict): Display configuration. Honours the same keys as the
-            Heatmap tab: ``data_type_display``, ``colorscale``,
-            ``show_numbers``, ``show_colorbar``, ``log_scale``,
-            ``use_custom_range``/``vmin``/``vmax``, ``start_range``,
-            ``end_range``, ``min_particles``, ``label_mode``,
-            ``show_mass_numbers``, ``search_element``, ``highlight_matches``,
-            ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
-            ``cell_linewidth``.
+        Heatmap tab: ``data_type_display``, ``colorscale``,
+        ``show_numbers``, ``show_colorbar``, ``log_scale``,
+        ``use_custom_range``/``vmin``/``vmax``, ``start_range``,
+        ``end_range``, ``min_particles``, ``label_mode``,
+        ``search_element``, ``highlight_matches``,
+        ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
+        ``cell_linewidth``.
         title (str): Title to render above the heatmap when provided.
         is_multi (bool): Whether this is a multi-sample panel. This still
             controls compatibility with existing multi-sample rendering paths,
@@ -835,12 +872,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     start = cfg.get('start_range', 1)
     end = cfg.get('end_range', 10)
     min_p = cfg.get('min_particles', 1)
-    label_mode = cfg.get('label_mode')
-    if not label_mode:
-        label_mode = ('Mass + Symbol' if cfg.get('show_mass_numbers', True)
-                      else 'Symbol')
-    elif not cfg.get('show_mass_numbers', True) and label_mode != 'Atomic Notation':
-        label_mode = 'Symbol'
+    label_mode = cfg.get('label_mode', 'Mass + Symbol')
     import matplotlib.cm as _cm
     cscale = cfg.get('colorscale', 'YlGnBu')
     if cscale not in _cm._colormaps:
@@ -1010,7 +1042,7 @@ class HeatmapPlotNode(QObject):
         'start_range': 1, 'end_range': 10,
         'filter_zeros': True, 'min_particles': 1,
         'label_mode': 'Mass + Symbol',
-        'show_mass_numbers': True, 'colorscale': 'YlGnBu',
+        'colorscale': 'YlGnBu',
         'show_numbers': True, 'show_colorbar': True,
         'display_mode': 'Individual Subplots',
         'sample_name_mappings': {},
