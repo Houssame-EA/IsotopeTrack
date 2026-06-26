@@ -1,0 +1,5302 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Free open-source spICP-MS analysis platform — full code reference">
+      
+      
+        <meta name="author" content="Houssame Ahabchane">
+      
+      
+        <link rel="canonical" href="https://isotopetrack.readthedocs.io/latest/results/results-cluster/">
+      
+      
+        <link rel="prev" href="../results-box-plot/">
+      
+      
+        <link rel="next" href="../results-cluster-tools/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>results_cluster.py - IsotopeTrack Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+  
+
+
+  
+  
+
+<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-XXXXXXXXXX"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-XXXXXXXXXX",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
+  
+    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
+  
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="light-blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#results_clusterpy" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IsotopeTrack Documentation" class="md-header__button md-logo" aria-label="IsotopeTrack Documentation" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IsotopeTrack Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              results_cluster.py
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="light-blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Houssame-EA/IsotopeTrack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Houssame-EA/IsotopeTrack
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Changelog
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../entry_points/" class="md-tabs__link">
+          
+  
+  
+  Entry Points
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../main_window/" class="md-tabs__link">
+          
+  
+  
+  Main Window
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../theme/" class="md-tabs__link">
+          
+  
+  
+  Theme System
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../loading/" class="md-tabs__link">
+          
+  
+  
+  Data Loading
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../project_io/" class="md-tabs__link">
+          
+  
+  
+  Project & I/O
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../peak_detection/" class="md-tabs__link">
+          
+  
+  
+  Peak Detection
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../calibration/" class="md-tabs__link">
+          
+  
+  
+  Calibration
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../canvas_shared/" class="md-tabs__link">
+          
+  
+  
+  Canvas & Shared
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+  Results
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../widgets_ui/" class="md-tabs__link">
+          
+  
+  
+  Widgets & UI
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../tools_utilities/" class="md-tabs__link">
+          
+  
+  
+  Tools & Utilities
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../utils/" class="md-tabs__link">
+          
+  
+  
+  Utils (Non-Visual)
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IsotopeTrack Documentation" class="md-nav__button md-logo" aria-label="IsotopeTrack Documentation" data-md-component="logo">
+      
+  <img src="../../assets/logo.svg" alt="logo">
+
+    </a>
+    IsotopeTrack Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Houssame-EA/IsotopeTrack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Houssame-EA/IsotopeTrack
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Entry Points
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Entry Points
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entry_points/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entry_points/run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entry_points/cli-utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli_utils.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entry_points/progressive-main-window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    progressive_main_window.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../entry_points/splash-screen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    splash_screen.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Main Window
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Main Window
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../main_window/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../main_window/mainwindow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mainwindow.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Theme System
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Theme System
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theme/theme/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    theme.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../theme/colors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    colors.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Loading
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Data Loading
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/sia-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SIA_manager.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/data-thread/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    data_thread.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/import-csv-dialogs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    import_csv_dialogs.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/tofwerk-loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tofwerk_loading.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../loading/vitesse-loading/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vitesse_loading.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project & I/O
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Project & I/O
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/autosave/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    autosave.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/export-utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    export_utils.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/fast-project-io/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    fast_project_io.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/ionic-session/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ionic_session.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/project-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    project_manager.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../project_io/unit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    unit.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Peak Detection
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Peak Detection
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../peak_detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../peak_detection/detection-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    detection_registry.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../peak_detection/peak-detection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    peak_detection.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Calibration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/te/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TE.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/te-input/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TE_input.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/te-mass/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TE_mass.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/te-number/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TE_number.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/calibration-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    calibration_registry.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/ionic-cal/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ionic_CAL.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../calibration/te-common/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    te_common.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_10" >
+        
+          
+          <label class="md-nav__link" for="__nav_10" id="__nav_10_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Canvas & Shared
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Canvas & Shared
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/canvas-widgets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    canvas_widgets.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/custom-plot-widget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    custom_plot_widget.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/shared-plot-utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    shared_plot_utils.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/shared-annotation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    shared_annotation.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../canvas_shared/utils-sort/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    utils_sort.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_11" id="__nav_11_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Results
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-ai/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_AI.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-bar-charts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_bar_charts.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-box-plot/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_box_plot.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_cluster.py
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_cluster.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+  
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#constants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_safefigurecanvas-extends-figurecanvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _SafeFigureCanvas (extends FigureCanvas)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_som" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _SOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringsettingsdialog-extends-qdialog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringSettingsDialog (extends QDialog)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_clusterworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _ClusterWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_evalworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _EvalWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_bootstrapworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _BootstrapWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringdisplaydialog-extends-qdialog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringDisplayDialog (extends QDialog)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringplotnode-extends-qobject" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringPlotNode (extends QObject)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-cluster-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_cluster_tools.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-composition-wheel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_composition_wheel.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-concentration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_concentration.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-correlation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_correlation.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-dashboard/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_dashboard.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-heatmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_heatmap.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-isotope/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_isotope.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-matrix/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_matrix.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-molar-ratio/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_molar_ratio.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-network/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_network.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-periodic/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_periodic.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-pie-charts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_pie_charts.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-reader/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_reader.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-single-multiple/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_single_multiple.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results-triangle/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    results_triangle.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Widgets & UI
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Widgets & UI
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/batch-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    batch_parameters.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/calibration-info/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    calibration_info.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/drag-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    drag_table.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/interference-database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    interference_database.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/isobaric-correction-dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    isobaric_correction_dialog.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/numeric-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    numeric_table.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/periodic-table-widget/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    periodic_table_widget.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/help-dialogs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    help_dialogs.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    tutorial.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/element-picker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    element_picker.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/parameters-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    parameters_table.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/info-table/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Info_table.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/info-file/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    info_file.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../widgets_ui/signal-selector-dialog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_selector_dialog.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_13" >
+        
+          
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tools & Utilities
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Tools & Utilities
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/dilution-utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    dilution_utils.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/home-panel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    home_panel.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/logging-utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    logging_utils.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/mass-fraction-calculator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mass_fraction_calculator.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/particle-filter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    particle_filter.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/toast/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    toast.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/undo-manager/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    undo_manager.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/update-checker/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    update_checker.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tools_utilities/welcome/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    welcome.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_14" >
+        
+          
+          <label class="md-nav__link" for="__nav_14" id="__nav_14_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utils (Non-Visual)
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_14_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_14">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Utils (Non-Visual)
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/--init--/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    __init__.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/app-version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    app_version.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/dilution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    dilution.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/isobaric-correction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    isobaric_correction.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/unit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    unit.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+  
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#constants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Constants
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_safefigurecanvas-extends-figurecanvas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _SafeFigureCanvas (extends FigureCanvas)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_som" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _SOM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringsettingsdialog-extends-qdialog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringSettingsDialog (extends QDialog)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_clusterworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _ClusterWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_evalworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _EvalWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_bootstrapworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _BootstrapWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringdisplaydialog-extends-qdialog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringDisplayDialog (extends QDialog)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clusteringplotnode-extends-qobject" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ClusteringPlotNode (extends QObject)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="results_clusterpy"><code>results_cluster.py</code><a class="headerlink" href="#results_clusterpy" title="Permanent link">&para;</a></h1>
+<hr />
+<h2 id="constants">Constants<a class="headerlink" href="#constants" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ALGORITHMS</code></td>
+<td><code>['K-Means', 'Hierarchical', 'DBSCAN', 'HDBSCAN', 'Spectra…</code></td>
+</tr>
+<tr>
+<td><code>CVI_FUNCS</code></td>
+<td><code>{'silhouette_scores': lambda d, l: float(silhouette_score…</code></td>
+</tr>
+<tr>
+<td><code>METRIC_REGISTRY</code></td>
+<td><code>{'Silhouette': {'display': 'Silhouette Score', 'key': 'si…</code></td>
+</tr>
+<tr>
+<td><code>METRICS</code></td>
+<td><code>list(METRIC_REGISTRY.keys())</code></td>
+</tr>
+<tr>
+<td><code>METRIC_KEYS</code></td>
+<td><code>{name: (spec['display'], spec['key']) for name, spec in M…</code></td>
+</tr>
+<tr>
+<td><code>DEFAULT_METRICS</code></td>
+<td><code>['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']</code></td>
+</tr>
+<tr>
+<td><code>METRIC_COLORS</code></td>
+<td><code>{name: spec['color'] for name, spec in METRIC_REGISTRY.it…</code></td>
+</tr>
+<tr>
+<td><code>DENSITY_BASED_ALGOS</code></td>
+<td><code>{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}</code></td>
+</tr>
+<tr>
+<td><code>PROGRESS_RESOLUTION</code></td>
+<td><code>1000</code></td>
+</tr>
+<tr>
+<td><code>SCALING_OPTIONS</code></td>
+<td><code>['CLR', 'ILR', 'Robust Z-score', 'None']</code></td>
+</tr>
+<tr>
+<td><code>DIM_REDUCTION_OPTIONS</code></td>
+<td><code>['None', 'PCA', 't-SNE']</code></td>
+</tr>
+<tr>
+<td><code>DATA_TYPE_OPTIONS</code></td>
+<td><code>['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…</code></td>
+</tr>
+<tr>
+<td><code>DATA_KEY_MAP</code></td>
+<td><code>{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…</code></td>
+</tr>
+<tr>
+<td><code>CLUSTER_COLORS</code></td>
+<td><code>['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…</code></td>
+</tr>
+<tr>
+<td><code>ALGO_LINE_STYLES</code></td>
+<td><code>{'K-Means': dict(color='#2563EB', ls='-', marker='o'), 'H…</code></td>
+</tr>
+<tr>
+<td><code>_ELEMENT_PALETTE</code></td>
+<td><code>['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…</code></td>
+</tr>
+<tr>
+<td><code>SAMPLE_MARKERS</code></td>
+<td><code>['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '&lt;', '&gt;', 'p']</code></td>
+</tr>
+<tr>
+<td><code>SAMPLE_PALETTE</code></td>
+<td><code>['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="classes">Classes<a class="headerlink" href="#classes" title="Permanent link">&para;</a></h2>
+<h3 id="_safefigurecanvas-extends-figurecanvas"><code>_SafeFigureCanvas</code> <em>(extends <code>FigureCanvas</code>)</em><a class="headerlink" href="#_safefigurecanvas-extends-figurecanvas" title="Permanent link">&para;</a></h3>
+<p>FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>showEvent</code></td>
+<td><code>(self, event)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>resizeEvent</code></td>
+<td><code>(self, event)</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_som"><code>_SOM</code><a class="headerlink" href="#_som" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>fit</code></td>
+<td><code>(self, X, progress_cb=None, snapshot_every=0)</code></td>
+<td>Train the SOM, optionally reporting live convergence snapshots.</td>
+</tr>
+<tr>
+<td><code>predict</code></td>
+<td><code>(self, X)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_weights</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_grid_labels</code></td>
+<td><code>(self, neuron_cluster_labels)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>get_u_matrix</code></td>
+<td><code>(self)</code></td>
+<td>Compute the U-matrix: mean Euclidean distance from each neuron to</td>
+</tr>
+<tr>
+<td><code>get_hit_count</code></td>
+<td><code>(self, X)</code></td>
+<td>Count how many input samples have each neuron as their BMU</td>
+</tr>
+<tr>
+<td><code>get_quantization_error</code></td>
+<td><code>(self, X)</code></td>
+<td>Mean Euclidean distance from each input to its BMU.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="clusteringsettingsdialog-extends-qdialog"><code>ClusteringSettingsDialog</code> <em>(extends <code>QDialog</code>)</em><a class="headerlink" href="#clusteringsettingsdialog-extends-qdialog" title="Permanent link">&para;</a></h3>
+<p>Full settings dialog opened from right-click → Configure.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, config, parent=None, input_data=None)</code></td>
+<td>Initialise the dialog and build the UI from the supplied config.</td>
+</tr>
+<tr>
+<td><code>_build_ui</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>collect</code></td>
+<td><code>(self) → dict</code></td>
+<td>Collect all widget values into a configuration dictionary.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_clusterworker-extends-qthread"><code>_ClusterWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#_clusterworker-extends-qthread" title="Permanent link">&para;</a></h3>
+<p>Background worker that runs the clustering pipeline off the UI thread.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, dialog, sel_k, elements, data, enabled, parent=None)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td><code>(self)</code></td>
+<td>Execute the pipeline on the worker thread and emit results.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_evalworker-extends-qthread"><code>_EvalWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#_evalworker-extends-qthread" title="Permanent link">&para;</a></h3>
+<p>Background worker that runs K-evaluation off the UI thread.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, dialog, elements, parent=None)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td><code>(self)</code></td>
+<td>Run preparation and K-evaluation, emitting progress and results.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_bootstrapworker-extends-qthread"><code>_BootstrapWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#_bootstrapworker-extends-qthread" title="Permanent link">&para;</a></h3>
+<p>Background worker that runs the K-stability bootstrap off the UI thread.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>cancel</code></td>
+<td><code>(self)</code></td>
+<td>Request cancellation; the loop stops after the current resample.</td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td><code>(self)</code></td>
+<td>Execute the bootstrap loop on the worker thread and emit results.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="clusteringdisplaydialog-extends-qdialog"><code>ClusteringDisplayDialog</code> <em>(extends <code>QDialog</code>)</em><a class="headerlink" href="#clusteringdisplaydialog-extends-qdialog" title="Permanent link">&para;</a></h3>
+<p>Main clustering dialog with toolbar, tabs, and right-click menus.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, node, parent_window=None)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_on_app_theme_changed</code></td>
+<td><code>(self, _name=None)</code></td>
+<td>Re-theme the dialog and redraw figures when the app theme changes.</td>
+</tr>
+<tr>
+<td><code>_apply_theme</code></td>
+<td><code>(self)</code></td>
+<td>Apply the active palette to the whole dialog as one stylesheet.</td>
+</tr>
+<tr>
+<td><code>_is_multi</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_update_color_by_visibility</code></td>
+<td><code>(self)</code></td>
+<td>Hide the Color-by picker for single-sample input.</td>
+</tr>
+<tr>
+<td><code>_update_eval_scope_visibility</code></td>
+<td><code>(self)</code></td>
+<td>Hide the Pooled/Per-sample scope toggle for single-sample input.</td>
+</tr>
+<tr>
+<td><code>_on_color_by_changed</code></td>
+<td><code>(self, text)</code></td>
+<td>Redraw the cluster scatter when the user changes the Color-by selection.</td>
+</tr>
+<tr>
+<td><code>_build_ui</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_btn_style</code></td>
+<td><code>(self, color)</code></td>
+<td>Return the stylesheet for a flat coloured action button.</td>
+</tr>
+<tr>
+<td><code>_make_btn</code></td>
+<td><code>(self, text, color, slot)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_build_eval_tab</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_build_summary_tab</code></td>
+<td><code>(self)</code></td>
+<td>Build the Summary tab holding the consensus decision matrix.</td>
+</tr>
+<tr>
+<td><code>_refresh_summary</code></td>
+<td><code>(self)</code></td>
+<td>Redraw the consensus summary table from the latest evaluation state.</td>
+</tr>
+<tr>
+<td><code>_build_cluster_tab</code></td>
+<td><code>(self)</code></td>
+<td>Build the Clusters tab containing both 2-D and 3-D scatter views,</td>
+</tr>
+<tr>
+<td><code>_switch_cluster_view</code></td>
+<td><code>(self, mode)</code></td>
+<td>Toggle between 2-D scatter and 3-D scatter within the Clusters tab.</td>
+</tr>
+<tr>
+<td><code>_ctx_menu</code></td>
+<td><code>(self, pos, tab)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_make_popout_btn</code></td>
+<td><code>(self, slot)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_pop_out_figure</code></td>
+<td><code>(self, tab: str)</code></td>
+<td>Redraw the requested figure into a standalone resizable window.</td>
+</tr>
+<tr>
+<td><code>_edit_figure</code></td>
+<td><code>(self, tab: str)</code></td>
+<td>Open the per-figure display settings dialog.</td>
+</tr>
+<tr>
+<td><code>_redraw_figure</code></td>
+<td><code>(self, tab: str)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_cl_drag_press</code></td>
+<td><code>(self, event)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_cl_drag_motion</code></td>
+<td><code>(self, event)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_cl_drag_release</code></td>
+<td><code>(self, _event)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_set</code></td>
+<td><code>(self, key, value)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_build_overview_tab</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_on_overview_view_changed</code></td>
+<td><code>(self, text)</code></td>
+<td>Handle a change to the Strips/Heatmap toggle in the Overview toolbar.</td>
+</tr>
+<tr>
+<td><code>_open_overview_element_picker</code></td>
+<td><code>(self)</code></td>
+<td>Pop a small multi-select menu of available elements.</td>
+</tr>
+<tr>
+<td><code>_clear_overview_elements</code></td>
+<td><code>(self)</code></td>
+<td>Empty the selected-elements list and redraw.</td>
+</tr>
+<tr>
+<td><code>_refresh_overview_elem_btn</code></td>
+<td><code>(self)</code></td>
+<td>Sync the picker button's label with the current selection.</td>
+</tr>
+<tr>
+<td><code>_build_dendrogram_tab</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_open_3d_sample_picker</code></td>
+<td><code>(self)</code></td>
+<td>Checkable menu to show/hide samples in the 3D scatter.</td>
+</tr>
+<tr>
+<td><code>_show_all_3d_samples</code></td>
+<td><code>(self)</code></td>
+<td>Clear the hidden-sample set and redraw the 3D scatter.</td>
+</tr>
+<tr>
+<td><code>_on_3d_scroll</code></td>
+<td><code>(self, event)</code></td>
+<td>Zoom the 3D axes under the cursor in/out on mouse-wheel scroll.</td>
+</tr>
+<tr>
+<td><code>_set_3d_view</code></td>
+<td><code>(self, elev, azim)</code></td>
+<td>Snap all 3D axes to a preset view angle.</td>
+</tr>
+<tr>
+<td><code>_draw_3d</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_on_3d_hover</code></td>
+<td><code>(self, event)</code></td>
+<td>Show a tooltip with cluster and element information on 3D hover.</td>
+</tr>
+<tr>
+<td><code>_draw_3d_into</code></td>
+<td><code>(self, target_fig)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_draw_dendrogram</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_draw_dendrogram_into</code></td>
+<td><code>(self, target_fig)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_draw_overview</code></td>
+<td><code>(self)</code></td>
+<td>Render the Overview tab: composition strips (or heatmap) on the</td>
+</tr>
+<tr>
+<td><code>_draw_overview_into</code></td>
+<td><code>(self, target_fig)</code></td>
+<td>Draw the Overview content into an arbitrary Figure.</td>
+</tr>
+<tr>
+<td><code>_restyle_heatmap_axes</code></td>
+<td><code>(self, ax, fig, cfg)</code></td>
+<td>Re-apply font and theme to an externally-drawn heatmap axes.</td>
+</tr>
+<tr>
+<td><code>_on_eval_pick</code></td>
+<td><code>(self, event)</code></td>
+<td>Click a point on an evaluation curve to set K directly.</td>
+</tr>
+<tr>
+<td><code>_on_cluster_hover</code></td>
+<td><code>(self, event)</code></td>
+<td>Show a floating tooltip with element values when hovering scatter points.</td>
+</tr>
+<tr>
+<td><code>_open_settings</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_on_node_changed</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_get_elements</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_prepare_data</code></td>
+<td><code>(self, elements)</code></td>
+<td>Prepare data matrix — identical logic to original.</td>
+</tr>
+<tr>
+<td><code>_run_algo</code></td>
+<td><code>(self, name, k, data)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_run_som</code></td>
+<td><code>(self, k, data, cfg, progress_cb=None)</code></td>
+<td>Train a SOM and cluster the resulting neuron weight vectors.</td>
+</tr>
+<tr>
+<td><code>_evaluate_data</code></td>
+<td><code>(self, data, *, enabled_algos=None, enabled_metrics=None, min_k=None,</code></td>
+<td>Run the full algorithm × K × metric sweep on <code>data</code> once.</td>
+</tr>
+<tr>
+<td><code>_pick_optimal_per_metric</code></td>
+<td><code>(self, eval_results)</code></td>
+<td>Reduce an eval-results dict to <code>{metric: K}</code> using vote+tiebreak.</td>
+</tr>
+<tr>
+<td><code>_evaluate_per_sample</code></td>
+<td><code>(self, data)</code></td>
+<td>Run the evaluation sweep independently on each sample's particles.</td>
+</tr>
+<tr>
+<td><code>_run_evaluation</code></td>
+<td><code>(self)</code></td>
+<td>Launch K-evaluation on a background worker thread.</td>
+</tr>
+<tr>
+<td><code>_on_eval_done</code></td>
+<td><code>(self, payload)</code></td>
+<td>Apply evaluation results on the main thread and refresh the UI.</td>
+</tr>
+<tr>
+<td><code>_on_eval_failed</code></td>
+<td><code>(self, message)</code></td>
+<td>Report an evaluation-worker failure to the user.</td>
+</tr>
+<tr>
+<td><code>_on_eval_thread_finished</code></td>
+<td><code>(self)</code></td>
+<td>Clean up after the evaluation worker terminates.</td>
+</tr>
+<tr>
+<td><code>_run_bootstrap</code></td>
+<td><code>(self)</code></td>
+<td>Launch the K-stability bootstrap on a background worker thread.</td>
+</tr>
+<tr>
+<td><code>_on_bootstrap_done</code></td>
+<td><code>(self, payload)</code></td>
+<td>Apply bootstrap stability results on the main thread.</td>
+</tr>
+<tr>
+<td><code>_on_bootstrap_failed</code></td>
+<td><code>(self, message)</code></td>
+<td>Report a bootstrap-worker failure to the user.</td>
+</tr>
+<tr>
+<td><code>_on_bootstrap_thread_finished</code></td>
+<td><code>(self)</code></td>
+<td>Restore the toolbar and progress state after the worker terminates.</td>
+</tr>
+<tr>
+<td><code>_cancel_bootstrap</code></td>
+<td><code>(self)</code></td>
+<td>Request the running bootstrap worker to stop after the current pass.</td>
+</tr>
+<tr>
+<td><code>_determine_optimal_k</code></td>
+<td><code>(self)</code></td>
+<td>Compute the optimal K independently for each enabled metric.</td>
+</tr>
+<tr>
+<td><code>_elbow_k</code></td>
+<td><code>(k_vals: list, scores: list) → int</code></td>
+<td>Kneedle algorithm: find the K at the elbow of a monotone curve.</td>
+</tr>
+<tr>
+<td><code>_update_optimal_label</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_update_metric_picks_ui</code></td>
+<td><code>(self)</code></td>
+<td>Rebuild the per-metric K-pick chips in the toolbar.</td>
+</tr>
+<tr>
+<td><code>_select_metric_pick</code></td>
+<td><code>(self, metric, k)</code></td>
+<td>Switch the active K selection to the given metric's suggestion.</td>
+</tr>
+<tr>
+<td><code>_refresh_eval_plot</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_run_clustering</code></td>
+<td><code>(self)</code></td>
+<td>Launch the clustering pipeline on a background worker thread.</td>
+</tr>
+<tr>
+<td><code>_set_progress</code></td>
+<td><code>(self, pct)</code></td>
+<td>Set the toolbar progress bar from a 0-100 percentage.</td>
+</tr>
+<tr>
+<td><code>_on_cluster_progress</code></td>
+<td><code>(self, pct, message)</code></td>
+<td>Update the progress bar and status text from worker signals.</td>
+</tr>
+<tr>
+<td><code>_on_som_snapshot</code></td>
+<td><code>(self, weights, t, total)</code></td>
+<td>Render a live SOM convergence frame during training.</td>
+</tr>
+<tr>
+<td><code>_persist_results_to_node</code></td>
+<td><code>(self, sel_k=None)</code></td>
+<td>Store the full clustering state on the workflow node so it is</td>
+</tr>
+<tr>
+<td><code>_restore_saved_results</code></td>
+<td><code>(self)</code></td>
+<td>Restore a previously saved clustering state from the workflow</td>
+</tr>
+<tr>
+<td><code>_on_cluster_done</code></td>
+<td><code>(self, payload)</code></td>
+<td>Finalise clustering results on the main thread and draw all figures.</td>
+</tr>
+<tr>
+<td><code>_on_cluster_failed</code></td>
+<td><code>(self, message)</code></td>
+<td>Report a worker-thread failure to the user.</td>
+</tr>
+<tr>
+<td><code>_on_cluster_thread_finished</code></td>
+<td><code>(self)</code></td>
+<td>Clean up after the worker thread terminates (success or failure).</td>
+</tr>
+<tr>
+<td><code>closeEvent</code></td>
+<td><code>(self, event)</code></td>
+<td>Ensure a running clustering worker finishes before teardown.</td>
+</tr>
+<tr>
+<td><code>_live_k_supported</code></td>
+<td><code>(self)</code></td>
+<td>Return whether the current algorithm supports live K dragging.</td>
+</tr>
+<tr>
+<td><code>_update_live_k_availability</code></td>
+<td><code>(self)</code></td>
+<td>Enable or disable the Live checkbox based on the current algorithm.</td>
+</tr>
+<tr>
+<td><code>_on_k_combo_changed</code></td>
+<td><code>(self, text)</code></td>
+<td>Sync the slider to the combo when the combo changes.</td>
+</tr>
+<tr>
+<td><code>_on_k_slider_changed</code></td>
+<td><code>(self, k)</code></td>
+<td>Sync the combo to the slider and, if live mode is on, schedule a recut.</td>
+</tr>
+<tr>
+<td><code>_do_live_k</code></td>
+<td><code>(self)</code></td>
+<td>Recompute clustering for the current slider K on the main thread.</td>
+</tr>
+<tr>
+<td><code>_hier_recut</code></td>
+<td><code>(self, data, k, cfg)</code></td>
+<td>Cut a cached hierarchical linkage tree at K clusters.</td>
+</tr>
+<tr>
+<td><code>_build_som_tab</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_characterise</code></td>
+<td><code>(self, elements, data)</code></td>
+<td>Generate cluster characterisation with real element-% composition labels.</td>
+</tr>
+<tr>
+<td><code>_rebuild_display_labels</code></td>
+<td><code>(self)</code></td>
+<td>Recompute cluster_type_short and cluster_type from stored composition.</td>
+</tr>
+<tr>
+<td><code>_apply_display_settings</code></td>
+<td><code>(self)</code></td>
+<td>Rebuild display labels and redraw all figures without re-clustering.</td>
+</tr>
+<tr>
+<td><code>_export_results</code></td>
+<td><code>(self)</code></td>
+<td>Serialise clustering results and characterisation to a JSON file.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="clusteringplotnode-extends-qobject"><code>ClusteringPlotNode</code> <em>(extends <code>QObject</code>)</em><a class="headerlink" href="#clusteringplotnode-extends-qobject" title="Permanent link">&para;</a></h3>
+<p>Clustering analysis node with matplotlib figures.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, parent_window=None)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>set_position</code></td>
+<td><code>(self, pos)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>configure</code></td>
+<td><code>(self, parent_window)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>process_data</code></td>
+<td><code>(self, input_data)</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>_cluster_centroids</code></td>
+<td><code>(data, labels, valid_labels)</code></td>
+<td>Compute per-cluster centroids as the arithmetic mean of member points.</td>
+</tr>
+<tr>
+<td><code>_xie_beni_score</code></td>
+<td><code>(data, labels)</code></td>
+<td>Xie-Beni cluster validity index (lower is better).</td>
+</tr>
+<tr>
+<td><code>_pbm_score</code></td>
+<td><code>(data, labels)</code></td>
+<td>PBM (I-index) cluster validity index (higher is better).</td>
+</tr>
+<tr>
+<td><code>_sdbw_score</code></td>
+<td><code>(data, labels)</code></td>
+<td>S_Dbw cluster validity index (lower is better).</td>
+</tr>
+<tr>
+<td><code>_dunn_sym_score</code></td>
+<td><code>(data, labels, max_points=2000, random_state=0)</code></td>
+<td>Dunn-Symmetric (Sym-Dunn) cluster validity index (higher is better).</td>
+</tr>
+<tr>
+<td><code>_c_index_score</code></td>
+<td><code>(data, labels, max_points=2000, random_state=0)</code></td>
+<td>C-index cluster validity index (lower is better, bounded in <code>[0, 1]</code>).</td>
+</tr>
+<tr>
+<td><code>_vote_optimal_per_metric</code></td>
+<td><code>(eval_results, elbow_fn, enabled_metrics=None)</code></td>
+<td>Select an optimal K per metric by voting across algorithms.</td>
+</tr>
+<tr>
+<td><code>_palette_to_plot</code></td>
+<td><code>(pal)</code></td>
+<td>Map an app <code>Palette</code> (or None) to the plot/theme keys used here.</td>
+</tr>
+<tr>
+<td><code>_current_plot_palette</code></td>
+<td><code>()</code></td>
+<td>Return the active plot/theme dict from the app ThemeManager.</td>
+</tr>
+<tr>
+<td><code>multiplicative_replacement</code></td>
+<td><code>(matrix, frac=0.65, threshold=None)</code></td>
+<td>Replace zeros in a non-negative composition matrix without distorting ratios.</td>
+</tr>
+<tr>
+<td><code>_apply_clr</code></td>
+<td><code>(matrix, zero_replacement='additive')</code></td>
+<td>Centred-log-ratio transform of a non-negative composition matrix.</td>
+</tr>
+<tr>
+<td><code>_apply_ilr</code></td>
+<td><code>(matrix, zero_replacement='additive')</code></td>
+<td>Isometric-log-ratio transform yielding <code>p - 1</code> orthonormal coordinates.</td>
+</tr>
+<tr>
+<td><code>_apply_robust_zscore</code></td>
+<td><code>(matrix)</code></td>
+<td>Robust per-column z-score using a consistent scale estimate.</td>
+</tr>
+<tr>
+<td><code>_filter_rare_particle_types</code></td>
+<td><code>(matrix, sample_labels, original_indices, min_count)</code></td>
+<td>Remove particles whose elemental signature occurs fewer than min_count times.</td>
+</tr>
+<tr>
+<td><code>_som_cluster_cmap</code></td>
+<td><code>(name, n_clusters)</code></td>
+<td>Build a discrete categorical colormap for the SOM cluster grid.</td>
+</tr>
+<tr>
+<td><code>_contrast_text_for</code></td>
+<td><code>(cmap_name, norm_value)</code></td>
+<td>Pick black or white text for legibility over a colormap cell.</td>
+</tr>
+<tr>
+<td><code>_draw_som_grid</code></td>
+<td><code>(fig, som_obj, neuron_cluster_labels, data_labels, cfg, sample_labels=</code></td>
+<td>Draw the SOM diagnostic panels: cluster grid, U-matrix, hit-count,</td>
+</tr>
+<tr>
+<td><code>_font_scale</code></td>
+<td><code>(cfg, role='label')</code></td>
+<td>Return a (FontProperties, color) pair scaled for a given text role.</td>
+</tr>
+<tr>
+<td><code>_text_color</code></td>
+<td><code>(cfg)</code></td>
+<td>Resolve the colour for figure text in a theme-consistent way.</td>
+</tr>
+<tr>
+<td><code>_muted_color</code></td>
+<td><code>(cfg)</code></td>
+<td>Theme-aware muted colour for placeholder / empty-state text.</td>
+</tr>
+<tr>
+<td><code>_empty_message</code></td>
+<td><code>(ax, cfg, text)</code></td>
+<td>Draw a centered, theme- and font-consistent placeholder message.</td>
+</tr>
+<tr>
+<td><code>_plot_theme</code></td>
+<td><code>(cfg)</code></td>
+<td>Return plot colours (face, grid, text) for the active theme.</td>
+</tr>
+<tr>
+<td><code>_style_ax</code></td>
+<td><code>(ax, cfg, xlabel='', ylabel='', title='')</code></td>
+<td>Apply consistent visual styling to a matplotlib Axes.</td>
+</tr>
+<tr>
+<td><code>_element_color</code></td>
+<td><code>(element, all_elements_sorted)</code></td>
+<td>Return a deterministic colour for an element symbol.</td>
+</tr>
+<tr>
+<td><code>_cluster_label_short</code></td>
+<td><code>(cid)</code></td>
+<td>Return a user-facing display tag for a cluster ID.</td>
+</tr>
+<tr>
+<td><code>_cluster_per_ml_value</code></td>
+<td><code>(cd, input_data)</code></td>
+<td>Convert a cluster's particle count to particles per mL.</td>
+</tr>
+<tr>
+<td><code>_cluster_size_str</code></td>
+<td><code>(cd, cfg, input_data, renderer=Renderer.MATHTEXT)</code></td>
+<td>Return the size annotation for a cluster honouring the y-axis unit.</td>
+</tr>
+<tr>
+<td><code>_build_cluster_label</code></td>
+<td><code>(cd, threshold_pct=0.1, max_elems=5, include_count=True, label_mode='S</code></td>
+<td>Build a "Fe, O, Si (1,234)" style row label from a cluster's</td>
+</tr>
+<tr>
+<td><code>_cluster_primary</code></td>
+<td><code>(cd)</code></td>
+<td>Return the primary dominant element of a cluster.</td>
+</tr>
+<tr>
+<td><code>_order_clusters</code></td>
+<td><code>(char_for_algo, group_by_dominant=True)</code></td>
+<td>Return cluster IDs in display order.</td>
+</tr>
+<tr>
+<td><code>_build_sample_data_from_characterisation</code></td>
+<td><code>(char_for_algo, elements, threshold_pct=0.1, max_elems=5, group_by_dom</code></td>
+<td>Synthesise a <code>sample_data</code> dict from per-cluster characterisation data.</td>
+</tr>
+<tr>
+<td><code>_draw_composition_strips</code></td>
+<td><code>(ax, char_for_algo, elements, cfg, algo_name='', input_data=None)</code></td>
+<td>Draw one horizontal stacked bar per cluster showing mass composition.</td>
+</tr>
+<tr>
+<td><code>_draw_sample_share_strip</code></td>
+<td><code>(ax, char_for_algo, sample_names, cfg, group_by_dominant=True)</code></td>
+<td>Draw a per-cluster sample-fraction strip for multi-sample input.</td>
+</tr>
+<tr>
+<td><code>_draw_detection_panel</code></td>
+<td><code>(ax, char_for_algo, selected_elements, cfg, group_by_dominant=True, in</code></td>
+<td>Draw per-cluster real detection counts for selected elements.</td>
+</tr>
+<tr>
+<td><code>_draw_evaluation</code></td>
+<td><code>(fig, eval_results, cfg, optimal_k=None, view_algo='All Algorithms', o</code></td>
+<td>Draw evaluation metric curves on a matplotlib Figure.</td>
+</tr>
+<tr>
+<td><code>_draw_evaluation_per_sample</code></td>
+<td><code>(fig, per_sample_eval, cfg, per_sample_optk=None, view_algo='All Algor</code></td>
+<td>Draw per-sample evaluation curves as a single metric × sample grid.</td>
+</tr>
+<tr>
+<td><code>_consensus_k</code></td>
+<td><code>(per_metric_k)</code></td>
+<td>Return the consensus K and its agreement fraction from per-metric picks.</td>
+</tr>
+<tr>
+<td><code>_draw_consensus_summary</code></td>
+<td><code>(fig, eval_results, per_sample_eval, cfg, elbow_fn, optimal_per_metric</code></td>
+<td>Draw a metric × scope consensus decision table for choosing K.</td>
+</tr>
+<tr>
+<td><code>_draw_clustering</code></td>
+<td><code>(fig, clustering_results, data_matrix, characterisation, cfg, input_da</code></td>
+<td>Draw cluster scatter plots on a matplotlib Figure.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Houssame Ahabchane &mdash; <a href="#__consent">Change cookie settings</a>
+
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/Houssame-EA/IsotopeTrack" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.top", "navigation.instant", "navigation.tracking", "search.highlight", "search.suggest", "search.share", "content.code.copy", "content.code.annotate", "toc.follow", "announce.dismiss"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
