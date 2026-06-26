@@ -10,6 +10,9 @@ from pathlib import Path
 
 import numpy as np
 from calibration_methods import calibration_registry
+from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
+from utils.validation import ValidationInfos
+
 _itk_log = logging.getLogger("IsotopeTrack.save_export.fast_project_io")
 
 logger = logging.getLogger(__name__)
@@ -264,6 +267,7 @@ def build_metadata(mw):
         'saturation_filtered_multi': getattr(mw, 'saturation_filtered_multi', {}),
         'saturation_windows': getattr(mw, 'saturation_windows', {}),
         'saturation_excluded_time_s': getattr(mw, 'saturation_excluded_time_s', {}),
+        'nps_list': getattr(mw, 'nps_service', {'get_all_shapes': lambda: []}).get_all_shapes()
     }
 
     if hasattr(mw, 'canvas_results_dialog') and mw.canvas_results_dialog is not None:
@@ -557,6 +561,20 @@ def _restore_metadata(mw, metadata):
 
     folder_map = metadata.get('sample_to_folder_map', {})
     mw.sample_to_folder_map = {k: Path(v) if v else v for k, v in folder_map.items()}
+
+    nps_list = metadata.get('nps_list', [])
+    if nps_list and isinstance(mw.nps_service, NanoParticleShapeService):
+        validations = mw.nps_service.load_shapes(nps_list)
+        if validations:
+            validation = ValidationInfos.compact(validations)
+            if validation.has_errors():
+                logger.warning(f"Error(s) while parsing nanoparticle shape data:\n* "
+                               + "\n* ".join(validation.errors))
+            if validation.has_messages():
+                logger.info(f"Message(s) while parsing nanoparticle shape data: \n* "
+                            + "\n* ".join(validation.messages))
+
+
 
     mw._formatted_label_cache = {}
     mw._element_data_cache = {}

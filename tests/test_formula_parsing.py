@@ -6,38 +6,32 @@ element counts and canonicalise them. They feed the mass-fraction lookup, so a
 parsing error would propagate into reported particle masses. The functions are
 pure; the module imports Qt/pandas only for the dialog and CSV database.
 """
-from tools.mass_fraction_calculator import (
-    _parse_formula_to_counts,
-    _safe_int,
-    _element_order_in_formula,
-    _reduce_counts,
-    _signature_from_counts,
-    _join_formula_from_counts,
-    canonicalize_preserve_user_order,
-)
+from tools.mass_fraction_calculator_utils.formula_utils import *
+from tools.mass_fraction_calculator_utils.formula_utils import _safe_int, _element_order_in_formula, \
+    _join_formula_from_counts
 
 
 class TestParseFormulaToCounts:
     def test_simple(self):
-        assert _parse_formula_to_counts("H2O") == {"H": 2, "O": 1}
-        assert _parse_formula_to_counts("Fe2O3") == {"Fe": 2, "O": 3}
+        assert parse_formula_to_counts("H2O") == {"H": 2, "O": 1}
+        assert parse_formula_to_counts("Fe2O3") == {"Fe": 2, "O": 3}
 
     def test_implicit_one(self):
-        assert _parse_formula_to_counts("NaCl") == {"Na": 1, "Cl": 1}
+        assert parse_formula_to_counts("NaCl") == {"Na": 1, "Cl": 1}
 
     def test_parenthesised_group(self):
-        assert _parse_formula_to_counts("Ca(OH)2") == {"Ca": 1, "O": 2, "H": 2}
+        assert parse_formula_to_counts("Ca(OH)2") == {"Ca": 1, "O": 2, "H": 2}
 
     def test_nested_groups(self):
-        assert _parse_formula_to_counts("Al2(SO4)3") == {"Al": 2, "S": 3, "O": 12}
+        assert parse_formula_to_counts("Al2(SO4)3") == {"Al": 2, "S": 3, "O": 12}
 
     def test_repeated_element_accumulates(self):
         # CH3CH2OH -> C2 H6 O1
-        assert _parse_formula_to_counts("CH3CH2OH") == {"C": 2, "H": 6, "O": 1}
+        assert parse_formula_to_counts("CH3CH2OH") == {"C": 2, "H": 6, "O": 1}
 
     def test_empty_and_invalid(self):
-        assert _parse_formula_to_counts("") == {}
-        assert _parse_formula_to_counts(None) == {}
+        assert parse_formula_to_counts("") == {}
+        assert parse_formula_to_counts(None) == {}
 
 
 class TestSafeInt:
@@ -71,24 +65,24 @@ class TestElementOrder:
 
 class TestReduceCounts:
     def test_divides_by_gcd(self):
-        assert _reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
-        assert _reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
+        assert reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
+        assert reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
 
     def test_already_reduced_unchanged(self):
-        assert _reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
+        assert reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
 
     def test_empty(self):
-        assert _reduce_counts({}) == {}
+        assert reduce_counts({}) == {}
 
 
 class TestSignature:
     def test_order_independent(self):
-        a = _signature_from_counts({"O": 2, "H": 2})
-        b = _signature_from_counts({"H": 2, "O": 2})
+        a = signature_from_counts({"O": 2, "H": 2})
+        b = signature_from_counts({"H": 2, "O": 2})
         assert a == b == "H2|O2"
 
     def test_empty(self):
-        assert _signature_from_counts({}) == ""
+        assert signature_from_counts({}) == ""
 
 
 class TestJoinFormula:

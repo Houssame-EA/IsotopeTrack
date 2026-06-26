@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication
 from mainwindow import MainWindow
 from tools.cli_utils import get_selected_isotopes, CliArguments
 from tools.logging_utils import logging_manager
-from tools.mass_fraction_calculator import CSVCompoundDatabase
+from tools.mass_fraction_calculator_utils.compound_database import CSVCompoundDatabase
 from widget.periodic_table_widget import PeriodicTableWidget
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.progressive_main_window")
