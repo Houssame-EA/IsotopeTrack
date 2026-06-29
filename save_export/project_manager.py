@@ -61,7 +61,7 @@ class ProjectManager:
             main_window (object): Reference to the MainWindow instance
         """
         self.main_window = main_window
-        self.project_version = '1.10.4'
+        self.project_version = '1.10.5'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -211,7 +211,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.10.4
+Version=1.10.5
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -589,7 +589,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.10.4',
+            'application_version': '1.10.5',
         }
     
     def _restore_project_data(self, project_data):
@@ -793,6 +793,40 @@ Terminal=false
                         _itk_log.exception("Handled exception in _serialize_node_config")
                         continue
                 node_data[attr] = value
+
+        if getattr(node, '_figures', None):
+            try:
+                from results.shared_plot_utils import serialize_node_figures
+                node_data['figures'] = serialize_node_figures(node)
+            except Exception:
+                _itk_log.exception("Handled exception in _serialize_node_config")
+
+        self._serialize_batch_output(node, node_data)
+
+    def _serialize_batch_output(self, node, node_data):
+        """Bake a Batch Windows node's combined output into its saved data.
+
+        The Batch Windows node aggregates data from other windows, which a
+        single-window project file cannot contain. Its computed output is stored
+        as a static snapshot so the batch's results survive on their own and are
+        replayed when the project is reopened.
+
+        Args:
+            node (object): Workflow node being serialized.
+            node_data (dict): Destination dictionary for this node's saved data.
+        """
+        if not getattr(node, 'selected_windows', None):
+            return
+        if not hasattr(node, 'get_output_data'):
+            return
+        try:
+            out = node.get_output_data()
+            if out:
+                node_data['batch_output_snapshot'] = {
+                    k: v for k, v in out.items() if k != 'parent_window'
+                }
+        except Exception:
+            _itk_log.exception("Handled exception in _serialize_batch_output")
     
     def _deserialize_canvas_state(self, canvas_state):
         """Recreate the canvas state from saved data.
@@ -944,7 +978,16 @@ Terminal=false
                 if attr in ['needs_initial_detection'] and isinstance(value, list):
                     value = set(value)
                 setattr(workflow_node, attr, value)
-    
+
+        figures = node_data.get('figures')
+        if figures:
+            workflow_node._restored_figure_configs = [
+                dict(cfg) for cfg in figures if isinstance(cfg, dict)
+            ]
+
+        if 'batch_output_snapshot' in node_data:
+            workflow_node._saved_output_snapshot = node_data['batch_output_snapshot']
+
     def _reset_data_structures(self):
         """Reset all data structures before loading a saved project.
 

@@ -245,7 +245,7 @@ class UserGuideDialog(QDialog):
     def _tab_overview(self):
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.10.4</h2>
+            <h2>IsotopeTrack v1.10.5</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 

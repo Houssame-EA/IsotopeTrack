@@ -4,6 +4,18 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.10.5 — 2026-06-25
+
+
+- adding preview figures and you can keep all the figures from a single node figure
+- Autosave (disable) the same for the homescreen
+- uniform some plot setting 
+- save project include all the figures in a single node 
+- heatmap you can display SD
+- easy connection with lines 
+- 
+
+
 ## v1.10.4 — 2026-06-22
 
 

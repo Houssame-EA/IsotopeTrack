@@ -1,6 +1,7 @@
 import re
 import enum
 import math
+import copy
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as _FigureCanvasBase
@@ -12,10 +13,419 @@ from PySide6.QtWidgets import (
     QSpinBox, QCheckBox, QPushButton, QLineEdit, QWidget,
     QDialogButtonBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QObject, QEvent, QTimer
 import pyqtgraph as pg
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.shared_plot_utils")
+
+
+def _deep_copy_config(cfg):
+    """Return a fully independent copy of a config dict.
+
+    A shallow ``dict(cfg)`` would leave nested values (e.g. ``element_colors``,
+    ``sample_colors``, ``custom_titles``, ``element_groups``) shared between
+    figures, so editing one figure's settings would bleed into the others. A
+    deep copy keeps every figure's settings independent. Falls back to a shallow
+    copy only if deep copy fails.
+    """
+    if not cfg:
+        return {}
+    try:
+        return copy.deepcopy(dict(cfg))
+    except Exception:
+        _itk_log.exception("Handled exception in _deep_copy_config")
+        return dict(cfg)
+
+
+class _HideOnCloseFilter(QObject):
+    """Event filter: closing a figure window hides it instead of destroying it.
+
+    Installed on a figure dialog so its window close button keeps the window
+    (and all its state) alive. Set ``dialog._force_close = True`` to allow a
+    real close/teardown (e.g. when the owning node is deleted).
+    """
+
+    def eventFilter(self, obj, event):
+        try:
+            if (event.type() == QEvent.Type.Close
+                    and not getattr(obj, '_force_close', False)):
+                view = getattr(obj, '_owner_view', None)
+                if view is not None:
+                    capture_view_thumbnail(view)
+                else:
+                    capture_figure_thumbnail(getattr(obj, '_owner_node', None), obj)
+                event.ignore()
+                obj.hide()
+                return True
+        except Exception:
+            _itk_log.exception("Handled exception in _HideOnCloseFilter")
+        return False
+
+
+def _figure_alive(dlg):
+    """Return True if the dialog's underlying C++ object still exists."""
+    if dlg is None:
+        return False
+    try:
+        dlg.objectName()
+        return True
+    except RuntimeError:
+        return False
+
+
+def capture_figure_thumbnail(node, dlg):
+    """Grab a small snapshot of the figure's plot for the node hover preview.
+
+    Stored on the node as ``_figure_thumbnail`` (a QPixmap). Called after a
+    figure is shown and again when it is hidden, so the preview reflects the
+    user's latest view. Best-effort: never raises.
+    """
+    if node is None or dlg is None:
+        return
+    try:
+        widget = (getattr(dlg, 'pw', None)
+                  or getattr(dlg, 'plot_widget', None)
+                  or dlg.findChild(_FigureCanvasBase)
+                  or dlg)
+        pm = widget.grab()
+        if pm is None or pm.isNull():
+            return
+        node._figure_thumbnail = pm.scaledToWidth(400, Qt.SmoothTransformation)
+    except Exception:
+        _itk_log.exception("Handled exception in capture_figure_thumbnail")
+
+
+def _connect_thumb_refresh(node, dlg):
+    """Re-capture the thumbnail (debounced) whenever the figure changes."""
+    if getattr(dlg, '_thumb_refresh_connected', False):
+        return
+    try:
+        node.configuration_changed.connect(
+            lambda n=node, d=dlg: QTimer.singleShot(
+                450, lambda: capture_figure_thumbnail(n, d)))
+        dlg._thumb_refresh_connected = True
+    except Exception:
+        _itk_log.exception("Handled exception in _connect_thumb_refresh")
+
+
+def show_persistent_figure(node, factory, _parent_window=None):
+    """Open a node's figure, reusing one window and hiding (not killing) it.
+
+    The first call builds the dialog via ``factory()`` and caches it on the
+    node as ``_figure_dialog``; an event filter makes the window's close button
+    hide it. Later calls re-show that same window with all its state intact,
+    so a figure reopens exactly as the user left it (and nothing is destroyed,
+    which also avoids the PySide6 teardown segfault).
+    """
+    dlg = getattr(node, '_figure_dialog', None)
+    if not _figure_alive(dlg):
+        dlg = factory()
+        node._figure_dialog = dlg
+        flt = _HideOnCloseFilter(dlg)
+        dlg._hide_on_close_filter = flt
+        dlg.installEventFilter(flt)
+        _connect_thumb_refresh(node, dlg)
+        _itk_log.info("Figure window CREATED for %s", type(node).__name__)
+    else:
+        _itk_log.info("Figure window REUSED for %s", type(node).__name__)
+    dlg._owner_node = node
+    try:
+        dlg.setAttribute(Qt.WA_DontShowOnScreen, False)
+    except Exception:
+        pass
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()
+    QTimer.singleShot(350, lambda: capture_figure_thumbnail(node, dlg))
+    return dlg
+
+
+def prime_figure_thumbnail(node, factory):
+    """Build a figure off-screen once so its hover thumbnail exists before the
+    user opens it. The window is kept hidden and reused on the next real open.
+    """
+    if getattr(node, '_figure_thumbnail', None) is not None:
+        return
+    if getattr(node, '_figures', None):
+        return
+    if _figure_alive(getattr(node, '_figure_dialog', None)):
+        return
+    try:
+        dlg = factory()
+        node._figure_dialog = dlg
+        dlg._owner_node = node
+        flt = _HideOnCloseFilter(dlg)
+        dlg._hide_on_close_filter = flt
+        dlg.installEventFilter(flt)
+        _connect_thumb_refresh(node, dlg)
+        dlg.setAttribute(Qt.WA_DontShowOnScreen, True)
+        dlg.show()
+        QTimer.singleShot(300, lambda: _finish_prime(node, dlg))
+        _itk_log.info("Figure thumbnail PRIMED for %s", type(node).__name__)
+    except Exception:
+        _itk_log.exception("Handled exception in prime_figure_thumbnail")
+
+
+def _finish_prime(node, dlg):
+    """Capture the primed thumbnail, then keep the window hidden + ready.
+
+    If the user opened the figure for real during the off-screen build (which
+    clears WA_DontShowOnScreen), leave it visible instead of hiding it.
+    """
+    try:
+        capture_figure_thumbnail(node, dlg)
+    finally:
+        try:
+            if dlg.testAttribute(Qt.WA_DontShowOnScreen):
+                dlg.hide()
+                dlg.setAttribute(Qt.WA_DontShowOnScreen, False)
+        except Exception:
+            _itk_log.exception("Handled exception in _finish_prime")
+
+
+class _FigureView:
+    """One figure of a node: its own ``config``, shared underlying data.
+
+    Passed to a figure dialog in place of the node so several figures of the
+    same node can each keep independent settings. ``config`` is private to the
+    view; ``extract_plot_data`` runs the node's extraction with this view's
+    config swapped in; everything else delegates to the real node.
+    """
+
+    _OWN = frozenset({'_node', '_dialog_class', '_parent_window',
+                      'config', 'dialog', 'thumbnail'})
+
+    def __init__(self, node, dialog_class, parent_window, config=None):
+        self._node = node
+        self._dialog_class = dialog_class
+        self._parent_window = parent_window
+        base_cfg = config if config is not None else getattr(node, 'config', None)
+        self.config = _deep_copy_config(base_cfg)
+        self.dialog = None
+        self.thumbnail = None
+
+    def __setattr__(self, name, value):
+        """Keep config/dialog/thumbnail on the view; forward any other attribute
+        write to the real node so dialogs that set node attributes still work."""
+        if name in _FigureView._OWN:
+            object.__setattr__(self, name, value)
+            return
+        try:
+            node = object.__getattribute__(self, '_node')
+        except AttributeError:
+            node = None
+        if node is not None:
+            setattr(node, name, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def extract_plot_data(self, *args, **kwargs):
+        """Run the node's extraction with this view's config swapped in.
+
+        Nodes without a ``config`` attribute (e.g. Dashboard) are called through
+        unchanged.
+        """
+        n = self._node
+        if not hasattr(n, 'config'):
+            return n.extract_plot_data(*args, **kwargs)
+        saved = n.config
+        n.config = self.config
+        try:
+            return n.extract_plot_data(*args, **kwargs)
+        finally:
+            n.config = saved
+
+    def new_figure(self):
+        """Spawn another independent figure for the same node."""
+        return _add_node_figure(self._node, self._dialog_class,
+                                self._parent_window, base_config=self.config)
+
+    def __getattr__(self, name):
+        if name == '_node':
+            raise AttributeError(name)
+        return getattr(self._node, name)
+
+
+def _connect_view_thumb_refresh(view, dlg):
+    if getattr(dlg, '_thumb_refresh_connected', False):
+        return
+    try:
+        view._node.configuration_changed.connect(
+            lambda v=view: QTimer.singleShot(450, lambda: capture_view_thumbnail(v)))
+        dlg._thumb_refresh_connected = True
+    except Exception:
+        _itk_log.exception("Handled exception in _connect_view_thumb_refresh")
+
+
+def capture_view_thumbnail(view):
+    """Grab a thumbnail for one figure view (and mirror to the node)."""
+    dlg = getattr(view, 'dialog', None)
+    if dlg is None:
+        return
+    try:
+        widget = (getattr(dlg, 'pw', None)
+                  or getattr(dlg, 'plot_widget', None)
+                  or dlg.findChild(_FigureCanvasBase) or dlg)
+        pm = widget.grab()
+        if pm is None or pm.isNull():
+            return
+        view.thumbnail = pm.scaledToWidth(400, Qt.SmoothTransformation)
+        view._node._figure_thumbnail = view.thumbnail
+    except Exception:
+        _itk_log.exception("Handled exception in capture_view_thumbnail")
+
+
+def _open_view(view):
+    """Show a figure view's window, creating it on first open."""
+    dlg = getattr(view, 'dialog', None)
+    if not _figure_alive(dlg):
+        dlg = view._dialog_class(view, view._parent_window)
+        view.dialog = dlg
+        dlg._owner_view = view
+        flt = _HideOnCloseFilter(dlg)
+        dlg._hide_on_close_filter = flt
+        dlg.installEventFilter(flt)
+        _connect_view_thumb_refresh(view, dlg)
+    try:
+        dlg.setAttribute(Qt.WA_DontShowOnScreen, False)
+    except Exception:
+        pass
+    dlg.show()
+    dlg.raise_()
+    dlg.activateWindow()
+    QTimer.singleShot(350, lambda: capture_view_thumbnail(view))
+    return dlg
+
+
+def _add_node_figure(node, dialog_class, parent_window, base_config=None):
+    """Create a new figure view for the node, append it, and open it."""
+    figs = getattr(node, '_figures', None)
+    if figs is None:
+        figs = []
+        node._figures = figs
+    view = _FigureView(node, dialog_class, parent_window, config=base_config)
+    figs.append(view)
+    _itk_log.info("Figure ADDED (#%d) for %s", len(figs), type(node).__name__)
+    _open_view(view)
+    return view
+
+
+def open_node_figures(node, dialog_class, parent_window, always_new=False):
+    """Open a node figure. Double-click passes ``always_new=True`` so each
+    double-click spawns a new independent figure; closing one only hides it,
+    and it stays selectable from the node's hover fan.
+    """
+    figs = getattr(node, '_figures', None)
+    if always_new or not figs:
+        base = figs[-1].config if figs else None
+        return _add_node_figure(node, dialog_class, parent_window, base_config=base)
+    return _open_view(figs[0])
+
+
+def _encode_pixmap(pm):
+    """Encode a QPixmap to a base64 PNG string for saving (or None)."""
+    if pm is None or pm.isNull():
+        return None
+    try:
+        import base64
+        from PySide6.QtCore import QByteArray, QBuffer, QIODevice
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        pm.save(buf, 'PNG')
+        buf.close()
+        return base64.b64encode(bytes(ba.data())).decode('ascii')
+    except Exception:
+        _itk_log.exception("Handled exception in _encode_pixmap")
+        return None
+
+
+def _decode_pixmap(s):
+    """Decode a base64 PNG string from a saved project back to a QPixmap (or None)."""
+    if not s:
+        return None
+    try:
+        import base64
+        from PySide6.QtGui import QPixmap
+        pm = QPixmap()
+        pm.loadFromData(base64.b64decode(s), 'PNG')
+        return pm if not pm.isNull() else None
+    except Exception:
+        _itk_log.exception("Handled exception in _decode_pixmap")
+        return None
+
+
+def serialize_node_figures(node):
+    """Return a pickle-safe list describing a node's figures for project save.
+
+    Each entry is ``{'config': <settings dict>, 'thumb': <base64 PNG or None>}``
+    so a restored project shows each figure's real preview image, not just a
+    placeholder.
+    """
+    out = []
+    for v in (getattr(node, '_figures', None) or []):
+        out.append({
+            'config': dict(getattr(v, 'config', {}) or {}),
+            'thumb': _encode_pixmap(getattr(v, 'thumbnail', None)),
+        })
+    return out
+
+
+def rebuild_node_figures(node, dialog_class, parent_window, saved):
+    """Recreate a node's figures from saved data, without opening windows.
+
+    Accepts either the current ``{'config', 'thumb'}`` entries or, for older
+    projects, plain config dicts. Restores each figure's settings and (when
+    present) its saved thumbnail so the hover fan shows the real preview before
+    the figure is reopened. Returns the list of rebuilt views.
+    """
+    views = []
+    for item in (saved or []):
+        if isinstance(item, dict) and 'config' in item:
+            cfg = item.get('config') or {}
+            thumb = _decode_pixmap(item.get('thumb'))
+        else:
+            cfg = item or {}
+            thumb = None
+        try:
+            view = _FigureView(node, dialog_class, parent_window, config=cfg)
+            if thumb is not None:
+                view.thumbnail = thumb
+            views.append(view)
+        except Exception:
+            _itk_log.exception("Handled exception in rebuild_node_figures")
+    if views:
+        node._figures = views
+        last = getattr(views[-1], 'thumbnail', None)
+        if last is not None:
+            node._figure_thumbnail = last
+    return views
+
+
+def focus_node_figure(view):
+    """Bring a figure (picked from the hover fan) to the front."""
+    try:
+        _open_view(view)
+    except Exception:
+        _itk_log.exception("Handled exception in focus_node_figure")
+
+
+def close_node_figure(view):
+    """Close/remove a figure picked from the hover fan."""
+    try:
+        node = view._node
+        figs = getattr(node, '_figures', None)
+        if figs and view in figs:
+            figs.remove(view)
+        dlg = getattr(view, 'dialog', None)
+        if dlg is not None:
+            dlg._force_close = True
+            dlg.close()
+        view.dialog = None
+        node._figure_thumbnail = (getattr(figs[-1], 'thumbnail', None)
+                                  if figs else None)
+    except Exception:
+        _itk_log.exception("Handled exception in close_node_figure")
 
 
 def pick_color_hex(initial_color: str, owner=None,

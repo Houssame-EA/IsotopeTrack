@@ -1,17 +1,19 @@
 from PySide6.QtWidgets import (
     QDialog, QMenu, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QGraphicsView, QGraphicsScene,
-    QGraphicsItem, QLabel, QCheckBox,
+    QGraphicsItem, QGraphicsObject, QLabel, QCheckBox,
     QFrame, QScrollArea, QSplitter, QGraphicsWidget,
     QGraphicsEllipseItem, QApplication, QDialogButtonBox, QLineEdit, QToolTip,
     QSizePolicy
 )
 from PySide6.QtCore import (
-    Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject,
-    QTimer, QSize, QThread
+    Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject, QEvent, QRect,
+    QTimer, QSize, QThread,
+    QPropertyAnimation, QParallelAnimationGroup, QSequentialAnimationGroup,
+    QPauseAnimation, QEasingCurve,
 )
 from PySide6.QtGui import (
-    QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath,
+    QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath, QCursor,
     QLinearGradient, QFont, QPainterPathStroker, QRadialGradient,QFontMetrics,
     QShortcut, QKeySequence, QIcon, QTransform, QCursor, QWheelEvent
 )
@@ -308,7 +310,7 @@ class AnchorPoint(QGraphicsEllipseItem):
     def shape(self):
         """Creates an invisible, larger hitbox for easier clicking and dragging."""
         path = QPainterPath()
-        hitbox_radius = self.radius + 7
+        hitbox_radius = self.radius + 12
         path.addEllipse(QRectF(-hitbox_radius, -hitbox_radius, hitbox_radius * 2, hitbox_radius * 2))
         return path
 
@@ -323,6 +325,31 @@ class AnchorPoint(QGraphicsEllipseItem):
         self._apply_style(hover=False)
         self.setScale(1.0)
         super().hoverLeaveEvent(event)
+
+    def set_drag_target(self, state):
+        """Highlight this input port while a connection is being dragged.
+
+        state: 'none', 'candidate' (a valid drop target), or 'snap' (the wire
+        is about to connect here).
+        """
+        c = self._base_color
+        if state == 'snap':
+            grad = QRadialGradient(0, 0, self.radius * 1.7)
+            grad.setColorAt(0, c.lighter(185))
+            grad.setColorAt(1, c)
+            self.setBrush(QBrush(grad))
+            self.setPen(QPen(c.lighter(160), 2.8))
+            self.setScale(1.6)
+        elif state == 'candidate':
+            grad = QRadialGradient(0, 0, self.radius * 1.35)
+            grad.setColorAt(0, c.lighter(165))
+            grad.setColorAt(1, c)
+            self.setBrush(QBrush(grad))
+            self.setPen(QPen(c.lighter(140), 2.2))
+            self.setScale(1.28)
+        else:
+            self._apply_style(hover=False)
+            self.setScale(1.0)
 
 class NodeItem(QGraphicsWidget):
 
@@ -348,6 +375,12 @@ class NodeItem(QGraphicsWidget):
 
     def paint_icon_node(self, painter, grad_colors, icon_name, label_text,
                         badge_text="", badge_color=None):
+        """Paint a circular icon node with its label.
+
+        When ``badge_text`` is given it is drawn as a small rounded pill on the
+        upper-right of the circle (used to show how many figures a viz node has
+        open).
+        """
         painter.setRenderHint(QPainter.Antialiasing)
 
         d = self.icon_d
@@ -436,11 +469,22 @@ class NodeItem(QGraphicsWidget):
 
         if badge_text:
             bc = QColor(badge_color) if badge_color else QColor(DS.TEXT_MUTED)
-            dot_x = cx + r * 0.6
-            dot_y = cy + r * 0.6
+            t = str(badge_text)
+            f = QFont(DS.FONT_FAMILY)
+            f.setPixelSize(11)
+            f.setBold(True)
+            tw = QFontMetrics(f).horizontalAdvance(t)
+            bh = 18
+            bw = max(bh, tw + 11)
+            bx = cx + r * 0.62
+            by = cy - r * 0.62
+            rect = QRectF(bx - bw / 2, by - bh / 2, bw, bh)
             painter.setPen(QPen(QColor(_app_theme.palette.bg_primary), 2))
             painter.setBrush(bc)
-            painter.drawEllipse(QPointF(dot_x, dot_y), 6, 6)
+            painter.drawRoundedRect(rect, bh / 2, bh / 2)
+            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(f)
+            painter.drawText(rect, Qt.AlignCenter, t)
 
     def paint(self, painter, option, widget=None):
         self.paint_icon_node(
@@ -1783,9 +1827,22 @@ class BatchSampleSelectorNode(WorkflowNode):
         self._has_output = True
         self.output_channels = ["output"]
         self.selected_windows = []
+        self._saved_output_snapshot = None
 
     def get_output_data(self):
+        """Combined dataset for the selected windows.
+
+        Aggregates live data from the currently selected windows. When no live
+        windows are linked (e.g. after reopening a single-window project that
+        baked the batch results), the saved output snapshot is replayed instead.
+        Returns None when there is neither live selection nor a snapshot.
+        """
         if not self.selected_windows:
+            snap = getattr(self, '_saved_output_snapshot', None)
+            if snap:
+                out = dict(snap)
+                out['parent_window'] = self.parent_window
+                return out
             return None
         names, particles, data, isos = [], [], {}, {}
         concentration_meta = {}
@@ -1820,19 +1877,28 @@ class BatchSampleSelectorNode(WorkflowNode):
         }
 
     def configure(self, parent_window):
-        dlg = BatchSampleSelectorDialog(parent_window,
-                                        previously_selected=self.selected_windows)
+        """Open the window selector; selecting live windows rebuilds the batch.
+
+        When a saved batch snapshot was loaded from a project, it is shown in the
+        dialog and kept as-is unless the user selects live windows, in which case
+        the batch switches back to live aggregation.
+        """
+        dlg = BatchSampleSelectorDialog(
+            parent_window,
+            previously_selected=self.selected_windows,
+            saved_snapshot=self._saved_output_snapshot)
         if dlg.exec() == QDialog.Accepted:
             sel = dlg.get_selection()
             if sel:
                 self.selected_windows = sel
+                self._saved_output_snapshot = None
                 self.configuration_changed.emit()
                 return True
         return False
 
 
 class BatchSampleSelectorDialog(QDialog):
-    def __init__(self, parent_window, previously_selected=None):
+    def __init__(self, parent_window, previously_selected=None, saved_snapshot=None):
         super().__init__(parent_window)
         self.setWindowTitle("Batch Window Selector")
         self.setModal(True)
@@ -1844,6 +1910,7 @@ class BatchSampleSelectorDialog(QDialog):
 
         self.parent_window = parent_window
         self.previously_selected = previously_selected or []
+        self.saved_snapshot = saved_snapshot
         self.all_windows = _collect_main_windows()
         self.window_checkboxes = []
         self._build()
@@ -1856,6 +1923,23 @@ class BatchSampleSelectorDialog(QDialog):
         hdr = QLabel("Select Windows to Include")
         hdr.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {DS.TEXT_PRIMARY};")
         layout.addWidget(hdr)
+
+        if self.saved_snapshot:
+            p = _app_theme.palette
+            snap = self.saved_snapshot
+            ns = len(snap.get('sample_names', []) or [])
+            npart = len(snap.get('particle_data', []) or [])
+            nwin = snap.get('source_windows', 0)
+            banner = QLabel(
+                f"✓  Saved batch results kept: {nwin} window(s) · {ns} samples "
+                f"· {npart:,} particles, loaded from the saved project. They stay "
+                f"connected as-is. Select windows below only if you want to rebuild "
+                f"the batch from the currently open windows instead.")
+            banner.setWordWrap(True)
+            banner.setStyleSheet(
+                f"padding:10px; background:{p.accent_soft}; border:1px solid {p.accent};"
+                f" border-radius:6px; color:{p.text_primary}; font-weight:600;")
+            layout.addWidget(banner)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1899,7 +1983,16 @@ class BatchSampleSelectorDialog(QDialog):
     def _preview(self):
         p = _app_theme.palette
         sel = [cb for cb in self.window_checkboxes if cb.isChecked()]
-        if not sel:
+        if not sel and self.saved_snapshot:
+            snap = self.saved_snapshot
+            ns = len(snap.get('sample_names', []) or [])
+            self.preview_label.setText(
+                f"Keeping saved batch results · {snap.get('source_windows', 0)} "
+                f"window(s) · {ns} samples")
+            self.preview_label.setStyleSheet(
+                f"padding:12px; background:{p.accent_soft}; border:1px solid {p.accent};"
+                f" border-radius:6px; color:{p.text_primary}; font-weight:bold;")
+        elif not sel:
             self.preview_label.setText("No windows selected")
             self.preview_label.setStyleSheet(
                 f"padding:12px; background:{p.bg_tertiary}; border:1px solid {p.border};"
@@ -2104,7 +2197,7 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         tw = self._tooltip_widget
         x = pos.x() + 14
         y = pos.y() - tw.height() - 8
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = (QApplication.screenAt(pos) or QApplication.primaryScreen()).availableGeometry()
         if x + tw.width() > screen.right():
             x = pos.x() - tw.width() - 14
         if y < screen.top():
@@ -2245,6 +2338,310 @@ class ModernNodeTooltip(QWidget):
                 y += fm.height() + 4
 
         p.end()
+
+
+class FigurePreviewPopup(QWidget):
+    """Small framed thumbnail preview of a node's figure, shown on hover.
+
+    Styled like the figure cards in the spread prototype: a compact white card
+    with rounded corners, a soft drop shadow and the plot tucked inside.
+    """
+
+    _PAD = 13
+    _INNER = 7
+    _WIDTH = 190
+    _RADIUS = 12
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._pm = None
+        self._accent = QColor("#38BDF8")
+
+    def set_pixmap(self, pm, accent=None):
+        """Set the preview thumbnail and resize the card to fit it."""
+        if accent:
+            self._accent = QColor(accent)
+        if pm is not None and not pm.isNull():
+            self._pm = pm.scaledToWidth(self._WIDTH, Qt.SmoothTransformation)
+            card_w = self._pm.width() + self._INNER * 2
+            card_h = self._pm.height() + self._INNER * 2
+            self.setFixedSize(card_w + self._PAD * 2, card_h + self._PAD * 2)
+        else:
+            self._pm = None
+        self.update()
+
+    def paintEvent(self, event):
+        """Paint a soft-shadowed white card with the figure thumbnail inside."""
+        if self._pm is None or self._pm.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        pad = self._PAD
+        card = QRectF(pad, pad, self.width() - pad * 2, self.height() - pad * 2)
+        r = self._RADIUS
+
+        p.setPen(Qt.NoPen)
+        for i in range(10, 0, -1):
+            p.setBrush(QColor(0, 0, 0, 7))
+            p.drawRoundedRect(card.adjusted(-i, -i + 1, i, i + 3), r + i, r + i)
+
+        p.setBrush(QColor(255, 255, 255))
+        p.drawRoundedRect(card, r, r)
+
+        inner = card.adjusted(self._INNER, self._INNER, -self._INNER, -self._INNER)
+        clip = QPainterPath()
+        clip.addRoundedRect(inner, 6, 6)
+        p.save()
+        p.setClipPath(clip)
+        p.drawPixmap(inner.toRect(), self._pm)
+        p.restore()
+
+        p.setPen(QPen(QColor(226, 230, 238), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(card, r, r)
+        p.end()
+
+
+class _FanCardItem(QGraphicsObject):
+    """One animated figure card in the hover fan (rotates/scales into place)."""
+
+    selected = Signal(object)
+    killed = Signal(object)
+
+    def __init__(self, view, accent, pm):
+        super().__init__()
+        self.view = view
+        self._accent = QColor(accent)
+        self._pm = pm
+        self.w = pm.width() + 12
+        self.h = pm.height() + 12
+        self.setOpacity(0.0)
+        self.setScale(0.55)
+        self.setZValue(1)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self._x_rect = QRectF(self.w / 2 - 24, -self.h / 2 + 6, 19, 19)
+        self._seq = None
+        self._hover_anim = None
+        self._base_scale = 1.0
+        self._base_z = 1
+
+    def boundingRect(self):
+        return QRectF(-self.w / 2 - 2, -self.h / 2 - 2, self.w + 4, self.h + 4)
+
+    def paint(self, p, opt, widget=None):
+        """Draw the white card, the clipped plot image, the accent border and
+        the corner close (✕) button."""
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        rect = QRectF(-self.w / 2, -self.h / 2, self.w, self.h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255))
+        p.drawRoundedRect(rect, 10, 10)
+        inner = rect.adjusted(6, 6, -6, -6)
+        clip = QPainterPath()
+        clip.addRoundedRect(inner, 6, 6)
+        p.save()
+        p.setClipPath(clip)
+        p.drawPixmap(inner.toRect(), self._pm)
+        p.restore()
+        bc = QColor(self._accent)
+        bc.setAlpha(170)
+        p.setPen(QPen(bc, 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(rect, 10, 10)
+        xr = self._x_rect
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(0, 0, 0, 140))
+        p.drawEllipse(xr)
+        p.setPen(QPen(QColor(255, 255, 255), 1.6))
+        p.drawLine(QPointF(xr.left() + 6, xr.top() + 6), QPointF(xr.right() - 6, xr.bottom() - 6))
+        p.drawLine(QPointF(xr.right() - 6, xr.top() + 6), QPointF(xr.left() + 6, xr.bottom() - 6))
+
+    def mousePressEvent(self, event):
+        """Emit ``killed`` when the ✕ is clicked, otherwise ``selected``."""
+        if self._x_rect.contains(event.pos()):
+            self.killed.emit(self.view)
+        else:
+            self.selected.emit(self.view)
+        event.accept()
+
+    def hoverEnterEvent(self, event):
+        self.setZValue(100)
+        self._scale_to(self._base_scale * 1.14)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setZValue(self._base_z)
+        self._scale_to(self._base_scale)
+        super().hoverLeaveEvent(event)
+
+    def _scale_to(self, scale):
+        """Animate the card to ``scale`` (used for the hover pop)."""
+        a = QPropertyAnimation(self, b"scale")
+        a.setDuration(140)
+        a.setEndValue(float(scale))
+        a.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._hover_anim = a
+        a.start()
+
+    def animate_to(self, pos, rot, scale, opac, delay, dur=440):
+        """Animate position, rotation, scale and opacity together (after an
+        optional stagger ``delay``) to fan the card into place."""
+        self._base_scale = float(scale)
+        if self._seq:
+            self._seq.stop()
+        grp = QParallelAnimationGroup()
+        for prop, end in ((b"pos", pos), (b"rotation", float(rot)),
+                          (b"scale", float(scale)), (b"opacity", float(opac))):
+            an = QPropertyAnimation(self, prop)
+            an.setDuration(dur)
+            an.setEndValue(end)
+            an.setEasingCurve(QEasingCurve.Type.OutCubic)
+            grp.addAnimation(an)
+        if delay > 0:
+            seq = QSequentialAnimationGroup()
+            seq.addAnimation(QPauseAnimation(int(delay)))
+            seq.addAnimation(grp)
+            self._seq = seq
+        else:
+            self._seq = grp
+        self._seq.start()
+
+
+class FigureFanPopup(QWidget):
+    """Hover fan of a node's open figures: spread, animated cards you pick/kill.
+
+    Mirrors the spread prototype: cards emerge from a pivot near the node and
+    fan out (rotation + scale + fade), staggered.
+    """
+
+    select_figure = Signal(object)
+    close_figure = Signal(object)
+
+    ANGLE = 110.0
+    DISTANCE = 80.0
+    STAGGER = 110
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self._gview = QGraphicsView(self)
+        self._gview.setFrameShape(QFrame.NoFrame)
+        self._gview.setStyleSheet("background: transparent; border: none;")
+        self._gview.setRenderHint(QPainter.Antialiasing)
+        self._gview.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._gview.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._gview.setAttribute(Qt.WA_TranslucentBackground)
+        self._gview.viewport().setAttribute(Qt.WA_TranslucentBackground)
+        self._scene = QGraphicsScene(self)
+        self._gview.setScene(self._scene)
+        self._gview.viewport().installEventFilter(self)
+        self._cards = []
+        self.on_enter = None
+        self.on_leave = None
+
+    def eventFilter(self, obj, event):
+        """Forward viewport enter/leave to the on_enter/on_leave callbacks."""
+        if obj is self._gview.viewport():
+            if event.type() == QEvent.Type.Enter and self.on_enter:
+                self.on_enter()
+            elif event.type() == QEvent.Type.Leave and self.on_leave:
+                self.on_leave()
+        return False
+
+    def has_cards(self):
+        """True if the fan currently holds any figure cards."""
+        return bool(self._cards)
+
+    def _placeholder_pixmap(self, w, idx, accent):
+        """A neutral 'Figure N' card image for a restored figure with no thumbnail."""
+        h = int(w * 0.72)
+        pm = QPixmap(w, h)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(245, 247, 250))
+        p.drawRoundedRect(0, 0, w, h, 8, 8)
+        ac = QColor(accent)
+        ac.setAlpha(70)
+        p.setPen(QPen(ac, 1.4))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(1, 1, w - 2, h - 2, 8, 8)
+        p.setPen(QColor(120, 130, 145))
+        f = QFont(DS.FONT_FAMILY)
+        f.setPixelSize(max(11, int(w * 0.1)))
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, f"Figure {idx}")
+        p.end()
+        return pm
+
+    def set_views(self, views, accent, zoom=1.0):
+        """Build one card per figure view and fan them out around a pivot.
+
+        Cards are sized to the canvas zoom, laid out along an arc of ``ANGLE``
+        degrees at radius ``DISTANCE`` and animated into place with a per-card
+        ``STAGGER`` delay.
+        """
+        import math
+        for c in self._cards:
+            try:
+                self._scene.removeItem(c)
+            except Exception:
+                pass
+        self._cards = []
+        z = max(0.65, min(1.6, zoom))
+        thumb_w = int(150 * z)
+        data = []
+        for idx, v in enumerate(views, 1):
+            pm = getattr(v, 'thumbnail', None)
+            if pm is None or pm.isNull():
+                spm = self._placeholder_pixmap(thumb_w, idx, accent)
+            else:
+                spm = pm.scaledToWidth(thumb_w, Qt.SmoothTransformation)
+            data.append((v, spm))
+        n = len(data)
+        if n == 0:
+            self.setFixedSize(1, 1)
+            return
+        cw = data[0][1].width() + 12
+        ch = data[0][1].height() + 12
+        R = self.DISTANCE * z
+        half = math.radians(self.ANGLE / 2.0)
+        span_w = 2.0 * (R * math.sin(half)) + cw + 40
+        W = int(max(cw + 50, span_w))
+        H = int(R + ch + 44)
+        self.setFixedSize(W, H)
+        self._gview.setGeometry(0, 0, W, H)
+        self._scene.setSceneRect(0, 0, W, H)
+        pivot = QPointF(W / 2.0, H - ch / 2.0 - 10)
+        for i, (v, spm) in enumerate(data):
+            card = _FanCardItem(v, accent, spm)
+            card.selected.connect(self.select_figure)
+            card.killed.connect(self.close_figure)
+            self._scene.addItem(card)
+            card.setPos(pivot)
+            self._cards.append(card)
+            t = 0.0 if n == 1 else (i - (n - 1) / 2.0) / (n - 1)
+            ang = t * self.ANGLE
+            rad = math.radians(ang)
+            cx = pivot.x() + R * math.sin(rad)
+            cy = pivot.y() - R * math.cos(rad)
+            card.animate_to(QPointF(cx, cy), ang, 1.0, 1.0, delay=i * self.STAGGER)
+
+    def enterEvent(self, event):
+        if self.on_enter:
+            self.on_enter()
+
+    def leaveEvent(self, event):
+        if self.on_leave:
+            self.on_leave()
 
 
 class StickyNoteItem(QGraphicsWidget):
@@ -2497,7 +2894,7 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         tw = self._tooltip_widget
         x = pos.x() + 14
         y = pos.y() - tw.height() - 8
-        screen = QApplication.primaryScreen().availableGeometry()
+        screen = (QApplication.screenAt(pos) or QApplication.primaryScreen()).availableGeometry()
         if x + tw.width() > screen.right():
             x = pos.x() - tw.width() - 14
         if y < screen.top():
@@ -2534,7 +2931,7 @@ class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     def paint(self, painter, option, widget=None):
         wf = self.workflow_node
         badge, bc = "", None
-        if wf.selected_windows:
+        if wf.selected_windows or getattr(wf, '_saved_output_snapshot', None):
             badge, bc = "✓", DS.SUCCESS
         else:
             badge, bc = "!", DS.ERROR
@@ -2555,7 +2952,7 @@ class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         if self.parent_window:
             self.workflow_node.configure(self.parent_window)
 
-def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class):
+def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class, multi_figure=False):
     """Factory: creates a circular icon node for each visualization type."""
 
     class VizIconNodeItem(NodeItem):
@@ -2563,85 +2960,339 @@ def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class):
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
+            self.setAcceptHoverEvents(True)
+            self._accent = grad_colors[0]
+            self._preview_timer = QTimer()
+            self._preview_timer.setSingleShot(True)
+            self._preview_timer.timeout.connect(self._show_preview)
+            self._watch_timer = QTimer()
+            self._watch_timer.setInterval(120)
+            self._watch_timer.timeout.connect(self._watch_cursor)
+            self._preview_pos = None
+            self._prime_attempted = False
+            self._preview_popup = FigurePreviewPopup()
+            self._preview_popup.hide()
+            if multi_figure:
+                self._fan = FigureFanPopup()
+                self._fan.hide()
+                self._fan.select_figure.connect(self._focus_figure)
+                self._fan.close_figure.connect(self._close_figure)
+                self._restore_saved_figures(wf)
+            else:
+                self._fan = None
+
+        def _restore_saved_figures(self, wf):
+            """Rebuild figures saved with the project (no windows opened yet)."""
+            stashed = getattr(wf, '_restored_figure_configs', None)
+            if not stashed:
+                return
+            wf._restored_figure_configs = None
+            try:
+                from results.shared_plot_utils import rebuild_node_figures
+                rebuild_node_figures(wf, dialog_class, self.parent_window, stashed)
+                self.update()
+            except Exception:
+                _itk_log.exception("Handled exception in _restore_saved_figures")
 
         def paint(self, painter, option, widget=None):
-            self.paint_icon_node(painter, grad_colors, icon_name, label)
+            if multi_figure:
+                n = len(getattr(self.workflow_node, '_figures', []) or [])
+                badge = str(n) if n else ""
+                bc = QColor(grad_colors[0]) if n else None
+                self.paint_icon_node(painter, grad_colors, icon_name, label, badge, bc)
+            else:
+                self.paint_icon_node(painter, grad_colors, icon_name, label)
 
         def configure_node(self):
+            """Open the node's figure on double-click.
+
+            For multi-figure nodes each call opens a new independent figure;
+            closing one only hides it, so it stays selectable from the hover
+            fan. Single-figure nodes reuse one persistent dialog.
+            """
             ual = _ual()
             if ual:
                 ual.log_action('DIALOG_OPEN', f'Opened viz node: {label}',
                             {'node_type': self.workflow_node.node_type,
                                 'dialog': dialog_class.__name__})
-            self._active_dialog = dialog_class(self.workflow_node, self.parent_window)
-            self._active_dialog.show()
+            if multi_figure:
+                from results.shared_plot_utils import open_node_figures
+                self._active_dialog = open_node_figures(
+                    self.workflow_node, dialog_class, self.parent_window,
+                    always_new=True)
+                self.update()
+            else:
+                from results.shared_plot_utils import show_persistent_figure
+                self._active_dialog = show_persistent_figure(
+                    self.workflow_node,
+                    lambda: dialog_class(self.workflow_node, self.parent_window))
+
+        def _figure_views(self):
+            """Return all of this node's figure views (live or restored)."""
+            return list(getattr(self.workflow_node, '_figures', []) or [])
+
+        def _current_zoom(self):
+            try:
+                vs = self.scene().views()
+                if vs:
+                    return vs[0].transform().m11()
+            except Exception:
+                pass
+            return 1.0
+
+        def _screen_geo(self, pt):
+            """Available geometry of the screen under ``pt``.
+
+            Resolves the monitor the cursor/node is actually on so popups land
+            on the correct display in a multi-monitor setup, falling back to the
+            primary screen.
+            """
+            scr = None
+            try:
+                if pt is not None:
+                    scr = QApplication.screenAt(pt)
+            except Exception:
+                scr = None
+            if scr is None:
+                scr = QApplication.primaryScreen()
+            return scr.availableGeometry()
+
+        def _show_preview(self):
+            """Show the hover preview for this node.
+
+            Multi-figure nodes with open figures fan them out; otherwise a
+            single thumbnail is shown. This single path also serves a multi
+            node before any figure exists, so a freshly-connected node previews
+            automatically, priming the thumbnail off-screen when missing.
+            """
+            try:
+                if not self.isUnderMouse() or self._preview_pos is None:
+                    return
+                if multi_figure and self._figure_views():
+                    self._show_fan()
+                    return
+                pm = getattr(self.workflow_node, '_figure_thumbnail', None)
+                if pm is None or pm.isNull():
+                    if self._prime_thumbnail():
+                        self._preview_timer.start(600)
+                    return
+                tw = self._preview_popup
+                tw.set_pixmap(pm, self._accent)
+                pos = self._preview_pos
+                x = pos.x() + 18
+                y = pos.y() - tw.height() - 10
+                screen = self._screen_geo(pos)
+                if x + tw.width() > screen.right():
+                    x = pos.x() - tw.width() - 18
+                if y < screen.top():
+                    y = pos.y() + 22
+                tw.move(int(x), int(y))
+                tw.show()
+                tw.raise_()
+                self._start_watch()
+            except Exception:
+                _itk_log.exception("Handled exception in _show_preview")
+
+        def _show_fan(self):
+            """Position and show the hover fan above the node, on-screen-clamped."""
+            views = self._figure_views()
+            if not views:
+                return
+            fan = self._fan
+            fan.set_views(views, self._accent, self._current_zoom())
+            if not fan.has_cards():
+                return
+            pos = self._preview_pos
+            x = pos.x() - fan.width() // 2
+            y = pos.y() - fan.height() - 12
+            screen = self._screen_geo(pos)
+            x = max(screen.left() + 8, min(x, screen.right() - fan.width() - 8))
+            if y < screen.top() + 8:
+                y = pos.y() + 24
+            fan.move(int(x), int(y))
+            fan.show()
+            fan.raise_()
+            self._start_watch()
+
+        def _focus_figure(self, view):
+            """Bring the figure picked from the fan to the front."""
+            try:
+                from results.shared_plot_utils import focus_node_figure
+                focus_node_figure(view)
+                if self._fan is not None:
+                    self._fan.raise_()
+            except Exception:
+                _itk_log.exception("Handled exception in _focus_figure")
+
+        def _close_figure(self, view):
+            """Kill the figure picked from the fan, then refresh or hide the fan."""
+            try:
+                from results.shared_plot_utils import close_node_figure
+                close_node_figure(view)
+                self.update()
+                views = self._figure_views()
+                if views:
+                    self._fan.set_views(views, self._accent, self._current_zoom())
+                else:
+                    self._do_hide()
+            except Exception:
+                _itk_log.exception("Handled exception in _close_figure")
+
+        def _prime_thumbnail(self):
+            """Build the figure off-screen once (if it has data) so a preview
+            exists before the user opens it. Returns True if a build started."""
+            if self._prime_attempted:
+                return False
+            wf = self.workflow_node
+            if getattr(wf, 'input_data', None) is None:
+                return False
+            self._prime_attempted = True
+            try:
+                from results.shared_plot_utils import prime_figure_thumbnail
+                prime_figure_thumbnail(
+                    wf, lambda: dialog_class(wf, self.parent_window))
+                return True
+            except Exception:
+                _itk_log.exception("Handled exception in _prime_thumbnail")
+                return False
+
+        def _node_screen_rect(self):
+            """This node's bounding box in global screen coordinates."""
+            try:
+                vs = self.scene().views()
+                if not vs:
+                    return None
+                view = vs[0]
+                r = view.mapFromScene(self.sceneBoundingRect()).boundingRect()
+                tl = view.viewport().mapToGlobal(r.topLeft())
+                return QRect(tl.x(), tl.y(), r.width(), r.height())
+            except Exception:
+                return None
+
+        def _start_watch(self):
+            if not self._watch_timer.isActive():
+                self._watch_timer.start()
+
+        def _watch_cursor(self):
+            """Hide the popup once the cursor leaves the node and popup areas.
+
+            Keeps the preview/fan open while the cursor is within a small margin
+            of either the node or any visible popup, so the user can move onto
+            the popup without it vanishing.
+            """
+            try:
+                cur = QCursor.pos()
+                m = 28
+                over = False
+                nr = self._node_screen_rect()
+                if nr is not None and nr.adjusted(-m, -m, m, m).contains(cur):
+                    over = True
+                for popup in (self._fan, self._preview_popup):
+                    if popup is not None and popup.isVisible():
+                        if popup.geometry().adjusted(-m, -m, m, m).contains(cur):
+                            over = True
+                if not over:
+                    self._do_hide()
+            except Exception:
+                _itk_log.exception("Handled exception in _watch_cursor")
+
+        def _do_hide(self):
+            try:
+                self._watch_timer.stop()
+                if self._fan is not None:
+                    self._fan.hide()
+                if self._preview_popup is not None:
+                    self._preview_popup.hide()
+            except Exception:
+                _itk_log.exception("Handled exception in _do_hide")
+
+        def _popup_visible(self):
+            return ((self._fan is not None and self._fan.isVisible())
+                    or (self._preview_popup is not None
+                        and self._preview_popup.isVisible()))
+
+        def hoverEnterEvent(self, event):
+            super().hoverEnterEvent(event)
+            self._preview_pos = event.screenPos()
+            self._preview_timer.start(350)
+
+        def hoverMoveEvent(self, event):
+            super().hoverMoveEvent(event)
+            self._preview_pos = event.screenPos()
+            if not self._popup_visible():
+                self._preview_timer.start(350)
+
+        def hoverLeaveEvent(self, event):
+            """Stop the open timer; the cursor-watch timer handles hiding."""
+            self._preview_timer.stop()
+            super().hoverLeaveEvent(event)
 
     VizIconNodeItem.__name__ = f"{label.replace(' ', '').replace('/', '')}IconNodeItem"
     return VizIconNodeItem
 
 HistogramPlotNodeItem = _make_viz_icon_node(
     ("#F97316", "#C2410C"), "fa6s.chart-column", "Histogram",
-    HistogramDisplayDialog)
+    HistogramDisplayDialog, multi_figure=True)
 
 ElementBarChartPlotNodeItem = _make_viz_icon_node(
     ("#EF4444", "#B91C1C"), "fa6s.chart-bar", "Bar Chart",
-    ElementBarChartDisplayDialog)
+    ElementBarChartDisplayDialog, multi_figure=True)
 
 BoxPlotNodeItem = _make_viz_icon_node(
     ("#8B5CF6", "#6D28D9"), "fa6s.chart-simple", "Box Plot",
-    BoxPlotDisplayDialog)
+    BoxPlotDisplayDialog, multi_figure=True)
 
 CorrelationPlotNodeItem = _make_viz_icon_node(
     ("#EC4899", "#BE185D"), "fa6s.chart-line", "Correlation",
-    CorrelationPlotDisplayDialog)
+    CorrelationPlotDisplayDialog, multi_figure=True)
 
 PieChartPlotNodeItem = _make_viz_icon_node(
     ("#14B8A6", "#0F766E"), "fa6s.chart-pie", "Pie Chart",
-    PieChartDisplayDialog)
+    PieChartDisplayDialog, multi_figure=True)
 
 ElementCompositionPlotNodeItem = _make_viz_icon_node(
     ("#06B6D4", "#0E7490"), "fa6s.circle-half-stroke", "Composition",
-    ElementCompositionDisplayDialog)
+    ElementCompositionDisplayDialog, multi_figure=True)
 
 HeatmapPlotNodeItem = _make_viz_icon_node(
     ("#F59E0B", "#B45309"), "fa6s.fire", "Heatmap",
-    HeatmapDisplayDialog)
+    HeatmapDisplayDialog, multi_figure=True)
 
 MolarRatioPlotNodeItem = _make_viz_icon_node(
     ("#6366F1", "#4338CA"), "fa6s.divide", "Molar Ratio",
-    MolarRatioDisplayDialog)
+    MolarRatioDisplayDialog, multi_figure=True)
 
 IsotopicRatioPlotNodeItem = _make_viz_icon_node(
     ("#A855F7", "#7E22CE"), "fa6s.atom", "Isotope Ratio",
-    IsotopicRatioDisplayDialog)
+    IsotopicRatioDisplayDialog, multi_figure=True)
 
 TrianglePlotNodeItem = _make_viz_icon_node(
     ("#22C55E", "#15803D"), "fa6s.play", "Ternary",
-    TriangleDisplayDialog)
+    TriangleDisplayDialog, multi_figure=True)
 
 SingleMultipleElementPlotNodeItem = _make_viz_icon_node(
     ("#3B82F6", "#1D4ED8"), "fa6s.layer-group", "Single/Multi",
-    SingleMultipleElementDisplayDialog)
+    SingleMultipleElementDisplayDialog, multi_figure=True)
 
 ClusteringPlotNodeItem = _make_viz_icon_node(
     ("#0EA5E9", "#0369A1"), "fa6s.circle-nodes", "Clustering",
-    ClusteringDisplayDialog)
+    ClusteringDisplayDialog, multi_figure=True)
 
 CorrelationMatrixNodeItem = _make_viz_icon_node(
     ("#F43F5E", "#BE123C"), "fa6s.table-cells", "Corr. Matrix",
-    CorrelationMatrixDisplayDialog)
+    CorrelationMatrixDisplayDialog, multi_figure=True)
 
 ConcentrationComparisonNodeItem = _make_viz_icon_node(
     ("#8B5CF6", "#6D28D9"), "fa6s.arrows-left-right", "Concentration",
-    ConcentrationDisplayDialog)
+    ConcentrationDisplayDialog, multi_figure=True)
 
 NetworkDiagramNodeItem = _make_viz_icon_node(
     ("#14B8A6", "#0F766E"), "fa6s.diagram-project", "Network",
-    NetworkDisplayDialog)
+    NetworkDisplayDialog, multi_figure=True)
 
 DashboardNodeItem = _make_viz_icon_node(
     ("#3B82F6", "#1D4ED8"), "fa6s.gauge-high", "Dashboard",
-    DashboardDisplayDialog)
+    DashboardDisplayDialog, multi_figure=True)
 
 
 class AIAssistantNodeItem(NodeItem):
@@ -3159,8 +3810,22 @@ class EnhancedCanvasScene(QGraphicsScene):
 
     def mouseMoveEvent(self, event):
         if self.dragging_connection and self.temp_link_item:
-            if self.temp_link_item.sink_anchor:
-                self.temp_link_item.sink_anchor.setPos(event.scenePos())
+            pos = event.scenePos()
+            near = self._nearest_candidate(pos, 70)
+            if near is not None:
+                if getattr(self, '_snap_anchor', None) is not near:
+                    if getattr(self, '_snap_anchor', None) is not None:
+                        self._snap_anchor.set_drag_target('candidate')
+                    near.set_drag_target('snap')
+                    self._snap_anchor = near
+                if self.temp_link_item.sink_anchor:
+                    self.temp_link_item.sink_anchor.setPos(near.scenePos())
+            else:
+                if getattr(self, '_snap_anchor', None) is not None:
+                    self._snap_anchor.set_drag_target('candidate')
+                    self._snap_anchor = None
+                if self.temp_link_item.sink_anchor:
+                    self.temp_link_item.sink_anchor.setPos(pos)
         else:
             super().mouseMoveEvent(event)
 
@@ -3170,7 +3835,26 @@ class EnhancedCanvasScene(QGraphicsScene):
         else:
             super().mouseReleaseEvent(event)
 
+    def _nearest_candidate(self, pos, radius):
+        """Closest highlighted input anchor to ``pos`` within ``radius``, or None."""
+        best, bestd = None, float(radius) * float(radius)
+        for a in getattr(self, '_candidate_anchors', []):
+            try:
+                ap = a.scenePos()
+                dx, dy = ap.x() - pos.x(), ap.y() - pos.y()
+                d = dx * dx + dy * dy
+                if d < bestd:
+                    bestd, best = d, a
+            except Exception:
+                pass
+        return best
+
     def _start_drag(self, anchor, pos):
+        """Begin a connection drag from ``anchor``.
+
+        Every valid input anchor on other nodes is highlighted as a candidate
+        drop target so the connection is easy to land.
+        """
         self.dragging_connection = True
         self.drag_start_anchor = anchor
         self.temp_link_item = LinkItem()
@@ -3181,19 +3865,41 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.addItem(ta)
         self.temp_link_item.set_sink_anchor(ta)
         self.addItem(self.temp_link_item)
+        src_node = anchor.parentItem()
+        self._candidate_anchors = [
+            it for it in self.items()
+            if isinstance(it, AnchorPoint) and it.is_input
+            and it.parentItem() is not None and it.parentItem() is not src_node]
+        for a in self._candidate_anchors:
+            a.set_drag_target('candidate')
+        self._snap_anchor = None
 
     def _end_drag(self, pos):
+        """Finish a connection drag.
+
+        Connects to whatever the wire snapped to, or the nearest candidate port,
+        so the user need not release exactly on the small anchor dot.
+        """
+        target = getattr(self, '_snap_anchor', None) or self._nearest_candidate(pos, 70)
+        for a in getattr(self, '_candidate_anchors', []):
+            try:
+                a.set_drag_target('none')
+            except Exception:
+                pass
+        self._candidate_anchors = []
+        self._snap_anchor = None
+
         if self.temp_link_item:
             if self.temp_link_item.sink_anchor:
                 self.removeItem(self.temp_link_item.sink_anchor)
             self.removeItem(self.temp_link_item)
             self.temp_link_item = None
 
-        target = None
-        for item in self.items(pos, Qt.IntersectsItemShape, Qt.DescendingOrder):
-            if isinstance(item, AnchorPoint) and item.is_input and item != self.drag_start_anchor:
-                target = item
-                break
+        if target is None:
+            for item in self.items(pos, Qt.IntersectsItemShape, Qt.DescendingOrder):
+                if isinstance(item, AnchorPoint) and item.is_input and item != self.drag_start_anchor:
+                    target = item
+                    break
 
         if target and self.drag_start_anchor:
             sni = self.drag_start_anchor.parentItem()

@@ -103,9 +103,9 @@ DEFAULT_CONFIG = {
     'show_values': False,
     'alpha': 0.7,
     'bin_borders': True,
-    'log_x': True,
+    'log_x': False,
     'log_y': False,
-    'show_stats': True,
+    'show_stats': False,
     'show_curve': True,
     'show_median_line': False,
     'median_line_color': '#0F6E56',
@@ -369,7 +369,7 @@ class MolarRatioSettingsDialog(QDialog):
         if self._scope in ('all', 'format'):
             f4.addRow("Bin Borders:", self.borders_cb)
         self.curve_cb = QCheckBox(); self.curve_cb.setChecked(self._cfg.get('show_curve', True))
-        self.stats_cb = QCheckBox(); self.stats_cb.setChecked(self._cfg.get('show_stats', True))
+        self.stats_cb = QCheckBox(); self.stats_cb.setChecked(self._cfg.get('show_stats', False))
         self.box_cb = QCheckBox(); self.box_cb.setChecked(self._cfg.get('show_box', True))
         if self._scope in ('all', 'quantities'):
             # Quantity scope owns data-view toggles that are consumed by draw paths.
@@ -378,7 +378,7 @@ class MolarRatioSettingsDialog(QDialog):
         if self._scope in ('all', 'format'):
             # Format scope owns visual frame presentation controls.
             f4.addRow("Figure Box (frame):", self.box_cb)
-        self.lx_cb = QCheckBox(); self.lx_cb.setChecked(self._cfg.get('log_x', True))
+        self.lx_cb = QCheckBox(); self.lx_cb.setChecked(self._cfg.get('log_x', False))
         self.ly_cb = QCheckBox(); self.ly_cb.setChecked(self._cfg.get('log_y', False))
         self.y_breaks_edit = QLineEdit()
         self.y_breaks_edit.setPlaceholderText('e.g. (50,500),(5000,50000)')
@@ -874,6 +874,9 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
     bar = pg.BarGraphItem(x=centres, height=y, width=widths,
                           brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
                           pen=pg.mkPen(color=pc, width=pw))
+    if sample_key is not None:
+        setattr(bar, '_color_identity_role', 'sample')
+        setattr(bar, '_color_identity_key', sample_key)
     plot_item.addItem(bar)
 
     # Optional count labels above each non-zero bin.
@@ -969,7 +972,7 @@ def _add_ref_line(plot_item, cfg):
     """Draw a customisable reference vertical line (e.g. ratio = 1)."""
     if not cfg.get('show_ref_line', False):
         return
-    log_x = cfg.get('log_x', True)
+    log_x = cfg.get('log_x', False)
     val = float(cfg.get('ref_line_value', 1.0))
     if val <= 0:
         return
@@ -1070,7 +1073,7 @@ def _add_shaded_region(plot_item, values, cfg):
     if shade_type == 'None' or len(values) < 3:
         return
 
-    log_x = cfg.get('log_x', True)
+    log_x = cfg.get('log_x', False)
     color = cfg.get('shade_color', '#534AB7')
     alpha = int(cfg.get('shade_alpha', 0.18) * 255)
     real_vals = 10**values if log_x else values
@@ -1128,7 +1131,7 @@ def _add_stats_text(plot_item, ratios, cfg):
     lm = cfg.get('label_mode', 'Symbol')
     num = format_element_label(cfg.get('numerator_element', '?'), lm, Renderer.HTML)
     den = format_element_label(cfg.get('denominator_element', '?'), lm, Renderer.HTML)
-    lx = cfg.get('log_x', True)
+    lx = cfg.get('log_x', False)
     fc = cfg.get('font_color', '#000000')
 
     vals = 10**ratios if lx else ratios
@@ -1189,7 +1192,7 @@ def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None)
 
     _apply_box(plot_item, cfg)
 
-    lx = cfg.get('log_x', True)
+    lx = cfg.get('log_x', False)
     ly = cfg.get('log_y', False)
     if not cfg.get('auto_x', True):
         xn, xx = cfg['x_min'], cfg['x_max']
@@ -1468,13 +1471,8 @@ class MolarRatioDisplayDialog(QDialog):
             Annotation shelf/attach behavior is intentionally removed.
         """
         try:
-            self._plot_container_layout.removeWidget(self.pw)
-            self.pw.deleteLater()
-            self.pw = EnhancedGraphicsLayoutWidget()
+            self.pw.clear()
             self.pw.setBackground('w')
-            self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
-            self.pw.customContextMenuRequested.connect(self._ctx_menu)
-            self._plot_container_layout.addWidget(self.pw)
 
             cfg = self.node.config
             lm = cfg.get('label_mode', 'Symbol')
@@ -1534,6 +1532,7 @@ class MolarRatioDisplayDialog(QDialog):
 
             self._update_stats(plot_data, multi)
             self._disable_native_pyqtgraph_context_menu()
+            self.pw.reapply_inline_overrides()
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
             _itk_log.error(f"Error updating molar ratio: {e}")
@@ -1650,7 +1649,7 @@ class MolarRatioDisplayDialog(QDialog):
         per_ml = per_ml_active(cfg, self.node.input_data)
         sn = single_sample_name(self.node.input_data)
         y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-        _draw_ratio_plot(pi, ratios, cfg, color, y_scale)
+        _draw_ratio_plot(pi, ratios, cfg, color, y_scale, sample_key='single_sample')
         xl, yl = _xy_labels(cfg)
         set_axis_labels(pi, xl, yl, cfg)
 
@@ -1658,8 +1657,8 @@ class MolarRatioDisplayDialog(QDialog):
         pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
         if per_ml and not cfg.get('log_y', False):
             apply_sci_y_axis(pi, cfg)
-        if cfg.get('show_stats', True):
-            pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
+        if cfg.get('show_stats', False):
+            pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
             _add_stats_text(pi, pr, cfg)
 
     def _draw_overlaid(self, pi, plot_data, cfg):
@@ -1684,6 +1683,9 @@ class MolarRatioDisplayDialog(QDialog):
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
                 c = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c, y_scale,
+                                                    sample_key=sn)
                 legend_items.append((sn, c))
                 if sn not in hidden:
                     y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
@@ -1804,12 +1806,12 @@ class MolarRatioDisplayDialog(QDialog):
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
                 
-                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', True)))
+                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
                 pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
                 if per_ml and not cfg.get('log_y', False):
                     apply_sci_y_axis(pi, cfg)
-                if cfg.get('show_stats', True):
-                    pr = np.log10(ratios) if cfg.get('log_x', True) else ratios.copy()
+                if cfg.get('show_stats', False):
+                    pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
                     _add_stats_text(pi, pr, cfg)
             apply_font_to_pyqtgraph(pi, cfg)
 
@@ -1847,9 +1849,10 @@ class MolarRatioPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = MolarRatioDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: MolarRatioDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

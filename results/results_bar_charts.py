@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QColor, QFont
 import pyqtgraph as pg
 import numpy as np
@@ -39,7 +39,8 @@ _ensure_project_root_on_sys_path()
 from results.shared_plot_utils import (
     FONT_FAMILIES, DEFAULT_SAMPLE_COLORS,
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
-    apply_plot_item_text_styling, apply_plot_title_style,
+    apply_plot_item_text_styling, apply_plot_title_style, apply_axis_label_style,
+    apply_legend_label_style,
     get_sample_color,
     get_display_name, download_pyqtgraph_figure,
     format_element_label,
@@ -61,6 +62,8 @@ except Exception:
 from results.utils_sort import (
     sort_elements_by_mass, sort_element_dict_by_mass, element_alphabetical_key,
 )
+
+_AXIS_NAMES = ('left', 'bottom', 'right', 'top')
 
 
 HIST_DATA_TYPES = [
@@ -511,6 +514,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                         pi, '_title_editor_options', {})
                     TitleEditorDialog(
                         adapter, dlg_parent, **title_editor_options).exec()
+                    self._persist_inline_edit(adapter)
                     event.accept(); return
 
             la = pi.getAxis('left')
@@ -518,6 +522,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     la.boundingRect()).contains(scene_pos):
                 AxisLabelEditorDialog(
                     adapter, 'left', dlg_parent).exec()
+                self._persist_inline_edit(adapter)
                 event.accept(); return
 
             ba = pi.getAxis('bottom')
@@ -525,6 +530,7 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                     ba.boundingRect()).contains(scene_pos):
                 AxisLabelEditorDialog(
                     adapter, 'bottom', dlg_parent).exec()
+                self._persist_inline_edit(adapter)
                 event.accept(); return
 
             legend = getattr(pi, 'legend', None)
@@ -534,13 +540,21 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                             legend.boundingRect()).contains(scene_pos):
                         adapter.legend = legend
                         LegendEditorDialog(adapter, dlg_parent).exec()
+                        self._persist_inline_edit(adapter)
                         event.accept(); return
                 except Exception:
                     _itk_log.exception("Handled exception in mouseDoubleClickEvent")
 
             scat = self._closest_scatter(pi, scene_pos)
             if scat is not None:
-                ScatterEditorDialog(scat, adapter, dlg_parent).exec()
+                if getattr(scat, '_color_identity_role', None):
+                    from PySide6.QtWidgets import QColorDialog
+                    new_c = QColorDialog.getColor(
+                        self._current_identity_color(scat), self, "Series Color")
+                    if new_c.isValid():
+                        self._persist_element_color(scat, new_c)
+                else:
+                    ScatterEditorDialog(scat, adapter, dlg_parent).exec()
                 event.accept(); return
 
             curve = self._closest_curve(pi, scene_pos)
@@ -565,9 +579,32 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                             new_c.red(), new_c.green(),
                             new_c.blue(), alpha),
                         pen=pg.mkPen('w', width=0.5))
+                    self._persist_element_color(bar_item, new_c)
+                event.accept(); return
+
+            tagged = self._tagged_color_item_at(pi, scene_pos)
+            if tagged is not None:
+                from PySide6.QtWidgets import QColorDialog
+                try:
+                    cur = tagged.brush().color()
+                except Exception:
+                    cur = QColor(100, 120, 220)
+                new_c = QColorDialog.getColor(cur, self, "Color")
+                if new_c.isValid():
+                    try:
+                        alpha = tagged.brush().color().alpha() or 200
+                    except Exception:
+                        alpha = 200
+                    try:
+                        tagged.setBrush(pg.mkBrush(
+                            new_c.red(), new_c.green(), new_c.blue(), alpha))
+                    except Exception:
+                        _itk_log.exception("Handled exception in mouseDoubleClickEvent")
+                    self._persist_element_color(tagged, new_c)
                 event.accept(); return
 
             BackgroundEditorDialog(adapter, dlg_parent).exec()
+            self._persist_inline_edit(adapter)
             event.accept()
 
         except Exception as e:
@@ -575,6 +612,161 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
             _itk_log.error(f"EnhancedGraphicsLayoutWidget double-click error: {e}")
             import traceback; traceback.print_exc()
             super().mouseDoubleClickEvent(event)
+
+    def _owner_node(self):
+        """Resolve the owning display dialog's node by walking up the parents.
+
+        Returns the first ancestor's ``node`` that exposes a ``config`` mapping,
+        or None. Lets inline edits be written into config so they persist.
+        """
+        obj = self.parent()
+        for _ in range(6):
+            if obj is None:
+                break
+            node = getattr(obj, 'node', None)
+            if node is not None and hasattr(node, 'config'):
+                return node
+            obj = obj.parent() if hasattr(obj, 'parent') else None
+        return None
+
+    def _persist_element_color(self, item, qcolor):
+        """Write an edited colour into the owning node's config and redraw.
+
+        The config key follows the colour identity tagged on the item: 'single'
+        → ``single_sample_color``, 'sample' → ``sample_colors[key]``, otherwise
+        ``element_colors[key]``. A deferred ``configuration_changed`` keeps the
+        plot and its saved thumbnail in sync, and the value persists with the
+        project.
+        """
+        role = getattr(item, '_color_identity_role', 'element')
+        key = (getattr(item, '_raw_element_key', None)
+               or getattr(item, '_color_identity_key', None))
+        node = self._owner_node()
+        if node is None:
+            return
+        try:
+            if role == 'single':
+                node.config['single_sample_color'] = qcolor.name()
+            else:
+                if not key:
+                    return
+                cfg_key = 'sample_colors' if role == 'sample' else 'element_colors'
+                colors = dict(node.config.get(cfg_key, {}) or {})
+                colors[key] = qcolor.name()
+                node.config[cfg_key] = colors
+        except Exception:
+            _itk_log.exception("Handled exception in _persist_element_color")
+            return
+        try:
+            sig = getattr(node, 'configuration_changed', None)
+            if sig is not None:
+                QTimer.singleShot(0, sig.emit)
+        except Exception:
+            _itk_log.exception("Handled exception in _persist_element_color")
+
+    def _current_identity_color(self, item, fallback='#3B82F6'):
+        """Current colour for a tagged item, read from the owning node config."""
+        node = self._owner_node()
+        if node is None:
+            return QColor(fallback)
+        cfg = getattr(node, 'config', {}) or {}
+        role = getattr(item, '_color_identity_role', 'element')
+        key = (getattr(item, '_raw_element_key', None)
+               or getattr(item, '_color_identity_key', None))
+        if role == 'single':
+            return QColor(cfg.get('single_sample_color', fallback))
+        cfg_key = 'sample_colors' if role == 'sample' else 'element_colors'
+        return QColor((cfg.get(cfg_key, {}) or {}).get(key, fallback))
+
+    def _tagged_color_item_at(self, pi, scene_pos):
+        """Topmost non-bar graphics item at ``scene_pos`` tagged with a colour
+        identity (e.g. a box-plot box). Bars are handled separately."""
+        try:
+            items = pi.scene().items(scene_pos)
+        except Exception:
+            return None
+        for it in items:
+            if isinstance(it, pg.BarGraphItem):
+                continue
+            if getattr(it, '_color_identity_role', None):
+                return it
+        return None
+
+    def _persist_inline_edit(self, adapter):
+        """Save a double-click axis edit into the ONE shared config.
+
+        The font (family/size/bold/italic/color) chosen in the axis editor is
+        written to the global ``font_*`` keys — the same keys the Plot Settings
+        dialog uses — so it applies uniformly to both axes, the tick numbers,
+        the title and the legend on the next redraw. The axis label TEXT is kept
+        per-axis in ``custom_axis_labels``. A deferred redraw reapplies it all.
+        """
+        node = self._owner_node()
+        if node is None:
+            return
+        try:
+            labels = dict(getattr(adapter, 'custom_axis_labels', {}) or {})
+            last_font = None
+            if labels:
+                store = dict(node.config.get('inline_axis_text', {}) or {})
+                for axis_name, info in labels.items():
+                    if axis_name not in _AXIS_NAMES or not isinstance(info, dict):
+                        continue
+                    store[axis_name] = {
+                        'text': info.get('text', ''),
+                        'units': info.get('units'),
+                    }
+                    last_font = info
+                node.config['inline_axis_text'] = store
+            if last_font is not None:
+                self._write_global_font(node, last_font)
+            sig = getattr(node, 'configuration_changed', None)
+            if sig is not None:
+                QTimer.singleShot(0, sig.emit)
+        except Exception:
+            _itk_log.exception("Handled exception in _persist_inline_edit")
+
+    @staticmethod
+    def _write_global_font(node, font_info):
+        """Copy an editor's font choice into the shared global ``font_*`` config."""
+        mapping = {
+            'family': 'font_family', 'size': 'font_size',
+            'bold': 'font_bold', 'italic': 'font_italic', 'color': 'font_color',
+        }
+        for src, dst in mapping.items():
+            val = font_info.get(src)
+            if val is not None:
+                node.config[dst] = val
+
+    def reapply_inline_overrides(self):
+        """Reapply persisted inline axis-label TEXT after a redraw (single-panel).
+
+        Fonts are handled by the shared global font path (``apply_font_to_pyqtgraph``)
+        the draw already runs, so here only the per-axis label TEXT is restored,
+        using the same global font from config. Limited to single-panel plots so
+        multi-panel layouts are not disturbed.
+        """
+        try:
+            node = self._owner_node()
+            cfg = getattr(node, 'config', None) if node is not None else None
+            if not cfg:
+                return
+            labels = cfg.get('inline_axis_text') or {}
+            if not labels:
+                return
+            pis = [it for it in self.scene().items()
+                   if isinstance(it, pg.PlotItem)]
+            if len(pis) != 1:
+                return
+            pi = pis[0]
+            for axis_name, info in labels.items():
+                if axis_name not in _AXIS_NAMES or not isinstance(info, dict):
+                    continue
+                apply_axis_label_style(
+                    pi, axis_name, info.get('text', ''),
+                    units=info.get('units'), config=cfg)
+        except Exception:
+            _itk_log.exception("Handled exception in reapply_inline_overrides")
 
 
 class _ClickableLegendSwatch(pg.BarGraphItem):
@@ -1326,7 +1518,7 @@ class HistogramSettingsDialog(QDialog):
         self.log_y.setChecked(self._cfg.get('log_y', False))
         fl.addRow("Log Y-axis:", self.log_y)
         self.show_stats = QCheckBox()
-        self.show_stats.setChecked(self._cfg.get('show_stats', True))
+        self.show_stats.setChecked(self._cfg.get('show_stats', False))
         fl.addRow("Show Statistics:", self.show_stats)
         self.label_mode = QComboBox()
         self.label_mode.addItems(LABEL_MODES)
@@ -1561,7 +1753,7 @@ class HistogramFormatSettingsDialog(QDialog):
         self.show_curve = QCheckBox()
         self.show_curve.setChecked(self._cfg.get('show_curve', True))
         self.show_stats = QCheckBox()
-        self.show_stats.setChecked(self._cfg.get('show_stats', True))
+        self.show_stats.setChecked(self._cfg.get('show_stats', False))
         self.show_box = QCheckBox()
         self.show_box.setChecked(self._cfg.get('show_box', True))
         self.show_median_line = QCheckBox()
@@ -1826,7 +2018,6 @@ class HistogramDisplayDialog(QDialog):
         bb.addWidget(btn_export)
         layout.addLayout(bb)
 
-
     def _ctx_menu(self, pos):
         """Show lightweight histogram quick actions.
 
@@ -1850,7 +2041,7 @@ class HistogramDisplayDialog(QDialog):
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
             ('show_curve',  'Density Curve',       True),
-            ('show_stats',  'Statistics',          True),
+            ('show_stats',  'Statistics',          False),
             ('show_box',    'Figure Box (frame)',   True),
             ('show_values', 'Values on Bars',      False),
         ]:
@@ -2465,19 +2656,14 @@ class HistogramDisplayDialog(QDialog):
             decomposition are rebuilt fresh on every redraw.
         """
         try:
-            parent_layout = self.pw.parent().layout()
-            idx = parent_layout.indexOf(self.pw)
-            parent_layout.removeWidget(self.pw)
-            self.pw.deleteLater()
-            self.pw = EnhancedGraphicsLayoutWidget()
+            self.pw.clear()
             self.pw.setBackground('w')
-            self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
-            self.pw.customContextMenuRequested.connect(self._ctx_menu)
-            parent_layout.insertWidget(idx, self.pw, stretch=1)
             self._histogram_panel_contexts = {}
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
+            _itk_log.error(f"STATS={cfg.get('show_stats')} id={id(cfg)}")
+
 
             if not plot_data:
                 pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
@@ -2525,6 +2711,7 @@ class HistogramDisplayDialog(QDialog):
 
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
+            self.pw.reapply_inline_overrides()
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
@@ -2754,7 +2941,7 @@ class HistogramDisplayDialog(QDialog):
                 self._register_panel_context(
                     pi, 'Side by Side Subplots', get_display_name(sn, cfg), sd,
                     sample_name=sn)
-                if cfg.get('show_stats', True):
+                if cfg.get('show_stats', False):
                     _add_stats_text(pi, sd, cfg)
             if first_pi is None:
                 first_pi = pi
@@ -2897,6 +3084,9 @@ class HistogramDisplayDialog(QDialog):
         self._draw_overlaid(plot_data, cfg)
 
     def _update_stats(self, plot_data):
+        if not self.node.config.get('show_stats', False):
+            self.stats_label.setText("")
+            return
         cfg = self.node.config
         groups = cfg.get('element_groups', [])
         group_info = ""
@@ -3040,7 +3230,7 @@ class HistogramDecompositionDialog(QDialog):
         tg = menu.addMenu("Quick Toggles")
         for key, label, default in [
             ('show_curve',  'Density Curve',       True),
-            ('show_stats',  'Statistics',          True),
+            ('show_stats',  'Statistics',          False),
             ('show_box',    'Figure Box (frame)',  True),
             ('show_median_line', 'Median Line',    False),
             ('show_mean_line',   'Mean Line',      False),
@@ -3305,15 +3495,8 @@ class HistogramDecompositionDialog(QDialog):
             is requested but unavailable for a panel, a small in-panel note is
             shown instead of modal warnings.
         """
-        parent_layout = self.pw.parent().layout()
-        idx = parent_layout.indexOf(self.pw)
-        parent_layout.removeWidget(self.pw)
-        self.pw.deleteLater()
-        self.pw = EnhancedGraphicsLayoutWidget()
+        self.pw.clear()
         self.pw.setBackground('w')
-        self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.pw.customContextMenuRequested.connect(self._ctx_menu)
-        parent_layout.insertWidget(idx, self.pw, stretch=1)
         self._subplot_context_by_plotitem = {}
 
         sorted_items = sort_element_dict_by_mass(self._element_data)
@@ -3358,7 +3541,7 @@ class HistogramDecompositionDialog(QDialog):
                 st = density_status.get(elem, {})
                 if st and not st.get('success'):
                     self._add_density_unavailable_note(pi)
-            if self._cfg.get('show_stats', True):
+            if self._cfg.get('show_stats', False):
                 _add_stats_text(pi, {elem: vals}, self._cfg)
 
         self._disable_native_pyqtgraph_context_menu()
@@ -3440,7 +3623,7 @@ class HistogramPlotNode(QObject):
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
-        'show_stats': True,
+        'show_stats': False,
         'shade_type': 'None',
         'shade_color': '#534AB7',
         'shade_alpha': 0.18,
@@ -3485,9 +3668,10 @@ class HistogramPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = HistogramDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: HistogramDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:
@@ -4580,7 +4764,7 @@ def _has_swallowed_bars(all_bar_sets, breaks):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
-                         name='', y_scale=1.0):
+                         name='', y_scale=1.0, raw_key=None):
     """Draw histogram bars using PyQtGraph BarGraphItem.
 
     Args:
@@ -4593,6 +4777,9 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
         name (Any): Name string.
         y_scale (float): Multiplier applied to bin counts, used to convert raw
             counts to particles per millilitre. Defaults to 1.0.
+        raw_key (str | None): Canonical raw element key. When given, the bar is
+            tagged with that colour identity so a double-click colour edit
+            persists to ``element_colors`` like the Plot Settings dialog.
     """
     if bin_edges is None:
         bin_width = cfg.get('bin_width', 20)
@@ -4616,6 +4803,8 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
         pen=pg.mkPen(color='w', width=0.5))
     if name:
         bar.opts['_trace_name'] = name
+    if raw_key is not None:
+        _tag_element_color_item(bar, raw_key, name or str(raw_key))
     plot_item.addItem(bar)
 
     return values, bin_edges, counts
@@ -5817,19 +6006,15 @@ class ElementBarChartDisplayDialog(QDialog):
             plot identifiers stored in node config.
         """
         try:
-            parent_layout = self.pw.parent().layout()
-            idx = parent_layout.indexOf(self.pw)
-            parent_layout.removeWidget(self.pw)
-            self.pw.deleteLater()
-            self.pw = EnhancedGraphicsLayoutWidget()
+            self.pw.clear()
             self.pw.setBackground('w')
             self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
             self.pw.customContextMenuRequested.connect(self._ctx_menu)
-            parent_layout.insertWidget(idx, self.pw, stretch=1)
             self._bar_subplot_contexts = {}
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
+            
 
             if not plot_data:
                 pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
@@ -5881,6 +6066,7 @@ class ElementBarChartDisplayDialog(QDialog):
             self._reapply_saved_plot_format_settings()
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data)
+            self.pw.reapply_inline_overrides()
 
         except Exception as e:
             _itk_log.exception("Handled exception in _refresh")
@@ -6425,9 +6611,10 @@ class ElementBarChartPlotNode(QObject):
             self.position_changed.emit(pos)
 
     def configure(self, parent_window):
-        dlg = ElementBarChartDisplayDialog(self, parent_window)
-        dlg.exec()
-        return True
+        """Open this node's figure, reusing one persistent (hide-on-close) window."""
+        from results.shared_plot_utils import show_persistent_figure
+        return show_persistent_figure(
+            self, lambda: ElementBarChartDisplayDialog(self, parent_window))
 
     def process_data(self, input_data):
         if not input_data:

@@ -1,9 +1,4 @@
-# Runtime dependencies for IsotopeTrack.
-# Build & docs tools: requirements-dev.txt (docs pins also in docs/requirements.txt for Read the Docs)
 
-# ── Core application ──────────────────────────────────────────────────────────
-# Downgraded from 6.10.2 → 6.9.1: 6.10.2 segfaults in the frozen macOS build
-# (SignalManager null metaObject during QWidgetAction init on "New Window").
 PySide6==6.9.0
 PySide6_Addons==6.9.0
 PySide6_Essentials==6.9.0
