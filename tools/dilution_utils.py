@@ -48,11 +48,13 @@ def maybe_prompt_dilution(window):
     box = QMessageBox(window)
     box.setIcon(QMessageBox.Information)
     box.setWindowTitle("Correct Particles per mL?")
-    box.setText(
-        "A transport rate is available, so particle concentrations "
+    box.setText("A transport rate is available, so particle concentrations "
         "(particles/mL) can be reported.\n\n"
         "If your samples were diluted, enter the dilution factor under "
-        "Tools → Dilution Factor to correct the concentrations.")
+        "Tools → Dilution Factor to correct the concentrations. \n\n"
+        "After entering the dilution factor(s), close this results canvas,"
+        "open it again, reselect the single/multi sample nodes that contain the" 
+        "samples for which you entered a dilution factor for, then click 'OK'") 
     dont_show = QCheckBox("Don't show this message again")
     box.setCheckBox(dont_show)
     open_btn = box.addButton("Open Dilution Factor", QMessageBox.AcceptRole)
