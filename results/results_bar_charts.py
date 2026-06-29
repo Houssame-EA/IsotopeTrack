@@ -47,6 +47,7 @@ from results.shared_plot_utils import (
     LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
     _apply_box, _add_shaded_region_hist, _add_stat_lines_hist,
     _add_det_limit_v, _add_det_limit_h, format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
+    ScientificLineEdit,
 )
 try:
     from widget.custom_plot_widget import (
@@ -1534,12 +1535,8 @@ class HistogramSettingsDialog(QDialog):
         w = QWidget()
         hl = QHBoxLayout(w)
         hl.setContentsMargins(0, 0, 0, 0)
-        self.x_min = QDoubleSpinBox()
-        self.x_min.setRange(-999999, 999999)
-        self.x_min.setValue(self._cfg.get('x_min', 0))
-        self.x_max = QDoubleSpinBox()
-        self.x_max.setRange(-999999, 999999)
-        self.x_max.setValue(self._cfg.get('x_max', 1000))
+        self.x_min = ScientificLineEdit(self._cfg.get('x_min', 0), min_val=0.0)
+        self.x_max = ScientificLineEdit(self._cfg.get('x_max', 1000), min_val=0.0)
         hl.addWidget(self.x_min)
         hl.addWidget(QLabel("to"))
         hl.addWidget(self.x_max)
@@ -1550,12 +1547,8 @@ class HistogramSettingsDialog(QDialog):
         w2 = QWidget()
         hl2 = QHBoxLayout(w2)
         hl2.setContentsMargins(0, 0, 0, 0)
-        self.y_min = QDoubleSpinBox()
-        self.y_min.setRange(0, 999999)
-        self.y_min.setValue(self._cfg.get('y_min', 0))
-        self.y_max = QDoubleSpinBox()
-        self.y_max.setRange(0, 999999)
-        self.y_max.setValue(self._cfg.get('y_max', 100))
+        self.y_min = ScientificLineEdit(self._cfg.get('y_min', 0), min_val=0.0)
+        self.y_max = ScientificLineEdit(self._cfg.get('y_max', 100), min_val=0.0)
         hl2.addWidget(self.y_min)
         hl2.addWidget(QLabel("to"))
         hl2.addWidget(self.y_max)

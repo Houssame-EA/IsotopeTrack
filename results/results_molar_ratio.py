@@ -18,6 +18,7 @@ from results.shared_plot_utils import (
     Renderer, get_font_config,
     per_ml_active, per_ml_factor, conc_meta_available,
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
+    ScientificLineEdit,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
@@ -407,10 +408,8 @@ class MolarRatioSettingsDialog(QDialog):
         g5 = QGroupBox("Axis Limits")
         f5 = QFormLayout(g5)
         xr = QHBoxLayout()
-        self.x_min = QDoubleSpinBox(); self.x_min.setRange(0.0001, 999999); self.x_min.setDecimals(4)
-        self.x_min.setValue(self._cfg.get('x_min', 0.01))
-        self.x_max = QDoubleSpinBox(); self.x_max.setRange(0.0001, 999999); self.x_max.setDecimals(4)
-        self.x_max.setValue(self._cfg.get('x_max', 100.0))
+        self.x_min = ScientificLineEdit(self._cfg.get('x_min', 0.01), min_val=1e-300)
+        self.x_max = ScientificLineEdit(self._cfg.get('x_max', 100.0), min_val=1e-300)
         self.auto_x = QCheckBox("Auto"); self.auto_x.setChecked(self._cfg.get('auto_x', True))
         self.auto_x.stateChanged.connect(lambda: (
             self.x_min.setEnabled(not self.auto_x.isChecked()),
@@ -421,10 +420,8 @@ class MolarRatioSettingsDialog(QDialog):
         f5.addRow("X Range:", xr)
 
         yr = QHBoxLayout()
-        self.y_min = QDoubleSpinBox(); self.y_min.setRange(0, 999999)
-        self.y_min.setValue(self._cfg.get('y_min', 0))
-        self.y_max = QDoubleSpinBox(); self.y_max.setRange(0, 999999)
-        self.y_max.setValue(self._cfg.get('y_max', 100))
+        self.y_min = ScientificLineEdit(self._cfg.get('y_min', 0), min_val=0.0)
+        self.y_max = ScientificLineEdit(self._cfg.get('y_max', 100), min_val=0.0)
         self.auto_y = QCheckBox("Auto"); self.auto_y.setChecked(self._cfg.get('auto_y', True))
         self.auto_y.stateChanged.connect(lambda: (
             self.y_min.setEnabled(not self.auto_y.isChecked()),
