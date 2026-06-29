@@ -2911,31 +2911,6 @@ def download_matplotlib_figure(figure, parent,
 # ─────────────────────────────────────────────
 
 class ScientificLineEdit(QLineEdit):
-    """A QLineEdit that accepts plain decimals, e-notation, and LaTeX-style
-    scientific notation (``2x10^{-4}``, ``2\\cdot10^{-4}``, ``2×10^{-4}``).
-
-    On commit (focus-out or Enter) the text is parsed and, if valid, normalised
-    to Python's ``2e-04`` display form.  Invalid input shows a warning popup and
-    the field reverts to its last accepted value.
-
-    Args:
-        value:        Initial float value.
-        min_val:      Minimum accepted value (inclusive).  Use ``None`` for no
-                      lower bound.  Pass ``0.0`` to reject negatives, or a small
-                      positive like ``1e-300`` to also reject zero (ratios).
-        max_val:      Maximum accepted value (inclusive).  ``None`` = no limit.
-        parent:       Optional Qt parent widget.
-    """
-
-    # Matches: coefficient  ×  10  ^  {exponent}  or  ^exponent
-    _SCI_RE = re.compile(
-        r'^\s*([+-]?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)'   # coefficient
-        r'\s*(?:x|\\cdot|×|\\times|\*)'                  # ×  operator
-        r'\s*10\s*\^\s*(?:\{([+-]?\d+)\}|([+-]?\d+))'   # 10^{exp} or 10^exp
-        r'\s*$',
-        re.IGNORECASE,
-    )
-
     def __init__(self, value: float = 0.0, min_val=None, max_val=None,
                  parent=None):
         super().__init__(parent)
@@ -2945,18 +2920,19 @@ class ScientificLineEdit(QLineEdit):
         self.setText(self._format(self._last_valid))
         self.editingFinished.connect(self._commit)
 
-    # ── public API ────────────────────────────────────────────────────────
-
     def value(self) -> float:
-        """Return the last successfully committed float value."""
+        try:
+            v = float(self.text())
+            if (self._min_val is None or v >= self._min_val) and \
+               (self._max_val is None or v <= self._max_val):
+                return v
+        except (ValueError, OverflowError):
+            pass
         return self._last_valid
 
     def setValue(self, v: float) -> None:
-        """Set the displayed and stored value programmatically."""
         self._last_valid = float(v)
         self.setText(self._format(self._last_valid))
-
-    # ── internal ──────────────────────────────────────────────────────────
 
     @staticmethod
     def _format(v: float) -> str:
@@ -2966,58 +2942,39 @@ class ScientificLineEdit(QLineEdit):
             return f"{v:.4e}"
         return f"{v:g}"
 
-    def _parse(self, text: str):
-        """Return float or raise ValueError."""
-        text = text.strip()
-        m = self._SCI_RE.match(text)
-        if m:
-            coeff = float(m.group(1))
-            exp   = int(m.group(2) if m.group(2) is not None else m.group(3))
-            return coeff * (10.0 ** exp)
-        return float(text)
-
     def _commit(self):
         text = self.text().strip()
         try:
-            v = self._parse(text)
+            v = float(text)
         except (ValueError, OverflowError):
-            self._warn_invalid(
-                f"\"{text}\" could not be read as a number.\n\n"
+            QMessageBox.warning(
+                self, "Invalid Range Value",
+                f'"{text}" could not be read as a number.\n\n'
                 "Accepted formats:\n"
-                "  • Plain decimal:       0.0002\n"
-                "  • E-notation:          2e-4\n"
-                "  • Scientific (LaTeX):  2×10^{-4}  or  2\\cdot10^{-4}"
+                "  • Plain decimal:  0.0002\n"
+                "  • E-notation:     2e-4"
             )
             self.setText(self._format(self._last_valid))
             return
 
         if self._min_val is not None and v < self._min_val:
             if self._min_val > 0:
-                self._warn_invalid(
-                    f"This field requires a value greater than zero.\n"
-                    f"You entered: {v}"
-                )
+                QMessageBox.warning(self, "Invalid Range Value",
+                    f"This field requires a value greater than zero.\nYou entered: {v}")
             else:
-                self._warn_invalid(
-                    f"This field requires a value of zero or greater.\n"
-                    f"You entered: {v}"
-                )
+                QMessageBox.warning(self, "Invalid Range Value",
+                    f"This field requires a value of zero or greater.\nYou entered: {v}")
             self.setText(self._format(self._last_valid))
             return
 
         if self._max_val is not None and v > self._max_val:
-            self._warn_invalid(
-                f"This field requires a value no greater than {self._max_val:g}.\n"
-                f"You entered: {v}"
-            )
+            QMessageBox.warning(self, "Invalid Range Value",
+                f"This field requires a value no greater than {self._max_val:g}.\nYou entered: {v}")
             self.setText(self._format(self._last_valid))
             return
 
         self._last_valid = v
         self.setText(self._format(v))
-
-    def _warn_invalid(self, message: str) -> None:
-        QMessageBox.warning(self, "Invalid Range Value", message)
 
 
 class FontSettingsGroup:
