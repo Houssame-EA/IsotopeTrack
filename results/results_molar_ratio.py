@@ -836,7 +836,7 @@ def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True, bin_mod
     return _mr_compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
 
 
-def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None):
+def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None, sample_key=None):
     """Draw histogram bars for ratio values.
 
     Args:
@@ -1166,7 +1166,7 @@ def _add_stats_text(plot_item, ratios, cfg):
         ti.setPos(0.02, 0.98)
 
 
-def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None):
+def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None, sample_key=None):
     """Draw a complete ratio histogram with overlays (applied to every subplot).
 
     Args:
@@ -1181,7 +1181,8 @@ def _draw_ratio_plot(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None)
     if ratios is None or len(ratios) == 0:
         return
     pr, edges, _ = _draw_histogram_bars(plot_item, ratios, cfg, color,
-                                        bin_edges=bin_edges, y_scale=y_scale)
+                                        bin_edges=bin_edges, y_scale=y_scale,
+                                        sample_key=sample_key)
 
     if cfg.get('show_curve', True) and len(ratios) > 5:
         _add_density_curve(plot_item, pr, cfg, edges, len(ratios) * y_scale)
@@ -1769,7 +1770,8 @@ class MolarRatioDisplayDialog(QDialog):
                                      axisItems={'left': HtmlAxisItem('left')})
                 if ratios is not None and len(ratios) > 0:
                     _draw_ratio_plot(pi, ratios, cfg, color,
-                                     bin_edges=global_edges, y_scale=y_scale)
+                                     bin_edges=global_edges, y_scale=y_scale,
+                                     sample_key=sn)
                     pi.setTitle(get_display_name(sn, cfg))
                     xl, yl = _xy_labels(cfg)
                     set_axis_labels(pi, xl, yl, cfg)
@@ -1801,7 +1803,8 @@ class MolarRatioDisplayDialog(QDialog):
                 color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
                 y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                 _draw_ratio_plot(pi, ratios, cfg, color,
-                                 bin_edges=global_edges, y_scale=y_scale)
+                                 bin_edges=global_edges, y_scale=y_scale,
+                                 sample_key=sn)
                 pi.setTitle(get_display_name(sn, cfg))
                 xl, yl = _xy_labels(cfg)
                 set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
