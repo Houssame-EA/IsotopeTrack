@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QListWidget, QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 import pyqtgraph as pg
 import numpy as np
 import math
@@ -15,7 +15,7 @@ from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, make_qfont,
     apply_font_to_pyqtgraph, set_axis_labels, FontSettingsGroup, get_display_name,
     download_pyqtgraph_figure, format_element_label, LABEL_MODES,
-    Renderer,
+    Renderer, get_font_config,
     per_ml_active, per_ml_factor, conc_meta_available,
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
 )
@@ -27,7 +27,7 @@ try:
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
         _ClickableLegendSwatch, _attach_histogram_legend_toggle,
         parse_y_axis_breaks, _y_segments, _setup_broken_axis_panels,
-        _has_swallowed_bars,
+        _has_swallowed_bars, _bar_value_textitem, _make_segment_yticks,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -55,6 +55,13 @@ except Exception:
 
     def _has_swallowed_bars(all_bar_sets, breaks):  # noqa: E306
         return False
+
+    def _bar_value_textitem(value, per_ml, anchor=(0.5, 1), color='#374151', cfg=None):  # noqa: E306
+        import pyqtgraph as _pg
+        return _pg.TextItem(str(int(round(float(value)))), anchor=anchor, color=color)
+
+    def _make_segment_yticks(s_lo, s_hi, g_lo=None, g_hi=None):  # noqa: E306
+        return [[], []]
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -93,6 +100,7 @@ DEFAULT_CONFIG = {
     'bin_width': 0.25,
     'bin_mode': 'geometric',
     'y_axis_breaks': [],
+    'show_values': False,
     'alpha': 0.7,
     'bin_borders': True,
     'log_x': True,
@@ -851,6 +859,7 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
         bin_edges = _mr_compute_bin_edges(pr, bin_width, log_x, bin_mode=bin_mode)
     y, edges = np.histogram(pr, bins=bin_edges)
     y = y.astype(float) * y_scale
+    y_scaled_raw = y.copy()   # pre-log, used for value labels
     if log_y:
         y = np.log10(y + 1)
 
@@ -866,6 +875,22 @@ def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=N
                           brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
                           pen=pg.mkPen(color=pc, width=pw))
     plot_item.addItem(bar)
+
+    # Optional count labels above each non-zero bin.
+    if cfg.get('show_values', False) and not log_y:
+        _mh_mr = float(np.max(y)) if len(y) > 0 else 1.0
+        _fc_mr = get_font_config(cfg)
+        _fnt_mr = QFont(_fc_mr.get('family', 'Times New Roman'),
+                        max(_fc_mr.get('size', 18) - 5, 6))
+        for _cx_mr, _hy_mr, _sc_mr in zip(centres, y, y_scaled_raw):
+            if _sc_mr <= 0:
+                continue
+            _ti_mr = pg.TextItem(str(int(round(float(_sc_mr)))),
+                                 anchor=(0.5, 1), color="#374151")
+            _ti_mr.setFont(_fnt_mr)
+            plot_item.addItem(_ti_mr)
+            _ti_mr.setPos(float(_cx_mr), float(_hy_mr) + _mh_mr * 0.01)
+
     return pr, edges, y
 
 
@@ -1282,6 +1307,7 @@ class MolarRatioDisplayDialog(QDialog):
         for key, label in [
             ('show_curve',  'Density Curve'),
             ('show_box',    'Figure Box (frame)'),
+            ('show_values', 'Values on Bars'),
             ('show_ref_line',    'Reference Line'),
             ('show_median_line', 'Median Line'),
             ('show_mean_line',   'Mean Line'),
@@ -1558,6 +1584,31 @@ class MolarRatioDisplayDialog(QDialog):
         seg_panels, gap_panels = _setup_broken_axis_panels(
             inner, all_bar_sets, breaks, data_max, cfg,
             x_label=xl, y_label=yl)
+
+        # Value labels above each non-zero bin in the correct segment panel.
+        if cfg.get('show_values', False):
+            _segs_mr = _y_segments(breaks, data_max)
+            _n_segs_mr = len(_segs_mr)
+            _fc_mr = get_font_config(cfg)
+            _fnt_mr = QFont(_fc_mr.get('family', 'Times New Roman'),
+                            max(_fc_mr.get('size', 18) - 5, 6))
+            _x_mr = np.asarray(all_bar_sets[0]['x'], dtype=float)
+            _ht_mr = np.asarray(all_bar_sets[0]['heights'], dtype=float)
+            for _xi_mr, _hi_mr in zip(_x_mr, _ht_mr):
+                if _hi_mr <= 0:
+                    continue
+                _tgt_mr, _dy_mr = seg_panels[0], min(_hi_mr, _segs_mr[0][1])
+                for _si_mr in range(_n_segs_mr - 1, -1, -1):
+                    _sl_mr, _sh_mr = _segs_mr[_si_mr]
+                    if _hi_mr > _sl_mr:
+                        _tgt_mr = seg_panels[_si_mr]
+                        _dy_mr = min(_hi_mr, _sh_mr)
+                        break
+                _ti_mr = pg.TextItem(str(int(round(float(_hi_mr)))),
+                                     anchor=(0.5, 1), color="#374151")
+                _ti_mr.setFont(_fnt_mr)
+                _tgt_mr.addItem(_ti_mr)
+                _ti_mr.setPos(float(_xi_mr), float(_dy_mr) + data_max * 0.01)
 
         # Add stat lines to each segment
         if cfg.get('show_stats', True):

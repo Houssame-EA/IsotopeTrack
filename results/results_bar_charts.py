@@ -1852,6 +1852,7 @@ class HistogramDisplayDialog(QDialog):
             ('show_curve',  'Density Curve',       True),
             ('show_stats',  'Statistics',          True),
             ('show_box',    'Figure Box (frame)',   True),
+            ('show_values', 'Values on Bars',      False),
         ]:
             a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
@@ -2201,7 +2202,7 @@ class HistogramDisplayDialog(QDialog):
             affects presentation in that mode.
         """
         unsupported_overlaid = {
-            'show_curve', 'show_stats',
+            'show_curve', 'show_stats', 'show_values',
             'show_median_line', 'show_mean_line',
             'show_mode_marker', 'show_det_limit',
         }
@@ -2209,6 +2210,7 @@ class HistogramDisplayDialog(QDialog):
             'show_curve': 'Density Curve',
             'show_stats': 'Statistics',
             'show_box': 'Figure Box (frame)',
+            'show_values': 'Values on Bars',
             'show_median_line': 'Median Line',
             'show_mean_line': 'Mean Line',
             'show_mode_marker': 'Mode Marker',
@@ -2216,7 +2218,7 @@ class HistogramDisplayDialog(QDialog):
         }
         support = {}
         for key in [
-            'show_curve', 'show_stats', 'show_box',
+            'show_curve', 'show_stats', 'show_box', 'show_values',
             'show_median_line', 'show_mean_line',
             'show_mode_marker', 'show_det_limit',
         ]:
@@ -2644,6 +2646,32 @@ class HistogramDisplayDialog(QDialog):
         seg_panels, gap_panels = _setup_broken_axis_panels(
             inner, all_bar_sets, breaks, data_max, cfg,
             x_label=xl, y_label=yl)
+
+        # Value labels above each non-zero bar in the correct segment panel.
+        if cfg.get('show_values', False):
+            _segs_h = _y_segments(breaks, data_max)
+            _n_segs_h = len(_segs_h)
+            _fc_h = get_font_config(cfg)
+            _fnt_h = QFont(_fc_h.get('family', 'Times New Roman'),
+                           max(_fc_h.get('size', 18) - 5, 6))
+            for _bs_h in all_bar_sets:
+                _x_h = np.asarray(_bs_h['x'], dtype=float)
+                _ht_h = np.asarray(_bs_h['heights'], dtype=float)
+                for _xi_h, _hi_h in zip(_x_h, _ht_h):
+                    if _hi_h <= 0:
+                        continue
+                    _tgt_h, _dy_h = seg_panels[0], min(_hi_h, _segs_h[0][1])
+                    for _si_h in range(_n_segs_h - 1, -1, -1):
+                        _sl_h, _sh_h = _segs_h[_si_h]
+                        if _hi_h > _sl_h:
+                            _tgt_h = seg_panels[_si_h]
+                            _dy_h = min(_hi_h, _sh_h)
+                            break
+                    _ti_h = pg.TextItem(str(int(round(float(_hi_h)))),
+                                        anchor=(0.5, 1), color="#374151")
+                    _ti_h.setFont(_fnt_h)
+                    _tgt_h.addItem(_ti_h)
+                    _ti_h.setPos(float(_xi_h), float(_dy_h) + data_max * 0.01)
 
         # Add overlays (stat lines, shaded regions, det-limit) to each segment.
         if all_raw_vals:
@@ -3408,6 +3436,7 @@ class HistogramPlotNode(QObject):
         'bin_width': 20,
         'bin_mode': 'geometric',
         'y_axis_breaks': [],
+        'show_values': False,
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
@@ -4281,6 +4310,73 @@ def _compute_hist_bar_data(values, cfg, bin_edges=None, y_scale=1.0):
             'widths': widths, 'bin_edges': bin_edges}
 
 
+def _make_segment_yticks(s_lo, s_hi, g_lo=None, g_hi=None):
+    """Compute Y-axis ticks for one broken-axis segment panel.
+
+    Returns the list expected by ``AxisItem.setTicks()``:
+    ``[[major_ticks], []]`` where each tick is ``(value, label_str)``.
+
+    ``g_lo``: value at the TOP of this segment (= bottom of the gap above it).
+    ``g_hi``: value at the BOTTOM of this segment (= top of the gap below it).
+    These boundary values are forced into the tick list so the user can read
+    the exact cut-off values directly from the Y axis.
+    """
+    import math as _math
+
+    def _fmt(v):
+        if v == 0:
+            return '0'
+        av = abs(v)
+        if av >= 1e5 or av < 0.1:
+            return f'{v:.3g}'
+        if av == int(av):
+            return str(int(v))
+        return f'{v:.4g}'
+
+    boundary_vals = []
+    if g_hi is not None:
+        boundary_vals.append(g_hi)
+    if g_lo is not None:
+        boundary_vals.append(g_lo)
+
+    span = s_hi - s_lo
+    if span <= 0:
+        ticks = [(s_lo, _fmt(s_lo))]
+        for bv in boundary_vals:
+            ticks.append((bv, _fmt(bv)))
+        return [sorted(set(ticks), key=lambda t: t[0]), []]
+
+    raw_step = span / 4.0
+    if raw_step <= 0:
+        raw_step = 1.0
+    magnitude = 10 ** _math.floor(_math.log10(raw_step))
+    step = raw_step
+    for mult in [1, 2, 2.5, 5, 10]:
+        candidate = mult * magnitude
+        n = span / candidate
+        if 2.0 <= n <= 6.0:
+            step = candidate
+            break
+
+    tol = step * 0.12
+    first = _math.ceil(s_lo / step) * step if step > 0 else s_lo
+    auto_vals = []
+    v = first
+    while v <= s_hi + tol * 0.5:
+        auto_vals.append(v)
+        v += step
+
+    final = list(boundary_vals)
+    for av in auto_vals:
+        too_close = any(abs(av - bv) < tol for bv in boundary_vals)
+        if not too_close:
+            final.append(av)
+
+    final_sorted = sorted(set(final))
+    ticks = [(v, _fmt(v)) for v in final_sorted]
+    return [ticks, []]
+
+
 def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,
                                cfg, x_ticks=None, x_label='', y_label=''):
     """Create stacked PlotItems in *inner_layout* for a broken Y-axis.
@@ -4429,9 +4525,10 @@ def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,
 
     # ── Style segment panels ─────────────────────────────────────────────────
     bottom_pi = seg_panels[0]
-    for seg_i, (pi, (_s_lo, _s_hi)) in enumerate(zip(seg_panels, segments)):
+    for seg_i, (pi, (s_lo, s_hi)) in enumerate(zip(seg_panels, segments)):
         if seg_i != 0:
             pi.hideAxis('bottom')
+            pi.getAxis('bottom').setStyle(showValues=False, tickLength=0)
         else:
             if x_ticks is not None:
                 pi.getAxis('bottom').setTicks([x_ticks])
@@ -4439,6 +4536,10 @@ def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,
                 pi.getAxis('bottom').setLabel(x_label)
             if y_label:
                 pi.setLabel('left', y_label)
+        # Y-axis ticks: include break-boundary values so cut positions are legible.
+        g_lo = breaks[seg_i][0] if seg_i < n_segs - 1 else None
+        g_hi = breaks[seg_i - 1][1] if seg_i > 0 else None
+        pi.getAxis('left').setTicks(_make_segment_yticks(s_lo, s_hi, g_lo, g_hi))
         if cfg.get('log_x', False):
             pi.getAxis('bottom').setLogMode(True)
         apply_font_to_pyqtgraph(pi, cfg)
@@ -4449,6 +4550,8 @@ def _setup_broken_axis_panels(inner_layout, all_bar_sets, breaks, data_max,
     for gp in gap_panels:
         gp.hideAxis('bottom')
         gp.hideAxis('left')
+        gp.getAxis('bottom').setStyle(showValues=False, tickLength=0)
+        gp.getAxis('left').setStyle(showValues=False, tickLength=0)
         gp.setMenuEnabled(False)
         gp.setMouseEnabled(x=False, y=False)
         gp.setXLink(bottom_pi)
@@ -4721,8 +4824,10 @@ def _draw_single_histogram(
     """
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
+    log_y = cfg.get('log_y', False)
     bin_width = cfg.get('bin_width', 20)
     bin_mode = cfg.get('bin_mode', 'geometric')
+    show_vals = cfg.get('show_values', False)
     hidden = set(hidden_elements or set())
 
     sorted_data = sort_element_dict_by_mass(element_data)
@@ -4750,9 +4855,27 @@ def _draw_single_histogram(
 
         visible_count += 1
         color = single_color or _get_element_color(elem, idx, cfg)
-        _draw_histogram_bars(plot_item, vals, cfg, color, bin_edges=global_edges,
-                             name=_fmt_elem(elem, cfg), y_scale=y_scale)
+        _, _be_used, _cts_used = _draw_histogram_bars(
+            plot_item, vals, cfg, color, bin_edges=global_edges,
+            name=_fmt_elem(elem, cfg), y_scale=y_scale)
         all_vals.append(vals)
+
+        # Value labels above each non-zero bin (single-element or multi).
+        if show_vals and not log_y and _be_used is not None and len(_be_used) > 1:
+            _sc = _cts_used.astype(float) * y_scale
+            _cx = (_be_used[:-1] + _be_used[1:]) / 2.0
+            _mh = float(np.max(_sc)) if len(_sc) > 0 else 1.0
+            _fc2 = get_font_config(cfg)
+            _fnt2 = QFont(_fc2.get('family', 'Times New Roman'),
+                          max(_fc2.get('size', 18) - 5, 6))
+            for _xi, _hi, _si in zip(_cx, _sc, _sc):
+                if _si <= 0:
+                    continue
+                _ti = pg.TextItem(str(int(round(float(_si)))),
+                                  anchor=(0.5, 1), color="#374151")
+                _ti.setFont(_fnt2)
+                plot_item.addItem(_ti)
+                _ti.setPos(float(_xi), float(_hi) + _mh * 0.01)
 
         if is_single:
             bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x, bin_mode=bin_mode)
@@ -5882,6 +6005,31 @@ class ElementBarChartDisplayDialog(QDialog):
         seg_panels, _ = _setup_broken_axis_panels(
             inner, all_bar_sets, breaks, data_max, cfg,
             x_ticks=x_ticks, x_label='Isotope Elements', y_label=yl)
+
+        # Value labels above each bar in the correct segment panel.
+        if cfg.get('show_values', True):
+            _segs_bc = _y_segments(breaks, data_max)
+            _n_segs_bc = len(_segs_bc)
+            _fc_bc = get_font_config(cfg)
+            _fnt_bc = QFont(_fc_bc.get('family', 'Times New Roman'),
+                            max(_fc_bc.get('size', 18) - 4, 7))
+            for _bs_bc in all_bar_sets:
+                _h_bc = float(_bs_bc['heights'][0])
+                _x_bc = float(_bs_bc['x'][0])
+                if _h_bc <= 0:
+                    continue
+                _tgt_bc, _dy_bc = seg_panels[0], min(_h_bc, _segs_bc[0][1])
+                for _si_bc in range(_n_segs_bc - 1, -1, -1):
+                    _sl_bc, _sh_bc = _segs_bc[_si_bc]
+                    if _h_bc > _sl_bc:
+                        _tgt_bc = seg_panels[_si_bc]
+                        _dy_bc = min(_h_bc, _sh_bc)
+                        break
+                _ti_bc = _bar_value_textitem(
+                    _h_bc, per_ml, anchor=(0.5, 1), color="#374151", cfg=cfg)
+                _ti_bc.setFont(_fnt_bc)
+                _tgt_bc.addItem(_ti_bc)
+                _ti_bc.setPos(_x_bc, _dy_bc + data_max * 0.012)
 
         if not cfg.get('auto_x', True):
             seg_panels[0].setXRange(
