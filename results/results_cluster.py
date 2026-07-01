@@ -4648,7 +4648,7 @@ class ClusteringDisplayDialog(QDialog):
             ax._algo_name = algo_name
        
             try:
-                ax.set_box_aspect(None, zoom=1.2)
+                ax.set_box_aspect(None, zoom=1)
             except Exception:
                 _itk_log.exception("Handled exception in _draw_3d_into")
             labels_arr  = result.get('labels')
