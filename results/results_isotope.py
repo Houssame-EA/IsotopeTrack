@@ -24,7 +24,6 @@ from results.shared_plot_utils import (
     _apply_box, _add_hband,
     _add_det_limit_h,
     apply_plot_title_style, apply_axis_label_style,
-    ScientificLineEdit,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_isotope")
@@ -800,10 +799,14 @@ class IsotopeSettingsDialog(QDialog):
                             min_val=0.0, max_val=None):
             rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
             auto_cb = QCheckBox("Auto"); auto_cb.setChecked(self._cfg.get(auto_key, True))
-            mn = ScientificLineEdit(self._cfg.get(min_key, min_def),
-                                    min_val=min_val, max_val=max_val)
-            mx = ScientificLineEdit(self._cfg.get(max_key, max_def),
-                                    min_val=min_val, max_val=max_val)
+            mn = QDoubleSpinBox()
+            mn.setRange(min_val if min_val is not None else -1e9,
+                        max_val if max_val is not None else 1e9)
+            mn.setDecimals(4); mn.setValue(self._cfg.get(min_key, min_def))
+            mx = QDoubleSpinBox()
+            mx.setRange(min_val if min_val is not None else -1e9,
+                        max_val if max_val is not None else 1e9)
+            mx.setDecimals(4); mx.setValue(self._cfg.get(max_key, max_def))
             mn.setEnabled(not auto_cb.isChecked())
             mx.setEnabled(not auto_cb.isChecked())
             auto_cb.stateChanged.connect(lambda s, a=mn, b=mx: (
