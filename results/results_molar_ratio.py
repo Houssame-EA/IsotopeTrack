@@ -14,7 +14,7 @@ from scipy.stats import gaussian_kde
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, make_qfont,
     apply_font_to_pyqtgraph, set_axis_labels, FontSettingsGroup, get_display_name,
-    download_pyqtgraph_figure, format_element_label, LABEL_MODES,
+    download_pyqtgraph_figure, copy_figure_to_clipboard, format_element_label, LABEL_MODES,
     Renderer,
     per_ml_active, per_ml_factor, conc_meta_available,
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
@@ -25,6 +25,7 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
 try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
+        _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -38,6 +39,9 @@ except Exception:
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
+    _get_broken_cuts = lambda cfg: []
+    _render_broken_or_plain = None
+    BrokenYAxisEditor = None
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -51,10 +55,10 @@ MOLAR_DATA_KEY_MAP = {
 MR_DISPLAY_MODES = [
     'Overlaid (Different Colors)',
     'Individual Subplots',
+    'Side by Side Subplots',
 ]
 
 _MR_DISPLAY_MODE_ALIASES = {
-    'Side by Side Subplots': 'Individual Subplots',
     'Combined with Legend': 'Overlaid (Different Colors)',
 }
 
@@ -370,6 +374,10 @@ class MolarRatioSettingsDialog(QDialog):
         f5.addRow("Y Range:", yr)
         if self._scope in ('all', 'quantities'):
             lay.addWidget(g5)
+            if BrokenYAxisEditor is not None:
+                self._broken_editor = BrokenYAxisEditor(
+                    self._cfg, log_y_checkbox=self.ly_cb)
+                lay.addWidget(self._broken_editor)
 
         gs = QGroupBox("Statistical Overlays  (applied to all subplots)")
         fs = QFormLayout(gs)
@@ -620,6 +628,8 @@ class MolarRatioSettingsDialog(QDialog):
                 d['y_min'] = self.y_min.value()
                 d['y_max'] = self.y_max.value()
                 d['auto_y'] = self.auto_y.isChecked()
+            if getattr(self, '_broken_editor', None) is not None:
+                self._broken_editor.collect_into(d)
             if self.mode_combo is not None:
                 d['display_mode'] = _normalize_mr_display_mode(
                     self.mode_combo.currentText())
@@ -730,13 +740,17 @@ def _apply_box(plot_item, cfg):
     """Show or hide the figure frame (top + right axes = closed box).
 
     The frame state is forced on every redraw so toggling ``show_box`` is
-    responsive in single and multi-sample views.
+    responsive in single and multi-sample views. Broken (cut) Y-axis panels
+    flagged with ``_itk_hide_top_axis`` never show the top border, which
+    would otherwise draw a solid line across the cut seam.
     """
     show = bool(cfg.get('show_box', True))
-    plot_item.showAxis('top', show)
+    show_top = show and not getattr(plot_item, '_itk_hide_top_axis', False)
+    plot_item.showAxis('top', show_top)
     plot_item.showAxis('right', show)
-    if show:
+    if show_top:
         plot_item.getAxis('top').setStyle(showValues=False)
+    if show:
         plot_item.getAxis('right').setStyle(showValues=False)
     else:
         # Ensure hidden-frame state is explicit after any prior enabled state.
@@ -1104,6 +1118,10 @@ class MolarRatioDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == label_mode)
             a.triggered.connect(lambda _, v=label_mode: self._set('label_mode', v))
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.pw))
         menu.exec(self.pw.mapToGlobal(pos))
 
     # ── Helpers ──────────────────────────
@@ -1270,14 +1288,33 @@ class MolarRatioDisplayDialog(QDialog):
                 cfg['display_mode'] = mode
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
+                elif mode == 'Side by Side Subplots':
+                    self._draw_side_by_side(plot_data, cfg)
                 else:
-                    pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
-                    self._draw_overlaid(pi, plot_data, cfg)
-                    apply_font_to_pyqtgraph(pi, cfg)
+                    cuts = _get_broken_cuts(cfg)
+
+                    def _draw(pi, is_top, is_bottom):
+                        """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                        self._draw_overlaid(pi, plot_data, cfg,
+                                            with_legend=is_top)
+                        apply_font_to_pyqtgraph(pi, cfg)
+
+                    _render_broken_or_plain(
+                        self.pw, cuts, _draw,
+                        axis_factory=lambda: {'left': HtmlAxisItem('left')},
+                        cfg=cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
-                self._draw_single(pi, plot_data, cfg)
-                apply_font_to_pyqtgraph(pi, cfg)
+                cuts = _get_broken_cuts(cfg)
+
+                def _draw(pi, is_top, is_bottom):
+                    """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                    self._draw_single(pi, plot_data, cfg)
+                    apply_font_to_pyqtgraph(pi, cfg)
+
+                _render_broken_or_plain(
+                    self.pw, cuts, _draw,
+                    axis_factory=lambda: {'left': HtmlAxisItem('left')},
+                    cfg=cfg)
 
             # Enforce figure-frame visibility across every subplot regardless
             # of draw branch or panel data availability.
@@ -1312,7 +1349,7 @@ class MolarRatioDisplayDialog(QDialog):
             pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
             _add_stats_text(pi, pr, cfg)
 
-    def _draw_overlaid(self, pi, plot_data, cfg):
+    def _draw_overlaid(self, pi, plot_data, cfg, with_legend=True):
         """Draw multi-sample overlaid ratios in one panel with explicit log states."""
         sc = cfg.get('sample_colors', {})
         legend_items = []
@@ -1340,7 +1377,7 @@ class MolarRatioDisplayDialog(QDialog):
         if per_ml and not cfg.get('log_y', False):
             apply_sci_y_axis(pi, cfg)
         _apply_box(pi, cfg)
-        if legend_items:
+        if legend_items and with_legend:
             legend = pi.addLegend()
             for sn, c in legend_items:
                 dn = get_display_name(sn, cfg)
@@ -1354,53 +1391,71 @@ class MolarRatioDisplayDialog(QDialog):
         rows = math.ceil(len(names) / cols)
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
+        cuts = _get_broken_cuts(cfg)
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c,
-                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
-            if ratios is not None and len(ratios) > 0:
-                color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_ratio_plot(pi, ratios, cfg, color, y_scale, sample_key=sn)
-                pi.setTitle(get_display_name(sn, cfg))
-                xl, yl = _xy_labels(cfg)
-                set_axis_labels(pi, xl, yl, cfg)
-                
-                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
-                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
-                if per_ml and not cfg.get('log_y', False):
-                    apply_sci_y_axis(pi, cfg)
-                if cfg.get('show_stats', False):
-                    pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
-                    _add_stats_text(pi, pr, cfg)
-            apply_font_to_pyqtgraph(pi, cfg)
+            has_data = ratios is not None and len(ratios) > 0
+
+            def _draw(pi, is_top, is_bottom, sn=sn, ratios=ratios, i=i):
+                """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                if ratios is not None and len(ratios) > 0:
+                    color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                    y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                    _draw_ratio_plot(pi, ratios, cfg, color, y_scale, sample_key=sn)
+                    xl, yl = _xy_labels(cfg)
+                    set_axis_labels(pi, xl, yl, cfg)
+
+                    pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
+                    pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                    if per_ml and not cfg.get('log_y', False):
+                        apply_sci_y_axis(pi, cfg)
+                    if cfg.get('show_stats', False) and is_top:
+                        pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
+                        _add_stats_text(pi, pr, cfg)
+                apply_font_to_pyqtgraph(pi, cfg)
+
+            _render_broken_or_plain(
+                self.pw, (cuts if has_data else []), _draw,
+                axis_factory=lambda: {'left': HtmlAxisItem('left')},
+                row=r, col=c,
+                title=get_display_name(sn, cfg) if has_data else None,
+                cfg=cfg)
 
     def _draw_side_by_side(self, plot_data, cfg):
         """Draw side-by-side sample subplots with explicit log + stats behavior."""
         names = list(plot_data.keys())
         sc = cfg.get('sample_colors', {})
         per_ml = per_ml_active(cfg, self.node.input_data)
+        cuts = _get_broken_cuts(cfg)
         for i, sn in enumerate(names):
-            pi = self.pw.addPlot(row=0, col=i,
-                                 axisItems={'left': HtmlAxisItem('left')})
             ratios = plot_data[sn]
-            if ratios is not None and len(ratios) > 0:
-                color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                _draw_ratio_plot(pi, ratios, cfg, color, y_scale, sample_key=sn)
-                pi.setTitle(get_display_name(sn, cfg))
-                xl, yl = _xy_labels(cfg)
-                set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
-                
-                pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
-                pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
-                if per_ml and not cfg.get('log_y', False):
-                    apply_sci_y_axis(pi, cfg)
-                if cfg.get('show_stats', False):
-                    pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
-                    _add_stats_text(pi, pr, cfg)
-            apply_font_to_pyqtgraph(pi, cfg)
+            has_data = ratios is not None and len(ratios) > 0
+
+            def _draw(pi, is_top, is_bottom, sn=sn, ratios=ratios, i=i):
+                """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                if ratios is not None and len(ratios) > 0:
+                    color = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
+                    y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
+                    _draw_ratio_plot(pi, ratios, cfg, color, y_scale, sample_key=sn)
+                    xl, yl = _xy_labels(cfg)
+                    set_axis_labels(pi, xl, yl if i == 0 else "", cfg)
+
+                    pi.getAxis('bottom').setLogMode(bool(cfg.get('log_x', False)))
+                    pi.getAxis('left').setLogMode(bool(cfg.get('log_y', False)))
+                    if per_ml and not cfg.get('log_y', False):
+                        apply_sci_y_axis(pi, cfg)
+                    if cfg.get('show_stats', False) and is_top:
+                        pr = np.log10(ratios) if cfg.get('log_x', False) else ratios.copy()
+                        _add_stats_text(pi, pr, cfg)
+                apply_font_to_pyqtgraph(pi, cfg)
+
+            _render_broken_or_plain(
+                self.pw, (cuts if has_data else []), _draw,
+                axis_factory=lambda: {'left': HtmlAxisItem('left')},
+                row=0, col=i,
+                title=get_display_name(sn, cfg) if has_data else None,
+                cfg=cfg)
 
     def _update_stats(self, plot_data, multi):
         if multi:

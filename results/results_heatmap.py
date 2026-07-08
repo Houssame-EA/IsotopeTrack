@@ -9,6 +9,7 @@ from matplotlib.figure import Figure
 import numpy as np
 import math
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     DATA_KEY_MAPPING, FontSettingsGroup,
     ExportSettingsGroup, MplDraggableCanvas, get_font_config,
@@ -544,6 +545,10 @@ class HeatmapDisplayDialog(QDialog):
             a.setChecked(mode == current_mode)
             a.triggered.connect(lambda _, m=mode: self._set_label_mode(m))
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas))
         menu.exec(QCursor.pos())
     def _get_row_at(self, widget_pos):
         """Return the raw combo key for the heatmap row at widget_pos, or None."""

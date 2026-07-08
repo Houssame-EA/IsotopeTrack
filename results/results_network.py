@@ -21,6 +21,7 @@ import numpy as np
 import math
 from scipy.stats import pearsonr
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     get_font_config,
     FontSettingsGroup, ExportSettingsGroup, MplDraggableCanvas,
@@ -913,6 +914,10 @@ class NetworkDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas))
         menu.exec(QCursor.pos())
     def _toggle(self, key):
         """Flip a boolean config flag and redraw the current figure.

@@ -15,6 +15,7 @@ import pandas as pd
 
 from results.utils_sort import extract_mass_and_element
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, apply_font_to_pyqtgraph,
     LABEL_MODES, format_element_label, Renderer, apply_saturation_filter,
@@ -1868,6 +1869,10 @@ class IsotopicRatioDisplayDialog(QDialog):
         menu.addAction("Isotope correction...").triggered.connect(
             self._open_isotope_correction_settings)
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.plot_widget))
         menu.exec(QCursor.pos())
     
     def _download_figure(self):

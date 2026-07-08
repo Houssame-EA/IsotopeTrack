@@ -139,9 +139,6 @@ def selectable_labels():
     return [m.label for m in _ORDER if m.user_selectable]
 
 
-# ── Built-in methods ──────────────────────────────────────────────────────────
-# NOTE: ids are the exact strings already stored in saved projects and shown in
-# the UI, so lookups keep working for existing data without any remapping.
 register(DetectionMethod(
     "Manual", "Manual",
     is_manual=True, user_selectable=True,

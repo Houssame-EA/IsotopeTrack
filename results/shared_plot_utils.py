@@ -1362,6 +1362,11 @@ def apply_plot_item_text_styling(
     apply_legend_label_style(
         getattr(plot_item, 'legend', None), family=family, size=legend_size,
         bold=bold, italic=italic, color=color)
+    if getattr(plot_item, '_itk_hide_bottom_axis', False):
+        try:
+            plot_item.hideAxis('bottom')
+        except Exception:
+            pass
     try:
         plot_item.update()
     except Exception:
@@ -1396,6 +1401,19 @@ def apply_font_to_pyqtgraph(plot_item, config: dict):
     except Exception as e:
         _itk_log.exception("Handled exception in apply_font_to_pyqtgraph")
         _itk_log.error(f"Error applying pyqtgraph font settings: {e}")
+
+
+def copy_figure_to_clipboard(widget):
+    """Copy the full rendered figure to the system clipboard as an image.
+
+    Args:
+        widget: QWidget-based plot container (e.g. a GraphicsLayoutWidget).
+            The widget is grabbed exactly as displayed, including every
+            subplot, stacked broken-axis panel, legend, and title, so the
+            pasted image matches the on-screen figure.
+    """
+    from PySide6.QtWidgets import QApplication
+    QApplication.clipboard().setPixmap(widget.grab())
 
 
 def set_axis_labels(plot_item, x_label: str, y_label: str, config: dict):
@@ -3206,12 +3224,19 @@ def apply_outlier_filter(values: np.ndarray, cfg: dict) -> np.ndarray:
 
 
 def _apply_box(plot_item, cfg: dict):
-    """Show or hide the top + right axes (figure box frame)."""
+    """Show or hide the top + right axes (figure box frame).
+
+    Broken (cut) Y-axis panels flagged with ``_itk_hide_top_axis`` never
+    show the top border, which would otherwise draw a solid line straight
+    across the cut seam between stacked panels.
+    """
     show = cfg.get('show_box', True)
-    plot_item.showAxis('top', show)
+    show_top = show and not getattr(plot_item, '_itk_hide_top_axis', False)
+    plot_item.showAxis('top', show_top)
     plot_item.showAxis('right', show)
-    if show:
+    if show_top:
         plot_item.getAxis('top').setStyle(showValues=False)
+    if show:
         plot_item.getAxis('right').setStyle(showValues=False)
 
 
