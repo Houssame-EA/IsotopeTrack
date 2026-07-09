@@ -78,7 +78,7 @@ DEFAULT_CONFIG = {
     'filter_outliers': True,
     'outlier_percentile': 99.0,
     'bin_width': 0.25,
-    'bin_mode': 'linear',
+    'bin_mode': 'Linear',
     'show_values': False,
     'alpha': 0.7,
     'bin_borders': True,

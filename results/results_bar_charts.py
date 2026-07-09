@@ -4113,7 +4113,7 @@ class HistogramPlotNode(QObject):
         'mode_line_width': 2,
         'curve_color': '#2C3E50',
         'bin_width': 20,
-        'bin_mode': 'linear',
+        'bin_mode': 'Linear',
         'show_values': False,
         'alpha': 0.7,
         'log_x': False,
