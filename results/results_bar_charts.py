@@ -767,7 +767,7 @@ def warn_if_values_swallowed(container, cuts, parent):
     if not cuts:
         return
     try:
-        panels = [it for it in container.ci.items.keys()
+        panels = [it for it in container.scene().items()
                   if isinstance(it, pg.PlotItem)]
     except AttributeError:
         return
