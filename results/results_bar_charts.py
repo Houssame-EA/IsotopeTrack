@@ -705,6 +705,97 @@ def _finalize_broken_panels(panels, cuts, cfg=None):
     _apply_broken_ticks(panels, segs)
 
 
+def _iter_panel_values(plot_item):
+    """Yield every plotted Y-value on a panel that represents a real quantity.
+
+    Generic across node types: Histogram/Element Bar Chart/Molar Ratio draw
+    ``pg.BarGraphItem`` bars (top = height + y-offset); Box Plot draws
+    ``QGraphicsRectItem`` boxes, ``PlotDataItem`` whisker/median/mean lines,
+    and ``ScatterPlotItem`` outlier/jitter points. Each is read directly
+    since none of them expose a common "value" API.
+
+    Args:
+        plot_item (pg.PlotItem): Panel to scan.
+
+    Yields:
+        float: One Y-value per plotted feature (bar top, box edge, line
+        point, or scatter point).
+    """
+    for item in list(plot_item.items):
+        if isinstance(item, pg.BarGraphItem):
+            opts = getattr(item, 'opts', {}) or {}
+            hs = opts.get('height')
+            if hs is None:
+                continue
+            hs = np.atleast_1d(np.asarray(hs, dtype=float))
+            y_off = float(item.pos().y())
+            for hh in hs:
+                if np.isfinite(hh):
+                    yield float(hh) + y_off
+        elif isinstance(item, pg.QtWidgets.QGraphicsRectItem):
+            r = item.rect()
+            y_off = float(item.pos().y())
+            yield float(r.y()) + y_off
+            yield float(r.y() + r.height()) + y_off
+        elif isinstance(item, (pg.PlotDataItem, pg.ScatterPlotItem)):
+            try:
+                _, y = item.getData()
+            except Exception:
+                continue
+            if y is None:
+                continue
+            for v in np.atleast_1d(np.asarray(y, dtype=float)):
+                if np.isfinite(v):
+                    yield float(v)
+
+
+def warn_if_values_swallowed(container, cuts, parent):
+    """Warn when a broken Y-axis cut hides a real plotted value.
+
+    A value strictly inside a removed band (``lo < v < hi``) never reaches
+    ``hi``, so it is clipped at the band edge and looks identical to a
+    value of ``lo`` — its real magnitude disappears from the chart. The
+    cut is still allowed; this only informs the user it happened.
+
+    Args:
+        container: GraphicsLayoutWidget whose currently drawn PlotItems
+            should be scanned (e.g. a display dialog's ``self.pw``).
+        cuts (list[list[float]]): Sanitized ``[lo, hi]`` bands, as returned
+            by ``_get_broken_cuts``.
+        parent (QWidget): Parent widget for the message box.
+    """
+    if not cuts:
+        return
+    try:
+        panels = [it for it in container.ci.items.keys()
+                  if isinstance(it, pg.PlotItem)]
+    except AttributeError:
+        return
+    if not panels:
+        return
+    hit = None
+    for lo, hi in cuts:
+        for pi in panels:
+            if any(lo < v < hi for v in _iter_panel_values(pi)):
+                hit = (lo, hi)
+                break
+        if hit:
+            break
+    if hit is None:
+        return
+    lo, hi = hit
+    QMessageBox.warning(
+        parent,
+        "Some Values Fall Inside a Cut",
+        f"One or more bars/points have a true value between {lo:g} and "
+        f"{hi:g}, inside a removed Y-axis band. Their tops are cut off "
+        "exactly at the band edge, so they'll look identical to a value "
+        f"of {lo:g}, and their real magnitude won't be visible anywhere "
+        "on the chart.\n\n"
+        "You can still apply this cut, but consider narrowing it or "
+        "picking a band that doesn't intersect real data.")
+
+
 class BrokenYAxisEditor(QGroupBox):
     """Settings-dialog group box for configuring broken Y-axis cuts.
 
@@ -828,8 +919,7 @@ class BrokenYAxisEditor(QGroupBox):
             sp.setDecimals(2)
         lo_spin.setValue(50.0 if lo is None else lo)
         hi_spin.setValue(400.0 if hi is None else hi)
-        rm_btn = QPushButton("−")
-        rm_btn.setFixedSize(22, 22)
+        rm_btn = QPushButton("Remove cut")
         rm_btn.setToolTip("Remove this cut")
         rh.addWidget(QLabel("cut from"))
         rh.addWidget(lo_spin)
@@ -3101,10 +3191,15 @@ class HistogramDisplayDialog(QDialog):
             te_available=_meta_te_available(self.node.input_data))
         if title_override:
             dlg.setWindowTitle(title_override)
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(),
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
         else:
             self.node.config.clear()
             self.node.config.update(_snap)
@@ -3805,6 +3900,8 @@ class HistogramDecompositionDialog(QDialog):
             self._cfg.update(dlg.collect())
             self._cfg['data_type_display'] = self._inherited_data_type
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self._cfg), self)
 
     def _reset_layout(self):
         """Reset child view ranges without modifying plotted values."""
@@ -5648,6 +5745,8 @@ class ElementBarChartDisplayDialog(QDialog):
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
 
     def _open_plot_format_settings(self):
         """
@@ -5682,10 +5781,15 @@ class ElementBarChartDisplayDialog(QDialog):
             _sample_names(self.node.input_data), self, scope='quantities',
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements())
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(),
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
         else:
             self.node.config.clear()
             self.node.config.update(_snap)

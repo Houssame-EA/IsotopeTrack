@@ -39,6 +39,7 @@ try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
         _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
+        warn_if_values_swallowed,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -55,6 +56,7 @@ except Exception:
     _get_broken_cuts = lambda cfg: []
     _render_broken_or_plain = None
     BrokenYAxisEditor = None
+    warn_if_values_swallowed = lambda *a, **k: None
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -1353,10 +1355,18 @@ class BoxPlotDisplayDialog(QDialog):
             self.node.config, self.node.input_data, self, scope=scope)
         if title_override:
             dlg.setWindowTitle(title_override)
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+
+        def _maybe_warn_swallowed():
+            if scope in ('all', 'quantities'):
+                warn_if_values_swallowed(
+                    self.pw, _get_broken_cuts(self.node.config), self)
+
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(), _maybe_warn_swallowed()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            _maybe_warn_swallowed()
         else:
             self.node.config.clear()
             self.node.config.update(_snap)

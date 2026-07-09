@@ -28,6 +28,7 @@ try:
         EnhancedGraphicsLayoutWidget,
         _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
         _ClickableLegendSwatch, _attach_histogram_legend_toggle,
+        warn_if_values_swallowed,
     )
 except Exception:
     _itk_log.exception("Handled exception in <module>")
@@ -39,6 +40,7 @@ except Exception:
             super().__init__(*args, **kwargs)
     _attach_histogram_legend_toggle = lambda legend, raw_key, toggle_callback: None
     BrokenYAxisEditor = None
+    warn_if_values_swallowed = lambda *a, **k: None
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -1353,10 +1355,18 @@ class MolarRatioDisplayDialog(QDialog):
         )
         if title_override:
             dlg.setWindowTitle(title_override)
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+
+        def _maybe_warn_swallowed():
+            if scope in ('all', 'quantities'):
+                warn_if_values_swallowed(
+                    self.pw, _get_broken_cuts(self.node.config), self)
+
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(), _maybe_warn_swallowed()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            _maybe_warn_swallowed()
         else:
             self.node.config.clear()
             self.node.config.update(_snap)
