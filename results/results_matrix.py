@@ -26,6 +26,7 @@ from results.shared_plot_utils import (
     ExportSettingsGroup,
     MplDraggableCanvas, LABEL_MODES, format_element_label,
     Renderer, get_display_name, download_matplotlib_figure,
+    pick_color_hex,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging
@@ -67,6 +68,16 @@ MATRIX_DISPLAY_MODES = [
 
 DEGREE_SIGN = "\N{DEGREE SIGN}"
 
+DEFAULT_HIGHLIGHT_COLOR = '#000000'
+
+
+def _normalize_highlighted_elements(raw):
+    """Return ``{element: hex_color}`` from the highlighted_elements config value."""
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {k: DEFAULT_HIGHLIGHT_COLOR for k in (raw or [])}
+
+
 DEFAULT_CONFIG = {
     'data_type_display':  'Counts',
     'min_particles':      5,
@@ -82,6 +93,7 @@ DEFAULT_CONFIG = {
     'font_color':         '#000000',
     'sample_colors':      {},
     'sample_name_mappings': {},
+    'highlighted_elements': {},
     'label_mode':         'Symbol',
     'x_rotation':         0,
     'bg_color':           '#FFFFFF',
@@ -283,6 +295,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
         self.node = node
         self.setWindowTitle("Correlation Matrix Analysis")
         self.setMinimumSize(1100, 750)
+        self._axes_row_elems = {}
         self._build_ui()
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
@@ -346,6 +359,25 @@ class CorrelationMatrixDisplayDialog(QDialog):
             a.setChecked(cfg.get('label_mode', 'Symbol') == mode)
             a.triggered.connect(lambda _, v=mode: self._set('label_mode', v))
 
+        row_elem = self._get_row_at(pos)
+        highlighted = _normalize_highlighted_elements(cfg.get('highlighted_elements', {}))
+        if row_elem is not None:
+            menu.addSeparator()
+            if row_elem in highlighted:
+                a = menu.addAction("Remove highlight from this row")
+                a.triggered.connect(lambda _, e=row_elem: self._toggle_row_highlight(e, False))
+                a3 = menu.addAction("Change highlight color...")
+                a3.triggered.connect(lambda _, e=row_elem: self._change_row_highlight_color(e))
+            else:
+                a = menu.addAction("Highlight this row")
+                a.triggered.connect(lambda _, e=row_elem: self._toggle_row_highlight(e, True))
+
+        if highlighted:
+            if row_elem is None:
+                menu.addSeparator()
+            a2 = menu.addAction("Clear all row highlights")
+            a2.triggered.connect(lambda _: self._clear_all_highlights())
+
         menu.addSeparator()
         act_copy_fig = menu.addAction("Copy figure")
         act_copy_fig.triggered.connect(
@@ -357,6 +389,52 @@ class CorrelationMatrixDisplayDialog(QDialog):
 
     def _set(self, key, value):
         self.node.config[key] = value
+        self._refresh()
+
+    def _get_row_at(self, widget_pos):
+        """Return the element for the matrix row at widget_pos, or None."""
+        canvas_h = self.canvas.height()
+        mpl_x = float(widget_pos.x())
+        mpl_y = float(canvas_h - widget_pos.y())
+        for ax in self.figure.get_axes():
+            row_elems = self._axes_row_elems.get(id(ax))
+            if not row_elems:
+                continue
+            try:
+                inv = ax.transData.inverted()
+                data_x, data_y = inv.transform((mpl_x, mpl_y))
+                row_idx = int(round(data_y))
+                xlim = ax.get_xlim(); ylim = ax.get_ylim()
+                x_min = min(xlim); x_max = max(xlim)
+                y_min = min(ylim); y_max = max(ylim)
+                if (x_min - 0.5 <= data_x <= x_max + 0.5
+                        and y_min - 0.5 <= data_y <= y_max + 0.5
+                        and 0 <= row_idx < len(row_elems)):
+                    return row_elems[row_idx]
+            except Exception:
+                pass
+        return None
+
+    def _toggle_row_highlight(self, elem, add):
+        highlighted = _normalize_highlighted_elements(self.node.config.get('highlighted_elements', {}))
+        if add:
+            highlighted[elem] = highlighted.get(elem, DEFAULT_HIGHLIGHT_COLOR)
+        else:
+            highlighted.pop(elem, None)
+        self.node.config['highlighted_elements'] = highlighted
+        self._refresh()
+
+    def _change_row_highlight_color(self, elem):
+        highlighted = _normalize_highlighted_elements(self.node.config.get('highlighted_elements', {}))
+        current = highlighted.get(elem, DEFAULT_HIGHLIGHT_COLOR)
+        picked = pick_color_hex(current, self, "Choose Highlight Color")
+        if picked is not None:
+            highlighted[elem] = picked
+            self.node.config['highlighted_elements'] = highlighted
+            self._refresh()
+
+    def _clear_all_highlights(self):
+        self.node.config['highlighted_elements'] = {}
         self._refresh()
 
     def _reset_layout(self):
@@ -401,6 +479,7 @@ class CorrelationMatrixDisplayDialog(QDialog):
 
     def _refresh(self):
         try:
+            self._axes_row_elems = {}
             cfg = self.node.config
             if cfg.get('use_custom_figsize', False):
                 self.figure.set_size_inches(cfg.get('figsize_w', 14.0),
@@ -515,6 +594,15 @@ class CorrelationMatrixDisplayDialog(QDialog):
                            fontsize=fc['size'], color=fc['color'])
         ax.set_yticks(range(n))
         ax.set_yticklabels(fmt_elems, fontsize=fc['size'], color=fc['color'])
+
+        self._axes_row_elems[id(ax)] = elems
+        highlighted = _normalize_highlighted_elements(cfg.get('highlighted_elements', {}))
+        if highlighted:
+            for i, el in enumerate(elems):
+                if el in highlighted:
+                    ax.axhline(y=i + 0.35, color=highlighted[el], linewidth=2, alpha=0.9,
+                               xmin=-0.15, xmax=0, clip_on=False)
+                    ax.get_yticklabels()[i].set_weight('bold')
 
         if title:
             ax.set_title(title, fontsize=fc['size'] + 2,

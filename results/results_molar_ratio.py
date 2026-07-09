@@ -18,6 +18,7 @@ from results.shared_plot_utils import (
     Renderer,
     per_ml_active, per_ml_factor, conc_meta_available,
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
+    get_font_config,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
@@ -26,6 +27,7 @@ try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
         _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
+        _ClickableLegendSwatch, _attach_histogram_legend_toggle,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -41,6 +43,10 @@ except Exception:
     _CUSTOM_PLOT_AVAILABLE = False
     _get_broken_cuts = lambda cfg: []
     _render_broken_or_plain = None
+    class _ClickableLegendSwatch(pg.BarGraphItem):
+        def __init__(self, *args, raw_key=None, toggle_callback=None, **kwargs):
+            super().__init__(*args, **kwargs)
+    _attach_histogram_legend_toggle = lambda legend, raw_key, toggle_callback: None
     BrokenYAxisEditor = None
 
 # ── Constants ──────────────────────────────────────────────────────────
