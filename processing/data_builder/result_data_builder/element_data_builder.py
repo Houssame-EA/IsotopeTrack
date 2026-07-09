@@ -6,7 +6,7 @@ from typing import override, Optional, Callable
 import numpy as np
 
 from utils.utils import mass_to_diameter
-from result_data_builder import ResultDataBuilder
+from .result_data_builder import ResultDataBuilder
 from widget.periodic_table_widget import PeriodicTableWidget
 
 

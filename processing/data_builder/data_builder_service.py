@@ -2,7 +2,7 @@ from threading import Event
 
 from PySide6.QtCore import QObject, Signal
 
-from result_data_builder.result_data_builder import ResultDataBuilder
+from .result_data_builder import ResultDataBuilder
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
 
 
