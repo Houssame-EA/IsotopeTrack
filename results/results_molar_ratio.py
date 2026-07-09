@@ -25,22 +25,13 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
 
 try:
     from results.results_bar_charts import (
-        EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
+        EnhancedGraphicsLayoutWidget,
         _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
         _ClickableLegendSwatch, _attach_histogram_legend_toggle,
     )
-    try:
-        from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
-        _CUSTOM_PLOT_AVAILABLE = True
-    except Exception:
-        _itk_log.exception("Handled exception in <module>")
-        _PlotSettingsDialog = None
-        _CUSTOM_PLOT_AVAILABLE = False
 except Exception:
     _itk_log.exception("Handled exception in <module>")
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
-    _PlotWidgetAdapter = None
-    _CUSTOM_PLOT_AVAILABLE = False
     _get_broken_cuts = lambda cfg: []
     _render_broken_or_plain = None
     class _ClickableLegendSwatch(pg.BarGraphItem):
@@ -84,7 +75,7 @@ DEFAULT_CONFIG = {
     'filter_outliers': True,
     'outlier_percentile': 99.0,
     'bin_width': 0.25,
-    'bin_mode': 'Linear',
+    'bin_mode': 'linear',
     'show_values': False,
     'alpha': 0.7,
     'bin_borders': True,
@@ -1341,28 +1332,6 @@ class MolarRatioDisplayDialog(QDialog):
 
     # ── Helpers ──────────────────────────
 
-    def _current_ratios(self):
-        """Return a 1-D numpy array of all current ratio values (pooled across
-        samples if multi). Returns None if unavailable."""
-        try:
-            plot_data = self.node.extract_plot_data()
-        except Exception:
-            _itk_log.exception("Handled exception in _current_ratios")
-            return None
-        if plot_data is None:
-            return None
-        if _is_multi(self.node.input_data):
-            if not isinstance(plot_data, dict):
-                return None
-            parts = [v for v in plot_data.values()
-                     if v is not None and hasattr(v, '__len__') and len(v) > 0]
-            if not parts:
-                return None
-            return np.concatenate([np.asarray(p).ravel() for p in parts])
-        if hasattr(plot_data, '__len__') and len(plot_data) > 0:
-            return np.asarray(plot_data).ravel()
-        return None
-
     def _toggle(self, key):
         self.node.config[key] = not self.node.config.get(key, False)
         self._refresh()
@@ -1406,18 +1375,6 @@ class MolarRatioDisplayDialog(QDialog):
             scope='quantities',
             title_override="Molar ratio quantities configuration",
         )
-
-    def _open_plot_settings(self):
-        if not _CUSTOM_PLOT_AVAILABLE or _PlotSettingsDialog is None \
-                or _PlotWidgetAdapter is None:
-            return
-        pi = next(
-            (item for item in self.pw.scene().items()
-             if isinstance(item, pg.PlotItem)),
-            None,
-        )
-        if pi is not None:
-            _PlotSettingsDialog(_PlotWidgetAdapter(self.pw, pi), self).exec()
 
     def _export_figure(self):
         """Export the full Molar Ratio figure using existing helper options."""
@@ -1573,7 +1530,7 @@ class MolarRatioDisplayDialog(QDialog):
         hidden = self._hidden_molar_samples
         log_x = cfg.get('log_x', True)
         bin_width = cfg.get('bin_width', 0.25)
-        bin_mode = cfg.get('bin_mode', 'geometric')
+        bin_mode = cfg.get('bin_mode', 'linear')
 
         # Compute shared bin edges from all visible samples so bars align.
         visible_prep = []
@@ -1586,15 +1543,13 @@ class MolarRatioDisplayDialog(QDialog):
         for i, (sn, ratios) in enumerate(plot_data.items()):
             if ratios is not None and len(ratios) > 0:
                 c = sc.get(sn, DEFAULT_SAMPLE_COLORS[i % len(DEFAULT_SAMPLE_COLORS)])
-                y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
-                pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c, y_scale,
-                                                    sample_key=sn)
                 legend_items.append((sn, c))
                 if sn not in hidden:
                     y_scale = per_ml_factor(self.node.input_data, sn) if per_ml else 1.0
                     pr, edges, y = _draw_histogram_bars(pi, ratios, cfg, c,
                                                         bin_edges=global_edges,
-                                                        y_scale=y_scale)
+                                                        y_scale=y_scale,
+                                                        sample_key=sn)
                     if cfg.get('show_curve', True) and len(ratios) > 5:
                         _add_density_curve(pi, pr, cfg, edges, len(ratios) * y_scale)
                     all_pr.append(pr)
@@ -1648,6 +1603,7 @@ class MolarRatioDisplayDialog(QDialog):
                 all_prep.append(prep)
         global_edges = _mr_compute_global_bin_edges(
             all_prep, bin_width, log_x, bin_mode=bin_mode)
+        cuts = _get_broken_cuts(cfg)
 
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
@@ -1690,6 +1646,7 @@ class MolarRatioDisplayDialog(QDialog):
         all_prep = [np.log10(plot_data[sn]) if log_x else np.asarray(plot_data[sn], dtype=float)
                     for sn in names if plot_data.get(sn) is not None and len(plot_data[sn]) > 0]
         global_edges = _mr_compute_global_bin_edges(all_prep, bin_width, log_x, bin_mode=bin_mode)
+        cuts = _get_broken_cuts(cfg)
         for i, sn in enumerate(names):
             ratios = plot_data[sn]
             has_data = ratios is not None and len(ratios) > 0
