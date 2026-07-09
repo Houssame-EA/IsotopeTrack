@@ -246,6 +246,6 @@ class NanoParticleShapeWidget(QWidget):
 
         nps_editor = NPSEditor(index,
                                nps_model=self.nps_model,
-                               compound_service=self.compound_service,  # TODO: upstream this please.
+                               compound_service=self.compound_service,
                                parent=self)
         return nps_editor
