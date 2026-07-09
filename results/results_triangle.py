@@ -30,6 +30,7 @@ import numpy as np
 import math
 import mpltern  # noqa: F401  (side effect: registers ternary projection)
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, TERNARY_DATA_TYPE_OPTIONS,
     TERNARY_DATA_KEY_MAPPING, get_font_config,
@@ -1819,6 +1820,10 @@ class TriangleDisplayDialog(QDialog):
                 act = menu.addAction(f"Examine  '{dname}'")
                 act.triggered.connect(lambda _=False, s=sn: self._examine_sample(s))
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas))
         menu.exec(QCursor.pos())
 
     def _subplot_under_cursor(self, widget_pos):

@@ -21,7 +21,7 @@ from scipy.stats import gaussian_kde
 
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, apply_font_to_pyqtgraph,
-    FontSettingsGroup, get_display_name, download_pyqtgraph_figure, format_element_label,
+    FontSettingsGroup, get_display_name, download_pyqtgraph_figure, copy_figure_to_clipboard, format_element_label,
     LABEL_MODES, Renderer, HtmlAxisItem,
     SHADE_TYPES,
     _apply_box, _add_hband, _add_det_limit_h, apply_plot_title_style,
@@ -38,6 +38,7 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_box_plot")
 try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
+        _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -51,6 +52,9 @@ except Exception:
     EnhancedGraphicsLayoutWidget = pg.GraphicsLayoutWidget
     _PlotWidgetAdapter = None
     _CUSTOM_PLOT_AVAILABLE = False
+    _get_broken_cuts = lambda cfg: []
+    _render_broken_or_plain = None
+    BrokenYAxisEditor = None
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -591,6 +595,11 @@ class BoxPlotSettingsDialog(QDialog):
             f4.addRow("Y Range:", row)
             lay.addWidget(g4)
 
+            if BrokenYAxisEditor is not None:
+                self._broken_editor = BrokenYAxisEditor(
+                    self._cfg, log_y_checkbox=self.log_y_cb)
+                lay.addWidget(self._broken_editor)
+
         if self._scope in ('all', 'quantities'):
             g_filt = QGroupBox("Outlier Filtering")
             f_filt = QFormLayout(g_filt)
@@ -782,6 +791,8 @@ class BoxPlotSettingsDialog(QDialog):
             d['y_min'] = self.y_min.value()
             d['y_max'] = self.y_max.value()
             d['auto_y'] = self.auto_y.isChecked()
+        if getattr(self, '_broken_editor', None) is not None:
+            self._broken_editor.collect_into(d)
         if self.filter_outliers_cb is not None:
             d['filter_outliers'] = self.filter_outliers_cb.isChecked()
             d['outlier_percentile'] = self.outlier_pct.value()
@@ -1239,6 +1250,10 @@ class BoxPlotDisplayDialog(QDialog):
             hint = "Right-click a subplot panel to export only that panel."
             exp_act.setToolTip(hint)
             exp_act.setStatusTip(hint)
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.pw))
         menu.exec(self.pw.mapToGlobal(pos))
 
     def _plot_item_at(self, pos):
@@ -1717,13 +1732,29 @@ class BoxPlotDisplayDialog(QDialog):
                 elif mode == 'Subplots by isotope':
                     self._draw_grouped(plot_data, cfg)
                 else:
-                    pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
-                    self._draw_combined(pi, plot_data, cfg)
-                    apply_font_to_pyqtgraph(pi, cfg)
+                    cuts = _get_broken_cuts(cfg)
+
+                    def _draw(pi, is_top, is_bottom):
+                        """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                        self._draw_combined(pi, plot_data, cfg)
+                        apply_font_to_pyqtgraph(pi, cfg)
+
+                    _render_broken_or_plain(
+                        self.pw, cuts, _draw,
+                        axis_factory=lambda: {'bottom': HtmlAxisItem('bottom')},
+                        cfg=cfg)
             else:
-                pi = self.pw.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
-                self._draw_single_sample(pi, plot_data, cfg)
-                apply_font_to_pyqtgraph(pi, cfg)
+                cuts = _get_broken_cuts(cfg)
+
+                def _draw(pi, is_top, is_bottom):
+                    """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                    self._draw_single_sample(pi, plot_data, cfg)
+                    apply_font_to_pyqtgraph(pi, cfg)
+
+                _render_broken_or_plain(
+                    self.pw, cuts, _draw,
+                    axis_factory=lambda: {'bottom': HtmlAxisItem('bottom')},
+                    cfg=cfg)
 
             self._disable_native_pyqtgraph_context_menu()
             self._update_stats(plot_data, multi)
@@ -1876,13 +1907,18 @@ class BoxPlotDisplayDialog(QDialog):
         cols = min(3, len(names))
         rows = math.ceil(len(names) / cols)
         first_pi = None
+        cuts = _get_broken_cuts(cfg)
         for i, sn in enumerate(names):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c,
-                                  axisItems={'bottom': HtmlAxisItem('bottom')})
             sd = plot_data[sn]
-            if sd:
-                self._draw_single_sample(pi, sort_element_dict_by_mass(sd), cfg)
+
+            def _draw(pi, is_top, is_bottom, sn=sn, sd=sd):
+                """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                if sd:
+                    self._draw_single_sample(
+                        pi, sort_element_dict_by_mass(sd), cfg)
+                elif is_top:
+                    _add_empty_panel_message(pi, "No valid data")
                 self._apply_effective_axis_labels(
                     pi,
                     self._title_key_for_sample_plot(sn),
@@ -1891,27 +1927,24 @@ class BoxPlotDisplayDialog(QDialog):
                         'left': {'text': _y_label(cfg), 'units': None},
                     },
                 )
-            else:
-                _add_empty_panel_message(pi, "No valid data")
-                self._apply_effective_axis_labels(
-                    pi,
-                    self._title_key_for_sample_plot(sn),
-                    {
-                        'bottom': {'text': "Elements", 'units': None},
-                        'left': {'text': _y_label(cfg), 'units': None},
-                    },
-                )
+                _apply_boxplot_grid(pi, cfg)
+                apply_font_to_pyqtgraph(pi, cfg)
+
+            panels = _render_broken_or_plain(
+                self.pw, (cuts if sd else []), _draw,
+                axis_factory=lambda: {'bottom': HtmlAxisItem('bottom')},
+                row=r, col=c, cfg=cfg)
             self._configure_plot_title(
-                pi, self._title_key_for_sample_plot(sn),
+                panels[-1], self._title_key_for_sample_plot(sn),
                 default_title=get_display_name(sn, cfg))
-            if first_pi is None:
-                first_pi = pi
+            if i == 0:
+                first_pi = panels[0]
             elif cols > 1 and r == 0:
-                pi.setYLink(first_pi)
-                pi.getAxis('left').setLabel('')
-                pi.getAxis('left').setStyle(showValues=False)
-            _apply_boxplot_grid(pi, cfg)
-            apply_font_to_pyqtgraph(pi, cfg)
+                for pi in panels:
+                    if not cuts:
+                        pi.setYLink(first_pi)
+                    pi.getAxis('left').setLabel('')
+                    pi.getAxis('left').setStyle(showValues=False)
     def _draw_grouped(self, plot_data, cfg):
         """Draw ``Subplots by isotope`` with one panel per element/isotope.
 
@@ -1937,11 +1970,9 @@ class BoxPlotDisplayDialog(QDialog):
         all_elems = sort_elements_by_mass(list(all_elems))
         cols = min(3, len(all_elems))
         rows = math.ceil(len(all_elems) / cols)
+        cuts = _get_broken_cuts(cfg)
         for i, el in enumerate(all_elems):
             r, c = divmod(i, cols)
-            pi = self.pw.addPlot(row=r, col=c)
-            drawn_any = False
-            panel_values = []
             sample_records = []
             for original_index, sn in enumerate(ordered_samples):
                 sd = plot_data.get(sn, {})
@@ -1968,41 +1999,52 @@ class BoxPlotDisplayDialog(QDialog):
                 })
 
             sorted_records = _sort_box_sample_records(sample_records, sort_mode)
-            tick_pairs = []
-            for x_pos, record in enumerate(sorted_records):
-                sn = record['raw_sample_name']
-                fv = record['values']
-                tick_pairs.append((x_pos, record['display_label']))
-                if fv:
-                    _draw_single_element(pi, x_pos, fv, sn, el, cfg, True)
-                    panel_values.extend(fv)
-                    drawn_any = True
-            if tick_pairs:
-                pi.getAxis('bottom').setTicks([tick_pairs])
+
+            def _draw(pi, is_top, is_bottom, el=el,
+                      sorted_records=sorted_records):
+                """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
+                drawn_any = False
+                panel_values = []
+                tick_pairs = []
+                for x_pos, record in enumerate(sorted_records):
+                    sn = record['raw_sample_name']
+                    fv = record['values']
+                    tick_pairs.append((x_pos, record['display_label']))
+                    if fv:
+                        _draw_single_element(pi, x_pos, fv, sn, el, cfg, True)
+                        panel_values.extend(fv)
+                        drawn_any = True
+                if tick_pairs:
+                    pi.getAxis('bottom').setTicks([tick_pairs])
+                self._subplot_context_by_plotitem[pi] = {
+                    "mode": "Subplots by isotope",
+                    "element": el,
+                    "title": self._effective_title_for_key(
+                        self._title_key_for_element_plot(el),
+                        _fmt_elem(el, cfg)),
+                }
+                self._apply_effective_axis_labels(
+                    pi,
+                    self._title_key_for_element_plot(el),
+                    {
+                        'bottom': {'text': "Samples", 'units': None},
+                        'left': {'text': _y_label(cfg), 'units': None},
+                    },
+                )
+                if cfg.get('log_y'):
+                    pi.getAxis('left').setLogMode(True)
+                _apply_box_overlays(pi, panel_values, cfg)
+                if not drawn_any and is_top:
+                    _add_empty_panel_message(pi, "No valid data")
+                _apply_boxplot_grid(pi, cfg)
+                apply_font_to_pyqtgraph(pi, cfg)
+
+            panels = _render_broken_or_plain(
+                self.pw, cuts, _draw, axis_factory=lambda: {},
+                row=r, col=c, cfg=cfg)
             self._configure_plot_title(
-                pi, self._title_key_for_element_plot(el),
+                panels[-1], self._title_key_for_element_plot(el),
                 default_title=_fmt_elem(el, cfg))
-            self._subplot_context_by_plotitem[pi] = {
-                "mode": "Subplots by isotope",
-                "element": el,
-                "title": self._effective_title_for_key(
-                    self._title_key_for_element_plot(el), _fmt_elem(el, cfg)),
-            }
-            self._apply_effective_axis_labels(
-                pi,
-                self._title_key_for_element_plot(el),
-                {
-                    'bottom': {'text': "Samples", 'units': None},
-                    'left': {'text': _y_label(cfg), 'units': None},
-                },
-            )
-            if cfg.get('log_y'):
-                pi.getAxis('left').setLogMode(True)
-            _apply_box_overlays(pi, panel_values, cfg)
-            if not drawn_any:
-                _add_empty_panel_message(pi, "No valid data")
-            _apply_boxplot_grid(pi, cfg)
-            apply_font_to_pyqtgraph(pi, cfg)
 
     def _draw_by_sample(self, plot_data, cfg):
         """X-axis = samples (time-ordered), one subplot per element.

@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
 )
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     FontSettingsGroup, Renderer, LABEL_MODES, build_element_matrix,
     format_element_label, get_display_name, get_sample_color,
@@ -612,6 +613,10 @@ class CompositionWheelDisplayDialog(QDialog):
         a.setChecked(cfg.get('legend_show', True))
         a.triggered.connect(lambda _: self._set('legend_show',
                                                 not cfg.get('legend_show', True)))
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas_widget))
         menu.exec(global_pos)
 
     def _set(self, k, v):

@@ -5514,12 +5514,12 @@ class MainWindow(QMainWindow):
                     size=5,
                     brush=pg.mkBrush(255, 165, 0, 200),  
                     pen=pg.mkPen(None),
-                    name='Integrated Particles',
+                    name='Integrated points',
                 )
                 scatter_integ._role               = 'particle_integration'
                 scatter_integ._legend_representative = True
-                if 'Integrated Particles' in _saved_scatter:
-                    ss = _saved_scatter['Integrated Particles']
+                if 'Integrated Points' in _saved_scatter:
+                    ss = _saved_scatter['Integrated Points']
                     scatter_integ.setSymbol(_SYM_MAP.get(ss.get('symbol', 'Circle'), 'o'))
                     scatter_integ.setSize(ss.get('size', 5))
                     scatter_integ.setBrush(pg.mkBrush(QColor(ss['color'])))
@@ -8118,3 +8118,6 @@ if __name__ == "__main__":
     main_window = MainWindow()
     main_window.showMaximized()
     sys.exit(app.exec())
+    
+    
+    

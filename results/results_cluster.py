@@ -50,6 +50,7 @@ from scipy.cluster.hierarchy import (
     fcluster as scipy_fcluster,
 )
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     DEFAULT_SAMPLE_COLORS, get_font_config,
     make_font_properties, FontSettingsGroup,
@@ -3991,6 +3992,19 @@ class ClusteringDisplayDialog(QDialog):
             lambda: download_matplotlib_figure(fig_map.get(tab, self.eval_fig),
                                                self, names.get(tab, 'figure.png')))
 
+        canvas_map = {'eval': self.eval_canvas,
+                      'summary': self.summary_canvas,
+                      'cluster': self.cluster_canvas,
+                      'overview': self.overview_canvas,
+                      'dendro': self.dendro_canvas,
+                      '3d': self._3d_canvas,
+                      'som': getattr(self, 'som_canvas', None)}
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(
+                canvas_map.get(tab) or self.eval_canvas))
+
         menu.exec(QCursor.pos())
 
 
@@ -4022,6 +4036,17 @@ class ClusteringDisplayDialog(QDialog):
         new_fig = Figure(figsize=(13, 8), dpi=110, tight_layout=True)
         new_canvas = _SafeFigureCanvas(new_fig)
         vl.addWidget(new_canvas, stretch=1)
+
+        def _popout_ctx_menu(pos):
+            """Right-click menu of the pop-out figure window."""
+            menu = QMenu(dlg)
+            act_copy_fig = menu.addAction("Copy figure")
+            act_copy_fig.triggered.connect(
+                lambda: copy_figure_to_clipboard(new_canvas))
+            menu.exec(new_canvas.mapToGlobal(pos))
+
+        new_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        new_canvas.customContextMenuRequested.connect(_popout_ctx_menu)
 
         btn_hl = QHBoxLayout()
         dl_btn = QPushButton("💾  Save Figure…")
@@ -4648,7 +4673,7 @@ class ClusteringDisplayDialog(QDialog):
             ax._algo_name = algo_name
        
             try:
-                ax.set_box_aspect(None, zoom=1.2)
+                ax.set_box_aspect(None, zoom=1)
             except Exception:
                 _itk_log.exception("Handled exception in _draw_3d_into")
             labels_arr  = result.get('labels')

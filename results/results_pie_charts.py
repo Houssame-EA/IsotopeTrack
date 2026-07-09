@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     FontSettingsGroup, get_display_name, LABEL_MODES,
     format_element_label, format_combination_label, Renderer, per_ml_active,
@@ -971,6 +972,10 @@ class PieChartDisplayDialog(QDialog):
             exp_sub.setEnabled(False)
             exp_sub.setToolTip("Right-click directly over a pie subplot to export it individually.")
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas_widget))
         menu.exec(global_pos)
 
     def _toggle(self, key):
@@ -1703,6 +1708,10 @@ class ElementCompositionDisplayDialog(QDialog):
             exp_sub.setEnabled(False)
             exp_sub.setToolTip("Right-click directly over a pie subplot to export it individually.")
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas_widget))
         menu.exec(global_pos)
 
     def _toggle(self, key):

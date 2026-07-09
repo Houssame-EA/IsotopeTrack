@@ -569,7 +569,7 @@ class ScatterEditorDialog(QDialog):
         self.scatter_item.setBrush(pg.mkBrush(self.current_color))
         self.scatter_item.setPen(pg.mkPen(self.current_color.darker(120), width=1))
         # ── Persist so Detect Peaks re-draw reapplies these settings ───
-        scatter_name = self.scatter_item.opts.get('name') or 'Integrated Particles'
+        scatter_name = self.scatter_item.opts.get('name') or 'Integrated Points'
         if not hasattr(self.plot_widget, '_scatter_settings'):
             self.plot_widget._scatter_settings = {}
         self.plot_widget._scatter_settings[scatter_name] = {
@@ -1325,7 +1325,7 @@ class PlotSettingsDialog(QDialog):
             itm.setBrush(pg.mkBrush(col_b._color))
             itm.setPen(pg.mkPen(col_b._color.darker(120), width=1))
             # ── Persist so Detect Peaks re-draw reapplies these settings ──
-            scatter_name = itm.opts.get('name') or 'Integrated Particles'
+            scatter_name = itm.opts.get('name') or 'Integrated Points'
             if not hasattr(self.plot_widget, '_scatter_settings'):
                 self.plot_widget._scatter_settings = {}
             self.plot_widget._scatter_settings[scatter_name] = {
@@ -1450,7 +1450,7 @@ class PlotSettingsDialog(QDialog):
             if getattr(item, '_legend_representative', False) and legend is not None:
                 try:
                     if checked:
-                        name = item.opts.get('name') or 'Integrated Particles'
+                        name = item.opts.get('name') or 'Integrated Points'
                         legend.addItem(item, name)
                     else:
                         legend.removeItem(item)

@@ -22,6 +22,7 @@ from matplotlib.figure import Figure
 import matplotlib.ticker as mticker
 import numpy as np
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     get_font_config, apply_font_to_matplotlib,
     FontSettingsGroup, ExportSettingsGroup,
@@ -468,6 +469,10 @@ class ConcentrationDisplayDialog(QDialog):
             action.setChecked(current_mouse_mode == mode)
             action.triggered.connect(lambda _, m=mode: self._set_mouse_mode(m))
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.canvas))
         menu.exec(QCursor.pos())
     def _toggle(self, key):
         self.node.config[key] = not self.node.config.get(key, False)

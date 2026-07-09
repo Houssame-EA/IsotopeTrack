@@ -10,6 +10,7 @@ import pyqtgraph as pg
 import numpy as np
 import re
 
+from results.shared_plot_utils import copy_figure_to_clipboard
 from results.shared_plot_utils import (
     FONT_FAMILIES, FontSettingsGroup, DATA_TYPE_OPTIONS, DATA_KEY_MAPPING, get_font_config,
     apply_font_to_pyqtgraph, set_axis_labels, LABEL_MODES, format_label_text_tokens,
@@ -1126,6 +1127,10 @@ class CorrelationPlotDisplayDialog(QDialog):
             disabled.setToolTip(reason)
             disabled.setStatusTip(reason)
 
+        menu.addSeparator()
+        act_copy_fig = menu.addAction("Copy figure")
+        act_copy_fig.triggered.connect(
+            lambda: copy_figure_to_clipboard(self.plot_widget))
         menu.exec(QCursor.pos())
 
     def _add_toggle(self, menu, label, key):
