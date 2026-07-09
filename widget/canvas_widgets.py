@@ -14,7 +14,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QPainter, QPen, QBrush, QColor, QDrag, QPixmap, QPainterPath, QCursor,
-    QLinearGradient, QFont, QPainterPathStroker, QRadialGradient,QFontMetrics,
+    QLinearGradient, QFont, QPainterPathStroker, QRadialGradient, QFontMetrics,
     QShortcut, QKeySequence, QIcon, QTransform, QCursor, QWheelEvent
 )
 import numpy as np
@@ -25,7 +25,7 @@ from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
     ElementCompositionDisplayDialog, ElementCompositionPlotNode,
 )
-from results.results_reader import (      
+from results.results_reader import (
     integrate_insights_panel,
     make_insights_toggle_button,
 )
@@ -62,7 +62,9 @@ import qtawesome as qta
 
 from tools.theme import theme as _app_theme
 import logging
+
 _itk_log = logging.getLogger("IsotopeTrack.widget.canvas_widgets")
+
 
 # ── user-action logging ──────────────────────────────────────────────────────
 def _ual():
@@ -73,6 +75,7 @@ def _ual():
     except Exception:
         _itk_log.exception("Handled exception in _ual")
         return None
+
 
 def _collect_main_windows():
     """
@@ -224,6 +227,7 @@ class DS:
     def brush(color):
         return QBrush(QColor(color))
 
+
 class WorkflowLink(QObject):
     state_changed = Signal(int)
 
@@ -306,7 +310,7 @@ class AnchorPoint(QGraphicsEllipseItem):
         if change == QGraphicsItem.ItemScenePositionHasChanged:
             self.position_changed.emit(value)
         return super().itemChange(change, value)
-    
+
     def shape(self):
         """Creates an invisible, larger hitbox for easier clicking and dragging."""
         path = QPainterPath()
@@ -350,6 +354,7 @@ class AnchorPoint(QGraphicsEllipseItem):
         else:
             self._apply_style(hover=False)
             self.setScale(1.0)
+
 
 class NodeItem(QGraphicsWidget):
 
@@ -602,6 +607,7 @@ class NodeItem(QGraphicsWidget):
     def configure_node(self):
         pass
 
+
 class LinkCurveItem(QGraphicsWidget):
 
     def __init__(self, parent=None):
@@ -706,7 +712,8 @@ class LinkItem(QGraphicsWidget):
 
     def set_source_anchor(self, anchor):
         if self.source_anchor:
-            try: self.source_anchor.position_changed.disconnect(self.__update_curve)
+            try:
+                self.source_anchor.position_changed.disconnect(self.__update_curve)
             except Exception:
                 _itk_log.exception("Handled exception in set_source_anchor")
         self.source_anchor = anchor
@@ -716,7 +723,8 @@ class LinkItem(QGraphicsWidget):
 
     def set_sink_anchor(self, anchor):
         if self.sink_anchor:
-            try: self.sink_anchor.position_changed.disconnect(self.__update_curve)
+            try:
+                self.sink_anchor.position_changed.disconnect(self.__update_curve)
             except Exception:
                 _itk_log.exception("Handled exception in set_sink_anchor")
         self.sink_anchor = anchor
@@ -823,6 +831,7 @@ class LinkItem(QGraphicsWidget):
     def mouseDoubleClickEvent(self, event):
         self.activated.emit()
         super().mouseDoubleClickEvent(event)
+
 
 def _dialog_base_style():
     """Dialog stylesheet synced to the current app theme. The canvas itself
@@ -1178,8 +1187,8 @@ class SampleSelectorDialog(QDialog):
             return selected[0], isotopes, False
         else:
             return selected, isotopes, True
-        
-    
+
+
 class MultipleSampleSelectorDialog(QDialog):
     """Simplified multi-sample configurator: sample list with inline group fields + isotope chips."""
 
@@ -1507,6 +1516,7 @@ class MultipleSampleSelectorDialog(QDialog):
             isotopes.append({'symbol': sym, 'mass': mass, 'key': key, 'label': lbl})
         return sel, isotopes, self.current_sample_config
 
+
 class SampleSelectorNode(WorkflowNode):
     def __init__(self, parent_window=None):
         super().__init__("Single Sample", "sample_selector")
@@ -1605,7 +1615,7 @@ class SampleSelectorNode(WorkflowNode):
                     if fld in p:
                         fp[fld] = {k: v for k, v in p[fld].items()
                                    if k in labels and (
-                                       (fld == 'elements' and v > 0)
+                                       (fld == 'elements' and v > 0)  # TODO: condition can be simplified
                                        or (fld != 'elements' and v > 0 and not np.isnan(v)))}
                 out.append(fp)
         return out
@@ -2009,6 +2019,7 @@ class BatchSampleSelectorDialog(QDialog):
     def get_selection(self):
         return [cb.window_ref for cb in self.window_checkboxes if cb.isChecked()]
 
+
 class _CalculationWorker(QThread):
     """Runs a node's ``get_output_data()`` off the GUI thread.
 
@@ -2122,6 +2133,7 @@ class _StatusNodeMixin:
 
 class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     """Single beaker icon."""
+
     def __init__(self, wf, pw=None):
         super().__init__(wf)
         self.parent_window = pw
@@ -2181,7 +2193,8 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
             if wf.sum_replicates and wf.replicate_samples:
                 lines.append(f"Replicates: {', '.join(wf.replicate_samples)}")
             if wf.selected_isotopes:
-                lines.append(f"Isotopes: {', '.join(i['label'] if isinstance(i, dict) else str(i) for i in wf.selected_isotopes)}")
+                lines.append(
+                    f"Isotopes: {', '.join(i['label'] if isinstance(i, dict) else str(i) for i in wf.selected_isotopes)}")
 
 
         else:
@@ -2230,6 +2243,7 @@ class SampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
 
 class ModernNodeTooltip(QWidget):
     """Custom floating tooltip with glow effect."""
+
     def __init__(self, parent=None):
         super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -2730,10 +2744,14 @@ class StickyNoteItem(QGraphicsWidget):
                          Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, self._text)
 
     def hoverEnterEvent(self, event):
-        self._hovered = True; self.update(); super().hoverEnterEvent(event)
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        self._hovered = False; self.update(); super().hoverLeaveEvent(event)
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         from PySide6.QtWidgets import QInputDialog
@@ -2785,7 +2803,7 @@ class StickyNoteItem(QGraphicsWidget):
             qta.icon('fa6s.text-height', color=DS.ACCENT), "  Text Size")
         size_menu.setStyleSheet(NodeItem._ctx_menu_style())
         for size, label in [(8, "Tiny (8)"), (9, "Small (9)"), (10, "Normal (10)"),
-                             (12, "Medium (12)"), (14, "Large (14)"), (16, "XL (16)")]:
+                            (12, "Medium (12)"), (14, "Large (14)"), (16, "XL (16)")]:
             act = size_menu.addAction(f"✓  {label}" if size == self._font_size else f"   {label}")
             act.triggered.connect(lambda checked=False, s=size: self._set_font_size(s))
 
@@ -2821,6 +2839,7 @@ class StickyNoteItem(QGraphicsWidget):
     def _delete_self(self):
         if self.scene():
             self.scene().removeItem(self)
+
 
 class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     def __init__(self, wf, pw=None):
@@ -2879,7 +2898,8 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
                 if groups:
                     lines.append(f"Groups: {', '.join(sorted(groups))}")
             if wf.selected_isotopes:
-                lines.append(f"Isotopes: {', '.join(i['label'] if isinstance(i, dict) else str(i) for i in wf.selected_isotopes)}")
+                lines.append(
+                    f"Isotopes: {', '.join(i['label'] if isinstance(i, dict) else str(i) for i in wf.selected_isotopes)}")
 
         else:
             lines.append("Status: Not configured")
@@ -2920,8 +2940,10 @@ class MultipleSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
         super().hoverLeaveEvent(event)
         self.hover_pos = None
 
+
 class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     """Globe / multi-window icon."""
+
     def __init__(self, wf, pw=None):
         super().__init__(wf)
         self.parent_window = pw
@@ -2951,6 +2973,7 @@ class BatchSampleSelectorNodeItem(NodeItem, _StatusNodeMixin):
     def configure_node(self):
         if self.parent_window:
             self.workflow_node.configure(self.parent_window)
+
 
 def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class, multi_figure=False):
     """Factory: creates a circular icon node for each visualization type."""
@@ -3013,7 +3036,7 @@ def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class, multi_figur
             ual = _ual()
             if ual:
                 ual.log_action('DIALOG_OPEN', f'Opened viz node: {label}',
-                            {'node_type': self.workflow_node.node_type,
+                               {'node_type': self.workflow_node.node_type,
                                 'dialog': dialog_class.__name__})
             if multi_figure:
                 from results.shared_plot_utils import open_node_figures
@@ -3230,6 +3253,7 @@ def _make_viz_icon_node(grad_colors, icon_name, label, dialog_class, multi_figur
     VizIconNodeItem.__name__ = f"{label.replace(' ', '').replace('/', '')}IconNodeItem"
     return VizIconNodeItem
 
+
 HistogramPlotNodeItem = _make_viz_icon_node(
     ("#F97316", "#C2410C"), "fa6s.chart-column", "Histogram",
     HistogramDisplayDialog, multi_figure=True)
@@ -3297,6 +3321,7 @@ DashboardNodeItem = _make_viz_icon_node(
 
 class AIAssistantNodeItem(NodeItem):
     """AI sparkle icon."""
+
     def __init__(self, wf, pw=None):
         super().__init__(wf)
         self.parent_window = pw
@@ -3314,6 +3339,7 @@ class AIAssistantNodeItem(NodeItem):
     def configure_node(self):
         if self.parent_window:
             self.workflow_node.configure(self.parent_window)
+
 
 _PENDING_DRAG_NODE_TYPE = None
 
@@ -3366,7 +3392,7 @@ class DraggableNodeButton(QPushButton):
             self._drag.setMimeData(self._mime)
             px = self.grab()
             self._drag.setPixmap(px)
-            self._drag.setHotSpot(QPoint(px.width()//2, px.height()//2))
+            self._drag.setHotSpot(QPoint(px.width() // 2, px.height() // 2))
             global _PENDING_DRAG_NODE_TYPE
             _PENDING_DRAG_NODE_TYPE = self.node_type
             try:
@@ -3374,6 +3400,7 @@ class DraggableNodeButton(QPushButton):
             finally:
                 _PENDING_DRAG_NODE_TYPE = None
         super().mousePressEvent(event)
+
 
 class _CollapsibleGroup(QWidget):
     def __init__(self, title, parent=None):
@@ -3444,7 +3471,7 @@ class NodePalette(QWidget):
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         root.addWidget(self.search)
-        self._apply_palette_theme()  
+        self._apply_palette_theme()
 
         self._scroll_area = QScrollArea()
         scroll = self._scroll_area
@@ -3546,13 +3573,14 @@ class NodePalette(QWidget):
                 f" padding: 8px 12px; background: {p.bg_primary};"
                 f" border-top: 1px solid {p.border};"
             )
+
     def _filter(self, text):
         q = text.lower()
         for btn, name in self._all_buttons:
             btn.setVisible(q in name.lower())
 
-class EnhancedCanvasScene(QGraphicsScene):
 
+class EnhancedCanvasScene(QGraphicsScene):
     node_selection_changed = Signal(int)
 
     def __init__(self, parent_window=None):
@@ -3868,8 +3896,10 @@ class EnhancedCanvasScene(QGraphicsScene):
         src_node = anchor.parentItem()
         self._candidate_anchors = [
             it for it in self.items()
-            if isinstance(it, AnchorPoint) and it.is_input
-            and it.parentItem() is not None and it.parentItem() is not src_node]
+            if isinstance(it, AnchorPoint)
+               and it.is_input
+               and it.parentItem() is not None
+               and it.parentItem() is not src_node]
         for a in self._candidate_anchors:
             a.set_drag_target('candidate')
         self._snap_anchor = None
@@ -3914,8 +3944,8 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.dragging_connection = False
         self.drag_start_anchor = None
 
-class EnhancedCanvasView(QGraphicsView):
 
+class EnhancedCanvasView(QGraphicsView):
     zoom_changed = Signal(float)
 
     def __init__(self, parent_window=None):
@@ -4032,7 +4062,7 @@ class EnhancedCanvasView(QGraphicsView):
 
         painter.setPen(QPen(dot, 1.5))
         left = int(rect.left()) - (int(rect.left()) % gs)
-        top  = int(rect.top())  - (int(rect.top())  % gs)
+        top = int(rect.top()) - (int(rect.top()) % gs)
         y = top
         while y < rect.bottom():
             x = left
@@ -4134,7 +4164,6 @@ class EnhancedCanvasView(QGraphicsView):
 
 ParticleFilterNodeItem = build_particle_filter_node_item()
 
-
 _NODE_FACTORIES = {
     "sample_selector":              SampleSelectorNode,
     "multiple_sample_selector":     MultipleSampleSelectorNode,
@@ -4202,18 +4231,18 @@ class CanvasResultsDialog(QDialog):
     def _apply_chrome_theme(self):
         self.setStyleSheet(_canvas_chrome_style())
 
-    def _build(self):                          
+    def _build(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-    
+
         # ── header bar ─────────────────────────────────────────────────────
         hdr = QFrame()
         hdr.setObjectName("chromeHeader")
         hdr.setFixedHeight(52)
         hl = QHBoxLayout(hdr)
         hl.setContentsMargins(16, 0, 16, 0)
-    
+
         logo = QLabel("◆  Workflow Builder")
         logo.setStyleSheet(
             f"color: {_app_theme.palette.text_primary};"
@@ -4222,51 +4251,52 @@ class CanvasResultsDialog(QDialog):
         )
         hl.addWidget(logo)
         hl.addStretch()
-    
+
         def _zoom_out():
             self.canvas.set_zoom(self.canvas._zoom / 1.2)
+
         def _zoom_in():
             self.canvas.set_zoom(self.canvas._zoom * 1.2)
+
         def _fit():
             self.canvas.fit_content()
-    
+
         zm = QPushButton("−")
         zm.setFixedSize(30, 30)
         zm.setStyleSheet(self._tool_btn_style())
         zm.clicked.connect(_zoom_out)
         hl.addWidget(zm)
-    
+
         self.zoom_label = QLabel("100%")
         self.zoom_label.setFixedWidth(50)
         self.zoom_label.setAlignment(Qt.AlignCenter)
         hl.addWidget(self.zoom_label)
-    
+
         zp = QPushButton("+")
         zp.setFixedSize(30, 30)
         zp.setStyleSheet(self._tool_btn_style())
         zp.clicked.connect(_zoom_in)
         hl.addWidget(zp)
-    
+
         fit = QPushButton("Fit")
         fit.setFixedSize(40, 30)
         fit.setStyleSheet(self._tool_btn_style())
         fit.clicked.connect(_fit)
         hl.addWidget(fit)
-    
+
         sep = QFrame()
         sep.setFixedWidth(1)
         sep.setStyleSheet(f"background: {DS.BORDER}; margin: 8px 12px;")
         hl.addWidget(sep)
-    
-  
-        self._insights_btn = None  
-    
+
+        self._insights_btn = None
+
         def _clear_and_log():
             self.clear_canvas()
-    
+
         def _close_and_log():
             self.close()
-    
+
         clr = QPushButton("Clear All")
         clr.setStyleSheet(f"""
             QPushButton {{
@@ -4277,7 +4307,7 @@ class CanvasResultsDialog(QDialog):
             QPushButton:hover {{ background: {DS.ERROR_BG}; }}
         """)
         clr.clicked.connect(_clear_and_log)
-    
+
         back = QPushButton("✕  Close")
         back.setStyleSheet(f"""
             QPushButton {{
@@ -4292,17 +4322,17 @@ class CanvasResultsDialog(QDialog):
         self._insights_placeholder = QPushButton("✦  Insights")
         self._insights_placeholder.setFixedHeight(30)
         self._insights_placeholder.setStyleSheet(self._tool_btn_style())
-        hl.addWidget(self._insights_placeholder)  
-    
+        hl.addWidget(self._insights_placeholder)
+
         hl.addWidget(clr)
         hl.addWidget(back)
-    
+
         root.addWidget(hdr)
-    
+
         # ── body splitter ──────────────────────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(1)
-    
+
         pf = QFrame()
         pf.setObjectName("chromePalette")
         pf.setFixedWidth(240)
@@ -4310,41 +4340,40 @@ class CanvasResultsDialog(QDialog):
         pl.setContentsMargins(0, 0, 0, 0)
         self.palette = NodePalette(self.parent)
         pl.addWidget(self.palette)
-    
+
         self.canvas = EnhancedCanvasView(self.parent)
         self.canvas.zoom_changed.connect(
             lambda z: self.zoom_label.setText(f"{int(z * 100)}%"))
-    
+
         splitter.addWidget(pf)
         splitter.addWidget(self.canvas)
-    
+
         self.insights_panel = integrate_insights_panel(self, splitter)
-        splitter.setSizes([240, 860, 0])  
-    
+        splitter.setSizes([240, 860, 0])
+
         real_btn = make_insights_toggle_button(self, splitter)
         hl.replaceWidget(self._insights_placeholder, real_btn)
         self._insights_placeholder.deleteLater()
         self._insights_btn = real_btn
         # ──────────────────────────────────────────────────────────────────
-    
+
         root.addWidget(splitter)
-    
+
         sb = QFrame()
         sb.setObjectName("chromeStatus")
         sb.setFixedHeight(28)
         sbl = QHBoxLayout(sb)
         sbl.setContentsMargins(12, 0, 12, 0)
-    
+
         self.status_label = QLabel("Ready")
         sbl.addWidget(self.status_label)
         sbl.addStretch()
-    
+
         self.sel_label = QLabel("")
         sbl.addWidget(self.sel_label)
-    
+
         self.canvas.scene.node_selection_changed.connect(self._update_sel)
         root.addWidget(sb)
-        
 
     def _update_sel(self, count):
         if count:
