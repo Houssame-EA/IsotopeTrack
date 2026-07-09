@@ -721,13 +721,25 @@ class BoxPlotSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         root.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _pick_shade_color(self):
         from PySide6.QtWidgets import QColorDialog

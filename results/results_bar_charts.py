@@ -760,6 +760,46 @@ class BrokenYAxisEditor(QGroupBox):
             log_y_checkbox.toggled.connect(self._sync_log_state)
         self._sync_log_state()
 
+        self._last_good_enabled = self.enable_cb.isChecked()
+        self._last_good_log_y = bool(
+            log_y_checkbox.isChecked()) if log_y_checkbox else False
+
+    def guard_apply(self, parent_widget):
+        """Block Apply/Done when Log Y-axis and the broken Y-axis cut are both on.
+
+        Log Y and the broken-axis cut cannot be combined meaningfully (a fixed
+        value band doesn't translate to a log scale), and the live-disable in
+        `_sync_log_state` only greys out controls without stopping a stale
+        checked state from being collected. This is the actual gate: called
+        from the owning dialog's Apply/Done handlers before that dialog
+        collects its config.
+
+        Returns:
+            bool: True if there is no conflict (and the current state is
+            remembered as the new last-accepted state). False if the pending
+            state was rejected and both checkboxes were reverted to the last
+            accepted values.
+        """
+        log_on = bool(self._log_y_cb.isChecked()) if self._log_y_cb else False
+        if log_on and self.enable_cb.isChecked():
+            QMessageBox.warning(
+                parent_widget,
+                "Log Y-axis and Y-axis Cut Conflict",
+                "Log Y-axis and Broken Y-axis (cut) cannot be used together: "
+                "removing a fixed value band from the axis doesn't have a "
+                "consistent meaning once the axis is log-scaled.\n\n"
+                "Your changes were not applied. Reverting to the last "
+                "accepted settings — disable one of the two options and try "
+                "again.")
+            if self._log_y_cb is not None:
+                self._log_y_cb.setChecked(self._last_good_log_y)
+            self.enable_cb.setChecked(self._last_good_enabled)
+            self._sync_log_state()
+            return False
+        self._last_good_enabled = self.enable_cb.isChecked()
+        self._last_good_log_y = log_on
+        return True
+
     def _sync_log_state(self, *_args):
         """Enable or disable every control based on the log-Y checkbox."""
         log_on = bool(self._log_y_cb.isChecked()) if self._log_y_cb else False
@@ -2151,13 +2191,25 @@ class HistogramSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         outer.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _pick_curve_color(self):
         from PySide6.QtWidgets import QColorDialog
@@ -4061,7 +4113,7 @@ class HistogramPlotNode(QObject):
         'mode_line_width': 2,
         'curve_color': '#2C3E50',
         'bin_width': 20,
-        'bin_mode': 'geometric',
+        'bin_mode': 'linear',
         'show_values': False,
         'alpha': 0.7,
         'log_x': False,
@@ -4388,13 +4440,25 @@ class BarChartSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         outer.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _build_format_groups(self, layout):
         """Build the flat Element Bar Chart format controls.

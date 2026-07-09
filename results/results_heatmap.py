@@ -1,10 +1,10 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QScrollArea,
-    QWidget, QMenu, QDialogButtonBox, QInputDialog
+    QWidget, QMenu, QDialogButtonBox, QInputDialog, QColorDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject
-from PySide6.QtGui import QCursor
+from PySide6.QtGui import QCursor, QColor
 from matplotlib.figure import Figure
 import numpy as np
 import math
@@ -39,6 +39,16 @@ HEATMAP_MULTI_DISPLAY_MODES = [
     'Side by Side Subplots',
     'Combined Heatmap',
 ]
+
+DEFAULT_HIGHLIGHT_COLOR = '#000000'
+
+
+def _normalize_highlighted_combos(raw):
+    """Return ``{combo_key: hex_color}`` from either the current dict format
+    or the legacy list format (list of combo keys, all rendered black)."""
+    if isinstance(raw, dict):
+        return dict(raw)
+    return {k: DEFAULT_HIGHLIGHT_COLOR for k in (raw or [])}
 
 
 def _normalize_heatmap_display_mode(display_mode: str) -> str:
@@ -508,17 +518,19 @@ class HeatmapDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Custom Color Range", 'use_custom_range')
 
         row_combo = self._get_row_at(pos)
+        highlighted = _normalize_highlighted_combos(cfg.get('highlighted_combos', {}))
         if row_combo is not None:
-            highlighted = set(cfg.get('highlighted_combos', []))
             menu.addSeparator()
             if row_combo in highlighted:
                 a = menu.addAction("Remove highlight from this row")
                 a.triggered.connect(lambda _, rc=row_combo: self._toggle_row_highlight(rc, False))
+                a3 = menu.addAction("Change highlight color...")
+                a3.triggered.connect(lambda _, rc=row_combo: self._change_row_highlight_color(rc))
             else:
                 a = menu.addAction("Highlight this row")
                 a.triggered.connect(lambda _, rc=row_combo: self._toggle_row_highlight(rc, True))
 
-        if cfg.get('highlighted_combos', []):
+        if highlighted:
             if row_combo is None:
                 menu.addSeparator()
             a2 = menu.addAction("Clear all row highlights")
@@ -597,16 +609,25 @@ class HeatmapDisplayDialog(QDialog):
         return None
 
     def _toggle_row_highlight(self, combo_key, add):
-        highlighted = set(self.node.config.get('highlighted_combos', []))
+        highlighted = _normalize_highlighted_combos(self.node.config.get('highlighted_combos', {}))
         if add:
-            highlighted.add(combo_key)
+            highlighted[combo_key] = highlighted.get(combo_key, DEFAULT_HIGHLIGHT_COLOR)
         else:
-            highlighted.discard(combo_key)
-        self.node.config['highlighted_combos'] = list(highlighted)
+            highlighted.pop(combo_key, None)
+        self.node.config['highlighted_combos'] = highlighted
         self._refresh()
 
+    def _change_row_highlight_color(self, combo_key):
+        highlighted = _normalize_highlighted_combos(self.node.config.get('highlighted_combos', {}))
+        current = highlighted.get(combo_key, DEFAULT_HIGHLIGHT_COLOR)
+        color = QColorDialog.getColor(QColor(current), self, "Choose Highlight Color")
+        if color.isValid():
+            highlighted[combo_key] = color.name()
+            self.node.config['highlighted_combos'] = highlighted
+            self._refresh()
+
     def _clear_all_highlights(self):
-        self.node.config['highlighted_combos'] = []
+        self.node.config['highlighted_combos'] = {}
         self._refresh()
 
     def _add_toggle(self, menu, label, key):
@@ -963,7 +984,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     dt = cfg.get('data_type_display', 'Counts')
     search_text = cfg.get('search_element', '').strip()
-    highlighted_combos = set(cfg.get('highlighted_combos', []))
+    highlighted_combos = _normalize_highlighted_combos(cfg.get('highlighted_combos', {}))
     filter_combos = cfg.get('filter_combinations', False)
     filter_exact = cfg.get('filter_exact_match', False)
     start = cfg.get('start_range', 1)
@@ -1089,7 +1110,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
         combo_keys_list = [c for c, _ in selected]
         for i, ck in enumerate(combo_keys_list):
             if ck in highlighted_combos:
-                ax.axhline(y=i + 0.35, color='black', linewidth=2, alpha=0.9,
+                ax.axhline(y=i + 0.35, color=highlighted_combos[ck], linewidth=2, alpha=0.9,
                            xmin=-0.15, xmax=0, clip_on=False)
                 ax.get_yticklabels()[i].set_weight('bold')
 
@@ -1145,7 +1166,7 @@ class HeatmapPlotNode(QObject):
         'search_element': '', 'highlight_matches': True,
         'filter_combinations': False,
         'filter_exact_match': False,
-        'highlighted_combos': [],
+        'highlighted_combos': {},
         'start_range': 1, 'end_range': 10,
         'filter_zeros': True, 'min_particles': 1,
         'label_mode': 'Mass + Symbol',
