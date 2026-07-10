@@ -4,6 +4,14 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+
+## v1.10.6 — 2026-07-10
+
+Ability to highlight and color individual rows in heatmap and correlation matrix node
+default set to linear bins and no log base 10 on the x axis
+A warning message about bars/bins getting swallowed by the y axis cuts (user still allowed to make the cut)
+Prevention of the user from making cuts to y axis when log base 10 applied on y axis along with message
+
 ## v1.10.5 — 2026-06-25
 
 
@@ -13,7 +21,7 @@ All notable changes to IsotopeTrack are documented here.
 - save project include all the figures in a single node 
 - heatmap you can display SD
 - easy connection with lines 
-- 
+- if multiple windows are open and they have the user did prepared some batch samples the window that is saved will have the results from different windows 
 
 
 ## v1.10.4 — 2026-06-22
