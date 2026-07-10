@@ -47,6 +47,8 @@ from results.shared_plot_utils import (
     LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
     _apply_box, _add_shaded_region_hist, _add_stat_lines_hist,
     _add_det_limit_v, _add_det_limit_h, format_per_ml as _shared_format_per_ml, apply_sci_y_axis as _shared_apply_sci_y_axis,
+    compute_bin_edges_fixed_geo as _compute_bin_edges,
+    compute_global_bin_edges_fixed_geo as _compute_global_bin_edges,
 )
 try:
     from widget.custom_plot_widget import (
@@ -4910,98 +4912,6 @@ def _prepare_values(values, data_type, log_x):
             return None
         v = np.log10(v)
     return v
-
-
-def _compute_bin_edges(values, bin_width, log_x=False, bin_mode='geometric'):
-    """Compute bin edges for a single array of (possibly log-transformed) values.
-
-    Args:
-        values:   1-D array of already-prepared values (log10-transformed when log_x=True).
-        bin_width: Bin width in data units for Linear mode; ignored for Geometric mode
-                   (which always uses a fixed 0.25-decade width).
-        log_x:    When True, values are already in log10 space.
-        bin_mode: 'geometric' = equal-width bins in log₁₀ space (0.25-decade fixed);
-                  'linear'    = equal-width bins in data units using bin_width.
-                  These are independent of log_x: all four (mode × axis) combos are valid.
-
-    Returns:
-        np.ndarray of bin edges in the same coordinate space as *values*, with ≥2 elements.
-    """
-    arr = np.asarray(values, dtype=float)
-    arr = arr[np.isfinite(arr)]
-    if len(arr) == 0:
-        return np.array([0.0, max(float(bin_width), 1.0)])
-    v_min = float(np.nanmin(arr))
-    v_max = float(np.nanmax(arr))
-
-    if bin_mode == 'geometric':
-        # Equal-width bins in log₁₀ space; 0.25 decade per bin.
-        GEO_BW = 0.25
-        if log_x:
-            # Values already in log space → bin directly.
-            start = np.floor(v_min / GEO_BW) * GEO_BW
-            stop  = np.ceil(v_max  / GEO_BW) * GEO_BW + GEO_BW
-            edges = np.arange(start, stop, GEO_BW)  # log-space edges
-        else:
-            # Values in linear space → compute in log space, return as linear.
-            safe_min = max(v_min, 1e-300)
-            safe_max = max(v_max, 1e-300)
-            log_min = float(np.log10(safe_min))
-            log_max = float(np.log10(safe_max))
-            start = np.floor(log_min / GEO_BW) * GEO_BW
-            stop  = np.ceil(log_max  / GEO_BW) * GEO_BW + GEO_BW
-            log_edges = np.arange(start, stop, GEO_BW)
-            edges = 10.0 ** log_edges  # convert to linear space
-    else:
-        # Linear mode: equal-width additive bins.
-        bw = float(bin_width) if float(bin_width) > 0 else 1.0
-        if log_x:
-            # Values in log space → compute linear edges, return as log-space.
-            real_min = 10.0 ** v_min
-            real_max = 10.0 ** v_max
-            r_start = np.floor(real_min / bw) * bw
-            r_stop  = np.ceil(real_max  / bw) * bw + bw
-            real_edges = np.arange(r_start, r_stop, bw)
-            real_edges = real_edges[real_edges > 0]
-            if len(real_edges) < 2:
-                return np.array([v_min - 0.5, v_max + 0.5])
-            edges = np.log10(real_edges)  # log-space edges (unequal widths)
-        else:
-            # Values in linear space → pure linear edges.
-            start = np.floor(v_min / bw) * bw
-            stop  = np.ceil(v_max  / bw) * bw + bw
-            edges = np.arange(start, stop, bw)
-
-    if len(edges) < 2:
-        fallback = float(bin_width) if float(bin_width) > 0 else 1.0
-        edges = np.array([v_min - fallback, v_max + fallback])
-    return edges
-
-
-def _compute_global_bin_edges(all_values_list, bin_width, log_x=False, bin_mode='geometric'):
-    """Compute shared bin edges from multiple value arrays.
-
-    Ensures all histograms in a multi-element or multi-sample view share
-    the same bin edges, keeping x-axis comparison scientifically valid.
-
-    Args:
-        all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
-        bin_width: Desired bin width (data units for Linear mode; ignored for Geometric).
-        log_x: Whether values are already in log10 space.
-        bin_mode: 'geometric' or 'linear' — see _compute_bin_edges.
-
-    Returns:
-        np.ndarray of shared bin edges, or None when no valid data found.
-    """
-    arrays = [np.asarray(v, dtype=float) for v in all_values_list if v is not None]
-    if not arrays:
-        return None
-    combined = np.concatenate(arrays)
-    combined = combined[np.isfinite(combined)]
-    if len(combined) == 0:
-        return None
-    return _compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
-
 
 
 
