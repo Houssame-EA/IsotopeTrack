@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
     QLineEdit, QFrame, QScrollArea, QWidget, QMenu, QSlider,
-    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView
+    QDialogButtonBox, QListWidget, QListWidgetItem, QAbstractItemView,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QColor, QFont
@@ -704,6 +705,97 @@ def _finalize_broken_panels(panels, cuts, cfg=None):
     _apply_broken_ticks(panels, segs)
 
 
+def _iter_panel_values(plot_item):
+    """Yield every plotted Y-value on a panel that represents a real quantity.
+
+    Generic across node types: Histogram/Element Bar Chart/Molar Ratio draw
+    ``pg.BarGraphItem`` bars (top = height + y-offset); Box Plot draws
+    ``QGraphicsRectItem`` boxes, ``PlotDataItem`` whisker/median/mean lines,
+    and ``ScatterPlotItem`` outlier/jitter points. Each is read directly
+    since none of them expose a common "value" API.
+
+    Args:
+        plot_item (pg.PlotItem): Panel to scan.
+
+    Yields:
+        float: One Y-value per plotted feature (bar top, box edge, line
+        point, or scatter point).
+    """
+    for item in list(plot_item.items):
+        if isinstance(item, pg.BarGraphItem):
+            opts = getattr(item, 'opts', {}) or {}
+            hs = opts.get('height')
+            if hs is None:
+                continue
+            hs = np.atleast_1d(np.asarray(hs, dtype=float))
+            y_off = float(item.pos().y())
+            for hh in hs:
+                if np.isfinite(hh):
+                    yield float(hh) + y_off
+        elif isinstance(item, pg.QtWidgets.QGraphicsRectItem):
+            r = item.rect()
+            y_off = float(item.pos().y())
+            yield float(r.y()) + y_off
+            yield float(r.y() + r.height()) + y_off
+        elif isinstance(item, (pg.PlotDataItem, pg.ScatterPlotItem)):
+            try:
+                _, y = item.getData()
+            except Exception:
+                continue
+            if y is None:
+                continue
+            for v in np.atleast_1d(np.asarray(y, dtype=float)):
+                if np.isfinite(v):
+                    yield float(v)
+
+
+def warn_if_values_swallowed(container, cuts, parent):
+    """Warn when a broken Y-axis cut hides a real plotted value.
+
+    A value strictly inside a removed band (``lo < v < hi``) never reaches
+    ``hi``, so it is clipped at the band edge and looks identical to a
+    value of ``lo`` — its real magnitude disappears from the chart. The
+    cut is still allowed; this only informs the user it happened.
+
+    Args:
+        container: GraphicsLayoutWidget whose currently drawn PlotItems
+            should be scanned (e.g. a display dialog's ``self.pw``).
+        cuts (list[list[float]]): Sanitized ``[lo, hi]`` bands, as returned
+            by ``_get_broken_cuts``.
+        parent (QWidget): Parent widget for the message box.
+    """
+    if not cuts:
+        return
+    try:
+        panels = [it for it in container.scene().items()
+                  if isinstance(it, pg.PlotItem)]
+    except AttributeError:
+        return
+    if not panels:
+        return
+    hit = None
+    for lo, hi in cuts:
+        for pi in panels:
+            if any(lo < v < hi for v in _iter_panel_values(pi)):
+                hit = (lo, hi)
+                break
+        if hit:
+            break
+    if hit is None:
+        return
+    lo, hi = hit
+    QMessageBox.warning(
+        parent,
+        "Some Values Fall Inside a Cut",
+        f"One or more bars/points have a true value between {lo:g} and "
+        f"{hi:g}, inside a removed Y-axis band. Their tops are cut off "
+        "exactly at the band edge, so they'll look identical to a value "
+        f"of {lo:g}, and their real magnitude won't be visible anywhere "
+        "on the chart.\n\n"
+        "You can still apply this cut, but consider narrowing it or "
+        "picking a band that doesn't intersect real data.")
+
+
 class BrokenYAxisEditor(QGroupBox):
     """Settings-dialog group box for configuring broken Y-axis cuts.
 
@@ -759,6 +851,46 @@ class BrokenYAxisEditor(QGroupBox):
             log_y_checkbox.toggled.connect(self._sync_log_state)
         self._sync_log_state()
 
+        self._last_good_enabled = self.enable_cb.isChecked()
+        self._last_good_log_y = bool(
+            log_y_checkbox.isChecked()) if log_y_checkbox else False
+
+    def guard_apply(self, parent_widget):
+        """Block Apply/Done when Log Y-axis and the broken Y-axis cut are both on.
+
+        Log Y and the broken-axis cut cannot be combined meaningfully (a fixed
+        value band doesn't translate to a log scale), and the live-disable in
+        `_sync_log_state` only greys out controls without stopping a stale
+        checked state from being collected. This is the actual gate: called
+        from the owning dialog's Apply/Done handlers before that dialog
+        collects its config.
+
+        Returns:
+            bool: True if there is no conflict (and the current state is
+            remembered as the new last-accepted state). False if the pending
+            state was rejected and both checkboxes were reverted to the last
+            accepted values.
+        """
+        log_on = bool(self._log_y_cb.isChecked()) if self._log_y_cb else False
+        if log_on and self.enable_cb.isChecked():
+            QMessageBox.warning(
+                parent_widget,
+                "Log Y-axis and Y-axis Cut Conflict",
+                "Log Y-axis and Broken Y-axis (cut) cannot be used together: "
+                "removing a fixed value band from the axis doesn't have a "
+                "consistent meaning once the axis is log-scaled.\n\n"
+                "Your changes were not applied. Reverting to the last "
+                "accepted settings — disable one of the two options and try "
+                "again.")
+            if self._log_y_cb is not None:
+                self._log_y_cb.setChecked(self._last_good_log_y)
+            self.enable_cb.setChecked(self._last_good_enabled)
+            self._sync_log_state()
+            return False
+        self._last_good_enabled = self.enable_cb.isChecked()
+        self._last_good_log_y = log_on
+        return True
+
     def _sync_log_state(self, *_args):
         """Enable or disable every control based on the log-Y checkbox."""
         log_on = bool(self._log_y_cb.isChecked()) if self._log_y_cb else False
@@ -787,8 +919,7 @@ class BrokenYAxisEditor(QGroupBox):
             sp.setDecimals(2)
         lo_spin.setValue(50.0 if lo is None else lo)
         hi_spin.setValue(400.0 if hi is None else hi)
-        rm_btn = QPushButton("−")
-        rm_btn.setFixedSize(22, 22)
+        rm_btn = QPushButton("Remove cut")
         rm_btn.setToolTip("Remove this cut")
         rh.addWidget(QLabel("cut from"))
         rh.addWidget(lo_spin)
@@ -2049,9 +2180,20 @@ class HistogramSettingsDialog(QDialog):
         self.bin_width.setValue(self._cfg.get('bin_width', 20))
         self.bin_width.setToolTip(
             "Width of each histogram bin in data units (e.g. 20 = bins of 20 counts).\n"
-            "All samples/elements share the same bin edges for fair comparison.\n"
-            "In log-X mode a fixed 0.25-decade bin width is used instead.")
+            "Used only in Linear bin mode; Geometric mode always uses 0.25-decade bins.\n"
+            "All samples/elements share the same bin edges for fair comparison.")
         fl.addRow("Bin Width:", self.bin_width)
+        self.bin_mode_combo = QComboBox()
+        self.bin_mode_combo.addItems(['Geometric', 'Linear'])
+        _cur_bm = self._cfg.get('bin_mode', 'geometric')
+        self.bin_mode_combo.setCurrentText(_cur_bm.capitalize())
+        self.bin_mode_combo.setToolTip(
+            "Geometric: equal-width bins in log₁₀ space (0.25-decade per bin).\n"
+            "  Bars look even on a log X-axis, uneven on a linear X-axis.\n"
+            "Linear: equal-width bins in data units (using Bin Width above).\n"
+            "  Bars look even on a linear X-axis, uneven on a log X-axis.\n"
+            "All 4 combinations of Bin Mode × Log X-axis are supported.")
+        fl.addRow("Bin Mode:", self.bin_mode_combo)
         self.alpha = QSlider(Qt.Horizontal)
         self.alpha.setRange(10, 100)
         self.alpha.setValue(int(self._cfg.get('alpha', 0.7) * 100))
@@ -2139,13 +2281,25 @@ class HistogramSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         outer.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _pick_curve_color(self):
         from PySide6.QtWidgets import QColorDialog
@@ -2195,6 +2349,7 @@ class HistogramSettingsDialog(QDialog):
         out['det_limit_label'] = self.det_label_edit.text().strip()
         out['show_box'] = self.show_box_cb.isChecked()
         out['bin_width'] = self.bin_width.value()
+        out['bin_mode'] = self.bin_mode_combo.currentText().lower()
         out['alpha'] = self.alpha.value() / 100.0
         out['log_x'] = self.log_x.isChecked()
         out['log_y'] = self.log_y.isChecked()
@@ -2591,6 +2746,7 @@ class HistogramDisplayDialog(QDialog):
             ('show_curve',  'Density Curve',       True),
             ('show_stats',  'Statistics',          False),
             ('show_box',    'Figure Box (frame)',   True),
+            ('show_values', 'Values on Bars',      False),
         ]:
             a = tg.addAction(label); a.setCheckable(True)
             a.setChecked(cfg.get(key, default))
@@ -2944,7 +3100,7 @@ class HistogramDisplayDialog(QDialog):
             affects presentation in that mode.
         """
         unsupported_overlaid = {
-            'show_curve', 'show_stats',
+            'show_curve', 'show_stats', 'show_values',
             'show_median_line', 'show_mean_line',
             'show_mode_marker', 'show_det_limit',
         }
@@ -2952,6 +3108,7 @@ class HistogramDisplayDialog(QDialog):
             'show_curve': 'Density Curve',
             'show_stats': 'Statistics',
             'show_box': 'Figure Box (frame)',
+            'show_values': 'Values on Bars',
             'show_median_line': 'Median Line',
             'show_mean_line': 'Mean Line',
             'show_mode_marker': 'Mode Marker',
@@ -2959,7 +3116,7 @@ class HistogramDisplayDialog(QDialog):
         }
         support = {}
         for key in [
-            'show_curve', 'show_stats', 'show_box',
+            'show_curve', 'show_stats', 'show_box', 'show_values',
             'show_median_line', 'show_mean_line',
             'show_mode_marker', 'show_det_limit',
         ]:
@@ -3034,10 +3191,15 @@ class HistogramDisplayDialog(QDialog):
             te_available=_meta_te_available(self.node.input_data))
         if title_override:
             dlg.setWindowTitle(title_override)
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(),
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
         else:
             self.node.config.clear()
             self.node.config.update(_snap)
@@ -3300,14 +3462,11 @@ class HistogramDisplayDialog(QDialog):
             def _draw(pi, is_top, is_bottom, sd=sd, sn=sn, y_scale=y_scale):
                 """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                 _draw_single_histogram(
-                    pi,
-                    sd,
-                    cfg,
+                    pi, sd, cfg,
                     hidden_elements=self._hidden_histogram_elements,
                     legend_click_callback=self._toggle_histogram_element_visibility,
                     y_scale=y_scale,
-                    y_label='Particles/mL' if per_ml else None,
-                )
+                    y_label='Particles/mL' if per_ml else None)
                 self._register_panel_context(
                     pi, 'Individual Subplots', get_display_name(sn, cfg), sd,
                     sample_name=sn)
@@ -3741,6 +3900,8 @@ class HistogramDecompositionDialog(QDialog):
             self._cfg.update(dlg.collect())
             self._cfg['data_type_display'] = self._inherited_data_type
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self._cfg), self)
 
     def _reset_layout(self):
         """Reset child view ranges without modifying plotted values."""
@@ -4049,6 +4210,8 @@ class HistogramPlotNode(QObject):
         'mode_line_width': 2,
         'curve_color': '#2C3E50',
         'bin_width': 20,
+        'bin_mode': 'linear',
+        'show_values': False,
         'alpha': 0.7,
         'log_x': False,
         'log_y': False,
@@ -4374,13 +4537,25 @@ class BarChartSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         outer.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _build_format_groups(self, layout):
         """Build the flat Element Bar Chart format controls.
@@ -4737,16 +4912,20 @@ def _prepare_values(values, data_type, log_x):
     return v
 
 
-def _compute_bin_edges(values, bin_width, log_x=False):
-    """Compute fixed-width bin edges for a single array of (possibly log-transformed) values.
+def _compute_bin_edges(values, bin_width, log_x=False, bin_mode='geometric'):
+    """Compute bin edges for a single array of (possibly log-transformed) values.
 
     Args:
-        values: 1-D array of already-prepared values (log10-transformed when log_x=True).
-        bin_width: Desired bin width in raw data units (linear mode) or ignored in log mode.
-        log_x: When True, values are in log10 space; uses 0.25-decade fixed bins instead.
+        values:   1-D array of already-prepared values (log10-transformed when log_x=True).
+        bin_width: Bin width in data units for Linear mode; ignored for Geometric mode
+                   (which always uses a fixed 0.25-decade width).
+        log_x:    When True, values are already in log10 space.
+        bin_mode: 'geometric' = equal-width bins in log₁₀ space (0.25-decade fixed);
+                  'linear'    = equal-width bins in data units using bin_width.
+                  These are independent of log_x: all four (mode × axis) combos are valid.
 
     Returns:
-        np.ndarray of bin edges with at least 2 elements.
+        np.ndarray of bin edges in the same coordinate space as *values*, with ≥2 elements.
     """
     arr = np.asarray(values, dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -4754,33 +4933,62 @@ def _compute_bin_edges(values, bin_width, log_x=False):
         return np.array([0.0, max(float(bin_width), 1.0)])
     v_min = float(np.nanmin(arr))
     v_max = float(np.nanmax(arr))
-    if log_x:
-        # Values are log10-transformed; use 0.25-decade bins (4 bins per decade)
-        bw = 0.25
-        start = np.floor(v_min / bw) * bw
-        stop = np.ceil(v_max / bw) * bw + bw
-        edges = np.arange(start, stop, bw)
+
+    if bin_mode == 'geometric':
+        # Equal-width bins in log₁₀ space; 0.25 decade per bin.
+        GEO_BW = 0.25
+        if log_x:
+            # Values already in log space → bin directly.
+            start = np.floor(v_min / GEO_BW) * GEO_BW
+            stop  = np.ceil(v_max  / GEO_BW) * GEO_BW + GEO_BW
+            edges = np.arange(start, stop, GEO_BW)  # log-space edges
+        else:
+            # Values in linear space → compute in log space, return as linear.
+            safe_min = max(v_min, 1e-300)
+            safe_max = max(v_max, 1e-300)
+            log_min = float(np.log10(safe_min))
+            log_max = float(np.log10(safe_max))
+            start = np.floor(log_min / GEO_BW) * GEO_BW
+            stop  = np.ceil(log_max  / GEO_BW) * GEO_BW + GEO_BW
+            log_edges = np.arange(start, stop, GEO_BW)
+            edges = 10.0 ** log_edges  # convert to linear space
     else:
+        # Linear mode: equal-width additive bins.
         bw = float(bin_width) if float(bin_width) > 0 else 1.0
-        start = np.floor(v_min / bw) * bw
-        stop = np.ceil(v_max / bw) * bw + bw
-        edges = np.arange(start, stop, bw)
+        if log_x:
+            # Values in log space → compute linear edges, return as log-space.
+            real_min = 10.0 ** v_min
+            real_max = 10.0 ** v_max
+            r_start = np.floor(real_min / bw) * bw
+            r_stop  = np.ceil(real_max  / bw) * bw + bw
+            real_edges = np.arange(r_start, r_stop, bw)
+            real_edges = real_edges[real_edges > 0]
+            if len(real_edges) < 2:
+                return np.array([v_min - 0.5, v_max + 0.5])
+            edges = np.log10(real_edges)  # log-space edges (unequal widths)
+        else:
+            # Values in linear space → pure linear edges.
+            start = np.floor(v_min / bw) * bw
+            stop  = np.ceil(v_max  / bw) * bw + bw
+            edges = np.arange(start, stop, bw)
+
     if len(edges) < 2:
-        bw = float(bin_width) if float(bin_width) > 0 else 1.0
-        edges = np.array([v_min - bw, v_max + bw])
+        fallback = float(bin_width) if float(bin_width) > 0 else 1.0
+        edges = np.array([v_min - fallback, v_max + fallback])
     return edges
 
 
-def _compute_global_bin_edges(all_values_list, bin_width, log_x=False):
-    """Compute shared fixed-width bin edges from multiple value arrays.
+def _compute_global_bin_edges(all_values_list, bin_width, log_x=False, bin_mode='geometric'):
+    """Compute shared bin edges from multiple value arrays.
 
     Ensures all histograms in a multi-element or multi-sample view share
     the same bin edges, keeping x-axis comparison scientifically valid.
 
     Args:
         all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
-        bin_width: Desired bin width in raw data units.
+        bin_width: Desired bin width (data units for Linear mode; ignored for Geometric).
         log_x: Whether values are already in log10 space.
+        bin_mode: 'geometric' or 'linear' — see _compute_bin_edges.
 
     Returns:
         np.ndarray of shared bin edges, or None when no valid data found.
@@ -4792,8 +5000,39 @@ def _compute_global_bin_edges(all_values_list, bin_width, log_x=False):
     combined = combined[np.isfinite(combined)]
     if len(combined) == 0:
         return None
-    return _compute_bin_edges(combined, bin_width, log_x)
+    return _compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
 
+
+
+
+def _compute_hist_bar_data(values, cfg, bin_edges=None, y_scale=1.0):
+    """Compute histogram bar arrays without drawing anything.
+
+    Returns:
+        dict with numpy arrays ``'centres'``, ``'heights'``, ``'widths'``,
+        ``'bin_edges'``.  Heights are log10-scaled when ``cfg['log_y']`` is
+        True.  All arrays are empty when edges cannot be computed.
+    """
+    if bin_edges is None:
+        bw = cfg.get('bin_width', 20)
+        lx = cfg.get('log_x', False)
+        bm = cfg.get('bin_mode', 'geometric')
+        bin_edges = _compute_bin_edges(values, bw, lx, bin_mode=bm)
+    if bin_edges is None or len(bin_edges) < 2:
+        empty = np.array([])
+        return {'centres': empty, 'heights': empty,
+                'widths': empty, 'bin_edges': np.array([])}
+    counts, bin_edges = np.histogram(values, bins=bin_edges)
+    scaled  = counts.astype(float) * y_scale
+    log_y   = cfg.get('log_y', False)
+    heights = np.log10(scaled + 1) if log_y else scaled
+    centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
+    widths  = (bin_edges[1:] - bin_edges[:-1]) * 0.95
+    return {'centres': centres, 'heights': heights,
+            'widths': widths, 'bin_edges': bin_edges}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
                          name='', y_scale=1.0, raw_key=None):
@@ -4816,7 +5055,8 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
     if bin_edges is None:
         bin_width = cfg.get('bin_width', 20)
         log_x = cfg.get('log_x', False)
-        bin_edges = _compute_bin_edges(values, bin_width, log_x)
+        bin_mode = cfg.get('bin_mode', 'geometric')
+        bin_edges = _compute_bin_edges(values, bin_width, log_x, bin_mode=bin_mode)
     alpha = int(cfg.get('alpha', 0.7) * 255)
     log_y = cfg.get('log_y', False)
 
@@ -4825,11 +5065,11 @@ def _draw_histogram_bars(plot_item, values, cfg, color_hex, bin_edges=None,
     y_plot = np.log10(scaled + 1) if log_y else scaled
 
     centres = (bin_edges[:-1] + bin_edges[1:]) / 2.0
-    bw = bin_edges[1] - bin_edges[0] if len(bin_edges) > 1 else 1.0
+    widths  = (bin_edges[1:] - bin_edges[:-1]) * 0.95  # per-bar widths (handles non-uniform bins)
 
     co = QColor(color_hex)
     bar = pg.BarGraphItem(
-        x=centres, height=y_plot, width=bw * 0.95,
+        x=centres, height=y_plot, width=widths,
         brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
         pen=pg.mkPen(color='w', width=0.5))
     if name:
@@ -5044,7 +5284,10 @@ def _draw_single_histogram(
     """
     dt = cfg.get('data_type_display', 'Counts')
     log_x = cfg.get('log_x', False)
+    log_y = cfg.get('log_y', False)
     bin_width = cfg.get('bin_width', 20)
+    bin_mode = cfg.get('bin_mode', 'geometric')
+    show_vals = cfg.get('show_values', False)
     hidden = set(hidden_elements or set())
 
     sorted_data = sort_element_dict_by_mass(element_data)
@@ -5060,7 +5303,7 @@ def _draw_single_histogram(
         v = _prepare_values(raw_vals, dt, log_x)
         if v is not None:
             prepared_all.append(v)
-    global_edges = _compute_global_bin_edges(prepared_all, bin_width, log_x)
+    global_edges = _compute_global_bin_edges(prepared_all, bin_width, log_x, bin_mode=bin_mode)
 
     all_vals = []
     for idx, (elem, raw_vals) in enumerate(sorted_data.items()):
@@ -5072,13 +5315,30 @@ def _draw_single_histogram(
 
         visible_count += 1
         color = single_color or _get_element_color(elem, idx, cfg)
-        _draw_histogram_bars(plot_item, vals, cfg, color, bin_edges=global_edges,
-                             name=_fmt_elem(elem, cfg), y_scale=y_scale,
-                             raw_key=(elem if single_color is None else None))
+        _, _be_used, _cts_used = _draw_histogram_bars(
+            plot_item, vals, cfg, color, bin_edges=global_edges,
+            name=_fmt_elem(elem, cfg), y_scale=y_scale)
         all_vals.append(vals)
 
+        # Value labels above each non-zero bin (single-element or multi).
+        if show_vals and not log_y and _be_used is not None and len(_be_used) > 1:
+            _sc = _cts_used.astype(float) * y_scale
+            _cx = (_be_used[:-1] + _be_used[1:]) / 2.0
+            _mh = float(np.max(_sc)) if len(_sc) > 0 else 1.0
+            _fc2 = get_font_config(cfg)
+            _fnt2 = QFont(_fc2.get('family', 'Times New Roman'),
+                          max(_fc2.get('size', 18) - 5, 6))
+            for _xi, _hi, _si in zip(_cx, _sc, _sc):
+                if _si <= 0:
+                    continue
+                _ti = pg.TextItem(str(int(round(float(_si)))),
+                                  anchor=(0.5, 1), color="#374151")
+                _ti.setFont(_fnt2)
+                plot_item.addItem(_ti)
+                _ti.setPos(float(_xi), float(_hi) + _mh * 0.01)
+
         if is_single:
-            bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x)
+            bin_edges = global_edges if global_edges is not None else _compute_bin_edges(vals, bin_width, log_x, bin_mode=bin_mode)
             can_attempt_density, density_reason = _density_curve_status(vals, cfg)
             density_attempted = cfg.get('show_curve', True)
             density_success = False
@@ -5265,6 +5525,7 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node = bar_node
         self.parent_window = parent_window
         self._hidden_bar_samples = set()
+        self._bar_subplot_contexts = {}
         self.setWindowTitle("Element Particle Count Bar Chart")
         self.setMinimumSize(1000, 700)
 
@@ -5325,6 +5586,8 @@ class ElementBarChartDisplayDialog(QDialog):
             delegating full configuration/export/reset to bottom buttons.
         """
         cfg = self.node.config
+        clicked_plot = self._plot_item_at(pos)
+        subplot_ctx = self._bar_subplot_contexts.get(clicked_plot)
         menu = QMenu(self)
 
         tg = menu.addMenu("Quick Toggles")
@@ -5353,6 +5616,17 @@ class ElementBarChartDisplayDialog(QDialog):
             a.setChecked(s == cur_sort)
             a.triggered.connect(lambda _, v=s: self._set('sort_bars', v))
 
+        mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
+        if mode == 'Individual Subplots' and clicked_plot is not None and subplot_ctx is not None:
+            exp_act = menu.addAction("Export this subplot...")
+            exp_act.triggered.connect(
+                lambda *_: self._export_subplot(clicked_plot, subplot_ctx))
+        else:
+            exp_act = menu.addAction("Export this subplot... (unavailable here)")
+            exp_act.setEnabled(False)
+            exp_act.setToolTip(
+                "Switch to Individual Subplots and right-click a panel to export it.")
+
         menu.addSeparator()
         act_copy_fig = menu.addAction("Copy figure")
         act_copy_fig.triggered.connect(
@@ -5379,6 +5653,27 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         self.node.config[key] = value
         self._refresh()
+
+    def _plot_item_at(self, pos):
+        """Return the PlotItem under a right-click position, or None.
+
+        Args:
+            pos: Position in ``self.pw`` widget coordinates from
+                ``customContextMenuRequested``.
+        """
+        try:
+            scene_pos = self.pw.mapToScene(pos)
+            for item in self.pw.scene().items():
+                if isinstance(item, pg.PlotItem):
+                    try:
+                        rect = item.mapRectToScene(item.boundingRect())
+                        if rect.contains(scene_pos):
+                            return item
+                    except Exception:
+                        _itk_log.exception("Handled exception in _plot_item_at")
+        except Exception:
+            _itk_log.exception("Handled exception in _plot_item_at")
+        return None
 
     def _toggle_bar_sample_visibility(self, raw_sample_key):
         """Toggle one raw sample's visibility in supported multi-sample modes.
@@ -5450,6 +5745,8 @@ class ElementBarChartDisplayDialog(QDialog):
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
 
     def _open_plot_format_settings(self):
         """
@@ -5484,10 +5781,15 @@ class ElementBarChartDisplayDialog(QDialog):
             _sample_names(self.node.input_data), self, scope='quantities',
             te_available=_meta_te_available(self.node.input_data),
             available_elements=self._get_available_bar_elements())
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(),
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            warn_if_values_swallowed(
+                self.pw, _get_broken_cuts(self.node.config), self)
         else:
             self.node.config.clear()
             self.node.config.update(_snap)
@@ -5918,6 +6220,22 @@ class ElementBarChartDisplayDialog(QDialog):
             csv_data=csv_df,
         )
 
+    def _export_subplot(self, plot_item, subplot_ctx):
+        """Export one Individual Subplots panel as a standalone figure.
+
+        Reuses the shared export dialog via download_pyqtgraph_figure so
+        format/resolution options are consistent with full-figure export.
+        """
+        disp = subplot_ctx.get('display_name', 'subplot') if subplot_ctx else 'subplot'
+        text = str(disp).strip().replace(' ', '_')
+        stem = ''.join(c if c.isalnum() or c in ('_', '-') else '_'
+                       for c in text).strip('_') or 'subplot'
+        download_pyqtgraph_figure(
+            self.pw, self,
+            default_name=stem,
+            export_item=plot_item,
+        )
+
     def _export_figure(self):
         """Route standardized export button to existing bar-chart export path."""
         self._download_figure()
@@ -5972,6 +6290,9 @@ class ElementBarChartDisplayDialog(QDialog):
         try:
             self.pw.clear()
             self.pw.setBackground('w')
+            self.pw.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.pw.customContextMenuRequested.connect(self._ctx_menu)
+            self._bar_subplot_contexts = {}
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config

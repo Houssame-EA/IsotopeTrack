@@ -39,6 +39,7 @@ try:
     from results.results_bar_charts import (
         EnhancedGraphicsLayoutWidget, _PlotWidgetAdapter,
         _get_broken_cuts, _render_broken_or_plain, BrokenYAxisEditor,
+        warn_if_values_swallowed,
     )
     try:
         from widget.custom_plot_widget import PlotSettingsDialog as _PlotSettingsDialog
@@ -55,6 +56,7 @@ except Exception:
     _get_broken_cuts = lambda cfg: []
     _render_broken_or_plain = None
     BrokenYAxisEditor = None
+    warn_if_values_swallowed = lambda *a, **k: None
 
 # ── Constants ──────────────────────────────────────────────────────────
 
@@ -721,13 +723,25 @@ class BoxPlotSettingsDialog(QDialog):
         _apply_btn = QPushButton("Apply")
         _done_btn = QPushButton("Done")
         _cancel_btn = QPushButton("Cancel")
-        _apply_btn.clicked.connect(lambda: self.preview_requested.emit(self.collect()))
-        _done_btn.clicked.connect(self.accept)
+        _apply_btn.clicked.connect(self._try_apply)
+        _done_btn.clicked.connect(self._try_done)
         _cancel_btn.clicked.connect(self.reject)
         _btn_row.addWidget(_apply_btn)
         _btn_row.addWidget(_done_btn)
         _btn_row.addWidget(_cancel_btn)
         root.addLayout(_btn_row)
+
+    def _try_apply(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.preview_requested.emit(self.collect())
+
+    def _try_done(self):
+        if getattr(self, '_broken_editor', None) is not None \
+                and not self._broken_editor.guard_apply(self):
+            return
+        self.accept()
 
     def _pick_shade_color(self):
         from PySide6.QtWidgets import QColorDialog
@@ -1341,10 +1355,18 @@ class BoxPlotDisplayDialog(QDialog):
             self.node.config, self.node.input_data, self, scope=scope)
         if title_override:
             dlg.setWindowTitle(title_override)
-        dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
+
+        def _maybe_warn_swallowed():
+            if scope in ('all', 'quantities'):
+                warn_if_values_swallowed(
+                    self.pw, _get_broken_cuts(self.node.config), self)
+
+        dlg.preview_requested.connect(lambda cfg: (
+            self.node.config.update(cfg), self._refresh(), _maybe_warn_swallowed()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
+            _maybe_warn_swallowed()
         else:
             self.node.config.clear()
             self.node.config.update(_snap)

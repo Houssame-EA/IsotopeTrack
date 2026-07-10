@@ -796,13 +796,18 @@ class IsotopeSettingsDialog(QDialog):
         self.log_y.setChecked(self._cfg.get('log_y', False))
         fl.addRow("Log Y-axis:", self.log_y)
 
-        def _make_range_row(auto_key, min_key, max_key, min_def, max_def):
+        def _make_range_row(auto_key, min_key, max_key, min_def, max_def,
+                            min_val=0.0, max_val=None):
             rw = QWidget(); rh = QHBoxLayout(rw); rh.setContentsMargins(0,0,0,0)
             auto_cb = QCheckBox("Auto"); auto_cb.setChecked(self._cfg.get(auto_key, True))
-            mn = QDoubleSpinBox(); mn.setRange(-1e9, 1e9); mn.setDecimals(4)
-            mn.setValue(self._cfg.get(min_key, min_def))
-            mx = QDoubleSpinBox(); mx.setRange(-1e9, 1e9); mx.setDecimals(4)
-            mx.setValue(self._cfg.get(max_key, max_def))
+            mn = QDoubleSpinBox()
+            mn.setRange(min_val if min_val is not None else -1e9,
+                        max_val if max_val is not None else 1e9)
+            mn.setDecimals(4); mn.setValue(self._cfg.get(min_key, min_def))
+            mx = QDoubleSpinBox()
+            mx.setRange(min_val if min_val is not None else -1e9,
+                        max_val if max_val is not None else 1e9)
+            mx.setDecimals(4); mx.setValue(self._cfg.get(max_key, max_def))
             mn.setEnabled(not auto_cb.isChecked())
             mx.setEnabled(not auto_cb.isChecked())
             auto_cb.stateChanged.connect(lambda s, a=mn, b=mx: (
