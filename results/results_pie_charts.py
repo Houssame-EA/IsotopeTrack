@@ -41,8 +41,7 @@ PIE_DISPLAY_MODES = [
 ]
 COMP_ANALYSIS_TYPES = [
     'Single vs Multiple Elements',
-    'Specific Element Combinations',
-    'Element Distribution by Data Type',
+    'Specific Isotope Combinations',
 ]
 DEFAULT_PIE_COLORS = [
     '#FF6347', '#FFD700', '#FFA500', '#20B2AA', '#00BFFF',
