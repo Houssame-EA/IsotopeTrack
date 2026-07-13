@@ -8,9 +8,10 @@ left side of the configuration dialog. Each sample carries its own filter
 settings: click a sample, tune its criteria in the right pane, then move to
 the next one.
 
-Per sample, up to three independent criteria axes are available (AND logic
-between active axes): element composition (AND / OR / EXACT match),
-detected-element count, and per-element signal thresholds.
+Per sample, up to four independent criteria axes are available (AND logic
+between active axes): isotopic composition (AND / OR / EXACT / NOT(AND) /
+NOT(OR) / NOT(EXACT) match), detected-isotope count, per-isotope signal
+thresholds, and particle data (mass / diameter range filters).
 
 The output is regrouped so figures can read it: one chosen sample is
 re-emitted as single-sample data, several chosen samples are regrouped into
@@ -52,6 +53,20 @@ def _ual():
         return None
 
 
+def _num_text(v):
+    """Format a numeric filter value for a QLineEdit without trailing zeros.
+
+    Args:
+        v (float): Value to format.
+
+    Returns:
+        str: Compact numeric text, e.g. "2.5" not "2.500000".
+    """
+    if v == int(v):
+        return str(int(v))
+    return f"{v:g}"
+
+
 def _empty_conc_meta():
     """Build an empty concentration metadata entry.
 
@@ -61,27 +76,93 @@ def _empty_conc_meta():
     return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
 
 
+def _default_particle_data_field():
+    """Build one (mass or diameter) sub-filter's default (inactive) state.
+
+    Returns:
+        dict: Disabled sub-filter with an empty "at least" expression.
+    """
+    return {'enabled': False, 'expr': 'at_least', 'min': None, 'max': None}
+
+
 def default_filter_config():
     """Build the default (inactive) per-sample filter configuration.
 
     Returns:
-        dict: Configuration with all three filter axes disabled.
+        dict: Configuration with all four filter axes disabled.
     """
     return {
         'composition': {'enabled': False, 'isotopes': [], 'mode': 'AND'},
         'count':       {'enabled': False, 'op': 'min', 'value': 2},
         'threshold':   {'enabled': False, 'unit': 'elements', 'values': {}},
+        'particle_data': {
+            'enabled': False,
+            'mass': _default_particle_data_field(),
+            'diameter': _default_particle_data_field(),
+        },
     }
+
+
+_NOT_MODES = {'NOT(AND)': 'AND', 'NOT(OR)': 'OR', 'NOT(EXACT)': 'EXACT'}
+
+
+def _particle_data_field_valid(field):
+    """Check whether one Particle Data sub-filter (mass/diameter) is valid.
+
+    Args:
+        field (dict): {'enabled', 'expr', 'min', 'max'}.
+
+    Returns:
+        bool: True when disabled, or enabled with well-formed bounds.
+    """
+    if not field or not field.get('enabled'):
+        return True
+    expr = field.get('expr', 'at_least')
+    mn, mx = field.get('min'), field.get('max')
+    if expr == 'at_least':
+        return isinstance(mn, (int, float)) and mn >= 0
+    if expr == 'at_most':
+        return isinstance(mx, (int, float)) and mx >= 0
+    if expr == 'between':
+        return (isinstance(mn, (int, float)) and isinstance(mx, (int, float))
+                and mn >= 0 and mx >= 0 and mn < mx)
+    return False
+
+
+def particle_data_valid(pd_cfg):
+    """Check whether an enabled Particle Data box's sub-filters are valid.
+
+    A blocking policy is used (matching this dialog's existing convention
+    of ignoring an axis entirely rather than half-applying it): if the box
+    is enabled but any enabled sub-filter is invalid, the whole box must be
+    treated as inactive by the caller until fixed.
+
+    Args:
+        pd_cfg (dict): The 'particle_data' config dict.
+
+    Returns:
+        bool: True when the box is off, or on with every enabled sub-filter
+            valid.
+    """
+    if not pd_cfg or not pd_cfg.get('enabled'):
+        return True
+    return (_particle_data_field_valid(pd_cfg.get('mass') or {})
+            and _particle_data_field_valid(pd_cfg.get('diameter') or {}))
 
 
 def active_axes(config):
     """List the filter axes that are enabled and meaningfully configured.
 
+    A Particle Data box with invalid input is deliberately excluded here —
+    per this dialog's blocking convention, an invalid sub-filter makes the
+    whole box inactive until corrected (see :func:`particle_data_valid`).
+
     Args:
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        list: Subset of ['composition', 'count', 'threshold'].
+        list: Subset of ['composition', 'count', 'threshold',
+            'particle_data'].
     """
     if not config:
         return []
@@ -96,6 +177,11 @@ def active_axes(config):
     if thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         axes.append('threshold')
+    pd = config.get('particle_data') or {}
+    if pd.get('enabled') and particle_data_valid(pd) and (
+            (pd.get('mass') or {}).get('enabled')
+            or (pd.get('diameter') or {}).get('enabled')):
+        axes.append('particle_data')
     return axes
 
 
@@ -106,7 +192,7 @@ def summarize_config(config):
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        str: e.g. "Fe·Cr·Co | AND + ≥2 elem", or "No filter" when inactive.
+        str: e.g. "Fe·Cr·Co | AND + ≥2 iso", or "No filter" when inactive.
     """
     if not config:
         return "No filter"
@@ -123,22 +209,38 @@ def summarize_config(config):
     cnt = config.get('count') or {}
     if cnt.get('enabled'):
         sym = {'exact': '=', 'min': '≥', 'max': '≤'}.get(cnt.get('op'), '=')
-        parts.append(f"{sym}{cnt.get('value', 1)} elem")
+        parts.append(f"{sym}{cnt.get('value', 1)} iso")
     thr = config.get('threshold') or {}
     if thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         parts.append("thr")
+    pd = config.get('particle_data') or {}
+    if pd.get('enabled') and particle_data_valid(pd):
+        bits = []
+        for key, unit in (('mass', 'fg'), ('diameter', 'nm')):
+            f = pd.get(key) or {}
+            if not f.get('enabled'):
+                continue
+            expr = f.get('expr', 'at_least')
+            if expr == 'at_least':
+                bits.append(f"{key[0].upper()}≥{f.get('min')}{unit}")
+            elif expr == 'at_most':
+                bits.append(f"{key[0].upper()}≤{f.get('max')}{unit}")
+            else:
+                bits.append(f"{key[0].upper()}∈[{f.get('min')},{f.get('max')}]{unit}")
+        if bits:
+            parts.append(' & '.join(bits))
     return ' + '.join(parts) if parts else "No filter"
 
 
 def referenced_labels(config):
-    """Collect the element labels referenced by enabled filter axes.
+    """Collect the isotope labels referenced by enabled filter axes.
 
     Args:
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        set: Referenced element label strings.
+        set: Referenced isotope label strings.
     """
     refs = set()
     if not config:
@@ -163,30 +265,30 @@ def stale_from_available(avail, config):
     the configuration so the user's setup survives upstream changes.
 
     Args:
-        avail (set): Available element labels in the sample's data.
+        avail (set): Available isotope labels in the sample's data.
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        set: Stale element label strings.
+        set: Stale isotope label strings.
     """
     return {lbl for lbl in referenced_labels(config) if lbl not in avail}
 
 
 def detected_labels(particle, thr_unit, thr_values):
-    """Build the set of element labels detected in a particle.
+    """Build the set of isotope labels detected in a particle.
 
-    Detection means signal > 0 in ``elements``; if a per-element threshold
+    Detection means signal > 0 in ``elements``; if a per-isotope threshold
     is configured, the value in the threshold unit dict must also reach it,
     so near-zero detections don't count as "present".
 
     Args:
         particle (dict): One particle dict.
-        thr_unit (str): 'elements' or 'element_mass_fg'.
+        thr_unit (str): 'elements' or 'element_mass_fg' (data schema keys).
         thr_values (dict): Mapping label -> minimum value, already pruned of
             stale and zero entries; empty when the threshold axis is off.
 
     Returns:
-        set: Detected element labels.
+        set: Detected isotope labels.
     """
     els = particle.get('elements') or {}
     detected = set()
@@ -214,33 +316,93 @@ def detected_labels(particle, thr_unit, thr_values):
     return detected
 
 
+def _composition_passes(comp_labels, mode, detected):
+    """Evaluate the isotopic composition axis for one particle.
+
+    Each NOT(...) variant is computed by negating the corresponding base
+    (AND / OR / EXACT) boolean, never by re-deriving it from negated
+    per-isotope flags — that avoids accidentally flipping a quantifier.
+
+    Args:
+        comp_labels (set): Effective (non-stale) composition labels.
+        mode (str): 'AND', 'OR', 'EXACT', 'NOT(AND)', 'NOT(OR)' or
+            'NOT(EXACT)'.
+        detected (set): Isotope labels detected in the particle.
+
+    Returns:
+        bool: True if the particle satisfies this axis.
+    """
+    base_mode = _NOT_MODES.get(mode, mode)
+    if base_mode == 'AND':
+        result = comp_labels <= detected
+    elif base_mode == 'OR':
+        result = bool(comp_labels & detected)
+    elif base_mode == 'EXACT':
+        result = detected == comp_labels
+    else:
+        result = True
+    if mode in _NOT_MODES:
+        result = not result
+    return result
+
+
+def _particle_data_field_passes(particle, key, field):
+    """Evaluate one Particle Data sub-filter (mass or diameter).
+
+    Bounds are inclusive on both ends (a particle exactly at "min" or
+    "max" passes), consistent for both "at least"/"at most" and "between".
+
+    Args:
+        particle (dict): One particle dict.
+        key (str): 'mass' or 'diameter'.
+        field (dict): {'enabled', 'expr', 'min', 'max'}.
+
+    Returns:
+        bool: True if the sub-filter is inactive, or the particle's value
+            satisfies it.
+    """
+    if not field or not field.get('enabled'):
+        return True
+    pkey = 'particle_mass_fg' if key == 'mass' else 'particle_diameter_nm'
+    try:
+        val = float(particle.get(pkey))
+    except (TypeError, ValueError):
+        return False
+    if val != val:  # NaN
+        return False
+    expr = field.get('expr', 'at_least')
+    if expr == 'at_least':
+        return val >= field.get('min')
+    if expr == 'at_most':
+        return val <= field.get('max')
+    if expr == 'between':
+        return field.get('min') <= val <= field.get('max')
+    return True
+
+
 def particle_passes(particle, comp_labels, mode, count_cfg,
-                    thr_unit, thr_values):
+                    thr_unit, thr_values, particle_data=None):
     """Evaluate every active filter axis against one particle (AND logic).
 
     Args:
         particle (dict): One particle dict.
         comp_labels (set): Effective (non-stale) composition labels, empty
             when the composition axis is inactive.
-        mode (str): 'AND', 'OR' or 'EXACT'.
+        mode (str): 'AND', 'OR', 'EXACT', 'NOT(AND)', 'NOT(OR)' or
+            'NOT(EXACT)'.
         count_cfg (dict): {'op': 'exact'|'min'|'max', 'value': int} or None.
         thr_unit (str): Threshold unit key.
-        thr_values (dict): Effective per-element thresholds.
+        thr_values (dict): Effective per-isotope thresholds.
+        particle_data (dict): Effective {'mass': field, 'diameter': field}
+            sub-filters, or None when the Particle Data axis is inactive.
 
     Returns:
         bool: True if the particle passes every active filter.
     """
     detected = detected_labels(particle, thr_unit, thr_values)
     if comp_labels:
-        if mode == 'AND':
-            if not comp_labels <= detected:
-                return False
-        elif mode == 'OR':
-            if not (comp_labels & detected):
-                return False
-        elif mode == 'EXACT':
-            if detected != comp_labels:
-                return False
+        if not _composition_passes(comp_labels, mode, detected):
+            return False
     if count_cfg:
         n = len(detected)
         op = count_cfg.get('op', 'min')
@@ -251,6 +413,11 @@ def particle_passes(particle, comp_labels, mode, count_cfg,
             return False
         if op == 'max' and n > val:
             return False
+    if particle_data:
+        for key in ('mass', 'diameter'):
+            if not _particle_data_field_passes(
+                    particle, key, particle_data.get(key)):
+                return False
     return True
 
 
@@ -262,11 +429,11 @@ def effective_criteria(config, stale):
 
     Args:
         config (dict): A per-sample filter configuration dict.
-        stale (set): Stale element labels to ignore.
+        stale (set): Stale isotope labels to ignore.
 
     Returns:
-        tuple: (comp_labels, mode, count_cfg, thr_unit, thr_values) ready
-            for :func:`particle_passes`.
+        tuple: (comp_labels, mode, count_cfg, thr_unit, thr_values,
+            particle_data) ready for :func:`particle_passes`.
     """
     comp = config.get('composition') or {}
     comp_labels = set()
@@ -284,7 +451,14 @@ def effective_criteria(config, stale):
         thr_unit = thr.get('unit', 'elements')
         thr_values = {lbl: v for lbl, v in (thr.get('values') or {}).items()
                       if v and v > 0 and lbl not in stale}
-    return comp_labels, mode, count_cfg, thr_unit, thr_values
+    pd = config.get('particle_data') or {}
+    particle_data = None
+    if pd.get('enabled') and particle_data_valid(pd):
+        particle_data = {
+            'mass': pd.get('mass') or _default_particle_data_field(),
+            'diameter': pd.get('diameter') or _default_particle_data_field(),
+        }
+    return comp_labels, mode, count_cfg, thr_unit, thr_values, particle_data
 
 
 def normalize_sources(upstreams):
@@ -350,13 +524,13 @@ def normalize_sources(upstreams):
 
 
 def source_labels(source):
-    """Collect the element labels available in one source entry.
+    """Collect the isotope labels available in one source entry.
 
     Args:
         source (dict): Source entry from :func:`normalize_sources`.
 
     Returns:
-        set: Available element label strings.
+        set: Available isotope label strings.
     """
     labels = set()
     for iso in source.get('isotopes') or []:
@@ -485,11 +659,11 @@ def prune_config_to_labels(config, labels):
     """Copy a filter configuration keeping only criteria for given labels.
 
     Used by "Apply to all samples" so a copied filter never starts out
-    stale on samples that lack some elements.
+    stale on samples that lack some isotopes.
 
     Args:
         config (dict): A per-sample filter configuration dict.
-        labels (set): Element labels available in the target sample.
+        labels (set): Isotope labels available in the target sample.
 
     Returns:
         dict: Deep copy of the configuration restricted to ``labels``.
@@ -510,9 +684,10 @@ class ParticleFilterDialog(QDialog):
 
     Left pane: every incoming sample with a check (include / exclude) and a
     short tag showing its filter. Right pane: the filter settings of the
-    sample currently clicked — element composition (chips + AND/OR/EXACT),
-    element count, and per-element thresholds. Each sample keeps its own
-    settings; "Apply to all samples" copies the current one everywhere.
+    sample currently clicked — isotopic composition (chips + AND/OR/EXACT/
+    NOT variants), isotopic count, per-isotope thresholds, and particle
+    data (mass / diameter). Each sample keeps its own settings; "Apply to
+    all samples" copies the current one everywhere.
     The live preview runs on the upstream snapshot fetched once at dialog
     open and is debounced (~250 ms) after the last user change.
     """
@@ -745,19 +920,19 @@ class ParticleFilterDialog(QDialog):
         root.addWidget(self._preview)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
+        bb.accepted.connect(self._try_accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def _build_pane(self, pv):
-        """Build the three filter-axis sections of the right pane.
+        """Build the four filter-axis sections of the right pane.
 
         Args:
             pv (QVBoxLayout): Layout of the right pane.
         """
         p = _app_theme.palette
 
-        self.grp_comp = QGroupBox("Element Composition")
+        self.grp_comp = QGroupBox("Isotopic Composition")
         self.grp_comp.setCheckable(True)
         cv = QVBoxLayout(self.grp_comp)
         cv.setSpacing(8)
@@ -768,11 +943,18 @@ class ParticleFilterDialog(QDialog):
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Match mode:"))
         self.cmb_mode = QComboBox()
-        self.cmb_mode.addItem("AND — contains all selected elements", "AND")
+        self.cmb_mode.addItem("AND — contains all selected isotopes", "AND")
         self.cmb_mode.addItem(
-            "OR — contains at least one selected element", "OR")
+            "OR — contains at least one selected isotope", "OR")
         self.cmb_mode.addItem(
-            "EXACT — only the selected elements, no others", "EXACT")
+            "EXACT — only the selected isotopes, no others", "EXACT")
+        self.cmb_mode.addItem(
+            "NOT(AND) — missing at least one selected isotope", "NOT(AND)")
+        self.cmb_mode.addItem(
+            "NOT(OR) — contains none of the selected isotopes", "NOT(OR)")
+        self.cmb_mode.addItem(
+            "NOT(EXACT) — any set other than exactly the selected isotopes",
+            "NOT(EXACT)")
         self.cmb_mode.currentIndexChanged.connect(self._schedule_preview)
         mode_row.addWidget(self.cmb_mode, 1)
         cv.addLayout(mode_row)
@@ -792,7 +974,7 @@ class ParticleFilterDialog(QDialog):
         self.grp_comp.toggled.connect(self._schedule_preview)
         pv.addWidget(self.grp_comp)
 
-        self.grp_count = QGroupBox("Element Count")
+        self.grp_count = QGroupBox("Isotopic Count")
         self.grp_count.setCheckable(True)
         cr = QHBoxLayout(self.grp_count)
         cr.addWidget(QLabel("Keep particles with"))
@@ -806,12 +988,12 @@ class ParticleFilterDialog(QDialog):
         self.spin_count.setRange(1, 99)
         self.spin_count.valueChanged.connect(self._schedule_preview)
         cr.addWidget(self.spin_count)
-        cr.addWidget(QLabel("detected element(s)"))
+        cr.addWidget(QLabel("Detected Isotope(s)"))
         cr.addStretch()
         self.grp_count.toggled.connect(self._schedule_preview)
         pv.addWidget(self.grp_count)
 
-        self.grp_thr = QGroupBox("Per-Element Signal Threshold")
+        self.grp_thr = QGroupBox("Per-isotope signal threshold")
         self.grp_thr.setCheckable(True)
         tv = QVBoxLayout(self.grp_thr)
         tv.setSpacing(8)
@@ -824,7 +1006,7 @@ class ParticleFilterDialog(QDialog):
         unit_row.addWidget(self.cmb_unit, 1)
         tv.addLayout(unit_row)
         thr_hint = QLabel(
-            "Minimum value for an element to count as \"present\" — so "
+            "Minimum value for an isotope to count as \"present\" — so "
             "near-zero detections are ignored. Leave at 0 for no threshold.")
         thr_hint.setWordWrap(True)
         thr_hint.setStyleSheet(
@@ -837,6 +1019,143 @@ class ParticleFilterDialog(QDialog):
         tv.addWidget(self._thr_container)
         self.grp_thr.toggled.connect(self._schedule_preview)
         pv.addWidget(self.grp_thr)
+
+        self.grp_pd = QGroupBox("Particle Data")
+        self.grp_pd.setCheckable(True)
+        pdv = QVBoxLayout(self.grp_pd)
+        pdv.setSpacing(8)
+        self._pd_fields = {}
+        for key, title, unit in (('mass', 'Mass', 'fg'),
+                                 ('diameter', 'Diameter', 'nm')):
+            self._pd_fields[key] = self._build_particle_data_field(
+                pdv, key, title, unit)
+        self.grp_pd.toggled.connect(self._schedule_preview)
+        pv.addWidget(self.grp_pd)
+
+    def _build_particle_data_field(self, parent_layout, key, title, unit):
+        """Build one Particle Data sub-filter row (Mass or Diameter).
+
+        Args:
+            parent_layout (QVBoxLayout): The Particle Data box's layout.
+            key (str): 'mass' or 'diameter'.
+            title (str): Checkbox label, e.g. "Mass".
+            unit (str): Fixed unit label shown next to the inputs.
+
+        Returns:
+            dict: Widget handles for this field, used by
+                :meth:`_pane_config` / :meth:`_load_pane`.
+        """
+        p = _app_theme.palette
+        box = QGroupBox(title)
+        box.setCheckable(True)
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+
+        expr_row = QHBoxLayout()
+        expr_row.addWidget(QLabel("Expression:"))
+        cmb_expr = QComboBox()
+        cmb_expr.addItem("at least", "at_least")
+        cmb_expr.addItem("at most", "at_most")
+        cmb_expr.addItem("between", "between")
+        expr_row.addWidget(cmb_expr, 1)
+        v.addLayout(expr_row)
+
+        inputs_row = QHBoxLayout()
+        lbl_min = QLabel("Minimum:")
+        edit_min = QLineEdit()
+        edit_min.setPlaceholderText(f"value in {unit}")
+        lbl_max = QLabel("Maximum:")
+        edit_max = QLineEdit()
+        edit_max.setPlaceholderText(f"value in {unit}")
+        unit_lbl = QLabel(unit)
+        unit_lbl.setStyleSheet(f"color:{p.text_muted};")
+        inputs_row.addWidget(lbl_min)
+        inputs_row.addWidget(edit_min)
+        inputs_row.addWidget(lbl_max)
+        inputs_row.addWidget(edit_max)
+        inputs_row.addWidget(unit_lbl)
+        v.addLayout(inputs_row)
+
+        err_lbl = QLabel()
+        err_lbl.setWordWrap(True)
+        err_lbl.setStyleSheet(
+            "color:#DC2626; font-size:11px; font-weight:600;")
+        err_lbl.setVisible(False)
+        v.addWidget(err_lbl)
+
+        parent_layout.addWidget(box)
+
+        fields = {'box': box, 'cmb_expr': cmb_expr, 'lbl_min': lbl_min,
+                  'edit_min': edit_min, 'lbl_max': lbl_max,
+                  'edit_max': edit_max, 'err_lbl': err_lbl}
+
+        def sync_visibility():
+            expr = cmb_expr.currentData() or 'at_least'
+            lbl_min.setVisible(expr in ('at_least', 'between'))
+            edit_min.setVisible(expr in ('at_least', 'between'))
+            lbl_max.setVisible(expr in ('at_most', 'between'))
+            edit_max.setVisible(expr in ('at_most', 'between'))
+            self._validate_particle_data_field(key, fields)
+            self._schedule_preview()
+
+        cmb_expr.currentIndexChanged.connect(sync_visibility)
+        edit_min.textChanged.connect(
+            lambda: (self._validate_particle_data_field(key, fields),
+                     self._schedule_preview()))
+        edit_max.textChanged.connect(
+            lambda: (self._validate_particle_data_field(key, fields),
+                     self._schedule_preview()))
+        box.toggled.connect(sync_visibility)
+        sync_visibility()
+        return fields
+
+    def _validate_particle_data_field(self, key, fields=None):
+        """Validate one Particle Data sub-filter's inputs and show/hide its
+        inline error message.
+
+        Args:
+            key (str): 'mass' or 'diameter'.
+            fields (dict): Widget handles for this field; looked up from
+                ``self._pd_fields`` when omitted (that dict isn't
+                populated yet during the field's own initial construction,
+                so the builder passes its local ``fields`` directly).
+
+        Returns:
+            bool: True when the field is off, or on and valid.
+        """
+        f = fields if fields is not None else self._pd_fields[key]
+        err_lbl = f['err_lbl']
+        if not f['box'].isChecked():
+            err_lbl.setVisible(False)
+            return True
+        expr = f['cmb_expr'].currentData() or 'at_least'
+
+        def parse(edit):
+            txt = edit.text().strip()
+            if not txt:
+                return None, "required"
+            try:
+                v = float(txt)
+            except ValueError:
+                return None, "must be numeric"
+            if v < 0:
+                return None, "must be >= 0"
+            return v, None
+
+        msg = None
+        if expr == 'at_least':
+            _v, msg = parse(f['edit_min'])
+        elif expr == 'at_most':
+            _v, msg = parse(f['edit_max'])
+        else:
+            mn, msg_mn = parse(f['edit_min'])
+            mx, msg_mx = parse(f['edit_max'])
+            msg = msg_mn or msg_mx
+            if not msg and mn >= mx:
+                msg = "minimum must be strictly less than maximum"
+        err_lbl.setText(f"⚠ {msg}" if msg else "")
+        err_lbl.setVisible(bool(msg))
+        return msg is None
 
     @staticmethod
     def _section_label(text):
@@ -957,7 +1276,49 @@ class ParticleFilterDialog(QDialog):
             cfg['threshold'].get('unit', 'elements'))))
         self._rebuild_thr_rows()
         self._refresh_stale_area()
+
+        pd = cfg.get('particle_data') or {}
+        self.grp_pd.setChecked(pd.get('enabled', False))
+        for key in ('mass', 'diameter'):
+            f = self._pd_fields[key]
+            field_cfg = pd.get(key) or _default_particle_data_field()
+            f['box'].setChecked(field_cfg.get('enabled', False))
+            f['cmb_expr'].setCurrentIndex(max(0, f['cmb_expr'].findData(
+                field_cfg.get('expr', 'at_least'))))
+            mn, mx = field_cfg.get('min'), field_cfg.get('max')
+            f['edit_min'].setText('' if mn is None else _num_text(mn))
+            f['edit_max'].setText('' if mx is None else _num_text(mx))
+            self._validate_particle_data_field(key)
         self._loading = False
+
+    def _read_particle_data_field(self, key):
+        """Read one Particle Data sub-filter's widgets into a config dict.
+
+        Args:
+            key (str): 'mass' or 'diameter'.
+
+        Returns:
+            dict: {'enabled', 'expr', 'min', 'max'}; 'min'/'max' are None
+                when blank or unparsable — validity is checked separately
+                by :func:`particle_data_valid`, this just reads raw state.
+        """
+        f = self._pd_fields[key]
+
+        def parse(edit):
+            txt = edit.text().strip()
+            if not txt:
+                return None
+            try:
+                return float(txt)
+            except ValueError:
+                return None
+
+        return {
+            'enabled': f['box'].isChecked(),
+            'expr': f['cmb_expr'].currentData() or 'at_least',
+            'min': parse(f['edit_min']),
+            'max': parse(f['edit_max']),
+        }
 
     def _pane_config(self):
         """Read the right pane into a filter configuration dict.
@@ -989,11 +1350,16 @@ class ParticleFilterDialog(QDialog):
                 'unit': self.cmb_unit.currentData() or 'elements',
                 'values': values,
             },
+            'particle_data': {
+                'enabled': self.grp_pd.isChecked(),
+                'mass': self._read_particle_data_field('mass'),
+                'diameter': self._read_particle_data_field('diameter'),
+            },
         }
 
     def _apply_to_all(self):
         """Copy the current sample's filter to every other sample, pruned to
-        each sample's available elements so nothing starts out stale."""
+        each sample's available isotopes so nothing starts out stale."""
         if not self._current:
             return
         cfg = self._pane_config()
@@ -1050,7 +1416,7 @@ class ParticleFilterDialog(QDialog):
             self._thr_values[lbl] = spin.value()
 
     def _rebuild_thr_rows(self):
-        """Rebuild the threshold form: one spinbox per element selected in
+        """Rebuild the threshold form: one spinbox per isotope selected in
         the composition section, plus greyed rows for stale entries."""
         while self._thr_form.count():
             item = self._thr_form.takeAt(0)
@@ -1062,8 +1428,8 @@ class ParticleFilterDialog(QDialog):
 
         labels = [iso['label'] for iso in self._selected_isotopes()]
         if not labels and not self._stale_thr:
-            ph = QLabel("Select elements in the composition section above "
-                        "to set per-element thresholds.")
+            ph = QLabel("Select isotopes in the composition section above "
+                        "to set per-isotope thresholds.")
             ph.setWordWrap(True)
             ph.setStyleSheet(
                 f"color:{p.text_muted}; font-style:italic;"
@@ -1177,6 +1543,23 @@ class ParticleFilterDialog(QDialog):
         if self._merge_edit is not None:
             return self._merge_edit.text().strip() or "Combined"
         return self._merged_name or "Combined"
+
+    def _try_accept(self):
+        """Block accept while the current sample's Particle Data box is
+        checked but has invalid input, so a broken filter is never applied
+        silently; otherwise close the dialog normally."""
+        if self.grp_pd.isChecked():
+            bad = [title for key, title in (('mass', 'Mass'),
+                                            ('diameter', 'Diameter'))
+                   if not self._validate_particle_data_field(key)]
+            if bad:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, "Invalid Particle Data filter",
+                    "Fix the highlighted Particle Data field(s) before "
+                    "continuing: " + ", ".join(bad))
+                return
+        self.accept()
 
     def get_selected_sources(self):
         """Read the include/exclude check states.
@@ -1439,7 +1822,7 @@ class ParticleFilterNode(QObject):
         """List labels referenced by filters but missing in their samples.
 
         Returns:
-            list: Stale element label strings.
+            list: Stale isotope label strings.
         """
         return list(self._stale)
 
