@@ -212,7 +212,7 @@ class NPSEditor(QDialog):
         self.nps_combo_box.currentIndexChanged.connect(self.handle_nps_selection_change)
 
         title = QLabel("Editor", parent=header)
-        title.setStyleSheet(results_title_qss(theme.palette))  # TODO: make a common style
+        title.setStyleSheet(results_title_qss(theme.palette))
         header_layout.addWidget(title)
         header_layout.addWidget(self.nps_combo_box)
 
@@ -235,7 +235,6 @@ class NPSEditor(QDialog):
         """
         layout = self.layout()
 
-        # TODO: Find a smoother alternative
         assert isinstance(layout, QVBoxLayout)
 
         if isinstance(self.current_form_widget, QWidget):

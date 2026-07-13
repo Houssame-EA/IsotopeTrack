@@ -98,7 +98,7 @@ def signature_from_counts(counts: dict) -> str:
 
 def signature_from_formula(formula: str) -> str: # TODO: tests
     """Order-independent canonical key for matching equivalent formulas."""
-    return signature_from_counts(parse_formula_to_counts(formula))
+    return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
 
 
 def elements_with_count_from_formula(formula: str) -> list[str]:

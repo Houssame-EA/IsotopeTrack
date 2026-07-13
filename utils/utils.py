@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def mass_to_diameter(mass_fg, density):  # TODO: Put in NPSs
+def mass_to_diameter(mass_fg, density):
     """Convert mass to spherical particle diameter.
 
     Returns:

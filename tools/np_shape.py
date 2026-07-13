@@ -75,14 +75,17 @@ class NanoParticleShapeModel(QAbstractTableModel):
                 return self.columns_info[section].title
         return None
 
-    def removeRows(self, position, row, parent=QModelIndex()):
+    def removeRows(self, position, row, parent=QModelIndex()) -> bool:
         self.logger.info("removeRows: Removing rows with the service")
         self.beginRemoveRows(parent, position, position + row - 1)
-        for i in range(row):
-            self.nps_service.delete_shape(position)  # TODO: Manage exceptions
-
-        self.endRemoveRows()
-        self.layoutChanged.emit()
+        try:
+            for _ in range(row):
+                self.nps_service.delete_shape(position)
+        except IndexError:
+            return False
+        finally:
+            self.endRemoveRows()
+            self.layoutChanged.emit()
         return True
 
     def addData(self, nps: NanoParticleShape):

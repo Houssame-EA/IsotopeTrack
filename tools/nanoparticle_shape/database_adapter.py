@@ -21,8 +21,8 @@ class CompoundService:
 
         self._filter_by_analysed_elements()
 
-    def _elements_as_compound_df(self):
-        # TODO: Find another way
+    @staticmethod
+    def _elements_as_compound_df():
         elements_list = []
         elements_data = PeriodicTableWidget.create_elements_data()
         for element in elements_data:
@@ -44,16 +44,15 @@ class CompoundService:
         return pd.DataFrame(elements_list)
 
     def _filter_by_analysed_elements(self):
+        self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
         if not self.analysed_elements:
             return
 
-        self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
         self.df = self.df[
             self.df["formula"].str
             .contains("|".join(self.analysed_elements),
                       regex=True)
         ]
-        self._elements_as_compound_df()
 
     def get_compound(self, index: int) -> Compound:
         """
