@@ -943,17 +943,17 @@ class ParticleFilterDialog(QDialog):
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Match mode:"))
         self.cmb_mode = QComboBox()
-        self.cmb_mode.addItem("AND — contains all selected isotopes", "AND")
+        self.cmb_mode.addItem("AND: contains at least all selected isotopes", "AND")
         self.cmb_mode.addItem(
-            "OR — contains at least one selected isotope", "OR")
+            "OR: contains at least one selected isotope", "OR")
         self.cmb_mode.addItem(
-            "EXACT — only the selected isotopes, no others", "EXACT")
+            "EXACT: only the selected isotopes, no others", "EXACT")
         self.cmb_mode.addItem(
-            "NOT(AND) — missing at least one selected isotope", "NOT(AND)")
+            "NOT(AND) : missing at least one selected isotope", "NOT(AND)")
         self.cmb_mode.addItem(
-            "NOT(OR) — contains none of the selected isotopes", "NOT(OR)")
+            "NOT(OR): contains none of the selected isotopes", "NOT(OR)")
         self.cmb_mode.addItem(
-            "NOT(EXACT) — any set other than exactly the selected isotopes",
+            "NOT(EXACT):any set other than exactly the selected isotopes",
             "NOT(EXACT)")
         self.cmb_mode.currentIndexChanged.connect(self._schedule_preview)
         mode_row.addWidget(self.cmb_mode, 1)
