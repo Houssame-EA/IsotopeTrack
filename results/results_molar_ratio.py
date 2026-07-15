@@ -19,6 +19,8 @@ from results.shared_plot_utils import (
     per_ml_active, per_ml_factor, conc_meta_available,
     single_sample_name, apply_sci_y_axis, HtmlAxisItem, pick_color_hex,
     get_font_config,
+    compute_bin_edges_width_geo as _mr_compute_bin_edges,
+    compute_global_bin_edges_width_geo as _mr_compute_global_bin_edges,
 )
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_molar_ratio")
@@ -713,104 +715,6 @@ class MolarRatioSettingsDialog(QDialog):
 
 
 # ── Drawing helpers (PyQtGraph) ────────────────────────────────────────
-
-def _mr_compute_bin_edges(values, bin_width, log_x=True, bin_mode='geometric'):
-    """Compute bin edges anchored to clean grid boundaries.
-
-    bin_mode and log_x are independent — all four combinations are valid:
-
-    - bin_mode='geometric', log_x=True : values in log space; bin_width in log₁₀
-      units → equal-width log bins drawn on a log axis (bars look even).
-    - bin_mode='geometric', log_x=False: values in linear space; bin_width in
-      log₁₀ units → compute in log space, return linear edges (bars look uneven
-      on a linear axis).
-    - bin_mode='linear',    log_x=False: values in linear space; bin_width in
-      ratio units → equal-width linear bins (bars look even on a linear axis).
-    - bin_mode='linear',    log_x=True : values in log space; bin_width in ratio
-      units → compute linear edges then log-transform (bars look uneven on a log
-      axis).
-
-    Args:
-        values:    1-D array already in plot-space (log10 when log_x=True).
-        bin_width: Bin width in log₁₀ units (Geometric mode) or ratio units
-                   (Linear mode).
-        log_x:     True when values are log10-transformed.
-        bin_mode:  'geometric' or 'linear'.
-
-    Returns:
-        np.ndarray of bin edges in the same coordinate space as *values*, ≥2 elements.
-    """
-    arr = np.asarray(values, dtype=float)
-    arr = arr[np.isfinite(arr)]
-    if len(arr) == 0:
-        return np.array([0.0, 1.0])
-    v_min, v_max = float(np.nanmin(arr)), float(np.nanmax(arr))
-    bw = max(float(bin_width), 1e-9)
-
-    if bin_mode == 'geometric':
-        if log_x:
-            # Values already in log space; bw is in log₁₀ units.
-            start = np.floor(v_min / bw) * bw
-            stop  = np.ceil(v_max  / bw) * bw + bw
-            edges = np.arange(start, stop, bw)
-        else:
-            # Values in linear space; compute log-space edges, return linear.
-            safe_min = max(v_min, 1e-300)
-            safe_max = max(v_max, 1e-300)
-            log_min = float(np.log10(safe_min))
-            log_max = float(np.log10(safe_max))
-            start = np.floor(log_min / bw) * bw
-            stop  = np.ceil(log_max  / bw) * bw + bw
-            log_edges = np.arange(start, stop, bw)
-            edges = 10.0 ** log_edges
-    else:  # linear
-        if log_x:
-            # Values in log space; bw is in ratio units; return log-space edges.
-            real_min = 10.0 ** v_min
-            real_max = 10.0 ** v_max
-            r_start = np.floor(real_min / bw) * bw
-            r_stop  = np.ceil(real_max  / bw) * bw + bw
-            real_edges = np.arange(r_start, r_stop, bw)
-            real_edges = real_edges[real_edges > 0]
-            if len(real_edges) < 2:
-                return np.array([v_min - 0.5, v_max + 0.5])
-            edges = np.log10(real_edges)
-        else:
-            # Values in linear space; bw is in ratio units.
-            start = np.floor(v_min / bw) * bw
-            stop  = np.ceil(v_max  / bw) * bw + bw
-            edges = np.arange(start, stop, bw)
-
-    if len(edges) < 2:
-        edges = np.array([v_min - bw, v_max + bw])
-    return edges
-
-
-def _mr_compute_global_bin_edges(all_values_list, bin_width, log_x=True, bin_mode='geometric'):
-    """Compute shared bin edges from multiple per-sample arrays.
-
-    Ensures every panel in a multi-sample view uses identical bin boundaries
-    so x-axis alignment is exact and counts are directly comparable.
-
-    Args:
-        all_values_list: List of 1-D prepared (possibly log-transformed) arrays.
-        bin_width:       Bin width in log₁₀ units (Geometric) or ratio units (Linear).
-        log_x:           Whether values are already in log10 space.
-        bin_mode:        'geometric' or 'linear' — see _mr_compute_bin_edges.
-
-    Returns:
-        np.ndarray of shared bin edges, or None when no valid data.
-    """
-    arrays = [np.asarray(v, dtype=float) for v in all_values_list
-              if v is not None and len(v) > 0]
-    if not arrays:
-        return None
-    combined = np.concatenate(arrays)
-    combined = combined[np.isfinite(combined)]
-    if len(combined) == 0:
-        return None
-    return _mr_compute_bin_edges(combined, bin_width, log_x, bin_mode=bin_mode)
-
 
 def _draw_histogram_bars(plot_item, ratios, cfg, color, y_scale=1.0, bin_edges=None, sample_key=None):
     """Draw histogram bars for ratio values.

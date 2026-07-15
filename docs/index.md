@@ -1,7 +1,7 @@
 # IsotopeTrack Documentation
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Version](https://img.shields.io/badge/version-1.10.5-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.10.6-green.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 
@@ -99,7 +99,7 @@ Run.py
 | **Methods** | 2134 |
 | **Functions** | 292 |
 | **License** | GPL-3.0 |
-| **Version** | 1.10.5 |
+| **Version** | 1.10.6 |
 
 ---
 

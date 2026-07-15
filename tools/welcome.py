@@ -27,7 +27,7 @@ try:
     from utils.app_version import __version__ as APP_VERSION
 except Exception:
     # Fallback only used if the import fails; kept in sync by version.py.
-    APP_VERSION = "1.10.5"
+    APP_VERSION = "1.10.6"
 
 _itk_log = logging.getLogger("IsotopeTrack.tools.welcome")
 
