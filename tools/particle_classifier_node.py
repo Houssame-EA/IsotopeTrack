@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Particle Classifier canvas node — Stage 2 (registration + connectivity).
+"""Particle Classifier canvas node.
 
-Stage 2 scope per ``.claude/PARTICLE_CLASSIFIER_DESIGN.md`` §14: canvas
-registration, hard-blocked connectivity restrictions, node registry entries,
-and a minimal placeholder node item. No dialog UI, no expression wiring, no
-output relabeling yet — those are later stages (§14.3-5). Double-clicking the
-node currently does nothing beyond what the base ``WorkflowNode.configure``
-no-op provides.
+Stage 2 (canvas registration, hard-blocked connectivity restrictions, node
+registry entries, minimal placeholder node item) and Stage 3 (real
+definition storage + the configuration dialog from
+``tools/particle_classifier_dialog.py``) per
+``.claude/PARTICLE_CLASSIFIER_DESIGN.md`` §14. Output relabeling (§7) is
+still Stage 4 — ``get_output_data`` still passes upstream data through
+unmodified.
 
 Connectivity (design §2):
     Upstream:   Particle Filter, Single Sample, Multiple Sample only.
@@ -20,10 +21,27 @@ cannot be drawn) with an explicit error dialog — see
 
 from __future__ import annotations
 
+import uuid
+
 from PySide6.QtCore import QObject, QPointF, Signal
+from PySide6.QtWidgets import QDialog
 
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_classifier_node")
+
+
+def _ual():
+    """Return the UserActionLogger, or None if logging isn't ready.
+
+    Returns:
+        object: The user action logger instance, or None.
+    """
+    try:
+        from tools.logging_utils import logging_manager
+        return logging_manager.get_user_action_logger()
+    except Exception:
+        _itk_log.exception("Handled exception in _ual")
+        return None
 
 NODE_TYPE = "particle_classifier"
 
@@ -70,13 +88,53 @@ def is_allowed_downstream(node_type: str, viz_node_types) -> bool:
     return node_type in viz_node_types
 
 
+#: Default neutral-gray color for the "Unclassified" bucket (design §6).
+DEFAULT_UNCLASSIFIED_COLOR = "#9CA3AF"
+
+
+def new_definition_id():
+    """Generate a fresh, stable identity for a classifier definition.
+
+    Returns:
+        str: A UUID4 hex string.
+    """
+    return uuid.uuid4().hex
+
+
 class ParticleClassifierNode(QObject):
-    """Placeholder Particle Classifier workflow node (Stage 2).
+    """Particle Classifier workflow node.
 
     Duck-types the attributes ``WorkflowNode``/``NodeItem`` expect, matching
     the pattern used by :class:`tools.particle_filter.ParticleFilterNode`.
-    Holds no classification state yet; that arrives in Stage 3 (per-sample
-    definitions UI) and Stage 4 (output relabeling).
+
+    Holds the node-wide state edited by ``ParticleClassifierDialog``
+    (``tools/particle_classifier_dialog.py``):
+
+    - ``definitions``: one flat, priority-ordered list of definition dicts,
+      each scoped to exactly one sample (design §4). Shape::
+
+          {
+              'id': str,                     # stable identity, see new_definition_id()
+              'target_sample': str,          # sample name this definition is scoped to
+              'expression_text': str,        # raw user text, re-parsed on load
+              'match_mode': 'partial' | 'exact',
+              'group_name': str | None,      # None = auto-named bucket of one
+              'color': str | None,           # None = auto-derived from group/palette
+          }
+
+      List order *is* the priority order (index 0 = highest priority).
+    - ``groups``: ``{group_name: color_hex}`` registry (design §4).
+    - ``overlap_mode``: ``'double_count'`` (default) or ``'priority'`` — a
+      single node-wide choice, not per-pair (design §5).
+    - ``unmatched_mode``: ``'unclassified'`` (default), ``'discard'``, or
+      ``'passthrough'`` (design §6).
+    - ``unclassified_color``: overridable color for the Unclassified bucket.
+    - ``selected_sources``: ``None`` (all connected samples included) or a
+      list of sample names — same convention as
+      :attr:`tools.particle_filter.ParticleFilterNode.selected_sources`.
+
+    Output relabeling (design §7) is Stage 4 — ``get_output_data`` still
+    passes upstream data through unmodified.
     """
 
     position_changed = Signal(object)
@@ -95,6 +153,17 @@ class ParticleClassifierNode(QObject):
         self.input_data = None
         self.scene_ref = None
 
+        self.definitions = []
+        self.groups = {}
+        self.overlap_mode = 'double_count'
+        self.unmatched_mode = 'unclassified'
+        self.unclassified_color = DEFAULT_UNCLASSIFIED_COLOR
+        self.selected_sources = None
+        #: Set by the dialog on Accept: True when any definition currently
+        #: has a stale isotope reference. Drives the node icon's warning
+        #: badge (see build_particle_classifier_node_item).
+        self._has_unresolved_issues = False
+
     def set_position(self, pos):
         """Update the node position and notify the canvas item."""
         if self.position != pos:
@@ -102,34 +171,106 @@ class ParticleClassifierNode(QObject):
             self.position_changed.emit(pos)
 
     def process_data(self, input_data):
-        """Receive pushed upstream data (Stage 2: stored only, not used)."""
+        """Receive pushed single-link upstream data."""
         self.input_data = input_data
         self.configuration_changed.emit()
 
-    def get_output_data(self):
-        """Stage 2 placeholder: passes upstream data through unmodified.
+    def _pull_upstream_all(self):
+        """Fetch the upstream dict from every input link.
 
-        Real relabeling logic (matched/unclassified/pass-through particles)
-        is implemented in Stage 4.
+        Falls back to the last pushed data when the node is not (yet) part
+        of a scene. Mirrors
+        :meth:`tools.particle_filter.ParticleFilterNode._pull_upstream_all`.
 
         Returns:
-            dict | None: The single upstream dict, or None if unconnected.
+            list: Non-None upstream data dicts.
         """
+        out = []
         scene = self.scene_ref
         if scene is not None:
             try:
                 for lk in getattr(scene, 'workflow_links', []):
                     if lk.sink_node is self:
-                        data = lk.get_data()
-                        if data:
-                            return data
+                        out.append(lk.get_data())
             except Exception:
-                _itk_log.exception("Handled exception in get_output_data")
-        return self.input_data
+                _itk_log.exception("Handled exception in _pull_upstream_all")
+        if not out and self.input_data is not None:
+            out = [self.input_data]
+        return [u for u in out if u]
+
+    def get_output_data(self):
+        """Stage 3: passes upstream data through unmodified.
+
+        Real relabeling logic (matched/unclassified/pass-through particles)
+        is implemented in Stage 4.
+
+        Returns:
+            dict | None: The first upstream dict, or None if unconnected.
+        """
+        upstreams = self._pull_upstream_all()
+        return upstreams[0] if upstreams else None
+
+    def definitions_for_sample(self, sample_name):
+        """List this node's definitions targeting one sample, in priority order.
+
+        Args:
+            sample_name (str): The sample name to filter by.
+
+        Returns:
+            list: Subset of :attr:`definitions` whose ``target_sample``
+                matches, in the same relative (priority) order.
+        """
+        return [d for d in self.definitions
+                if d.get('target_sample') == sample_name]
 
     def configure(self, parent_window):
-        """Stage 2: no dialog yet (Stage 3 adds the LHS/RHS UI)."""
+        """Open the configuration dialog (double-click).
+
+        Mirrors :meth:`tools.particle_filter.ParticleFilterNode.configure`'s
+        pull-snapshot / open-dialog / read-back-on-accept shape.
+
+        Returns:
+            bool: True when the dialog was accepted.
+        """
+        from tools.particle_classifier_dialog import ParticleClassifierDialog
+        snapshots = self._pull_upstream_all()
+        dlg = ParticleClassifierDialog(
+            parent_window, snapshots, self.definitions, self.groups,
+            self.overlap_mode, self.unmatched_mode, self.unclassified_color,
+            self.selected_sources)
+        if dlg.exec() == QDialog.Accepted:
+            self.definitions = dlg.get_definitions()
+            self.groups = dlg.get_groups()
+            self.overlap_mode = dlg.get_overlap_mode()
+            self.unmatched_mode = dlg.get_unmatched_mode()
+            self.unclassified_color = dlg.get_unclassified_color()
+            self.selected_sources = dlg.get_selected_sources()
+            self._has_unresolved_issues = dlg.get_has_unresolved_issues()
+            self.configuration_changed.emit()
+            ual = _ual()
+            if ual:
+                ual.log_action(
+                    'DATA_OP',
+                    f'Canvas node configured: {self.summary_text()}',
+                    {'node': 'ParticleClassifier',
+                     'num_definitions': len(self.definitions),
+                     'num_groups': len(self.groups),
+                     'overlap_mode': self.overlap_mode,
+                     'unmatched_mode': self.unmatched_mode,
+                     'selected_sources': self.selected_sources})
+            return True
         return False
+
+    def summary_text(self):
+        """Build the live summary shown under the node icon.
+
+        Returns:
+            str: e.g. "3 definitions", "No definitions".
+        """
+        n = len(self.definitions)
+        if n == 0:
+            return "No definitions"
+        return f"{n} definition" + ("s" if n != 1 else "")
 
 
 def build_particle_classifier_node_item():
@@ -145,7 +286,14 @@ def build_particle_classifier_node_item():
     from widget.canvas_widgets import NodeItem, DS
 
     class ParticleClassifierNodeItem(NodeItem):
-        """Minimal placeholder icon node item for the Particle Classifier."""
+        """Tag icon node item for the Particle Classifier.
+
+        Shows a live summary badge mirroring
+        ``ParticleFilterNodeItem.paint``'s badge pattern
+        (``tools/particle_filter.py``): a definition-count badge when
+        healthy, a warning badge when any definition currently has a stale
+        isotope reference or an unresolved contradiction.
+        """
 
         def __init__(self, wf, pw=None):
             super().__init__(wf)
@@ -153,13 +301,23 @@ def build_particle_classifier_node_item():
             wf.configuration_changed.connect(self.update)
 
         def paint(self, painter, option, widget=None):
+            wf = self.workflow_node
+            n = len(wf.definitions)
+            if getattr(wf, '_has_unresolved_issues', False):
+                badge, bc = "⚠", DS.WARNING
+            elif n:
+                badge, bc = str(n), DS.SUCCESS
+            else:
+                badge, bc = "", None
             self.paint_icon_node(
                 painter, (DS.INDIGO, "#4F46E5"),
                 "fa6s.tags", "Classifier",
+                badge, bc,
             )
 
         def configure_node(self):
-            """Stage 2: no dialog yet (Stage 3 adds the LHS/RHS UI)."""
-            pass
+            """Open the classifier configuration dialog (double-click)."""
+            if self.parent_window:
+                self.workflow_node.configure(self.parent_window)
 
     return ParticleClassifierNodeItem
