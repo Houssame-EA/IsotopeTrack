@@ -830,6 +830,7 @@ class ParticleFilterDialog(QDialog):
             self._list.setCurrentRow(0)
         else:
             self._load_pane(None)
+        self._update_select_all_label()
         self._update_preview()
 
     @staticmethod
@@ -980,7 +981,11 @@ class ParticleFilterDialog(QDialog):
         self._pane_title.setStyleSheet(
             f"font-size:14px; font-weight:700; color:{p.text_primary};")
         head.addWidget(self._pane_title, 1)
-        self._btn_all = QPushButton("Apply to all samples")
+        self._btn_select_all = QPushButton("Select all samples")
+        self._btn_select_all.setFixedHeight(28)
+        self._btn_select_all.clicked.connect(self._toggle_select_all)
+        head.addWidget(self._btn_select_all)
+        self._btn_all = QPushButton("Apply to selected samples")
         self._btn_all.setFixedHeight(28)
         self._btn_all.clicked.connect(self._apply_to_all)
         head.addWidget(self._btn_all)
@@ -1319,6 +1324,7 @@ class ParticleFilterDialog(QDialog):
     def _on_item_checked(self, item):
         """React to an include/exclude checkbox toggle."""
         if not self._loading:
+            self._update_select_all_label()
             self._schedule_preview()
 
     def _save_pane(self, name):
@@ -1476,20 +1482,58 @@ class ParticleFilterDialog(QDialog):
         }
 
     def _apply_to_all(self):
-        """Copy the current sample's filter to every other sample, pruned to
-        each sample's available isotopes so nothing starts out stale."""
+        """Copy the current sample's filter to every checked ("selected for
+        output") sample, pruned to each sample's available isotopes so
+        nothing starts out stale.
+
+        "Selected" here means checked in the left list — include/exclude
+        and which-sample-is-being-edited are two independent controls (see
+        the "Check = include in output · Click = edit its filter" hint), so
+        this only touches samples the user has actually opted into the
+        output, not every connected sample regardless of inclusion.
+        """
         if not self._current:
             return
         cfg = self._pane_config()
         self._filters[self._current] = cfg
+        checked = set(self._checked_names())
         for s in self._sources:
-            if s['name'] == self._current:
+            if s['name'] == self._current or s['name'] not in checked:
                 continue
             self._filters[s['name']] = prune_config_to_labels(
                 cfg, source_labels(s))
         for i in range(self._list.count()):
             self._refresh_row(self._list.item(i))
         self._schedule_preview()
+
+    def _toggle_select_all(self):
+        """Check every sample row, or uncheck every row if all are already
+        checked — a single button doubling as Select all / Deselect all."""
+        n = self._list.count()
+        if n == 0:
+            return
+        all_checked = all(
+            self._list.item(i).checkState() == Qt.Checked
+            for i in range(n) if self._list.item(i).data(Qt.UserRole))
+        new_state = Qt.Unchecked if all_checked else Qt.Checked
+        for i in range(n):
+            item = self._list.item(i)
+            if item.data(Qt.UserRole):
+                item.setCheckState(new_state)
+        self._update_select_all_label()
+        self._schedule_preview()
+
+    def _update_select_all_label(self):
+        """Relabel the Select-all button to reflect the current check state."""
+        if not hasattr(self, '_btn_select_all'):
+            return
+        n = self._list.count()
+        rows = [self._list.item(i) for i in range(n)]
+        rows = [it for it in rows if it.data(Qt.UserRole)]
+        all_checked = bool(rows) and all(
+            it.checkState() == Qt.Checked for it in rows)
+        self._btn_select_all.setText(
+            "Deselect all samples" if all_checked else "Select all samples")
 
     def _on_chips_changed(self):
         """React to a chip toggle: refresh threshold rows and the preview."""
@@ -1900,13 +1944,31 @@ class ParticleFilterNode(QObject):
         """Gather every upstream stream, filter each chosen sample with its
         own settings, and regroup the result for downstream figures.
 
+        Wrapped in a broad try/except: this runs inside a background
+        ``_CalculationWorker`` thread (``widget/canvas_widgets.py``), whose
+        caller only logs failures at ``_itk_log.error`` level and otherwise
+        drops them silently — a downstream plot window would keep showing
+        whatever data it last received with no visible sign the recompute
+        never happened. Logging with ``exception`` here (full traceback,
+        at module import time this logger is already configured) makes a
+        future occurrence diagnosable instead of invisible.
+
         Returns:
             dict: Single-sample data when one sample is chosen, multi-sample
                 data when several are (regrouped with ``source_sample``
                 tags); the unmodified upstream dict in the single-link
-                no-filter case; None when upstream is unconfigured or no
-                sample is selected.
+                no-filter case; None when upstream is unconfigured, no
+                sample is selected, or recomputation raised.
         """
+        try:
+            return self._get_output_data_impl()
+        except Exception:
+            _itk_log.exception(
+                "ParticleFilterNode.get_output_data failed — downstream "
+                "nodes will keep their previous data instead of updating")
+            return None
+
+    def _get_output_data_impl(self):
         upstreams = self._pull_upstream_all()
         if not upstreams:
             return None
