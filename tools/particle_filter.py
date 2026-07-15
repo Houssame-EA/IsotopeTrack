@@ -108,7 +108,7 @@ _NOT_MODES = {'NOT(AND)': 'AND', 'NOT(OR)': 'OR', 'NOT(EXACT)': 'EXACT'}
 
 
 def _particle_data_field_valid(field):
-    """Check whether one Particle Data sub-filter (mass/diameter) is valid.
+    """Check whether one Particle Data sub-filter (mass/counts) is valid.
 
     Args:
         field (dict): {'enabled', 'expr', 'min', 'max'}.
@@ -148,7 +148,6 @@ def particle_data_valid(pd_cfg):
     if not pd_cfg or not pd_cfg.get('enabled'):
         return True
     return (_particle_data_field_valid(pd_cfg.get('mass') or {})
-            and _particle_data_field_valid(pd_cfg.get('diameter') or {})
             and _particle_data_field_valid(pd_cfg.get('counts') or {}))
 
 
@@ -176,13 +175,12 @@ def active_axes(config):
     if cnt.get('enabled'):
         axes.append('count')
     thr = config.get('threshold') or {}
-    if thr.get('enabled') and any(
+    if comp.get('enabled') and thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         axes.append('threshold')
     pd = config.get('particle_data') or {}
     if pd.get('enabled') and particle_data_valid(pd) and (
             (pd.get('mass') or {}).get('enabled')
-            or (pd.get('diameter') or {}).get('enabled')
             or (pd.get('counts') or {}).get('enabled')):
         axes.append('particle_data')
     return axes
@@ -214,7 +212,7 @@ def summarize_config(config):
         sym = {'exact': '=', 'min': '≥', 'max': '≤'}.get(cnt.get('op'), '=')
         parts.append(f"{sym}{cnt.get('value', 1)} iso")
     thr = config.get('threshold') or {}
-    if thr.get('enabled') and any(
+    if comp.get('enabled') and thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         parts.append("thr")
     pd = config.get('particle_data') or {}
@@ -222,6 +220,8 @@ def summarize_config(config):
         bits = []
         for key, unit in (('mass', 'fg'), ('diameter', 'nm'),
                           ('counts', 'cts')):
+            if key in _PD_DISABLED_KEYS:
+                continue
             f = pd.get(key) or {}
             if not f.get('enabled'):
                 continue
@@ -350,22 +350,54 @@ def _composition_passes(comp_labels, mode, detected):
     return result
 
 
-_PD_PARTICLE_KEYS = {
-    'mass': 'particle_mass_fg',
-    'diameter': 'particle_diameter_nm',
-    'counts': 'total_counts',
+# Sub-filter keys with no usable whole-particle value in the data model —
+# disabled/greyed out in the UI (see _build_particle_data_field) and always
+# treated as inactive in validity/evaluation, regardless of stored config
+# (protects against a stale config saved before this restriction existed).
+_PD_DISABLED_KEYS = {'diameter'}
+
+
+def _particle_scalar_mass_fg(particle):
+    """Read a particle's whole-particle mass total (fg), if computed.
+
+    ``particle['particle_mass_fg']`` is a dict keyed by element/isotope
+    label (individual elements' contributions), not a usable whole-particle
+    value — the real per-particle total lives in
+    ``particle['totals']['total_particle_mass_fg']`` (summed across
+    elements in ``mainwindow.py``'s mass-conversion pass; mass is additive,
+    so this sum is physically valid). Returns None when not yet computed
+    (e.g. before that conversion pass has run).
+
+    Args:
+        particle (dict): One particle dict.
+
+    Returns:
+        float or None.
+    """
+    return (particle.get('totals') or {}).get('total_particle_mass_fg')
+
+
+# 'diameter' deliberately has no entry: there is no whole-particle diameter
+# anywhere in this codebase. ``particle['particle_diameter_nm']`` is a dict
+# keyed by element (one element's contribution can't represent the whole
+# particle's physical size, and diameters aren't additive across elements
+# the way mass is) — see the Diameter sub-box's disabled state in the UI.
+_PD_SCALAR_GETTERS = {
+    'mass': _particle_scalar_mass_fg,
+    'counts': lambda particle: particle.get('total_counts'),
 }
 
 
 def _particle_data_field_passes(particle, key, field):
-    """Evaluate one Particle Data sub-filter (mass, diameter, or counts).
+    """Evaluate one Particle Data sub-filter (mass or counts; diameter is
+    disabled in the UI — see :data:`_PD_SCALAR_GETTERS`).
 
     Bounds are inclusive on both ends (a particle exactly at "min" or
     "max" passes), consistent for both "at least"/"at most" and "between".
 
     Args:
         particle (dict): One particle dict.
-        key (str): 'mass', 'diameter', or 'counts'.
+        key (str): 'mass' or 'counts'.
         field (dict): {'enabled', 'expr', 'min', 'max'}.
 
     Returns:
@@ -374,9 +406,11 @@ def _particle_data_field_passes(particle, key, field):
     """
     if not field or not field.get('enabled'):
         return True
-    pkey = _PD_PARTICLE_KEYS[key]
+    getter = _PD_SCALAR_GETTERS.get(key)
+    if getter is None:
+        return True
     try:
-        val = float(particle.get(pkey))
+        val = float(getter(particle))
     except (TypeError, ValueError):
         return False
     if val != val:  # NaN
@@ -459,7 +493,7 @@ def effective_criteria(config, stale):
                  if cnt.get('enabled') else None)
     thr = config.get('threshold') or {}
     thr_unit, thr_values = 'elements', {}
-    if thr.get('enabled'):
+    if comp.get('enabled') and thr.get('enabled'):
         thr_unit = thr.get('unit', 'elements')
         thr_values = {lbl: v for lbl, v in (thr.get('values') or {}).items()
                       if v and v > 0 and lbl not in stale}
@@ -984,28 +1018,17 @@ class ParticleFilterDialog(QDialog):
         stale_row.addWidget(self._stale_lbl, 1)
         stale_row.addWidget(self._btn_rm_stale, 0, Qt.AlignTop)
         cv.addLayout(stale_row)
-        self.grp_comp.toggled.connect(self._schedule_preview)
-        pv.addWidget(self.grp_comp)
 
-        self.grp_count = QGroupBox("Isotopic Count")
-        self.grp_count.setCheckable(True)
-        cr = QHBoxLayout(self.grp_count)
-        cr.addWidget(QLabel("Keep particles with"))
-        self.cmb_op = QComboBox()
-        self.cmb_op.addItem("exactly", "exact")
-        self.cmb_op.addItem("at least", "min")
-        self.cmb_op.addItem("at most", "max")
-        self.cmb_op.currentIndexChanged.connect(self._schedule_preview)
-        cr.addWidget(self.cmb_op)
-        self.spin_count = QSpinBox()
-        self.spin_count.setRange(1, 99)
-        self.spin_count.valueChanged.connect(self._schedule_preview)
-        cr.addWidget(self.spin_count)
-        cr.addWidget(QLabel("Detected Isotope(s)"))
-        cr.addStretch()
-        self.grp_count.toggled.connect(self._schedule_preview)
-        pv.addWidget(self.grp_count)
-
+        # Per-isotope signal threshold lives INSIDE Isotopic Composition,
+        # not as a sibling box — it only modulates which isotopes count as
+        # "present" for composition/count matching, so it's meaningless
+        # without composition enabled (previously it was a fully
+        # independent box, which let a user configure it while composition
+        # was off; it looked "enabled" but had zero effect on filtering
+        # until composition was also turned on — a confusing silent
+        # no-op). Nesting it here plus disabling it when grp_comp is
+        # unchecked (see below) makes the dependency structural instead of
+        # just documented.
         self.grp_thr = QGroupBox("Per-isotope signal threshold")
         self.grp_thr.setCheckable(True)
         tv = QVBoxLayout(self.grp_thr)
@@ -1031,7 +1054,30 @@ class ParticleFilterDialog(QDialog):
         self._thr_form.setSpacing(6)
         tv.addWidget(self._thr_container)
         self.grp_thr.toggled.connect(self._schedule_preview)
-        pv.addWidget(self.grp_thr)
+        cv.addWidget(self.grp_thr)
+
+        self.grp_comp.toggled.connect(self.grp_thr.setEnabled)
+        self.grp_thr.setEnabled(self.grp_comp.isChecked())
+        pv.addWidget(self.grp_comp)
+
+        self.grp_count = QGroupBox("Isotopic Count")
+        self.grp_count.setCheckable(True)
+        cr = QHBoxLayout(self.grp_count)
+        cr.addWidget(QLabel("Keep particles with"))
+        self.cmb_op = QComboBox()
+        self.cmb_op.addItem("exactly", "exact")
+        self.cmb_op.addItem("at least", "min")
+        self.cmb_op.addItem("at most", "max")
+        self.cmb_op.currentIndexChanged.connect(self._schedule_preview)
+        cr.addWidget(self.cmb_op)
+        self.spin_count = QSpinBox()
+        self.spin_count.setRange(1, 99)
+        self.spin_count.valueChanged.connect(self._schedule_preview)
+        cr.addWidget(self.spin_count)
+        cr.addWidget(QLabel("Detected Isotope(s)"))
+        cr.addStretch()
+        self.grp_count.toggled.connect(self._schedule_preview)
+        pv.addWidget(self.grp_count)
 
         self.grp_pd = QGroupBox("Particle Data")
         self.grp_pd.setCheckable(True)
@@ -1042,18 +1088,23 @@ class ParticleFilterDialog(QDialog):
                                  ('diameter', 'Diameter', 'nm'),
                                  ('counts', 'Counts', 'cts')):
             self._pd_fields[key] = self._build_particle_data_field(
-                pdv, key, title, unit)
+                pdv, key, title, unit, disabled=(key in _PD_DISABLED_KEYS))
         self.grp_pd.toggled.connect(self._schedule_preview)
         pv.addWidget(self.grp_pd)
 
-    def _build_particle_data_field(self, parent_layout, key, title, unit):
-        """Build one Particle Data sub-filter row (Mass or Diameter).
+    def _build_particle_data_field(self, parent_layout, key, title, unit,
+                                    disabled=False):
+        """Build one Particle Data sub-filter row (Mass, Diameter, Counts).
 
         Args:
             parent_layout (QVBoxLayout): The Particle Data box's layout.
             key (str): 'mass', 'diameter', or 'counts'.
             title (str): Checkbox label, e.g. "Mass".
             unit (str): Fixed unit label shown next to the inputs.
+            disabled (bool): When True, the whole sub-box is greyed out and
+                un-checkable — used for 'diameter', which has no
+                whole-particle value anywhere in the data model (see
+                :data:`_PD_SCALAR_GETTERS`). A tooltip explains why.
 
         Returns:
             dict: Widget handles for this field, used by
@@ -1064,6 +1115,14 @@ class ParticleFilterDialog(QDialog):
         box.setCheckable(True)
         v = QVBoxLayout(box)
         v.setSpacing(6)
+        if disabled:
+            box.setEnabled(False)
+            box.setChecked(False)
+            box.setToolTip(
+                "No whole-particle diameter is currently computed — only "
+                "a per-element breakdown exists, which can't represent "
+                "the whole particle's size. Contact the dev team if "
+                "particle-level diameter filtering is needed.")
 
         expr_row = QHBoxLayout()
         expr_row.addWidget(QLabel("Expression:"))
@@ -1296,7 +1355,9 @@ class ParticleFilterDialog(QDialog):
         for key in ('mass', 'diameter', 'counts'):
             f = self._pd_fields[key]
             field_cfg = pd.get(key) or _default_particle_data_field()
-            f['box'].setChecked(field_cfg.get('enabled', False))
+            f['box'].setChecked(
+                field_cfg.get('enabled', False)
+                and key not in _PD_DISABLED_KEYS)
             f['cmb_expr'].setCurrentIndex(max(0, f['cmb_expr'].findData(
                 field_cfg.get('expr', 'at_least'))))
             mn, mx = field_cfg.get('min'), field_cfg.get('max')
@@ -1565,7 +1626,6 @@ class ParticleFilterDialog(QDialog):
         silently; otherwise close the dialog normally."""
         if self.grp_pd.isChecked():
             bad = [title for key, title in (('mass', 'Mass'),
-                                            ('diameter', 'Diameter'),
                                             ('counts', 'Counts'))
                    if not self._validate_particle_data_field(key)]
             if bad:
