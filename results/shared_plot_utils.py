@@ -921,7 +921,7 @@ def parse_element_label(label: str) -> tuple[str, str | None]:
         charge = trail.group(3) or ''
         return f"{sym}{charge}", mass
 
-    alpha = re.match(r'^\s*([A-Za-z][A-Za-z]?)', text)
+    alpha = re.match(r'^\s*([A-Za-z][A-Za-z]?)\s*$', text)
     if alpha:
         return alpha.group(1), None
     return text, None
@@ -1726,6 +1726,38 @@ def get_sample_color(sample_name: str, index: int, config: dict) -> str:
     if sample_name in colors:
         return colors[sample_name]
     return DEFAULT_SAMPLE_COLORS[index % len(DEFAULT_SAMPLE_COLORS)]
+
+
+def seed_suggested_element_colors(config: dict, input_data: dict | None) -> None:
+    """Seed default bar/legend colors from an upstream node's suggestions.
+
+    Upstream nodes (e.g. the Particle Classifier) may attach a
+    ``label_colors`` dict (``{label: hex}``) to their output for labels they
+    synthesized, so a downstream viz node's first render honors the color the
+    user already chose upstream instead of an arbitrary palette index.
+
+    A label's entry in ``config['element_colors']`` is only ever touched here
+    while it remains "seeded, not manual" (tracked via
+    ``config['_seeded_element_colors']``), so it can track later upstream
+    color changes (e.g. the user recolors a classifier group). The instant a
+    user manually recolors that same label in *this* node (see
+    ``_on_element_color_changed``), the label is removed from that tracking
+    set and this function leaves it alone forever after — matching every
+    other element's existing color precedence.
+
+    Args:
+        config (dict): The viz node's own config dict, mutated in place.
+        input_data (dict | None): The node's current upstream data snapshot.
+    """
+    suggested = (input_data or {}).get('label_colors') or {}
+    if not suggested:
+        return
+    colors = config.setdefault('element_colors', {})
+    seeded = config.setdefault('_seeded_element_colors', set())
+    for label, hex_color in suggested.items():
+        if label not in colors or label in seeded:
+            colors[label] = hex_color
+            seeded.add(label)
 
 
 def get_display_name(original_name: str, config: dict) -> str:

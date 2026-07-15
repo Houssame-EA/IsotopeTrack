@@ -38,6 +38,7 @@ from tools.particle_classifier_expr import (
     parse, ExpressionSyntaxError, referenced_isotopes, find_confound,
     classify_formula,
 )
+from tools.particle_classifier_relabel import multi_definition_groups
 from results.shared_plot_utils import pick_color_hex, DEFAULT_SAMPLE_COLORS
 
 import logging
@@ -117,7 +118,8 @@ class ParticleClassifierDialog(QDialog):
 
     def __init__(self, parent, upstreams, definitions=None, groups=None,
                  overlap_mode='double_count', unmatched_mode='unclassified',
-                 unclassified_color=None, selected_sources=None):
+                 unclassified_color=None, selected_sources=None,
+                 group_pooling_policies=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Classifier Configuration")
         self.setModal(True)
@@ -142,12 +144,19 @@ class ParticleClassifierDialog(QDialog):
             unclassified_color or DEFAULT_UNCLASSIFIED_COLOR)
         self._selected_sources = (list(selected_sources)
                                   if selected_sources is not None else None)
+        self._group_pooling_policies = (
+            dict(group_pooling_policies) if group_pooling_policies else {})
 
         self._current = None
         self._current_def_id = None
         self._loading = False
         self._has_unresolved_issues = False
         self._confound_prompted_pairs = set()
+        #: Group names the pooling modal has already been shown for this
+        #: session, so re-committing the same group name repeatedly (or
+        #: navigating away and back) doesn't re-nag every time — mirrors
+        #: _confound_prompted_pairs' one-time-per-session pattern.
+        self._pooling_prompted_groups = set()
 
         self._validate_timer = QTimer(self)
         self._validate_timer.setSingleShot(True)
@@ -699,8 +708,73 @@ class ParticleClassifierDialog(QDialog):
                               text, self._groups[text])
             self._color_btn.set_color(self._groups[text])
             d['color'] = None
+            self._check_group_pooling(text)
         self._reselect_definition_after_rebuild(def_id)
         self._refresh_row_for(self._current)
+
+    def _check_group_pooling(self, group_name):
+        """Warn once per session when a group now pools 2+ definitions
+        (design §5/§7 ambiguity — see
+        tools/particle_classifier_relabel.py's module docstring): those
+        definitions may govern particles with different underlying Mass
+        Fraction Calculator assumptions, so particle-mass/moles stats for
+        the pooled group could mix incompatible bases. Structural check
+        only (definition count), no particle data needed — consistent
+        with how confound/contradiction detection are both structural."""
+        if group_name in self._pooling_prompted_groups:
+            return
+        if group_name not in multi_definition_groups(self._definitions):
+            return
+        self._pooling_prompted_groups.add(group_name)
+        n = sum(1 for d in self._definitions
+                if d.get('group_name') == group_name)
+        _itk_log.warning(
+            "Group %r now pools %d definitions -- prompting for "
+            "particle-mass pooling policy", group_name, n)
+        self._show_group_pooling_modal(group_name)
+
+    def _show_group_pooling_modal(self, group_name):
+        """Warning-and-choice modal for a multi-definition group (design
+        §5/§7, §11): explain the apples-and-oranges risk by name, offer
+        keep-full-data / drop-particle-mass-stats / go-back-and-rename."""
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Group Pools Multiple Definitions")
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setText(
+            f"<b>{group_name}</b> now pools particles from more than one "
+            f"definition.")
+        dlg.setInformativeText(
+            "Particles matching either definition will be pooled and "
+            "displayed under one shared label downstream — but they may "
+            "have different underlying Mass Fraction Calculator "
+            "assumptions, so particle-level mass/moles statistics (e.g. "
+            "mean particle mass) for this group could mix incompatible "
+            "values. Counts, element mass, and element moles are always "
+            "safe and unaffected by this choice.")
+        btn_keep = dlg.addButton("Keep Full Data Anyway",
+                                 QMessageBox.ButtonRole.AcceptRole)
+        btn_drop = dlg.addButton("Drop Particle-Mass Stats for This Group",
+                                 QMessageBox.ButtonRole.DestructiveRole)
+        btn_back = dlg.addButton("Go Back and Rename",
+                                 QMessageBox.ButtonRole.RejectRole)
+        dlg.setDefaultButton(btn_drop)
+        dlg.exec()
+        clicked = dlg.clickedButton()
+        if clicked is btn_keep:
+            self._group_pooling_policies[group_name] = 'keep'
+        elif clicked is btn_back:
+            # Undo: clear the group assignment that triggered this so the
+            # user can pick a different (non-colliding) name.
+            d = self._current_definition()
+            if d is not None:
+                d['group_name'] = None
+                self._group_combo.setCurrentText("")
+            self._pooling_prompted_groups.discard(group_name)
+            return
+        else:
+            self._group_pooling_policies[group_name] = 'drop_mfc'
+        _itk_log.info("Group %r pooling policy -> %s",
+                      group_name, self._group_pooling_policies.get(group_name))
 
     def _reselect_definition_after_rebuild(self, def_id):
         """Rebuild the definitions list widget and restore the given
@@ -1025,3 +1099,6 @@ class ParticleClassifierDialog(QDialog):
 
     def get_has_unresolved_issues(self):
         return self._has_unresolved_issues
+
+    def get_group_pooling_policies(self):
+        return dict(self._group_pooling_policies)

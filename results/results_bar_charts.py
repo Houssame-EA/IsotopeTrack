@@ -41,7 +41,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style, apply_axis_label_style,
     apply_legend_label_style,
-    get_sample_color,
+    get_sample_color, seed_suggested_element_colors,
     get_display_name, download_pyqtgraph_figure, copy_figure_to_clipboard,
     format_element_label,
     LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
@@ -1359,6 +1359,8 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                 colors = dict(node.config.get(cfg_key, {}) or {})
                 colors[key] = qcolor.name()
                 node.config[cfg_key] = colors
+                if cfg_key == 'element_colors':
+                    node.config.get('_seeded_element_colors', set()).discard(key)
         except Exception:
             _itk_log.exception("Handled exception in _persist_element_color")
             return
@@ -3374,6 +3376,7 @@ class HistogramDisplayDialog(QDialog):
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
+            seed_suggested_element_colors(cfg, self.node.input_data)
             _itk_log.error(f"STATS={cfg.get('show_stats')} id={id(cfg)}")
 
 
@@ -6145,8 +6148,10 @@ class ElementBarChartDisplayDialog(QDialog):
             return
 
         element_colors = dict(self.node.config.get('element_colors', {}))
+        seeded = self.node.config.get('_seeded_element_colors', set())
         for raw_key in raw_keys:
             element_colors[raw_key] = color_hex
+            seeded.discard(raw_key)
         self.node.config['element_colors'] = element_colors
         self._update_element_legend_swatches(raw_keys, color_hex)
 
@@ -6296,7 +6301,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
-            
+            seed_suggested_element_colors(cfg, self.node.input_data)
 
             if not plot_data:
                 pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})

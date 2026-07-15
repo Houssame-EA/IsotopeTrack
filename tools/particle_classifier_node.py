@@ -159,6 +159,11 @@ class ParticleClassifierNode(QObject):
         self.unmatched_mode = 'unclassified'
         self.unclassified_color = DEFAULT_UNCLASSIFIED_COLOR
         self.selected_sources = None
+        #: {group_name: "keep" | "drop_mfc"} for every multi-definition
+        #: group (design §5/§7 ambiguity — see
+        #: tools/particle_classifier_relabel.py's module docstring),
+        #: chosen via the dialog's group-pooling warning modal.
+        self.group_pooling_policies = {}
         #: Set by the dialog on Accept: True when any definition currently
         #: has a stale isotope reference. Drives the node icon's warning
         #: badge (see build_particle_classifier_node_item).
@@ -199,16 +204,73 @@ class ParticleClassifierNode(QObject):
         return [u for u in out if u]
 
     def get_output_data(self):
-        """Stage 3: passes upstream data through unmodified.
+        """Relabel every connected sample's particles per this node's
+        classifier definitions (design §7) and hand the result downstream
+        with the exact same top-level shape it arrived in — this is a
+        relabel-in-place operation, never a sample merge/regroup, so
+        single-sample input stays single-sample, multi-sample input stays
+        multi-sample with its per-sample structure intact.
 
-        Real relabeling logic (matched/unclassified/pass-through particles)
-        is implemented in Stage 4.
+        Never touches ``concentration_meta``, diameter fields, or any
+        other non-composition metadata (design §2, §7) — only the
+        ``particle_data`` list changes.
 
         Returns:
-            dict | None: The first upstream dict, or None if unconnected.
+            dict | None: The relabeled output dict, or None if unconnected
+                or no sample survives the ``selected_sources``/unmatched-
+                mode filtering.
         """
+        from tools.particle_filter import normalize_sources
+        from tools.particle_classifier_relabel import (
+            relabel_particles, suggested_label_colors)
+
         upstreams = self._pull_upstream_all()
-        return upstreams[0] if upstreams else None
+        if not upstreams:
+            return None
+        data = upstreams[0]
+        if data.get('type') not in ('sample_data', 'multiple_sample_data'):
+            # Non-particle upstream types (shouldn't occur given the
+            # canvas-level connectivity restriction, but stay defensive):
+            # pass through unmodified rather than guessing.
+            return data
+
+        sources = normalize_sources([data])
+        if self.selected_sources is not None:
+            sources = [s for s in sources if s['name'] in self.selected_sources]
+        if not sources:
+            return None
+
+        relabeled_by_sample = {}
+        for s in sources:
+            defs = self.definitions_for_sample(s['name'])
+            relabeled_by_sample[s['name']] = relabel_particles(
+                s['particles'], defs, self.groups, self.overlap_mode,
+                self.unmatched_mode, self.unclassified_color,
+                self.group_pooling_policies)
+
+        label_colors = suggested_label_colors(
+            self.definitions, self.groups, self.unmatched_mode,
+            self.unclassified_color)
+
+        if data.get('type') == 'sample_data':
+            out = dict(data)
+            out['particle_data'] = relabeled_by_sample.get(
+                sources[0]['name'], [])
+            out['filtered_particles'] = len(out['particle_data'])
+            out['label_colors'] = label_colors
+            return out
+
+        # multiple_sample_data: preserve per-sample structure, only the
+        # combined particle_data list (and its filtered count) changes.
+        out = dict(data)
+        combined = []
+        for s in sources:
+            combined.extend(relabeled_by_sample.get(s['name'], []))
+        out['particle_data'] = combined
+        out['filtered_particles'] = len(combined)
+        out['sample_names'] = [s['name'] for s in sources]
+        out['label_colors'] = label_colors
+        return out
 
     def definitions_for_sample(self, sample_name):
         """List this node's definitions targeting one sample, in priority order.
@@ -237,7 +299,7 @@ class ParticleClassifierNode(QObject):
         dlg = ParticleClassifierDialog(
             parent_window, snapshots, self.definitions, self.groups,
             self.overlap_mode, self.unmatched_mode, self.unclassified_color,
-            self.selected_sources)
+            self.selected_sources, self.group_pooling_policies)
         if dlg.exec() == QDialog.Accepted:
             self.definitions = dlg.get_definitions()
             self.groups = dlg.get_groups()
@@ -245,6 +307,7 @@ class ParticleClassifierNode(QObject):
             self.unmatched_mode = dlg.get_unmatched_mode()
             self.unclassified_color = dlg.get_unclassified_color()
             self.selected_sources = dlg.get_selected_sources()
+            self.group_pooling_policies = dlg.get_group_pooling_policies()
             self._has_unresolved_issues = dlg.get_has_unresolved_issues()
             self.configuration_changed.emit()
             ual = _ual()
@@ -283,9 +346,9 @@ def build_particle_classifier_node_item():
     Returns:
         type: The ParticleClassifierNodeItem class.
     """
-    from widget.canvas_widgets import NodeItem, DS
+    from widget.canvas_widgets import NodeItem, _StatusNodeMixin, DS
 
-    class ParticleClassifierNodeItem(NodeItem):
+    class ParticleClassifierNodeItem(NodeItem, _StatusNodeMixin):
         """Tag icon node item for the Particle Classifier.
 
         Shows a live summary badge mirroring
@@ -299,6 +362,7 @@ def build_particle_classifier_node_item():
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
+            wf.configuration_changed.connect(self._trigger)
 
         def paint(self, painter, option, widget=None):
             wf = self.workflow_node
@@ -314,6 +378,10 @@ def build_particle_classifier_node_item():
                 "fa6s.tags", "Classifier",
                 badge, bc,
             )
+
+        def _trigger(self):
+            """Push freshly relabeled output to downstream nodes on change."""
+            self._run_calculation_async()
 
         def configure_node(self):
             """Open the classifier configuration dialog (double-click)."""

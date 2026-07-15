@@ -55,7 +55,7 @@ def no_modal(qapp, monkeypatch):
     monkeypatch.setattr(pcd, "QMessageBox", _Fake)
     pcd.QMessageBox.Icon = type('Icon', (), {'Warning': 1, 'Information': 2})
     pcd.QMessageBox.ButtonRole = type(
-        'ButtonRole', (), {'AcceptRole': 1, 'RejectRole': 2})
+        'ButtonRole', (), {'AcceptRole': 1, 'RejectRole': 2, 'DestructiveRole': 3})
     pcd.QMessageBox.information = staticmethod(lambda *a, **kw: None)
     return state
 
@@ -336,6 +336,59 @@ class TestGroupAndColor:
 
 
 # --------------------------------------------------------------------------- #
+# Group pooling modal (design §5/§7 ambiguity: 2+ definitions sharing a
+# group name may carry different Mass Fraction Calculator assumptions)
+# --------------------------------------------------------------------------- #
+class TestGroupPoolingModal:
+    def _two_defs_same_group(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Contamination")
+        dlg._add_definition()
+        dlg._expr_edit.setText("107Ag")
+        _commit_group_text(dlg, "Contamination")
+
+    def test_single_definition_group_never_prompts(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Contamination")
+        assert dlg._group_pooling_policies == {}
+
+    def test_second_definition_in_group_prompts_and_records_keep(self, dlg, no_modal):
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.AcceptRole  # Keep Full Data Anyway
+        self._two_defs_same_group(dlg)
+        assert dlg._group_pooling_policies == {"Contamination": "keep"}
+
+    def test_choosing_drop_records_drop_mfc(self, dlg, no_modal):
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.DestructiveRole
+        self._two_defs_same_group(dlg)
+        assert dlg._group_pooling_policies == {"Contamination": "drop_mfc"}
+
+    def test_choosing_go_back_clears_the_group_assignment(self, dlg, no_modal):
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.RejectRole  # Go Back and Rename
+        self._two_defs_same_group(dlg)
+        # The second definition's group assignment was reverted.
+        assert dlg._current_definition()['group_name'] is None
+        assert "Contamination" not in dlg._group_pooling_policies
+
+    def test_not_reprompted_for_same_group_in_session(self, dlg, no_modal):
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.AcceptRole
+        self._two_defs_same_group(dlg)
+        dlg._add_definition()
+        dlg._expr_edit.setText("197Au")
+        _commit_group_text(dlg, "Contamination")  # third def, same group
+        # Still just one recorded policy -- no re-prompt overwrote it oddly.
+        assert dlg._group_pooling_policies == {"Contamination": "keep"}
+
+    def test_get_group_pooling_policies_read_back(self, dlg, no_modal):
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.DestructiveRole
+        self._two_defs_same_group(dlg)
+        assert dlg.get_group_pooling_policies() == {"Contamination": "drop_mfc"}
+
+
+# --------------------------------------------------------------------------- #
 # Apply to Selected Samples
 # --------------------------------------------------------------------------- #
 class TestApplyToSelectedSamples:
@@ -404,6 +457,7 @@ class TestNodeConfigureRoundTrip:
             def get_unclassified_color(self): return '#9CA3AF'
             def get_selected_sources(self): return ['SampleA']
             def get_has_unresolved_issues(self): return True
+            def get_group_pooling_policies(self): return {'G': 'drop_mfc'}
 
         monkeypatch.setattr(pcd, "ParticleClassifierDialog", _FakeDialog)
         result = node.configure(None)
@@ -414,6 +468,7 @@ class TestNodeConfigureRoundTrip:
         assert node.unmatched_mode == 'discard'
         assert node.selected_sources == ['SampleA']
         assert node._has_unresolved_issues is True
+        assert node.group_pooling_policies == {'G': 'drop_mfc'}
 
     def test_configure_returns_false_on_cancel(self, qapp, monkeypatch):
         node = ParticleClassifierNode()
