@@ -16,6 +16,7 @@ from tools.splash_screen import SplashCoordinator
 from mainwindow import MainWindow
 
 
+
 class IsotopeTrackApplication(QApplication):
     """QApplication that handles the macOS 'open document' event.
 
