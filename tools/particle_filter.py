@@ -777,7 +777,7 @@ class ParticleFilterDialog(QDialog):
 
     def __init__(self, parent, upstreams, sample_filters=None,
                  selected_sources=None, merged_name="Combined",
-                 owner_node=None):
+                 owner_node=None, suppress_stale_warning=False):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -790,6 +790,7 @@ class ParticleFilterDialog(QDialog):
         import copy as _copy
         self.parent_window = parent
         self._owner_node = owner_node
+        self._suppress_stale_warning = bool(suppress_stale_warning)
         if isinstance(upstreams, dict):
             upstreams = [upstreams]
         self._upstreams = [u for u in (upstreams or []) if u]
@@ -799,14 +800,6 @@ class ParticleFilterDialog(QDialog):
         self._selected_sources = (list(selected_sources)
                                   if selected_sources is not None else None)
         self._merged_name = merged_name or "Combined"
-        # Snapshot of the config as it was when the dialog opened, used by
-        # _try_accept to detect whether anything actually changed before
-        # warning about already-open downstream plots going stale.
-        self._orig_filters = _copy.deepcopy(self._filters)
-        self._orig_selected_sources = (list(self._selected_sources)
-                                       if self._selected_sources is not None
-                                       else None)
-        self._orig_merged_name = self._merged_name
         self._n_singles = sum(1 for s in self._sources
                               if s.get('origin') == 'single')
 
@@ -1706,111 +1699,26 @@ class ParticleFilterDialog(QDialog):
             return self._merge_edit.text().strip() or "Combined"
         return self._merged_name or "Combined"
 
-    def _config_changed(self):
-        """Report whether the effective configuration differs from what was
-        loaded when the dialog opened.
-
-        Compares the same "active axes only" view :meth:`get_sample_filters`
-        exposes to callers, plus the sample-selection and merge-name state,
-        so a user who opens the dialog and clicks OK without changing
-        anything doesn't get warned about downstream plots that aren't
-        actually going to change.
-
-        Returns:
-            bool: True if applying now would change the node's output.
-        """
-        if self._current:
-            self._save_pane(self._current)
-        now = {name: cfg for name, cfg in self._filters.items()
-              if active_axes(cfg)}
-        orig = {name: cfg for name, cfg in self._orig_filters.items()
-               if active_axes(cfg)}
-        if now != orig:
-            return True
-        if self.get_selected_sources() != self._orig_selected_sources:
-            return True
-        if self.get_merged_name() != self._orig_merged_name:
-            return True
-        return False
-
-    def _downstream_open_windows(self):
-        """Find open result/plot windows fed (directly or indirectly) by
-        this dialog's owning node, so :meth:`_try_accept` can warn before
-        applying a change that would make them stale.
-
-        Walks ``scene.workflow_links`` forward from the owner node (a BFS
-        over ``source_node -> sink_node`` edges — the reverse direction of
-        :meth:`ParticleFilterNode._pull_upstream_all`'s upstream walk).
-        Open-ness is read the same way the results modules track it
-        themselves: a single-figure node caches its dialog as
-        ``node._figure_dialog`` (:func:`shared_plot_utils.show_persistent_figure`),
-        a multi-figure node keeps a list of views as ``node._figures``
-        (:func:`shared_plot_utils.open_node_figures`) each with its own
-        ``.dialog``. These windows are "hide on close, not destroy" (see
-        ``_HideOnCloseFilter``) — the C++ object survives a user closing
-        the window, it's just hidden — so both liveness (:func:`_figure_alive`)
-        AND ``.isVisible()`` are checked; a closed-then-reopenable-later
-        window must not trigger this warning.
-
-        Returns:
-            list: Titles of downstream nodes with at least one open window
-                (deduplicated, insertion order), or [] when the owner node
-                is unset/not in a scene, or nothing downstream is open.
-        """
-        node = self._owner_node
-        scene = getattr(node, 'scene_ref', None) if node else None
-        if node is None or scene is None:
-            return []
-        from results.shared_plot_utils import _figure_alive
-
-        def _window_visible(dlg):
-            """True when the dialog exists AND is actually on screen.
-
-            ``_figure_alive`` alone isn't enough — this app's figures are
-            "hide on close, not destroy" (``_HideOnCloseFilter``), so a
-            window the user closed is still alive as a C++/Qt object, just
-            hidden. Only a currently-visible window counts as something
-            the user would notice going stale.
-            """
-            if not _figure_alive(dlg):
-                return False
-            try:
-                return dlg.isVisible()
-            except RuntimeError:
-                return False
-
-        links = list(getattr(scene, 'workflow_links', []) or [])
-        seen_nodes = set()
-        frontier = [node]
-        open_titles = []
-        while frontier:
-            n = frontier.pop()
-            for lk in links:
-                if lk.source_node is not n:
-                    continue
-                nxt = lk.sink_node
-                if id(nxt) in seen_nodes:
-                    continue
-                seen_nodes.add(id(nxt))
-                frontier.append(nxt)
-                is_open = _window_visible(getattr(nxt, '_figure_dialog', None))
-                if not is_open:
-                    for view in getattr(nxt, '_figures', None) or []:
-                        if _window_visible(getattr(view, 'dialog', None)):
-                            is_open = True
-                            break
-                if is_open:
-                    title = getattr(nxt, 'title', None) or type(nxt).__name__
-                    if title not in open_titles:
-                        open_titles.append(title)
-        return open_titles
-
     def _try_accept(self):
         """Block accept while the current sample's Particle Data box is
         checked but has invalid input, so a broken filter is never applied
-        silently; warn (with a cancel option) when accepting would change
-        already-open downstream plots; otherwise close the dialog
-        normally."""
+        silently; otherwise remind the user that OK can change whatever
+        this filter feeds downstream, then close the dialog normally.
+
+        The reminder used to only fire when a diff against the dialog's
+        opening snapshot said something had actually changed, gated on
+        finding a currently-open downstream plot window via a
+        scene-graph walk. In practice that stayed silent even on runs
+        where the user visibly watched a downstream chart's values change
+        after clicking OK — replaced (per explicit user decision) with an
+        unconditional reminder on every OK, since "did it really change"
+        and "is a window really open somewhere downstream" are exactly the
+        two things that kept failing to detect correctly live. A per-node
+        "don't show this again" opt-out (persisted on
+        ``ParticleFilterNode.suppress_stale_warning`` and read back in
+        :meth:`ParticleFilterNode.configure`) keeps this from turning into
+        nag-ware for someone who has already acknowledged it.
+        """
         if self.grp_pd.isChecked():
             bad = [title for key, title in (('mass', 'Mass'),
                                             ('counts', 'Counts'))
@@ -1822,27 +1730,40 @@ class ParticleFilterDialog(QDialog):
                     "Fix the highlighted Particle Data field(s) before "
                     "continuing: " + ", ".join(bad))
                 return
-        if self._config_changed():
-            open_titles = self._downstream_open_windows()
-            if open_titles:
-                from PySide6.QtWidgets import QMessageBox
-                names = ", ".join(open_titles)
-                box = QMessageBox(self)
-                box.setIcon(QMessageBox.Warning)
-                box.setWindowTitle("Open plots will change")
-                box.setText(
-                    "This filter feeds data into an open plot window: "
-                    f"{names}.\n\nApplying now will change what those "
-                    "plots show. If you want to keep the current view, "
-                    "save it first, then come back and apply this filter.")
-                proceed = box.addButton("Proceed anyway",
-                                        QMessageBox.AcceptRole)
-                box.addButton("Go back", QMessageBox.RejectRole)
-                box.setDefaultButton(proceed)
-                box.exec()
-                if box.clickedButton() is not proceed:
-                    return
+        if not self._suppress_stale_warning:
+            from PySide6.QtWidgets import QMessageBox, QCheckBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Downstream plots may change")
+            box.setText(
+                "This filter feeds sample selectors, other filters, and "
+                "plot/results nodes downstream — single-sample, "
+                "multi-sample, and batch alike. Applying now will pass "
+                "through with today's settings, so any open plot window "
+                "fed by this filter will update to match.\n\nIf you want "
+                "to keep a plot's current view, save it first, then come "
+                "back and apply this filter.")
+            dont_show = QCheckBox("Don't show this again for this filter")
+            box.setCheckBox(dont_show)
+            proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
+            box.addButton("Go back", QMessageBox.RejectRole)
+            box.setDefaultButton(proceed)
+            box.exec()
+            self._suppress_stale_warning_now = dont_show.isChecked()
+            if box.clickedButton() is not proceed:
+                return
         self.accept()
+
+    def stale_warning_suppressed(self):
+        """Read whether "Don't show this again" was checked on last accept.
+
+        Returns:
+            bool: True if the reminder should be skipped for this node from
+                now on — either it was already suppressed coming in, or the
+                user just checked the box while accepting.
+        """
+        return self._suppress_stale_warning or getattr(
+            self, '_suppress_stale_warning_now', False)
 
     def get_selected_sources(self):
         """Read the include/exclude check states.
@@ -1905,6 +1826,13 @@ class ParticleFilterNode(QObject):
         self.merged_name = "Combined"
         self._stale = []
         self._incoming_names = []
+        # Per-node opt-out for the "applying this will change open plots"
+        # reminder shown on every OK (see ParticleFilterDialog._try_accept).
+        # Persists on the node itself (like sample_filters) so a user who
+        # dismisses it once for THIS filter node isn't nagged again by it,
+        # while a different Particle Filter node on the same canvas still
+        # warns until it's separately opted out.
+        self.suppress_stale_warning = False
 
     def set_position(self, pos):
         """Update the node position and notify the canvas item."""
@@ -2166,13 +2094,15 @@ class ParticleFilterNode(QObject):
             bool: True when the dialog was accepted.
         """
         snapshots = self._pull_upstream_all()
-        dlg = ParticleFilterDialog(parent_window, snapshots,
-                                   self.sample_filters, self.selected_sources,
-                                   self.merged_name, owner_node=self)
+        dlg = ParticleFilterDialog(
+            parent_window, snapshots, self.sample_filters,
+            self.selected_sources, self.merged_name, owner_node=self,
+            suppress_stale_warning=self.suppress_stale_warning)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()
+            self.suppress_stale_warning = dlg.stale_warning_suppressed()
             self._recompute_stale(normalize_sources(snapshots))
             self.configuration_changed.emit()
             ual = _ual()
