@@ -254,6 +254,14 @@ class WorkflowNode(QObject):
         self._has_output = False
         self.input_channels = []
         self.output_channels = []
+        # Per-node opt-out for the "applying this may change downstream
+        # plots" reminder (see _warn_before_apply_changes below). Lives on
+        # the base class so every node type — current and future — gets
+        # independent suppression state for free, matching the pattern
+        # already used by tools/particle_filter.py's ParticleFilterNode
+        # (which subclasses QObject directly, not this base, and carries
+        # its own separate copy of the same attribute).
+        self.suppress_stale_warning = False
 
     def set_position(self, pos):
         if self.position != pos:
@@ -265,6 +273,60 @@ class WorkflowNode(QObject):
         Args:
             parent_window (Any): The parent window.
         """
+
+
+def _warn_before_apply_changes(parent, node):
+    """Remind the user that applying this node's configuration now may
+    change whatever it feeds downstream, before actually committing it.
+
+    Shared across every sample-selector-family node (Single Sample,
+    Multi-Sample, Batch Windows) and any future node type — call this from
+    a node's ``configure()`` right after its dialog returns
+    ``QDialog.Accepted`` and before writing the new selection back onto the
+    node. Mirrors the Particle Filter node's own reminder
+    (``tools/particle_filter.py``'s ``ParticleFilterDialog._try_accept``)
+    including its "don't show this again" opt-out — kept as a single
+    shared implementation here rather than copy-pasted per node type so a
+    future node only needs one call to get the same behavior.
+
+    The opt-out is stored as ``node.suppress_stale_warning`` (set on every
+    ``WorkflowNode`` by its base ``__init__``), so it's independent per
+    node instance: dismissing it for one Single Sample node never silences
+    a different Single Sample (or Multi-Sample, or Batch) node.
+
+    Args:
+        parent (QWidget): Parent for the message box (typically the
+            just-accepted configuration dialog, or the canvas window).
+        node (WorkflowNode): The node about to have its configuration
+            committed; read/written for ``suppress_stale_warning``.
+
+    Returns:
+        bool: True if the caller should proceed and commit the new
+            configuration; False if the user chose "Go back" (the caller
+            should leave the node's prior configuration untouched).
+    """
+    if getattr(node, 'suppress_stale_warning', False):
+        return True
+    from PySide6.QtWidgets import QMessageBox, QCheckBox
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Downstream plots may change")
+    box.setText(
+        "This node feeds other sample selectors, filters, and plot/results "
+        "nodes downstream. Applying now will pass through today's "
+        "settings, so any open plot window fed by this node will update "
+        "to match.\n\nIf you want to keep a plot's current view, save it "
+        "first, then come back and apply this change.")
+    dont_show = QCheckBox("Don't show this again for this node")
+    box.setCheckBox(dont_show)
+    proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
+    box.addButton("Go back", QMessageBox.RejectRole)
+    box.setDefaultButton(proceed)
+    box.exec()
+    if dont_show.isChecked():
+        node.suppress_stale_warning = True
+    return box.clickedButton() is proceed
+
 
 class AnchorPointSignals(QObject):
     position_changed = Signal(QPointF)
@@ -1626,6 +1688,8 @@ class SampleSelectorNode(WorkflowNode):
             parent_window, samples, self.selected_sample,
             self.selected_isotopes, self.sum_replicates, self.replicate_samples)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sample, isotopes, sr = dlg.get_selection()
             if sample:
                 if sr and isinstance(sample, list):
@@ -1810,6 +1874,8 @@ class MultipleSampleSelectorNode(WorkflowNode):
             parent_window, samples, self.selected_samples,
             self.selected_isotopes, self.sample_config)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sel, iso, cfg = dlg.get_selection()
             if sel:
                 self.selected_samples = sel
@@ -1888,6 +1954,8 @@ class BatchSampleSelectorNode(WorkflowNode):
             previously_selected=self.selected_windows,
             saved_snapshot=self._saved_output_snapshot)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sel = dlg.get_selection()
             if sel:
                 self.selected_windows = sel
