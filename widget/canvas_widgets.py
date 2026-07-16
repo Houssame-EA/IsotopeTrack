@@ -1260,7 +1260,17 @@ class MultipleSampleSelectorDialog(QDialog):
         self.current_isotopes = current_isotopes or []
 
         if current_sample_config:
-            self.current_sample_config = current_sample_config.copy()
+            # Pruned to the node's CURRENT sample list — carrying the whole
+            # dict forward unpruned let stale keys for samples no longer
+            # relevant (e.g. left over from before groups were set up)
+            # accumulate forever, resurfacing as phantom 0-particle rows in
+            # get_output_data() (see MultipleSampleSelectorNode.get_output_data
+            # below, which trusted every key in sample_config unconditionally).
+            self.current_sample_config = {
+                s: v for s, v in current_sample_config.items() if s in samples}
+            for s in samples:
+                self.current_sample_config.setdefault(s, {
+                    'included': False, 'sum_group': '', 'custom_name': s})
         else:
             self.current_sample_config = {}
             cs = current_selection or []
@@ -1747,16 +1757,30 @@ class MultipleSampleSelectorNode(WorkflowNode):
     def get_output_data(self):
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
             return self.input_data
-        included = ([s for s, c in self.sample_config.items() if c.get('included')]
-                    if self.sample_config else self.selected_samples)
+        sample_config = self.sample_config
+        if sample_config:
+            # Defensively re-narrow to the node's current sample universe —
+            # same source configure() passes into the dialog. Guards against
+            # stale keys in sample_config (e.g. from a project saved before
+            # the dialog-side pruning fix existed) resurfacing as phantom
+            # 0-particle rows below; built as a local view rather than
+            # mutating self.sample_config since this can run off the GUI
+            # thread via _run_calculation_async.
+            universe = set(self.batch_samples if self.batch_samples else
+                          getattr(self.parent_window, 'sample_to_folder_map', {}).keys())
+            if universe:
+                sample_config = {s: c for s, c in sample_config.items()
+                                 if s in universe}
+        included = ([s for s, c in sample_config.items() if c.get('included')]
+                    if sample_config else self.selected_samples)
         if not included:
             return None
 
         combined, total, names = [], 0, []
-        if self.sample_config:
+        if sample_config:
             indiv, groups = {}, {}
             for s in included:
-                c = self.sample_config.get(s, {'sum_group': '', 'custom_name': s})
+                c = sample_config.get(s, {'sum_group': '', 'custom_name': s})
                 g = c.get('sum_group', '')
                 if not g:
                     indiv[s] = c
@@ -1794,9 +1818,9 @@ class MultipleSampleSelectorNode(WorkflowNode):
         else:
             conc_src = lambda m: _sample_concentration_meta(self.parent_window, m)
         name_members = {}
-        if self.sample_config:
+        if sample_config:
             for s in included:
-                c = self.sample_config.get(s, {'sum_group': '', 'custom_name': s})
+                c = sample_config.get(s, {'sum_group': '', 'custom_name': s})
                 g = c.get('sum_group', '')
                 name_members.setdefault(g or s, []).append(s)
         else:
