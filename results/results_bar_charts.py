@@ -3377,7 +3377,6 @@ class HistogramDisplayDialog(QDialog):
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
             seed_suggested_element_colors(cfg, self.node.input_data)
-            _itk_log.error(f"STATS={cfg.get('show_stats')} id={id(cfg)}")
 
 
             if not plot_data:

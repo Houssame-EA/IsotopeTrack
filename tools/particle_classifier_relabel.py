@@ -149,7 +149,43 @@ def suggested_label_colors(definitions, groups, unmatched_mode, unclassified_col
     return out
 
 
-def classify_particle(particle, definitions, overlap_mode):
+def _parse_definitions(definitions):
+    """Parse every definition's expression exactly once.
+
+    ``parse()`` is a pure function of ``expression_text`` alone — it does
+    not depend on any particle — so it must never run inside a per-particle
+    loop. :func:`relabel_particles` calls this once per classification pass
+    (not once per particle) and reuses the result across every particle,
+    which is what actually matters for large particle populations: with
+    N particles and M definitions, parsing/re-parsing per particle costs
+    O(N*M) redundant work for something that is really only O(M).
+
+    Args:
+        definitions (list): Definitions to parse.
+
+    Returns:
+        dict: ``{definition_id: (ast, referenced_isotopes_set)}``, omitting
+            any definition with blank or unparseable expression text (a
+            warning is logged once per such definition here, not once per
+            particle that would otherwise have re-triggered it).
+    """
+    parsed = {}
+    for d in definitions:
+        text = d.get('expression_text', '')
+        if not text.strip():
+            continue
+        try:
+            ast = parse(text)
+        except ExpressionSyntaxError:
+            _itk_log.warning(
+                "Definition %s has an unparseable expression at "
+                "classification time, skipping: %r", d.get('id'), text)
+            continue
+        parsed[d['id']] = (ast, referenced_isotopes(ast))
+    return parsed
+
+
+def classify_particle(particle, definitions, overlap_mode, parsed=None):
     """Decide which definition(s) match one particle.
 
     Args:
@@ -160,6 +196,11 @@ def classify_particle(particle, definitions, overlap_mode):
         definitions (list): Definitions to test, already filtered to the
             particle's sample and in priority order (index 0 = highest).
         overlap_mode ("double_count" | "priority"): §5 semantics.
+        parsed (dict | None): Precomputed :func:`_parse_definitions` result
+            to reuse instead of re-parsing on every call — pass this from
+            any per-particle loop. When omitted (e.g. direct/test callers
+            classifying a single particle in isolation), each definition
+            is parsed on demand exactly as before.
 
     Returns:
         list: Matched definitions, in priority order. Under
@@ -175,13 +216,19 @@ def classify_particle(particle, definitions, overlap_mode):
         text = d.get('expression_text', '')
         if not text.strip():
             continue
-        try:
-            ast = parse(text)
-        except ExpressionSyntaxError:
-            _itk_log.warning(
-                "Definition %s has an unparseable expression at "
-                "classification time, skipping: %r", d.get('id'), text)
-            continue
+        if parsed is not None:
+            entry = parsed.get(d['id'])
+            if entry is None:
+                continue
+            ast, _isotopes = entry
+        else:
+            try:
+                ast = parse(text)
+            except ExpressionSyntaxError:
+                _itk_log.warning(
+                    "Definition %s has an unparseable expression at "
+                    "classification time, skipping: %r", d.get('id'), text)
+                continue
         mode = d.get('match_mode', 'partial')
         if evaluate(ast, present, mode):
             matched.append(d)
@@ -276,9 +323,10 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
     """
     group_pooling_policies = group_pooling_policies or {}
     multi_groups = set(multi_definition_groups(definitions))
+    parsed = _parse_definitions(definitions)
     out = []
     for p in particles:
-        matches = classify_particle(p, definitions, overlap_mode)
+        matches = classify_particle(p, definitions, overlap_mode, parsed=parsed)
         if not matches:
             if unmatched_mode == 'discard':
                 continue
@@ -293,11 +341,10 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
                 out.append(copy)
                 continue
         for d in matches:
-            try:
-                ast = parse(d.get('expression_text', ''))
-            except ExpressionSyntaxError:
+            entry = parsed.get(d['id'])
+            if entry is None:
                 continue
-            isotopes = referenced_isotopes(ast)
+            _ast, isotopes = entry
             label, _color = _bucket_label_and_color(d, groups)
             group = d.get('group_name')
             if group and group in multi_groups:

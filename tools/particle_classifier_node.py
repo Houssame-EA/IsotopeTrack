@@ -355,9 +355,9 @@ def build_particle_classifier_node_item():
     Returns:
         type: The ParticleClassifierNodeItem class.
     """
-    from widget.canvas_widgets import NodeItem, _StatusNodeMixin, DS
+    from widget.canvas_widgets import NodeItem, DS
 
-    class ParticleClassifierNodeItem(NodeItem, _StatusNodeMixin):
+    class ParticleClassifierNodeItem(NodeItem):
         """Tag icon node item for the Particle Classifier.
 
         Shows a live summary badge mirroring
@@ -371,7 +371,6 @@ def build_particle_classifier_node_item():
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
-            wf.configuration_changed.connect(self._trigger)
 
         def paint(self, painter, option, widget=None):
             wf = self.workflow_node
@@ -388,13 +387,41 @@ def build_particle_classifier_node_item():
                 badge, bc,
             )
 
-        def _trigger(self):
-            """Push freshly relabeled output to downstream nodes on change."""
-            self._run_calculation_async()
-
         def configure_node(self):
-            """Open the classifier configuration dialog (double-click)."""
-            if self.parent_window:
-                self.workflow_node.configure(self.parent_window)
+            """Open the classifier configuration dialog (double-click).
+
+            On Accept, pushes freshly relabeled output to every currently
+            connected sink so an already-open downstream viz figure
+            reflects the new configuration immediately, instead of only on
+            its next unrelated redraw (design §7 "stale plot" fix).
+
+            Deliberately NOT wired to ``configuration_changed`` (which also
+            fires from ``process_data`` on every routine upstream push,
+            including during project-load link restoration) — that would
+            re-run this node's full downstream chain on every data arrival
+            instead of only on a user-initiated reconfigure, and did cause
+            a real startup hang on project load. This push only ever runs
+            once, synchronously, as a direct result of this dialog's OK
+            button — never automatically.
+            """
+            if not self.parent_window:
+                return
+            if not self.workflow_node.configure(self.parent_window):
+                return
+            s = self.scene()
+            if not s:
+                return
+            try:
+                result = self.workflow_node.get_output_data()
+            except Exception:
+                _itk_log.exception("Handled exception in ParticleClassifierNodeItem.configure_node")
+                return
+            for lk in s.workflow_links:
+                if lk.source_node == self.workflow_node:
+                    try:
+                        if hasattr(lk.sink_node, "process_data"):
+                            lk.sink_node.process_data(result)
+                    except Exception:
+                        _itk_log.exception("Handled exception in ParticleClassifierNodeItem.configure_node")
 
     return ParticleClassifierNodeItem
