@@ -1339,6 +1339,90 @@ def dialog_qss(p: Palette) -> str:
     """
 
 
+def export_dialog_qss(p: Palette) -> str:
+    """Styling for pyqtgraph's plot-export dialogs (item picker and Save As).
+
+    Extends :func:`dialog_qss` with unscoped rules because pyqtgraph's
+    ``ExportDialog`` is a plain ``QWidget`` (the ``QDialog``-scoped selectors
+    never match it), and with file-browser widgets (``QTreeView``,
+    ``QListView``, ``QToolButton``, ``QHeaderView``) that the Save As
+    dialog uses. Apply only to those dialogs, never application-wide.
+    """
+    return dialog_qss(p) + f"""
+        QWidget {{
+            background-color: {p.bg_secondary};
+            color: {p.text_primary};
+        }}
+        QLabel {{
+            background: transparent;
+            color: {p.text_primary};
+        }}
+        QTreeWidget, QListWidget, QTreeView, QListView {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+        }}
+        QTreeWidget::item:selected, QListWidget::item:selected,
+        QTreeView::item:selected, QListView::item:selected {{
+            background-color: {p.bg_selected};
+            color: {p.text_primary};
+        }}
+        QTreeWidget::item:hover, QListWidget::item:hover,
+        QTreeView::item:hover, QListView::item:hover {{
+            background-color: {p.bg_hover};
+        }}
+        QHeaderView::section {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_secondary};
+            border: none;
+            border-bottom: 1px solid {p.border};
+            padding: 2px 6px;
+        }}
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 2px 4px;
+        }}
+        QCheckBox {{
+            background: transparent;
+            color: {p.text_primary};
+        }}
+        QPushButton {{
+            background-color: {p.accent};
+            color: {p.text_inverse};
+            border: none;
+            border-radius: 4px;
+            padding: 5px 14px;
+        }}
+        QPushButton:hover {{
+            background-color: {p.accent_hover};
+        }}
+        QPushButton:pressed {{
+            background-color: {p.accent_pressed};
+        }}
+        QPushButton:disabled {{
+            background-color: {p.disabled};
+            color: {p.text_muted};
+        }}
+        QToolButton {{
+            background-color: {p.bg_tertiary};
+            color: {p.text_primary};
+            border: 1px solid {p.border};
+            border-radius: 4px;
+            padding: 2px;
+        }}
+        QToolButton:hover {{
+            background-color: {p.bg_hover};
+        }}
+        QScrollBar:vertical, QScrollBar:horizontal {{
+            background: {p.bg_secondary};
+        }}
+    """
+
+
 def tier_colors(p: Palette) -> dict:
     """Returns a dict mapping tier name -> QColor-compatible hex string.
     Replacement for hardcoded (255,200,200) style row backgrounds.

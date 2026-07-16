@@ -13,7 +13,12 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import Qt, QEvent
 from tools.splash_screen import SplashCoordinator
+from utils.pyqtgraph_patches import apply_pyqtgraph_patches
+from utils.file_dialog_memory import install_file_dialog_memory
 from mainwindow import MainWindow
+
+apply_pyqtgraph_patches()
+install_file_dialog_memory()
 
 
 class IsotopeTrackApplication(QApplication):
