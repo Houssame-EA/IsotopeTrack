@@ -99,7 +99,11 @@ def _fs(delta=0):
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 def _safe_positive(v):
-    try: v = float(v); return v > 0 and not np.isnan(v)
+    try:
+        v = float(v)
+        # v == v is False only for NaN; np.isnan on a scalar is much slower
+        # than this comparison and this runs once per particle per element.
+        return v > 0 and v == v
     except Exception:
         _itk_log.exception("Handled exception in _safe_positive")
         return False
@@ -114,7 +118,7 @@ def _extract_element_values(particles, field='elements'):
             except Exception:
                 _itk_log.exception("Handled exception in _extract_element_values")
                 continue
-            if v > 0 and not np.isnan(v): result.setdefault(el, []).append(v)
+            if v > 0 and v == v: result.setdefault(el, []).append(v)
     return result
 
 def _extract_element_counts(particles):

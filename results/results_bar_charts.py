@@ -1725,7 +1725,10 @@ def _apply_element_groups(particles, dk, groups):
         for el, val in d.items():
             if val <= 0:
                 continue
-            if dk != 'elements' and np.isnan(val):
+            # val == val is False only for NaN; np.isnan on a scalar has
+            # much higher per-call overhead than this comparison, and this
+            # runs once per particle per element for the full population.
+            if dk != 'elements' and val != val:
                 continue
 
             grp_name = elem_to_group.get(el)
@@ -1769,7 +1772,10 @@ def _apply_element_groups_multi(particles, sample_names, dk, groups):
         for el, val in d.items():
             if val <= 0:
                 continue
-            if dk != 'elements' and np.isnan(val):
+            # val == val is False only for NaN; np.isnan on a scalar has
+            # much higher per-call overhead than this comparison, and this
+            # runs once per particle per element for the full population.
+            if dk != 'elements' and val != val:
                 continue
 
             grp_name = elem_to_group.get(el)
@@ -4321,7 +4327,7 @@ class HistogramPlotNode(QObject):
                     if val > 0:
                         out.setdefault(el, []).append(val)
                 else:
-                    if val > 0 and not np.isnan(val):
+                    if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         out.setdefault(el, []).append(val)
         return out or None
 
@@ -4341,7 +4347,7 @@ class HistogramPlotNode(QObject):
                     if val > 0:
                         result[src].setdefault(el, []).append(val)
                 else:
-                    if val > 0 and not np.isnan(val):
+                    if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         result[src].setdefault(el, []).append(val)
         return {k: v for k, v in result.items() if v} or None
 
@@ -5225,7 +5231,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
         if not vals:
             continue
         if dt != 'Counts':
-            v = [x for x in vals if x > 0 and not np.isnan(x)]
+            v = [x for x in vals if x > 0 and x == x]  # x==x false only for NaN, faster than np.isnan per scalar
         else:
             v = vals
         if not v:
