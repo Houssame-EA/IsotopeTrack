@@ -62,7 +62,7 @@ Heatmap plot node with multiple sample support.
 | `set_position` | `(self, pos)` | Args: |
 | `configure` | `(self, parent_window)` | Args: |
 | `process_data` | `(self, input_data)` | Args: |
-| `extract_combinations_data` | `(self)` | Returns: |
+| `extract_plot_data` | `(self)` | Returns: |
 | `_extract_single` | `(self, data_key)` | Args: |
 | `_extract_multi` | `(self, data_key)` | Args: |
 

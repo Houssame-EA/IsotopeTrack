@@ -716,7 +716,7 @@ class HeatmapDisplayDialog(QDialog):
 
     def _export_subplot(self, sample_name):
         """Export one heatmap subplot as a standalone single-panel figure."""
-        data = self.node.extract_combinations_data()
+        data = self.node.extract_plot_data()
         if not data or sample_name not in data:
             return
         cfg = self.node.config
@@ -751,7 +751,7 @@ class HeatmapDisplayDialog(QDialog):
             bg = cfg.get('bg_color', '#FFFFFF')
             self.figure.patch.set_facecolor(bg)
 
-            data = self.node.extract_combinations_data()
+            data = self.node.extract_plot_data()
 
             if not data:
                 ax = self.figure.add_subplot(111)
@@ -1226,7 +1226,7 @@ class HeatmapPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
-    def extract_combinations_data(self):
+    def extract_plot_data(self):
         if not self.input_data:
             return None
         dt = self.config.get('data_type_display', 'Counts')
