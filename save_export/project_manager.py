@@ -776,7 +776,7 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
-            'merge_singles',
+            'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
@@ -969,7 +969,7 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
-            'merge_singles',
+            'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]

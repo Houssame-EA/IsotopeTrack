@@ -761,7 +761,7 @@ class ParticleFilterDialog(QDialog):
     def __init__(self, parent, upstreams, sample_filters=None,
                  selected_sources=None, merged_name="Combined",
                  owner_node=None, suppress_stale_warning=False,
-                 merge_singles=True):
+                 merge_singles=True, sample_groups=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -781,6 +781,7 @@ class ParticleFilterDialog(QDialog):
         self._sources = normalize_sources(self._upstreams)
         self._src_by_name = {s['name']: s for s in self._sources}
         self._filters = _copy.deepcopy(sample_filters) if sample_filters else {}
+        self._groups = _copy.deepcopy(sample_groups) if sample_groups else {}
         self._selected_sources = (list(selected_sources)
                                   if selected_sources is not None else None)
         self._merged_name = merged_name or "Combined"
@@ -984,6 +985,15 @@ class ParticleFilterDialog(QDialog):
         pv = QVBoxLayout(self._pane)
         pv.setContentsMargins(0, 0, 6, 0)
         pv.setSpacing(8)
+        group_row = QHBoxLayout()
+        self._group_lbl = QLabel("Group (optional):")
+        group_row.addWidget(self._group_lbl)
+        self._group_edit = QLineEdit()
+        self._group_edit.setPlaceholderText(
+            "e.g. Group A — samples sharing a name merge together")
+        self._group_edit.textChanged.connect(self._schedule_preview)
+        group_row.addWidget(self._group_edit, 1)
+        pv.addLayout(group_row)
         self._build_pane(pv)
         pv.addStretch()
         self._pane_scroll.setWidget(self._pane)
@@ -1277,6 +1287,9 @@ class ParticleFilterDialog(QDialog):
         if name == self._current and not self._loading:
             cfg = self._pane_config()
         text = f"{name}   ({s['total'] if s else 0})"
+        gname = self._groups.get(name)
+        if gname:
+            text += f"\n      \U0001F517 Group: {gname}"
         if active_axes(cfg):
             text += f"\n      ⚙ {summarize_config(cfg)}"
         item.setText(text)
@@ -1309,6 +1322,12 @@ class ParticleFilterDialog(QDialog):
         """
         if name and not self._loading:
             self._filters[name] = self._pane_config()
+            if self._src_by_name.get(name, {}).get('origin') == 'single':
+                gname = self._group_edit.text().strip()
+                if gname:
+                    self._groups[name] = gname
+                else:
+                    self._groups.pop(name, None)
 
     def _load_pane(self, name):
         """Load one sample's filter configuration into the right pane.
@@ -1323,6 +1342,23 @@ class ParticleFilterDialog(QDialog):
         enabled = src is not None
         self._pane.setEnabled(enabled)
         self._btn_all.setEnabled(enabled and len(self._sources) > 1)
+        is_single = enabled and src.get('origin') == 'single'
+        self._group_edit.setEnabled(is_single)
+        self._group_lbl.setEnabled(is_single)
+        self._group_edit.setText(self._groups.get(name, '') if is_single else '')
+        if enabled and not is_single:
+            why = ("Not available — this sample is already a group summed "
+                   "upstream by a Multi-Sample node; group summing here "
+                   "only applies to individual Single Sample inputs.")
+            self._group_edit.setPlaceholderText(why)
+            self._group_edit.setToolTip(why)
+            self._group_lbl.setToolTip(why)
+        else:
+            default_hint = ("e.g. Group A — samples sharing a name merge "
+                            "together")
+            self._group_edit.setPlaceholderText(default_hint)
+            self._group_edit.setToolTip("")
+            self._group_lbl.setToolTip("")
         self._pane_title.setText(
             f"Filter — {name}" if name else "Filter — no sample")
 
@@ -1453,9 +1489,10 @@ class ParticleFilterDialog(QDialog):
         }
 
     def _apply_to_all(self):
-        """Copy the current sample's filter to every checked ("selected for
-        output") sample, pruned to each sample's available isotopes so
-        nothing starts out stale.
+        """Copy the current sample's filter — and, for single-sample rows,
+        its Group name — to every checked ("selected for output") sample,
+        pruned to each sample's available isotopes so nothing starts out
+        stale.
 
         "Selected" here means checked in the left list — include/exclude
         and which-sample-is-being-edited are two independent controls (see
@@ -1467,12 +1504,25 @@ class ParticleFilterDialog(QDialog):
             return
         cfg = self._pane_config()
         self._filters[self._current] = cfg
+        src_cur = self._src_by_name.get(self._current)
+        gname = (self._group_edit.text().strip()
+                 if src_cur and src_cur.get('origin') == 'single' else '')
+        if src_cur and src_cur.get('origin') == 'single':
+            if gname:
+                self._groups[self._current] = gname
+            else:
+                self._groups.pop(self._current, None)
         checked = set(self._checked_names())
         for s in self._sources:
             if s['name'] == self._current or s['name'] not in checked:
                 continue
             self._filters[s['name']] = prune_config_to_labels(
                 cfg, source_labels(s))
+            if s.get('origin') == 'single':
+                if gname:
+                    self._groups[s['name']] = gname
+                else:
+                    self._groups.pop(s['name'], None)
         for i in range(self._list.count()):
             self._refresh_row(self._list.item(i))
         self._schedule_preview()
@@ -1524,6 +1574,17 @@ class ParticleFilterDialog(QDialog):
         if self._merge_chk is not None:
             return self._merge_chk.isChecked()
         return True
+
+    def get_sample_groups(self):
+        """Read the per-sample custom group names set for single-sample
+        inputs (empty names are dropped — they mean "no custom group").
+
+        Returns:
+            dict: Sample name -> group name, single-sample entries only.
+        """
+        if self._current:
+            self._save_pane(self._current)
+        return {k: v for k, v in self._groups.items() if v}
 
     def _on_chips_changed(self):
         """React to a chip toggle: refresh threshold rows and the preview."""
@@ -1659,28 +1720,57 @@ class ParticleFilterDialog(QDialog):
                 "No samples checked — the filter output is empty.")
             return
         total = sum(len(s['particles']) for s in chosen)
-        kept_total, stale_all = 0, set()
-        single_kept, single_total, parts = 0, 0, []
-        chosen_singles = [s for s in chosen if s.get('origin') == 'single']
-        merging = len(chosen_singles) >= 2 and self.get_merge_singles()
+        kept_total, stale_all, kept_by_name = 0, set(), {}
         for s in chosen:
             kept, stale = apply_sample_filter(s, self._filters.get(s['name']))
             kept_total += len(kept)
             stale_all |= stale
-            if merging and s.get('origin') == 'single':
-                single_kept += len(kept)
-                single_total += len(s['particles'])
+            kept_by_name[s['name']] = (len(kept), len(s['particles']))
+
+        chosen_singles = [s for s in chosen if s.get('origin') == 'single']
+        grouped, ungrouped, group_order = {}, [], []
+        for s in chosen_singles:
+            gname = (self._groups.get(s['name']) or '').strip()
+            if gname:
+                if gname not in grouped:
+                    grouped[gname] = []
+                    group_order.append(gname)
+                grouped[gname].append(s)
             else:
-                parts.append(f"{s['name']}: {len(kept)}/{len(s['particles'])}")
+                ungrouped.append(s)
+        merging = len(ungrouped) >= 2 and self.get_merge_singles()
+
+        parts = []
+        for gname in group_order:
+            gk = sum(kept_by_name[s['name']][0] for s in grouped[gname])
+            gt = sum(kept_by_name[s['name']][1] for s in grouped[gname])
+            parts.append(f"{gname}: {gk}/{gt}")
         if merging:
-            parts.insert(0, f"{self.get_merged_name()}: "
-                            f"{single_kept}/{single_total}")
+            uk = sum(kept_by_name[s['name']][0] for s in ungrouped)
+            ut = sum(kept_by_name[s['name']][1] for s in ungrouped)
+            parts.append(f"{self.get_merged_name()}: {uk}/{ut}")
+        else:
+            for s in ungrouped:
+                k, t = kept_by_name[s['name']]
+                parts.append(f"{s['name']}: {k}/{t}")
+        for s in chosen:
+            if s.get('origin') != 'single':
+                k, t = kept_by_name[s['name']]
+                parts.append(f"{s['name']}: {k}/{t}")
+
         lines = [f"{kept_total} / {total} particles pass"]
-        if len(parts) > 1 or merging:
+        if parts:
             lines.append(" · ".join(parts))
+        if group_order:
+            n_grouped = sum(len(m) for m in grouped.values())
+            lines.append(
+                f"{n_grouped} sample" + ("s" if n_grouped != 1 else "")
+                + f" grouped into {len(group_order)} named group"
+                + ("s" if len(group_order) != 1 else "") + ": "
+                + ", ".join(group_order))
         if merging:
-            lines.append(f"{len(chosen_singles)} single-sample inputs exit "
-                         f"as one sample \"{self.get_merged_name()}\"")
+            lines.append(f"{len(ungrouped)} remaining single-sample inputs "
+                         f"exit as one sample \"{self.get_merged_name()}\"")
         if stale_all:
             lines.append("⚠ Ignored stale criteria: "
                          + ", ".join(sorted(stale_all)))
@@ -1822,6 +1912,7 @@ class ParticleFilterNode(QObject):
         self.selected_sources = None
         self.merged_name = "Combined"
         self.merge_singles = True
+        self.sample_groups = {}
         self._stale = []
         self._incoming_names = []
         # Per-node opt-out for the "applying this will change open plots"
@@ -1942,16 +2033,40 @@ class ParticleFilterNode(QObject):
                    if s.get('origin') == 'single']
         others = [(s, k) for s, k in filtered
                   if s.get('origin') != 'single']
+
+        # Singles explicitly tagged with a custom group name (in the dialog's
+        # per-sample "Group" field) always merge under that name, regardless
+        # of the merge_singles toggle — the toggle only governs the
+        # leftover, untagged singles below.
+        grouped, ungrouped, group_order = {}, [], []
+        for s, kept in singles:
+            gname = (self.sample_groups.get(s['name']) or '').strip()
+            if gname:
+                if gname not in grouped:
+                    grouped[gname] = []
+                    group_order.append(gname)
+                grouped[gname].append((s, kept))
+            else:
+                ungrouped.append((s, kept))
+
         final = []
-        if len(singles) >= 2 and self.merge_singles:
+        for gname in group_order:
+            members = grouped[gname]
+            merged_kept = []
+            for _s, kept in members:
+                merged_kept.extend(retag_particles(kept, gname))
+            final.append((merge_single_sources(
+                [s for s, _k in members], gname), merged_kept))
+
+        if len(ungrouped) >= 2 and self.merge_singles:
             name = (self.merged_name or '').strip() or 'Combined'
             merged_kept = []
-            for _s, kept in singles:
+            for _s, kept in ungrouped:
                 merged_kept.extend(retag_particles(kept, name))
             final.append((merge_single_sources(
-                [s for s, _k in singles], name), merged_kept))
+                [s for s, _k in ungrouped], name), merged_kept))
         else:
-            final.extend(singles)
+            final.extend(ungrouped)
         final.extend(others)
         if len(final) == 1:
             return self._build_single_output(final[0][0], final[0][1])
@@ -2123,12 +2238,13 @@ class ParticleFilterNode(QObject):
             parent_window, snapshots, self.sample_filters,
             self.selected_sources, self.merged_name, owner_node=self,
             suppress_stale_warning=self.suppress_stale_warning,
-            merge_singles=self.merge_singles)
+            merge_singles=self.merge_singles, sample_groups=self.sample_groups)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()
             self.merge_singles = dlg.get_merge_singles()
+            self.sample_groups = dlg.get_sample_groups()
             self.suppress_stale_warning = dlg.stale_warning_suppressed()
             self._recompute_stale(normalize_sources(snapshots))
             self.configuration_changed.emit()

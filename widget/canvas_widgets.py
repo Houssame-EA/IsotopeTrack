@@ -3782,7 +3782,7 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
-                     'merge_singles', 'saved_cluster_state'):
+                     'merge_singles', 'sample_groups', 'saved_cluster_state'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
