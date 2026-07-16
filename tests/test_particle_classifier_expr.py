@@ -334,6 +334,44 @@ class TestFindConfound:
         assert pce.evaluate(a, witness, "partial") is True
         assert pce.evaluate(b, witness, "partial") is True
 
+    def test_exact_mode_disjoint_vocab_never_confounds(self):
+        # Real bug report: under partial semantics "60Ni" and "107Ag"
+        # confound (see test_disjoint_isotopes_still_confound_under_
+        # partial_semantics above), but if BOTH definitions are Exact
+        # Match, no real particle can satisfy both simultaneously -- exact
+        # mode requires the particle to carry no isotopes outside each
+        # formula's own vocabulary, and these two vocabularies are
+        # disjoint, so there is no valid intersection.
+        a = pce.parse("60Ni")
+        b = pce.parse("107Ag")
+        assert pce.find_confound(a, b, "exact", "exact") is None
+
+    def test_exact_mode_still_confounds_when_vocab_overlaps(self):
+        # "60Ni" (exact) is satisfied by a particle whose only isotope is
+        # 60Ni; "[60Ni,107Ag]" (exact) is also satisfied by that same
+        # particle (60Ni present, nothing outside its own vocabulary) --
+        # a genuine confound survives even under exact/exact.
+        a = pce.parse("60Ni")
+        b = pce.parse("[60Ni,107Ag]")
+        witness = pce.find_confound(a, b, "exact", "exact")
+        assert witness == frozenset({"60Ni"})
+
+    def test_mixed_partial_and_exact_still_confounds(self):
+        # A partial-match side imposes no "nothing else present" ceiling,
+        # so it can still confound with an exact-match side whenever the
+        # exact side's own vocabulary is satisfiable on its own.
+        a = pce.parse("60Ni")  # partial
+        b = pce.parse("60Ni+107Ag")  # exact
+        witness = pce.find_confound(a, b, "partial", "exact")
+        assert witness == frozenset({"60Ni", "107Ag"})
+
+    def test_default_modes_preserve_old_partial_behavior(self):
+        # Omitting mode_a/mode_b must reproduce the pre-fix partial/partial
+        # behavior exactly, so existing callers are unaffected.
+        a = pce.parse("60Ni")
+        b = pce.parse("107Ag")
+        assert pce.find_confound(a, b) == frozenset({"60Ni", "107Ag"})
+
 
 # --------------------------------------------------------------------------- #
 # classify_formula

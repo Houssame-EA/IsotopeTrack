@@ -777,9 +777,13 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Particle Classifier (tools/particle_classifier_node.py)
+            'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
+            'unclassified_color', 'group_pooling_policies',
+            '_has_unresolved_issues', 'confound_dismissals',
         ]
-        
+
         for attr in config_attributes:
             if hasattr(node, attr):
                 value = getattr(node, attr)
@@ -844,7 +848,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
-                ParticleFilterNode,
+                ParticleFilterNode, ParticleClassifierNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -883,7 +887,8 @@ Terminal=false
             "sample_selector": SampleSelectorNode,
             "multiple_sample_selector": MultipleSampleSelectorNode,
             "particle_filter": ParticleFilterNode,
-            
+            "particle_classifier": ParticleClassifierNode,
+
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
             "correlation_plot": CorrelationPlotNode,
@@ -969,9 +974,13 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Particle Classifier (tools/particle_classifier_node.py)
+            'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
+            'unclassified_color', 'group_pooling_policies',
+            '_has_unresolved_issues', 'confound_dismissals',
         ]
-        
+
         for attr in config_attributes:
             if attr in node_data:
                 value = node_data[attr]

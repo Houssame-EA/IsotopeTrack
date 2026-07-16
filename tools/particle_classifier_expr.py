@@ -437,29 +437,46 @@ def evaluate(ast: AstNode, present: set[str],
 # --------------------------------------------------------------------------- #
 # Structural analyses — confound detection, contradiction/tautology
 # --------------------------------------------------------------------------- #
-def find_confound(ast_a: AstNode, ast_b: AstNode) -> frozenset[str] | None:
+def find_confound(ast_a: AstNode, ast_b: AstNode,
+                  mode_a: Literal["exact", "partial"] = "partial",
+                  mode_b: Literal["exact", "partial"] = "partial",
+                  ) -> frozenset[str] | None:
     """Check whether two formulas can both be satisfied by the same particle.
 
     Purely structural (design §5): enumerates every present/absent
     combination over the union of isotopes referenced by both ASTs — no
     particle data involved — and returns the first combination (as the set
     of isotopes marked "present") that satisfies both formulas
-    simultaneously under partial-match semantics, or None if no such
-    combination exists. Bounded by referenced-isotope count, so it stays
-    cheap enough to re-run on every edit.
+    simultaneously under each formula's own configured match mode, or None
+    if no such combination exists. Bounded by referenced-isotope count, so
+    it stays cheap enough to re-run on every edit.
+
+    Each definition's own Exact/Partial setting (design §9.1) matters here:
+    partial-match ignores isotopes outside a formula's own vocabulary, but
+    exact-match additionally requires the particle to carry *no* isotopes
+    outside that vocabulary. Two exact-match definitions with disjoint
+    vocabularies can therefore never actually confound in practice — a real
+    particle satisfying one exactly cannot simultaneously satisfy the
+    other's "nothing outside my own vocabulary" constraint unless the
+    vocabularies overlap enough to share a witness. Passing each side's
+    real mode (rather than always assuming partial) avoids flagging that
+    kind of false positive.
 
     Args:
         ast_a (AstNode): First definition's parsed expression.
         ast_b (AstNode): Second definition's parsed expression.
+        mode_a ("exact" | "partial"): First definition's own match mode.
+        mode_b ("exact" | "partial"): Second definition's own match mode.
 
     Returns:
         frozenset[str] | None: A witnessing present-isotope assignment that
-            satisfies both formulas, or None if they never overlap.
+            satisfies both formulas under their own modes, or None if they
+            never overlap.
     """
     vocab = sorted(referenced_isotopes(ast_a) | referenced_isotopes(ast_b))
     for combo in itertools.product([False, True], repeat=len(vocab)):
         present = {label for label, on in zip(vocab, combo) if on}
-        if _eval_partial(ast_a, present) and _eval_partial(ast_b, present):
+        if evaluate(ast_a, present, mode_a) and evaluate(ast_b, present, mode_b):
             return frozenset(present)
     return None
 

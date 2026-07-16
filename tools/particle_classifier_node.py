@@ -168,6 +168,13 @@ class ParticleClassifierNode(QObject):
         #: has a stale isotope reference. Drives the node icon's warning
         #: badge (see build_particle_classifier_node_item).
         self._has_unresolved_issues = False
+        #: Confound pairs the user has permanently dismissed via the
+        #: aggregate confound-warning dialog's per-pair "don't warn me
+        #: again" checkbox (design §5), so reopening this node's dialog
+        #: doesn't re-warn about them. See
+        #: ParticleClassifierDialog._confound_pair_key /
+        #: get_confound_dismissals.
+        self.confound_dismissals = []
 
     def set_position(self, pos):
         """Update the node position and notify the canvas item."""
@@ -299,7 +306,8 @@ class ParticleClassifierNode(QObject):
         dlg = ParticleClassifierDialog(
             parent_window, snapshots, self.definitions, self.groups,
             self.overlap_mode, self.unmatched_mode, self.unclassified_color,
-            self.selected_sources, self.group_pooling_policies)
+            self.selected_sources, self.group_pooling_policies,
+            self.confound_dismissals)
         if dlg.exec() == QDialog.Accepted:
             self.definitions = dlg.get_definitions()
             self.groups = dlg.get_groups()
@@ -309,6 +317,7 @@ class ParticleClassifierNode(QObject):
             self.selected_sources = dlg.get_selected_sources()
             self.group_pooling_policies = dlg.get_group_pooling_policies()
             self._has_unresolved_issues = dlg.get_has_unresolved_issues()
+            self.confound_dismissals = dlg.get_confound_dismissals()
             self.configuration_changed.emit()
             ual = _ual()
             if ual:

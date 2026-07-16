@@ -187,70 +187,227 @@ class TestContradictionTautology:
 
 # --------------------------------------------------------------------------- #
 # Confound detection
+#
+# Redesigned per user feedback: live per-keystroke confound modals were
+# "exhausting" (one pop-up per pair, re-shown every time the dialog was
+# typed in) and re-nagged every time the node was reopened. The new
+# mechanism only checks at OK-click time (never while typing), batches every
+# currently-active confound into one aggregate dialog, and lets the user
+# permanently dismiss individual pairs (persisted on the node itself via
+# get_confound_dismissals/confound_dismissals, so a dismissed pair stays
+# dismissed across dialog reopens).
 # --------------------------------------------------------------------------- #
 class TestConfoundDetection:
-    def test_overlapping_definitions_trigger_modal_and_set_priority(self, dlg, no_modal):
+    def test_validate_current_no_longer_shows_a_modal(self, dlg, no_modal):
+        """Typing a confounding expression must not pop anything up --
+        confound checks only run at accept() time now."""
         dlg._list.setCurrentRow(0)
         dlg._add_definition()
         dlg._expr_edit.setText("60Ni")
-        dlg._validate_current()
-        dlg._add_definition()
-        dlg._expr_edit.setText("60Ni+107Ag")
-        no_modal['role'] = pcd.QMessageBox.ButtonRole.RejectRole  # switch to priority
-        dlg._validate_current()
-        assert dlg._overlap_mode == 'priority'
-
-    def test_disjoint_definitions_do_not_force_priority(self, dlg, no_modal):
-        dlg._list.setCurrentRow(1)  # SampleB, isolated from SampleA defs
-        dlg._add_definition()
-        dlg._expr_edit.setText("197Au")
         dlg._validate_current()
         dlg._add_definition()
         no_modal['role'] = None
-        dlg._expr_edit.setText("60Ni")  # different sample's isotope entirely; no overlap on SampleB alone
+        dlg._expr_edit.setText("60Ni+107Ag")
         dlg._validate_current()
-        # No second definition on SampleB references 197Au, so no confound.
+        # No live modal fired, and overlap_mode is left at its prior value.
         assert dlg._overlap_mode == 'double_count'
 
-    def test_second_distinct_confounding_pair_still_warns(self, dlg, no_modal):
-        """Regression test: a real bug let 'priority ordering' (chosen for
-        one confounding pair) silently suppress the warning for every
-        later, entirely different confounding pair -- and since overlap_mode
-        persists on the node across dialog sessions, this meant confound
-        warnings effectively stopped firing forever after the first choice.
-        Each distinct pair must get its own one-time modal regardless of
-        the node's current overlap_mode."""
+    def test_collect_active_confound_pairs_finds_overlap_on_same_sample(self, dlg):
         dlg._list.setCurrentRow(0)
         dlg._add_definition()
         dlg._expr_edit.setText("60Ni")
         dlg._validate_current()
         dlg._add_definition()
-        no_modal['role'] = pcd.QMessageBox.ButtonRole.RejectRole  # -> priority
         dlg._expr_edit.setText("60Ni+107Ag")
         dlg._validate_current()
-        assert dlg._overlap_mode == 'priority'
-        first_pair_count = len(dlg._confound_prompted_pairs)
+        pairs = dlg._collect_active_confound_pairs()
+        assert len(pairs) == 1
+        d_a, d_b, witness, key = pairs[0]
+        assert '60Ni' in witness
 
-        # A brand-new definition confounding with BOTH existing ones (60Ni
-        # and 60Ni+107Ag) on the same sample -- two new distinct pairs.
+    def test_disjoint_samples_do_not_confound(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._list.setCurrentRow(1)  # SampleB, isolated from SampleA defs
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        # Same isotope, but on two different samples -- not a confound.
+        assert dlg._collect_active_confound_pairs() == []
+
+    def test_three_mutually_confounding_definitions_yield_three_pairs(self, dlg):
+        dlg._list.setCurrentRow(0)
+        for expr in ("60Ni", "60Ni+107Ag", "107Ag"):
+            dlg._add_definition()
+            dlg._expr_edit.setText(expr)
+            dlg._validate_current()
+        pairs = dlg._collect_active_confound_pairs()
+        assert len(pairs) == 3
+
+    def test_accept_shows_one_aggregate_dialog_for_all_pairs(self, dlg, monkeypatch):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._validate_current()
+
+        calls = []
+        def _fake(pairs):
+            calls.append(pairs)
+            return True  # simulate "Continue and Save"
+        monkeypatch.setattr(dlg, "_show_confound_warnings_dialog", _fake)
+        dlg.accept()
+        assert len(calls) == 1
+        assert len(calls[0]) == 1  # exactly one pair, shown once
+        assert dlg.result() == QDialog.Accepted
+
+    def test_go_back_and_edit_cancels_accept_without_closing_dialog(self, dlg, monkeypatch):
+        """Choosing 'Go Back and Edit' in the aggregate warning must cancel
+        the whole accept() -- the main dialog stays open so the user can
+        actually fix the definitions, matching the contradiction modal's
+        existing go-back-or-proceed convention."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._validate_current()
+
+        monkeypatch.setattr(
+            dlg, "_show_confound_warnings_dialog", lambda pairs: False)
+        dlg.accept()
+        assert dlg.result() != QDialog.Accepted
+        # Nothing was dismissed and the pair is still active next attempt.
+        assert len(dlg._collect_active_confound_pairs()) == 1
+
+    def test_dismissed_pair_not_shown_again_this_session(self, dlg, monkeypatch):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._validate_current()
+
+        def _dismiss_all(pairs):
+            for *_rest, key in pairs:
+                dlg._dismissed_confound_pairs.add(key)
+            return True  # simulate "Continue and Save"
+        monkeypatch.setattr(dlg, "_show_confound_warnings_dialog", _dismiss_all)
+        dlg.accept()
+        assert dlg._collect_active_confound_pairs() == []
+
+    def test_dismissal_persists_across_dialog_reopen(self, dlg, monkeypatch):
+        """The whole point of the redesign: dismissing a pair must survive
+        the dialog being closed and reopened (via node.confound_dismissals),
+        not just last for this one dialog instance."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._validate_current()
+
+        def _dismiss_all(pairs):
+            for *_rest, key in pairs:
+                dlg._dismissed_confound_pairs.add(key)
+            return True  # simulate "Continue and Save"
+        monkeypatch.setattr(dlg, "_show_confound_warnings_dialog", _dismiss_all)
+        dlg.accept()
+        dismissals = dlg.get_confound_dismissals()
+        assert len(dismissals) == 1
+
+        # Simulate reopening: brand-new dialog fed the persisted dismissals.
+        reopened = pcd.ParticleClassifierDialog(
+            None, dlg._upstreams, dlg.get_definitions(), dlg.get_groups(),
+            dlg.get_overlap_mode(), dlg.get_unmatched_mode(),
+            dlg.get_unclassified_color(), dlg.get_selected_sources(),
+            dlg.get_group_pooling_policies(), dismissals)
+        assert reopened._collect_active_confound_pairs() == []
+
+    def test_editing_expression_after_dismissal_reevaluates(self, dlg, monkeypatch):
+        """A dismissed pair whose expression later changes is a fresh
+        conflict -- it must not stay silently suppressed forever."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._validate_current()
+
+        def _dismiss_all(pairs):
+            for *_rest, key in pairs:
+                dlg._dismissed_confound_pairs.add(key)
+            return True  # simulate "Continue and Save"
+        monkeypatch.setattr(dlg, "_show_confound_warnings_dialog", _dismiss_all)
+        dlg.accept()
+        assert dlg._collect_active_confound_pairs() == []
+
+        # Still confounds via 60Ni, but the expression text itself changed.
+        dlg._expr_edit.setText("60Ni+197Au")
+        dlg._validate_current()
+        assert len(dlg._collect_active_confound_pairs()) == 1
+
+    def test_exact_match_disjoint_definitions_do_not_confound(self, dlg):
+        """Real bug report: two EXACT-match definitions with disjoint
+        isotope vocabularies were still flagged as confounding, even
+        though no real particle can ever satisfy both simultaneously --
+        exact mode requires a particle to carry *no* isotopes outside
+        each formula's own vocabulary, so disjoint exact-match
+        definitions can never actually overlap in practice."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._rb_exact.setChecked(True)
+        dlg._on_field_changed()
+        dlg._validate_current()
         dlg._add_definition()
         dlg._expr_edit.setText("107Ag")
+        dlg._rb_exact.setChecked(True)
+        dlg._on_field_changed()
         dlg._validate_current()
-        assert len(dlg._confound_prompted_pairs) == first_pair_count + 2
+        assert dlg._collect_active_confound_pairs() == []
 
-    def test_same_pair_not_reprompted_on_further_edits(self, dlg, no_modal):
+    def test_exact_match_overlapping_vocab_still_confounds(self, dlg):
+        """Two exact-match definitions can still genuinely confound if a
+        particle's isotopes could lie entirely within both vocabularies at
+        once (e.g. one formula's vocabulary is a subset of the other's)."""
         dlg._list.setCurrentRow(0)
         dlg._add_definition()
         dlg._expr_edit.setText("60Ni")
+        dlg._rb_exact.setChecked(True)
+        dlg._on_field_changed()
+        dlg._validate_current()
+        dlg._add_definition()
+        dlg._expr_edit.setText("[60Ni,107Ag]")
+        dlg._rb_exact.setChecked(True)
+        dlg._on_field_changed()
+        dlg._validate_current()
+        pairs = dlg._collect_active_confound_pairs()
+        assert len(pairs) == 1
+
+    def test_partial_vs_exact_mixed_pair_still_confounds(self, dlg):
+        """A partial-match definition never restricts what else may be
+        present, so it still confounds with an overlapping exact-match
+        definition even though the two disjoint-exact-match case above
+        does not."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")  # left as partial (default)
         dlg._validate_current()
         dlg._add_definition()
         dlg._expr_edit.setText("60Ni+107Ag")
+        dlg._rb_exact.setChecked(True)
+        dlg._on_field_changed()
         dlg._validate_current()
-        count_after_first = len(dlg._confound_prompted_pairs)
-        # Re-validating the same unchanged pair must not add a duplicate
-        # entry (it's still the same two definitions confounding).
-        dlg._validate_current()
-        assert len(dlg._confound_prompted_pairs) == count_after_first
+        assert len(dlg._collect_active_confound_pairs()) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -458,6 +615,9 @@ class TestNodeConfigureRoundTrip:
             def get_selected_sources(self): return ['SampleA']
             def get_has_unresolved_issues(self): return True
             def get_group_pooling_policies(self): return {'G': 'drop_mfc'}
+            def get_confound_dismissals(self):
+                return [{'id_a': 'x', 'id_b': 'y', 'expr_a': '60Ni',
+                         'expr_b': '60Ni+107Ag'}]
 
         monkeypatch.setattr(pcd, "ParticleClassifierDialog", _FakeDialog)
         result = node.configure(None)
@@ -469,6 +629,9 @@ class TestNodeConfigureRoundTrip:
         assert node.selected_sources == ['SampleA']
         assert node._has_unresolved_issues is True
         assert node.group_pooling_policies == {'G': 'drop_mfc'}
+        assert node.confound_dismissals == [
+            {'id_a': 'x', 'id_b': 'y', 'expr_a': '60Ni',
+             'expr_b': '60Ni+107Ag'}]
 
     def test_configure_returns_false_on_cancel(self, qapp, monkeypatch):
         node = ParticleClassifierNode()

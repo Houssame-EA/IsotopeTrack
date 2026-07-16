@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QComboBox, QGroupBox, QDialogButtonBox, QListWidget, QListWidgetItem,
     QSplitter, QScrollArea, QFrame, QLineEdit, QRadioButton, QButtonGroup,
-    QMessageBox,
+    QMessageBox, QCheckBox,
 )
 from PySide6.QtCore import Qt, QTimer
 
@@ -119,7 +119,7 @@ class ParticleClassifierDialog(QDialog):
     def __init__(self, parent, upstreams, definitions=None, groups=None,
                  overlap_mode='double_count', unmatched_mode='unclassified',
                  unclassified_color=None, selected_sources=None,
-                 group_pooling_policies=None):
+                 group_pooling_policies=None, confound_dismissals=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Classifier Configuration")
         self.setModal(True)
@@ -151,11 +151,17 @@ class ParticleClassifierDialog(QDialog):
         self._current_def_id = None
         self._loading = False
         self._has_unresolved_issues = False
-        self._confound_prompted_pairs = set()
+        #: Confound pairs the user has permanently dismissed via the
+        #: aggregate warning dialog's per-pair "don't warn me again"
+        #: checkbox, persisted on the node so they stay dismissed across
+        #: dialog reopens (see _confound_pair_key / get_confound_dismissals).
+        self._dismissed_confound_pairs = {
+            self._confound_pair_key_from_dict(rec)
+            for rec in (confound_dismissals or [])
+        }
         #: Group names the pooling modal has already been shown for this
         #: session, so re-committing the same group name repeatedly (or
-        #: navigating away and back) doesn't re-nag every time — mirrors
-        #: _confound_prompted_pairs' one-time-per-session pattern.
+        #: navigating away and back) doesn't re-nag every time.
         self._pooling_prompted_groups = set()
 
         self._validate_timer = QTimer(self)
@@ -857,7 +863,6 @@ class ParticleClassifierDialog(QDialog):
         elif verdict == "tautology":
             self._tautology_badge.show()
 
-        self._check_confound(d, ast)
         self._recompute_unresolved_issues()
 
     def _check_stale(self, d, ast):
@@ -928,60 +933,189 @@ class ParticleClassifierDialog(QDialog):
         dlg.exec()
         return dlg.clickedButton() is btn_save
 
-    def _check_confound(self, d, ast):
-        """Structural confound check against every other definition on the
-        same sample (design §5)."""
-        others = [x for x in self._defs_for(self._current) if x['id'] != d['id']]
-        for other in others:
-            try:
-                other_ast = parse(other.get('expression_text', ''))
-            except ExpressionSyntaxError:
-                continue
-            witness = find_confound(ast, other_ast)
-            if witness is None:
-                continue
-            pair_key = frozenset({d['id'], other['id']})
-            if pair_key in self._confound_prompted_pairs:
-                continue
-            self._confound_prompted_pairs.add(pair_key)
-            _itk_log.warning(
-                "Confound detected between definitions %s and %s on "
-                "sample %r: %s", d['id'], other['id'], self._current,
-                sorted(witness))
-            self._show_confound_modal(d, other)
+    @staticmethod
+    def _confound_pair_key(d_a, d_b):
+        """Stable, order-independent identity for a confounding pair.
 
-    def _show_confound_modal(self, def_a, def_b):
-        """Node-level warning-and-choice modal for a detected confound
-        (design §5): explain by name, offer Allow double-counting (default)
-        or switch to Priority ordering."""
-        name_a = def_a.get('group_name') or def_a.get('expression_text') or "Definition A"
-        name_b = def_b.get('group_name') or def_b.get('expression_text') or "Definition B"
-        dlg = QMessageBox(self)
+        Keyed by (sorted ids, their expression texts, their match modes)
+        rather than just ids so that editing either expression *or*
+        switching Exact/Partial later is treated as a fresh occurrence — a
+        dismissed pair whose text or match mode has since changed may no
+        longer be the same conflict (or may no longer confound at all, see
+        ``find_confound``'s mode-aware check), and should be re-evaluated
+        rather than silently staying suppressed forever.
+
+        Returns:
+            tuple: ``(id_a, id_b, expr_a, expr_b, mode_a, mode_b)`` with
+                ``id_a <= id_b``.
+        """
+        a, b = sorted((d_a, d_b), key=lambda d: d['id'])
+        return (a['id'], b['id'], a.get('expression_text', ''),
+                b.get('expression_text', ''), a.get('match_mode', 'partial'),
+                b.get('match_mode', 'partial'))
+
+    @staticmethod
+    def _confound_pair_key_from_dict(rec):
+        return (rec.get('id_a'), rec.get('id_b'),
+                rec.get('expr_a', ''), rec.get('expr_b', ''),
+                rec.get('mode_a', 'partial'), rec.get('mode_b', 'partial'))
+
+    def _collect_active_confound_pairs(self):
+        """Find every currently-confounding definition pair (design §5),
+        scoped per sample (a confound only means anything between two
+        definitions targeting the same sample), excluding pairs already
+        permanently dismissed via the warning dialog's checkbox.
+
+        Returns:
+            list: ``(def_a, def_b, witness_isotopes, pair_key)`` tuples.
+        """
+        by_sample = {}
+        for d in self._definitions:
+            by_sample.setdefault(d.get('target_sample'), []).append(d)
+
+        pairs = []
+        seen = set()
+        for defs in by_sample.values():
+            for i, d_a in enumerate(defs):
+                text_a = d_a.get('expression_text', '')
+                if not text_a.strip():
+                    continue
+                try:
+                    ast_a = parse(text_a)
+                except ExpressionSyntaxError:
+                    continue
+                for d_b in defs[i + 1:]:
+                    text_b = d_b.get('expression_text', '')
+                    if not text_b.strip():
+                        continue
+                    try:
+                        ast_b = parse(text_b)
+                    except ExpressionSyntaxError:
+                        continue
+                    witness = find_confound(
+                        ast_a, ast_b,
+                        d_a.get('match_mode', 'partial'),
+                        d_b.get('match_mode', 'partial'))
+                    if witness is None:
+                        continue
+                    key = self._confound_pair_key(d_a, d_b)
+                    if key in self._dismissed_confound_pairs or key in seen:
+                        continue
+                    seen.add(key)
+                    pairs.append((d_a, d_b, witness, key))
+        return pairs
+
+    def _show_confound_warnings_dialog(self, pairs):
+        """One aggregate warning for every currently active confound pair
+        (design §5), shown once when the user clicks OK — never while
+        typing, so N overlapping definitions produce one list instead of
+        N modals in a row. Each pair gets its own "don't warn me about
+        this pair again" checkbox. Overlap mode itself remains one shared,
+        node-wide choice (§5, not per-pair), kept in sync with the
+        "Overlapping Definitions" radio buttons in the main dialog.
+
+        Offers two ways forward, mirroring the contradiction modal's
+        go-back-or-proceed pattern: "Go Back and Edit" (default —
+        cautious option) leaves the main dialog open with nothing
+        persisted, so the user can fix the definitions before trying
+        again; "Continue and Save" proceeds with the accept and persists
+        any checked "don't warn me again" boxes onto the node. Checkbox
+        choices made right before clicking "Go Back and Edit" are
+        deliberately discarded — the user is signaling they intend to
+        change these definitions, not permanently silence the warning
+        for them.
+
+        Returns:
+            bool: True if the user chose to continue and save, False if
+                they chose to go back and edit (accept() should not close
+                the main dialog in that case).
+        """
+        dlg = QDialog(self)
         dlg.setWindowTitle("Overlapping Definitions Detected")
-        dlg.setIcon(QMessageBox.Icon.Warning)
-        dlg.setText(
-            f"Your definitions allow the same particle to fit both "
-            f"<b>{name_a}</b> and <b>{name_b}</b>.")
-        dlg.setInformativeText(
-            "This applies to the whole node, not just this pair: choose "
-            "whether overlapping definitions may both claim the same "
-            "particle (double-counting), or whether priority order should "
-            "decide — once a particle is claimed by a higher-priority "
-            "definition, lower-priority definitions never see it.")
-        btn_double = dlg.addButton("Allow Double-Counting",
-                                   QMessageBox.ButtonRole.AcceptRole)
-        btn_priority = dlg.addButton("Switch to Priority Ordering",
-                                     QMessageBox.ButtonRole.RejectRole)
-        dlg.setDefaultButton(btn_double)
-        dlg.exec()
-        if dlg.clickedButton() is btn_priority:
-            self._overlap_mode = 'priority'
-            self._rb_priority.setChecked(True)
-        else:
-            self._overlap_mode = 'double_count'
-            self._rb_double_count.setChecked(True)
-        _itk_log.info("Overlap mode set via confound modal -> %s",
-                      self._overlap_mode)
+        dlg.setModal(True)
+        dlg.resize(520, 460)
+        dlg.setStyleSheet(self.styleSheet())
+
+        layout = QVBoxLayout(dlg)
+        intro = QLabel("These definitions can both match the same particle:")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        iv = QVBoxLayout(inner)
+        checkboxes = []
+        for d_a, d_b, witness, key in pairs:
+            name_a = d_a.get('group_name') or d_a.get('expression_text') or "Definition A"
+            name_b = d_b.get('group_name') or d_b.get('expression_text') or "Definition B"
+            row = QLabel(
+                f"<b>{name_a}</b> ↔ <b>{name_b}</b>  "
+                f"({', '.join(sorted(witness))})")
+            row.setWordWrap(True)
+            iv.addWidget(row)
+            cb = QCheckBox("Don't warn me about this pair again")
+            iv.addWidget(cb)
+            checkboxes.append((key, cb))
+        iv.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+
+        grp = QGroupBox("Overlapping Definitions")
+        gv = QVBoxLayout(grp)
+        note = QLabel("This choice applies to the whole node, not just "
+                      "these pairs.")
+        note.setWordWrap(True)
+        gv.addWidget(note)
+        bg = QButtonGroup(dlg)
+        rb_double = QRadioButton("Allow Double-Counting")
+        rb_priority = QRadioButton("Switch to Priority Ordering")
+        bg.addButton(rb_double, 0)
+        bg.addButton(rb_priority, 1)
+        (rb_priority if self._overlap_mode == 'priority' else rb_double).setChecked(True)
+        gv.addWidget(rb_double)
+        gv.addWidget(rb_priority)
+        layout.addWidget(grp)
+
+        bb = QDialogButtonBox()
+        btn_back = bb.addButton("Go Back and Edit", QDialogButtonBox.RejectRole)
+        bb.addButton("Continue and Save", QDialogButtonBox.AcceptRole)
+        btn_back.setDefault(True)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        layout.addWidget(bb)
+
+        proceed = dlg.exec() == QDialog.Accepted
+
+        self._overlap_mode = 'priority' if rb_priority.isChecked() else 'double_count'
+        self._rb_priority.setChecked(rb_priority.isChecked())
+        self._rb_double_count.setChecked(not rb_priority.isChecked())
+
+        if proceed:
+            for key, cb in checkboxes:
+                if cb.isChecked():
+                    self._dismissed_confound_pairs.add(key)
+
+        _itk_log.info(
+            "Confound warnings shown for %d pair(s); overlap_mode=%s; "
+            "user chose %s", len(pairs), self._overlap_mode,
+            "continue" if proceed else "go back and edit")
+        return proceed
+
+    def accept(self):
+        """Show the aggregate confound warning (if any) before closing.
+
+        Confound detection now only runs here — at OK-click time — rather
+        than on every keystroke, so editing an expression never triggers a
+        pop-up mid-typing (design §5's warning is about the *saved*
+        configuration, not each transient edit). Choosing "Go Back and
+        Edit" in that warning cancels the accept entirely, leaving this
+        dialog open so the user can fix the definitions.
+        """
+        pairs = self._collect_active_confound_pairs()
+        if pairs and not self._show_confound_warnings_dialog(pairs):
+            return
+        super().accept()
 
     def _recompute_unresolved_issues(self):
         """Refresh the has-unresolved-issues flag (drives the node icon's
@@ -1102,3 +1236,19 @@ class ParticleClassifierDialog(QDialog):
 
     def get_group_pooling_policies(self):
         return dict(self._group_pooling_policies)
+
+    def get_confound_dismissals(self):
+        """Serializable form of permanently-dismissed confound pairs.
+
+        Returns:
+            list: ``[{'id_a', 'id_b', 'expr_a', 'expr_b', 'mode_a',
+                'mode_b'}, ...]``, read back by
+                :meth:`tools.particle_classifier_node.ParticleClassifierNode.configure`
+                and passed back in as ``confound_dismissals`` next time this
+                dialog opens, so dismissed pairs stay dismissed.
+        """
+        return [
+            {'id_a': k[0], 'id_b': k[1], 'expr_a': k[2], 'expr_b': k[3],
+             'mode_a': k[4], 'mode_b': k[5]}
+            for k in self._dismissed_confound_pairs
+        ]
