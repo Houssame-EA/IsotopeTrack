@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QComboBox, QSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout,
     QDialogButtonBox, QApplication, QGraphicsItem, QListWidget,
-    QListWidgetItem, QSplitter, QScrollArea, QFrame, QLineEdit,
+    QListWidgetItem, QSplitter, QScrollArea, QFrame, QLineEdit, QCheckBox,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPointF, QRectF
 from PySide6.QtGui import QPen, QColor
@@ -573,13 +573,18 @@ def normalize_sources(upstreams):
                 'name': name,
                 'origin': 'single',
                 'particles': particles,
-                'total': u.get('total_particles', len(particles)),
+                # Not u.get('total_particles', ...): that field is the
+                # sample node's pre-isotope-selection raw count, which
+                # doesn't match what actually enters the filter once the
+                # sample node's isotope selection has narrowed 'particles'.
+                'total': len(particles),
                 'sample_data': u.get('data'),
                 'conc': (u.get('concentration_meta') or {}).get(name),
                 'isotopes': u.get('selected_isotopes') or [],
                 'parent_window': u.get('parent_window'),
             })
     return sources
+
 
 
 def source_labels(source):
@@ -755,7 +760,8 @@ class ParticleFilterDialog(QDialog):
 
     def __init__(self, parent, upstreams, sample_filters=None,
                  selected_sources=None, merged_name="Combined",
-                 owner_node=None, suppress_stale_warning=False):
+                 owner_node=None, suppress_stale_warning=False,
+                 merge_singles=True):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -778,6 +784,7 @@ class ParticleFilterDialog(QDialog):
         self._selected_sources = (list(selected_sources)
                                   if selected_sources is not None else None)
         self._merged_name = merged_name or "Combined"
+        self._merge_singles_init = bool(merge_singles)
         self._n_singles = sum(1 for s in self._sources
                               if s.get('origin') == 'single')
 
@@ -928,18 +935,26 @@ class ParticleFilterDialog(QDialog):
             self._list.addItem(ph)
         lv.addWidget(self._list, 1)
 
+        self._merge_chk = None
         self._merge_edit = None
         if self._n_singles >= 2:
+            self._merge_chk = QCheckBox("Merge single samples into one")
+            self._merge_chk.setChecked(self._merge_singles_init)
+            self._merge_chk.toggled.connect(self._on_merge_toggle)
+            lv.addWidget(self._merge_chk)
             merge_lbl = QLabel(
                 "Single-sample inputs exit as ONE sample, named:")
             merge_lbl.setWordWrap(True)
             merge_lbl.setStyleSheet(
                 f"color:{p.text_muted}; font-size:11px; font-weight:400;")
+            merge_lbl.setEnabled(self._merge_singles_init)
             lv.addWidget(merge_lbl)
             self._merge_edit = QLineEdit(self._merged_name)
             self._merge_edit.setPlaceholderText("Combined")
+            self._merge_edit.setEnabled(self._merge_singles_init)
             self._merge_edit.textChanged.connect(self._schedule_preview)
             lv.addWidget(self._merge_edit)
+            self._merge_lbl = merge_lbl
         splitter.addWidget(left)
 
         right = QWidget()
@@ -1491,6 +1506,25 @@ class ParticleFilterDialog(QDialog):
         self._btn_select_all.setText(
             "Deselect all samples" if all_checked else "Select all samples")
 
+    def _on_merge_toggle(self, checked):
+        """React to the "Merge single samples into one" checkbox."""
+        if self._merge_edit is not None:
+            self._merge_edit.setEnabled(checked)
+        if getattr(self, '_merge_lbl', None) is not None:
+            self._merge_lbl.setEnabled(checked)
+        self._schedule_preview()
+
+    def get_merge_singles(self):
+        """Report whether single-sample inputs should merge into one.
+
+        Returns:
+            bool: The checkbox state, or True when fewer than two
+                single-sample inputs are connected (no checkbox exists).
+        """
+        if self._merge_chk is not None:
+            return self._merge_chk.isChecked()
+        return True
+
     def _on_chips_changed(self):
         """React to a chip toggle: refresh threshold rows and the preview."""
         if self._loading:
@@ -1628,7 +1662,7 @@ class ParticleFilterDialog(QDialog):
         kept_total, stale_all = 0, set()
         single_kept, single_total, parts = 0, 0, []
         chosen_singles = [s for s in chosen if s.get('origin') == 'single']
-        merging = len(chosen_singles) >= 2
+        merging = len(chosen_singles) >= 2 and self.get_merge_singles()
         for s in chosen:
             kept, stale = apply_sample_filter(s, self._filters.get(s['name']))
             kept_total += len(kept)
@@ -1787,6 +1821,7 @@ class ParticleFilterNode(QObject):
         self.sample_filters = {}
         self.selected_sources = None
         self.merged_name = "Combined"
+        self.merge_singles = True
         self._stale = []
         self._incoming_names = []
         # Per-node opt-out for the "applying this will change open plots"
@@ -1868,13 +1903,19 @@ class ParticleFilterNode(QObject):
         if not filterable:
             return upstreams[0]
         sources = normalize_sources(filterable)
-        self._incoming_names = [s['name'] for s in sources]
         self._recompute_stale(sources)
         if self.selected_sources is None:
             chosen = sources
         else:
             chosen = [s for s in sources
                       if s['name'] in self.selected_sources]
+            if not chosen and sources:
+                # self.selected_sources names none of the current sources —
+                # e.g. this node was duplicated (or its upstream swapped)
+                # and the stored selection refers to samples that no longer
+                # feed it. Treat it like an unset selection rather than
+                # silently emitting nothing.
+                chosen = sources
         if not chosen:
             return None
         any_active = any(active_axes(self.sample_filters.get(s['name']))
@@ -1902,7 +1943,7 @@ class ParticleFilterNode(QObject):
         others = [(s, k) for s, k in filtered
                   if s.get('origin') != 'single']
         final = []
-        if len(singles) >= 2:
+        if len(singles) >= 2 and self.merge_singles:
             name = (self.merged_name or '').strip() or 'Combined'
             merged_kept = []
             for _s, kept in singles:
@@ -1998,11 +2039,17 @@ class ParticleFilterNode(QObject):
         }
 
     def _recompute_stale(self, sources):
-        """Refresh the cached stale-label list against the incoming samples.
+        """Refresh cached knowledge of the incoming samples: which isotope
+        labels a filter references but the sample no longer has, and which
+        sample names are actually connected right now (so ``is_active()``
+        and ``summary_text()`` can tell a real setting apart from a
+        ``sample_filters``/``selected_sources`` entry left over from a
+        duplicate or a rewired upstream — see those methods).
 
         Args:
             sources (list): Source entries from :func:`normalize_sources`.
         """
+        self._incoming_names = [s['name'] for s in sources or []]
         stale = set()
         for s in sources or []:
             cfg = self.sample_filters.get(s['name'])
@@ -2021,29 +2068,44 @@ class ParticleFilterNode(QObject):
     def is_active(self):
         """Report whether the node is doing anything beyond passthrough.
 
+        Only counts ``sample_filters``/``selected_sources`` entries that
+        name a currently-connected sample (``self._incoming_names``) —
+        entries left over from a duplicate or a rewired upstream refer to
+        samples that aren't actually feeding this node anymore, so they
+        shouldn't make an unconfigured filter look active.
+
         Returns:
-            bool: True when any sample has an active filter or a sample
-                subset is selected.
+            bool: True when any currently-connected sample has an active
+                filter, or the sample selection currently narrows anything.
         """
-        return any(active_axes(c) for c in self.sample_filters.values()) or (
-            self.selected_sources is not None)
+        current = set(self._incoming_names)
+        filters_active = any(active_axes(c) for n, c in self.sample_filters.items()
+                              if n in current)
+        sources_active = bool(self.selected_sources) and any(
+            n in current for n in self.selected_sources)
+        return filters_active or sources_active
 
     def summary_text(self):
         """Build the live summary shown under the node icon.
 
         Returns:
             str: e.g. "2 samples + 1 filtered", a single sample's criteria
-                when only one filter is set, "No filter" when inactive,
+                when only one filter is set, "No filter" when inactive
+                (including when every stored setting is left over from a
+                duplicate/rewire and matches nothing currently connected),
                 "⚠ stale" when stale criteria are detected.
         """
         if self._stale:
             return "⚠ stale"
+        current = set(self._incoming_names)
         parts = []
         if self.selected_sources is not None:
-            n = len(self.selected_sources)
-            parts.append(f"{n} sample" + ("s" if n != 1 else ""))
+            matched = [n for n in self.selected_sources if n in current]
+            if matched:
+                n = len(matched)
+                parts.append(f"{n} sample" + ("s" if n != 1 else ""))
         filtered = {n: c for n, c in self.sample_filters.items()
-                    if active_axes(c)}
+                    if active_axes(c) and n in current}
         if len(filtered) == 1:
             parts.append(summarize_config(next(iter(filtered.values()))))
         elif len(filtered) > 1:
@@ -2060,11 +2122,13 @@ class ParticleFilterNode(QObject):
         dlg = ParticleFilterDialog(
             parent_window, snapshots, self.sample_filters,
             self.selected_sources, self.merged_name, owner_node=self,
-            suppress_stale_warning=self.suppress_stale_warning)
+            suppress_stale_warning=self.suppress_stale_warning,
+            merge_singles=self.merge_singles)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()
+            self.merge_singles = dlg.get_merge_singles()
             self.suppress_stale_warning = dlg.stale_warning_suppressed()
             self._recompute_stale(normalize_sources(snapshots))
             self.configuration_changed.emit()

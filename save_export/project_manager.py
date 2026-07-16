@@ -776,10 +776,11 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
+            'merge_singles',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
-        
+
         for attr in config_attributes:
             if hasattr(node, attr):
                 value = getattr(node, attr)
@@ -968,10 +969,11 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
+            'merge_singles',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
-        
+
         for attr in config_attributes:
             if attr in node_data:
                 value = node_data[attr]
