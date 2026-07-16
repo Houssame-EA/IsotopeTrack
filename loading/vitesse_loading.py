@@ -1,4 +1,5 @@
 """Loading data from Nu Instruments."""
+import gzip
 import json
 import logging
 from pathlib import Path
@@ -12,13 +13,33 @@ _itk_log = logging.getLogger("IsotopeTrack.loading.vitesse_loading")
 logger = logging.getLogger(__name__)
 
 
+def open_nu_binary(path: Path) -> BinaryIO:
+    """
+    Open a Nu binary file, transparently decompressing gzip if needed.
+    Uncompressed files are returned as-is,
+    so both formats are supported.
+
+    Args:
+        path (Path): Path to the binary file
+
+    Returns:
+        BinaryIO: Readable binary file object
+    """
+    fp = path.open("rb")
+    magic = fp.read(2)
+    fp.seek(0)
+    if magic == b"\x1f\x8b":
+        return gzip.open(fp, "rb")
+    return fp
+
+
 def is_nu_run_info_file(path: Path) -> bool:
     """
     Check if file exists and is called 'run.info'.
-    
+
     Args:
         path (Path): Path to check
-        
+
     Returns:
         bool: True if file exists and is named 'run.info'
     """
@@ -30,10 +51,10 @@ def is_nu_run_info_file(path: Path) -> bool:
 def is_nu_directory(path: Path) -> bool:
     """
     Check if path is a directory containing 'run.info' and 'integrated.index'.
-    
+
     Args:
         path (Path): Path to check
-        
+
     Returns:
         bool: True if valid Nu directory
     """
@@ -41,7 +62,7 @@ def is_nu_directory(path: Path) -> bool:
         return False
     if not path.joinpath("run.info").exists():
         return False
-    if not path.joinpath("integrated.index").exists(): 
+    if not path.joinpath("integrated.index").exists():
         return False
     return True
 
@@ -56,7 +77,7 @@ def blank_nu_signal_data(
 ) -> np.ndarray:
     """
     Apply auto-blanking to the integrated data.
-    
+
     There must be one cycle/segment and no missing acquisitions/data.
 
     Args:
@@ -105,13 +126,13 @@ def collect_nu_autob_data(
 ) -> list[np.ndarray]:
     """
     Collect Nu autoblank data from multiple files.
-    
+
     Args:
         root (Path): Root directory path
         index (list[dict]): List of index dictionaries
         cyc_number (int | None): Cycle number to filter, or None for all
         seg_number (int | None): Segment number to filter, or None for all
-        
+
     Returns:
         list[np.ndarray]: List of autoblank event arrays
     """
@@ -146,7 +167,7 @@ def collect_nu_integ_data(
 ) -> list[np.ndarray]:
     """
     Collect Nu integrated data from multiple files.
-    
+
     Args:
         root (Path): Root directory path
         index (list[dict]): List of index dictionaries
@@ -155,7 +176,7 @@ def collect_nu_integ_data(
         progress_callback (callable | None): Called with a 0..1 fraction after
             each integ file is read, so callers can report read progress that
             is proportional to the number of .integ files.
-        
+
     Returns:
         list[np.ndarray]: List of integrated data arrays
     """
@@ -191,7 +212,7 @@ def collect_nu_integ_data(
 def get_dwelltime_from_info(info: dict) -> float:
     """
     Read the dwell time (total acquisition time) from run.info.
-    
+
     Rounds to the nearest nanosecond.
 
     Args:
@@ -300,17 +321,28 @@ def read_nu_autob_binary(
 ) -> list[np.ndarray]:
     """
     Read Nu autoblank binary file.
-    
+
+    Supports both plain and gzip-compressed '.autob' files.
+
     Args:
         path (Path): Path to .autob file
         first_cyc_number (int | None): Expected first cycle number
         first_seg_number (int | None): Expected first segment number
         first_acq_number (int | None): Expected first acquisition number
-        
+
     Returns:
         list[np.ndarray]: List of autoblank event arrays
     """
     def autob_dtype(size: int) -> np.dtype:
+        """
+        Build the numpy dtype for an autoblank event.
+
+        Args:
+            size (int): Number of edges in the event
+
+        Returns:
+            np.dtype: Structured dtype for the event
+        """
         return np.dtype(
             [
                 ("cyc_number", np.uint32),
@@ -325,6 +357,15 @@ def read_nu_autob_binary(
         )
 
     def read_autob_events(fp: BinaryIO) -> Generator[np.ndarray, None, None]:
+        """
+        Yield autoblank events from an open binary file object.
+
+        Args:
+            fp (BinaryIO): Open binary file object
+
+        Yields:
+            np.ndarray: Single autoblank event array
+        """
         while fp:
             data = fp.read(4 + 4 + 4 + 4 + 4 + 1 + 4)
             if not data:
@@ -336,7 +377,7 @@ def read_nu_autob_binary(
                 autob["edges"] = np.frombuffer(fp.read(size * 4), dtype=np.uint32)
             yield autob
 
-    with path.open("rb") as fp:
+    with open_nu_binary(path) as fp:
         autob_events = list(read_autob_events(fp))
 
     return autob_events
@@ -350,22 +391,33 @@ def read_nu_integ_binary(
 ) -> np.ndarray:
     """
     Read Nu integrated binary file.
-    
+
+    Supports both plain and gzip-compressed '.integ' files.
+
     Args:
         path (Path): Path to .integ file
         first_cyc_number (int | None): Expected first cycle number
         first_seg_number (int | None): Expected first segment number
         first_acq_number (int | None): Expected first acquisition number
-        
+
     Returns:
         np.ndarray: Integrated data array
     """
     def integ_dtype(size: int) -> np.dtype:
+        """
+        Build the numpy dtype for an integrated data record.
+
+        Args:
+            size (int): Number of integration results per record
+
+        Returns:
+            np.dtype: Structured dtype for the record
+        """
         data_dtype = np.dtype(
             {
                 "names": ["center", "signal"],
                 "formats": [np.float32, np.float32],
-                "itemsize": 4 + 4 + 4 + 1, 
+                "itemsize": 4 + 4 + 4 + 1,
             }
         )
         return np.dtype(
@@ -378,7 +430,7 @@ def read_nu_integ_binary(
             ]
         )
 
-    with path.open("rb") as fp:
+    with open_nu_binary(path) as fp:
         cyc_number = int.from_bytes(fp.read(4), "little")
         if first_cyc_number is not None and cyc_number != first_cyc_number:
             raise ValueError("read_integ_binary: incorrect FirstCycNum")
@@ -409,6 +461,7 @@ def read_nu_directory(
     Directory must contain 'run.info', 'integrated.index' and at least one '.integ'
     file. Data is read from '.integ' files listed in the 'integrated.index' and
     are checked for correct starting cycle, segment and acquisition numbers.
+    Both plain and gzip-compressed '.integ' and '.autob' files are supported.
 
     Args:
         path (str | Path): Path to data directory
@@ -428,7 +481,7 @@ def read_nu_directory(
             - run_info (dict): Dictionary of parameters from run.info
     """
     path = Path(path)
-    if not is_nu_directory(path): 
+    if not is_nu_directory(path):
         raise ValueError("read_nu_directory: missing 'run.info' or 'integrated.index'")
 
     with path.joinpath("run.info").open("r") as fp:
@@ -448,6 +501,12 @@ def read_nu_directory(
     accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
 
     def _integ_progress(frac):
+        """
+        Scale integ read progress into the 0..0.85 range.
+
+        Args:
+            frac (float): Fraction of integ files read (0..1)
+        """
         if progress_callback is not None:
             try:
                 progress_callback(frac * 0.85)
@@ -462,7 +521,7 @@ def read_nu_directory(
         integs[0], run_info["MassCalCoefficients"], segment_delays
     )[0]
     signals = get_signals_from_nu_data(integs, accumulations)
-    del integs 
+    del integs
     if progress_callback is not None:
         try:
             progress_callback(0.93)
@@ -502,7 +561,7 @@ def select_nu_signals(
 ) -> np.ndarray:
     """
     Reduce signals to the isotopes in selected_masses.
-    
+
     'masses' must be sorted.
 
     Args:
@@ -519,6 +578,16 @@ def select_nu_signals(
             greater than 'max_mass_diff'
     """
     def find_closest_idx(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """
+        Find indices of the closest values of x for each value in y.
+
+        Args:
+            x (np.ndarray): Sorted array to search in
+            y (np.ndarray): Values to search for
+
+        Returns:
+            np.ndarray: Indices of closest values
+        """
         idx = np.searchsorted(x, y, side="left")
         prev_less = np.abs(y - x[np.maximum(idx - 1, 0)]) < np.abs(
             y - x[np.minimum(idx, len(x) - 1)]
@@ -565,10 +634,10 @@ def single_ion_distribution(
         np.ndarray: Array of stacked bin centers and counts
     """
     pzeros = np.count_nonzero(counts, axis=0) / counts.shape[0]
-    
-    poi2 = gammainc(3, pzeros) 
-    
+
+    poi2 = gammainc(3, pzeros)
+
     x = counts[:, (poi2 > 1e-5) & (poi2 < 1e-3)]
-    
+
     hist, bins = np.histogram(x[x > 0], bins=bins)
     return np.stack(((bins[1:] + bins[:-1]) / 2.0, hist), axis=1)
