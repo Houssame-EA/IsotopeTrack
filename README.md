@@ -332,6 +332,18 @@ The methodologies implemented in IsotopeTrack are based on the following studies
 
 The complete reference list — including the foundational statistics and every clustering algorithm and validity index — is available inside the application under **Help → Equations**, with clickable citations throughout.
 
+
+## Contributors
+
+Thanks to everyone who has contributed to building IsotopeTrack:
+
+| Contributor | Name |
+|---|---|
+| [![1nvertedProtagonist](https://github.com/1nvertedProtagonist.png?size=40)](https://github.com/1nvertedProtagonist) | [1nvertedProtagonist](https://github.com/1nvertedProtagonist) — Bogdan-Vladimir Damian |
+| [![TNTY100](https://github.com/TNTY100.png?size=40)](https://github.com/TNTY100) | [TNTY100](https://github.com/TNTY100) — Yohan Thibault |
+| [![github-actions[bot]](https://github.com/apps/github-actions.png?size=40)](https://github.com/apps/github-actions) | [github-actions[bot]](https://github.com/apps/github-actions) — automation/CI bot |
+| [![Houssame-EA](https://github.com/Houssame-EA.png?size=40)](https://github.com/Houssame-EA) | [Houssame-EA](https://github.com/Houssame-EA) — Houssame-Eddine Ahabchane |
+
 ---
 
 ## License
