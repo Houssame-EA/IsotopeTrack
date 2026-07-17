@@ -3,6 +3,14 @@
 All notable changes to IsotopeTrack are documented here.
 
 ---
+## v1.10.7 — 2026-07-17
+
+
+- Memory to the path folder
+- Updating the user guide
+- Removed the redundant display mode type in composition results node
+- Relocated histogram making stuff to shared_plot_utils instead of keeping the repetition
+- Heatmap now shows changes for when we have change the data type (bug fix)
 
 
 ## v1.10.6 — 2026-07-10
