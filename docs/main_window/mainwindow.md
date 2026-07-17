@@ -33,6 +33,12 @@ Custom QComboBox that ignores mouse wheel events.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self)` | Initialize the MainWindow for IsotopeTrack application. |
+| `_init_ui_enhancements` | `(self)` | Set up toast notifications and the home panel. |
+| `_sync_home_state` | `(self)` | Show the home panel only while no samples are loaded (never over a plot). |
+| `_recover_session` | `(self, path)` | Load a crashed session's autosave snapshot, then clear the snapshot. |
+| `notify` | `(self, message, level='info', duration=3500)` | Show a non-blocking toast notification. |
+| `_maybe_show_welcome` | `(self)` | Show the welcome screen on first launch unless the user opted out |
+| `show_welcome` | `(self)` | Open the Welcome / Home dialog. |
 | `update_window_title` | `(self, filepath=None)` | Update the window title to reflect the current project state. |
 | `setup_window_size` | `(self)` | Configure initial window size and position. |
 | `initialize_help_manager` | `(self)` | Initialize help dialog manager. |
@@ -49,7 +55,7 @@ Custom QComboBox that ignores mouse wheel events.
 | `_mark_results_changed` | `(self)` | Flag that the stored results are now out of date. |
 | `create_sidebar` | `(self)` | Create sidebar with calibration and sample management tools. |
 | `create_menu_bar` | `(self)` | Create application menu bar with actions. |
-| `open_new_window` | `(self)` | Returns: |
+| `open_new_window` | `(self)` |  |
 | `close_all_windows` | `(self)` | Close all open windows and quit application. |
 | `create_status_bar` | `(self)` | Create application status bar with progress indicator. |
 | `apply_theme` | `(self)` | Apply the currently-active theme palette to every styled widget |
@@ -63,9 +69,11 @@ Custom QComboBox that ignores mouse wheel events.
 | `create_table_header` | `(self, title, bg_color, text_color)` | Create styled header label for tables. |
 | `create_enhanced_checkbox` | `(self, text, tooltip)` | Create styled checkbox with custom appearance. |
 | `toggle_sidebar` | `(self)` | Animate sidebar visibility toggle. |
+| `_set_content_frozen` | `(self, frozen)` | Suspend/resume repaints of the heavy plot widget during the slide. |
 | `_apply_sidebar_grip_style` | `(self)` | Style the resize grip's divider line and pill holder for the theme. |
 | `_sidebar_grip_press` | `(self, event)` | Begin a sidebar resize drag. |
-| `_sidebar_grip_move` | `(self, event)` | Resize the sidebar live while dragging the grip. |
+| `_sidebar_grip_move` | `(self, event)` | Record the live drag width; applied on the next frame tick. |
+| `_apply_pending_grip_width` | `(self)` | Apply the most recent width requested during a grip drag. |
 | `_sidebar_grip_release` | `(self, event)` | End a sidebar resize drag and remember the chosen width. |
 | `on_animation_finished` | `(self)` | Clean up after sidebar animation completes. |
 | `toggle_info` | `(self)` | Toggle visibility of sample information tooltip. |
@@ -74,6 +82,7 @@ Custom QComboBox that ignores mouse wheel events.
 | `exit_fullscreen` | `(self)` | Exit fullscreen mode. |
 | `keyPressEvent` | `(self, event)` | Handle keyboard events. |
 | `resizeEvent` | `(self, event)` | Handle window resize events. |
+| `changeEvent` | `(self, event)` | Attribute subsequent log records to whichever window is active. |
 | `_has_loaded_samples` | `(self)` | Check whether any sample data is currently loaded in this window. |
 | `_probe_masses` | `(self, paths, source_type)` | Quickly probe the mass list of the first accessible path. |
 | `_prepare_for_load` | `(self, source_type, paths, new_masses=None)` | Decide how to handle a new load request against the current session. |
@@ -181,6 +190,7 @@ Custom QComboBox that ignores mouse wheel events.
 | `particles_per_ml` | `(self, sample_name, particle_count, element_key=None, apply_dilution=T` | Return the particle number concentration in particles per millilitre. |
 | `has_transport_rate` | `(self)` | Report whether a transport rate calibration is available. |
 | `open_dilution_factor_dialog` | `(self)` | Open the per sample dilution factor editor dialog. |
+| `open_autosave_settings` | `(self)` | Open the Auto Save Settings dialog. |
 | `maybe_prompt_dilution` | `(self)` | Show the one time dilution correction prompt when appropriate. |
 | `update_calculations` | `(self)` | Update calculations after transport rate changes. |
 | `_calculate_mass_data_optimized` | `(self, particles, element_cache, progress=None, process_all_samples=Fa` | Calculate comprehensive mass, mole, and diameter data for particles. |
@@ -188,7 +198,10 @@ Custom QComboBox that ignores mouse wheel events.
 | `update_sample_progress` | `(self, thread_progress, sample_name, current_sample, total_samples)` | Update progress bar for sample processing. |
 | `update_element_progress` | `(self, thread_progress, sample_name, current_sample, total_samples)` | Update progress bar during element processing. |
 | `log_status` | `(self, message, level='info', context=None)` | Update status bar and log message with context. |
-| `save_project` | `(self)` | Save current project to file. |
+| `save_project` | `(self)` | Save the current project. |
+| `save_project_as` | `(self)` | Save the current project under a new filename (always prompts). |
+| `_do_undo` | `(self)` | Step back to the previous editable-input state (Cmd/Ctrl+Z). |
+| `_do_redo` | `(self)` | Step forward again after an undo (Cmd/Ctrl+Shift+Z). |
 | `load_project` | `(self, filepath: str \| None=None)` | Load project from file. |
 | `_update_saturation_button_text` | `(self)` | Refresh the non-linearity filter button caption with the current |
 | `_particle_fwhm_s` | `(self, particle, time_arr, signal=None)` | Return the FWHM of a particle event in seconds. |
@@ -205,6 +218,7 @@ Custom QComboBox that ignores mouse wheel events.
 | `configure_saturation_filter` | `(self)` | Open the settings dialog of the non-linearity filter. The |
 | `_refresh_after_saturation_change` | `(self)` | Refresh the plot, the results tables and the summary of the |
 | `export_data` | `(self)` | Export all data using external export utility. |
+| `_offer_crash_recovery` | `(self)` | Offer to reload an autosave snapshot left behind by a crashed session. |
 | `closeEvent` | `(self, event)` | Handle application close event with unsaved changes check. |
 | `show_user_guide` | `(self)` | Display user guide dialog. |
 | `show_detection_methods` | `(self)` | Display detection methods information dialog. |

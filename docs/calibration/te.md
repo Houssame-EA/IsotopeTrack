@@ -6,7 +6,7 @@
 
 | Name | Value |
 |------|-------|
-| `_METHOD_SIGNAL_MAP` | `{'Liquid weight': 'Weight Method', 'Number based': 'Parti…` |
+| `_METHOD_SIGNAL_MAP` | `calibration_registry.label_to_signal_map()` |
 
 ## Classes
 

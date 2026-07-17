@@ -7,7 +7,7 @@ Application-wide theming and colors.
 ### [`theme.py`](theme.md)
 
 
-**2** classes &nbsp;·&nbsp; **27** functions &nbsp;·&nbsp; **12** methods
+**2** classes &nbsp;·&nbsp; **28** functions &nbsp;·&nbsp; **12** methods
 
 ### [`colors.py`](colors.md)
 

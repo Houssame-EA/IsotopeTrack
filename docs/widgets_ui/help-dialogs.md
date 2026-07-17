@@ -11,7 +11,7 @@ Background — compound Poisson-lognormal per bin
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `_temporal_profile` | `(self, dwell_us)` | Compute the lognormal temporal probability vector for distributing |
-| `generate` | `(self, acq_time_s=60.0, dwell_us=76.71, lambda_bg=1.1, n_particles=300` | Args: |
+| `generate` | `(self, acq_time_s=60.0, dwell_us=76.71, lambda_bg=1.1, n_particles=300` |  |
 
 ### `InteractiveEquationVisualizer` *(extends `QWidget`)*
 
@@ -119,8 +119,9 @@ Dialog displaying calibration method descriptions and equations.
 | `showEvent` | `(self, event)` | Reapply the theme each time the dialog becomes visible. |
 | `_img` | `(self, path, w=600, h=400)` | Load and scale an image resource into a QLabel. |
 | `_scroll` | `(self, *widgets)` | Wrap an arbitrary number of widgets inside a scrollable area. |
-| `_tab_overview` | `(self)` | Build the Overview tab content. |
-| `_tab_ionic` | `(self)` | Build the Ionic Calibration tab with regression methods and FOM equations. |
+| `_tab_ionic` | `(self)` | Build the Sensitivity tab: intro, figure, and the LaTeX equations |
+| `_topic_tab` | `(self, topic_key)` | Build a scrollable tab from one equations-reference topic, with |
+| `_equations_widget` | `(self, topic_key)` | Safely build the equations widget for one topic. |
 | `_tab_transport` | `(self)` | Build the Transport Rate tab with all three method equations. |
 
 ### `AboutDialog` *(extends `QDialog`)*

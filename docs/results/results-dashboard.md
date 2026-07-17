@@ -16,22 +16,22 @@ Full-window enhanced Chart.js dashboard.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dashboard_node, parent_window=None)` | Args: |
-| `_inject_data` | `(self, ok)` | Args: |
+| `__init__` | `(self, dashboard_node, parent_window=None)` |  |
+| `_inject_data` | `(self, ok)` |  |
 
 ### `DashboardNode` *(extends `QObject`)*
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
-| `set_position` | `(self, pos)` | Args: |
-| `process_data` | `(self, input_data)` | Args: |
-| `get_data_summary` | `(self)` | Returns: |
-| `configure` | `(self, parent_window)` | Args: |
+| `__init__` | `(self, parent_window=None)` |  |
+| `set_position` | `(self, pos)` |  |
+| `process_data` | `(self, input_data)` |  |
+| `get_data_summary` | `(self)` |  |
+| `configure` | `(self, parent_window)` |  |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_safe_positive` | `(v)` | Args: |
+| `_safe_positive` | `(v)` |  |
 | `_build_dashboard_data` | `(data_context)` | Extract everything the dashboard JS needs. |

@@ -31,11 +31,11 @@ Dialog for selecting and configuring multiple signals for simultaneous display.
 |--------|-----------|-------------|
 | `__init__` | `(self, main_window, parent=None)` | Initialize the signal selector dialog. |
 | `apply_theme` | `(self)` | Re-apply all theme-aware styling. |
-| `showEvent` | `(self, event)` | Args: |
+| `showEvent` | `(self, event)` |  |
 | `_apply_element_scroll_style` | `(self)` |  |
 | `_apply_sample_scroll_style` | `(self)` |  |
 | `_apply_button_bar_style` | `(self)` |  |
-| `_row_label_style` | `(self) → str` | Returns: |
+| `_row_label_style` | `(self) → str` |  |
 | `_setup_ui` | `(self)` | Build and assemble the dialog layout. |
 | `_build_sample_group` | `(self)` | Build the sample selection group box. |
 | `_build_element_group` | `(self)` | Build the element/signal selection group box. |
@@ -61,10 +61,10 @@ Dialog for selecting and configuring multiple signals for simultaneous display.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_style_group_box` | `() → str` | Returns: |
-| `_style_scroll_area` | `() → str` | Returns: |
-| `_style_checkbox` | `() → str` | Returns: |
-| `_style_row_widget` | `() → str` | Returns: |
-| `_style_utility_btn` | `() → str` | Returns: |
-| `_style_plot_btn` | `() → str` | Returns: |
-| `_style_cancel_btn` | `() → str` | Returns: |
+| `_style_group_box` | `() → str` |  |
+| `_style_scroll_area` | `() → str` |  |
+| `_style_checkbox` | `() → str` |  |
+| `_style_row_widget` | `() → str` |  |
+| `_style_utility_btn` | `() → str` |  |
+| `_style_plot_btn` | `() → str` |  |
+| `_style_cancel_btn` | `() → str` |  |

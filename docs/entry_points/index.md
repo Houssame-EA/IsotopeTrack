@@ -7,7 +7,7 @@ Application startup: CLI parsing, splash screen, progressive loading.
 ### [`Run.py`](run.md)
 
 
-**0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **4** methods
 
 ### [`cli_utils.py`](cli-utils.md)
 File with function and classes that manages arguments that are passed with the

@@ -33,18 +33,18 @@ FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `showEvent` | `(self, event)` | Args: |
-| `resizeEvent` | `(self, event)` | Args: |
+| `showEvent` | `(self, event)` |  |
+| `resizeEvent` | `(self, event)` |  |
 
 ### `_SOM`
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_` | Args: |
+| `__init__` | `(self, rows, cols, n_features, sigma=1.0, lr=0.5, n_iter=2000, random_` |  |
 | `fit` | `(self, X, progress_cb=None, snapshot_every=0)` | Train the SOM, optionally reporting live convergence snapshots. |
-| `predict` | `(self, X)` | Args: |
-| `get_weights` | `(self)` | Returns: |
-| `get_grid_labels` | `(self, neuron_cluster_labels)` | Args: |
+| `predict` | `(self, X)` |  |
+| `get_weights` | `(self)` |  |
+| `get_grid_labels` | `(self, neuron_cluster_labels)` |  |
 | `get_u_matrix` | `(self)` | Compute the U-matrix: mean Euclidean distance from each neuron to |
 | `get_hit_count` | `(self, X)` | Count how many input samples have each neuron as their BMU |
 | `get_quantization_error` | `(self, X)` | Mean Euclidean distance from each input to its BMU. |
@@ -65,7 +65,7 @@ Background worker that runs the clustering pipeline off the UI thread.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dialog, sel_k, elements, data, enabled, parent=None)` | Args: |
+| `__init__` | `(self, dialog, sel_k, elements, data, enabled, parent=None)` |  |
 | `run` | `(self)` | Execute the pipeline on the worker thread and emit results. |
 
 ### `_EvalWorker` *(extends `QThread`)*
@@ -74,7 +74,7 @@ Background worker that runs K-evaluation off the UI thread.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dialog, elements, parent=None)` | Args: |
+| `__init__` | `(self, dialog, elements, parent=None)` |  |
 | `run` | `(self)` | Run preparation and K-evaluation, emitting progress and results. |
 
 ### `_BootstrapWorker` *(extends `QThread`)*
@@ -83,7 +83,7 @@ Background worker that runs the K-stability bootstrap off the UI thread.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p` | Args: |
+| `__init__` | `(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p` |  |
 | `cancel` | `(self)` | Request cancellation; the loop stops after the current resample. |
 | `run` | `(self)` | Execute the bootstrap loop on the worker thread and emit results. |
 
@@ -93,30 +93,30 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, node, parent_window=None)` | Args: |
+| `__init__` | `(self, node, parent_window=None)` |  |
 | `_on_app_theme_changed` | `(self, _name=None)` | Re-theme the dialog and redraw figures when the app theme changes. |
 | `_apply_theme` | `(self)` | Apply the active palette to the whole dialog as one stylesheet. |
-| `_is_multi` | `(self)` | Returns: |
+| `_is_multi` | `(self)` |  |
 | `_update_color_by_visibility` | `(self)` | Hide the Color-by picker for single-sample input. |
 | `_update_eval_scope_visibility` | `(self)` | Hide the Pooled/Per-sample scope toggle for single-sample input. |
 | `_on_color_by_changed` | `(self, text)` | Redraw the cluster scatter when the user changes the Color-by selection. |
 | `_build_ui` | `(self)` |  |
 | `_btn_style` | `(self, color)` | Return the stylesheet for a flat coloured action button. |
-| `_make_btn` | `(self, text, color, slot)` | Args: |
+| `_make_btn` | `(self, text, color, slot)` |  |
 | `_build_eval_tab` | `(self)` |  |
 | `_build_summary_tab` | `(self)` | Build the Summary tab holding the consensus decision matrix. |
 | `_refresh_summary` | `(self)` | Redraw the consensus summary table from the latest evaluation state. |
 | `_build_cluster_tab` | `(self)` | Build the Clusters tab containing both 2-D and 3-D scatter views, |
 | `_switch_cluster_view` | `(self, mode)` | Toggle between 2-D scatter and 3-D scatter within the Clusters tab. |
-| `_ctx_menu` | `(self, pos, tab)` | Args: |
-| `_make_popout_btn` | `(self, slot)` | Args: |
+| `_ctx_menu` | `(self, pos, tab)` |  |
+| `_make_popout_btn` | `(self, slot)` |  |
 | `_pop_out_figure` | `(self, tab: str)` | Redraw the requested figure into a standalone resizable window. |
 | `_edit_figure` | `(self, tab: str)` | Open the per-figure display settings dialog. |
-| `_redraw_figure` | `(self, tab: str)` | Args: |
-| `_cl_drag_press` | `(self, event)` | Args: |
-| `_cl_drag_motion` | `(self, event)` | Args: |
-| `_cl_drag_release` | `(self, _event)` | Args: |
-| `_set` | `(self, key, value)` | Args: |
+| `_redraw_figure` | `(self, tab: str)` |  |
+| `_cl_drag_press` | `(self, event)` |  |
+| `_cl_drag_motion` | `(self, event)` |  |
+| `_cl_drag_release` | `(self, _event)` |  |
+| `_set` | `(self, key, value)` |  |
 | `_build_overview_tab` | `(self)` |  |
 | `_on_overview_view_changed` | `(self, text)` | Handle a change to the Strips/Heatmap toggle in the Overview toolbar. |
 | `_open_overview_element_picker` | `(self)` | Pop a small multi-select menu of available elements. |
@@ -129,9 +129,9 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_set_3d_view` | `(self, elev, azim)` | Snap all 3D axes to a preset view angle. |
 | `_draw_3d` | `(self)` |  |
 | `_on_3d_hover` | `(self, event)` | Show a tooltip with cluster and element information on 3D hover. |
-| `_draw_3d_into` | `(self, target_fig)` | Args: |
+| `_draw_3d_into` | `(self, target_fig)` |  |
 | `_draw_dendrogram` | `(self)` |  |
-| `_draw_dendrogram_into` | `(self, target_fig)` | Args: |
+| `_draw_dendrogram_into` | `(self, target_fig)` |  |
 | `_draw_overview` | `(self)` | Render the Overview tab: composition strips (or heatmap) on the |
 | `_draw_overview_into` | `(self, target_fig)` | Draw the Overview content into an arbitrary Figure. |
 | `_restyle_heatmap_axes` | `(self, ax, fig, cfg)` | Re-apply font and theme to an externally-drawn heatmap axes. |
@@ -139,9 +139,9 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_on_cluster_hover` | `(self, event)` | Show a floating tooltip with element values when hovering scatter points. |
 | `_open_settings` | `(self)` |  |
 | `_on_node_changed` | `(self)` |  |
-| `_get_elements` | `(self)` | Returns: |
+| `_get_elements` | `(self)` |  |
 | `_prepare_data` | `(self, elements)` | Prepare data matrix — identical logic to original. |
-| `_run_algo` | `(self, name, k, data)` | Args: |
+| `_run_algo` | `(self, name, k, data)` |  |
 | `_run_som` | `(self, k, data, cfg, progress_cb=None)` | Train a SOM and cluster the resulting neuron weight vectors. |
 | `_evaluate_data` | `(self, data, *, enabled_algos=None, enabled_metrics=None, min_k=None, ` | Run the full algorithm × K × metric sweep on ``data`` once. |
 | `_pick_optimal_per_metric` | `(self, eval_results)` | Reduce an eval-results dict to ``{metric: K}`` using vote+tiebreak. |
@@ -189,10 +189,10 @@ Clustering analysis node with matplotlib figures.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
-| `set_position` | `(self, pos)` | Args: |
-| `configure` | `(self, parent_window)` | Args: |
-| `process_data` | `(self, input_data)` | Args: |
+| `__init__` | `(self, parent_window=None)` |  |
+| `set_position` | `(self, pos)` |  |
+| `configure` | `(self, parent_window)` |  |
+| `process_data` | `(self, input_data)` |  |
 
 ## Functions
 

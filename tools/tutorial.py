@@ -1,25 +1,13 @@
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QVBoxLayout, QPushButton,
-    QLabel, QScrollArea, QWidget,
+    QLabel, QScrollArea, QWidget, QLineEdit, QListWidget, QListWidgetItem,
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QMovie
-from pathlib import Path
-import sys
+from PySide6.QtCore import Qt
+import re
 
 from tools.theme import theme
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.tutorial")
-
-
-def get_resource_path(relative_path):
-    # sys._MEIPASS only exists inside a PyInstaller bundle; in dev we resolve
-    # relative to the project root. Use getattr so the dev case is normal
-    # control flow rather than a logged AttributeError on every call.
-    base_path = getattr(sys, "_MEIPASS", None)
-    if base_path is None:
-        base_path = Path(__file__).parent.parent
-    return Path(base_path) / relative_path
 
 
 # ---------------------------------------------------------------------------
@@ -34,43 +22,6 @@ def _section(html: str) -> QLabel:
     lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
     lbl.setStyleSheet(f"font-size:13px; line-height:1.5; color:{theme.palette.text_primary};")
     return lbl
-
-
-def _gif_widget(filename: str, width: int = 680) -> QWidget:
-    """Return a widget displaying an animated GIF from the images/ folder.
-    Falls back to a styled placeholder if the file is not found.
-    Args:
-        filename (str): The filename.
-        width (int): Width in pixels.
-    """
-    path = get_resource_path(f"images/{filename}")
-
-    container = QWidget()
-    lay = QVBoxLayout(container)
-    lay.setContentsMargins(0, 8, 0, 8)
-    lay.setAlignment(Qt.AlignHCenter)
-
-    if Path(path).exists():
-        movie_label = QLabel()
-        movie_label.setAlignment(Qt.AlignCenter)
-        movie = QMovie(str(path))
-        movie.setScaledSize(QSize(width, width * 9 // 16))
-        movie_label.setMovie(movie)
-        movie.start()
-        lay.addWidget(movie_label)
-    else:
-        p = theme.palette
-        placeholder = QLabel(f"[ Animation: {filename} ]")
-        placeholder.setAlignment(Qt.AlignCenter)
-        placeholder.setStyleSheet(
-            f"background:{p.accent_soft}; border:2px dashed {p.accent}; "
-            f"border-radius:8px; padding:24px; color:{p.accent}; "
-            f"font-size:12px; font-style:italic;"
-        )
-        placeholder.setMinimumHeight(80)
-        lay.addWidget(placeholder)
-
-    return container
 
 
 def _scroll_tab(*widgets) -> QScrollArea:
@@ -97,6 +48,11 @@ def _scroll_tab(*widgets) -> QScrollArea:
 
 
 def _hr() -> QLabel:
+    """Return a horizontal-rule label for separating sections.
+
+    Returns:
+        QLabel: Rich-text label rendering a horizontal rule.
+    """
     lbl = QLabel("<hr>")
     lbl.setTextFormat(Qt.RichText)
     return lbl
@@ -111,6 +67,11 @@ class UserGuideDialog(QDialog):
     """
 
     def __init__(self, parent=None):
+        """Build the user-guide dialog and all its tabs.
+
+        Args:
+            parent (QWidget | None): Parent widget.
+        """
         super().__init__(parent)
         self.setWindowTitle("IsotopeTrack — User Guide")
         self.resize(820, 740)
@@ -118,15 +79,29 @@ class UserGuideDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._tab_overview(),    "Overview")
-        tabs.addTab(self._tab_workflow(),    "Workflow")
-        tabs.addTab(self._tab_data(),        "Data Loading")
-        tabs.addTab(self._tab_calibration(), "Calibration")
-        tabs.addTab(self._tab_parameters(),  "Parameters")
-        tabs.addTab(self._tab_results(),     "Results & Export")
+        self._search_index = []
+        self._search_box = QLineEdit()
+        self._search_box.setPlaceholderText(
+            "Search the whole guide…  (e.g. threshold, dilution, sigma)")
+        self._search_box.setClearButtonEnabled(True)
+        self._search_box.textChanged.connect(self._on_search_changed)
+        layout.addWidget(self._search_box)
 
-        layout.addWidget(tabs)
+        self._search_results = QListWidget()
+        self._search_results.setVisible(False)
+        self._search_results.setMaximumHeight(180)
+        self._search_results.itemClicked.connect(self._on_result_clicked)
+        layout.addWidget(self._search_results)
+
+        self._tabs = QTabWidget()
+        self._tabs.setUsesScrollButtons(True)
+        self._tabs.addTab(self._tab_overview(), "Overview")
+        self._tabs.addTab(self._tab_workflow(), "Workflow")
+        for section in self._interactive_sections():
+            self._tabs.addTab(section["widget"], section["title"])
+
+        layout.addWidget(self._tabs)
+        self._search_index = self._build_search_index()
 
         btn = QPushButton("Close")
         btn.setFixedWidth(90)
@@ -219,6 +194,34 @@ class UserGuideDialog(QDialog):
             QPushButton:hover {{
                 background-color: {p.accent_hover};
             }}
+            QLineEdit {{
+                background-color: {p.bg_tertiary};
+                color: {p.text_primary};
+                border: 1px solid {p.border};
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {p.accent};
+            }}
+            QListWidget {{
+                background-color: {p.bg_tertiary};
+                color: {p.text_primary};
+                border: 1px solid {p.border};
+                border-radius: 6px;
+                font-size: 12px;
+            }}
+            QListWidget::item {{
+                padding: 5px 8px;
+            }}
+            QListWidget::item:hover {{
+                background-color: {p.bg_hover};
+            }}
+            QListWidget::item:selected {{
+                background-color: {p.accent};
+                color: {p.text_inverse};
+            }}
         """)
         self._refresh_section_styles()
 
@@ -233,6 +236,11 @@ class UserGuideDialog(QDialog):
                 )
 
     def closeEvent(self, event):
+        """Disconnect theme signals when the dialog closes.
+
+        Args:
+            event (QCloseEvent): Close event from Qt.
+        """
         try:
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
@@ -243,9 +251,14 @@ class UserGuideDialog(QDialog):
     # Tab: Overview
     # ------------------------------------------------------------------ #
     def _tab_overview(self):
+        """Build the Overview tab.
+
+        Returns:
+            QScrollArea: Scrollable tab widget with overview content.
+        """
         return _scroll_tab(
             _section("""
-            <h2>IsotopeTrack v1.10.6</h2>
+            <h2>IsotopeTrack v1.10.7</h2>
             <p>Software application for analyzing single particle
             ICP-ToF-MS (Inductively Coupled Plasma Time-of-Flight Mass Spectrometry) data.</p>
 
@@ -287,9 +300,123 @@ class UserGuideDialog(QDialog):
         )
 
     # ------------------------------------------------------------------ #
+    # Guide-wide search                                                    #
+    # ------------------------------------------------------------------ #
+    def _build_search_index(self):
+        """Index every hotspot of every interactive page for search.
+
+        Returns:
+            list[dict]: Entries with display path, navigation targets and
+            lowercase searchable text.
+        """
+        try:
+            from tools.interactive_guide import InteractiveImagePage
+        except Exception:
+            _itk_log.exception("Could not import guide pages for search")
+            return []
+        index = []
+        for top in range(self._tabs.count()):
+            section_widget = self._tabs.widget(top)
+            section_title = self._tabs.tabText(top)
+            if isinstance(section_widget, InteractiveImagePage):
+                pages = [(-1, section_widget)]
+            elif isinstance(section_widget, QTabWidget):
+                pages = [(i, section_widget.widget(i))
+                         for i in range(section_widget.count())]
+            else:
+                continue
+            for inner, page_widget in pages:
+                if not isinstance(page_widget, InteractiveImagePage):
+                    continue
+                page = page_widget._page
+                for spot in page["hotspots"]:
+                    text = " ".join((
+                        section_title, page["title"], spot["title"],
+                        re.sub(r"<[^>]+>", " ", spot["body"]))).lower()
+                    index.append(dict(
+                        display=(f"{section_title}  ›  {page['title']}"
+                                 f"  ›  {spot['title']}"),
+                        top=top, inner=inner, spot_id=spot["id"],
+                        page_widget=page_widget,
+                        section_widget=section_widget, text=text))
+        return index
+
+    def _on_search_changed(self, text):
+        """Filter the search index and show matching regions.
+
+        Args:
+            text (str): Current search-box text.
+        """
+        query = text.strip().lower()
+        self._search_results.clear()
+        if len(query) < 2:
+            self._search_results.setVisible(False)
+            return
+        words = query.split()
+        matches = [e for e in self._search_index
+                   if all(w in e["text"] for w in words)]
+        for entry in matches[:15]:
+            item = QListWidgetItem(entry["display"])
+            item.setData(Qt.UserRole, entry)
+            self._search_results.addItem(item)
+        if not matches:
+            item = QListWidgetItem("No matches — try another word")
+            item.setFlags(Qt.NoItemFlags)
+            self._search_results.addItem(item)
+        self._search_results.setVisible(True)
+
+    def _on_result_clicked(self, item):
+        """Navigate to the clicked search result.
+
+        Args:
+            item (QListWidgetItem): The clicked result item.
+        """
+        entry = item.data(Qt.UserRole)
+        if not entry:
+            return
+        self._tabs.setCurrentIndex(entry["top"])
+        if entry["inner"] >= 0:
+            entry["section_widget"].setCurrentIndex(entry["inner"])
+        entry["page_widget"].show_hotspot(entry["spot_id"])
+        self._search_results.setVisible(False)
+
+    # ------------------------------------------------------------------ #
+    # Interactive sections (clickable screenshots)                         #
+    # ------------------------------------------------------------------ #
+    def _interactive_sections(self):
+        """Build the interactive guide sections from guide_content.
+
+        Returns:
+            list[dict]: Dicts with 'title' and 'widget' for each section.
+        """
+        try:
+            from tools.interactive_guide import build_section_widget
+            from tools.guide_content import SECTIONS
+        except Exception:
+            _itk_log.exception("Could not build interactive guide sections")
+            return []
+        built = []
+        for section in SECTIONS:
+            try:
+                built.append(dict(
+                    title=section["title"],
+                    widget=build_section_widget(section, self)))
+            except Exception:
+                _itk_log.exception(
+                    "Could not build guide section %s",
+                    section.get("title"))
+        return built
+
+    # ------------------------------------------------------------------ #
     # Tab: Workflow                                                         #
     # ------------------------------------------------------------------ #
     def _tab_workflow(self):
+        """Build the Workflow tab.
+
+        Returns:
+            QScrollArea: Scrollable tab widget with the recommended
+            step-by-step workflow.
+        """
         return _scroll_tab(
             _section("""
             <h2>Recommended Workflow</h2>
@@ -334,235 +461,3 @@ class UserGuideDialog(QDialog):
             """),
         )
 
-    # ------------------------------------------------------------------ #
-    # Tab: Data Loading                                                    #
-    # ------------------------------------------------------------------ #
-    def _tab_data(self):
-        return _scroll_tab(
-            _section("""
-            <h2>Data Loading</h2>
-
-            <h3>Supported Formats</h3>
-            <ul>
-              <li><b>Folder with <code>run.info</code></b> — Raw data from TOF Vitesse
-                  and multiple files from TOFWERK <code>.h5</code></li>
-              <li><b>CSV files</b> — Time-series data</li>
-            </ul>
-
-            <h3>Loading Process</h3>
-            <ol>
-              <li>Click <b>Import Data</b> in the <i>File</i> menu or sidebar</li>
-              <li>Select <i>Folder(s) with <code>run.info</code></i>,
-                  <i>CSV file(s)</i>, or <i>TOFWERK .h5</i></li>
-              <li>Browse to your data location and select one or more folders/files</li>
-              <li>The application validates the data and displays loading progress</li>
-              <li>Successfully loaded samples appear in the <b>Samples</b> table in the sidebar</li>
-            </ol>
-
-            <h3>CSV Format Requirements</h3>
-            <ul>
-              <li>First column must be <b>Time</b> (units: <code>ms</code>,
-                  <code>ns</code>, or <code>s</code>)</li>
-              <li>Each element column must include <b>mass number + element symbol</b>
-                  (e.g., <code>107Ag</code>)</li>
-              <li>Data must be provided in <b>counts</b></li>
-            </ul>
-
-            <h3>Sample Management</h3>
-            <ul>
-              <li>Click a sample in the sidebar to switch between samples</li>
-              <li>Right-click a sample to view additional metadata</li>
-              <li>Process all samples simultaneously using the same parameters</li>
-            </ul>
-
-            <h2>Element Selection</h2>
-
-            <h3>Using the Periodic Table</h3>
-            <p>The interactive periodic table allows selection of elements and
-            specific isotopes for analysis:</p>
-            <ol>
-              <li><b>Left-click</b> an element to select the most abundant isotope
-                  with minimal interferences</li>
-              <li><b>Right-click</b> an element to display all available isotopes
-                  and select specific ones</li>
-              <li><b>Right-click again</b> on a selected element to deselect it</li>
-              <li>Click <b>Confirm</b> to finalize the selection</li>
-              <li>Gray elements indicate elements not present in the loaded dataset</li>
-            </ol>
-            """
-            ),
-            _gif_widget("1.gif"),
-        )
-
-    # ------------------------------------------------------------------ #
-    # Tab: Calibration                                                     #
-    # ------------------------------------------------------------------ #
-    def _tab_calibration(self):
-        return _scroll_tab(
-            _section("""
-            <h2>Calibration Methods</h2>
-
-            <h3>Ionic Calibration (Sensitivity)</h3>
-            <p>Establishes the relationship between elemental concentration and
-            instrument response.</p>
-
-            <h4>Process</h4>
-            <ol>
-              <li>Selected isotopes are automatically imported from the main window</li>
-              <li>Create one or more calibration sets</li>
-              <li>Enter <code>-1</code> to exclude samples from specific calibration sets</li>
-              <li>The system automatically evaluates three calibration models:
-                <ul>
-                  <li><b>Simple Linear</b> (no intercept)</li>
-                  <li><b>Linear</b> (with intercept)</li>
-                  <li><b>Weighted Linear</b></li>
-                </ul>
-              </li>
-              <li>The model with the highest R² is automatically selected</li>
-              <li>Manual override is available</li>
-            </ol>
-            """),
-            _hr(),
-            _section("""
-            <h3>Transport Rate Calibration</h3>
-            <p>Determines the efficiency of aerosol transport into the plasma.</p>
-
-            <h4>Available Methods</h4>
-            <ul>
-              <li>Mass-based method</li>
-              <li>Number-based method</li>
-              <li>Weighted liquid method</li>
-            </ul>
-
-            <p><b>Reference:</b><br>
-            Pace, H. E., et al. (2011).
-            <i>Determining transport efficiency for the purpose of counting and sizing
-            nanoparticles via single-particle ICP-MS.</i>
-            Analytical Chemistry, <b>83</b>, 9361–9369.<br>
-            <a href="https://doi.org/10.1021/ac201952t">https://doi.org/10.1021/ac201952t</a></p>
-
-            <h4>After Calibration</h4>
-            <ul>
-              <li>Average multiple transport efficiency measurements, <b>or</b></li>
-              <li>Select the most reliable single value</li>
-            </ul>
-            <p>The chosen transport rate is applied to all subsequent particle mass
-            and number concentration calculations.</p>
-
-            <h3>Mass Fraction &amp; Density Configuration</h3>
-            <p>For accurate particle sizing, specify for each sample:</p>
-            <ul>
-              <li>Mass fraction of the target element in the particles</li>
-              <li>Particle density selected from the materials database</li>
-            </ul>
-            """),
-            _gif_widget("4.gif"),
-        )
-
-    # ------------------------------------------------------------------ #
-    # Tab: Parameters                                                      #
-    # ------------------------------------------------------------------ #
-    def _tab_parameters(self):
-        return _scroll_tab(
-            _section("""
-            <h2>Detection Parameters</h2>
-
-            <h3>Element Parameters Table</h3>
-            <p>Each element includes customizable detection parameters:</p>
-            <ul>
-              <li><b>Include</b> — Enable or disable the element in analysis</li>
-              <li><b>Method</b> — Detection algorithm (see below)</li>
-              <li><b>Min Points</b> — Minimum consecutive points above threshold
-                  to define a particle</li>
-              <li><b>Confidence Level</b> — Statistical confidence for threshold
-                  determination (default: 99.999&nbsp;%)</li>
-              <li>Optional smoothing</li>
-              <li>Alpha error rate</li>
-              <li>Iterative threshold calculation</li>
-              <li>Window size for threshold calculation</li>
-            </ul>
-
-            <h3>Detection Methods</h3>
-
-            <h4>Compound Poisson Log-Normal</h4>
-            <p>Advanced method accounting for signal distribution characteristics;
-            includes a sigma parameter describing distribution shape.</p>
-            <p><b>Reference:</b> Lockwood, T. E., Schlatt, L., &amp; Clases, D. (2025).
-            <i>SPCal – an open-source processing platform for ICP-TOFMS-based
-            single-event data.</i>
-            J. Anal. At. Spectrom.<br>
-            <a href="https://pubs.rsc.org/en/journal/jaas">
-            https://pubs.rsc.org/en/journal/jaas</a></p>
-
-            <h4>Manual</h4>
-            <p>User-defined threshold value.</p>
-            """),
-            _gif_widget("2.gif"),
-            _hr(),
-            _section("""
-            <h3>Batch Parameter Editing</h3>
-            <p>To apply identical parameters to multiple elements:</p>
-            <ol>
-              <li>Click <b>Batch Edit Parameters</b></li>
-              <li>Select elements to modify</li>
-              <li>Define shared parameters</li>
-              <li>Optionally select target samples</li>
-              <li>Apply settings to all selected elements simultaneously</li>
-            </ol>
-            <p>Particularly useful when analyzing identical elements across
-            multiple samples.</p>
-            """),
-        )
-
-
-    def _tab_results(self):
-        return _scroll_tab(
-            _section("""
-            <h2>Results Canvas &amp; Visualization</h2>
-
-            <p>The results canvas provides interactive visualization of your analysis:</p>
-            <ol>
-              <li>Select specific samples from the dropdown menu</li>
-              <li>Choose elements to display from available options</li>
-              <li>Select different figure types for various visualization needs</li>
-              <li>View updates in real time as you change selections</li>
-            </ol>
-            """),
-            _gif_widget("5.gif"),
-            _hr(),
-            _section("""
-            <h3>Single Element Results</h3>
-            <p>The <i>Single Element Results</i> tab displays:</p>
-            <ul>
-              <li>Start and end times of each detected particle</li>
-              <li>Total counts for each particle</li>
-              <li>Peak height and signal-to-noise ratio</li>
-            </ul>
-
-            <h3>Particle Results</h3>
-            <p>The <i>Particle Results</i> tab provides multi-element particle info:</p>
-            <ul>
-              <li>Particle identification numbers</li>
-              <li>Temporal overlap information</li>
-              <li>Count data for each element in coincident particles</li>
-            </ul>
-
-            <h3>Data Export Options</h3>
-
-            <h4>Summary File</h4>
-            <ul>
-              <li>Data for all samples and elements</li>
-              <li>Statistical summaries (mean, median, standard deviation)</li>
-              <li>Particle concentrations</li>
-              <li>Calibration information and method parameters</li>
-              <li>Ideal for comparative analysis across samples</li>
-            </ul>
-
-            <h4>Details File</h4>
-            <ul>
-              <li>Individual particle data for each sample</li>
-              <li>Complete particle-by-particle information</li>
-              <li>Peak characteristics and integration results</li>
-            </ul>
-            """),
-        )

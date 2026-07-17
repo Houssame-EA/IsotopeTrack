@@ -21,11 +21,11 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, cfg, input_data, parent=None, scope='all')` | Args: |
+| `__init__` | `(self, cfg, input_data, parent=None, scope='all')` |  |
 | `_build_ui` | `(self)` |  |
 | `_pick_point_color` | `(self, sn, btn)` | Pick one per-sample individual-point color and refresh its preview. |
 | `_pick_mean_color` | `(self, sn, btn)` | Pick one per-sample mean-marker color and refresh its preview. |
-| `collect` | `(self) → dict` | Returns: |
+| `collect` | `(self) → dict` |  |
 
 ### `ConcentrationDisplayDialog` *(extends `QDialog`)*
 
@@ -33,12 +33,13 @@ Matplotlib-based concentration strip-chart with drag support.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, node, parent_window=None)` | Args: |
+| `__init__` | `(self, node, parent_window=None)` |  |
 | `_build_ui` | `(self)` |  |
 | `_ctx_menu` | `(self, pos)` | Build a minimal Concentration right-click menu with quick controls only. |
-| `_toggle` | `(self, key)` | Args: |
-| `_set` | `(self, key, value)` | Args: |
-| `_reset_layout` | `(self)` |  |
+| `_toggle` | `(self, key)` |  |
+| `_set` | `(self, key, value)` |  |
+| `_set_mouse_mode` | `(self, mode: str)` | Update the transient Concentration mouse interaction mode. |
+| `_reset_layout` | `(self)` | Reset subplot layout and restore the baseline Concentration view limits. |
 | `_export_figure` | `(self)` |  |
 | `_open_plot_format_settings` | `(self)` |  |
 | `_open_configure_plot_quantities` | `(self)` |  |
@@ -50,19 +51,19 @@ Matplotlib-based concentration strip-chart with drag support.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
-| `set_position` | `(self, pos)` | Args: |
-| `configure` | `(self, parent_window)` | Args: |
-| `process_data` | `(self, input_data)` | Args: |
-| `_get_elements` | `(self)` | Returns: |
-| `extract_concentration_data` | `(self)` | Returns: |
-| `_extract_single` | `(self, data_key, elements, agg_method, unit)` | Args: |
-| `_extract_multi` | `(self, data_key, elements, agg_method, unit)` | Args: |
+| `__init__` | `(self, parent_window=None)` |  |
+| `set_position` | `(self, pos)` |  |
+| `configure` | `(self, parent_window)` |  |
+| `process_data` | `(self, input_data)` |  |
+| `_get_elements` | `(self)` |  |
+| `extract_concentration_data` | `(self)` |  |
+| `_extract_single` | `(self, data_key, elements, agg_method, unit)` |  |
+| `_extract_multi` | `(self, data_key, elements, agg_method, unit)` |  |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_is_multi` | `(input_data)` | Args: |
-| `_agg` | `(values, method)` | Args: |
-| `_fmt_val` | `(v)` | Args: |
+| `_is_multi` | `(input_data)` |  |
+| `_agg` | `(values, method)` |  |
+| `_fmt_val` | `(v)` |  |

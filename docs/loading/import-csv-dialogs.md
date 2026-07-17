@@ -20,9 +20,9 @@ Themed preview table; column selection enabled for mapping.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent=None)` | Args: |
+| `__init__` | `(self, parent=None)` |  |
 | `cleanup` | `(self)` | Disconnect the theme signal to allow this widget to be garbage-collected. |
-| `_apply_theme` | `(self, *_)` | Args: |
+| `_apply_theme` | `(self, *_)` |  |
 | `highlight_column` | `(self, column: int, color: QColor \| None=None)` | Tint every cell in ``column`` with ``color`` (default = accent_soft). |
 | `clear_column_highlight` | `(self, column: int)` | Reset column cells to the default (alternating) background. |
 
@@ -32,12 +32,12 @@ Horizontal strip of one clickable badge per data column, positioned
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent=None)` | Args: |
+| `__init__` | `(self, parent=None)` |  |
 | `sync_with_columns` | `(self, column_widths: list[int])` | Create one badge per column, with widths matching the preview table. |
 | `set_mapping` | `(self, column_index: int, isotope: dict \| None)` | Update the badge for one column (None = unmapped). |
 | `update_widths` | `(self, column_widths: list[int])` | Re-apply widths after the preview table resizes its columns. |
-| `_refresh_badge` | `(self, column_index: int)` | Args: |
-| `_show_context_menu` | `(self, column_index: int)` | Args: |
+| `_refresh_badge` | `(self, column_index: int)` |  |
+| `_show_context_menu` | `(self, column_index: int)` |  |
 
 ### `IsotopePickerDialog` *(extends `QDialog`)*
 
@@ -45,11 +45,11 @@ Modal popover for selecting an isotope. Opened from a column badge.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, periodic_table_data: list, initial_filter: str='', parent=None)` | Args: |
+| `__init__` | `(self, periodic_table_data: list, initial_filter: str='', parent=None)` |  |
 | `_populate` | `(self)` |  |
-| `_filter` | `(self, text: str)` | Args: |
-| `_accept_current` | `(self, *_)` | Args: |
-| `selected_isotope` | `(self) → dict \| None` | Returns: |
+| `_filter` | `(self, text: str)` |  |
+| `_accept_current` | `(self, *_)` |  |
+| `selected_isotope` | `(self) → dict \| None` |  |
 
 ### `DataProcessThread` *(extends `QThread`)*
 
@@ -57,14 +57,14 @@ Worker thread that loads CSV/TXT/Excel files per the import config.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, config, parent=None)` | Args: |
+| `__init__` | `(self, config, parent=None)` |  |
 | `run` | `(self)` |  |
-| `process_file` | `(self, file_config, file_index)` | Args: |
-| `_load_delimited` | `(self, file_path, settings)` | Args: |
-| `_load_excel` | `(self, file_path, settings)` | Args: |
-| `_process_time` | `(self, df, settings)` | Args: |
-| `_process_isotopes` | `(self, df, mappings, settings, dwell_s)` | Args: |
-| `_run_info` | `(self, df, settings, file_path, dwell_s, ext)` | Args: |
+| `process_file` | `(self, file_config, file_index)` |  |
+| `_load_delimited` | `(self, file_path, settings)` |  |
+| `_load_excel` | `(self, file_path, settings)` |  |
+| `_process_time` | `(self, df, settings)` |  |
+| `_process_isotopes` | `(self, df, mappings, settings, dwell_s)` |  |
+| `_run_info` | `(self, df, settings, file_path, dwell_s, ext)` |  |
 
 ### `FileStructureDialog` *(extends `QDialog`)*
 
@@ -72,34 +72,34 @@ Configure and preview import of one or more CSV/TXT/Excel files.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, file_paths, parent=None)` | Args: |
+| `__init__` | `(self, file_paths, parent=None)` |  |
 | `closeEvent` | `(self, event)` | Disconnect theme signals before closing to allow garbage collection. |
-| `_load_periodic_table` | `(parent) → list` | Args: |
+| `_load_periodic_table` | `(parent) → list` |  |
 | `_build_ui` | `(self)` |  |
-| `_build_file_header` | `(self) → QFrame` | Returns: |
-| `_build_left_panel` | `(self) → QWidget` | Returns: |
-| `_build_right_panel` | `(self) → QWidget` | Returns: |
-| `_build_button_row` | `(self) → QHBoxLayout` | Returns: |
-| `_apply_theme` | `(self, *_)` | Args: |
+| `_build_file_header` | `(self) → QFrame` |  |
+| `_build_left_panel` | `(self) → QWidget` |  |
+| `_build_right_panel` | `(self) → QWidget` |  |
+| `_build_button_row` | `(self) → QHBoxLayout` |  |
+| `_apply_theme` | `(self, *_)` |  |
 | `_toggle_advanced` | `(self)` |  |
-| `_switch_file` | `(self, index: int)` | Args: |
+| `_switch_file` | `(self, index: int)` |  |
 | `_load_file` | `(self, file_path: str)` | Load a file with the current settings; degrade gracefully on error. |
 | `_update_settings_visibility` | `(self, ftype: str)` | Enable the settings relevant to the current file type. |
-| `_populate_sheet_list` | `(self, file_path: str)` | Args: |
-| `_load_delimited_preview` | `(self, file_path: str) → pd.DataFrame` | Args: |
-| `_load_excel_preview` | `(self, file_path: str) → pd.DataFrame` | Args: |
+| `_populate_sheet_list` | `(self, file_path: str)` |  |
+| `_load_delimited_preview` | `(self, file_path: str) → pd.DataFrame` |  |
+| `_load_excel_preview` | `(self, file_path: str) → pd.DataFrame` |  |
 | `_refresh_preview` | `(self)` |  |
-| `_sync_badge_widths` | `(self, rebuild: bool=False)` | Args: |
+| `_sync_badge_widths` | `(self, rebuild: bool=False)` |  |
 | `_refresh_file_info` | `(self)` |  |
 | `_refresh_time_column_options` | `(self)` |  |
 | `_refresh_current_file_indicator` | `(self)` |  |
 | `_on_column_selected` | `(self)` |  |
-| `_on_time_column_changed` | `(self, text: str)` | Args: |
+| `_on_time_column_changed` | `(self, text: str)` |  |
 | `_refresh_time_column_options_if_needed` | `(self, selected_time_col: str)` | If the time column was previously mapped, remove that mapping. |
 | `_on_dwell_method_changed` | `(self)` |  |
 | `_open_picker_for_column` | `(self, column_index: int)` | Open the isotope picker for ``column_index`` and commit the result. |
-| `_commit_mapping` | `(self, column_index: int, column_name: str, isotope: dict)` | Args: |
-| `_unmap_column` | `(self, column_index: int)` | Args: |
+| `_commit_mapping` | `(self, column_index: int, column_name: str, isotope: dict)` |  |
+| `_unmap_column` | `(self, column_index: int)` |  |
 | `_remove_mapping` | `(self)` |  |
 | `_refresh_mappings_list` | `(self)` |  |
 | `_refresh_mapped_columns_highlight` | `(self)` |  |
@@ -113,7 +113,7 @@ Configure and preview import of one or more CSV/TXT/Excel files.
 | `_do_reload` | `(self)` |  |
 | `_prune_stale_mappings` | `(self)` | Remove mapping keys whose file_index is out of range for the current file list. |
 | `_validate_configuration` | `(self)` |  |
-| `_build_import_config` | `(self) → dict` | Returns: |
+| `_build_import_config` | `(self) → dict` |  |
 | `_accept_import` | `(self)` |  |
 
 ## Functions

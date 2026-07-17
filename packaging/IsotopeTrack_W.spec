@@ -171,6 +171,9 @@ a = Analysis(
         'matplotlib.lines',
         'matplotlib.text',
         'matplotlib.font_manager',
+        'matplotlib.mathtext',
+        'matplotlib._mathtext',
+        'matplotlib._mathtext_data',
 
         'mpltern',
         'mpltern.ternary',

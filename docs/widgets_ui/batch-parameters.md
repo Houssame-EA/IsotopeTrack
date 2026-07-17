@@ -10,9 +10,9 @@ A lightweight collapsible container with a toggle header.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title: str, parent=None)` | Args: |
-| `_on_toggled` | `(self, checked: bool)` | Args: |
-| `content_layout` | `(self) → QGridLayout` | Returns: |
+| `__init__` | `(self, title: str, parent=None)` |  |
+| `_on_toggled` | `(self, checked: bool)` |  |
+| `content_layout` | `(self) → QGridLayout` |  |
 
 ### `BatchElementParametersDialog` *(extends `QDialog`)*
 
@@ -22,10 +22,10 @@ A lightweight collapsible container with a toggle header.
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
 | `closeEvent` | `(self, event)` | Disconnect theme signal so we don't leak slots on closed dialogs. |
 | `setup_ui` | `(self)` | Build the dialog layout. |
-| `_build_samples_group` | `(self) → QGroupBox` | Returns: |
-| `_build_elements_group` | `(self) → QGroupBox` | Returns: |
-| `_build_params_group` | `(self) → QGroupBox` | Returns: |
-| `_build_advanced_section` | `(self) → CollapsibleSection` | Returns: |
+| `_build_samples_group` | `(self) → QGroupBox` |  |
+| `_build_elements_group` | `(self) → QGroupBox` |  |
+| `_build_params_group` | `(self) → QGroupBox` |  |
+| `_build_advanced_section` | `(self) → CollapsibleSection` |  |
 | `toggle_manual_threshold` | `(self, method)` | Show/hide the manual threshold input based on the detection method. |
 | `toggle_window_size` | `(self, state)` | Show/hide the window size input based on the Enable checkbox. |
 | `_toggle_valley_ratio` | `(self, method: str)` | Show/hide the valley ratio input depending on the split method. |

@@ -4,6 +4,11 @@ Project save/load, session management, and export utilities.
 
 ---
 
+### [`autosave.py`](autosave.md)
+Autosave and crash recovery for IsotopeTrack.
+
+**2** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **24** methods
+
 ### [`export_utils.py`](export-utils.md)
 
 
@@ -12,7 +17,7 @@ Project save/load, session management, and export utilities.
 ### [`fast_project_io.py`](fast-project-io.md)
 
 
-**0** classes &nbsp;·&nbsp; **9** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **10** functions &nbsp;·&nbsp; **0** methods
 
 ### [`ionic_session.py`](ionic-session.md)
 
@@ -22,9 +27,9 @@ Project save/load, session management, and export utilities.
 ### [`project_manager.py`](project-manager.md)
 
 
-**1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **19** methods
+**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **27** methods
 
 ### [`unit.py`](unit.md)
+Advanced Export Options dialog (visual).
 
-
-**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **10** methods
+**0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods

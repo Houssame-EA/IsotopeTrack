@@ -172,6 +172,9 @@ a = Analysis(
         'matplotlib.lines',
         'matplotlib.text',
         'matplotlib.font_manager',
+        'matplotlib.mathtext',
+        'matplotlib._mathtext',
+        'matplotlib._mathtext_data',
 
         'mpltern',
         'mpltern.ternary',
@@ -391,8 +394,8 @@ app = BUNDLE(
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.10.6',
-        'CFBundleVersion': '1.10.6',
+        'CFBundleShortVersionString': '1.10.7',
+        'CFBundleVersion': '1.10.7',
         'CFBundleDisplayName': 'IsotopeTrack',
         'CFBundleName': 'IsotopeTrack',
         'NSRequiresAquaSystemAppearance': 'False',

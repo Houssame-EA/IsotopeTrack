@@ -42,12 +42,12 @@ Isobaric Correction dialog — calculator-style equation editor.
 ### [`help_dialogs.py`](help-dialogs.md)
 
 
-**11** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **58** methods
+**11** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **59** methods
 
 ### [`tutorial.py`](tutorial.md)
 
 
-**1** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **10** methods
+**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **10** methods
 
 ### [`element_picker.py`](element-picker.md)
 tools/element_picker.py

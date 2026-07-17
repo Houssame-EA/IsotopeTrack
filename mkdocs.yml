@@ -109,6 +109,7 @@ nav:
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
     - Overview: project_io/index.md
+    - "autosave.py": project_io/autosave.md
     - "export_utils.py": project_io/export-utils.md
     - "fast_project_io.py": project_io/fast-project-io.md
     - "ionic_session.py": project_io/ionic-session.md
@@ -116,6 +117,7 @@ nav:
     - "unit.py": project_io/unit.md
 - Peak Detection:
     - Overview: peak_detection/index.md
+    - "detection_registry.py": peak_detection/detection-registry.md
     - "peak_detection.py": peak_detection/peak-detection.md
 - Calibration:
     - Overview: calibration/index.md
@@ -123,6 +125,7 @@ nav:
     - "TE_input.py": calibration/te-input.md
     - "TE_mass.py": calibration/te-mass.md
     - "TE_number.py": calibration/te-number.md
+    - "calibration_registry.py": calibration/calibration-registry.md
     - "ionic_CAL.py": calibration/ionic-cal.md
     - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
@@ -171,10 +174,24 @@ nav:
     - "signal_selector_dialog.py": widgets_ui/signal-selector-dialog.md
 - Tools & Utilities:
     - Overview: tools_utilities/index.md
-    - "app_version.py": tools_utilities/app-version.md
     - "dilution_utils.py": tools_utilities/dilution-utils.md
-    - "isobaric_correction.py": tools_utilities/isobaric-correction.md
+    - "equations_reference.py": tools_utilities/equations-reference.md
+    - "guide_content.py": tools_utilities/guide-content.md
+    - "home_panel.py": tools_utilities/home-panel.md
+    - "interactive_guide.py": tools_utilities/interactive-guide.md
     - "logging_utils.py": tools_utilities/logging-utils.md
     - "mass_fraction_calculator.py": tools_utilities/mass-fraction-calculator.md
     - "particle_filter.py": tools_utilities/particle-filter.md
+    - "toast.py": tools_utilities/toast.md
+    - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md
+    - "welcome.py": tools_utilities/welcome.md
+- Utils (Non-Visual):
+    - Overview: utils/index.md
+    - "__init__.py": utils/--init--.md
+    - "app_version.py": utils/app-version.md
+    - "dilution.py": utils/dilution.md
+    - "file_dialog_memory.py": utils/file-dialog-memory.md
+    - "isobaric_correction.py": utils/isobaric-correction.md
+    - "pyqtgraph_patches.py": utils/pyqtgraph-patches.md
+    - "unit.py": utils/unit.md

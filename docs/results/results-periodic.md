@@ -34,7 +34,7 @@ Selectable label widget for individual isotopes with visual feedback.
 | `setSelected` | `(self, selected)` | Set the selection state of this isotope label. |
 | `updateStyle` | `(self)` |  |
 | `mousePressEvent` | `(self, event)` | Handle mouse press events to emit clicked signal. |
-| `enterEvent` | `(self, event)` | Args: |
+| `enterEvent` | `(self, event)` |  |
 | `leaveEvent` | `(self, event)` | Handle mouse leave event to restore normal styling. |
 
 ### `CompactIsotopeDisplay` *(extends `QFrame`)*
@@ -48,7 +48,7 @@ Popup panel displaying available isotopes for an element with selection capabili
 | `_safe_apply_theme` | `(self)` |  |
 | `_apply_theme_style` | `(self)` |  |
 | `get_selected_isotopes_data` | `(self)` | Get list of selected isotopes as tuples. |
-| `load_selected_isotopes` | `(self, isotopes_data)` | Args: |
+| `load_selected_isotopes` | `(self, isotopes_data)` |  |
 | `set_isotopes` | `(self, element, available_element_masses=None)` | Populate the display with isotopes for the given element. |
 | `set_parent_button` | `(self, button)` | Set the parent button that owns this isotope display. |
 | `toggle_at_position` | `(self, pos)` | Toggle display visibility at the specified position. |
@@ -94,15 +94,15 @@ Compact chip-based isotope selector.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent=None)` | Args: |
+| `__init__` | `(self, parent=None)` |  |
 | `_chip_disconnect_theme` | `(self)` |  |
 | `_safe_restyle` | `(self)` |  |
 | `_setup` | `(self)` |  |
 | `_restyle_all` | `(self)` |  |
-| `_style_chip` | `(self, sym, mass)` | Args: |
+| `_style_chip` | `(self, sym, mass)` |  |
 | `set_available_isotopes` | `(self, element_data_list, isotope_pairs)` | isotope_pairs: list of (symbol, mass) tuples |
 | `_rebuild_chips` | `(self)` |  |
-| `_toggle` | `(self, sym, mass)` | Args: |
+| `_toggle` | `(self, sym, mass)` |  |
 | `set_selected` | `(self, isotope_list)` | isotope_list: list of {'symbol':..., 'mass':...} dicts |
 | `get_selected` | `(self)` | Returns list of (symbol, mass) tuples |
 | `select_all` | `(self)` |  |

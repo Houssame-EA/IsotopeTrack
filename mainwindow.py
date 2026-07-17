@@ -1091,7 +1091,7 @@ class MainWindow(QMainWindow):
         guide_action = _ma('fa6s.book', "User Guide", self.show_user_guide)
         detection_action = _ma('fa6s.magnifying-glass', "Detection Methods",
                                self.show_detection_methods)
-        calibration_action = _ma('fa6s.sliders', "Calibration Methods",
+        calibration_action = _ma('fa6s.sliders', "Equations",
                                  self.show_calibration_methods)
         about_action = _ma('fa6s.circle-info', "About IsotopeTrack",
                            self.show_about_dialog)

@@ -68,12 +68,12 @@ Network-local font settings group with a safe font color picker.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
-| `set_position` | `(self, pos)` | Args: |
-| `configure` | `(self, parent_window)` | Args: |
-| `process_data` | `(self, input_data)` | Args: |
-| `_get_elements` | `(self)` | Returns: |
-| `extract_network_data` | `(self)` | Returns: |
+| `__init__` | `(self, parent_window=None)` |  |
+| `set_position` | `(self, pos)` |  |
+| `configure` | `(self, parent_window)` |  |
+| `process_data` | `(self, input_data)` |  |
+| `_get_elements` | `(self)` |  |
+| `extract_network_data` | `(self)` |  |
 | `_extract_single` | `(self, data_key, elements, r_threshold, min_n, aggregation)` | Extract single-sample network data without presentation-side counts. |
 | `_extract_multi` | `(self, data_key, elements, r_threshold, min_n, aggregation)` | Extract per-sample network data for a multi-sample selection. |
 
@@ -81,7 +81,7 @@ Network-local font settings group with a safe font color picker.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_is_multi` | `(input_data)` | Args: |
+| `_is_multi` | `(input_data)` |  |
 | `_compute_edges` | `(particles, elements, data_key, r_threshold, min_n)` | Return list of (i, j, r) where \|r\| >= threshold. |
 | `_compute_node_amounts` | `(particles, elements, data_key, aggregation='Sum')` | Aggregate per-element amounts for one sample and one selected data type. |
 | `_normalize_node_size_aggregation` | `(value)` | Normalize node-size aggregation config values to supported options. |

@@ -23,18 +23,48 @@
 
 ## Classes
 
+### `_HideOnCloseFilter` *(extends `QObject`)*
+
+Event filter: closing a figure window hides it instead of destroying it.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `eventFilter` | `(self, obj, event)` |  |
+
+### `_FigureView`
+
+One figure of a node: its own ``config``, shared underlying data.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, node, dialog_class, parent_window, config=None)` |  |
+| `__setattr__` | `(self, name, value)` | Keep config/dialog/thumbnail on the view; forward any other attribute |
+| `extract_plot_data` | `(self, *args, **kwargs)` | Run the node's extraction with this view's config swapped in. |
+| `new_figure` | `(self)` | Spawn another independent figure for the same node. |
+| `__getattr__` | `(self, name)` |  |
+
 ### `MplDraggableCanvas` *(extends `_FigureCanvasBase`)*
 
 FigureCanvasQTAgg with built-in axes-drag support.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, figure, parent=None)` | Args: |
+| `__init__` | `(self, figure, parent=None)` |  |
+| `set_mouse_mode` | `(self, mode: str)` | Set the transient mouse interaction mode for this canvas. |
+| `mouse_mode` | `(self) → str` | Return the current transient mouse interaction mode. |
+| `enable_view_limit_tracking` | `(self, enabled: bool)` | Opt this canvas into baseline axis-limit snapshot/restore support. |
+| `snapshot_view_limits` | `(self)` | Capture current axis limits for later restoration. |
+| `restore_view_limits` | `(self)` | Restore the last snapshotted axis limits when tracking is enabled. |
 | `reset_layout` | `(self)` | Reset all axes to auto tight_layout positions. |
 | `snapshot_positions` | `(self)` | Save the current bounding box of every axes so reset_layout can |
+| `showEvent` | `(self, event)` | Guard matplotlib's installEventFilter call against QWidgetItem parents. |
 | `_drag_press` | `(self, event)` | Args: |
 | `_drag_motion` | `(self, event)` | Args: |
 | `_drag_release` | `(self, event)` | Args: |
+| `_zoom_press` | `(self, event)` | Start a rectangle zoom drag when zoom mode is active. |
+| `_zoom_motion` | `(self, event)` | Update the active rectangle zoom overlay while dragging. |
+| `_zoom_release` | `(self, event)` | Apply or cancel a rectangle zoom selection on mouse release. |
+| `_clear_zoom_state` | `(self, draw: bool=True)` | Remove any temporary zoom overlay and clear in-progress state. |
 
 ### `HtmlAxisItem` *(extends `pg.AxisItem`)*
 
@@ -56,7 +86,7 @@ Visual color bar for scatter plots using plot primitives.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, plot_item, colormap, vmin: float, vmax: float, config: dict, el` | Args: |
+| `__init__` | `(self, plot_item, colormap, vmin: float, vmax: float, config: dict, el` |  |
 | `create` | `(self) → list` | Draw the color bar and return list of added plot items. |
 | `remove` | `(self)` | Remove all color bar items from the plot. |
 
@@ -66,14 +96,14 @@ Unified download configuration dialog for all plot types.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, default_filename: str='figure', formats: list[str] \| None=None,` | Args: |
+| `__init__` | `(self, default_filename: str='figure', formats: list[str] \| None=None,` |  |
 | `set_csv_data` | `(self, data, columns: dict \| None=None)` | Attach data so the dialog can export CSV directly. |
 | `_build_ui` | `(self)` |  |
-| `_on_format_change` | `(self, fmt: str)` | Args: |
+| `_on_format_change` | `(self, fmt: str)` |  |
 | `_on_size_toggle` | `(self)` |  |
 | `show_dpi_control` | `(self, visible: bool=True)` | Call from Matplotlib callers to expose the DPI spinner. |
-| `_get_csv_separator` | `(self) → str` | Returns: |
-| `collect` | `(self) → dict` | Returns: |
+| `_get_csv_separator` | `(self) → str` |  |
+| `collect` | `(self) → dict` |  |
 
 ### `FontSettingsGroup`
 
@@ -81,10 +111,10 @@ Reusable font-settings QGroupBox builder.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, config: dict)` | Args: |
-| `build` | `(self, on_change=None) → QGroupBox` | Args: |
+| `__init__` | `(self, config: dict)` |  |
+| `build` | `(self, on_change=None) → QGroupBox` |  |
 | `_pick_color` | `(self)` |  |
-| `collect` | `(self) → dict` | Returns: |
+| `collect` | `(self) → dict` |  |
 
 ### `LegendGroup`
 
@@ -92,9 +122,9 @@ Reusable legend settings QGroupBox builder.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, config: dict)` | Args: |
-| `build` | `(self) → QGroupBox` | Returns: |
-| `collect` | `(self) → dict` | Returns: |
+| `__init__` | `(self, config: dict)` |  |
+| `build` | `(self) → QGroupBox` |  |
+| `collect` | `(self) → dict` |  |
 
 ### `ExportSettingsGroup`
 
@@ -102,15 +132,37 @@ Reusable export settings QGroupBox builder (background colour, format, DPI, figu
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, config: dict)` | Args: |
-| `build` | `(self) → QGroupBox` | Returns: |
+| `__init__` | `(self, config: dict)` |  |
+| `build` | `(self) → QGroupBox` |  |
 | `_pick_bg` | `(self)` |  |
-| `collect` | `(self) → dict` | Returns: |
+| `collect` | `(self) → dict` |  |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `compute_bin_edges_fixed_geo` | `(values, bin_width, log_x=False, bin_mode='geometric')` | Compute bin edges for a single array of (possibly log-transformed) values. |
+| `compute_global_bin_edges_fixed_geo` | `(all_values_list, bin_width, log_x=False, bin_mode='geometric')` | Compute shared bin edges from multiple value arrays. |
+| `compute_bin_edges_width_geo` | `(values, bin_width, log_x=True, bin_mode='geometric')` | Compute bin edges anchored to clean grid boundaries. |
+| `compute_global_bin_edges_width_geo` | `(all_values_list, bin_width, log_x=True, bin_mode='geometric')` | Compute shared bin edges from multiple per-sample arrays. |
+| `_deep_copy_config` | `(cfg)` | Return a fully independent copy of a config dict. |
+| `_figure_alive` | `(dlg)` | Return True if the dialog's underlying C++ object still exists. |
+| `capture_figure_thumbnail` | `(node, dlg)` | Grab a small snapshot of the figure's plot for the node hover preview. |
+| `_connect_thumb_refresh` | `(node, dlg)` | Re-capture the thumbnail (debounced) whenever the figure changes. |
+| `show_persistent_figure` | `(node, factory, _parent_window=None)` | Open a node's figure, reusing one window and hiding (not killing) it. |
+| `prime_figure_thumbnail` | `(node, factory)` | Build a figure off-screen once so its hover thumbnail exists before the |
+| `_finish_prime` | `(node, dlg)` | Capture the primed thumbnail, then keep the window hidden + ready. |
+| `_connect_view_thumb_refresh` | `(view, dlg)` |  |
+| `capture_view_thumbnail` | `(view)` | Grab a thumbnail for one figure view (and mirror to the node). |
+| `_open_view` | `(view)` | Show a figure view's window, creating it on first open. |
+| `_add_node_figure` | `(node, dialog_class, parent_window, base_config=None)` | Create a new figure view for the node, append it, and open it. |
+| `open_node_figures` | `(node, dialog_class, parent_window, always_new=False)` | Open a node figure. Double-click passes ``always_new=True`` so each |
+| `_encode_pixmap` | `(pm)` | Encode a QPixmap to a base64 PNG string for saving (or None). |
+| `_decode_pixmap` | `(s)` | Decode a base64 PNG string from a saved project back to a QPixmap (or None). |
+| `serialize_node_figures` | `(node)` | Return a pickle-safe list describing a node's figures for project save. |
+| `rebuild_node_figures` | `(node, dialog_class, parent_window, saved)` | Recreate a node's figures from saved data, without opening windows. |
+| `focus_node_figure` | `(view)` | Bring a figure (picked from the hover fan) to the front. |
+| `close_node_figure` | `(view)` | Close/remove a figure picked from the hover fan. |
 | `pick_color_hex` | `(initial_color: str, owner=None, title: str='Select Color') → str \| No` | Open a safely parented color dialog and return a validated hex color. |
 | `parse_element_label` | `(label: str) → tuple[str, str \| None]` | Parse element/isotope text into (symbol_like, mass_or_none). |
 | `format_element_label` | `(key: str, mode: str, renderer: Renderer=Renderer.HTML, config: dict \|` | Format an element key for display according to label mode and renderer. |
@@ -126,6 +178,7 @@ Reusable export settings QGroupBox builder (background colour, format, DPI, figu
 | `apply_legend_label_style` | `(legend, config: dict \| None=None, *, family=None, size=None, bold=Non` | Apply explicit styling to every label inside a PyQtGraph legend. |
 | `apply_plot_item_text_styling` | `(plot_item, *, family: str, title_size: int, axis_size: int, legend_si` | Apply explicit text styling to title, axes, ticks, and legend. |
 | `apply_font_to_pyqtgraph` | `(plot_item, config: dict)` | Apply config-driven text styling to a PyQtGraph plot item. |
+| `copy_figure_to_clipboard` | `(widget)` | Copy the full rendered figure to the system clipboard as an image. |
 | `set_axis_labels` | `(plot_item, x_label: str, y_label: str, config: dict)` | Set axis labels with proper font formatting on a PyQtGraph PlotItem. |
 | `_configure_mathtext_font` | `(family: str) → None` | Sync matplotlib's mathtext roman font to the user's selected font. |
 | `apply_font_to_matplotlib` | `(ax, config: dict)` | Apply font settings to a Matplotlib Axes (ticks, title, colorbar). |

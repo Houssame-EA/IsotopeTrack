@@ -34,9 +34,9 @@ Themed collapsible panel. Click header to expand/collapse.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, title: str, parent=None)` | Args: |
+| `__init__` | `(self, title: str, parent=None)` |  |
 | `toggle` | `(self)` |  |
-| `collapse` | `(self, status: str='')` | Args: |
+| `collapse` | `(self, status: str='')` |  |
 | `expand` | `(self)` |  |
 | `set_status` | `(self, text: str)` |  |
 | `is_expanded` | `(self)` |  |

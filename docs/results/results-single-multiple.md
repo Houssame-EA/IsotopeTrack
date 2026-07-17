@@ -21,12 +21,12 @@ Analysis helper for single vs multiple element particle classification.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `analyze_particles` | `(particle_data, pct_single=0.5, pct_multiple=0.5)` | Args: |
+| `analyze_particles` | `(particle_data, pct_single=0.5, pct_multiple=0.5)` |  |
 | `format_clean` | `(combo_str, label_mode='Symbol', cfg=None)` | Format a raw combination label for display using the selected isotope label mode. |
-| `calc_per_ml` | `(count, parent_window, dilution=1.0, sample_info=None)` | Args: |
-| `pie_data` | `(results, combo_type, custom_colors=None, per_ml=False, parent_window=` | Args: |
+| `calc_per_ml` | `(count, parent_window, dilution=1.0, sample_info=None)` |  |
+| `pie_data` | `(results, combo_type, custom_colors=None, per_ml=False, parent_window=` |  |
 | `heatmap_data` | `(results_dict, per_ml=False, parent_window=None, dilution=1.0, label_m` | Build heatmap matrices for single- and multiple-element combinations. |
-| `statistics_table` | `(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilu` | Args: |
+| `statistics_table` | `(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilu` |  |
 
 ### `_ColorBtn` *(extends `QPushButton`)*
 
@@ -34,9 +34,9 @@ Compact colour-picker button.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, color: str='#FFFFFF', parent=None)` | Args: |
+| `__init__` | `(self, color: str='#FFFFFF', parent=None)` |  |
 | `_apply` | `(self)` | Refresh the swatch preview without styling any parent dialog. |
-| `color` | `(self) → str` | Returns: |
+| `color` | `(self) → str` |  |
 | `set_color` | `(self, c: str)` | Store one validated composition-preview color and refresh the swatch. |
 | `mousePressEvent` | `(self, event)` | Open the shared safe color picker for this swatch on left click. |
 
@@ -46,9 +46,9 @@ Pie / donut style settings reusable group for Single/Multiple dialog.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, cfg: dict)` | Args: |
-| `build` | `(self) → QGroupBox` | Returns: |
-| `collect` | `(self) → dict` | Returns: |
+| `__init__` | `(self, cfg: dict)` |  |
+| `build` | `(self) → QGroupBox` |  |
+| `collect` | `(self) → dict` |  |
 
 ### `SingleMultipleSettingsDialog` *(extends `QDialog`)*
 
@@ -65,12 +65,12 @@ Main dialog with matplotlib figure and right-click context menu.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, node, parent_window=None)` | Args: |
-| `_multi` | `(self)` | Returns: |
+| `__init__` | `(self, node, parent_window=None)` |  |
+| `_multi` | `(self)` |  |
 | `_build_ui` | `(self)` | Build the display dialog with visualization and table tabs. |
 | `_ctx_menu` | `(self, pos)` | Build an intentionally minimal right-click menu. |
-| `_toggle` | `(self, key)` | Args: |
-| `_set` | `(self, key, value)` | Args: |
+| `_toggle` | `(self, key)` |  |
+| `_set` | `(self, key, value)` |  |
 | `_open_settings` | `(self)` | Open the legacy all-in-one settings dialog for compatibility. |
 | `_open_plot_format_settings` | `(self)` | Open format-scoped settings dialog. |
 | `_open_configure_plot_quantities` | `(self)` | Open quantities-scoped settings dialog. |
@@ -81,18 +81,18 @@ Main dialog with matplotlib figure and right-click context menu.
 | `_refresh` | `(self)` |  |
 | `_draw_pies` | `(self, ad, cfg)` | Draw pie/donut visualizations for single vs multiple-element distributions. |
 | `_combine_multi_analysis` | `(self, analysis_by_sample)` | Combine per-sample analysis into one aggregated analysis structure. |
-| `_pie_one` | `(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, s` | Args: |
-| `_draw_heatmaps` | `(self, ad, cfg)` | Args: |
-| `_update_stats` | `(self, ad)` | Args: |
-| `_update_table` | `(self, ad)` | Args: |
+| `_pie_one` | `(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, s` |  |
+| `_draw_heatmaps` | `(self, ad, cfg)` |  |
+| `_update_stats` | `(self, ad)` |  |
+| `_update_table` | `(self, ad)` |  |
 
 ### `SingleMultipleElementPlotNode` *(extends `QObject`)*
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
-| `set_position` | `(self, pos)` | Args: |
-| `configure` | `(self, parent_window)` | Args: |
-| `process_data` | `(self, input_data)` | Args: |
-| `extract_analysis_data` | `(self)` | Returns: |
-| `_extract_multi` | `(self, st, mt)` | Args: |
+| `__init__` | `(self, parent_window=None)` |  |
+| `set_position` | `(self, pos)` |  |
+| `configure` | `(self, parent_window)` |  |
+| `process_data` | `(self, input_data)` |  |
+| `extract_analysis_data` | `(self)` |  |
+| `_extract_multi` | `(self, st, mt)` |  |

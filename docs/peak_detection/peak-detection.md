@@ -35,7 +35,7 @@ Lookup-table based Compound Poisson-Lognormal threshold.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, lut_path: str \| None=None)` | Args: |
+| `__init__` | `(self, lut_path: str \| None=None)` |  |
 | `_load_table` | `(self, path: str) → None` | Load and build the RegularGridInterpolator from the .npz file. |
 | `get_threshold` | `(self, lambda_bkgd: float, alpha: float, sigma: float=0.55) → float` | Return the CPLN detection threshold. |
 | `clear_cache` | `(self) → None` | No-op kept for interface compatibility with other classes. |
@@ -68,7 +68,7 @@ Features:
 | `find_particles_vectorized` | `(self, time, raw_signal, lambda_bkgd, threshold, min_width=3, min_cont` | Vectorized particle detection using NumPy with configurable integration |
 | `find_particles` | `(self, time, raw_signal, lambda_bkgd, threshold, min_width=3, min_cont` | Wrapper for safe particle detection. |
 | `process_single_sample_safe` | `(self, main_window, sample_name)` | Threading-safe sample processing with iterative calculation. |
-| `process_single_sample` | `(self, main_window, sample_name)` | Args: |
+| `process_single_sample` | `(self, main_window, sample_name)` |  |
 | `detect_peaks_with_poisson` | `(self, signal, alpha=1e-06, sample_name=None, element_key=None, method` | Detect peaks using Poisson-based methods with iterative calculation. |
 | `detect_particles_incremental` | `(self, main_window)` | Incremental particle detection for changed elements only. |
 | `process_sample_incremental` | `(self, main_window, sample_name, changed_elements)` | Process only changed elements for a sample incrementally. |
@@ -77,7 +77,7 @@ Features:
 | `apply_window_size` | `(self, signal, use_window_size, window_size)` | Apply window size limitation to signal if enabled. |
 | `get_changed_elements` | `(self, main_window, sample_name)` | Determine which elements need reprocessing for a sample. |
 | `process_multi_element_particles` | `(self, all_particles, time_array, sample_detected_peaks, selected_isot` | Process and identify multi-element particles. |
-| `is_overlapping` | `(self, particle, multi_particle)` | Check if particles overlap by at least 50 percent. |
+| `is_overlapping` | `(self, particle, multi_particle, min_overlap_percentage=75.0)` | Check if particles overlap by at least `min_overlap_percentage` percent. |
 | `detect_particles` | `(self, main_window)` | Main threading-safe particle detection function. |
 | `get_snr_color` | `(self, snr)` | Get color based on signal-to-noise ratio. |
 

@@ -66,7 +66,7 @@
 | `_toolbar_btn_style` | `(p) → str` | Style for the small control-panel buttons (Clear/Save/Load/Confirm). |
 | `_big_btn_style` | `(p, kind) → str` | Style for the big Save/Load Selections buttons. |
 | `_disabled_element_style` | `(self) → str` | Style for an element button whose isotopes aren't in the |
-| `create_elements_data` | `()` | Returns: |
+| `create_elements_data` | `()` |  |
 | `add_control_panel` | `(self)` | Add control panel with preset lists and save/load buttons. |
 | `confirm_selections` | `(self)` | Gather all selected elements and isotopes and emit signal. |
 | `add_save_load_buttons` | `(self)` | Add save and load buttons to the dialog. |

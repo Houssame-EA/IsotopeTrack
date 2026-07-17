@@ -8,6 +8,7 @@ Loading data from Nu Instruments.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `open_nu_binary` | `(path: Path) → BinaryIO` | Open a Nu binary file, transparently decompressing gzip if needed. |
 | `is_nu_run_info_file` | `(path: Path) → bool` | Check if file exists and is called 'run.info'. |
 | `is_nu_directory` | `(path: Path) → bool` | Check if path is a directory containing 'run.info' and 'integrated.index'. |
 | `blank_nu_signal_data` | `(autob_events: list[np.ndarray], signals: np.ndarray, masses: np.ndarr` | Apply auto-blanking to the integrated data. |

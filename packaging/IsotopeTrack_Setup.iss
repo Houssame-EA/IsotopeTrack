@@ -4,7 +4,7 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 
 #define AppName        "IsotopeTrack"
-#define AppVersion     "1.10.6"
+#define AppVersion     "1.10.7"
 #define AppPublisher   "IsotopeTrack"
 #define AppExeName     "IsotopeTrack.exe"
 #define SourceDir      "..\dist\IsotopeTrack"
@@ -41,8 +41,8 @@ MinVersion=10.0
 
 ; Wizard styling
 WizardStyle=modern
-WizardImageFile=..\images\dmg_background_PC.PNG
-WizardSmallImageFile=..\images\isotrack_icon.png
+WizardImageFile=installer\wizard_100.png,installer\wizard_200.png
+WizardSmallImageFile=installer\wizard_small_100.png,installer\wizard_small_200.png
 
 ; Uninstall
 UninstallDisplayIcon={app}\{#AppExeName}

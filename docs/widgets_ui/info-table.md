@@ -10,13 +10,13 @@ Custom tooltip widget for displaying sample analysis information and quality met
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent=None)` | Args: |
+| `__init__` | `(self, parent=None)` |  |
 | `set_trigger_widget` | `(self, widget)` | Set the widget (e.g. info button) whose clicks should NOT auto-close us. |
 | `show` | `(self)` | Show the tooltip and install a global click filter. |
 | `hide` | `(self)` | Hide the tooltip and remove the global click filter. |
 | `eventFilter` | `(self, obj, event)` | Hide on any mouse click that lands outside the tooltip. |
 | `setup_ui` | `(self)` | Setup the user interface. |
-| `_create_stat_box` | `(self)` | Returns: |
+| `_create_stat_box` | `(self)` |  |
 | `update_stats` | `(self, active_samples, total_elements, Suspected_percentage, analysis_` | Update the statistics display. |
 | `update_sample_content` | `(self, current_sample, selected_isotopes, detected_peaks, multi_elemen` | Update the sample content display with isotope information, SNR quality |
 

@@ -20,6 +20,11 @@
 | `_CODE_RE` | `re.compile('```python\\s*\\n(.*?)```', re.DOTALL)` |
 | `_THINK_RE` | `re.compile('<think>.*?</think>', re.DOTALL)` |
 | `_IMPORT_RE` | `re.compile('^\\s*(?:import\\s+\\w+\|from\\s+\\w+\\s+import…` |
+| `_BLOCKED_CALL_NAMES` | `frozenset({'open', 'eval', 'exec', 'compile', '__import__…` |
+| `_BLOCKED_ATTRS` | `frozenset({'save', 'savez', 'savez_compressed', 'load', '…` |
+| `_FLOAT_TOKEN_RE` | `re.compile('[-+]?\\d[\\d,]*\\.\\d+')` |
+| `_ANYNUM_TOKEN_RE` | `re.compile('[-+]?\\d[\\d,]*\\.\\d+\|[-+]?\\d[\\d,]*')` |
+| `_MAX_STDOUT_CHARS` | `20000` |
 | `IMAGE_EXTS` | `{'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'ima…` |
 | `TEXT_EXTS` | `{'.txt', 'csv', '.json', '.md', '.tsv', '.xml'}` |
 
@@ -49,6 +54,15 @@
 | `_stream_sse` | `(self)` |  |
 | `_run_custom_api` | `(self)` |  |
 | `_finish` | `(self, full, tc, t0)` |  |
+
+### `ProbeWorker` *(extends `QThread`)*
+
+Briefly probe localhost for a running model server so the assistant can
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, mlx_host=MLX_BASE)` |  |
+| `run` | `(self)` |  |
 
 ### `BackendDialog` *(extends `QDialog`)*
 
@@ -269,7 +283,10 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 | `_send` | `(self)` |  |
 | `_on_tok` | `(self, t)` |  |
 | `_on_stats` | `(self, n, el)` |  |
+| `_run_cached` | `(self, code, particles)` | Execute sandbox code, memoising error-free results within the current |
 | `_on_done` | `(self, full)` |  |
+| `_start_interpretation` | `(self, payload, allowed)` | Second pass: hand the computed results back to the model for a short, |
+| `_on_interpret_done` | `(self, full)` |  |
 | `_retry_send` | `(self)` | Re-trigger the LLM after injecting a sandbox correction hint. |
 | `_on_err` | `(self, err)` |  |
 | `_enable` | `(self)` |  |
@@ -293,6 +310,9 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 | `_add_user` | `(self, t)` |  |
 | `_add_ai` | `(self, t)` |  |
 | `_scrollb` | `(self)` |  |
+| `_start_autodetect` | `(self)` | Probe localhost for a running model server and self-configure, so the |
+| `_on_autodetect` | `(self, backend, model, label)` |  |
+| `_on_autodetect_info` | `(self, msg)` |  |
 
 ### `AIAssistantNode` *(extends `QObject`)*
 
@@ -324,6 +344,15 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 | `_ifmt` | `(t, ibg='#F3F4F6')` |  |
 | `_trim_history` | `(h, max_t)` |  |
 | `_sanitize_code` | `(code)` |  |
+| `_screen_code` | `(code)` | Static-analyse generated code. Returns an error string if it contains a |
+| `_to_float` | `(tok)` |  |
+| `_floats_in_text` | `(s)` | All numeric values (int or float) appearing in a string. |
+| `_numbers_in_rows` | `(rows, cap=8000)` |  |
+| `_close` | `(a, b, rel=0.005)` |  |
+| `_unverified_numbers` | `(prose, allowed)` | Decimal figures in prose with no match (within tolerance) in the set of |
+| `_compact_table` | `(tbl, max_rows=15)` | Short plain-text rendering of a result table for the interpretation pass. |
+| `_correction_hint` | `(err, import_error=False)` | Build the self-correction message fed back to the model after a sandbox |
+| `_format_exec_error` | `(exc, code)` | Error string with the offending line from the generated code, so both the |
 | `_execute_query_code` | `(code, particles, dc)` | Run code in sandbox. Returns (text_output, table_list, chart_list, error). |
 | `_read_image_b64` | `(path)` |  |
 | `_extract_pdf_text` | `(path)` |  |

@@ -2710,14 +2710,17 @@ class CalibrationMethodsDialog(QDialog):
             parent (QWidget | None): Optional parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Calibration Methods – IsotopeTrack")
-        self.resize(960, 760)
+        self.setWindowTitle("Equations – IsotopeTrack")
+        self.resize(980, 780)
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
-        tabs.addTab(self._tab_overview(), "Overview")
-        tabs.addTab(self._tab_ionic(), "Ionic Calibration")
+        tabs.setUsesScrollButtons(True)
+        tabs.addTab(self._tab_ionic(), "Sensitivity")
         tabs.addTab(self._tab_transport(), "Transport Rate")
+        tabs.addTab(self._topic_tab("detection"), "Detection & SIA")
+        tabs.addTab(self._topic_tab("quantification"), "Quantification")
+        tabs.addTab(self._topic_tab("clustering"), "Clustering")
         layout.addWidget(tabs)
 
         btn = QPushButton("Close")
@@ -2797,134 +2800,62 @@ class CalibrationMethodsDialog(QDialog):
         return sc
 
 
-    def _tab_overview(self):
-        """
-        Build the Overview tab content.
-
-        Returns:
-            QScrollArea: Tab widget with overview description and image.
-        """
-        return self._scroll(
-            _styled_label(
-                "<h2>Calibration Overview</h2>"
-                "<p>Two independent calibrations convert raw ICP-ToF-MS counts "
-                "into physical quantities:</p>"
-                "<ol>"
-                "<li><b>Ionic Calibration</b> – relates dissolved concentration "
-                "to instrument response (counts·s⁻¹).</li>"
-                "<li><b>Transport Rate Calibration</b> – determines the sample "
-                "volume entering the plasma per second (µL·s⁻¹).</li>"
-                "</ol>"
-                "<p><b>Outputs:</b> particle mass (fg), diameter (nm), "
-                "number concentration (particles·mL⁻¹), LOD, LOQ.</p>",
-                bg="#eef4ff", border="#4a90d9",
-            ),
-            self._img("images/calibration_overview.png"),
-        )
-
-
     def _tab_ionic(self):
         """
-        Build the Ionic Calibration tab with regression methods and FOM equations.
+        Build the Sensitivity tab: intro, figure, and the LaTeX equations
+        with worked examples and clickable references.
 
         Returns:
-            QScrollArea: Tab widget with descriptions, equations, and image.
+            QScrollArea: Tab widget with description, image and equations.
         """
         return self._scroll(
             _styled_label(
-                "<h2>Ionic Calibration</h2>"
+                "<h2>Ionic Calibration (Sensitivity)</h2>"
                 "<p>Standard solutions of known concentration are measured "
                 "and a regression of signal (counts·s⁻¹) vs. concentration "
                 "is performed. IsotopeTrack fits three models automatically "
                 "and selects the one with the highest R².</p>",
                 bg="#eef4ff", border="#4a90d9",
             ),
-
-            _styled_label(
-                "<h3>1. Force Through Zero</h3>"
-                "<p>Linear regression forced through the origin (intercept = 0). "
-                "Appropriate when the blank signal is negligible.</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Model:</b>&nbsp;&nbsp; y = m · x"
-                "<br><br>"
-                "<b>Slope:</b>&nbsp;&nbsp; m = Σ(xᵢ · yᵢ) / Σ(xᵢ²)"
-                "<br><br>"
-                "<b>R²:</b>&nbsp;&nbsp; R² = 1 − Σ(yᵢ − ŷᵢ)² / Σ(yᵢ²)"
-                "<br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "Note: denominator is Σ(yᵢ²), not Σ(yᵢ − ȳ)², because the "
-                "model passes through the origin.</span>"
-            ),
-
-            _styled_label(
-                "<h3>2. Simple Linear (OLS)</h3>"
-                "<p>Ordinary least-squares regression with a free intercept. "
-                "The standard approach for most calibration curves.</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Model:</b>&nbsp;&nbsp; y = m · x + b"
-                "<br><br>"
-                "<b>Solution:</b>&nbsp;&nbsp; [m, b] = (X<sup>T</sup>X)⁻¹ · X<sup>T</sup>y"
-                "<br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "where X is the design matrix [x, 1].</span>"
-                "<br><br>"
-                "<b>R²:</b>&nbsp;&nbsp; R² = 1 − Σ(yᵢ − ŷᵢ)² / Σ(yᵢ − ȳ)²"
-            ),
-
-            _styled_label(
-                "<h3>3. Weighted Linear (WLS)</h3>"
-                "<p>Weighted least-squares regression where each point is "
-                "weighted by the inverse variance of its signal. Gives more "
-                "influence to precise measurements — useful when variance "
-                "increases with concentration (heteroscedastic data).</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Weights:</b>&nbsp;&nbsp; wᵢ = 1 / σᵢ²"
-                "<br><br>"
-                "<b>Slope:</b>&nbsp;&nbsp; m = (Σw · Σwxy − Σwx · Σwy) / "
-                "(Σw · Σwx² − (Σwx)²)"
-                "<br><br>"
-                "<b>Intercept:</b>&nbsp;&nbsp; b = (Σwx² · Σwy − Σwx · Σwxy) / "
-                "(Σw · Σwx² − (Σwx)²)"
-                "<br><br>"
-                "<b>R²<sub>w</sub>:</b>&nbsp;&nbsp; R²<sub>w</sub> = "
-                "1 − Σwᵢ(yᵢ − ŷᵢ)² / Σwᵢ(yᵢ − ȳ)²"
-            ),
-
-            _styled_label(
-                "<h3>Figures of Merit (IUPAC convention)</h3>"
-                "<p>Computed for each regression method using the standard "
-                "deviation of the lowest-concentration standard (σ<sub>blank</sub>) "
-                "as a proxy for blank noise.</p>",
-                bg="#fff3e0", border="#ffb74d",
-            ),
-            _equation_label(
-                "<b>LOD</b> (Limit of Detection):"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "LOD = 3 · σ<sub>blank</sub> / m"
-                "<br><br>"
-                "<b>LOQ</b> (Limit of Quantification):"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "LOQ = 10 · σ<sub>blank</sub> / m"
-                "<br><br>"
-                "<b>BEC</b> (Blank Equivalent Concentration):"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "BEC = b / m"
-                "<br><br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "where m = slope (counts·s⁻¹ per conc. unit), "
-                "b = intercept (counts·s⁻¹), "
-                "σ<sub>blank</sub> = std. dev. of signal at lowest standard.</span>"
-            ),
-
             self._img("images/ionic_calibration.png"),
+            self._equations_widget("sensitivity"),
         )
 
+
+    def _topic_tab(self, topic_key):
+        """
+        Build a scrollable tab from one equations-reference topic, with
+        LaTeX equations, parameter definitions, worked examples and
+        references.
+
+        Args:
+            topic_key (str): Topic key ('detection', 'quantification',
+                'clustering').
+
+        Returns:
+            QWidget: Scrollable tab widget.
+        """
+        return self._scroll(self._equations_widget(topic_key))
+
+    def _equations_widget(self, topic_key):
+        """
+        Safely build the equations widget for one topic.
+
+        Args:
+            topic_key (str): Topic key in tools/equations_reference.py.
+
+        Returns:
+            QWidget: The topic widget, or a fallback label on failure.
+        """
+        try:
+            from tools.equations_reference import build_topic_widget
+            return build_topic_widget(topic_key, self)
+        except Exception:
+            _itk_log.exception(
+                "Could not build equations topic %s", topic_key)
+            fallback = QLabel("The equations reference could not be loaded.")
+            fallback.setAlignment(Qt.AlignCenter)
+            return fallback
 
     def _tab_transport(self):
         """
@@ -2940,118 +2871,13 @@ class CalibrationMethodsDialog(QDialog):
                 "delivered to the plasma per second. It is required to convert "
                 "detected particle counts into mass and number concentration.</p>"
                 "<p>Errors in transport rate propagate directly into size and "
-                "concentration errors (Pace <i>et al.</i>, <i>Anal. Chem.</i> "
-                "<b>83</b>, 9361, 2011; Laborda <i>et al.</i>, <i>Anal. Chem.</i> "
-                "<b>91</b>, 13275, 2019).</p>",
+                "concentration errors — see the clickable references below.</p>",
                 bg="#eef4ff", border="#4a90d9",
-            ),
-
-            _styled_label(
-                "<h3>1. Weight Method</h3>"
-                "<p>The most direct approach: measure the mass loss of the "
-                "sample vial and the mass collected in the waste container "
-                "over a known analysis time.</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Sample consumed:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "Δm<sub>sample</sub> = m<sub>initial</sub> − m<sub>final</sub>"
-                "<br><br>"
-                "<b>Volume reaching plasma:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "V<sub>plasma</sub> = Δm<sub>sample</sub> − m<sub>waste</sub>"
-                "<br><br>"
-                "<b>Transport rate:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "η = V<sub>plasma</sub> / (ρ · Δt)"
-                "<br><br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "where ρ ≈ 1.0 g·mL⁻¹ for dilute aqueous solutions, "
-                "Δt = analysis time (s). Result in µL·s⁻¹.</span>"
-            ),
-
-            _styled_label(
-                "<h3>2. Particle Number Method</h3>"
-                "<p>Uses a nanoparticle suspension of known size and "
-                "concentration. The transport rate is derived from the "
-                "ratio of detected to expected particle events.</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Single-particle mass:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "m<sub>p</sub> = (π/6) · d³ · ρ<sub>p</sub>"
-                "<br><br>"
-                "<b>Expected particle number concentration:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "C<sub>N</sub> = C<sub>mass</sub> / m<sub>p</sub>"
-                "<br><br>"
-                "<b>Transport rate:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "η = N<sub>detected</sub> / (C<sub>N</sub> · Δt)"
-                "<br><br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "where d = nominal particle diameter (nm), "
-                "ρ<sub>p</sub> = particle density (g·cm⁻³), "
-                "C<sub>mass</sub> = mass concentration (ng·L⁻¹), "
-                "N<sub>detected</sub> = number of detected particle events, "
-                "Δt = acquisition time (s).</span>"
-            ),
-
-            _styled_label(
-                "<h3>3. Mass Method (Dual-Calibration)</h3>"
-                "<p>Combines the particle calibration slope (counts vs. mass) "
-                "with the ionic calibration slope (signal vs. concentration) "
-                "to derive the transport rate as a ratio of the two sensitivities.</p>",
-                bg="#e8f5e9", border="#66bb6a",
-            ),
-            _equation_label(
-                "<b>Particle calibration:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "S<sub>part</sub> = slope of (total counts) vs. (particle mass in fg)"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "<span style='color:#666;'>units: counts · fg⁻¹</span>"
-                "<br><br>"
-                "<b>Ionic calibration:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "S<sub>ion</sub> = slope of (signal in counts·s⁻¹) vs. "
-                "(concentration)"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "<span style='color:#666;'>units: counts·s⁻¹ per conc. unit</span>"
-                "<br><br>"
-                "<b>Transport rate:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "η = S<sub>ion</sub> / S<sub>part</sub>"
-                "<br><br>"
-                "<span style='color:#666; font-size:11px;'>"
-                "The ionic slope is adjusted to consistent mass units before "
-                "division (e.g. ppb → µg·L⁻¹ if needed).</span>"
-            ),
-
-            _styled_label(
-                "<h3>Downstream: Particle Sizing</h3>"
-                "<p>Once the transport rate is known, individual particle "
-                "masses and diameters are calculated from their detected "
-                "counts.</p>",
-                bg="#fff3e0", border="#ffb74d",
-            ),
-            _equation_label(
-                "<b>Particle mass:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "m<sub>p</sub> (fg) = total counts / (S<sub>ion</sub> / η)"
-                "<br><br>"
-                "<b>Volume:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "V = m<sub>p</sub> / ρ<sub>p</sub>"
-                "<br><br>"
-                "<b>Equivalent spherical diameter:</b>"
-                "<br>&nbsp;&nbsp;&nbsp;&nbsp;"
-                "d = 2 · (3V / 4π)<sup>1/3</sup>"
             ),
 
             self._img("images/methods.png"),
             self._img("images/transport_effect.png"),
+            self._equations_widget("transport"),
         )
         
 class AboutDialog(QDialog):
@@ -3084,7 +2910,7 @@ class AboutDialog(QDialog):
         lay.addWidget(logo)
  
         lay.addWidget(QLabel(
-            "<h3 align='center'>Version 1.10.6</h3>"
+            "<h3 align='center'>Version 1.10.7</h3>"
             "<p align='center'>Advanced SP-ICP-ToF-MS data analysis.<br>"
             "Peak detection - Calibration - Nanoparticle quantification.</p>"
         ))

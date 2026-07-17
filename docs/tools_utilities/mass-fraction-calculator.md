@@ -20,13 +20,13 @@ Database loader for materials from CSV with signature-based lookup.
 | `__init__` | `(self)` |  |
 | `auto_load_csv` | `(self) → bool` | Try to load CSV from standard locations, preferring trimmed/compressed versions. |
 | `load_csv` | `(self, csv_path: str \| Path) → bool` | Load CSV and build signature-based indices. |
-| `_signature_for_formula` | `(self, formula: str) → str` | Args: |
-| `get_data_by_formula_or_signature` | `(self, formula: str) → list[dict]` | Args: |
-| `best_density_for_formula` | `(self, formula: str) → float` | Args: |
-| `best_url_for_formula` | `(self, formula: str) → str` | Args: |
+| `_signature_for_formula` | `(self, formula: str) → str` |  |
+| `get_data_by_formula_or_signature` | `(self, formula: str) → list[dict]` |  |
+| `best_density_for_formula` | `(self, formula: str) → float` |  |
+| `best_url_for_formula` | `(self, formula: str) → str` |  |
 | `get_compounds_for_element` | `(self, element: str) → list[dict]` | Get one entry per canonical formula for initial browsing. |
 | `get_variants_for_formula` | `(self, formula: str) → list[dict]` | Get ALL polymorphs/structures for a given formula. |
-| `get_material_data` | `(self, formula: str) → list[dict]` | Args: |
+| `get_material_data` | `(self, formula: str) → list[dict]` |  |
 
 ### `FormulaComboBox` *(extends `QComboBox`)*
 
@@ -34,16 +34,16 @@ Editable combobox for chemical formulas with debounced filtering.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, element: str, csv_database: CSVCompoundDatabase, tracked_elemen` | Args: |
+| `__init__` | `(self, element: str, csv_database: CSVCompoundDatabase, tracked_elemen` |  |
 | `_setup_compounds` | `(self)` | Build the full item list but only load a capped subset into the widget. |
 | `_rebuild_items` | `(self, items: list[dict])` | Replace dropdown items, blocking ALL signals to prevent recursion. |
 | `_do_filter` | `(self)` | Actually perform the filter (called by debounce timer). |
 | `filter_to_formula` | `(self, user_canon_formula: str)` | Show all polymorphs/structures for the confirmed formula. |
 | `reset_items` | `(self)` | Restore the capped default list. |
 | `_set_editor_text` | `(self, text: str)` | Set the lineEdit text without triggering any slots. |
-| `current_formula` | `(self) → str` | Returns: |
+| `current_formula` | `(self) → str` |  |
 | `_on_text_changed` | `(self, text: str)` | Debounce: restart timer on every keystroke, filter when typing pauses. |
-| `_on_item_activated` | `(self, index: int)` | Args: |
+| `_on_item_activated` | `(self, index: int)` |  |
 | `_on_editing_finished` | `(self)` |  |
 
 ### `CheckableListItem` *(extends `QWidget`)*
@@ -52,9 +52,9 @@ Compact widget with checkbox + label for sample list.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, sample_name: str, parent=None)` | Args: |
-| `is_checked` | `(self) → bool` | Returns: |
-| `set_checked` | `(self, checked: bool)` | Args: |
+| `__init__` | `(self, sample_name: str, parent=None)` |  |
+| `is_checked` | `(self) → bool` |  |
+| `set_checked` | `(self, checked: bool)` |  |
 
 ### `_PositiveDoubleDelegate` *(extends `QStyledItemDelegate`)*
 
@@ -62,9 +62,9 @@ Only accept positive floats when editing density cells.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `createEditor` | `(self, parent, option, index)` | Args: |
-| `setEditorData` | `(self, editor, index)` | Args: |
-| `setModelData` | `(self, editor, model, index)` | Args: |
+| `createEditor` | `(self, parent, option, index)` |  |
+| `setEditorData` | `(self, editor, index)` |  |
+| `setModelData` | `(self, editor, model, index)` |  |
 
 ### `MassFractionCalculator` *(extends `QDialog`)*
 
@@ -72,36 +72,36 @@ Mass fraction calculator with sample selection and molecular weight calculations
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, selected_isotopes: dict, periodic_table_widget, parent=None)` | Args: |
+| `__init__` | `(self, selected_isotopes: dict, periodic_table_widget, parent=None)` |  |
 | `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
 | `closeEvent` | `(self, event)` | Disconnect theme signal so we don't leak slots on closed dialogs. |
 | `_build_stylesheet` | `(self) → str` | Dark/light aware stylesheet for the whole dialog. |
 | `_refresh_db_status_style` | `(self)` |  |
 | `_refresh_apply_button_style` | `(self)` |  |
 | `_setup_ui` | `(self)` |  |
-| `_build_sample_panel` | `(self) → QGroupBox` | Returns: |
-| `_build_header` | `(self) → QHBoxLayout` | Returns: |
+| `_build_sample_panel` | `(self) → QGroupBox` |  |
+| `_build_header` | `(self) → QHBoxLayout` |  |
 | `_build_table` | `(self)` |  |
-| `_build_buttons` | `(self) → QHBoxLayout` | Returns: |
+| `_build_buttons` | `(self) → QHBoxLayout` |  |
 | `_populate_table` | `(self)` |  |
-| `_make_readonly_item` | `(text: str) → QTableWidgetItem` | Args: |
-| `_element_data` | `(self, symbol: str) → dict \| None` | Args: |
-| `_current_formula` | `(self, row: int) → str` | Args: |
-| `_calc_mass_fraction` | `(self, row: int, formula: str)` | Args: |
-| `_calc_molecular_weight` | `(self, row: int, formula: str)` | Args: |
-| `_on_compound_selected` | `(self, row: int, formula: str, density_csv: float)` | Args: |
+| `_make_readonly_item` | `(text: str) → QTableWidgetItem` |  |
+| `_element_data` | `(self, symbol: str) → dict \| None` |  |
+| `_current_formula` | `(self, row: int) → str` |  |
+| `_calc_mass_fraction` | `(self, row: int, formula: str)` |  |
+| `_calc_molecular_weight` | `(self, row: int, formula: str)` |  |
+| `_on_compound_selected` | `(self, row: int, formula: str, density_csv: float)` |  |
 | `_highlight_tracked` | `(self, row: int, formula: str)` | Set a tooltip showing which elements in the compound are being tracked. |
 | `_calculate_all` | `(self)` |  |
 | `_reset_to_default` | `(self)` |  |
 | `_select_all_samples` | `(self)` |  |
 | `_select_no_samples` | `(self)` |  |
-| `_get_selected_samples` | `(self) → list[str]` | Returns: |
+| `_get_selected_samples` | `(self) → list[str]` |  |
 | `_save_state` | `(self)` |  |
 | `_restore_previous_state` | `(self)` |  |
 | `_manual_load_csv` | `(self)` |  |
-| `_open_structure` | `(self, row: int)` | Args: |
+| `_open_structure` | `(self, row: int)` |  |
 | `_apply_mass_fractions` | `(self)` |  |
-| `closeEvent` | `(self, event)` | Args: |
+| `closeEvent` | `(self, event)` |  |
 | `reject` | `(self)` |  |
 
 ## Functions

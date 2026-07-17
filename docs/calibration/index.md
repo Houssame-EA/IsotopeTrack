@@ -24,6 +24,11 @@ Ionic calibration and transport-efficiency methods.
 
 **5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **54** methods
 
+### [`calibration_registry.py`](calibration-registry.md)
+Single source of truth for IsotopeTrack's calibration methods.
+
+**1** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **2** methods
+
 ### [`ionic_CAL.py`](ionic-cal.md)
 
 

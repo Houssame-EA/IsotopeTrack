@@ -18,7 +18,7 @@ Two-pane configurator for the Particle Filter node.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent, upstreams, sample_filters=None, selected_sources=None, ` | Args: |
+| `__init__` | `(self, parent, upstreams, sample_filters=None, selected_sources=None, ` |  |
 | `_load_elem_data` | `()` | Load the periodic-table element metadata used by the chips. |
 | `_style` | `()` | Build the dialog stylesheet for the current app theme. |
 | `_build` | `(self)` | Assemble the two-pane layout: sample list on the left, the |
@@ -51,7 +51,7 @@ Composable particle filter node with per-sample settings.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, parent_window=None)` | Args: |
+| `__init__` | `(self, parent_window=None)` |  |
 | `set_position` | `(self, pos)` | Update the node position and notify the canvas item. |
 | `process_data` | `(self, input_data)` | Receive pushed upstream data, refresh stale state and propagate. |
 | `_pull_upstream_all` | `(self)` | Fetch the upstream dict from every input link. |

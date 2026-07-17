@@ -27,4 +27,4 @@ Loading data from TOFWERK ICP-ToF.
 ### [`vitesse_loading.py`](vitesse-loading.md)
 Loading data from Nu Instruments.
 
-**0** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **14** functions &nbsp;·&nbsp; **0** methods
