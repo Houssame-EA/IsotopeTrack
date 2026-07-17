@@ -237,6 +237,42 @@ def classify_particle(particle, definitions, overlap_mode, parsed=None):
     return matched
 
 
+def count_matches_per_definition(particles, definitions, overlap_mode):
+    """Effective per-definition particle-match counts for one sample.
+
+    "Effective" means post-priority-resolution, not each definition's raw
+    formula match in isolation: reuses :func:`classify_particle`'s own
+    matching, so under ``"priority"`` mode a particle already claimed by a
+    higher-priority definition does not also count toward a lower-priority
+    one (matches classify_particle's break-on-first-match semantics
+    exactly); under ``"double_count"`` every definition a particle matches
+    gets credit independently. This is intentionally the same notion of
+    "match" the real relabeling pass uses, so the displayed count matches
+    what downstream viz nodes will actually show — not just "how many
+    particles satisfy this expression in a vacuum."
+
+    Intended to be called only at explicit commit points (dialog OK /
+    Apply to Current/Selected Samples), never per keystroke — see the
+    dialog's ``_recompute_match_counts_for_sample``.
+
+    Args:
+        particles (list): Particle dicts for one sample.
+        definitions (list): This sample's definitions, in priority order.
+        overlap_mode ("double_count" | "priority"): §5.
+
+    Returns:
+        dict: ``{definition_id: count}`` for every definition passed in
+            (0 for definitions that matched nothing, including blank or
+            unparseable expressions).
+    """
+    parsed = _parse_definitions(definitions)
+    counts = {d['id']: 0 for d in definitions}
+    for p in particles:
+        for d in classify_particle(p, definitions, overlap_mode, parsed=parsed):
+            counts[d['id']] += 1
+    return counts
+
+
 def _relabel_composition(particle, label, isotopes, keep_mfc_keys):
     """Build the relabeled composition dicts for one matched particle.
 

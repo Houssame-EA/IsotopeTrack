@@ -38,7 +38,8 @@ from tools.particle_classifier_expr import (
     parse, ExpressionSyntaxError, referenced_isotopes, find_confound,
     classify_formula,
 )
-from tools.particle_classifier_relabel import multi_definition_groups
+from tools.particle_classifier_relabel import (
+    multi_definition_groups, count_matches_per_definition)
 from results.shared_plot_utils import pick_color_hex, DEFAULT_SAMPLE_COLORS
 
 import logging
@@ -163,6 +164,15 @@ class ParticleClassifierDialog(QDialog):
         #: session, so re-committing the same group name repeatedly (or
         #: navigating away and back) doesn't re-nag every time.
         self._pooling_prompted_groups = set()
+        #: {definition_id: effective post-priority particle-match count},
+        #: shown as "(N)" in the RHS definitions list. Deliberately NOT
+        #: recomputed on every keystroke/navigation -- only at explicit
+        #: commit points (OK, Apply to Current/Selected Samples), since
+        #: it's meant to answer "what does the currently SAVED
+        #: configuration actually match," not track live edits. A
+        #: definition with no entry here has never been committed since
+        #: it was last changed, and shows no count suffix.
+        self._match_counts = {}
 
         self._validate_timer = QTimer(self)
         self._validate_timer.setSingleShot(True)
@@ -520,6 +530,28 @@ class ParticleClassifierDialog(QDialog):
         return [d for d in self._definitions
                 if d.get('target_sample') == sample_name]
 
+    def _recompute_match_counts_for_sample(self, sample_name):
+        """Refresh the effective match-count cache for one sample's
+        definitions, using its real connected particle data.
+
+        Called only from explicit commit points (accept(),
+        _apply_to_current_sample(), _apply_to_selected_samples()) — never
+        from live editing — per the "recompute fresh, don't try to
+        fine-grained-invalidate" design: this is cheap enough (reuses the
+        same classify_particle() pass relabel_particles() already does)
+        that always recomputing the whole sample is simpler and safer than
+        tracking which individual definitions are still valid.
+        """
+        source = self._src_by_name.get(sample_name)
+        defs = self._defs_for(sample_name)
+        if source is None or not defs:
+            for d in defs:
+                self._match_counts.pop(d['id'], None)
+            return
+        counts = count_matches_per_definition(
+            source.get('particles') or [], defs, self._overlap_mode)
+        self._match_counts.update(counts)
+
     def _find_def(self, def_id):
         for d in self._definitions:
             if d['id'] == def_id:
@@ -549,7 +581,10 @@ class ParticleClassifierDialog(QDialog):
 
     def _def_list_label(self, d):
         name = d.get('group_name') or d.get('expression_text') or "(empty)"
-        return f"{name}"
+        count = self._match_counts.get(d['id'])
+        if count is None:
+            return f"{name}"
+        return f"{name} ({count})"
 
     def _on_def_selected(self, row):
         defs = self._defs_for(self._current)
@@ -639,6 +674,7 @@ class ParticleClassifierDialog(QDialog):
         d = self._find_def(self._current_def_id)
         if d:
             self._definitions.remove(d)
+            self._match_counts.pop(d['id'], None)
             _itk_log.info("Deleted classifier definition %s", d['id'])
         self._current_def_id = None
         self._refresh_def_list()
@@ -685,6 +721,11 @@ class ParticleClassifierDialog(QDialog):
         if d is None or self._loading:
             return
         d['expression_text'] = text
+        # The cached match count (if any) described the PREVIOUS expression
+        # text; showing it against the new text would be actively
+        # misleading (not just "not yet updated"). Cleared here, recomputed
+        # fresh at the next OK/Apply commit -- see _match_counts.
+        self._match_counts.pop(d['id'], None)
         self._validate_timer.start()
 
     def _on_field_changed(self, *_a):
@@ -692,6 +733,7 @@ class ParticleClassifierDialog(QDialog):
         if d is None or self._loading:
             return
         d['match_mode'] = 'exact' if self._rb_exact.isChecked() else 'partial'
+        self._match_counts.pop(d['id'], None)  # match_mode affects matching -- stale count
         _itk_log.info("Definition %s match_mode -> %s", d['id'], d['match_mode'])
 
     def _on_group_committed(self, *_a):
@@ -1115,6 +1157,10 @@ class ParticleClassifierDialog(QDialog):
         pairs = self._collect_active_confound_pairs()
         if pairs and not self._show_confound_warnings_dialog(pairs):
             return
+        sample_names = {d.get('target_sample') for d in self._definitions
+                        if d.get('target_sample')}
+        for name in sample_names:
+            self._recompute_match_counts_for_sample(name)
         super().accept()
 
     def _recompute_unresolved_issues(self):
@@ -1146,7 +1192,9 @@ class ParticleClassifierDialog(QDialog):
         if self._current:
             _itk_log.info("Applied panel state to current sample %r",
                           self._current)
+            self._recompute_match_counts_for_sample(self._current)
             self._refresh_row_for(self._current)
+            self._reselect_definition_after_rebuild(self._current_def_id)
 
     def _apply_to_selected_samples(self):
         if not self._current:
@@ -1156,24 +1204,37 @@ class ParticleClassifierDialog(QDialog):
             return
         source_defs = self._defs_for(self._current)
         for target in targets:
-            # Remove any previous definitions this dialog session applied
-            # to the target sample before, so repeated "Apply" clicks don't
-            # accumulate duplicates.
+            # Fully replace the target sample's definitions with the
+            # source panel's current state -- "Apply" (design §3) means
+            # the target's definition set BECOMES a copy of what the
+            # source sample currently shows, not a merge. A per-session
+            # "did I apply this before" marker cannot work here:
+            # get_definitions() strips every underscore-prefixed key
+            # before definitions are handed back to the node (see
+            # get_definitions() below), so any such marker is gone the
+            # moment this dialog is reopened, and a marker-based dedup
+            # silently stops matching anything from a prior session --
+            # each further Apply click then piles a fresh, undeduplicated
+            # copy on top of whatever is already there. Full replacement
+            # sidesteps this entirely and matches the documented semantic.
+            for old in self._definitions:
+                if old.get('target_sample') == target:
+                    self._match_counts.pop(old['id'], None)
             self._definitions = [
                 d for d in self._definitions
-                if not (d.get('target_sample') == target
-                        and d.get('_applied_from') == self._current)]
+                if d.get('target_sample') != target]
             for d in source_defs:
                 copy_d = _copy.deepcopy(d)
                 copy_d['id'] = new_definition_id()
                 copy_d['target_sample'] = target
-                copy_d['_applied_from'] = self._current
                 self._definitions.append(copy_d)
             self._refresh_row_for(target)
+            self._recompute_match_counts_for_sample(target)
+        self._recompute_match_counts_for_sample(self._current)
         _itk_log.info(
             "Applied %d definition(s) from sample %r to selected samples: %s",
             len(source_defs), self._current, targets)
-        self._refresh_def_list()
+        self._reselect_definition_after_rebuild(self._current_def_id)
 
     # ------------------------------------------------------------------ #
     # Help
@@ -1201,8 +1262,8 @@ class ParticleClassifierDialog(QDialog):
     # Read-back contract (called by ParticleClassifierNode.configure)
     # ------------------------------------------------------------------ #
     def get_definitions(self):
-        """Return the edited definitions list (internal bookkeeping keys
-        like ``_applied_from`` stripped).
+        """Return the edited definitions list (any internal
+        underscore-prefixed bookkeeping keys stripped).
 
         Returns:
             list: Definition dicts.
