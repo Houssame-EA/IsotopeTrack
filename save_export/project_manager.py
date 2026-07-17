@@ -845,7 +845,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
-                ParticleFilterNode,
+                ParticleFilterNode, TempPassThroughNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -884,7 +884,8 @@ Terminal=false
             "sample_selector": SampleSelectorNode,
             "multiple_sample_selector": MultipleSampleSelectorNode,
             "particle_filter": ParticleFilterNode,
-            
+            "temp_pass_through": TempPassThroughNode,
+
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
             "correlation_plot": CorrelationPlotNode,

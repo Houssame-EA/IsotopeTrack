@@ -1906,6 +1906,11 @@ class ParticleFilterNode(QObject):
         self._has_output = True
         self.input_channels = ["input"]
         self.output_channels = ["output"]
+        # Unlike most node types, this one already walks every incoming
+        # link itself (see _pull_upstream_all) rather than reading a single
+        # overwritable input_data slot, so more than one upstream is safe —
+        # opt in to the Manage Connections / scene.add_link multi-input rule.
+        self.supports_multi_input = True
         self.input_data = None
         self.scene_ref = None
         self.sample_filters = {}

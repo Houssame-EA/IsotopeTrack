@@ -262,6 +262,15 @@ class WorkflowNode(QObject):
         # (which subclasses QObject directly, not this base, and carries
         # its own separate copy of the same attribute).
         self.suppress_stale_warning = False
+        # Declares whether more than one link may target this node's input
+        # at once. Most node types read a single overwritable input_data
+        # slot (a second incoming link would just silently lose), so this
+        # defaults False; only node types that actually walk the scene
+        # graph for every incoming link (e.g. ParticleFilterNode, which
+        # sets this True) should opt in. Read via getattr(node,
+        # 'supports_multi_input', False) — see Manage Connections /
+        # scene.add_link.
+        self.supports_multi_input = False
 
     def set_position(self, pos):
         if self.position != pos:
@@ -608,10 +617,21 @@ class NodeItem(QGraphicsWidget):
         menu.setStyleSheet(self._ctx_menu_style())
         dup = menu.addAction(qta.icon('fa6s.copy', color=DS.ACCENT), "  Duplicate")
         dup.triggered.connect(self.duplicate_node)
+        conn = menu.addAction(qta.icon('fa6s.link', color=DS.ACCENT), "  Manage Connections")
+        conn.triggered.connect(self.manage_connections)
         menu.addSeparator()
         dele = menu.addAction(qta.icon('fa6s.trash-can', color=DS.ERROR), "  Delete")
         dele.triggered.connect(self.delete_node)
         menu.exec(global_pos)
+
+    def manage_connections(self):
+        scene = self.scene()
+        if not scene:
+            return
+        views = scene.views()
+        dlg = ManageConnectionsDialog(scene, self.workflow_node,
+                                      views[0] if views else None)
+        dlg.exec()
 
     @staticmethod
     def _ctx_menu_style():
@@ -1987,6 +2007,217 @@ class BatchSampleSelectorNode(WorkflowNode):
                 self.configuration_changed.emit()
                 return True
         return False
+
+
+class TempPassThroughNode(WorkflowNode):
+    """Neutral single-input, single-output relay.
+
+    Created by "Create Temp Node" (Manage Connections) to hold a fan-out's
+    sinks in place while the user swaps in a new upstream node — passes its
+    input straight through unchanged. Deliberately kept single-input, with
+    no configuration or merge logic of its own: any real multi-source
+    combining need already has a home in a `supports_multi_input` node
+    (e.g. the Particle Filter), so this stays a plain relay rather than
+    becoming a second filter with its own opinions.
+    """
+
+    def __init__(self, parent_window=None):
+        super().__init__("Temp Node", "temp_pass_through")
+        self.parent_window = parent_window
+        self._has_input = True
+        self._has_output = True
+        self.input_channels = ["input"]
+        self.output_channels = ["output"]
+        self.input_data = None
+
+    def process_data(self, input_data):
+        self.input_data = input_data
+
+    def get_output_data(self):
+        return self.input_data
+
+
+class ManageConnectionsDialog(QDialog):
+    """Right-click "Manage Connections" — one checkbox per current link on
+    this node, checked = keep. Everything is staged locally and only
+    applied to the scene graph on OK; Cancel touches nothing. "Create Temp
+    Node" is the one exception — it's a distinct, deliberate compound
+    action (add a node + rewire several links) and commits immediately
+    rather than waiting for OK.
+    """
+
+    def __init__(self, scene, node, parent=None):
+        super().__init__(parent)
+        self.scene = scene
+        self.node = node
+        self.setWindowTitle(f"Manage Connections — {node.title}")
+        self.setModal(True)
+        self.resize(380, 420)
+        self.setStyleSheet(_dialog_base_style())
+        _app_theme.themeChanged.connect(
+            lambda _: self.setStyleSheet(_dialog_base_style()))
+
+        self._output_checks = {}   # WorkflowLink -> QCheckBox
+        self._input_checks = {}    # WorkflowLink -> QCheckBox (multi-input only)
+        self._single_input_disconnect = None  # QPushButton, if single-input
+        self._single_input_link = None
+        self._build()
+
+    def _current_output_links(self):
+        return [lk for lk in self.scene.workflow_links
+                if lk.source_node is self.node]
+
+    def _current_input_links(self):
+        return [lk for lk in self.scene.workflow_links
+                if lk.sink_node is self.node]
+
+    def _build(self):
+        p = _app_theme.palette
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        title = QLabel(f"Manage Connections — {self.node.title}")
+        title.setStyleSheet(
+            f"font-size:14px; font-weight:700; color:{p.text_primary};")
+        title.setWordWrap(True)
+        root.addWidget(title)
+
+        if getattr(self.node, '_has_input', False):
+            root.addWidget(self._section_label("Inputs"))
+            in_links = self._current_input_links()
+            if not in_links:
+                root.addWidget(self._muted_label("Not connected"))
+            elif getattr(self.node, 'supports_multi_input', False):
+                row = QHBoxLayout()
+                sel_btn = QPushButton("Select all inputs")
+                sel_btn.clicked.connect(
+                    lambda: self._toggle_all(self._input_checks))
+                row.addWidget(sel_btn)
+                row.addStretch()
+                root.addLayout(row)
+                for lk in in_links:
+                    cb = QCheckBox(lk.source_node.title)
+                    cb.setChecked(True)
+                    self._input_checks[lk] = cb
+                    root.addWidget(cb)
+            else:
+                lk = in_links[0]
+                self._single_input_link = lk
+                row = QHBoxLayout()
+                row.addWidget(QLabel(f"Connected to {lk.source_node.title}"), 1)
+                dbtn = QPushButton("Disconnect")
+                dbtn.setCheckable(True)
+                dbtn.toggled.connect(
+                    lambda checked, b=dbtn: b.setText(
+                        "Will disconnect on OK" if checked else "Disconnect"))
+                row.addWidget(dbtn)
+                self._single_input_disconnect = dbtn
+                root.addLayout(row)
+
+        if getattr(self.node, '_has_output', False):
+            root.addWidget(self._section_label("Outputs"))
+            out_links = self._current_output_links()
+            if not out_links:
+                root.addWidget(self._muted_label("Not connected to anything"))
+            else:
+                row = QHBoxLayout()
+                sel_btn = QPushButton("Select all outputs")
+                sel_btn.clicked.connect(
+                    lambda: self._toggle_all(self._output_checks))
+                row.addWidget(sel_btn)
+                row.addStretch()
+                temp_btn = QPushButton("Create Temp Node")
+                temp_btn.setToolTip(
+                    "Inserts a new pass-through node between here and the "
+                    "checked outputs, right now — this doesn't wait for OK.")
+                temp_btn.clicked.connect(self._create_temp_node)
+                row.addWidget(temp_btn)
+                root.addLayout(row)
+                for lk in out_links:
+                    cb = QCheckBox(lk.sink_node.title)
+                    cb.setChecked(True)
+                    self._output_checks[lk] = cb
+                    root.addWidget(cb)
+
+        hint = QLabel(
+            "Checked = stays connected. Uncheck a row and press OK to "
+            "disconnect it.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{p.text_muted}; font-size:11px;")
+        root.addWidget(hint)
+        root.addStretch()
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._apply_and_accept)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    @staticmethod
+    def _section_label(text):
+        p = _app_theme.palette
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"font-size:12px; font-weight:700; color:{p.text_secondary}; "
+            f"margin-top:6px;")
+        return lbl
+
+    @staticmethod
+    def _muted_label(text):
+        p = _app_theme.palette
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"color:{p.text_muted}; font-size:12px; font-style:italic;")
+        return lbl
+
+    def _toggle_all(self, checks):
+        if not checks:
+            return
+        all_checked = all(cb.isChecked() for cb in checks.values())
+        for cb in checks.values():
+            cb.setChecked(not all_checked)
+
+    def _create_temp_node(self):
+        """Insert a TempPassThroughNode between this node and the checked
+        outputs. Commits immediately (see class docstring) and closes the
+        dialog, since the graph shape just changed underneath it.
+        """
+        selected = [lk for lk, cb in self._output_checks.items()
+                   if cb.isChecked()]
+        if not selected:
+            return
+        pos = self.node.position + QPointF(DS.NODE_W + 60, 0)
+        parent_window = (getattr(self.node, 'parent_window', None)
+                         or getattr(self.scene, 'parent_window', None))
+        temp = TempPassThroughNode(parent_window)
+        self.scene.add_node(temp, pos)
+        self.scene.add_link(self.node, selected[0].source_channel,
+                            temp, "input")
+        for lk in selected:
+            li = self.scene.link_items.get(lk)
+            if li:
+                self.scene.delete_link(li)
+            self.scene.add_link(temp, "output", lk.sink_node, lk.sink_channel)
+        self.accept()
+
+    def _apply_and_accept(self):
+        for lk, cb in self._output_checks.items():
+            if not cb.isChecked():
+                li = self.scene.link_items.get(lk)
+                if li:
+                    self.scene.delete_link(li)
+        for lk, cb in self._input_checks.items():
+            if not cb.isChecked():
+                li = self.scene.link_items.get(lk)
+                if li:
+                    self.scene.delete_link(li)
+        if (self._single_input_disconnect is not None
+                and self._single_input_disconnect.isChecked()
+                and self._single_input_link is not None):
+            li = self.scene.link_items.get(self._single_input_link)
+            if li:
+                self.scene.delete_link(li)
+        self.accept()
 
 
 class BatchSampleSelectorDialog(QDialog):
@@ -3827,6 +4058,15 @@ class EnhancedCanvasScene(QGraphicsScene):
             if (lk.source_node == src_node and lk.sink_node == snk_node
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
                 return None
+        if not getattr(snk_node, 'supports_multi_input', False):
+            for lk in self.workflow_links:
+                if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
+                    # This node reads a single overwritable input slot, so
+                    # a second incoming link would just silently lose the
+                    # tug-of-war — refuse it instead of accepting a
+                    # connection that looks live but never actually feeds
+                    # anything (see Manage Connections / §12 in the spec).
+                    return None
         wl = WorkflowLink(src_node, src_ch, snk_node, snk_ch)
         self.workflow_links.append(wl)
         li = LinkItem()
@@ -4232,6 +4472,7 @@ _NODE_FACTORIES = {
     "multiple_sample_selector":     MultipleSampleSelectorNode,
     "batch_sample_selector":        BatchSampleSelectorNode,
     "particle_filter":              ParticleFilterNode,
+    "temp_pass_through":            TempPassThroughNode,
     "histogram_plot":               HistogramPlotNode,
     "element_bar_chart_plot":       ElementBarChartPlotNode,
     "correlation_plot":             CorrelationPlotNode,
