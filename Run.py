@@ -108,6 +108,8 @@ if __name__ == "__main__":
     app.main_windows.clear()
 
     logging.shutdown()
-    sys.stdout.flush()
-    sys.stderr.flush()
+    if sys.stdout is not None:
+        sys.stdout.flush()
+    if sys.stderr is not None:
+        sys.stderr.flush()
     os._exit(exit_code if isinstance(exit_code, int) else 0)
