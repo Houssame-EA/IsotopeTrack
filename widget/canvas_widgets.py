@@ -59,7 +59,8 @@ from tools.particle_filter import (
     ParticleFilterNode, build_particle_filter_node_item)
 from tools.particle_classifier_node import (
     ParticleClassifierNode, build_particle_classifier_node_item,
-    is_allowed_upstream, is_allowed_downstream, EXCLUDED_DOWNSTREAM_TYPES)
+    is_allowed_upstream, is_allowed_downstream, EXCLUDED_DOWNSTREAM_TYPES,
+    maybe_show_classifier_onboarding)
 
 import qtawesome as qta
 
@@ -4144,6 +4145,11 @@ class EnhancedCanvasView(QGraphicsView):
         if factory:
             wf = factory(self.parent_window)
             self.scene.add_node(wf, snapped)
+            if ntype == "particle_classifier":
+                # Fresh node just dragged in by the user (never fires for
+                # project-load deserialization or node duplication, which
+                # don't go through this drop handler) -- design §10.
+                maybe_show_classifier_onboarding(self.parent_window)
             event.acceptProposedAction()
         else:
             event.ignore()

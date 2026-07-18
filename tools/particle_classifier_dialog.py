@@ -45,7 +45,7 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from tools.theme import theme as _app_theme
 from tools.particle_filter import normalize_sources, source_labels
 from tools.particle_classifier_node import (
-    new_definition_id, DEFAULT_UNCLASSIFIED_COLOR,
+    new_definition_id, DEFAULT_UNCLASSIFIED_COLOR, CLASSIFIER_HELP_HTML,
 )
 from tools.particle_classifier_expr import (
     parse, ExpressionSyntaxError, referenced_isotopes, find_confound,
@@ -1319,23 +1319,13 @@ class ParticleClassifierDialog(QDialog):
     # Help
     # ------------------------------------------------------------------ #
     def _show_help(self):
-        QMessageBox.information(
-            self, "Particle Classifier Help",
-            "<b>Expression syntax</b><br>"
-            "&bull; <code>+</code> = AND (e.g. <code>60Ni+107Ag</code>)<br>"
-            "&bull; <code>[a, b]</code> = OR across branches<br>"
-            "&bull; <code>{a; b}</code> = one-hot XOR (exactly one branch)<br>"
-            "&bull; <code>!(a)</code> = NOT<br>"
-            "&bull; Isotopes are written mass-first, correctly cased: "
-            "<code>60Ni</code>, <code>208Pb</code><br><br>"
-            "<b>Exact vs. Partial match</b><br>"
-            "Partial: the formula must hold true using only the isotopes "
-            "it references; other isotopes on the particle are ignored.<br>"
-            "Exact: same, plus the particle may contain nothing outside "
-            "the formula's own isotopes.<br><br>"
-            "<b>Groups</b><br>"
-            "Give two definitions the same group name to pool their "
-            "matches into one shared, colored bucket downstream.")
+        """Same explanation as the one-time onboarding modal shown on
+        first drag onto the canvas (design §10) -- see
+        tools.particle_classifier_node.CLASSIFIER_HELP_HTML /
+        maybe_show_classifier_onboarding -- so dismissing onboarding never
+        loses access to the explanation."""
+        QMessageBox.information(self, "Particle Classifier Help",
+                                CLASSIFIER_HELP_HTML)
 
     # ------------------------------------------------------------------ #
     # Read-back contract (called by ParticleClassifierNode.configure)

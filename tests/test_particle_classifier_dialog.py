@@ -784,3 +784,20 @@ class TestNodeConfigureRoundTrip:
         monkeypatch.setattr(pcd, "ParticleClassifierDialog", _FakeDialog)
         assert node.configure(None) is False
         assert node.definitions == []  # untouched
+
+
+# --------------------------------------------------------------------------- #
+# Help (Stage 5, design §10): the dialog's Help button and the one-time
+# onboarding modal (tests/test_particle_classifier_node.py::TestOnboarding)
+# must show the exact same explanation, so dismissing onboarding never
+# loses access to it.
+# --------------------------------------------------------------------------- #
+class TestHelp:
+    def test_help_button_shows_shared_onboarding_content(self, dlg, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            pcd.QMessageBox, "information",
+            staticmethod(lambda parent, title, text: captured.update(
+                title=title, text=text)))
+        dlg._show_help()
+        assert captured['text'] == pcd.CLASSIFIER_HELP_HTML

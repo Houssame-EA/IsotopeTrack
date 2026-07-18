@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import uuid
 
-from PySide6.QtCore import QObject, QPointF, Signal
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QObject, QPointF, QSettings, Signal
+from PySide6.QtWidgets import QCheckBox, QDialog, QMessageBox
 
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.tools.particle_classifier_node")
@@ -99,6 +99,90 @@ def new_definition_id():
         str: A UUID4 hex string.
     """
     return uuid.uuid4().hex
+
+
+#: QSettings key gating the one-time onboarding modal (design §10). Same
+#: app-wide QSettings store used elsewhere for "don't show again" prompts
+#: (e.g. tools/dilution_utils.py's "hide_dilution_prompt") -- persists
+#: across sessions and projects, keyed by org+app, not by project file.
+_HIDE_ONBOARDING_SETTING = "hide_particle_classifier_onboarding"
+
+#: Explains the node's nature and how to use it (design §10/§3/§8), shared
+#: verbatim between the one-time onboarding modal (shown on first drag onto
+#: the canvas -- see maybe_show_classifier_onboarding) and the configuration
+#: dialog's persistent Help button (ParticleClassifierDialog._show_help),
+#: so a user who dismissed onboarding can always get the same explanation
+#: back later.
+CLASSIFIER_HELP_HTML = (
+    "<b>What this node does</b><br>"
+    "Classifies particles into named buckets based on which isotopes "
+    "they contain, then relabels them for every node downstream (charts, "
+    "stats, etc.) exactly as if they were another isotope.<br><br>"
+    "<b>How to use it</b><br>"
+    "Connect a Particle Filter or a Sample node upstream, then "
+    "double-click to configure. Pick a sample on the left, define one or "
+    "more classification rules for it on the right, then use "
+    "<i>Apply to Current Sample</i> or <i>Apply to Selected Samples</i> "
+    "to save your changes (or copy the same rules onto other samples).<br><br>"
+    "<b>Expression syntax</b><br>"
+    "&bull; <code>+</code> = AND (e.g. <code>60Ni+107Ag</code>)<br>"
+    "&bull; <code>[a, b]</code> = OR across branches<br>"
+    "&bull; <code>{a; b}</code> = one-hot XOR (exactly one branch)<br>"
+    "&bull; <code>!(a)</code> = NOT<br>"
+    "&bull; Isotopes are written mass-first, correctly cased: "
+    "<code>60Ni</code>, <code>208Pb</code><br><br>"
+    "<b>Exact vs. Partial match</b><br>"
+    "Partial: the formula must hold true using only the isotopes it "
+    "references; other isotopes on the particle are ignored.<br>"
+    "Exact: same, plus the particle may contain nothing outside the "
+    "formula's own isotopes.<br><br>"
+    "<b>Groups</b><br>"
+    "Give two definitions the same group name to pool their matches into "
+    "one shared, colored bucket. Group names and colors are shared across "
+    "every sample on this node -- the same group name always means the "
+    "same color everywhere.<br><br>"
+    "<b>Overlapping definitions</b><br>"
+    "If a particle can match more than one definition, choose "
+    "<i>Allow double-counting</i> (the particle is counted once per "
+    "matching definition) or <i>Priority ordering</i> (only the "
+    "highest-priority match wins) under Overlapping Definitions.<br><br>"
+    "<b>Unmatched particles</b><br>"
+    "Particles matching no definition go to the Unclassified bucket, are "
+    "discarded, or pass through unchanged -- your choice under Unmatched "
+    "Particles."
+)
+
+
+def maybe_show_classifier_onboarding(parent_window):
+    """Show the one-time onboarding modal the first time this node type is
+    dragged onto the canvas (design §10).
+
+    Gated by a QSettings flag (see _HIDE_ONBOARDING_SETTING), not any
+    per-node-instance state, since the point is "has this USER ever seen
+    this explanation," not "does this particular node instance need it" --
+    matches the existing app-wide "don't show again" pattern (see
+    tools/dilution_utils.py's maybe_prompt_dilution). Must only be called
+    from the fresh-drag-onto-canvas code path (widget/canvas_widgets.py's
+    EnhancedCanvasView.dropEvent), never from project-load deserialization
+    or node duplication -- both of those recreate an EXISTING node the
+    user has already configured before, not a first encounter.
+
+    Args:
+        parent_window: Parent widget for the modal (may be None).
+    """
+    settings = QSettings("IsotopeTrack", "IsotopeTrack")
+    if settings.value(_HIDE_ONBOARDING_SETTING, False, type=bool):
+        return
+    box = QMessageBox(parent_window)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Particle Classifier")
+    box.setText(CLASSIFIER_HELP_HTML)
+    dont_show = QCheckBox("Don't show this again")
+    box.setCheckBox(dont_show)
+    box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+    if dont_show.isChecked():
+        settings.setValue(_HIDE_ONBOARDING_SETTING, True)
 
 
 class ParticleClassifierNode(QObject):

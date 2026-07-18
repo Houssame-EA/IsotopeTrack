@@ -309,3 +309,94 @@ class TestStaleDefinitionsAfterRewire:
         assert dup._incoming_names == ['NewSample']
         assert dup._active_definitions() == []
         assert len(dup.definitions) == 1  # stale IronOre def preserved
+
+
+# --------------------------------------------------------------------------- #
+# One-time onboarding modal (Stage 5, design §10). QSettings is mocked with
+# an in-memory stand-in for every test here -- the real one is backed by the
+# actual OS registry/user settings store, and a test that touched it for
+# real could permanently set "don't show again" on the developer's own
+# machine, suppressing the real onboarding modal outside of tests too.
+# --------------------------------------------------------------------------- #
+class _FakeSettings:
+    _store = {}
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def value(self, key, default=None, type=None):
+        return self._store.get(key, default)
+
+    def setValue(self, key, value):
+        self._store[key] = value
+
+
+class _FakeOnboardingBox:
+    """Stand-in for QMessageBox inside maybe_show_classifier_onboarding --
+    mirrors the no_modal-style fakes used in test_particle_classifier_dialog.py,
+    just enough surface for that one function's call sequence."""
+    exec_calls = 0
+    last_checkbox = None
+
+    def __init__(self, *a, **kw):
+        self._checkbox = None
+
+    def setIcon(self, *a): pass
+    def setWindowTitle(self, *a): pass
+    def setText(self, *a): pass
+
+    def setCheckBox(self, cb):
+        self._checkbox = cb
+        _FakeOnboardingBox.last_checkbox = cb
+
+    def addButton(self, *a, **kw): pass
+
+    def exec(self):
+        _FakeOnboardingBox.exec_calls += 1
+
+
+class TestOnboarding:
+    @pytest.fixture(autouse=True)
+    def _mock_settings_and_modal(self, qapp, monkeypatch):
+        _FakeSettings._store = {}
+        _FakeOnboardingBox.exec_calls = 0
+        _FakeOnboardingBox.last_checkbox = None
+        _FakeOnboardingBox.Icon = type('Icon', (), {'Information': 1})
+        _FakeOnboardingBox.ButtonRole = type('ButtonRole', (), {'AcceptRole': 1})
+        monkeypatch.setattr(pcn, "QSettings", _FakeSettings)
+        monkeypatch.setattr(pcn, "QMessageBox", _FakeOnboardingBox)
+
+    def test_shows_the_first_time(self):
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 1
+
+    def test_does_not_show_again_once_flag_is_set(self):
+        _FakeSettings._store[pcn._HIDE_ONBOARDING_SETTING] = True
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 0
+
+    def test_leaving_dont_show_again_unchecked_does_not_persist(self):
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeSettings._store.get(pcn._HIDE_ONBOARDING_SETTING) in (None, False)
+
+    def test_checked_box_persists_flag_across_calls(self):
+        """End-to-end: first call shows the modal and the user checks the
+        box (simulated by checking it before exec() returns, since exec()
+        is what would normally block for that real user interaction);
+        flag must then be persisted, and a second call must not show it
+        again."""
+        orig_exec = _FakeOnboardingBox.exec
+
+        def _exec_checks_the_box(self):
+            self._checkbox.setChecked(True)
+            _FakeOnboardingBox.exec_calls += 1
+
+        _FakeOnboardingBox.exec = _exec_checks_the_box
+        try:
+            pcn.maybe_show_classifier_onboarding(None)
+        finally:
+            _FakeOnboardingBox.exec = orig_exec
+        assert _FakeSettings._store.get(pcn._HIDE_ONBOARDING_SETTING) is True
+
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 1  # second call suppressed
