@@ -923,9 +923,15 @@ Terminal=false
         # Restore saved links with interactive connection rules (type
         # compatibility + input cardinality) suspended — a project saved
         # before those rules existed must reload exactly as saved rather than
-        # having any now-"invalid" link silently dropped.
+        # having any now-"invalid" link silently dropped. Also suppress the
+        # per-link data push: pushing inside add_link recomputes each source
+        # node's output once per outgoing link (a filter feeding N plots
+        # would compute N times, re-pulling its own upstream each time),
+        # which makes load time balloon as the workflow graph grows. A single
+        # flush_data_flow() pass afterwards computes each node once instead.
         _prev_enforce = getattr(scene, '_enforce_connection_rules', True)
         scene._enforce_connection_rules = False
+        scene._suppress_data_flow = True
         try:
             for link_data in canvas_state.get('workflow_links', []):
                 source_node_id = link_data.get('source_node_id')
@@ -942,6 +948,8 @@ Terminal=false
                         link.enabled = link_data['enabled']
         finally:
             scene._enforce_connection_rules = _prev_enforce
+            scene._suppress_data_flow = False
+        scene.flush_data_flow()
 
         for note_data in canvas_state.get('sticky_notes', []):
             try:

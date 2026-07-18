@@ -38,6 +38,10 @@ _itk_log = logging.getLogger("IsotopeTrack.tools.particle_filter")
 _FILTERABLE_TYPES = ('sample_data', 'single_sample_data',
                      'multiple_sample_data')
 
+# Process-wide cache of the static periodic-table element metadata used by
+# the filter dialog's isotope chips (see ParticleFilterDialog._load_elem_data).
+_ELEM_DATA_CACHE = None
+
 
 def _ual():
     """Return the UserActionLogger, or None if logging isn't ready.
@@ -816,18 +820,26 @@ class ParticleFilterDialog(QDialog):
     def _load_elem_data():
         """Load the periodic-table element metadata used by the chips.
 
+        Cached process-wide: this is static reference data, but fetching it
+        meant building and destroying a whole CompactPeriodicTableWidget —
+        ~0.5s of pure overhead on EVERY dialog open (the dominant cost of
+        double-clicking a filter). Built once, reused thereafter.
+
         Returns:
             list: Element dicts, or an empty list when unavailable.
         """
+        global _ELEM_DATA_CACHE
+        if _ELEM_DATA_CACHE is not None:
+            return _ELEM_DATA_CACHE
         try:
             from results.results_periodic import CompactPeriodicTableWidget
             _tmp = CompactPeriodicTableWidget()
-            elem_data = _tmp.get_elements()
+            _ELEM_DATA_CACHE = _tmp.get_elements()
             _tmp.deleteLater()
-            return elem_data
         except Exception:
             _itk_log.exception("Handled exception in _load_elem_data")
-            return []
+            _ELEM_DATA_CACHE = []
+        return _ELEM_DATA_CACHE
 
     @staticmethod
     def _style():

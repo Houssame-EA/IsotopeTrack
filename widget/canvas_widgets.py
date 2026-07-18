@@ -3969,6 +3969,9 @@ class EnhancedCanvasScene(QGraphicsScene):
         # loop so a project saved before these rules existed isn't silently
         # pruned of links the rules would now reject.
         self._enforce_connection_rules = True
+        # When True, add_link's per-link data push is skipped; a single
+        # flush_data_flow() pass replaces it (see project load).
+        self._suppress_data_flow = False
 
         self.setSceneRect(-2000, -2000, 4000, 4000)
         self.selectionChanged.connect(self._on_selection)
@@ -4093,6 +4096,38 @@ class EnhancedCanvasScene(QGraphicsScene):
             self.workflow_links.remove(wl)
         self.link_items.pop(wl, None)
         self.removeItem(li)
+        # A node with no live input should hold no cached data — dropping a
+        # disconnected node's data keeps the app lightweight and stops a
+        # detached plot from still showing (and pinning in memory) its old
+        # source's particles. Skipped during undo/bulk-delete/load, where the
+        # disconnect is transient or the graph is mid-rebuild.
+        if wl and not self._undoing and not self._suppress_data_flow:
+            self._clear_if_orphaned(wl.sink_node)
+
+    def _clear_if_orphaned(self, node):
+        """Drop a node's cached input once it has no incoming link left.
+
+        Only acts on a node with zero live inputs. Recurses through a temp
+        pass-through: the temp holds nothing itself, but the plots it feeds
+        are now fed by an empty source and must forget their data too.
+        """
+        if any(lk.sink_node is node for lk in self.workflow_links):
+            return
+        self._clear_node_data(node)
+
+    def _clear_node_data(self, node):
+        if getattr(node, 'input_data', None) is not None:
+            node.input_data = None
+            sig = getattr(node, 'configuration_changed', None)
+            if sig is not None:
+                try:
+                    sig.emit()
+                except Exception:
+                    _itk_log.exception("Handled exception in _clear_node_data")
+        if getattr(node, 'node_type', None) == 'temp_pass_through':
+            for lk in list(self.workflow_links):
+                if lk.source_node is node:
+                    self._clear_node_data(lk.sink_node)
 
     def duplicate_selected_nodes(self):
         sel = [i for i in self.selectedItems() if isinstance(i, NodeItem)]
@@ -4228,6 +4263,13 @@ class EnhancedCanvasScene(QGraphicsScene):
         return wl
 
     def _trigger_data_flow(self, wl):
+        # Suppressed during bulk restore: add_link is called once per saved
+        # link, and pushing here would recompute each source node's output
+        # once PER outgoing link (a filter feeding N plots computes N times,
+        # dragging its own upstream along each time). flush_data_flow() does
+        # a single per-node pass instead once every link exists.
+        if self._suppress_data_flow:
+            return
         try:
             data = wl.get_data()
             if hasattr(wl.sink_node, 'process_data'):
@@ -4235,6 +4277,89 @@ class EnhancedCanvasScene(QGraphicsScene):
         except Exception as e:
             _itk_log.exception("Handled exception in _trigger_data_flow")
             _itk_log.error(f"Data flow error: {e}")
+
+    def flush_data_flow(self):
+        """Push each node's output to its sinks exactly once, sources first.
+
+        Used after a bulk restore (see _deserialize_canvas_state): computes
+        every node's ``get_output_data()`` a single time and distributes it
+        to all its sinks, instead of add_link's per-link recompute. Ordered
+        so a node is processed after the nodes feeding it, so each level's
+        input is populated before it computes.
+        """
+        # Kahn topological order over the workflow graph.
+        nodes = list(self.workflow_nodes)
+        indeg = {n: 0 for n in nodes}
+        outgoing = {n: [] for n in nodes}
+        for lk in self.workflow_links:
+            if lk.source_node in indeg and lk.sink_node in indeg:
+                indeg[lk.sink_node] += 1
+                outgoing[lk.source_node].append(lk)
+        queue = [n for n in nodes if indeg[n] == 0]
+        order = []
+        while queue:
+            n = queue.pop()
+            order.append(n)
+            for lk in outgoing[n]:
+                indeg[lk.sink_node] -= 1
+                if indeg[lk.sink_node] == 0:
+                    queue.append(lk.sink_node)
+        # A cycle (shouldn't happen) would leave nodes out of `order`; append
+        # them so their sinks still get pushed rather than silently skipped.
+        order.extend(n for n in nodes if n not in order)
+
+        # Memoize get_output_data for this pass only. ParticleFilterNode and
+        # TempPassThroughNode don't read the value pushed below at all — they
+        # pull their own upstream fresh by walking scene.workflow_links
+        # (_pull_upstream_all / WorkflowLink.get_data), every time they're
+        # asked, regardless of who's asking or how many times. Without this,
+        # a branching pipeline of such nodes (a completely normal shape for
+        # a canvas built up over months — chained filters fanning out to
+        # several plots each) recomputes every shared ancestor once per
+        # downstream path, compounding with depth AND fan-out — confirmed by
+        # a depth-4/branch-2 test tree computing 30 filters 104 times, and
+        # this is what turned into real multi-minute hangs on an actual
+        # project with real particle counts instead of this test's stub
+        # data. Instance-level monkeypatch, restored in `finally` so normal
+        # interactive use (which deliberately always recomputes fresh, to
+        # avoid the stale-data bugs this project has repeatedly hit) is
+        # completely unaffected outside this one call.
+        cache = {}
+        originals = {}
+        for n in nodes:
+            if hasattr(n, 'get_output_data'):
+                originals[n] = n.get_output_data
+
+                def _memoized(node=n, orig=originals[n]):
+                    if node not in cache:
+                        try:
+                            cache[node] = orig()
+                        except Exception:
+                            _itk_log.exception(
+                                "Handled exception in flush_data_flow")
+                            cache[node] = None
+                    return cache[node]
+                n.get_output_data = _memoized
+
+        try:
+            for n in order:
+                links = outgoing.get(n) or []
+                if not links:
+                    continue
+                try:
+                    data = n.get_output_data() if hasattr(n, 'get_output_data') else None
+                except Exception:
+                    _itk_log.exception("Handled exception in flush_data_flow")
+                    data = None
+                for lk in links:
+                    try:
+                        if hasattr(lk.sink_node, 'process_data'):
+                            lk.sink_node.process_data(data)
+                    except Exception:
+                        _itk_log.exception("Handled exception in flush_data_flow")
+        finally:
+            for n, orig in originals.items():
+                n.get_output_data = orig
 
     def contextMenuEvent(self, event):
         """Right-click on empty canvas space → canvas context menu."""
