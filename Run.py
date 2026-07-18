@@ -21,6 +21,7 @@ apply_pyqtgraph_patches()
 install_file_dialog_memory()
 
 
+
 class IsotopeTrackApplication(QApplication):
     """QApplication that handles the macOS 'open document' event.
 

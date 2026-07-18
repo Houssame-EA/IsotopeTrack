@@ -254,6 +254,23 @@ class WorkflowNode(QObject):
         self._has_output = False
         self.input_channels = []
         self.output_channels = []
+        # Per-node opt-out for the "applying this may change downstream
+        # plots" reminder (see _warn_before_apply_changes below). Lives on
+        # the base class so every node type — current and future — gets
+        # independent suppression state for free, matching the pattern
+        # already used by tools/particle_filter.py's ParticleFilterNode
+        # (which subclasses QObject directly, not this base, and carries
+        # its own separate copy of the same attribute).
+        self.suppress_stale_warning = False
+        # Declares whether more than one link may target this node's input
+        # at once. Most node types read a single overwritable input_data
+        # slot (a second incoming link would just silently lose), so this
+        # defaults False; only node types that actually walk the scene
+        # graph for every incoming link (e.g. ParticleFilterNode, which
+        # sets this True) should opt in. Read via getattr(node,
+        # 'supports_multi_input', False) — see Manage Connections /
+        # scene.add_link.
+        self.supports_multi_input = False
 
     def set_position(self, pos):
         if self.position != pos:
@@ -265,6 +282,60 @@ class WorkflowNode(QObject):
         Args:
             parent_window (Any): The parent window.
         """
+
+
+def _warn_before_apply_changes(parent, node):
+    """Remind the user that applying this node's configuration now may
+    change whatever it feeds downstream, before actually committing it.
+
+    Shared across every sample-selector-family node (Single Sample,
+    Multi-Sample, Batch Windows) and any future node type — call this from
+    a node's ``configure()`` right after its dialog returns
+    ``QDialog.Accepted`` and before writing the new selection back onto the
+    node. Mirrors the Particle Filter node's own reminder
+    (``tools/particle_filter.py``'s ``ParticleFilterDialog._try_accept``)
+    including its "don't show this again" opt-out — kept as a single
+    shared implementation here rather than copy-pasted per node type so a
+    future node only needs one call to get the same behavior.
+
+    The opt-out is stored as ``node.suppress_stale_warning`` (set on every
+    ``WorkflowNode`` by its base ``__init__``), so it's independent per
+    node instance: dismissing it for one Single Sample node never silences
+    a different Single Sample (or Multi-Sample, or Batch) node.
+
+    Args:
+        parent (QWidget): Parent for the message box (typically the
+            just-accepted configuration dialog, or the canvas window).
+        node (WorkflowNode): The node about to have its configuration
+            committed; read/written for ``suppress_stale_warning``.
+
+    Returns:
+        bool: True if the caller should proceed and commit the new
+            configuration; False if the user chose "Go back" (the caller
+            should leave the node's prior configuration untouched).
+    """
+    if getattr(node, 'suppress_stale_warning', False):
+        return True
+    from PySide6.QtWidgets import QMessageBox, QCheckBox
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Warning)
+    box.setWindowTitle("Downstream plots may change")
+    box.setText(
+        "This node feeds other sample selectors, filters, and plot/results "
+        "nodes downstream. Applying now will pass through today's "
+        "settings, so any open plot window fed by this node will update "
+        "to match.\n\nIf you want to keep a plot's current view, save it "
+        "first, then come back and apply this change.")
+    dont_show = QCheckBox("Don't show this again for this node")
+    box.setCheckBox(dont_show)
+    proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
+    box.addButton("Go back", QMessageBox.RejectRole)
+    box.setDefaultButton(proceed)
+    box.exec()
+    if dont_show.isChecked():
+        node.suppress_stale_warning = True
+    return box.clickedButton() is proceed
+
 
 class AnchorPointSignals(QObject):
     position_changed = Signal(QPointF)
@@ -546,10 +617,21 @@ class NodeItem(QGraphicsWidget):
         menu.setStyleSheet(self._ctx_menu_style())
         dup = menu.addAction(qta.icon('fa6s.copy', color=DS.ACCENT), "  Duplicate")
         dup.triggered.connect(self.duplicate_node)
+        conn = menu.addAction(qta.icon('fa6s.link', color=DS.ACCENT), "  Manage Connections")
+        conn.triggered.connect(self.manage_connections)
         menu.addSeparator()
         dele = menu.addAction(qta.icon('fa6s.trash-can', color=DS.ERROR), "  Delete")
         dele.triggered.connect(self.delete_node)
         menu.exec(global_pos)
+
+    def manage_connections(self):
+        scene = self.scene()
+        if not scene:
+            return
+        views = scene.views()
+        dlg = ManageConnectionsDialog(scene, self.workflow_node,
+                                      views[0] if views else None)
+        dlg.exec()
 
     @staticmethod
     def _ctx_menu_style():
@@ -1198,7 +1280,17 @@ class MultipleSampleSelectorDialog(QDialog):
         self.current_isotopes = current_isotopes or []
 
         if current_sample_config:
-            self.current_sample_config = current_sample_config.copy()
+            # Pruned to the node's CURRENT sample list — carrying the whole
+            # dict forward unpruned let stale keys for samples no longer
+            # relevant (e.g. left over from before groups were set up)
+            # accumulate forever, resurfacing as phantom 0-particle rows in
+            # get_output_data() (see MultipleSampleSelectorNode.get_output_data
+            # below, which trusted every key in sample_config unconditionally).
+            self.current_sample_config = {
+                s: v for s, v in current_sample_config.items() if s in samples}
+            for s in samples:
+                self.current_sample_config.setdefault(s, {
+                    'included': False, 'sum_group': '', 'custom_name': s})
         else:
             self.current_sample_config = {}
             cs = current_selection or []
@@ -1626,6 +1718,8 @@ class SampleSelectorNode(WorkflowNode):
             parent_window, samples, self.selected_sample,
             self.selected_isotopes, self.sum_replicates, self.replicate_samples)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sample, isotopes, sr = dlg.get_selection()
             if sample:
                 if sr and isinstance(sample, list):
@@ -1683,16 +1777,30 @@ class MultipleSampleSelectorNode(WorkflowNode):
     def get_output_data(self):
         if self.input_data and self.input_data.get('type') != 'batch_sample_list':
             return self.input_data
-        included = ([s for s, c in self.sample_config.items() if c.get('included')]
-                    if self.sample_config else self.selected_samples)
+        sample_config = self.sample_config
+        if sample_config:
+            # Defensively re-narrow to the node's current sample universe —
+            # same source configure() passes into the dialog. Guards against
+            # stale keys in sample_config (e.g. from a project saved before
+            # the dialog-side pruning fix existed) resurfacing as phantom
+            # 0-particle rows below; built as a local view rather than
+            # mutating self.sample_config since this can run off the GUI
+            # thread via _run_calculation_async.
+            universe = set(self.batch_samples if self.batch_samples else
+                          getattr(self.parent_window, 'sample_to_folder_map', {}).keys())
+            if universe:
+                sample_config = {s: c for s, c in sample_config.items()
+                                 if s in universe}
+        included = ([s for s, c in sample_config.items() if c.get('included')]
+                    if sample_config else self.selected_samples)
         if not included:
             return None
 
         combined, total, names = [], 0, []
-        if self.sample_config:
+        if sample_config:
             indiv, groups = {}, {}
             for s in included:
-                c = self.sample_config.get(s, {'sum_group': '', 'custom_name': s})
+                c = sample_config.get(s, {'sum_group': '', 'custom_name': s})
                 g = c.get('sum_group', '')
                 if not g:
                     indiv[s] = c
@@ -1730,9 +1838,9 @@ class MultipleSampleSelectorNode(WorkflowNode):
         else:
             conc_src = lambda m: _sample_concentration_meta(self.parent_window, m)
         name_members = {}
-        if self.sample_config:
+        if sample_config:
             for s in included:
-                c = self.sample_config.get(s, {'sum_group': '', 'custom_name': s})
+                c = sample_config.get(s, {'sum_group': '', 'custom_name': s})
                 g = c.get('sum_group', '')
                 name_members.setdefault(g or s, []).append(s)
         else:
@@ -1810,6 +1918,8 @@ class MultipleSampleSelectorNode(WorkflowNode):
             parent_window, samples, self.selected_samples,
             self.selected_isotopes, self.sample_config)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sel, iso, cfg = dlg.get_selection()
             if sel:
                 self.selected_samples = sel
@@ -1888,6 +1998,8 @@ class BatchSampleSelectorNode(WorkflowNode):
             previously_selected=self.selected_windows,
             saved_snapshot=self._saved_output_snapshot)
         if dlg.exec() == QDialog.Accepted:
+            if not _warn_before_apply_changes(parent_window, self):
+                return False
             sel = dlg.get_selection()
             if sel:
                 self.selected_windows = sel
@@ -1895,6 +2007,250 @@ class BatchSampleSelectorNode(WorkflowNode):
                 self.configuration_changed.emit()
                 return True
         return False
+
+
+class TempPassThroughNode(WorkflowNode):
+    """Neutral single-input, single-output relay.
+
+    Created by "Create Temp Node" (Manage Connections) to hold a fan-out's
+    sinks in place while the user swaps in a new upstream node — passes its
+    input straight through unchanged. Deliberately kept single-input, with
+    no configuration or merge logic of its own: any real multi-source
+    combining need already has a home in a `supports_multi_input` node
+    (e.g. the Particle Filter), so this stays a plain relay rather than
+    becoming a second filter with its own opinions.
+
+    Holds NO data of its own — it is pure wiring, not a data bank. Anything
+    pulling its output reads the current upstream live (``get_output_data``),
+    and any value pushed into it is forwarded straight on to whatever it
+    feeds (``process_data`` → ``_forward``). This is what makes a source
+    swap behave correctly: reconnect a different upstream and the plots
+    behind the temp update to the new source instead of showing a cached
+    copy of the old one, and no second copy of the particle data is kept
+    alive by the temp.
+    """
+
+    def __init__(self, parent_window=None):
+        super().__init__("Temp Node", "temp_pass_through")
+        self.parent_window = parent_window
+        self._has_input = True
+        self._has_output = True
+        self.input_channels = ["input"]
+        self.output_channels = ["output"]
+        # Set by the scene in add_node so the relay can find its own links.
+        self.scene_ref = None
+
+    def _forward(self, data):
+        """Push a value straight on to every node this temp feeds."""
+        scene = getattr(self, 'scene_ref', None)
+        if scene is None:
+            return
+        for lk in list(getattr(scene, 'workflow_links', [])):
+            if lk.source_node is self and hasattr(lk.sink_node, 'process_data'):
+                lk.sink_node.process_data(data)
+
+    def process_data(self, input_data):
+        # Don't store — forward. A push from the upstream (e.g. after it is
+        # reconfigured) flows through to the plots behind this temp.
+        self._forward(input_data)
+
+    def get_output_data(self):
+        # Pull the current upstream live rather than returning a cache, so
+        # the output always reflects whatever is connected right now.
+        scene = getattr(self, 'scene_ref', None)
+        if scene is not None:
+            for lk in getattr(scene, 'workflow_links', []):
+                if lk.sink_node is self:
+                    return lk.get_data()
+        return None
+
+
+class ManageConnectionsDialog(QDialog):
+    """Right-click "Manage Connections" — one checkbox per current link on
+    this node, checked = keep. Everything is staged locally and only
+    applied to the scene graph on OK; Cancel touches nothing. "Create Temp
+    Node" is the one exception — it's a distinct, deliberate compound
+    action (add a node + rewire several links) and commits immediately
+    rather than waiting for OK.
+    """
+
+    def __init__(self, scene, node, parent=None):
+        super().__init__(parent)
+        self.scene = scene
+        self.node = node
+        self.setWindowTitle(f"Manage Connections — {node.title}")
+        self.setModal(True)
+        self.resize(380, 420)
+        self.setStyleSheet(_dialog_base_style())
+        _app_theme.themeChanged.connect(
+            lambda _: self.setStyleSheet(_dialog_base_style()))
+
+        self._output_checks = {}   # WorkflowLink -> QCheckBox
+        self._input_checks = {}    # WorkflowLink -> QCheckBox (multi-input only)
+        self._single_input_disconnect = None  # QPushButton, if single-input
+        self._single_input_link = None
+        self._build()
+
+    def _current_output_links(self):
+        return [lk for lk in self.scene.workflow_links
+                if lk.source_node is self.node]
+
+    def _current_input_links(self):
+        return [lk for lk in self.scene.workflow_links
+                if lk.sink_node is self.node]
+
+    def _build(self):
+        p = _app_theme.palette
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        title = QLabel(f"Manage Connections — {self.node.title}")
+        title.setStyleSheet(
+            f"font-size:14px; font-weight:700; color:{p.text_primary};")
+        title.setWordWrap(True)
+        root.addWidget(title)
+
+        if getattr(self.node, '_has_input', False):
+            root.addWidget(self._section_label("Inputs"))
+            in_links = self._current_input_links()
+            if not in_links:
+                root.addWidget(self._muted_label("Not connected"))
+            elif getattr(self.node, 'supports_multi_input', False):
+                row = QHBoxLayout()
+                sel_btn = QPushButton("Select all inputs")
+                sel_btn.clicked.connect(
+                    lambda: self._toggle_all(self._input_checks))
+                row.addWidget(sel_btn)
+                row.addStretch()
+                root.addLayout(row)
+                for lk in in_links:
+                    cb = QCheckBox(lk.source_node.title)
+                    cb.setChecked(True)
+                    self._input_checks[lk] = cb
+                    root.addWidget(cb)
+            else:
+                lk = in_links[0]
+                self._single_input_link = lk
+                row = QHBoxLayout()
+                row.addWidget(QLabel(f"Connected to {lk.source_node.title}"), 1)
+                dbtn = QPushButton("Disconnect")
+                dbtn.setCheckable(True)
+                dbtn.toggled.connect(
+                    lambda checked, b=dbtn: b.setText(
+                        "Will disconnect on OK" if checked else "Disconnect"))
+                row.addWidget(dbtn)
+                self._single_input_disconnect = dbtn
+                root.addLayout(row)
+
+        if getattr(self.node, '_has_output', False):
+            root.addWidget(self._section_label("Outputs"))
+            out_links = self._current_output_links()
+            if not out_links:
+                root.addWidget(self._muted_label("Not connected to anything"))
+            else:
+                row = QHBoxLayout()
+                sel_btn = QPushButton("Select all outputs")
+                sel_btn.clicked.connect(
+                    lambda: self._toggle_all(self._output_checks))
+                row.addWidget(sel_btn)
+                row.addStretch()
+                # No "Create Temp Node" on a temp node itself — chaining pure
+                # relays (temp → temp) adds no capability and only costs
+                # performance, so temp-of-temp is disallowed by construction.
+                if self.node.node_type != "temp_pass_through":
+                    temp_btn = QPushButton("Create Temp Node")
+                    temp_btn.setToolTip(
+                        "Inserts a new pass-through node between here and the "
+                        "checked outputs, right now — this doesn't wait for OK.")
+                    temp_btn.clicked.connect(self._create_temp_node)
+                    row.addWidget(temp_btn)
+                root.addLayout(row)
+                for lk in out_links:
+                    cb = QCheckBox(lk.sink_node.title)
+                    cb.setChecked(True)
+                    self._output_checks[lk] = cb
+                    root.addWidget(cb)
+
+        hint = QLabel(
+            "Checked = stays connected. Uncheck a row and press OK to "
+            "disconnect it.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{p.text_muted}; font-size:11px;")
+        root.addWidget(hint)
+        root.addStretch()
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._apply_and_accept)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    @staticmethod
+    def _section_label(text):
+        p = _app_theme.palette
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"font-size:12px; font-weight:700; color:{p.text_secondary}; "
+            f"margin-top:6px;")
+        return lbl
+
+    @staticmethod
+    def _muted_label(text):
+        p = _app_theme.palette
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            f"color:{p.text_muted}; font-size:12px; font-style:italic;")
+        return lbl
+
+    def _toggle_all(self, checks):
+        if not checks:
+            return
+        all_checked = all(cb.isChecked() for cb in checks.values())
+        for cb in checks.values():
+            cb.setChecked(not all_checked)
+
+    def _create_temp_node(self):
+        """Insert a TempPassThroughNode between this node and the checked
+        outputs. Commits immediately (see class docstring) and closes the
+        dialog, since the graph shape just changed underneath it.
+        """
+        selected = [lk for lk, cb in self._output_checks.items()
+                   if cb.isChecked()
+                   and lk.sink_node.node_type != "temp_pass_through"]
+        if not selected:
+            return
+        pos = self.node.position + QPointF(DS.NODE_W + 60, 0)
+        parent_window = (getattr(self.node, 'parent_window', None)
+                         or getattr(self.scene, 'parent_window', None))
+        temp = TempPassThroughNode(parent_window)
+        self.scene.add_node(temp, pos)
+        self.scene.add_link(self.node, selected[0].source_channel,
+                            temp, "input")
+        for lk in selected:
+            li = self.scene.link_items.get(lk)
+            if li:
+                self.scene.delete_link(li)
+            self.scene.add_link(temp, "output", lk.sink_node, lk.sink_channel)
+        self.accept()
+
+    def _apply_and_accept(self):
+        for lk, cb in self._output_checks.items():
+            if not cb.isChecked():
+                li = self.scene.link_items.get(lk)
+                if li:
+                    self.scene.delete_link(li)
+        for lk, cb in self._input_checks.items():
+            if not cb.isChecked():
+                li = self.scene.link_items.get(lk)
+                if li:
+                    self.scene.delete_link(li)
+        if (self._single_input_disconnect is not None
+                and self._single_input_disconnect.isChecked()
+                and self._single_input_link is not None):
+            li = self.scene.link_items.get(self._single_input_link)
+            if li:
+                self.scene.delete_link(li)
+        self.accept()
 
 
 class BatchSampleSelectorDialog(QDialog):
@@ -3551,6 +3907,45 @@ class NodePalette(QWidget):
         for btn, name in self._all_buttons:
             btn.setVisible(q in name.lower())
 
+
+# ── Node-type connection compatibility ──────────────────────────────────────
+# Each node type carries an (input_family, output_family) pair. A link
+# source→sink is only allowed when the source's output family equals the
+# sink's input family (and both exist). Two families:
+#   'batch'  — a Batch Windows list (batch_sample_list)
+#   'sample' — single/multi sample data (what selectors, filters, temp emit
+#              and what filters, temp, and every plot node consume)
+# Cardinality (how many inputs a node tolerates) is a SEPARATE concern,
+# handled by supports_multi_input — a Particle Filter is ('sample','sample')
+# here AND accepts several sources because it walks every input link itself.
+_NODE_IO_FAMILIES = {
+    "batch_sample_selector":        (None,     "batch"),
+    "sample_selector":              ("batch",  "sample"),
+    "multiple_sample_selector":     ("batch",  "sample"),
+    "particle_filter":              ("sample", "sample"),
+    "temp_pass_through":            ("sample", "sample"),
+}
+
+
+def _io_families(node):
+    """Return (input_family, output_family) for a node.
+
+    Reads an explicit per-instance override first (future node types can set
+    ``input_family``/``output_family`` directly), then the type map, then
+    falls back to treating any input/output as the 'sample' family — which
+    is correct for every plot/analysis node (a 'sample'-consuming sink).
+    """
+    inst = (getattr(node, 'input_family', None),
+            getattr(node, 'output_family', None))
+    if inst != (None, None):
+        return inst
+    nt = getattr(node, 'node_type', None)
+    if nt in _NODE_IO_FAMILIES:
+        return _NODE_IO_FAMILIES[nt]
+    return ('sample' if getattr(node, '_has_input', False) else None,
+            'sample' if getattr(node, '_has_output', False) else None)
+
+
 class EnhancedCanvasScene(QGraphicsScene):
 
     node_selection_changed = Signal(int)
@@ -3569,6 +3964,14 @@ class EnhancedCanvasScene(QGraphicsScene):
 
         self._undo_stack = deque(maxlen=50)
         self._undoing = False
+        # Interactive connection rules (cardinality + type compatibility) are
+        # enforced in add_link. Project load flips this off around its restore
+        # loop so a project saved before these rules existed isn't silently
+        # pruned of links the rules would now reject.
+        self._enforce_connection_rules = True
+        # When True, add_link's per-link data push is skipped; a single
+        # flush_data_flow() pass replaces it (see project load).
+        self._suppress_data_flow = False
 
         self.setSceneRect(-2000, -2000, 4000, 4000)
         self.selectionChanged.connect(self._on_selection)
@@ -3610,6 +4013,11 @@ class EnhancedCanvasScene(QGraphicsScene):
                     self.delete_node(ni)
             elif action_type == 'delete_node':
                 self.add_node(data['wf_node'], data['pos'])
+                # Restore the node's links too, now that the node exists
+                # again in node_items — one delete = one undo, and the node
+                # comes back wired exactly as it was (see delete_node).
+                for src, sch, snk, snkch in data.get('links', []):
+                    self.add_link(src, sch, snk, snkch)
             elif action_type == 'add_link':
                 li = data.get('li')
                 if li and li.scene():
@@ -3635,18 +4043,36 @@ class EnhancedCanvasScene(QGraphicsScene):
         if not isinstance(ni, NodeItem):
             return
         wn = ni.workflow_node
+        # Capture the links this node touches so the whole delete (node +
+        # its connections) is one undo unit — undoing it re-adds the node
+        # and then these links, in that order. Doing it link-by-link with
+        # separate undo entries used to replay a link before its node
+        # existed, which left an unremovable ghost link (see add_link).
+        touched = [(lk.source_node, lk.source_channel, lk.sink_node,
+                    lk.sink_channel)
+                   for lk in self.workflow_links
+                   if lk.source_node == wn or lk.sink_node == wn]
         if not self._undoing:
-            self._undo_stack.append(('delete_node', {'wf_node': wn, 'pos': ni.pos()}))
+            self._undo_stack.append(('delete_node',
+                                     {'wf_node': wn, 'pos': ni.pos(),
+                                      'links': touched}))
             ual = _ual()
             if ual:
                 ual.log_action('DATA_OP', f'Deleted node: {wn.title}',
                                {'node_type': wn.node_type,
                                 'remaining_nodes': len(self.workflow_nodes) - 1})
-        for lk in list(self.workflow_links):
-            if lk.source_node == wn or lk.sink_node == wn:
-                li = self.link_items.get(lk)
-                if li:
-                    self.delete_link(li)
+        # Remove the links without letting each push its own undo entry —
+        # they belong to the single delete_node entry above.
+        _was_undoing = self._undoing
+        self._undoing = True
+        try:
+            for lk in list(self.workflow_links):
+                if lk.source_node == wn or lk.sink_node == wn:
+                    li = self.link_items.get(lk)
+                    if li:
+                        self.delete_link(li)
+        finally:
+            self._undoing = _was_undoing
         self.workflow_nodes.remove(wn) if wn in self.workflow_nodes else None
         self.node_items.pop(wn, None)
         self.removeItem(ni)
@@ -3670,6 +4096,38 @@ class EnhancedCanvasScene(QGraphicsScene):
             self.workflow_links.remove(wl)
         self.link_items.pop(wl, None)
         self.removeItem(li)
+        # A node with no live input should hold no cached data — dropping a
+        # disconnected node's data keeps the app lightweight and stops a
+        # detached plot from still showing (and pinning in memory) its old
+        # source's particles. Skipped during undo/bulk-delete/load, where the
+        # disconnect is transient or the graph is mid-rebuild.
+        if wl and not self._undoing and not self._suppress_data_flow:
+            self._clear_if_orphaned(wl.sink_node)
+
+    def _clear_if_orphaned(self, node):
+        """Drop a node's cached input once it has no incoming link left.
+
+        Only acts on a node with zero live inputs. Recurses through a temp
+        pass-through: the temp holds nothing itself, but the plots it feeds
+        are now fed by an empty source and must forget their data too.
+        """
+        if any(lk.sink_node is node for lk in self.workflow_links):
+            return
+        self._clear_node_data(node)
+
+    def _clear_node_data(self, node):
+        if getattr(node, 'input_data', None) is not None:
+            node.input_data = None
+            sig = getattr(node, 'configuration_changed', None)
+            if sig is not None:
+                try:
+                    sig.emit()
+                except Exception:
+                    _itk_log.exception("Handled exception in _clear_node_data")
+        if getattr(node, 'node_type', None) == 'temp_pass_through':
+            for lk in list(self.workflow_links):
+                if lk.source_node is node:
+                    self._clear_node_data(lk.sink_node)
 
     def duplicate_selected_nodes(self):
         sel = [i for i in self.selectedItems() if isinstance(i, NodeItem)]
@@ -3690,7 +4148,7 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
-                     'saved_cluster_state'):
+                     'merge_singles', 'sample_groups', 'saved_cluster_state'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
@@ -3721,6 +4179,12 @@ class EnhancedCanvasScene(QGraphicsScene):
         ni.setPos(pos)
         self.addItem(ni)
         self.node_items[wf_node] = ni
+        # Nodes that pull their own inputs from the scene graph (Particle
+        # Filter, Temp Node) need a back-reference to it — hand it over here
+        # so it survives duplication and project load, not just interactive
+        # placement.
+        if hasattr(wf_node, 'scene_ref'):
+            wf_node.scene_ref = self
         if not self._undoing:
             self._undo_stack.append(('add_node', {'wf_node': wf_node}))
             ual = _ual()
@@ -3735,38 +4199,77 @@ class EnhancedCanvasScene(QGraphicsScene):
             if (lk.source_node == src_node and lk.sink_node == snk_node
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
                 return None
-        wl = WorkflowLink(src_node, src_ch, snk_node, snk_ch)
-        self.workflow_links.append(wl)
-        li = LinkItem()
-        li.set_workflow_link(wl)
+        if self._enforce_connection_rules:
+            # Type compatibility: the source's output family must match the
+            # sink's input family (see _NODE_IO_FAMILIES). Blocks nonsensical
+            # wiring like sample→sample or filter→sample-selector.
+            src_out = _io_families(src_node)[1]
+            snk_in = _io_families(snk_node)[0]
+            if src_out is None or snk_in is None or src_out != snk_in:
+                return None
+            # Cardinality: a node that reads a single overwritable input slot
+            # can't take a second incoming link (it would silently lose the
+            # tug-of-war). Multi-input nodes (e.g. Particle Filter, which
+            # walks every input link itself) opt out via supports_multi_input.
+            if not getattr(snk_node, 'supports_multi_input', False):
+                for lk in self.workflow_links:
+                    if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
+                        return None
+        # Validate everything BEFORE mutating workflow_links — otherwise a
+        # failed add (e.g. undo replaying a link whose endpoint node no
+        # longer exists) would leave a "ghost" link: present in
+        # workflow_links (so Manage Connections and data-flow both see it as
+        # connected) but with no LinkItem drawn and no way to remove or
+        # reconnect it (the dedup check above would reject the redraw).
         si = self.node_items.get(src_node)
         di = self.node_items.get(snk_node)
         if not si or not di:
             return None
         sa = si.get_anchor(src_ch)
         da = di.get_anchor(snk_ch)
-        if sa and da:
-            li.set_source_anchor(sa)
-            li.set_sink_anchor(da)
-            self.addItem(li)
-            self.link_items[wl] = li
-            if not self._undoing:
-                self._undo_stack.append(('add_link', {'li': li}))
-                ual = _ual()
-                if ual:
-                    ual.log_action('DATA_OP',
-                                   f'Connected: {src_node.title} → {snk_node.title}',
-                                   {'source': src_node.title,
-                                    'source_type': src_node.node_type,
-                                    'sink': snk_node.title,
-                                    'sink_type': snk_node.node_type,
-                                    'total_links': len(self.workflow_links)})
-            QApplication.processEvents()
-            self._trigger_data_flow(wl)
-            return wl
-        return None
+        if not (sa and da):
+            return None
+        wl = WorkflowLink(src_node, src_ch, snk_node, snk_ch)
+        li = LinkItem()
+        li.set_workflow_link(wl)
+        self.workflow_links.append(wl)
+        li.set_source_anchor(sa)
+        li.set_sink_anchor(da)
+        self.addItem(li)
+        self.link_items[wl] = li
+        if not self._undoing:
+            self._undo_stack.append(('add_link', {'li': li}))
+            ual = _ual()
+            if ual:
+                ual.log_action('DATA_OP',
+                               f'Connected: {src_node.title} → {snk_node.title}',
+                               {'source': src_node.title,
+                                'source_type': src_node.node_type,
+                                'sink': snk_node.title,
+                                'sink_type': snk_node.node_type,
+                                'total_links': len(self.workflow_links)})
+        QApplication.processEvents()
+        self._trigger_data_flow(wl)
+        # After a genuine user connection into a node that cares (e.g. a
+        # Particle Filter), let it reconcile its saved per-sample settings
+        # against the newly connected source — a duplicated filter wired to
+        # a different sample wipes to a blank slate, a partial match warns.
+        # Deferred so any dialog opens after this connect event settles, and
+        # skipped during undo/project-load (those aren't user rewiring).
+        if (self._enforce_connection_rules and not self._undoing
+                and hasattr(snk_node, 'reconcile_incoming')):
+            QTimer.singleShot(
+                0, lambda n=snk_node: n.reconcile_incoming(self.parent_window))
+        return wl
 
     def _trigger_data_flow(self, wl):
+        # Suppressed during bulk restore: add_link is called once per saved
+        # link, and pushing here would recompute each source node's output
+        # once PER outgoing link (a filter feeding N plots computes N times,
+        # dragging its own upstream along each time). flush_data_flow() does
+        # a single per-node pass instead once every link exists.
+        if self._suppress_data_flow:
+            return
         try:
             data = wl.get_data()
             if hasattr(wl.sink_node, 'process_data'):
@@ -3774,6 +4277,89 @@ class EnhancedCanvasScene(QGraphicsScene):
         except Exception as e:
             _itk_log.exception("Handled exception in _trigger_data_flow")
             _itk_log.error(f"Data flow error: {e}")
+
+    def flush_data_flow(self):
+        """Push each node's output to its sinks exactly once, sources first.
+
+        Used after a bulk restore (see _deserialize_canvas_state): computes
+        every node's ``get_output_data()`` a single time and distributes it
+        to all its sinks, instead of add_link's per-link recompute. Ordered
+        so a node is processed after the nodes feeding it, so each level's
+        input is populated before it computes.
+        """
+        # Kahn topological order over the workflow graph.
+        nodes = list(self.workflow_nodes)
+        indeg = {n: 0 for n in nodes}
+        outgoing = {n: [] for n in nodes}
+        for lk in self.workflow_links:
+            if lk.source_node in indeg and lk.sink_node in indeg:
+                indeg[lk.sink_node] += 1
+                outgoing[lk.source_node].append(lk)
+        queue = [n for n in nodes if indeg[n] == 0]
+        order = []
+        while queue:
+            n = queue.pop()
+            order.append(n)
+            for lk in outgoing[n]:
+                indeg[lk.sink_node] -= 1
+                if indeg[lk.sink_node] == 0:
+                    queue.append(lk.sink_node)
+        # A cycle (shouldn't happen) would leave nodes out of `order`; append
+        # them so their sinks still get pushed rather than silently skipped.
+        order.extend(n for n in nodes if n not in order)
+
+        # Memoize get_output_data for this pass only. ParticleFilterNode and
+        # TempPassThroughNode don't read the value pushed below at all — they
+        # pull their own upstream fresh by walking scene.workflow_links
+        # (_pull_upstream_all / WorkflowLink.get_data), every time they're
+        # asked, regardless of who's asking or how many times. Without this,
+        # a branching pipeline of such nodes (a completely normal shape for
+        # a canvas built up over months — chained filters fanning out to
+        # several plots each) recomputes every shared ancestor once per
+        # downstream path, compounding with depth AND fan-out — confirmed by
+        # a depth-4/branch-2 test tree computing 30 filters 104 times, and
+        # this is what turned into real multi-minute hangs on an actual
+        # project with real particle counts instead of this test's stub
+        # data. Instance-level monkeypatch, restored in `finally` so normal
+        # interactive use (which deliberately always recomputes fresh, to
+        # avoid the stale-data bugs this project has repeatedly hit) is
+        # completely unaffected outside this one call.
+        cache = {}
+        originals = {}
+        for n in nodes:
+            if hasattr(n, 'get_output_data'):
+                originals[n] = n.get_output_data
+
+                def _memoized(node=n, orig=originals[n]):
+                    if node not in cache:
+                        try:
+                            cache[node] = orig()
+                        except Exception:
+                            _itk_log.exception(
+                                "Handled exception in flush_data_flow")
+                            cache[node] = None
+                    return cache[node]
+                n.get_output_data = _memoized
+
+        try:
+            for n in order:
+                links = outgoing.get(n) or []
+                if not links:
+                    continue
+                try:
+                    data = n.get_output_data() if hasattr(n, 'get_output_data') else None
+                except Exception:
+                    _itk_log.exception("Handled exception in flush_data_flow")
+                    data = None
+                for lk in links:
+                    try:
+                        if hasattr(lk.sink_node, 'process_data'):
+                            lk.sink_node.process_data(data)
+                    except Exception:
+                        _itk_log.exception("Handled exception in flush_data_flow")
+        finally:
+            for n, orig in originals.items():
+                n.get_output_data = orig
 
     def contextMenuEvent(self, event):
         """Right-click on empty canvas space → canvas context menu."""
@@ -4140,6 +4726,7 @@ _NODE_FACTORIES = {
     "multiple_sample_selector":     MultipleSampleSelectorNode,
     "batch_sample_selector":        BatchSampleSelectorNode,
     "particle_filter":              ParticleFilterNode,
+    "temp_pass_through":            TempPassThroughNode,
     "histogram_plot":               HistogramPlotNode,
     "element_bar_chart_plot":       ElementBarChartPlotNode,
     "correlation_plot":             CorrelationPlotNode,

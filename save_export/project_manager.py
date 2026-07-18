@@ -776,10 +776,11 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
+            'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
-        
+
         for attr in config_attributes:
             if hasattr(node, attr):
                 value = getattr(node, attr)
@@ -844,7 +845,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
-                ParticleFilterNode,
+                ParticleFilterNode, TempPassThroughNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -883,7 +884,8 @@ Terminal=false
             "sample_selector": SampleSelectorNode,
             "multiple_sample_selector": MultipleSampleSelectorNode,
             "particle_filter": ParticleFilterNode,
-            
+            "temp_pass_through": TempPassThroughNode,
+
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
             "correlation_plot": CorrelationPlotNode,
@@ -918,19 +920,36 @@ Terminal=false
                 scene.add_node(workflow_node, pos)
                 node_map[node_id] = workflow_node
         
-        for link_data in canvas_state.get('workflow_links', []):
-            source_node_id = link_data.get('source_node_id')
-            sink_node_id = link_data.get('sink_node_id')
-            
-            if source_node_id in node_map and sink_node_id in node_map:
-                source_node = node_map[source_node_id]
-                sink_node = node_map[sink_node_id]
-                source_channel = link_data.get('source_channel', 'output')
-                sink_channel = link_data.get('sink_channel', 'input')
-                
-                link = scene.add_link(source_node, source_channel, sink_node, sink_channel)
-                if link and 'enabled' in link_data:
-                    link.enabled = link_data['enabled']
+        # Restore saved links with interactive connection rules (type
+        # compatibility + input cardinality) suspended — a project saved
+        # before those rules existed must reload exactly as saved rather than
+        # having any now-"invalid" link silently dropped. Also suppress the
+        # per-link data push: pushing inside add_link recomputes each source
+        # node's output once per outgoing link (a filter feeding N plots
+        # would compute N times, re-pulling its own upstream each time),
+        # which makes load time balloon as the workflow graph grows. A single
+        # flush_data_flow() pass afterwards computes each node once instead.
+        _prev_enforce = getattr(scene, '_enforce_connection_rules', True)
+        scene._enforce_connection_rules = False
+        scene._suppress_data_flow = True
+        try:
+            for link_data in canvas_state.get('workflow_links', []):
+                source_node_id = link_data.get('source_node_id')
+                sink_node_id = link_data.get('sink_node_id')
+
+                if source_node_id in node_map and sink_node_id in node_map:
+                    source_node = node_map[source_node_id]
+                    sink_node = node_map[sink_node_id]
+                    source_channel = link_data.get('source_channel', 'output')
+                    sink_channel = link_data.get('sink_channel', 'input')
+
+                    link = scene.add_link(source_node, source_channel, sink_node, sink_channel)
+                    if link and 'enabled' in link_data:
+                        link.enabled = link_data['enabled']
+        finally:
+            scene._enforce_connection_rules = _prev_enforce
+            scene._suppress_data_flow = False
+        scene.flush_data_flow()
 
         for note_data in canvas_state.get('sticky_notes', []):
             try:
@@ -968,10 +987,11 @@ Terminal=false
             'selected_sample', 'selected_samples', 'selected_data_type',
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
+            'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
             'saved_cluster_state'
         ]
-        
+
         for attr in config_attributes:
             if attr in node_data:
                 value = node_data[attr]

@@ -41,6 +41,11 @@ class TestConfigBasics:
 
     def test_threshold_needs_a_positive_value(self):
         cfg = pf.default_filter_config()
+        # Threshold is a per-isotope modifier on top of Composition (see the
+        # cross-box audit), so it only counts as an active axis when
+        # Composition is also on — enable it here so the test exercises the
+        # positive-value rule rather than the composition gate.
+        cfg["composition"].update(enabled=True, isotopes=[{"symbol": "Fe"}])
         cfg["threshold"]["enabled"] = True
         cfg["threshold"]["values"] = {"56Fe": 0}
         assert "threshold" not in pf.active_axes(cfg)     # 0 doesn't count
@@ -64,13 +69,13 @@ class TestSummarizeConfig:
         cfg["count"].update(enabled=True, op="min", value=2)
         out = pf.summarize_config(cfg)
         assert "Fe·Cr | AND" in out
-        assert "≥2 elem" in out
+        assert "≥2 iso" in out
 
     @pytest.mark.parametrize("op,sym", [("min", "≥"), ("max", "≤"), ("exact", "=")])
     def test_count_operator_symbols(self, op, sym):
         cfg = pf.default_filter_config()
         cfg["count"].update(enabled=True, op=op, value=3)
-        assert f"{sym}3 elem" in pf.summarize_config(cfg)
+        assert f"{sym}3 iso" in pf.summarize_config(cfg)
 
 
 # --------------------------------------------------------------------------- #

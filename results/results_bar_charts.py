@@ -3555,6 +3555,7 @@ class HistogramDisplayDialog(QDialog):
         dt = cfg.get('data_type_display', 'Counts')
         log_x = cfg.get('log_x', False)
         bin_width = cfg.get('bin_width', 20)
+        bin_mode = cfg.get('bin_mode', 'geometric')
         per_ml = _per_ml_active(cfg, self.node.input_data)
         cuts = _get_broken_cuts(cfg)
 
@@ -3578,7 +3579,8 @@ class HistogramDisplayDialog(QDialog):
             v_pre = _prepare_values(combined_pre, dt, log_x)
             if v_pre is not None:
                 all_prepared.append(v_pre)
-        global_edges = _compute_global_bin_edges(all_prepared, bin_width, log_x)
+        global_edges = _compute_global_bin_edges(
+            all_prepared, bin_width, log_x, bin_mode=bin_mode)
 
         def _draw(pi, is_top, is_bottom):
             """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
