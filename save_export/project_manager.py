@@ -778,6 +778,7 @@ Terminal=false
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
+            'input_family', 'output_family',
             'saved_cluster_state'
         ]
 
@@ -989,6 +990,7 @@ Terminal=false
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups',
             'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
+            'input_family', 'output_family',
             'saved_cluster_state'
         ]
 

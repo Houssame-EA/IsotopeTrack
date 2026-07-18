@@ -2223,14 +2223,52 @@ class ManageConnectionsDialog(QDialog):
         parent_window = (getattr(self.node, 'parent_window', None)
                          or getattr(self.scene, 'parent_window', None))
         temp = TempPassThroughNode(parent_window)
+        # The relay adopts the family of the stream it is inserted into, so it
+        # can sit in a batch fan-out (Batch Windows -> sample selectors) just
+        # as well as a sample one. Without this it defaults to the 'sample'
+        # family and every link into/out of it would be rejected as a type
+        # mismatch — which, combined with the delete-then-add below, used to
+        # tear the whole fan-out down (see _io_families). The override is
+        # persisted with the node (project_manager config_attributes).
+        fam = _io_families(self.node)[1]
+        if fam is not None:
+            temp.input_family = fam
+            temp.output_family = fam
         self.scene.add_node(temp, pos)
-        self.scene.add_link(self.node, selected[0].source_channel,
-                            temp, "input")
-        for lk in selected:
-            li = self.scene.link_items.get(lk)
-            if li:
-                self.scene.delete_link(li)
-            self.scene.add_link(temp, "output", lk.sink_node, lk.sink_channel)
+        src_ch = selected[0].source_channel
+
+        # Rewire with data flow suppressed: a single-input sink must lose its
+        # direct link before it can take the temp's (cardinality), and the
+        # brief orphan state would otherwise clear+blank the sink. One push
+        # through the temp at the end repopulates every sink exactly once.
+        prev_suppress = getattr(self.scene, '_suppress_data_flow', False)
+        self.scene._suppress_data_flow = True
+        src_to_temp = None
+        try:
+            src_to_temp = self.scene.add_link(self.node, src_ch, temp, "input")
+            if src_to_temp is None:
+                # Couldn't wire the source into the temp — abort without ever
+                # deleting a direct link (never remove a connection before its
+                # replacement is confirmed in place).
+                ni = self.scene.node_items.get(temp)
+                if ni:
+                    self.scene.delete_node(ni)
+                return
+            for lk in selected:
+                sink_node, sink_ch = lk.sink_node, lk.sink_channel
+                li = self.scene.link_items.get(lk)
+                if li:
+                    self.scene.delete_link(li)
+                if self.scene.add_link(
+                        temp, "output", sink_node, sink_ch) is None:
+                    # Replacement failed — put the direct link back so this
+                    # sink isn't left orphaned.
+                    self.scene.add_link(self.node, src_ch, sink_node, sink_ch)
+        finally:
+            self.scene._suppress_data_flow = prev_suppress
+        # Push the source's data through the temp to every sink, once.
+        if src_to_temp is not None:
+            self.scene._trigger_data_flow(src_to_temp)
         self.accept()
 
     def _apply_and_accept(self):
