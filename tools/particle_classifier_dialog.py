@@ -15,6 +15,19 @@ Definitions are stored as one flat, global, priority-ordered list on the
 node (:class:`tools.particle_classifier_node.ParticleClassifierNode`); each
 definition is scoped to exactly one sample via its ``target_sample`` field.
 This dialog is the only place that list is edited.
+
+Group colors (``self._groups`` / the node's ``groups`` attribute) are
+deliberately GLOBAL, shared across every sample -- a group name means "this
+substance," and any definition assigned to it on any sample renders the
+same color everywhere, including downstream in the graphs. Typing an
+existing group name on a different sample joins that same shared bucket
+and adopts its color; there is no per-sample override. (A per-sample-
+independent-color variant of this was tried and reverted: downstream viz
+color-seeding is fundamentally keyed by label TEXT alone with no sample
+dimension, so per-sample-divergent colors could never actually render
+distinctly in a chart anyway -- they just looked like the wrong color was
+winning. Consistency across samples is also simply what a same-named
+group is FOR.)
 """
 
 from __future__ import annotations
@@ -27,7 +40,7 @@ from PySide6.QtWidgets import (
     QSplitter, QScrollArea, QFrame, QLineEdit, QRadioButton, QButtonGroup,
     QMessageBox, QCheckBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 
 from tools.theme import theme as _app_theme
 from tools.particle_filter import normalize_sources, source_labels
@@ -52,10 +65,22 @@ _WARNING_COLOR = "#F59E0B"
 class _ColorBtn(QPushButton):
     """Small color-square button that opens the shared color picker.
 
-    Copied verbatim from ``results/results_pie_charts.py``'s ``_ColorBtn`` —
-    the established color-square pattern this project's design doc points to
-    (see ``pick_color_hex`` in ``results/shared_plot_utils.py``).
+    Based on ``results/results_pie_charts.py``'s ``_ColorBtn`` (see
+    ``pick_color_hex`` in ``results/shared_plot_utils.py``), but that
+    original relies on callers polling ``.color()`` at commit time rather
+    than reacting to a signal. This dialog instead pushes color edits into
+    the definition dict immediately (matching every other field's
+    ``_on_xxx_changed`` pattern here), which needs its own
+    ``colorChanged`` signal: ``clicked`` is NOT safe to use for this,
+    because opening a modal color-picker dialog from inside
+    ``mousePressEvent`` means the user's mouse-release lands on that
+    dialog, not back on this button, so Qt never delivers a matching
+    release event here and ``clicked`` silently never fires (the swatch
+    still updates, since ``set_color`` runs unconditionally, giving the
+    illusion the pick worked while nothing downstream ever ran).
     """
+
+    colorChanged = Signal(str)
 
     def __init__(self, color='#FFFFFF', parent=None):
         super().__init__(parent)
@@ -84,6 +109,7 @@ class _ColorBtn(QPushButton):
                                     title="Select Color")
             if picked:
                 self.set_color(picked)
+                self.colorChanged.emit(picked)
         super().mousePressEvent(event)
 
 
@@ -476,7 +502,7 @@ class ParticleClassifierDialog(QDialog):
         group_row.addWidget(self._group_combo, 1)
         group_row.addWidget(QLabel("Color:"))
         self._color_btn = _ColorBtn(DEFAULT_SAMPLE_COLORS[0])
-        self._color_btn.clicked.connect(self._on_color_picked)
+        self._color_btn.colorChanged.connect(self._on_color_picked)
         group_row.addWidget(self._color_btn)
         pv.addLayout(group_row)
 
@@ -626,6 +652,9 @@ class ParticleClassifierDialog(QDialog):
             self._validate_current()
 
     def _refresh_group_combo(self):
+        """List every group name node-wide -- groups are global (see
+        module docstring), so any existing group from any sample is a
+        valid one to join from here."""
         self._group_combo.blockSignals(True)
         self._group_combo.clear()
         self._group_combo.addItem("")
@@ -635,7 +664,12 @@ class ParticleClassifierDialog(QDialog):
 
     def _color_for_definition(self, d):
         """Resolve a definition's effective color (own color, group color,
-        or the next free palette slot for an ungrouped definition)."""
+        or the next free palette slot for an ungrouped definition).
+
+        Group colors are global (see module docstring): looked up in the
+        one shared ``self._groups`` registry, not scoped to this
+        definition's sample.
+        """
         group = d.get('group_name')
         if group and group in self._groups:
             return self._groups[group]
@@ -747,11 +781,21 @@ class ParticleClassifierDialog(QDialog):
         text = (self._group_combo.currentText() or '').strip()
         if text == (d.get('group_name') or ''):
             return  # unchanged -- avoid pointless list rebuilds/refocus
+        prior_color = d.get('color')
         d['group_name'] = text or None
         if text:
+            # Groups are global (see module docstring): joining an
+            # existing group (from any sample) adopts its one shared
+            # color; creating a brand-new one seeds its color.
             if text not in self._groups:
-                used = set(self._groups.values())
-                self._groups[text] = _next_palette_color(used)
+                # Seed a brand-new group's color from whatever custom
+                # color the user already picked on this definition (a
+                # very natural order: customize the color, then decide
+                # to file it under a named bucket) instead of always
+                # overwriting it with an arbitrary palette default --
+                # that was silently discarding the user's color choice.
+                self._groups[text] = prior_color or _next_palette_color(
+                    set(self._groups.values()))
                 _itk_log.info("Created classifier group %r with color %s",
                               text, self._groups[text])
             self._color_btn.set_color(self._groups[text])
@@ -768,17 +812,26 @@ class ParticleClassifierDialog(QDialog):
         Fraction Calculator assumptions, so particle-mass/moles stats for
         the pooled group could mix incompatible bases. Structural check
         only (definition count), no particle data needed — consistent
-        with how confound/contradiction detection are both structural."""
+        with how confound/contradiction detection are both structural.
+
+        Scoped to the CURRENT sample's definitions only: relabel_particles
+        runs independently per sample (see
+        ParticleClassifierNode.get_output_data), so a group name that
+        coincidentally also exists on a different, unrelated sample never
+        actually pools with THIS sample's particles -- checking against
+        every definition node-wide would false-positive on that
+        coincidence (the same class of bug _collect_active_confound_pairs
+        was already fixed for)."""
         if group_name in self._pooling_prompted_groups:
             return
-        if group_name not in multi_definition_groups(self._definitions):
+        sample_defs = self._defs_for(self._current)
+        if group_name not in multi_definition_groups(sample_defs):
             return
         self._pooling_prompted_groups.add(group_name)
-        n = sum(1 for d in self._definitions
-                if d.get('group_name') == group_name)
+        n = sum(1 for d in sample_defs if d.get('group_name') == group_name)
         _itk_log.warning(
-            "Group %r now pools %d definitions -- prompting for "
-            "particle-mass pooling policy", group_name, n)
+            "Group %r now pools %d definitions on sample %r -- prompting "
+            "for particle-mass pooling policy", group_name, n, self._current)
         self._show_group_pooling_modal(group_name)
 
     def _show_group_pooling_modal(self, group_name):
@@ -847,6 +900,8 @@ class ParticleClassifierDialog(QDialog):
         color = self._color_btn.color()
         group = d.get('group_name')
         if group:
+            # Groups are global (see module docstring) -- this recolors
+            # the shared bucket for every sample using this group name.
             self._groups[group] = color
             _itk_log.info("Group %r color -> %s", group, color)
         else:
@@ -1008,12 +1063,25 @@ class ParticleClassifierDialog(QDialog):
         definitions targeting the same sample), excluding pairs already
         permanently dismissed via the warning dialog's checkbox.
 
+        Only considers definitions whose target_sample is a sample
+        actually connected to this dialog right now. A duplicated node
+        reconnected to a different upstream can still carry definitions
+        targeting the OLD connection's sample names (never silently
+        deleted -- see ParticleClassifierNode._active_definitions) but
+        those samples don't exist in self._src_by_name anymore, and
+        warning about a confound "in Hello" when no sample named Hello is
+        even connected would be pure noise referencing nothing the user
+        can see or act on.
+
         Returns:
             list: ``(def_a, def_b, witness_isotopes, pair_key)`` tuples.
         """
         by_sample = {}
         for d in self._definitions:
-            by_sample.setdefault(d.get('target_sample'), []).append(d)
+            sample = d.get('target_sample')
+            if sample not in self._src_by_name:
+                continue
+            by_sample.setdefault(sample, []).append(d)
 
         pairs = []
         seen = set()
@@ -1091,8 +1159,16 @@ class ParticleClassifierDialog(QDialog):
         for d_a, d_b, witness, key in pairs:
             name_a = d_a.get('group_name') or d_a.get('expression_text') or "Definition A"
             name_b = d_b.get('group_name') or d_b.get('expression_text') or "Definition B"
+            # Confounds are detected per sample (two definitions only
+            # confound if they target the SAME sample -- see
+            # _collect_active_confound_pairs), so name the sample: the same
+            # two names (e.g. "Iron Ore" / "Recycling") can appear as
+            # separate rows for different samples, and without the sample
+            # label those rows are visually identical and indistinguishable.
+            sample = d_a.get('target_sample') or d_b.get('target_sample') or ""
+            prefix = f"<span style='color:#6B7280'>[{sample}]</span> " if sample else ""
             row = QLabel(
-                f"<b>{name_a}</b> ↔ <b>{name_b}</b>  "
+                f"{prefix}<b>{name_a}</b> ↔ <b>{name_b}</b>  "
                 f"({', '.join(sorted(witness))})")
             row.setWordWrap(True)
             iv.addWidget(row)
@@ -1228,6 +1304,9 @@ class ParticleClassifierDialog(QDialog):
                 copy_d['id'] = new_definition_id()
                 copy_d['target_sample'] = target
                 self._definitions.append(copy_d)
+            # Group colors are global (see module docstring): a copied
+            # definition's group_name already resolves to the same shared
+            # self._groups entry on the target sample, nothing to carry.
             self._refresh_row_for(target)
             self._recompute_match_counts_for_sample(target)
         self._recompute_match_counts_for_sample(self._current)

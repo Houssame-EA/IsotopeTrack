@@ -154,6 +154,20 @@ class ParticleClassifierNode(QObject):
         self.scene_ref = None
 
         self.definitions = []
+        #: ``{group_name: color}`` -- deliberately GLOBAL, shared across
+        #: every sample: a group name means "this substance," and every
+        #: definition assigned to it (on any sample) renders the same
+        #: color everywhere, including downstream in the graphs. This was
+        #: briefly made per-sample-scoped, but reverted: (1) downstream viz
+        #: color-seeding is fundamentally keyed by label TEXT alone with no
+        #: sample dimension, so per-sample-divergent colors could never
+        #: actually render distinctly in a chart anyway -- they'd just look
+        #: like a bug (the "wrong" sample's color winning); (2) the user
+        #: explicitly wants same-named groups to always match across
+        #: samples for consistency, since divergent colors for the same
+        #: substance name is not a use case anyone wants. If two samples'
+        #: definitions need visually distinct colors, give them distinct
+        #: group names.
         self.groups = {}
         self.overlap_mode = 'double_count'
         self.unmatched_mode = 'unclassified'
@@ -175,6 +189,18 @@ class ParticleClassifierNode(QObject):
         #: ParticleClassifierDialog._confound_pair_key /
         #: get_confound_dismissals.
         self.confound_dismissals = []
+        #: Sample names actually feeding this node right now, refreshed on
+        #: every process_data() call. Mirrors
+        #: tools.particle_filter.ParticleFilterNode._incoming_names: when a
+        #: node is duplicated or its upstream link is swapped to a
+        #: different source, self.definitions may still contain entries
+        #: whose target_sample belonged to the OLD connection and no
+        #: longer exists anywhere in the new one. Those entries are kept
+        #: (never silently deleted — the user may reconnect the original
+        #: source later) but must not count toward "is this node actually
+        #: configured" displays (summary_text(), the node icon's badge)
+        #: — see the same reasoning in ParticleFilterNode.is_active().
+        self._incoming_names = []
 
     def set_position(self, pos):
         """Update the node position and notify the canvas item."""
@@ -185,7 +211,18 @@ class ParticleClassifierNode(QObject):
     def process_data(self, input_data):
         """Receive pushed single-link upstream data."""
         self.input_data = input_data
+        self._recompute_incoming_names(input_data)
         self.configuration_changed.emit()
+
+    def _recompute_incoming_names(self, input_data):
+        """Refresh the set of sample names currently feeding this node."""
+        from tools.particle_filter import normalize_sources
+        try:
+            sources = normalize_sources([input_data]) if input_data else []
+        except Exception:
+            _itk_log.exception("Handled exception in _recompute_incoming_names")
+            sources = []
+        self._incoming_names = [s['name'] for s in sources]
 
     def _pull_upstream_all(self):
         """Fetch the upstream dict from every input link.
@@ -261,10 +298,12 @@ class ParticleClassifierNode(QObject):
 
         if data.get('type') == 'sample_data':
             out = dict(data)
-            out['particle_data'] = relabeled_by_sample.get(
-                sources[0]['name'], [])
-            out['filtered_particles'] = len(out['particle_data'])
+            particles = relabeled_by_sample.get(sources[0]['name'], [])
+            out['particle_data'] = particles
+            out['filtered_particles'] = len(particles)
             out['label_colors'] = label_colors
+            out['selected_isotopes'] = self._output_selected_isotopes(
+                particles, data.get('selected_isotopes'), label_colors)
             return out
 
         # multiple_sample_data: preserve per-sample structure, only the
@@ -277,6 +316,64 @@ class ParticleClassifierNode(QObject):
         out['filtered_particles'] = len(combined)
         out['sample_names'] = [s['name'] for s in sources]
         out['label_colors'] = label_colors
+        out['selected_isotopes'] = self._output_selected_isotopes(
+            combined, data.get('selected_isotopes'), label_colors)
+        return out
+
+    @staticmethod
+    def _output_selected_isotopes(particles, upstream_selected, label_colors):
+        """Rebuild ``selected_isotopes`` to name the SYNTHETIC labels the
+        relabeled particles now actually carry (design §7: downstream nodes
+        should see a classifier bucket "exactly like another isotope").
+
+        Without this, the output would still advertise the upstream's raw
+        isotope labels (e.g. ``56Fe``) in ``selected_isotopes`` even though
+        every particle's composition dict has been relabeled to bucket
+        names (e.g. ``IronOre``). Downstream nodes that key off
+        ``selected_isotopes`` first rather than discovering labels from the
+        particle data itself (e.g. Concentration Comparison / Correlation
+        Matrix / Network Diagram via their ``_get_elements``) would then
+        look up isotope names that no longer exist in the particles and
+        find nothing.
+
+        Labels are taken from the particles themselves (first-appearance
+        order), so this stays correct for every unmatched-mode — including
+        ``passthrough``, where unmatched particles keep their original raw
+        isotope keys, which legitimately appear alongside the synthetic
+        bucket labels. Each label reuses its matching upstream
+        ``selected_isotopes`` entry when one exists (preserving any extra
+        keys a passed-through raw isotope carried), otherwise a fresh
+        ``{'label', 'color'}`` entry is synthesized.
+
+        Args:
+            particles (list): The relabeled output particle dicts.
+            upstream_selected (list | None): The upstream's own
+                ``selected_isotopes`` list, if any.
+            label_colors (dict): ``{label: hex}`` for synthetic labels.
+
+        Returns:
+            list: ``[{'label': ..., ...}, ...]`` naming the labels the
+                output particles actually carry.
+        """
+        upstream_by_label = {}
+        for iso in (upstream_selected or []):
+            lbl = iso.get('label') if isinstance(iso, dict) else str(iso)
+            if lbl and lbl not in upstream_by_label:
+                upstream_by_label[lbl] = iso
+
+        out, seen = [], set()
+        for p in particles:
+            for label in (p.get('elements') or {}):
+                if label in seen:
+                    continue
+                seen.add(label)
+                if isinstance(upstream_by_label.get(label), dict):
+                    out.append(dict(upstream_by_label[label]))
+                else:
+                    entry = {'label': label}
+                    if label in label_colors:
+                        entry['color'] = label_colors[label]
+                    out.append(entry)
         return out
 
     def definitions_for_sample(self, sample_name):
@@ -333,13 +430,33 @@ class ParticleClassifierNode(QObject):
             return True
         return False
 
+    def _active_definitions(self):
+        """Definitions whose target_sample is actually connected right now.
+
+        Excludes entries left over from a duplicate or a rewired upstream
+        (their target_sample belongs to a connection that no longer
+        exists) so they don't count toward "is this node configured"
+        displays — mirrors
+        :meth:`tools.particle_filter.ParticleFilterNode.is_active`. Never
+        deletes anything from :attr:`definitions`; if the node is later
+        reconnected back to a matching sample, those entries become active
+        again automatically.
+
+        Returns:
+            list: Subset of :attr:`definitions`.
+        """
+        current = set(self._incoming_names)
+        return [d for d in self.definitions if d.get('target_sample') in current]
+
     def summary_text(self):
         """Build the live summary shown under the node icon.
 
         Returns:
-            str: e.g. "3 definitions", "No definitions".
+            str: e.g. "3 definitions", "No definitions" (including when
+                every stored definition is left over from a duplicate/
+                rewire and targets a sample that isn't connected anymore).
         """
-        n = len(self.definitions)
+        n = len(self._active_definitions())
         if n == 0:
             return "No definitions"
         return f"{n} definition" + ("s" if n != 1 else "")
@@ -374,7 +491,7 @@ def build_particle_classifier_node_item():
 
         def paint(self, painter, option, widget=None):
             wf = self.workflow_node
-            n = len(wf.definitions)
+            n = len(wf._active_definitions())
             if getattr(wf, '_has_unresolved_issues', False):
                 badge, bc = "⚠", DS.WARNING
             elif n:

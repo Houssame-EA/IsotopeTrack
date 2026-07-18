@@ -110,7 +110,7 @@ def _bucket_label_and_color(d, groups):
 
     Args:
         d (dict): The matched definition.
-        groups (dict): ``{group_name: color}`` registry.
+        groups (dict): ``{group_name: color}`` registry (global).
 
     Returns:
         tuple: (label, color).
@@ -130,7 +130,11 @@ def suggested_label_colors(definitions, groups, unmatched_mode, unclassified_col
 
     Args:
         definitions (list): The node's definitions (any/all samples).
-        groups (dict): ``{group_name: color}`` registry.
+        groups (dict): ``{group_name: color}`` registry, deliberately
+            GLOBAL across every sample (see
+            :class:`tools.particle_classifier_node.ParticleClassifierNode`'s
+            ``groups`` docstring) -- a group name means one consistent
+            color for that substance everywhere it's used.
         unmatched_mode ("unclassified" | "discard" | "passthrough"): §6.
         unclassified_color (str): Color for the Unclassified bucket.
 
@@ -339,7 +343,13 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
         definitions (list): This sample's definitions
             (``target_sample``-filtered and in global priority order —
             see :meth:`tools.particle_classifier_node.ParticleClassifierNode.definitions_for_sample`).
-        groups (dict): ``{group_name: color}`` registry.
+        groups (dict): ``{group_name: color}`` registry (global across
+            samples). Only ever used here to resolve a label, never a
+            color -- the label output doesn't actually depend on it
+            either (grouped definitions label by ``group_name``
+            directly), so this is effectively inert; kept for API
+            symmetry with :func:`suggested_label_colors` and in case a
+            future caller needs it.
         overlap_mode ("double_count" | "priority"): §5.
         unmatched_mode ("unclassified" | "discard" | "passthrough"): §6.
         unclassified_color (str): Color for the Unclassified bucket.

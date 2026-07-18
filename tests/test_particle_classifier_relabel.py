@@ -88,6 +88,53 @@ class TestClassifyParticle:
 
 
 # --------------------------------------------------------------------------- #
+# count_matches_per_definition -- the dialog's live "(N)" per-definition count
+# --------------------------------------------------------------------------- #
+class TestCountMatchesPerDefinition:
+    def test_double_count_counts_all_matches(self):
+        particles = [_particle({'60Ni': 10}),
+                     _particle({'60Ni': 10, '107Ag': 5})]
+        d_ni, d_niag = _def('60Ni'), _def('60Ni+107Ag')
+        counts = pcr.count_matches_per_definition(
+            particles, [d_ni, d_niag], 'double_count')
+        assert counts[d_ni['id']] == 2      # both particles have 60Ni
+        assert counts[d_niag['id']] == 1     # only the second has both
+
+    def test_priority_excludes_particles_claimed_by_higher_priority(self):
+        """Effective post-priority count: a particle claimed by a
+        higher-priority definition does NOT also count for a lower one."""
+        particles = [_particle({'60Ni': 10}),
+                     _particle({'60Ni': 10, '107Ag': 5})]
+        d_ni, d_niag = _def('60Ni'), _def('60Ni+107Ag')  # d_ni higher priority
+        counts = pcr.count_matches_per_definition(
+            particles, [d_ni, d_niag], 'priority')
+        assert counts[d_ni['id']] == 2
+        assert counts[d_niag['id']] == 0     # both its matches claimed by d_ni
+
+    def test_zero_for_definition_matching_nothing(self):
+        particles = [_particle({'60Ni': 10})]
+        d_absent = _def('197Au')
+        counts = pcr.count_matches_per_definition(
+            particles, [d_absent], 'double_count')
+        assert counts[d_absent['id']] == 0
+
+    def test_count_equals_downstream_relabeled_particles(self):
+        """The whole point: the displayed count must equal the number of
+        particles that actually carry that definition's label downstream."""
+        particles = [_particle({'60Ni': 10}), _particle({'60Ni': 10}),
+                     _particle({'208Pb': 1})]
+        d = _def('60Ni', group='Nickel')
+        counts = pcr.count_matches_per_definition(
+            particles, [d], 'double_count')
+        relabeled = pcr.relabel_particles(
+            particles, [d], {'Nickel': '#000'}, 'double_count',
+            'discard', '#9CA3AF')
+        downstream = sum(1 for p in relabeled
+                         if 'Nickel' in (p.get('elements') or {}))
+        assert counts[d['id']] == downstream == 2
+
+
+# --------------------------------------------------------------------------- #
 # Aggregation policy -- the science-critical boundary
 # --------------------------------------------------------------------------- #
 class TestAggregationPolicy:
@@ -247,3 +294,61 @@ class TestNodeOutputWiring:
         node.selected_sources = ['SampleB']  # not in upstream
         node.input_data = self._single_sample_upstream([_particle({'60Ni': 10})])
         assert node.get_output_data() is None
+
+    def test_selected_isotopes_rewritten_to_synthetic_labels(self):
+        """Design §7 / downstream-node correctness: the output's
+        selected_isotopes must name the SYNTHETIC bucket labels the
+        relabeled particles now carry, not the upstream's raw isotopes --
+        otherwise nodes keying off selected_isotopes (Concentration
+        Comparison, Correlation Matrix, Network Diagram) look up isotope
+        names that no longer exist in the particles."""
+        node = ParticleClassifierNode()
+        node.definitions = [_def('60Ni', group='Nickel')]
+        node.groups = {'Nickel': '#10B981'}
+        node.input_data = self._single_sample_upstream([_particle({'60Ni': 10})])
+        out = node.get_output_data()
+        labels = [i['label'] for i in out['selected_isotopes']]
+        assert labels == ['Nickel']
+        assert '60Ni' not in labels
+        assert out['label_colors']['Nickel'] == '#10B981'
+
+    def test_same_group_name_on_different_samples_shares_one_color(self):
+        """Groups are deliberately GLOBAL (node.groups is one flat
+        {group_name: color} registry, not scoped per sample): two samples
+        both classifying into "Recycling" share the exact same color,
+        by design -- a group name means one consistent substance/color
+        across the whole dataset."""
+        node = ParticleClassifierNode()
+        node.definitions = [
+            _def('60Ni', target='SampleA', group='Recycling'),
+            _def('197Au', target='SampleB', group='Recycling'),
+        ]
+        node.groups = {'Recycling': '#111111'}
+        node.input_data = {
+            'type': 'multiple_sample_data',
+            'sample_names': ['SampleA', 'SampleB'],
+            'particle_data': [_particle({'60Ni': 10}, sample='SampleA'),
+                             _particle({'197Au': 5}, sample='SampleB')],
+            'data': {}, 'data_types': {}, 'selected_isotopes': [],
+            'total_particles': 2,
+            'concentration_meta': {'SampleA': {}, 'SampleB': {}},
+            'parent_window': None,
+        }
+        out = node.get_output_data()
+        labels = {frozenset(p['elements']) for p in out['particle_data']}
+        assert labels == {frozenset(['Recycling'])}
+        assert out['label_colors']['Recycling'] == '#111111'
+
+    def test_passthrough_keeps_raw_isotopes_in_selected(self):
+        """Passthrough unmatched particles keep raw isotope keys, which must
+        still appear in selected_isotopes alongside any synthetic labels."""
+        node = ParticleClassifierNode()
+        node.definitions = [_def('60Ni', group='Nickel')]
+        node.groups = {'SampleA': {'Nickel': '#10B981'}}
+        node.unmatched_mode = 'passthrough'
+        node.input_data = self._single_sample_upstream(
+            [_particle({'60Ni': 10}), _particle({'208Pb': 3})])
+        out = node.get_output_data()
+        labels = {i['label'] for i in out['selected_isotopes']}
+        assert 'Nickel' in labels      # matched -> bucket label
+        assert '208Pb' in labels       # unmatched passthrough -> raw isotope kept

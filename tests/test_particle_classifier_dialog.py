@@ -491,6 +491,102 @@ class TestGroupAndColor:
         _commit_group_text(dlg, "Contamination")  # re-commit, same text
         assert dlg._groups["Contamination"] == color_before
 
+    def test_color_picked_before_grouping_is_not_discarded(self, dlg):
+        """Regression test: picking a custom color on an ungrouped
+        definition, THEN typing a brand-new group name, must seed the new
+        group's color from that pick -- not silently overwrite it with an
+        arbitrary palette default (the reported bug: colors "reverting to
+        default" after Apply, traced to _on_group_committed unconditionally
+        discarding d['color'] on every group commit)."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._color_btn.set_color("#123ABC")
+        dlg._on_color_picked()
+        assert dlg._current_definition()['color'] == "#123ABC"
+        _commit_group_text(dlg, "NewGroup")
+        assert dlg._groups["NewGroup"] == "#123ABC"
+
+    def test_color_picked_after_grouping_still_works(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "NewGroup")
+        dlg._color_btn.set_color("#123ABC")
+        dlg._on_color_picked()
+        assert dlg._groups["NewGroup"] == "#123ABC"
+
+    def test_same_group_name_on_two_samples_shares_one_color(self, dlg):
+        """Groups are deliberately GLOBAL, not per-sample: a definition on
+        SampleB joining an existing group name created on SampleA must
+        adopt that group's shared color, and recoloring from either
+        sample updates the one shared entry seen by both."""
+        dlg._list.setCurrentRow(0)  # SampleA
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Recycling")
+        dlg._color_btn.set_color("#111111")
+        dlg._on_color_picked()
+
+        dlg._list.setCurrentRow(1)  # SampleB
+        dlg._add_definition()
+        dlg._expr_edit.setText("197Au")
+        _commit_group_text(dlg, "Recycling")
+        # Joining the EXISTING group must adopt its shared color, not
+        # get an independent default.
+        assert dlg._current_definition()['group_name'] == "Recycling"
+        assert dlg._groups["Recycling"] == "#111111"
+
+        dlg._color_btn.set_color("#222222")
+        dlg._on_color_picked()
+        assert dlg._groups["Recycling"] == "#222222"  # one shared entry
+
+    def test_apply_to_selected_samples_keeps_shared_group_color(self, dlg):
+        dlg._list.setCurrentRow(0)  # SampleA
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Recycling")
+        dlg._color_btn.set_color("#ABCDEF")
+        dlg._on_color_picked()
+
+        dlg._list.item(1).setCheckState(Qt.Checked)  # SampleB
+        dlg._apply_to_selected_samples()
+
+        assert dlg._groups["Recycling"] == "#ABCDEF"
+        copied = [d for d in dlg._definitions if d.get('target_sample') == 'SampleB']
+        assert copied and copied[0]['group_name'] == "Recycling"
+
+    def test_color_pick_persists_without_a_matching_release_event(
+            self, dlg, monkeypatch):
+        """Regression test for the real bug report: _ColorBtn opens its
+        modal picker from inside mousePressEvent, so in real mouse use the
+        release lands on that modal dialog, never back on this button --
+        Qt then never fires `clicked`, so anything wired to `clicked`
+        (the original implementation) silently never runs, even though the
+        swatch itself updates and looks like the pick worked. Simulates
+        exactly that: deliver ONLY a press event to the button (no release
+        at all), and confirm the color still reaches the definition dict
+        via the dedicated colorChanged signal emitted directly inside
+        mousePressEvent."""
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+
+        monkeypatch.setattr(pcd, "pick_color_hex",
+                            lambda *a, **kw: "#FEEDFA")
+
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        d = dlg._current_definition()
+
+        press = QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5), QPointF(5, 5),
+                            Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        dlg._color_btn.mousePressEvent(press)
+
+        assert d.get('color') == "#FEEDFA"
+        dlg._apply_to_current_sample()
+        assert d.get('color') == "#FEEDFA"
+
 
 # --------------------------------------------------------------------------- #
 # Group pooling modal (design §5/§7 ambiguity: 2+ definitions sharing a
@@ -570,6 +666,50 @@ class TestApplyToSelectedSamples:
         dlg._apply_to_selected_samples()
         dlg._apply_to_selected_samples()
         assert len(dlg._defs_for("SampleB")) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Per-definition live match count "(N)"
+# --------------------------------------------------------------------------- #
+class TestMatchCounts:
+    def test_no_count_shown_before_any_commit(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        # Never applied/OK'd yet -> no "(N)" suffix.
+        assert "(" not in dlg._def_list_label(dlg._current_definition())
+
+    def test_count_appears_after_apply_to_current(self, dlg):
+        dlg._list.setCurrentRow(0)  # SampleA has one particle w/ 60Ni + 107Ag
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._apply_to_current_sample()
+        assert dlg._def_list_label(dlg._current_definition()) == "60Ni (1)"
+
+    def test_editing_expression_invalidates_cached_count(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._apply_to_current_sample()
+        assert "(1)" in dlg._def_list_label(dlg._current_definition())
+        # Editing the expression must drop the now-stale count immediately.
+        dlg._expr_edit.setText("197Au")
+        assert "(" not in dlg._def_list_label(dlg._current_definition())
+
+    def test_count_reflects_priority_exclusion(self, dlg):
+        """Effective post-priority count: a higher-priority definition
+        claims the shared particle, dropping the lower one's count to 0."""
+        dlg._list.setCurrentRow(0)  # SampleA: one particle {60Ni, 107Ag}
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")            # def #0 (higher priority)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+107Ag")      # def #1 (lower priority)
+        dlg._overlap_mode = 'priority'
+        dlg._apply_to_current_sample()
+        defs = dlg._defs_for("SampleA")
+        labels = [dlg._def_list_label(d) for d in defs]
+        assert "60Ni (1)" in labels
+        assert "60Ni+107Ag (0)" in labels  # its only match claimed by 60Ni
 
 
 # --------------------------------------------------------------------------- #

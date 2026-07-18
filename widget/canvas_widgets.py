@@ -3694,7 +3694,14 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
-                     'saved_cluster_state'):
+                     'saved_cluster_state',
+                     # Particle Classifier (tools/particle_classifier_node.py)
+                     # -- same full state list carried by save/load in
+                     # save_export/project_manager.py's config_attributes.
+                     'definitions', 'groups', 'overlap_mode',
+                     'unmatched_mode', 'unclassified_color',
+                     'group_pooling_policies', '_has_unresolved_issues',
+                     'confound_dismissals'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
