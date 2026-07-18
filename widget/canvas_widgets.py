@@ -2019,6 +2019,15 @@ class TempPassThroughNode(WorkflowNode):
     combining need already has a home in a `supports_multi_input` node
     (e.g. the Particle Filter), so this stays a plain relay rather than
     becoming a second filter with its own opinions.
+
+    Holds NO data of its own — it is pure wiring, not a data bank. Anything
+    pulling its output reads the current upstream live (``get_output_data``),
+    and any value pushed into it is forwarded straight on to whatever it
+    feeds (``process_data`` → ``_forward``). This is what makes a source
+    swap behave correctly: reconnect a different upstream and the plots
+    behind the temp update to the new source instead of showing a cached
+    copy of the old one, and no second copy of the particle data is kept
+    alive by the temp.
     """
 
     def __init__(self, parent_window=None):
@@ -2028,13 +2037,32 @@ class TempPassThroughNode(WorkflowNode):
         self._has_output = True
         self.input_channels = ["input"]
         self.output_channels = ["output"]
-        self.input_data = None
+        # Set by the scene in add_node so the relay can find its own links.
+        self.scene_ref = None
+
+    def _forward(self, data):
+        """Push a value straight on to every node this temp feeds."""
+        scene = getattr(self, 'scene_ref', None)
+        if scene is None:
+            return
+        for lk in list(getattr(scene, 'workflow_links', [])):
+            if lk.source_node is self and hasattr(lk.sink_node, 'process_data'):
+                lk.sink_node.process_data(data)
 
     def process_data(self, input_data):
-        self.input_data = input_data
+        # Don't store — forward. A push from the upstream (e.g. after it is
+        # reconfigured) flows through to the plots behind this temp.
+        self._forward(input_data)
 
     def get_output_data(self):
-        return self.input_data
+        # Pull the current upstream live rather than returning a cache, so
+        # the output always reflects whatever is connected right now.
+        scene = getattr(self, 'scene_ref', None)
+        if scene is not None:
+            for lk in getattr(scene, 'workflow_links', []):
+                if lk.sink_node is self:
+                    return lk.get_data()
+        return None
 
 
 class ManageConnectionsDialog(QDialog):
@@ -2127,12 +2155,16 @@ class ManageConnectionsDialog(QDialog):
                     lambda: self._toggle_all(self._output_checks))
                 row.addWidget(sel_btn)
                 row.addStretch()
-                temp_btn = QPushButton("Create Temp Node")
-                temp_btn.setToolTip(
-                    "Inserts a new pass-through node between here and the "
-                    "checked outputs, right now — this doesn't wait for OK.")
-                temp_btn.clicked.connect(self._create_temp_node)
-                row.addWidget(temp_btn)
+                # No "Create Temp Node" on a temp node itself — chaining pure
+                # relays (temp → temp) adds no capability and only costs
+                # performance, so temp-of-temp is disallowed by construction.
+                if self.node.node_type != "temp_pass_through":
+                    temp_btn = QPushButton("Create Temp Node")
+                    temp_btn.setToolTip(
+                        "Inserts a new pass-through node between here and the "
+                        "checked outputs, right now — this doesn't wait for OK.")
+                    temp_btn.clicked.connect(self._create_temp_node)
+                    row.addWidget(temp_btn)
                 root.addLayout(row)
                 for lk in out_links:
                     cb = QCheckBox(lk.sink_node.title)
@@ -2183,7 +2215,8 @@ class ManageConnectionsDialog(QDialog):
         dialog, since the graph shape just changed underneath it.
         """
         selected = [lk for lk, cb in self._output_checks.items()
-                   if cb.isChecked()]
+                   if cb.isChecked()
+                   and lk.sink_node.node_type != "temp_pass_through"]
         if not selected:
             return
         pos = self.node.position + QPointF(DS.NODE_W + 60, 0)
@@ -3874,6 +3907,45 @@ class NodePalette(QWidget):
         for btn, name in self._all_buttons:
             btn.setVisible(q in name.lower())
 
+
+# ── Node-type connection compatibility ──────────────────────────────────────
+# Each node type carries an (input_family, output_family) pair. A link
+# source→sink is only allowed when the source's output family equals the
+# sink's input family (and both exist). Two families:
+#   'batch'  — a Batch Windows list (batch_sample_list)
+#   'sample' — single/multi sample data (what selectors, filters, temp emit
+#              and what filters, temp, and every plot node consume)
+# Cardinality (how many inputs a node tolerates) is a SEPARATE concern,
+# handled by supports_multi_input — a Particle Filter is ('sample','sample')
+# here AND accepts several sources because it walks every input link itself.
+_NODE_IO_FAMILIES = {
+    "batch_sample_selector":        (None,     "batch"),
+    "sample_selector":              ("batch",  "sample"),
+    "multiple_sample_selector":     ("batch",  "sample"),
+    "particle_filter":              ("sample", "sample"),
+    "temp_pass_through":            ("sample", "sample"),
+}
+
+
+def _io_families(node):
+    """Return (input_family, output_family) for a node.
+
+    Reads an explicit per-instance override first (future node types can set
+    ``input_family``/``output_family`` directly), then the type map, then
+    falls back to treating any input/output as the 'sample' family — which
+    is correct for every plot/analysis node (a 'sample'-consuming sink).
+    """
+    inst = (getattr(node, 'input_family', None),
+            getattr(node, 'output_family', None))
+    if inst != (None, None):
+        return inst
+    nt = getattr(node, 'node_type', None)
+    if nt in _NODE_IO_FAMILIES:
+        return _NODE_IO_FAMILIES[nt]
+    return ('sample' if getattr(node, '_has_input', False) else None,
+            'sample' if getattr(node, '_has_output', False) else None)
+
+
 class EnhancedCanvasScene(QGraphicsScene):
 
     node_selection_changed = Signal(int)
@@ -3892,6 +3964,11 @@ class EnhancedCanvasScene(QGraphicsScene):
 
         self._undo_stack = deque(maxlen=50)
         self._undoing = False
+        # Interactive connection rules (cardinality + type compatibility) are
+        # enforced in add_link. Project load flips this off around its restore
+        # loop so a project saved before these rules existed isn't silently
+        # pruned of links the rules would now reject.
+        self._enforce_connection_rules = True
 
         self.setSceneRect(-2000, -2000, 4000, 4000)
         self.selectionChanged.connect(self._on_selection)
@@ -3933,6 +4010,11 @@ class EnhancedCanvasScene(QGraphicsScene):
                     self.delete_node(ni)
             elif action_type == 'delete_node':
                 self.add_node(data['wf_node'], data['pos'])
+                # Restore the node's links too, now that the node exists
+                # again in node_items — one delete = one undo, and the node
+                # comes back wired exactly as it was (see delete_node).
+                for src, sch, snk, snkch in data.get('links', []):
+                    self.add_link(src, sch, snk, snkch)
             elif action_type == 'add_link':
                 li = data.get('li')
                 if li and li.scene():
@@ -3958,18 +4040,36 @@ class EnhancedCanvasScene(QGraphicsScene):
         if not isinstance(ni, NodeItem):
             return
         wn = ni.workflow_node
+        # Capture the links this node touches so the whole delete (node +
+        # its connections) is one undo unit — undoing it re-adds the node
+        # and then these links, in that order. Doing it link-by-link with
+        # separate undo entries used to replay a link before its node
+        # existed, which left an unremovable ghost link (see add_link).
+        touched = [(lk.source_node, lk.source_channel, lk.sink_node,
+                    lk.sink_channel)
+                   for lk in self.workflow_links
+                   if lk.source_node == wn or lk.sink_node == wn]
         if not self._undoing:
-            self._undo_stack.append(('delete_node', {'wf_node': wn, 'pos': ni.pos()}))
+            self._undo_stack.append(('delete_node',
+                                     {'wf_node': wn, 'pos': ni.pos(),
+                                      'links': touched}))
             ual = _ual()
             if ual:
                 ual.log_action('DATA_OP', f'Deleted node: {wn.title}',
                                {'node_type': wn.node_type,
                                 'remaining_nodes': len(self.workflow_nodes) - 1})
-        for lk in list(self.workflow_links):
-            if lk.source_node == wn or lk.sink_node == wn:
-                li = self.link_items.get(lk)
-                if li:
-                    self.delete_link(li)
+        # Remove the links without letting each push its own undo entry —
+        # they belong to the single delete_node entry above.
+        _was_undoing = self._undoing
+        self._undoing = True
+        try:
+            for lk in list(self.workflow_links):
+                if lk.source_node == wn or lk.sink_node == wn:
+                    li = self.link_items.get(lk)
+                    if li:
+                        self.delete_link(li)
+        finally:
+            self._undoing = _was_undoing
         self.workflow_nodes.remove(wn) if wn in self.workflow_nodes else None
         self.node_items.pop(wn, None)
         self.removeItem(ni)
@@ -4044,6 +4144,12 @@ class EnhancedCanvasScene(QGraphicsScene):
         ni.setPos(pos)
         self.addItem(ni)
         self.node_items[wf_node] = ni
+        # Nodes that pull their own inputs from the scene graph (Particle
+        # Filter, Temp Node) need a back-reference to it — hand it over here
+        # so it survives duplication and project load, not just interactive
+        # placement.
+        if hasattr(wf_node, 'scene_ref'):
+            wf_node.scene_ref = self
         if not self._undoing:
             self._undo_stack.append(('add_node', {'wf_node': wf_node}))
             ual = _ual()
@@ -4058,45 +4164,68 @@ class EnhancedCanvasScene(QGraphicsScene):
             if (lk.source_node == src_node and lk.sink_node == snk_node
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
                 return None
-        if not getattr(snk_node, 'supports_multi_input', False):
-            for lk in self.workflow_links:
-                if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
-                    # This node reads a single overwritable input slot, so
-                    # a second incoming link would just silently lose the
-                    # tug-of-war — refuse it instead of accepting a
-                    # connection that looks live but never actually feeds
-                    # anything (see Manage Connections / §12 in the spec).
-                    return None
-        wl = WorkflowLink(src_node, src_ch, snk_node, snk_ch)
-        self.workflow_links.append(wl)
-        li = LinkItem()
-        li.set_workflow_link(wl)
+        if self._enforce_connection_rules:
+            # Type compatibility: the source's output family must match the
+            # sink's input family (see _NODE_IO_FAMILIES). Blocks nonsensical
+            # wiring like sample→sample or filter→sample-selector.
+            src_out = _io_families(src_node)[1]
+            snk_in = _io_families(snk_node)[0]
+            if src_out is None or snk_in is None or src_out != snk_in:
+                return None
+            # Cardinality: a node that reads a single overwritable input slot
+            # can't take a second incoming link (it would silently lose the
+            # tug-of-war). Multi-input nodes (e.g. Particle Filter, which
+            # walks every input link itself) opt out via supports_multi_input.
+            if not getattr(snk_node, 'supports_multi_input', False):
+                for lk in self.workflow_links:
+                    if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
+                        return None
+        # Validate everything BEFORE mutating workflow_links — otherwise a
+        # failed add (e.g. undo replaying a link whose endpoint node no
+        # longer exists) would leave a "ghost" link: present in
+        # workflow_links (so Manage Connections and data-flow both see it as
+        # connected) but with no LinkItem drawn and no way to remove or
+        # reconnect it (the dedup check above would reject the redraw).
         si = self.node_items.get(src_node)
         di = self.node_items.get(snk_node)
         if not si or not di:
             return None
         sa = si.get_anchor(src_ch)
         da = di.get_anchor(snk_ch)
-        if sa and da:
-            li.set_source_anchor(sa)
-            li.set_sink_anchor(da)
-            self.addItem(li)
-            self.link_items[wl] = li
-            if not self._undoing:
-                self._undo_stack.append(('add_link', {'li': li}))
-                ual = _ual()
-                if ual:
-                    ual.log_action('DATA_OP',
-                                   f'Connected: {src_node.title} → {snk_node.title}',
-                                   {'source': src_node.title,
-                                    'source_type': src_node.node_type,
-                                    'sink': snk_node.title,
-                                    'sink_type': snk_node.node_type,
-                                    'total_links': len(self.workflow_links)})
-            QApplication.processEvents()
-            self._trigger_data_flow(wl)
-            return wl
-        return None
+        if not (sa and da):
+            return None
+        wl = WorkflowLink(src_node, src_ch, snk_node, snk_ch)
+        li = LinkItem()
+        li.set_workflow_link(wl)
+        self.workflow_links.append(wl)
+        li.set_source_anchor(sa)
+        li.set_sink_anchor(da)
+        self.addItem(li)
+        self.link_items[wl] = li
+        if not self._undoing:
+            self._undo_stack.append(('add_link', {'li': li}))
+            ual = _ual()
+            if ual:
+                ual.log_action('DATA_OP',
+                               f'Connected: {src_node.title} → {snk_node.title}',
+                               {'source': src_node.title,
+                                'source_type': src_node.node_type,
+                                'sink': snk_node.title,
+                                'sink_type': snk_node.node_type,
+                                'total_links': len(self.workflow_links)})
+        QApplication.processEvents()
+        self._trigger_data_flow(wl)
+        # After a genuine user connection into a node that cares (e.g. a
+        # Particle Filter), let it reconcile its saved per-sample settings
+        # against the newly connected source — a duplicated filter wired to
+        # a different sample wipes to a blank slate, a partial match warns.
+        # Deferred so any dialog opens after this connect event settles, and
+        # skipped during undo/project-load (those aren't user rewiring).
+        if (self._enforce_connection_rules and not self._undoing
+                and hasattr(snk_node, 'reconcile_incoming')):
+            QTimer.singleShot(
+                0, lambda n=snk_node: n.reconcile_incoming(self.parent_window))
+        return wl
 
     def _trigger_data_flow(self, wl):
         try:

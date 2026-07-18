@@ -1940,6 +1940,98 @@ class ParticleFilterNode(QObject):
         self._recompute_stale(normalize_sources([input_data]))
         self.configuration_changed.emit()
 
+    def _stored_sample_names(self):
+        """Sample names this node currently carries settings for.
+
+        The union of every name-keyed piece of state — active per-sample
+        filters, the output selection, and custom groups. Used to compare
+        stored settings against what's actually connected now.
+        """
+        names = {n for n, c in self.sample_filters.items() if active_axes(c)}
+        names |= set(self.sample_groups)
+        if self.selected_sources:
+            names |= set(self.selected_sources)
+        return names
+
+    def reconcile_incoming(self, parent_window=None):
+        """Reconcile stored per-sample settings against the samples actually
+        feeding this node right now — call after the input changes (e.g. a
+        duplicated filter is wired to a different source). GUI thread only,
+        since a partial mismatch shows a dialog.
+
+        - No stored settings, or nothing connected: do nothing.
+        - Total mismatch (no stored sample name is present in the incoming
+          data): wipe the name-keyed settings to a blank slate, so a
+          duplicated-then-rewired filter never carries the previous
+          source's sample/isotope names into its warnings or output.
+        - Partial mismatch (some stored names present, some gone): keep the
+          settings but inform the user which matched and which didn't,
+          offering to clear the settings for the samples that are gone.
+        """
+        sources = normalize_sources(self._pull_upstream_all())
+        incoming = {s['name'] for s in sources}
+        stored = self._stored_sample_names()
+        if not stored or not incoming:
+            return
+        matched = stored & incoming
+        missing = stored - incoming
+        if not matched:
+            self.sample_filters = {}
+            self.selected_sources = None
+            self.sample_groups = {}
+            self._recompute_stale(sources)
+            self.configuration_changed.emit()
+            return
+        if missing:
+            self._warn_partial_mismatch(
+                parent_window, sorted(matched), sorted(missing),
+                sorted(incoming - stored))
+
+    def _warn_partial_mismatch(self, parent_window, matched, missing, added):
+        """Tell the user the newly connected source only partly matches the
+        saved settings, and offer to drop the settings for samples that are
+        no longer connected.
+
+        Args:
+            parent_window: Dialog parent.
+            matched (list): Stored names still present (settings still apply).
+            missing (list): Stored names no longer connected (settings idle).
+            added (list): Incoming names with no saved filter yet.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(parent_window)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Sample mismatch")
+        box.setText(
+            "The samples feeding this filter don't fully match its saved "
+            "settings. Your settings are kept — here's how they line up:")
+        lines = []
+        lines.append("✓ Still apply ({}): {}".format(
+            len(matched), ", ".join(matched)))
+        lines.append("⚠ Saved but not connected now ({}): {}".format(
+            len(missing), ", ".join(missing)))
+        if added:
+            lines.append("＋ New, no filter yet ({}): {}".format(
+                len(added), ", ".join(added)))
+        lines.append(
+            "\nThe \"not connected\" settings sit idle until those samples "
+            "come back. You can keep them, or clear just those.")
+        box.setInformativeText("\n".join(lines))
+        keep = box.addButton("Keep settings", QMessageBox.AcceptRole)
+        clear = box.addButton("Clear settings for missing samples",
+                              QMessageBox.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        if box.clickedButton() is clear:
+            for n in missing:
+                self.sample_filters.pop(n, None)
+                self.sample_groups.pop(n, None)
+            if self.selected_sources is not None:
+                self.selected_sources = [s for s in self.selected_sources
+                                         if s not in missing]
+            self._recompute_stale(normalize_sources(self._pull_upstream_all()))
+            self.configuration_changed.emit()
+
     def _pull_upstream_all(self):
         """Fetch the upstream dict from every input link.
 

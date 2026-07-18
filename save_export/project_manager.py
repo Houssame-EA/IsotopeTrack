@@ -920,19 +920,28 @@ Terminal=false
                 scene.add_node(workflow_node, pos)
                 node_map[node_id] = workflow_node
         
-        for link_data in canvas_state.get('workflow_links', []):
-            source_node_id = link_data.get('source_node_id')
-            sink_node_id = link_data.get('sink_node_id')
-            
-            if source_node_id in node_map and sink_node_id in node_map:
-                source_node = node_map[source_node_id]
-                sink_node = node_map[sink_node_id]
-                source_channel = link_data.get('source_channel', 'output')
-                sink_channel = link_data.get('sink_channel', 'input')
-                
-                link = scene.add_link(source_node, source_channel, sink_node, sink_channel)
-                if link and 'enabled' in link_data:
-                    link.enabled = link_data['enabled']
+        # Restore saved links with interactive connection rules (type
+        # compatibility + input cardinality) suspended — a project saved
+        # before those rules existed must reload exactly as saved rather than
+        # having any now-"invalid" link silently dropped.
+        _prev_enforce = getattr(scene, '_enforce_connection_rules', True)
+        scene._enforce_connection_rules = False
+        try:
+            for link_data in canvas_state.get('workflow_links', []):
+                source_node_id = link_data.get('source_node_id')
+                sink_node_id = link_data.get('sink_node_id')
+
+                if source_node_id in node_map and sink_node_id in node_map:
+                    source_node = node_map[source_node_id]
+                    sink_node = node_map[sink_node_id]
+                    source_channel = link_data.get('source_channel', 'output')
+                    sink_channel = link_data.get('sink_channel', 'input')
+
+                    link = scene.add_link(source_node, source_channel, sink_node, sink_channel)
+                    if link and 'enabled' in link_data:
+                        link.enabled = link_data['enabled']
+        finally:
+            scene._enforce_connection_rules = _prev_enforce
 
         for note_data in canvas_state.get('sticky_notes', []):
             try:
