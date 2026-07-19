@@ -186,9 +186,16 @@ class ParticleClassifierDialog(QDialog):
             self._confound_pair_key_from_dict(rec)
             for rec in (confound_dismissals or [])
         }
-        #: Group names the pooling modal has already been shown for this
-        #: session, so re-committing the same group name repeatedly (or
-        #: navigating away and back) doesn't re-nag every time.
+        #: ``(sample_name, group_name)`` pairs the pooling modal has
+        #: already been shown for this session, so re-committing the same
+        #: group repeatedly (or navigating away and back) doesn't re-nag.
+        #: Keyed per sample (not just per group name) so that a group
+        #: which genuinely pools on two different samples surfaces the
+        #: MFC-safety modal once for EACH sample -- otherwise a real pool
+        #: on the second sample would silently inherit the first sample's
+        #: keep/drop policy without ever being shown (design §11: no
+        #: silent user-facing mass-basis decisions). The policy itself
+        #: (self._group_pooling_policies) stays global per group name.
         self._pooling_prompted_groups = set()
         #: {definition_id: effective post-priority particle-match count},
         #: shown as "(N)" in the RHS definitions list. Deliberately NOT
@@ -709,6 +716,7 @@ class ParticleClassifierDialog(QDialog):
         if d:
             self._definitions.remove(d)
             self._match_counts.pop(d['id'], None)
+            self._prune_orphan_groups()
             _itk_log.info("Deleted classifier definition %s", d['id'])
         self._current_def_id = None
         self._refresh_def_list()
@@ -781,6 +789,7 @@ class ParticleClassifierDialog(QDialog):
         text = (self._group_combo.currentText() or '').strip()
         if text == (d.get('group_name') or ''):
             return  # unchanged -- avoid pointless list rebuilds/refocus
+        prior_group = d.get('group_name')
         prior_color = d.get('color')
         d['group_name'] = text or None
         if text:
@@ -801,8 +810,41 @@ class ParticleClassifierDialog(QDialog):
             self._color_btn.set_color(self._groups[text])
             d['color'] = None
             self._check_group_pooling(text)
+            if d.get('group_name') is None:
+                # The pooling modal's "Go Back and Rename" cleared the
+                # group again -- restore the color the user had picked
+                # before grouping, instead of leaving it None (which would
+                # snap the definition to a palette default and lose their
+                # choice).
+                d['color'] = prior_color
+        elif prior_group and prior_group in self._groups:
+            # Ungrouping: seed the now-standalone definition's color from
+            # the group it just left, so its (expression-text) bucket
+            # keeps a sensible color instead of snapping to an unrelated
+            # palette default.
+            d['color'] = self._groups[prior_group]
+        self._prune_orphan_groups()
         self._reselect_definition_after_rebuild(def_id)
         self._refresh_row_for(self._current)
+
+    def _prune_orphan_groups(self):
+        """Drop any group (and its pooling policy) no live definition
+        references anymore.
+
+        Deleting a definition, renaming its group, or clearing its group
+        can leave a ``self._groups`` entry with no definition pointing at
+        it. Those orphans are harmless downstream (suggested_label_colors
+        only emits labels for definitions with a non-blank expression) but
+        they persist into the saved node via get_groups() and clutter the
+        group dropdown forever, so sweep them here after any such edit."""
+        live = {d.get('group_name') for d in self._definitions
+                if d.get('group_name')}
+        for name in list(self._groups):
+            if name not in live:
+                del self._groups[name]
+        for name in list(self._group_pooling_policies):
+            if name not in live:
+                del self._group_pooling_policies[name]
 
     def _check_group_pooling(self, group_name):
         """Warn once per session when a group now pools 2+ definitions
@@ -821,13 +863,17 @@ class ParticleClassifierDialog(QDialog):
         actually pools with THIS sample's particles -- checking against
         every definition node-wide would false-positive on that
         coincidence (the same class of bug _collect_active_confound_pairs
-        was already fixed for)."""
-        if group_name in self._pooling_prompted_groups:
+        was already fixed for). The "already prompted" guard is likewise
+        per (sample, group), so a group that genuinely pools on two
+        samples prompts once for each rather than silently inheriting the
+        first sample's answer."""
+        prompt_key = (self._current, group_name)
+        if prompt_key in self._pooling_prompted_groups:
             return
         sample_defs = self._defs_for(self._current)
         if group_name not in multi_definition_groups(sample_defs):
             return
-        self._pooling_prompted_groups.add(group_name)
+        self._pooling_prompted_groups.add(prompt_key)
         n = sum(1 for d in sample_defs if d.get('group_name') == group_name)
         _itk_log.warning(
             "Group %r now pools %d definitions on sample %r -- prompting "
@@ -870,7 +916,7 @@ class ParticleClassifierDialog(QDialog):
             if d is not None:
                 d['group_name'] = None
                 self._group_combo.setCurrentText("")
-            self._pooling_prompted_groups.discard(group_name)
+            self._pooling_prompted_groups.discard((self._current, group_name))
             return
         else:
             self._group_pooling_policies[group_name] = 'drop_mfc'
@@ -906,6 +952,21 @@ class ParticleClassifierDialog(QDialog):
             _itk_log.info("Group %r color -> %s", group, color)
         else:
             d['color'] = color
+            # Downstream, colors are keyed by label TEXT alone with no
+            # sample dimension (see suggested_label_colors), and an
+            # ungrouped definition's label IS its expression text. Keep
+            # every ungrouped definition sharing this expression on the
+            # same color so the dialog matches what the graph will
+            # actually render -- otherwise two same-expression ungrouped
+            # defs on different samples show two colors here but collapse
+            # to one (last-wins) downstream.
+            expr = (d.get('expression_text') or '').strip()
+            if expr:
+                for other in self._definitions:
+                    if (other is not d and other.get('group_name') is None
+                            and (other.get('expression_text') or '').strip()
+                            == expr):
+                        other['color'] = color
             _itk_log.info("Definition %s color -> %s", d['id'], color)
 
     def _on_unmatched_mode_changed(self, *_a):
@@ -1310,6 +1371,10 @@ class ParticleClassifierDialog(QDialog):
             self._refresh_row_for(target)
             self._recompute_match_counts_for_sample(target)
         self._recompute_match_counts_for_sample(self._current)
+        # Replacing a target's definitions can strand a group only that
+        # target used -- sweep it (groups are global, so a group survives
+        # as long as ANY sample still references it).
+        self._prune_orphan_groups()
         _itk_log.info(
             "Applied %d definition(s) from sample %r to selected samples: %s",
             len(source_defs), self._current, targets)

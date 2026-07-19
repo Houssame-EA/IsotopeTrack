@@ -4149,7 +4149,16 @@ class EnhancedCanvasView(QGraphicsView):
                 # Fresh node just dragged in by the user (never fires for
                 # project-load deserialization or node duplication, which
                 # don't go through this drop handler) -- design §10.
-                maybe_show_classifier_onboarding(self.parent_window)
+                # Deferred to the next event-loop turn: this dropEvent runs
+                # INSIDE the palette drag source's QDrag.exec_() nested loop
+                # (mouse still grabbed by the drag), and opening a modal
+                # there is the same "modal launched while another loop owns
+                # the input grab" hazard that broke the color picker's
+                # click handling earlier. Firing after the drop unwinds and
+                # releases the grab avoids it.
+                QTimer.singleShot(
+                    0, lambda: maybe_show_classifier_onboarding(
+                        self.parent_window))
             event.acceptProposedAction()
         else:
             event.ignore()

@@ -587,6 +587,76 @@ class TestGroupAndColor:
         dlg._apply_to_current_sample()
         assert d.get('color') == "#FEEDFA"
 
+    def test_ungrouped_same_expression_color_shared_across_samples(self, dlg):
+        """Downstream colors are keyed by label text alone, and an
+        ungrouped definition's label IS its expression text -- so coloring
+        one ungrouped '60Ni' must propagate to every other ungrouped
+        '60Ni' (any sample), keeping the dialog consistent with the single
+        color the graph will actually render for that label."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._list.setCurrentRow(1)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._color_btn.set_color("#0000FF")
+        dlg._on_color_picked()
+        colors = {d['target_sample']: d['color'] for d in dlg._definitions}
+        assert colors == {"SampleA": "#0000FF", "SampleB": "#0000FF"}
+
+    def test_different_expressions_do_not_share_color(self, dlg):
+        """The propagation is keyed strictly on identical expression text --
+        a different ungrouped expression keeps its own color."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._color_btn.set_color("#0000FF")
+        dlg._on_color_picked()
+        dlg._add_definition()
+        dlg._expr_edit.setText("107Ag")
+        dlg._color_btn.set_color("#00FF00")
+        dlg._on_color_picked()
+        by_expr = {d['expression_text']: d['color'] for d in dlg._definitions}
+        assert by_expr == {"60Ni": "#0000FF", "107Ag": "#00FF00"}
+
+    def test_deleting_last_definition_prunes_its_group(self, dlg):
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Ghost")
+        assert "Ghost" in dlg._groups
+        dlg._delete_current_definition()
+        assert "Ghost" not in dlg._groups  # orphan swept
+
+    def test_group_kept_while_another_sample_still_uses_it(self, dlg):
+        """Pruning is node-wide: a group survives as long as ANY sample's
+        definition still references it."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Shared")
+        dlg._list.item(1).setCheckState(Qt.Checked)
+        dlg._apply_to_selected_samples()          # SampleB now uses "Shared"
+        dlg._list.setCurrentRow(0)
+        dlg._def_list.setCurrentRow(0)
+        dlg._delete_current_definition()          # remove SampleA's copy
+        assert "Shared" in dlg._groups            # SampleB still references it
+
+    def test_ungrouping_restores_color_from_the_group(self, dlg):
+        """Clearing a group name hands the definition back a concrete color
+        (the group's), instead of snapping it to an unrelated palette
+        default and losing what the user was looking at."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Temp")
+        dlg._color_btn.set_color("#ABCDEF")
+        dlg._on_color_picked()
+        assert dlg._groups["Temp"] == "#ABCDEF"
+        _commit_group_text(dlg, "")               # ungroup
+        assert dlg._current_definition()['color'] == "#ABCDEF"
+        assert "Temp" not in dlg._groups          # orphan pruned too
+
 
 # --------------------------------------------------------------------------- #
 # Group pooling modal (design §5/§7 ambiguity: 2+ definitions sharing a
@@ -639,6 +709,51 @@ class TestGroupPoolingModal:
         no_modal['role'] = pcd.QMessageBox.ButtonRole.DestructiveRole
         self._two_defs_same_group(dlg)
         assert dlg.get_group_pooling_policies() == {"Contamination": "drop_mfc"}
+
+    def test_same_group_pooling_on_two_samples_prompts_for_each(self, dlg, no_modal):
+        """A group that genuinely pools 2+ definitions on two different
+        samples must surface the MFC-safety modal once for EACH sample --
+        the second sample's real pool must never silently inherit the
+        first sample's keep/drop policy (design §11: no silent mass-basis
+        decisions)."""
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.AcceptRole
+        prompts = []
+        real = dlg._show_group_pooling_modal
+
+        def _spy(group_name):
+            prompts.append((dlg._current, group_name))
+            return real(group_name)
+        dlg._show_group_pooling_modal = _spy
+
+        dlg._list.setCurrentRow(0)  # SampleA
+        dlg._add_definition(); dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Metal")
+        dlg._add_definition(); dlg._expr_edit.setText("107Ag")
+        _commit_group_text(dlg, "Metal")
+
+        dlg._list.setCurrentRow(1)  # SampleB
+        dlg._add_definition(); dlg._expr_edit.setText("197Au")
+        _commit_group_text(dlg, "Metal")
+        dlg._add_definition(); dlg._expr_edit.setText("197Au")
+        _commit_group_text(dlg, "Metal")
+
+        assert [s for s, _ in prompts] == ["SampleA", "SampleB"]
+
+    def test_go_back_restores_the_definitions_prior_color(self, dlg, no_modal):
+        """'Go Back and Rename' must hand back the color the user picked
+        before grouping, not leave the definition colorless and snap it to
+        a palette default."""
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.RejectRole  # Go Back
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition(); dlg._expr_edit.setText("60Ni")
+        _commit_group_text(dlg, "Metal")               # creates Metal (single def)
+        dlg._add_definition(); dlg._expr_edit.setText("107Ag")
+        dlg._color_btn.set_color("#00AA00")
+        dlg._on_color_picked()
+        _commit_group_text(dlg, "Metal")               # 2nd def -> pool -> go back
+        d = dlg._current_definition()
+        assert d['group_name'] is None
+        assert d['color'] == "#00AA00"
 
 
 # --------------------------------------------------------------------------- #
