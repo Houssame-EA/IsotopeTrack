@@ -4186,7 +4186,8 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
-                     'merge_singles', 'sample_groups', 'saved_cluster_state'):
+                     'merge_singles', 'sample_groups', 'saved_cluster_state',
+                     'input_family', 'output_family'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
@@ -4232,6 +4233,27 @@ class EnhancedCanvasScene(QGraphicsScene):
                                 'total_nodes': len(self.workflow_nodes)})
         return wf_node, ni
 
+    def _reaches(self, start, target):
+        """True if ``target`` is reachable downstream from ``start``.
+
+        Walks outgoing links only. Used by add_link to reject a back-edge
+        before it closes a cycle: if the prospective sink can already reach
+        the prospective source, wiring source -> sink would form a loop.
+        """
+        seen = set()
+        stack = [start]
+        while stack:
+            n = stack.pop()
+            if n is target:
+                return True
+            if id(n) in seen:
+                continue
+            seen.add(id(n))
+            for lk in self.workflow_links:
+                if lk.source_node is n:
+                    stack.append(lk.sink_node)
+        return False
+
     def add_link(self, src_node, src_ch, snk_node, snk_ch):
         for lk in self.workflow_links:
             if (lk.source_node == src_node and lk.sink_node == snk_node
@@ -4253,6 +4275,18 @@ class EnhancedCanvasScene(QGraphicsScene):
                 for lk in self.workflow_links:
                     if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
                         return None
+            # Acyclicity: data flows strictly source -> sink. The graph is a
+            # DAG (flush_data_flow topologically sorts it; every
+            # get_output_data pulls upstream recursively). A back-edge that
+            # closes a loop — including a node onto itself — makes those pulls
+            # recurse until RecursionError, which get_output_data's broad
+            # except swallows into a silent None: the graph would look
+            # connected while producing nothing, at ~1000-deep-stack cost per
+            # recompute. Reject it at creation, like an illegal type or an
+            # over-subscribed input. (Only enforced interactively — project
+            # load disables these rules, and flush tolerates a stray cycle.)
+            if src_node is snk_node or self._reaches(snk_node, src_node):
+                return None
         # Validate everything BEFORE mutating workflow_links — otherwise a
         # failed add (e.g. undo replaying a link whose endpoint node no
         # longer exists) would leave a "ghost" link: present in
