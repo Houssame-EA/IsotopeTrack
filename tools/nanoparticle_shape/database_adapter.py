@@ -1,3 +1,9 @@
+"""
+The CSVCompoundDatabase is full of useful information. This file tries to
+make it easier to work with by creating a service, a model that uses that
+service and a QCompleter that trusts the model to display the right
+information.
+"""
 from typing import Any
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QObject
@@ -19,16 +25,17 @@ class CompoundService:
         self.df_og = database.data if database.data is not None else pd.DataFrame()
         self.df: pd.DataFrame = self.df_og
 
-        self._filter_by_analysed_elements()
+        self._init_df_with_analysed_elements()
 
     @staticmethod
-    def _elements_as_compound_df():
+    def _elements_as_compound_df() -> pd.DataFrame:
+        """Returns a `DataFrame` with elements of the periodic table."""
         elements_list = []
         elements_data = PeriodicTableWidget.create_elements_data()
         for element in elements_data:
             element_formula = element["symbol"]
             element_density = element["density"]
-            element_display_text = f"{element_formula} ({element_density} g/cm³)"
+            element_display_text = f"{element_formula} - {element_density} g/cm³"
             element_signature = signature_from_formula(element_formula)
 
             element_row = {
@@ -43,7 +50,11 @@ class CompoundService:
             elements_list.append(element_row)
         return pd.DataFrame(elements_list)
 
-    def _filter_by_analysed_elements(self):
+    def _init_df_with_analysed_elements(self):
+        """
+        Initializes `self.df`with the periodic table elements and narrows
+        down the search space to compounds containing analyzed elements.
+        """
         self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
         if not self.analysed_elements:
             return
@@ -58,7 +69,7 @@ class CompoundService:
         """
         Gets the compound based on it's index
         Args:
-            index: index to retreve
+            index: index to retrieve
         """
         return self._row_to_compound(self.df.iloc[index])
 
@@ -75,7 +86,8 @@ class CompoundService:
 
     def search_compounds_by_formula(self, formula: str, max_count: int = 50) -> list[Compound]:
         """
-        Searches for the `max_count` shortest compounds fitting the formula.
+        Searches for the `max_count` (default 50) shortest compounds
+        fitting the formula.
         Args:
             formula: The formula that we want to look for closest match.
             max_count: (default=`50`) Maximum amount of matches returned.
@@ -107,7 +119,7 @@ class CompoundService:
 
 
 class CompoundDatabaseModel(QAbstractListModel):
-    """Adaptor between `CompoundService` and `QAbastractListModel`"""
+    """Adaptor between `CompoundService` and `QAbstractListModel`"""
 
     def __init__(self, database: CompoundService, parent=None):
         super().__init__(parent=parent)
@@ -119,7 +131,8 @@ class CompoundDatabaseModel(QAbstractListModel):
 
     def data(self, index, /, role=Qt.ItemDataRole.DisplayRole):
         if role == Qt.ItemDataRole.DisplayRole:
-            return self.results[index.row()].display_text
+            compound = self.results[index.row()]
+            return f"{compound.formula} - {compound.density} g/cm³"
         if role == Qt.ItemDataRole.EditRole:
             return self.results[index.row()].formula
         if role == Qt.ItemDataRole.UserRole:
