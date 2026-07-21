@@ -1,4 +1,7 @@
 import copy
+from typing import Self
+
+from _hashlib import HASH
 
 from tools.nanoparticle_shape.nanoparticle_shapes import NanoParticleShape
 from utils.validation import ValidationErrorException, ValidationInfos
@@ -109,3 +112,25 @@ class NanoParticleShapeService:
 
         return validation_list
 
+    def copy(self):
+        """
+        Returns:
+            A copy itself for future incremental update.
+        """
+        return copy.deepcopy(self)
+
+    def incremental_update(self, other: Self):
+        """
+        Updates itself to match the ``other``.
+        Args:
+            other: The ``NanoParticuleShapeService`` to update to.
+        """
+        self.nps_list = other.nps_list
+
+    def add_fingerprint_to(self, hash: HASH):
+        """
+        Adds its part of the fingerprint to the `hash`.
+        Args:
+            hash: hash to modify.
+        """
+        hash.update(repr(self.nps_list).encode("utf-8", "replace"))

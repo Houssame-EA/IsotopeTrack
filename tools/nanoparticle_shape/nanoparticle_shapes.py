@@ -1,4 +1,5 @@
 """The available shapes classes (subclasses of `NanoParticleShape`)."""
+from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_counts
 from tools.nanoparticle_shape.nps_validators import validate_required, validate_stoichiometry_and_required, \
     validate_trim, \
     validate_strictly_positive
@@ -17,8 +18,15 @@ class Compound(IValidation):
     display_text: str | None = None
 
     def __str__(self):
-        return self.display_text if self.display_text is not None \
-            else ""
+        return (self.display_text
+                if self.display_text is not None
+                else "")
+
+    def get_elements_with_counts(self) -> dict[str, int]:
+        """
+        Returns elements with their counts
+        """
+        return parse_formula_to_counts(self.formula)
 
     def validate(self) -> ValidationInfos:
         """
@@ -48,7 +56,6 @@ class Compound(IValidation):
         if required_validation.has_errors():
             return required_validation
         return validate_strictly_positive(self.density, "Density")
-
 
 
 class NanoParticleShape(IValidation):
@@ -107,7 +114,7 @@ class CoreShellNPS(NanoParticleShape):
     def __init__(self,
                  core: Compound | None = None,
                  shell: Compound | None = None,
-                 name = None):
+                 name=None):
         super().__init__(name=name)
 
         if core is None:

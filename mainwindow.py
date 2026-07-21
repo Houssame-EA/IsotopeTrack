@@ -1,15 +1,18 @@
 import sys
 import gc
 from pathlib import Path
-import copy
+from typing import Optional
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
-                               QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
+                               QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,
-                               QRadioButton,
+                               QRadioButton, QProgressDialog,
                                QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView, QAbstractItemView,
                                QSpinBox)
 
+from processing.data_builder import SampleBuilderService
+from processing.data_builder.result_data_builder import ElementDataBuilder
+from tools.mass_fraction_calculator_utils.mass_fraction_service import MassFractionService
 from tools.nanoparticle_shape.nps_service import NanoParticleShapeService
 from tools.parameters_table import (ParametersTableView,
                                     COL_SIGMA)
@@ -24,6 +27,7 @@ import tools.dilution_utils
 import utils.dilution
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
+from utils.utils import mass_to_diameter
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget
 from calibration_methods.TE import TransportRateCalibrationWindow
@@ -275,8 +279,13 @@ class MainWindow(QMainWindow):
         self.sample_method_info = {}
         self.sample_to_folder_map = {}
         self.transport_rate_methods = calibration_registry.default_transport_labels()
+
+        self.mass_fraction_service = MassFractionService(self.periodic_table_widget)
+        self.base_data_builder = ElementDataBuilder(self._build_element_conversion_cache, self.mass_fraction_service)
+        self.sample_builder_service = SampleBuilderService(self.base_data_builder, self.nps_service, parent=self)
+
         self.element_mass_fractions = {}
-        self.element_densities = {}
+        # self.element_densities = {}
         self.element_molecular_weights = {}
         self.sample_mass_fractions = {}
         self.sample_densities = {}
@@ -496,13 +505,6 @@ class MainWindow(QMainWindow):
         self.sample_run_info = {}
         self.sample_method_info = {}
 
-        self.element_mass_fractions = {}
-        self.element_densities = {}
-        self.element_molecular_weights = {}
-        self.sample_mass_fractions = {}
-        self.sample_densities = {}
-        self.sample_molecular_weights = {}
-
         self.current_sample = None
         self.data = {}
         self.time_array = None
@@ -513,6 +515,7 @@ class MainWindow(QMainWindow):
         self.results_table.setRowCount(0)
         self.multi_element_table.setRowCount(0)
 
+        self.mass_fraction_service.reset()
         self.plot_widget.clear()
 
     # ----------------------------------------------------------------------------------------------------------
@@ -5257,7 +5260,7 @@ class MainWindow(QMainWindow):
                 total_particles_all_elements += len([p for p in particles if p is not None])
 
         percentage_of_all = (
-                    particle_count / total_particles_all_elements * 100) if total_particles_all_elements > 0 else 0.00000
+                particle_count / total_particles_all_elements * 100) if total_particles_all_elements > 0 else 0.00000
 
         summary_html = f"""
         <style>{html_table_css(theme.palette)}</style>
@@ -5357,8 +5360,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Data", "No particle data available. Please run particle detection first.")
             return
 
-        element_cache = self._build_element_conversion_cache()
-
         if getattr(self, 'saturation_filter_enabled', False):
             for sample_name in list(self.sample_particle_data.keys()):
                 self.rebuild_particle_data(sample_name)
@@ -5367,7 +5368,6 @@ class MainWindow(QMainWindow):
                                  if self.sample_particle_data[sample]]
 
         if len(all_samples_with_data) > 1:
-            from PySide6.QtWidgets import QProgressDialog
             progress = QProgressDialog("Calculating mass data for all samples...", "Cancel",
                                        0, len(all_samples_with_data), self)
             progress.setWindowModality(Qt.WindowModal)
@@ -5382,20 +5382,19 @@ class MainWindow(QMainWindow):
                     break
 
                 particles = self.sample_particle_data[sample_name]
-                self._calculate_mass_data_optimized(particles, element_cache)
+                self._calculate_mass_data_optimized(particles, sample_name=sample_name)
 
             progress.close()
         else:
             particles = self.sample_particle_data[self.current_sample]
             if len(particles) > 1000:
-                from PySide6.QtWidgets import QProgressDialog
                 progress = QProgressDialog("Calculating mass data...", "Cancel", 0, len(particles), self)
                 progress.setWindowModality(Qt.WindowModal)
                 progress.show()
             else:
                 progress = None
 
-            self._calculate_mass_data_optimized(particles, element_cache, progress)
+            self._calculate_mass_data_optimized(particles, sample_name=self.current_sample, progress_dialog=progress)
 
             if progress:
                 progress.close()
@@ -6280,8 +6279,8 @@ class MainWindow(QMainWindow):
 
             info_x = view_start + 0.02 * (view_end - view_start)
             info_y = y_min + 0.6 * (
-                        y_max - y_min) if 'y_max' in locals() and 'y_min' in locals() else min_signal + 0.6 * (
-                        max_signal - min_signal)
+                    y_max - y_min) if 'y_max' in locals() and 'y_min' in locals() else min_signal + 0.6 * (
+                    max_signal - min_signal)
             info_label.setPos(info_x, info_y)
             self.plot_widget.addItem(info_label)
 
@@ -6428,8 +6427,8 @@ class MainWindow(QMainWindow):
                                             mql = mdl * (10 / 3)
 
                                             if density and density > 0:
-                                                sdl = self.mass_to_diameter(mdl, density)
-                                                sql = self.mass_to_diameter(mql, density)
+                                                sdl = mass_to_diameter(mdl, density)
+                                                sql = mass_to_diameter(mql, density)
                                             else:
                                                 sdl = float('nan')
                                                 sql = float('nan')
@@ -6498,9 +6497,8 @@ class MainWindow(QMainWindow):
             if (self.current_sample and
                     self.current_sample in self.sample_particle_data and
                     self.sample_particle_data[self.current_sample]):
-                element_cache = self._build_element_conversion_cache()
                 particles = self.sample_particle_data[self.current_sample]
-                self._calculate_mass_data_optimized(particles, element_cache)
+                self._calculate_mass_data_optimized(particles, sample_name=self.curent_sample)
 
     def update_calibration_display(self):
         """Update calibration information display panel."""
@@ -6657,8 +6655,8 @@ class MainWindow(QMainWindow):
 
                 density = cal_data.get('density')
                 if density and density > 0:
-                    sdl = self.mass_to_diameter(mdl, density)
-                    sql = self.mass_to_diameter(mql, density)
+                    sdl = mass_to_diameter(mdl, density)
+                    sql = mass_to_diameter(mql, density)
                 else:
                     sdl = float('nan')
                     sql = float('nan')
@@ -6699,8 +6697,8 @@ class MainWindow(QMainWindow):
             calculator = MassFractionCalculator(
                 self.selected_isotopes,
                 self.periodic_table_widget,
-                copy.deepcopy(self.nps_service),
-                self
+                self.nps_service.copy(),
+                parent=self
             )
             calculator.mass_fractions_updated.connect(self.handle_mass_fractions_updated)
             calculator.exec()
@@ -6712,8 +6710,7 @@ class MainWindow(QMainWindow):
 
     def handle_mass_fractions_updated(self, data, nps_service):
         """Handle mass fraction updates from calculator."""
-        # TODO: notify nps_service
-        self.nps_service = nps_service
+        self.nps_service.incremental_update(nps_service)
 
         mass_fractions = data['mass_fractions']
         densities = data['densities']
@@ -6722,9 +6719,7 @@ class MainWindow(QMainWindow):
         selected_samples = data.get('selected_samples', [])
 
         if apply_to_all:
-            self.element_mass_fractions = mass_fractions.copy()
-            self.element_densities = densities.copy()
-            self.element_molecular_weights = molecular_weights.copy()
+            self.mass_fraction_service.set_element_infos(mass_fractions, densities, molecular_weights)
 
             if "Ionic Calibration" in self.calibration_results:
                 for element, density in densities.items():
@@ -6739,19 +6734,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText(
                 f"Updated mass fractions and molecular weights for {len(mass_fractions)} elements (applied to all samples)")
         else:
-            for sample_name in selected_samples:
-                if sample_name not in self.sample_mass_fractions:
-                    self.sample_mass_fractions[sample_name] = {}
-                if sample_name not in self.sample_densities:
-                    self.sample_densities[sample_name] = {}
-                if not hasattr(self, 'sample_molecular_weights'):
-                    self.sample_molecular_weights = {}
-                if sample_name not in self.sample_molecular_weights:
-                    self.sample_molecular_weights[sample_name] = {}
-
-                self.sample_mass_fractions[sample_name].update(mass_fractions.copy())
-                self.sample_densities[sample_name].update(densities.copy())
-                self.sample_molecular_weights[sample_name].update(molecular_weights.copy())
+            self.mass_fraction_service.set_sample_infos(mass_fractions,
+                                                        densities,
+                                                        molecular_weights,
+                                                        selected_samples)
 
             sample_count = len(selected_samples)
             self.status_label.setText(
@@ -6763,96 +6749,13 @@ class MainWindow(QMainWindow):
         if (self.current_sample and
                 self.current_sample in self.sample_particle_data and
                 self.sample_particle_data[self.current_sample]):
-            element_cache = self._build_element_conversion_cache()
             particles = self.sample_particle_data[self.current_sample]
-            self._calculate_mass_data_optimized(particles, element_cache)
+            self._calculate_mass_data_optimized(particles, sample_name=self.current_sample)
 
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
 
         self._mark_results_changed()
         self.unsaved_changes = True
-
-    def get_molecular_weight(self, element_key, sample_name=None):
-        """Get molecular weight for element compound.
-
-        Returns:
-            float or None: Molecular weight in g/mol
-        """
-        element = element_key.split('-')[0]
-
-        if (sample_name and
-                hasattr(self, 'sample_molecular_weights') and
-                sample_name in self.sample_molecular_weights):
-            molecular_weight = self.sample_molecular_weights[sample_name].get(element)
-            if molecular_weight and molecular_weight > 0:
-                return molecular_weight
-
-        if (hasattr(self, 'element_molecular_weights') and
-                element in self.element_molecular_weights):
-            molecular_weight = self.element_molecular_weights[element]
-            if molecular_weight and molecular_weight > 0:
-                return molecular_weight
-
-        if self.periodic_table_widget:
-            element_data = self.periodic_table_widget.get_element_by_symbol(element)
-            if element_data:
-                atomic_mass = float(element_data.get('mass', 0))
-                return atomic_mass
-
-        return None
-
-    def get_mass_fraction(self, element_key, sample_name=None):
-        """Get mass fraction for element in compound.
-
-        Returns:
-            float: Mass fraction (0.0-1.0), defaults to 1.0 for pure element
-        """
-        element = element_key.split('-')[0]
-
-        if sample_name and sample_name in self.sample_mass_fractions:
-            fraction = self.sample_mass_fractions[sample_name].get(element)
-            if fraction is not None:
-                return fraction
-
-        if element in self.element_mass_fractions:
-            return self.element_mass_fractions[element]
-
-        return 1.0
-
-    def get_element_density(self, element_key, sample_name=None):
-        """Get density for element compound.
-
-        Returns:
-            float or None: Density in g/cm³
-        """
-        element = element_key.split('-')[0]
-
-        if sample_name and sample_name in self.sample_densities:
-            density = self.sample_densities[sample_name].get(element)
-            if density:
-                return density
-
-        if element in self.element_densities:
-            return self.element_densities[element]
-
-        if self.periodic_table_widget:
-            element_data = self.periodic_table_widget.get_element_by_symbol(element)
-            if element_data:
-                return element_data.get('density', None)
-
-        return None
-
-    def mass_to_diameter(self, mass_fg, density):
-        """Convert mass to spherical particle diameter.
-
-        Returns:
-            float: Diameter in nanometers
-        """
-        if mass_fg <= 0 or density <= 0:
-            return float('nan')
-        mass_g = mass_fg * 1e-15
-        diameter_cm = ((6 * mass_g) / (np.pi * density)) ** (1 / 3)
-        return diameter_cm * 1e7
 
     def get_sample_dilution(self, sample_name):
         """
@@ -6944,165 +6847,18 @@ class MainWindow(QMainWindow):
     def update_calculations(self):
         """Update calculations after transport rate changes."""
 
-    def _calculate_mass_data_optimized(self, particles, element_cache, progress=None, process_all_samples=False):
+    def _calculate_mass_data_optimized(self,
+                                       particles,
+                                       sample_name="",
+                                       progress_dialog: Optional[QProgressDialog] = None):
         """Calculate comprehensive mass, mole, and diameter data for particles."""
-        if process_all_samples:
-            all_particles = []
-            for sample_name, sample_particles in self.sample_particle_data.items():
-                if sample_particles:
-                    for particle in sample_particles:
-                        particle['_source_sample'] = sample_name
-                        all_particles.append(particle)
-            particles = all_particles
+        self.mass_fraction_service.periodic_table = self.periodic_table_widget
+        self.sample_builder_service.set_current_sample(
+            sample_name if sample_name else self.current_sample)
 
-        for i, particle in enumerate(particles):
-            if progress and i % 100 == 0:
-                progress.setValue(i)
-                if progress.wasCanceled():
-                    return
-                QApplication.processEvents()
-
-            sample_name = particle.get('_source_sample', self.current_sample)
-
-            if 'element_mass_fg' not in particle:
-                particle['element_mass_fg'] = {}
-            if 'element_moles_fmol' not in particle:
-                particle['element_moles_fmol'] = {}
-            if 'particle_mass_fg' not in particle:
-                particle['particle_mass_fg'] = {}
-            if 'particle_moles_fmol' not in particle:
-                particle['particle_moles_fmol'] = {}
-            if 'element_diameter_nm' not in particle:
-                particle['element_diameter_nm'] = {}
-            if 'particle_diameter_nm' not in particle:
-                particle['particle_diameter_nm'] = {}
-            if 'mass_fractions_used' not in particle:
-                particle['mass_fractions_used'] = {}
-            if 'densities_used' not in particle:
-                particle['densities_used'] = {}
-            if 'molar_masses' not in particle:
-                particle['molar_masses'] = {}
-
-            if 'mass_fg' not in particle:
-                particle['mass_fg'] = {}
-
-            total_element_mass_fg = 0
-            total_element_moles_fmol = 0
-            total_particle_mass_fg = 0
-            total_particle_moles_fmol = 0
-
-            for element_display, counts in particle['elements'].items():
-                if counts <= 0:
-                    continue
-
-                if element_display in element_cache:
-                    cache_entry = element_cache[element_display]
-                    conversion_factor = cache_entry['conversion_factor']
-                    element_key = cache_entry['element_key']
-
-                    element = element_key.split('-')[0]
-                    isotope = float(element_key.split('-')[1])
-                    if self.periodic_table_widget:
-                        element_data = self.periodic_table_widget.get_element_by_symbol(element)
-                        if element_data:
-                            atomic_mass = float(element_data.get('mass', isotope))
-
-                    mass_fraction = self.get_mass_fraction(element_key, sample_name)
-                    element_density = None
-                    compound_density = self.get_element_density(element_key, sample_name)
-
-                    if self.periodic_table_widget:
-                        element_data = self.periodic_table_widget.get_element_by_symbol(element)
-                        if element_data:
-                            element_density = element_data.get('density')
-
-                    particle['mass_fractions_used'][element_display] = mass_fraction
-                    particle['densities_used'][element_display] = {
-                        'element_density': element_density,
-                        'compound_density': compound_density
-                    }
-                    particle['molar_masses'][element_display] = atomic_mass
-
-                    if conversion_factor and conversion_factor > 0 and atomic_mass > 0:
-
-                        element_mass_fg = counts / conversion_factor
-                        element_moles_fmol = element_mass_fg / atomic_mass
-
-                        particle['element_mass_fg'][element_display] = element_mass_fg
-                        particle['element_moles_fmol'][element_display] = element_moles_fmol
-
-                        particle_mass_fg = element_mass_fg / mass_fraction
-
-                        compound_molecular_weight = self.get_molecular_weight(element_key, sample_name)
-
-                        if compound_molecular_weight and compound_molecular_weight > 0:
-                            particle_moles_fmol = particle_mass_fg / compound_molecular_weight
-                        else:
-                            particle_moles_fmol = element_moles_fmol
-
-                        particle['particle_mass_fg'][element_display] = particle_mass_fg
-                        particle['particle_moles_fmol'][element_display] = particle_moles_fmol
-
-                        if element_density and element_density > 0:
-                            element_diameter_nm = self.mass_to_diameter(element_mass_fg, element_density)
-                            if not np.isnan(element_diameter_nm):
-                                particle['element_diameter_nm'][element_display] = element_diameter_nm
-                            else:
-                                particle['element_diameter_nm'][element_display] = 0
-                        else:
-                            particle['element_diameter_nm'][element_display] = 0
-
-                        if compound_density and compound_density > 0:
-                            particle_diameter_nm = self.mass_to_diameter(particle_mass_fg, compound_density)
-                            if not np.isnan(particle_diameter_nm):
-                                particle['particle_diameter_nm'][element_display] = particle_diameter_nm
-                            else:
-                                particle['particle_diameter_nm'][element_display] = 0
-                        else:
-                            particle['particle_diameter_nm'][element_display] = particle['element_diameter_nm'][
-                                element_display]
-
-                        particle['mass_fg'][element_display] = particle_mass_fg
-
-                        total_element_mass_fg += element_mass_fg
-                        total_element_moles_fmol += element_moles_fmol
-                        total_particle_mass_fg += particle_mass_fg
-                        total_particle_moles_fmol += particle_moles_fmol
-
-                    else:
-                        particle['element_mass_fg'][element_display] = 0
-                        particle['element_moles_fmol'][element_display] = 0
-                        particle['particle_mass_fg'][element_display] = 0
-                        particle['particle_moles_fmol'][element_display] = 0
-                        particle['element_diameter_nm'][element_display] = 0
-                        particle['particle_diameter_nm'][element_display] = 0
-                        particle['mass_fg'][element_display] = 0
-
-            particle['totals'] = {
-                'total_element_mass_fg': total_element_mass_fg,
-                'total_element_moles_fmol': total_element_moles_fmol,
-                'total_particle_mass_fg': total_particle_mass_fg,
-                'total_particle_moles_fmol': total_particle_moles_fmol
-            }
-
-            if total_element_mass_fg > 0:
-                particle['mass_percentages'] = {}
-                particle['mole_percentages'] = {}
-
-                for element_display in particle['elements'].keys():
-                    if element_display in particle['element_mass_fg']:
-                        element_mass = particle['element_mass_fg'][element_display]
-                        element_moles = particle['element_moles_fmol'][element_display]
-
-                        mass_percent = (element_mass / total_element_mass_fg * 100) if total_element_mass_fg > 0 else 0
-                        mole_percent = (
-                                    element_moles / total_element_moles_fmol * 100) if total_element_moles_fmol > 0 else 0
-
-                        particle['mass_percentages'][element_display] = mass_percent
-                        particle['mole_percentages'][element_display] = mole_percent
-
-        if progress:
-            progress.setValue(len(particles))
+        if progress_dialog is not None:
+            self.sample_builder_service.particules_processed.connect(progress_dialog.setValue)
+        self.sample_builder_service.build_particules(particles)
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------progress and status--------------------------------------------
@@ -7922,7 +7678,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Recovery failed",
                     "The autosaved session could not be loaded.")
-                return 
+                return
         from save_export.autosave import AutosaveManager
         AutosaveManager.discard_recovery_files(leftovers)
 
@@ -7968,6 +7724,7 @@ class MainWindow(QMainWindow):
         if getattr(self, 'periodic_table_widget', None) is not None:
             self.periodic_table_widget.close()
             self.periodic_table_widget = None
+            # TODO: Check if we need to disconnect the self.data_builder_service
 
         if getattr(self, 'transport_rate_window', None) is not None:
             self.transport_rate_window.close()
@@ -8143,7 +7900,6 @@ if __name__ == "__main__":
     from PySide6.QtCore import Qt, QCoreApplication
 
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets
 
     app = QApplication(sys.argv)
     theme.sync_with_system()

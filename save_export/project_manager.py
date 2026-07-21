@@ -60,7 +60,10 @@ class ProjectManager:
         Args:
             main_window (object): Reference to the MainWindow instance
         """
-        self.main_window = main_window
+        from mainwindow import MainWindow
+        assert isinstance(main_window, MainWindow)
+        self.main_window: MainWindow = main_window
+
         self.project_version = '1.10.5'
         
         if getattr(sys, 'frozen', False):
@@ -551,12 +554,12 @@ Terminal=false
             'selected_transport_rate_methods': self.main_window.selected_transport_rate_methods,
             'transport_rate_methods': getattr(self.main_window, 'transport_rate_methods', calibration_registry.default_transport_labels()),
             
-            'element_mass_fractions': getattr(self.main_window, 'element_mass_fractions', {}),
-            'element_densities': getattr(self.main_window, 'element_densities', {}),
-            'element_molecular_weights': getattr(self.main_window, 'element_molecular_weights', {}),  
-            'sample_mass_fractions': getattr(self.main_window, 'sample_mass_fractions', {}),
-            'sample_densities': getattr(self.main_window, 'sample_densities', {}),
-            'sample_molecular_weights': getattr(self.main_window, 'sample_molecular_weights', {}),
+            'element_mass_fractions': getattr(self.main_window.mass_fraction_service, 'element_mass_fractions', {}),
+            'element_densities': getattr(self.main_window.mass_fraction_service, 'element_densities', {}),
+            'element_molecular_weights': getattr(self.main_window.mass_fraction_service, 'element_molecular_weights', {}),
+            'sample_mass_fractions': getattr(self.main_window.mass_fraction_service, 'sample_mass_fractions', {}),
+            'sample_densities': getattr(self.main_window.mass_fraction_service, 'sample_densities', {}),
+            'sample_molecular_weights': getattr(self.main_window.mass_fraction_service, 'sample_molecular_weights', {}),
             'sample_dilutions': getattr(self.main_window, 'sample_dilutions', {}),
             
             'overlap_threshold_percentage': getattr(self.main_window, 'overlap_threshold_percentage', 75.0),
@@ -619,12 +622,14 @@ Terminal=false
         self.main_window.selected_transport_rate_methods = project_data.get('selected_transport_rate_methods', [])
         self.main_window.transport_rate_methods = project_data.get('transport_rate_methods', calibration_registry.default_transport_labels())
         
-        self.main_window.element_mass_fractions = project_data.get('element_mass_fractions', {})
-        self.main_window.element_densities = project_data.get('element_densities', {})
-        self.main_window.element_molecular_weights = project_data.get('element_molecular_weights', {})  
-        self.main_window.sample_mass_fractions = project_data.get('sample_mass_fractions', {})
-        self.main_window.sample_densities = project_data.get('sample_densities', {})
-        self.main_window.sample_molecular_weights = project_data.get('sample_molecular_weights', {})
+        self.main_window.mass_fraction_service.element_mass_fractions = project_data.get('element_mass_fractions', {}) # TODO: is it the right way?
+        self.main_window.mass_fraction_service.element_densities = project_data.get('element_densities', {})
+        self.main_window.mass_fraction_service.element_molecular_weights = project_data.get('element_molecular_weights', {})
+
+        self.main_window.mass_fraction_service.sample_mass_fractions = project_data.get('sample_mass_fractions', {})
+        self.main_window.mass_fraction_service.sample_densities = project_data.get('sample_densities', {})
+        self.main_window.mass_fraction_service.sample_molecular_weights = project_data.get('sample_molecular_weights', {})
+
         self.main_window.sample_dilutions = project_data.get('sample_dilutions', {})
         
         self.main_window.overlap_threshold_percentage = project_data.get('overlap_threshold_percentage', 75.0)

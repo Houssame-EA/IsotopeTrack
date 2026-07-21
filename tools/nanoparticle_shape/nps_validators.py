@@ -27,7 +27,7 @@ def validate_stoichiometry_and_required(formula: str | None,
     if required_validation.has_errors():
         return "", required_validation
 
-    assert  formula is not None  # TODO: see if we can place this in another way.
+    assert formula is not None
 
     reduced_formula = canonicalize_preserve_user_order(formula)
 
@@ -59,9 +59,9 @@ def validate_required(value: Any, represents: str | None = None) -> ValidationIn
     """
     if not value:
         if represents:
-            return ValidationInfos(errors=[f"{represents} is/are required."])
+            return ValidationInfos(errors=[f"{represents} is required."])
         else:
-            return ValidationInfos(errors=[f"Required field(s) is/are missing."])
+            return ValidationInfos(errors=[f"Required field is missing."])
     return ValidationInfos()
 
 
