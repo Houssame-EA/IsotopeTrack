@@ -138,3 +138,7 @@ def canonicalize_preserve_user_order(formula: str) -> str:
     counts = reduce_counts(parse_formula_to_counts(formula))
     order = _element_order_in_formula(formula)
     return _join_formula_from_counts(counts, prefer_order=order)
+
+def element_from_label(label: str) -> str:
+    """Gets the element from the label : "27Al" --> "Al"."""
+    return re.search("\\D+", label).group()
