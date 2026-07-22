@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 
 from tools.mass_fraction_calculator_utils.mass_fraction_service import MassFractionService
@@ -130,3 +131,25 @@ class TestMassFractionService(unittest.TestCase):
         self.assertEqual(self.mass_fraction_service.get_mass_fraction("Li", self.selected_samples[0]), 1)
         self.assertAlmostEqual(self.mass_fraction_service.get_element_density("Li", self.selected_samples[0]), 0.534)
         self.assertAlmostEqual(self.mass_fraction_service.get_molecular_weight("Li", self.selected_samples[0]), 6.941)
+
+    def test_reset(self):
+        self.mass_fraction_service.reset()
+
+        self.assertDictEqual(self.mass_fraction_service.element_mass_fractions, {})
+        self.assertDictEqual(self.mass_fraction_service.element_densities, {})
+        self.assertDictEqual(self.mass_fraction_service.element_molecular_weights, {})
+        self.assertDictEqual(self.mass_fraction_service.sample_mass_fractions, {})
+        self.assertDictEqual(self.mass_fraction_service.sample_densities, {})
+        self.assertDictEqual(self.mass_fraction_service.sample_molecular_weights, {})
+
+    def test_add_fingerprint_to(self):
+        hash1 = hashlib.md5()
+        hash2 = hashlib.md5()
+        self.mass_fraction_service.add_fingerprint_to(hash1)
+
+        hash2.update(repr(self.mass_fraction_service.element_mass_fractions).encode('utf-8', 'replace'))
+        hash2.update(repr(self.mass_fraction_service.element_densities).encode('utf-8', 'replace'))
+        hash2.update(repr(self.mass_fraction_service.sample_mass_fractions).encode('utf-8', 'replace'))
+        hash2.update(repr(self.mass_fraction_service.sample_densities).encode('utf-8', 'replace'))
+
+        self.assertEqual(hash1.hexdigest(), hash2.hexdigest())
