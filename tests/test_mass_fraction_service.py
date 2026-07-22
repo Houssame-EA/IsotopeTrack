@@ -132,6 +132,26 @@ class TestMassFractionService(unittest.TestCase):
         self.assertAlmostEqual(self.mass_fraction_service.get_element_density("Li", self.selected_samples[0]), 0.534)
         self.assertAlmostEqual(self.mass_fraction_service.get_molecular_weight("Li", self.selected_samples[0]), 6.941)
 
+    def test_set_sample_info_partial(self):
+        self.mass_fraction_service.set_sample_infos(
+            {"H": 4},
+            {"H": 4},
+            {"H": 4},
+            ["Sample2"])
+
+        # Assert for untouched samples
+        self.assertEqual(self.mass_fraction_service.get_mass_fraction("H", self.selected_samples[0]),
+                         self.defaultValSample)
+        self.assertEqual(self.mass_fraction_service.get_element_density("H", self.selected_samples[0]),
+                         self.defaultValSample)
+        self.assertEqual(self.mass_fraction_service.get_molecular_weight("H", self.selected_samples[0]),
+                         self.defaultValSample)
+
+        # Assert for touched samples
+        self.assertEqual(self.mass_fraction_service.get_mass_fraction("H", "Sample2"), 4)
+        self.assertEqual(self.mass_fraction_service.get_element_density("H", "Sample2"), 4)
+        self.assertEqual(self.mass_fraction_service.get_molecular_weight("H", "Sample2"), 4)
+
     def test_reset(self):
         self.mass_fraction_service.reset()
 
