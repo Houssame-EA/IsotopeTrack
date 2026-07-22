@@ -22,7 +22,7 @@ from results.shared_plot_utils import (
     FontSettingsGroup, get_display_name, LABEL_MODES,
     format_element_label, format_combination_label, Renderer, per_ml_active,
     per_ml_factor, conc_meta_available, single_sample_name, format_per_ml,
-    pick_color_hex,
+    pick_color_hex, seed_suggested_element_colors,
 )
 from results.utils_sort import sort_elements_by_mass
 import logging
@@ -1097,6 +1097,11 @@ class PieChartDisplayDialog(QDialog):
                 return
 
             cfg = self.node.config
+            # Seed per-element slice colors from an upstream Particle
+            # Classifier's chosen bucket colors (label_colors), same as the
+            # bar-chart nodes do -- only fills colors the user hasn't
+            # manually overridden here.
+            seed_suggested_element_colors(cfg, self.node.input_data)
             subplots = []
             per_ml = per_ml_active(cfg, self.node.input_data)
 

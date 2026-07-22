@@ -352,3 +352,46 @@ class TestNodeOutputWiring:
         labels = {i['label'] for i in out['selected_isotopes']}
         assert 'Nickel' in labels      # matched -> bucket label
         assert '208Pb' in labels       # unmatched passthrough -> raw isotope kept
+
+
+# --------------------------------------------------------------------------- #
+# Relabel edge cases surfaced during the QA pass (2026-07-19)
+# --------------------------------------------------------------------------- #
+class TestRelabelEdgeCases:
+    def test_none_elements_particle_does_not_crash(self):
+        """A degenerate particle with elements=None must not raise -- it
+        simply matches nothing and is handled by the unmatched mode."""
+        out = pcr.relabel_particles(
+            [{'elements': None}], [_def('60Ni')], {},
+            'double_count', 'passthrough', '#999')
+        assert len(out) == 1  # passthrough keeps it, no exception
+
+    def test_empty_elements_particle_matches_nothing(self):
+        out = pcr.relabel_particles(
+            [{'elements': {}}], [_def('60Ni')], {},
+            'double_count', 'discard', '#999')
+        assert out == []  # matched nothing -> discarded
+
+    def test_double_count_same_group_twice_counts_particle_twice(self):
+        """SUBTLE SEMANTIC (pinned deliberately): under double_count, one
+        particle matching two definitions that share a group name is
+        emitted twice, both under that group label -- so a single physical
+        particle inflates the group's downstream count by 2. Consistent
+        with double_count's 'once per matching definition' rule, but a
+        gotcha worth locking so any future change is intentional."""
+        defs = [_def('60Ni', group='M'), _def('107Ag', group='M')]
+        out = pcr.relabel_particles(
+            [_particle({'60Ni': 10, '107Ag': 5})], defs, {'M': '#111'},
+            'double_count', 'discard', '#999')
+        labels = [set((p.get('elements') or {}).keys()) for p in out]
+        assert labels == [{'M'}, {'M'}]  # same particle, twice, one label
+
+    def test_priority_same_group_twice_counts_particle_once(self):
+        """The priority-mode counterpart: the same particle is claimed only
+        by the highest-priority definition, so it appears once."""
+        defs = [_def('60Ni', group='M'), _def('107Ag', group='M')]
+        out = pcr.relabel_particles(
+            [_particle({'60Ni': 10, '107Ag': 5})], defs, {'M': '#111'},
+            'priority', 'discard', '#999')
+        labels = [set((p.get('elements') or {}).keys()) for p in out]
+        assert labels == [{'M'}]  # claimed once

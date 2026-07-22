@@ -184,6 +184,34 @@ class TestContradictionTautology:
         # text (it has static text) -- check hidden() via isHidden proxy
         # is unreliable headless, so just assert no contradiction path ran.
 
+    def test_contradiction_sets_unresolved_issues_flag(self, dlg, no_modal):
+        """Regression test: a single contradictory definition (even the
+        ONLY definition on the node) must set has_unresolved_issues, so
+        the node icon's warning badge shows -- this was previously only
+        wired for syntax errors and stale isotopes, never contradictions,
+        so a pure contradiction never triggered the ⚠ badge."""
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.AcceptRole  # Save Anyway
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+!(60Ni)")
+        dlg._validate_current()
+        assert dlg._has_unresolved_issues is True
+        assert dlg.get_has_unresolved_issues() is True
+
+    def test_contradiction_flag_persists_after_save_anyway(self, dlg, no_modal):
+        """Choosing 'Save Anyway' means 'save it as-is,' not 'stop warning
+        me' -- there's no permanent-dismiss for contradictions (unlike
+        confound pairs), so the flag must stay True even after the modal
+        closes with that choice."""
+        no_modal['role'] = pcd.QMessageBox.ButtonRole.AcceptRole
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni+!(60Ni)")
+        dlg._validate_current()
+        # Re-run validation (e.g. as if navigating away and back) -- still True.
+        dlg._validate_current()
+        assert dlg._has_unresolved_issues is True
+
 
 # --------------------------------------------------------------------------- #
 # Confound detection

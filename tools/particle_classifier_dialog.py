@@ -1302,8 +1302,18 @@ class ParticleClassifierDialog(QDialog):
 
     def _recompute_unresolved_issues(self):
         """Refresh the has-unresolved-issues flag (drives the node icon's
-        warning badge): true when any definition currently has a stale
-        isotope reference."""
+        warning badge): true when any definition currently has a syntax
+        error, a stale isotope reference, or is a logical contradiction
+        (design §9.3 -- a formula that can never match any particle).
+
+        The contradiction check is unconditional (like the syntax-error
+        check above it), not scoped to whether the target sample is
+        currently connected -- matching the existing scoping of that
+        check. A definition the user chose "Save Anyway" on in the
+        contradiction modal still counts here: that choice means "let me
+        save it as-is," not "stop warning me forever" (there's no
+        permanent-dismiss for contradictions, unlike confound pairs' own
+        per-pair dismissal)."""
         has_issue = False
         for d in self._definitions:
             text = d.get('expression_text', '')
@@ -1314,6 +1324,8 @@ class ParticleClassifierDialog(QDialog):
             except ExpressionSyntaxError:
                 has_issue = True
                 continue
+            if classify_formula(ast) == "contradiction":
+                has_issue = True
             source = self._src_by_name.get(d.get('target_sample'))
             if source is None:
                 continue

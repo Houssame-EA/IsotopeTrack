@@ -91,6 +91,13 @@ def is_allowed_downstream(node_type: str, viz_node_types) -> bool:
 #: Default neutral-gray color for the "Unclassified" bucket (design §6).
 DEFAULT_UNCLASSIFIED_COLOR = "#9CA3AF"
 
+#: Name of the single sample that two-or-more input links are merged into
+#: (mirrors ParticleFilterNode's "Combined" default). The classifier does
+#: NOT yet expose the filter's per-incoming-sample naming/management UX —
+#: multiple inputs are simply pooled under this one name (deliberately
+#: deferred; see the node's _merged_upstream_dict docstring).
+MERGED_SAMPLE_NAME = "Combined"
+
 
 def new_definition_id():
     """Generate a fresh, stable identity for a classifier definition.
@@ -299,14 +306,28 @@ class ParticleClassifierNode(QObject):
         self.configuration_changed.emit()
 
     def _recompute_incoming_names(self, input_data):
-        """Refresh the set of sample names currently feeding this node."""
+        """Refresh the effective sample names currently feeding this node.
+
+        Mirrors the same merge rule as :meth:`_merged_upstream_dict`: two or
+        more input links collapse to the single "Combined" sample, while a
+        lone input keeps its own (possibly multi-) sample names. Drives
+        _active_definitions / the node badge, so it must agree with what
+        get_output_data actually emits.
+        """
         from tools.particle_filter import normalize_sources
         try:
-            sources = normalize_sources([input_data]) if input_data else []
+            upstreams = self._pull_upstream_all()
+            if len(upstreams) >= 2:
+                sources = normalize_sources(upstreams)
+                self._incoming_names = [MERGED_SAMPLE_NAME] if sources else []
+            elif upstreams:
+                self._incoming_names = [
+                    s['name'] for s in normalize_sources(upstreams)]
+            else:
+                self._incoming_names = []
         except Exception:
             _itk_log.exception("Handled exception in _recompute_incoming_names")
-            sources = []
-        self._incoming_names = [s['name'] for s in sources]
+            self._incoming_names = []
 
     def _pull_upstream_all(self):
         """Fetch the upstream dict from every input link.
@@ -331,17 +352,81 @@ class ParticleClassifierNode(QObject):
             out = [self.input_data]
         return [u for u in out if u]
 
+    def _merged_upstream_dict(self):
+        """Return the single effective input dict for this node, merging
+        two-or-more input links into one sample named ``MERGED_SAMPLE_NAME``
+        ("Combined").
+
+        Fixes the silent-data-drop bug where only the last-pushed input
+        survived: with several sources feeding one classifier, every
+        particle from every link is pooled under one "Combined" sample so
+        they all get classified. A SINGLE input link is returned unchanged,
+        so a lone Multiple-Sample node keeps its own per-sample structure
+        (its subplots stay separate downstream).
+
+        Deliberately minimal (deadline): unlike ParticleFilterNode, this
+        does NOT let the user rename or individually manage the incoming
+        samples — that richer UX is deferred. ``concentration_meta`` for
+        the merged sample is intentionally left empty: particles/mL for a
+        pool of samples with different volumes/dilutions is undefined, and
+        fabricating one would be worse than leaving concentration-dependent
+        downstream nodes to report nothing for "Combined". (Flagged for the
+        follow-up pass.)
+
+        Returns:
+            dict | None: One upstream-style data dict, or None if nothing
+                is connected.
+        """
+        upstreams = self._pull_upstream_all()
+        if not upstreams:
+            return None
+        if len(upstreams) == 1:
+            return upstreams[0]
+        from tools.particle_filter import normalize_sources
+        try:
+            sources = normalize_sources(upstreams)
+        except Exception:
+            _itk_log.exception("Handled exception in _merged_upstream_dict")
+            return upstreams[0]
+        if not sources:
+            # Non-particle upstreams (shouldn't happen given connectivity
+            # rules) -- don't guess, just pass the first through.
+            return upstreams[0]
+        combined, isotopes, seen_iso = [], [], set()
+        for s in sources:
+            for p in (s.get('particles') or []):
+                q = dict(p)
+                q['source_sample'] = MERGED_SAMPLE_NAME
+                combined.append(q)
+            for iso in (s.get('isotopes') or []):
+                key = iso.get('label') if isinstance(iso, dict) else iso
+                if key and key not in seen_iso:
+                    seen_iso.add(key)
+                    isotopes.append(iso)
+        return {
+            'type': 'multiple_sample_data',
+            'sample_names': [MERGED_SAMPLE_NAME],
+            'particle_data': combined,
+            'data': {},
+            'data_types': {},
+            'selected_isotopes': isotopes,
+            'total_particles': len(combined),
+            'concentration_meta': {MERGED_SAMPLE_NAME: {}},
+            'parent_window': self.parent_window,
+        }
+
     def get_output_data(self):
         """Relabel every connected sample's particles per this node's
-        classifier definitions (design §7) and hand the result downstream
-        with the exact same top-level shape it arrived in — this is a
-        relabel-in-place operation, never a sample merge/regroup, so
-        single-sample input stays single-sample, multi-sample input stays
-        multi-sample with its per-sample structure intact.
+        classifier definitions (design §7) and hand the result downstream,
+        preserving per-sample structure — a relabel-in-place operation on
+        the composition, never a per-sample regroup.
 
-        Never touches ``concentration_meta``, diameter fields, or any
-        other non-composition metadata (design §2, §7) — only the
-        ``particle_data`` list changes.
+        Two-or-more input links are first pooled into one "Combined" sample
+        (see :meth:`_merged_upstream_dict`); a single input link keeps its
+        own (possibly multi-) sample structure. Beyond that pooling, this
+        never touches ``concentration_meta``, diameter fields, or any other
+        non-composition metadata (design §2, §7) — only ``particle_data``
+        changes.
 
         Returns:
             dict | None: The relabeled output dict, or None if unconnected
@@ -352,10 +437,9 @@ class ParticleClassifierNode(QObject):
         from tools.particle_classifier_relabel import (
             relabel_particles, suggested_label_colors)
 
-        upstreams = self._pull_upstream_all()
-        if not upstreams:
+        data = self._merged_upstream_dict()
+        if data is None:
             return None
-        data = upstreams[0]
         if data.get('type') not in ('sample_data', 'multiple_sample_data'):
             # Non-particle upstream types (shouldn't occur given the
             # canvas-level connectivity restriction, but stay defensive):
@@ -483,7 +567,12 @@ class ParticleClassifierNode(QObject):
             bool: True when the dialog was accepted.
         """
         from tools.particle_classifier_dialog import ParticleClassifierDialog
-        snapshots = self._pull_upstream_all()
+        # Show the dialog the same effective samples get_output_data emits:
+        # two-or-more input links appear as one "Combined" sample (see
+        # _merged_upstream_dict), so the definitions the user writes target
+        # the same sample names the relabel pass will actually use.
+        merged = self._merged_upstream_dict()
+        snapshots = [merged] if merged else []
         dlg = ParticleClassifierDialog(
             parent_window, snapshots, self.definitions, self.groups,
             self.overlap_mode, self.unmatched_mode, self.unclassified_color,
@@ -557,6 +646,7 @@ def build_particle_classifier_node_item():
         type: The ParticleClassifierNodeItem class.
     """
     from widget.canvas_widgets import NodeItem, DS
+    from PySide6.QtWidgets import QGraphicsItem
 
     class ParticleClassifierNodeItem(NodeItem):
         """Tag icon node item for the Particle Classifier.
@@ -572,6 +662,20 @@ def build_particle_classifier_node_item():
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
+
+        def itemChange(self, change, value):
+            """Track scene membership so the node can pull data via its
+            input links (needed for multi-input merging — see
+            ParticleClassifierNode._merged_upstream_dict). Mirrors
+            ParticleFilterNodeItem.itemChange; without this the node's
+            scene_ref stays None and only the last-pushed input survives.
+
+            Returns:
+                object: Result of the base implementation.
+            """
+            if change == QGraphicsItem.ItemSceneHasChanged:
+                self.workflow_node.scene_ref = value
+            return super().itemChange(change, value)
 
         def paint(self, painter, option, widget=None):
             wf = self.workflow_node

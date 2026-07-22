@@ -396,3 +396,39 @@ class TestClassifyFormula:
     def test_xor_of_isotope_and_its_negation_is_tautology(self):
         ast = pce.parse("{60Ni; !(60Ni)}")
         assert pce.classify_formula(ast) == "tautology"
+
+
+# --------------------------------------------------------------------------- #
+# Edge cases surfaced during the QA pass (2026-07-19)
+# --------------------------------------------------------------------------- #
+class TestExpressionEdgeCases:
+    def test_single_branch_xor_matches_iff_present(self):
+        """A one-branch XOR {a} is satisfied exactly when a is present
+        (one-hot count == 1)."""
+        ast = pce.parse("{60Ni}")
+        assert pce.evaluate(ast, {"60Ni"}, "partial") is True
+        assert pce.evaluate(ast, set(), "partial") is False
+
+    def test_duplicate_isotope_in_and_is_idempotent(self):
+        """'60Ni+60Ni' is degenerate but valid; it must behave like '60Ni'."""
+        ast = pce.parse("60Ni+60Ni")
+        assert pce.evaluate(ast, {"60Ni"}, "partial") is True
+        assert pce.evaluate(ast, {"107Ag"}, "partial") is False
+        assert pce.classify_formula(ast) == "normal"
+
+    def test_empty_or_group_is_syntax_error(self):
+        with pytest.raises(pce.ExpressionSyntaxError):
+            pce.parse("[]")
+
+    def test_empty_xor_group_is_syntax_error(self):
+        with pytest.raises(pce.ExpressionSyntaxError):
+            pce.parse("{}")
+
+    def test_leading_zero_isotope_currently_parses(self):
+        """Documents current behavior: a leading-zero mass like '007Ag'
+        parses (the tokenizer only checks digit-then-cased-symbol shape).
+        Harmless in practice -- it will never be in real sample data, so
+        stale-isotope detection flags it. Pinned so any future tightening
+        of the tokenizer is a deliberate, noticed change."""
+        ast = pce.parse("007Ag")
+        assert pce.referenced_isotopes(ast) == {"007Ag"}
