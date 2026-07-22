@@ -54,8 +54,6 @@ class MassFractionService:
                 self.sample_mass_fractions[sample_name] = {}
             if sample_name not in self.sample_densities:
                 self.sample_densities[sample_name] = {}
-            if not hasattr(self, 'sample_molecular_weights'):
-                self.sample_molecular_weights = {}
             if sample_name not in self.sample_molecular_weights:
                 self.sample_molecular_weights[sample_name] = {}
 
@@ -91,16 +89,12 @@ class MassFractionService:
         """
         element = element_key.split('-')[0]
 
-        if (sample_name and
-                hasattr(self, 'sample_molecular_weights') and
-                sample_name in self.sample_molecular_weights):
-            print("molecular weight through sample")
+        if sample_name and sample_name in self.sample_molecular_weights:
             molecular_weight = self.sample_molecular_weights[sample_name].get(element)
             if molecular_weight and molecular_weight > 0:
                 return molecular_weight
 
-        if (hasattr(self, 'element_molecular_weights') and
-                element in self.element_molecular_weights):
+        if element in self.element_molecular_weights:
             molecular_weight = self.element_molecular_weights[element]
             if molecular_weight and molecular_weight > 0:
                 return molecular_weight
