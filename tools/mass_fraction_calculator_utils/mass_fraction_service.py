@@ -2,13 +2,15 @@
 This file contains code that help the Mass Fraction Calculator to share its
 data with other parts of the code.
 """
+from typing import Optional
 
-from widget.periodic_table_widget import PeriodicTableWidget
+from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 
 
 class MassFractionService:
-    """Is the manager and provider for Mass Fractions data"""
-    def __init__(self, periodic_table: PeriodicTableWidget):
+    """Is the manager and provider for Mass Fractions data."""
+
+    def __init__(self, periodic_table_info: PeriodicTableInfo):
         self.element_mass_fractions = {}
         self.element_densities = {}
         self.element_molecular_weights = {}
@@ -17,12 +19,12 @@ class MassFractionService:
         self.sample_densities = {}
         self.sample_molecular_weights = {}
 
-        self.periodic_table = periodic_table  # TODO: Make it a information service to simplify everything
+        self.periodic_table_info = periodic_table_info
 
     def set_element_infos(self,
                           mass_fractions: dict,
                           densities: dict,
-                          molecular_weights:dict) -> None:
+                          molecular_weights: dict) -> None:
         """
         Updates element level information.
         Args:
@@ -79,7 +81,9 @@ class MassFractionService:
 
         return 1.0
 
-    def get_molecular_weight(self, element_key, sample_name=None):
+    def get_molecular_weight(self,
+                             element_key: str,
+                             sample_name: Optional[str] = None) -> Optional[float]:
         """Get molecular weight for element compound.
 
         Returns:
@@ -101,15 +105,11 @@ class MassFractionService:
             if molecular_weight and molecular_weight > 0:
                 return molecular_weight
 
-        if self.periodic_table:
-            element_data = self.periodic_table.get_element_by_symbol(element)
-            if element_data:
-                atomic_mass = float(element_data.get('mass', 0))
-                return atomic_mass
+        return self.periodic_table_info.get_mass_by_element(element)
 
-        return None
-
-    def get_element_density(self, element_key, sample_name=None):
+    def get_element_density(self,
+                            element_key: str,
+                            sample_name: Optional[str] = None) -> Optional[float]:
         """Get density for element compound.
 
         Returns:
@@ -118,7 +118,6 @@ class MassFractionService:
         element = element_key.split('-')[0]
 
         if sample_name and sample_name in self.sample_densities:
-            print("density through sample")
             density = self.sample_densities[sample_name].get(element)
             if density:
                 return density
@@ -126,12 +125,7 @@ class MassFractionService:
         if element in self.element_densities:
             return self.element_densities[element]
 
-        if self.periodic_table:
-            element_data = self.periodic_table.get_element_by_symbol(element)
-            if element_data:
-                return element_data.get('density', None)
-
-        return None
+        return self.periodic_table_info.get_density_by_element(element)
 
     def reset(self):
         """Resets all data structures of the service."""
