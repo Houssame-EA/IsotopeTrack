@@ -1364,6 +1364,19 @@ class EnhancedLoggingManager:
 
         self._context_filter = _ContextFilter()
 
+        # Windows consoles default to a narrow codepage (e.g. cp1252) that
+        # can't encode characters like the arrow used in connection-log
+        # messages ("A -> B"). Without this, every such message raises
+        # inside Handler.emit(), caught by logging's own handleError() (so
+        # it doesn't crash), but it dumps a full traceback to stderr on
+        # every occurrence -- pure noise, and wasted work on the logging
+        # hot path. reconfigure() only affects how unencodable characters
+        # are handled, not the file's actual data.
+        try:
+            sys.stdout.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(logging.INFO)
         ch.setFormatter(logging.Formatter(

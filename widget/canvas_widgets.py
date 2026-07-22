@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QGraphicsItem, QGraphicsObject, QLabel, QCheckBox,
     QFrame, QScrollArea, QSplitter, QGraphicsWidget,
     QGraphicsEllipseItem, QApplication, QDialogButtonBox, QLineEdit, QToolTip,
-    QSizePolicy
+    QSizePolicy, QMessageBox
 )
 from PySide6.QtCore import (
     Qt, Signal, QPointF, QRectF, QMimeData, QPoint, QObject, QEvent, QRect,
@@ -57,6 +57,10 @@ from results.results_dashboard import DashboardDisplayDialog, DashboardNode
 from results.results_periodic import IsotopeChipSelector
 from tools.particle_filter import (
     ParticleFilterNode, build_particle_filter_node_item)
+from tools.particle_classifier_node import (
+    ParticleClassifierNode, build_particle_classifier_node_item,
+    is_allowed_upstream, is_allowed_downstream, EXCLUDED_DOWNSTREAM_TYPES,
+    maybe_show_classifier_onboarding)
 
 import qtawesome as qta
 
@@ -3858,6 +3862,7 @@ class NodePalette(QWidget):
             ("Multiple Sample",  "multiple_sample_selector", 'fa6s.flask-vial',          DS.PURPLE),
             ("Batch Windows",    "batch_sample_selector",    'fa6s.window-restore',  DS.TEAL),
             ("Particle Filter",  "particle_filter",          'fa6s.filter',          DS.TEAL),
+            ("Particle Classifier", "particle_classifier",   'fa6s.tags',            DS.INDIGO),
         ]:
             b = DraggableNodeButton(txt, ntype, icon, color)
             dg.addWidget(b)
@@ -4187,7 +4192,14 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
                      'merge_singles', 'sample_groups', 'saved_cluster_state',
-                     'input_family', 'output_family'):
+                     'input_family', 'output_family',
+                     # Particle Classifier (tools/particle_classifier_node.py)
+                     # -- same full state list carried by save/load in
+                     # save_export/project_manager.py's config_attributes.
+                     'definitions', 'groups', 'overlap_mode',
+                     'unmatched_mode', 'unclassified_color',
+                     'group_pooling_policies', '_has_unresolved_issues',
+                     'confound_dismissals'):
             if hasattr(wf, attr):
                 try:
                     setattr(new_wf, attr, copy.deepcopy(getattr(wf, attr)))
@@ -4260,6 +4272,21 @@ class EnhancedCanvasScene(QGraphicsScene):
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
                 return None
         if self._enforce_connection_rules:
+            # Particle Classifier connectivity (Design §2): upstream limited
+            # to filter/single/multi sample, downstream to non-excluded viz
+            # nodes. Shows a helpful dialog on refusal; a no-op for any link
+            # not touching a classifier. Runs first so the user gets the
+            # specific message rather than a silent generic rejection.
+            refusal = validate_classifier_link(src_node, snk_node)
+            if refusal:
+                _itk_log.warning(
+                    "Blocked link %s -> %s: %s",
+                    getattr(src_node, 'title', src_node),
+                    getattr(snk_node, 'title', snk_node), refusal)
+                QMessageBox.warning(
+                    self.views()[0] if self.views() else None,
+                    "Connection Not Allowed", refusal)
+                return None
             # Type compatibility: the source's output family must match the
             # sink's input family (see _NODE_IO_FAMILIES). Blocks nonsensical
             # wiring like sample→sample or filter→sample-selector.
@@ -4269,8 +4296,9 @@ class EnhancedCanvasScene(QGraphicsScene):
                 return None
             # Cardinality: a node that reads a single overwritable input slot
             # can't take a second incoming link (it would silently lose the
-            # tug-of-war). Multi-input nodes (e.g. Particle Filter, which
-            # walks every input link itself) opt out via supports_multi_input.
+            # tug-of-war). Multi-input nodes (Particle Filter, Particle
+            # Classifier — both walk every input link themselves) opt out via
+            # supports_multi_input.
             if not getattr(snk_node, 'supports_multi_input', False):
                 for lk in self.workflow_links:
                     if lk.sink_node is snk_node and lk.sink_channel == snk_ch:
@@ -4781,6 +4809,20 @@ class EnhancedCanvasView(QGraphicsView):
         if factory:
             wf = factory(self.parent_window)
             self.scene.add_node(wf, snapped)
+            if ntype == "particle_classifier":
+                # Fresh node just dragged in by the user (never fires for
+                # project-load deserialization or node duplication, which
+                # don't go through this drop handler) -- design §10.
+                # Deferred to the next event-loop turn: this dropEvent runs
+                # INSIDE the palette drag source's QDrag.exec_() nested loop
+                # (mouse still grabbed by the drag), and opening a modal
+                # there is the same "modal launched while another loop owns
+                # the input grab" hazard that broke the color picker's
+                # click handling earlier. Firing after the drop unwinds and
+                # releases the grab avoids it.
+                QTimer.singleShot(
+                    0, lambda: maybe_show_classifier_onboarding(
+                        self.parent_window))
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -4791,6 +4833,7 @@ class EnhancedCanvasView(QGraphicsView):
 
 
 ParticleFilterNodeItem = build_particle_filter_node_item()
+ParticleClassifierNodeItem = build_particle_classifier_node_item()
 
 
 _NODE_FACTORIES = {
@@ -4799,6 +4842,7 @@ _NODE_FACTORIES = {
     "batch_sample_selector":        BatchSampleSelectorNode,
     "particle_filter":              ParticleFilterNode,
     "temp_pass_through":            TempPassThroughNode,
+    "particle_classifier":          ParticleClassifierNode,
     "histogram_plot":               HistogramPlotNode,
     "element_bar_chart_plot":       ElementBarChartPlotNode,
     "correlation_plot":             CorrelationPlotNode,
@@ -4823,6 +4867,7 @@ _NODE_ITEM_MAP = {
     "multiple_sample_selector":     MultipleSampleSelectorNodeItem,
     "batch_sample_selector":        BatchSampleSelectorNodeItem,
     "particle_filter":              ParticleFilterNodeItem,
+    "particle_classifier":          ParticleClassifierNodeItem,
     "histogram_plot":               HistogramPlotNodeItem,
     "element_bar_chart_plot":       ElementBarChartPlotNodeItem,
     "correlation_plot":             CorrelationPlotNodeItem,
@@ -4841,6 +4886,55 @@ _NODE_ITEM_MAP = {
     "network_diagram":              NetworkDiagramNodeItem,
     "dashboard":                    DashboardNodeItem,
 }
+
+#: Every Visualization-category node type (mirrors the palette's
+#: "VISUALIZATION" group in NodePalette._setup — category membership has
+#: no runtime field on the node classes themselves, so this list is the
+#: source of truth for "is this a viz node" checks, e.g. classifier
+#: downstream-connectivity validation).
+_VIZ_NODE_TYPES = frozenset({
+    "histogram_plot", "element_bar_chart_plot", "box_plot",
+    "correlation_plot", "pie_chart_plot", "element_composition_plot",
+    "heatmap_plot", "molar_ratio_plot", "isotopic_ratio_plot",
+    "triangle_plot", "single_multiple_element_plot", "clustering_plot",
+    "correlation_matrix", "concentration_comparison", "network_diagram",
+    "dashboard",
+})
+
+
+def validate_classifier_link(src_node, snk_node):
+    """Check a proposed link against Particle Classifier connectivity rules.
+
+    Design §2: upstream limited to Particle Filter / Single Sample /
+    Multiple Sample; downstream limited to Visualization-category nodes
+    excluding Clustering, AI Data Assistant, and Dashboard. Only fires when
+    one endpoint of the link actually is a Particle Classifier node — every
+    other link pair in the app is unaffected.
+
+    Args:
+        src_node: The link's source ``WorkflowNode``.
+        snk_node: The link's sink ``WorkflowNode``.
+
+    Returns:
+        str | None: A human-readable refusal reason, or None if the link
+            is permitted (including when neither endpoint is a classifier).
+    """
+    if getattr(snk_node, 'node_type', None) == "particle_classifier":
+        if not is_allowed_upstream(getattr(src_node, 'node_type', None)):
+            return (
+                "Particle Classifier can only accept input from a "
+                "Particle Filter, Single Sample, or Multiple Sample node.")
+    if getattr(src_node, 'node_type', None) == "particle_classifier":
+        snk_type = getattr(snk_node, 'node_type', None)
+        if not is_allowed_downstream(snk_type, _VIZ_NODE_TYPES):
+            if snk_type in EXCLUDED_DOWNSTREAM_TYPES:
+                return (
+                    "Particle Classifier cannot connect to Clustering, "
+                    "AI Data Assistant, or Dashboard nodes.")
+            return (
+                "Particle Classifier can only connect to Visualization "
+                "nodes.")
+    return None
 
 
 class CanvasResultsDialog(QDialog):

@@ -777,8 +777,11 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups',
-            'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
-            'input_family', 'output_family',
+            'config', '_has_input', '_has_output', 'input_channels', 'output_channels', 
+            'input_family', 'output_family', # Particle Classifier (tools/particle_classifier_node.py)
+            'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
+            'unclassified_color', 'group_pooling_policies',
+            '_has_unresolved_issues', 'confound_dismissals',
             'saved_cluster_state'
         ]
 
@@ -846,7 +849,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
-                ParticleFilterNode, TempPassThroughNode,
+                ParticleFilterNode,TempPassThroughNode, ParticleClassifierNode,
                 StickyNoteItem,
             )
         except ImportError as e:
@@ -886,7 +889,7 @@ Terminal=false
             "multiple_sample_selector": MultipleSampleSelectorNode,
             "particle_filter": ParticleFilterNode,
             "temp_pass_through": TempPassThroughNode,
-
+            "particle_classifier": ParticleClassifierNode,
             "histogram_plot": HistogramPlotNode,
             "element_bar_chart_plot": ElementBarChartPlotNode,
             "correlation_plot": CorrelationPlotNode,
@@ -989,8 +992,11 @@ Terminal=false
             'selected_isotopes', 'sum_replicates', 'replicate_samples',
             'sample_config', 'sample_filters', 'selected_sources', 'merged_name',
             'merge_singles', 'sample_groups',
-            'config', '_has_input', '_has_output', 'input_channels', 'output_channels',
-            'input_family', 'output_family',
+            'config', '_has_input', '_has_output', 'input_channels', 'output_channels', 'input_family', 'output_family',
+            # Particle Classifier (tools/particle_classifier_node.py)
+            'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
+            'unclassified_color', 'group_pooling_policies',
+            '_has_unresolved_issues', 'confound_dismissals',
             'saved_cluster_state'
         ]
 

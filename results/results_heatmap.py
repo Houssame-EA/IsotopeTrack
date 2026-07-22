@@ -1278,6 +1278,12 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
     """
     try:
         combos = {}
+        # sort_elements_by_mass() output depends only on the SET of element
+        # names (it re-sorts regardless of input order), and real particle
+        # populations reuse the same handful of isotope combinations across
+        # many thousands of particles — memoizing by that set avoids
+        # re-running the mass-parsing regex + sort for every repeat.
+        key_cache = {}
         for particle in particles:
             d = particle.get(data_key, {})
             elems = []
@@ -1288,14 +1294,18 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
                         elems.append(name)
                         vals[name] = v
                 else:
-                    if v > 0 and not np.isnan(v):
+                    if v > 0 and v == v:  # v==v false only for NaN, faster than np.isnan on a scalar
                         elems.append(name)
                         vals[name] = v
 
             if not elems:
                 continue
 
-            key = ', '.join(sort_elements_by_mass(elems))
+            combo_id = frozenset(elems)
+            key = key_cache.get(combo_id)
+            if key is None:
+                key = ', '.join(sort_elements_by_mass(elems))
+                key_cache[combo_id] = key
             if key not in combos:
                 combos[key] = {'count': 0, 'particle_count': 0, 'pml': 0.0,
                                'total_values': {}}

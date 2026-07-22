@@ -41,7 +41,7 @@ from results.shared_plot_utils import (
     get_font_config, apply_font_to_pyqtgraph, set_axis_labels,
     apply_plot_item_text_styling, apply_plot_title_style, apply_axis_label_style,
     apply_legend_label_style,
-    get_sample_color,
+    get_sample_color, seed_suggested_element_colors,
     get_display_name, download_pyqtgraph_figure, copy_figure_to_clipboard,
     format_element_label,
     LABEL_MODES, Renderer, HtmlAxisItem, SHADE_TYPES,
@@ -1361,6 +1361,8 @@ class EnhancedGraphicsLayoutWidget(pg.GraphicsLayoutWidget):
                 colors = dict(node.config.get(cfg_key, {}) or {})
                 colors[key] = qcolor.name()
                 node.config[cfg_key] = colors
+                if cfg_key == 'element_colors':
+                    node.config.get('_seeded_element_colors', set()).discard(key)
         except Exception:
             _itk_log.exception("Handled exception in _persist_element_color")
             return
@@ -1725,7 +1727,10 @@ def _apply_element_groups(particles, dk, groups):
         for el, val in d.items():
             if val <= 0:
                 continue
-            if dk != 'elements' and np.isnan(val):
+            # val == val is False only for NaN; np.isnan on a scalar has
+            # much higher per-call overhead than this comparison, and this
+            # runs once per particle per element for the full population.
+            if dk != 'elements' and val != val:
                 continue
 
             grp_name = elem_to_group.get(el)
@@ -1769,7 +1774,10 @@ def _apply_element_groups_multi(particles, sample_names, dk, groups):
         for el, val in d.items():
             if val <= 0:
                 continue
-            if dk != 'elements' and np.isnan(val):
+            # val == val is False only for NaN; np.isnan on a scalar has
+            # much higher per-call overhead than this comparison, and this
+            # runs once per particle per element for the full population.
+            if dk != 'elements' and val != val:
                 continue
 
             grp_name = elem_to_group.get(el)
@@ -3376,7 +3384,7 @@ class HistogramDisplayDialog(QDialog):
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
-            _itk_log.error(f"STATS={cfg.get('show_stats')} id={id(cfg)}")
+            seed_suggested_element_colors(cfg, self.node.input_data)
 
 
             if not plot_data:
@@ -4323,7 +4331,7 @@ class HistogramPlotNode(QObject):
                     if val > 0:
                         out.setdefault(el, []).append(val)
                 else:
-                    if val > 0 and not np.isnan(val):
+                    if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         out.setdefault(el, []).append(val)
         return out or None
 
@@ -4343,7 +4351,7 @@ class HistogramPlotNode(QObject):
                     if val > 0:
                         result[src].setdefault(el, []).append(val)
                 else:
-                    if val > 0 and not np.isnan(val):
+                    if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         result[src].setdefault(el, []).append(val)
         return {k: v for k, v in result.items() if v} or None
 
@@ -5135,7 +5143,7 @@ def _add_stats_text(plot_item, plot_data, cfg):
         if not vals:
             continue
         if dt != 'Counts':
-            v = [x for x in vals if x > 0 and not np.isnan(x)]
+            v = [x for x in vals if x > 0 and x == x]  # x==x false only for NaN, faster than np.isnan per scalar
         else:
             v = vals
         if not v:
@@ -6057,8 +6065,10 @@ class ElementBarChartDisplayDialog(QDialog):
             return
 
         element_colors = dict(self.node.config.get('element_colors', {}))
+        seeded = self.node.config.get('_seeded_element_colors', set())
         for raw_key in raw_keys:
             element_colors[raw_key] = color_hex
+            seeded.discard(raw_key)
         self.node.config['element_colors'] = element_colors
         self._update_element_legend_swatches(raw_keys, color_hex)
 
@@ -6208,7 +6218,7 @@ class ElementBarChartDisplayDialog(QDialog):
 
             plot_data = self.node.extract_plot_data()
             cfg = self.node.config
-            
+            seed_suggested_element_colors(cfg, self.node.input_data)
 
             if not plot_data:
                 pi = self.pw.addPlot(axisItems={'left': HtmlAxisItem('left')})
