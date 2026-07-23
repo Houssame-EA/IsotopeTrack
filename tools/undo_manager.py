@@ -16,6 +16,9 @@ loaded sample set changes, matching the rule that whole-sample changes are not
 undoable.
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mainwindow import MainWindow
 
 import pickle
 import logging
@@ -24,7 +27,7 @@ from PySide6.QtCore import QObject, QTimer
 
 _itk_log = logging.getLogger("IsotopeTrack.undo")
 
-_FIELDS = (
+_MAIN_WINDOW_FIELDS = (
     'selected_isotopes',
     'sample_parameters',
     'isotope_method_preferences',
@@ -34,12 +37,6 @@ _FIELDS = (
     'average_transport_rate',
     'selected_transport_rate_methods',
     'transport_rate_methods',
-    'element_mass_fractions',
-    'element_densities',
-    'element_molecular_weights',
-    'sample_mass_fractions',
-    'sample_densities',
-    'sample_molecular_weights',
     'sample_dilutions',
     'overlap_threshold_percentage',
     '_global_sigma',
@@ -47,6 +44,14 @@ _FIELDS = (
     'detection_states',
     'saturation_filter_enabled',
 )
+_MASS_FRACTION_SERVICE_FIELDS = {
+    'element_mass_fractions',
+    'element_densities',
+    'element_molecular_weights',
+    'sample_mass_fractions',
+    'sample_densities',
+    'sample_molecular_weights',
+}
 
 MAX_DEPTH = 40
 POLL_MS = 1200
@@ -55,10 +60,10 @@ POLL_MS = 1200
 class UndoManager(QObject):
     """Polling, snapshot-based undo/redo for one ``MainWindow``."""
 
-    def __init__(self, main_window):
+    def __init__(self, main_window: MainWindow):
         """Create the manager and its change-detection timer."""
         super().__init__(main_window)
-        self.mw = main_window
+        self.mw: MainWindow = main_window
         self._stack = []
         self._index = -1
         self._restoring = False
@@ -87,7 +92,9 @@ class UndoManager(QObject):
 
     def _snapshot(self):
         """Return the current editable inputs pickled, or None on failure."""
-        state = {f: getattr(self.mw, f, None) for f in _FIELDS}
+        state = {f: getattr(self.mw, f, None) for f in _MAIN_WINDOW_FIELDS}
+        for field in _MASS_FRACTION_SERVICE_FIELDS:
+            state[field] = getattr(self.mw.mass_fraction_service, field, None)
         try:
             return pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
         except Exception:
@@ -161,8 +168,10 @@ class UndoManager(QObject):
             return
         self._restoring = True
         try:
-            for f, v in state.items():
-                setattr(self.mw, f, v)
+            for f in _MAIN_WINDOW_FIELDS:
+                setattr(self.mw, f, state.get(f))
+            for f in _MASS_FRACTION_SERVICE_FIELDS:
+                setattr(self.mw.mass_fraction_service, f, state.get(f))
             self._refresh_ui()
             self.mw.unsaved_changes = True
         finally:
