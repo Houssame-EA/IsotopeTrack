@@ -186,6 +186,18 @@ Shared logic for vertical & horizontal lines.
 
 Event filter installed on the pyqtgraph plot scene.
 
+Purpose: consume mouse press / release / move events at the scene level
+so they never bubble to the parent dialog or the OS window manager.
+Without this, macOS treats an unaccepted scene-level mouse release
+(produced after dragging an annotation to a new position) as a click
+outside the focused dialog, which raises the main application window
+above the dialog.
+
+We don't filter events that would block interaction — pyqtgraph items
+still receive their own mousePressEvent / mouseMoveEvent / mouseReleaseEvent
+via the scene's normal event dispatch. The filter only accepts the event
+*after* dispatch, preventing onward propagation.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, manager)` |  |
@@ -194,6 +206,14 @@ Event filter installed on the pyqtgraph plot scene.
 ### `AnnotationManager` *(extends `QObject`)*
 
 Owns cfg['annotations'], the list of live annotation wrappers, the selection
+state, and the undo stack. Exposes methods for toolbar/inspector to call.
+
+Flow:
+  - Plot dialog calls attach_plot(plot_item) after every _refresh to rebuild items.
+  - Toolbar calls begin_insert(type) to enter insert mode; next click on the
+    plot scene creates an annotation at the clicked (data) coordinates.
+  - Inspector calls update_selected(new_data) to modify the selected annotation.
+  - Manager emits sig_selection_changed when selection changes.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -242,6 +262,16 @@ The '+' button that opens a QColorDialog. Emits sig_picked(hex).
 
 Small popover shown next to the currently selected annotation.
 
+Parented to a *persistent* container (not the plot widget, which gets
+recreated on every refresh). Uses a getter to find the current plot
+widget / viewbox for positioning.
+
+Lifecycle:
+    fi = FloatingInspector(mgr, parent=plot_container)
+    fi.set_plot_accessor(lambda: (self.pw, self.primary_plot_item))
+    # after every _refresh() in the host dialog:
+    fi.attach(current_plot_item)
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, mgr: 'AnnotationManager', parent: QWidget)` |  |
@@ -265,6 +295,7 @@ Small popover shown next to the currently selected annotation.
 ### `AnnotationShelfButton` *(extends `QPushButton`)*
 
 A small pill showing "≡ N annotations". Clicking opens a popup menu
+with each annotation (select, toggle visible, delete) and a "clear all".
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

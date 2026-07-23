@@ -16,6 +16,7 @@ tools/guide_content.py. This module only provides the widgets.
 ### `HotspotImage` *(extends `QWidget`)*
 
 Paint a screenshot scaled to the widget width and overlay
+clickable, hover-highlighted hotspot regions.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -35,6 +36,7 @@ Paint a screenshot scaled to the widget width and overlay
 ### `InteractiveImagePage` *(extends `QWidget`)*
 
 Scrollable page: intro text, interactive screenshot, and a
+detailed explanation section below the image.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

@@ -78,6 +78,19 @@ Formatted key-value display for a selected log entry's context.
 
 Full-featured log viewer with dark / light theme support.
 
+Key features
+------------
+* Theme-aware colour coding — updates live when the app theme changes
+* Level-based colour coding with background tints (dark & light)
+* DEBUG lines show module / function / line number
+* ERROR / CRITICAL lines surface exception traces in the context panel
+* Rate-limited GUI refresh — no freeze on log bursts
+* Jump-to-next-error navigation
+* Copy selected lines to clipboard
+* Save as .txt or export as .jsonl
+* Live statistics bar with session timer
+* All entries are preserved when the window is hidden / closed
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent: QWidget \| None=None)` |  |
@@ -124,6 +137,12 @@ Tracks user interactions and analysis workflow steps.
 ### `EnhancedLoggingManager`
 
 Creates and manages the root logger, file handlers, and the GUI log window.
+
+Pre-window buffer
+-----------------
+All log records emitted before ``create_log_window`` is called are
+stored in ``_pre_window_buffer``.  When the window is first opened the
+buffer is replayed so no startup messages are ever lost.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

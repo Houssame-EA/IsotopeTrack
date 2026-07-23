@@ -20,6 +20,8 @@ Command Line Interface (CLI)
 
 Object used to work with CLI arguments.
 
+Notes it was mostly used to help the LSP.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `from_args_parser_namespace` | `(namespace: Namespace)` | Converts an `argpars.Namespace` into a `CliArguments`. |

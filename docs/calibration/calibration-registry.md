@@ -34,6 +34,12 @@ without a display server — see ``tests/test_calibration_registry.py``.
 
 One transport-rate calibration method.
 
+Args:
+    label: Display name, also the value stored in saved projects
+        (e.g. ``"Liquid weight"``).
+    signal_name: Name emitted to ``handle_calibration_result``
+        (e.g. ``"Weight Method"``).
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, label, signal_name)` |  |

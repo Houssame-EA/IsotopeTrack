@@ -38,6 +38,7 @@ IsotopeTrack.
 ### `ParametersModel` *(extends `QAbstractTableModel`)*
 
 Stores all parameter data as a list of plain Python dicts.
+No Qt widgets are ever created here.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

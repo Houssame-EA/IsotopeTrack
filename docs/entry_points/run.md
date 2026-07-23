@@ -8,6 +8,11 @@
 
 QApplication that handles the macOS 'open document' event.
 
+When a .itproj file is double-clicked in Finder while IsotopeTrack is already
+running, macOS delivers a QFileOpenEvent rather than a command-line argument.
+This routes that file to an open window — or queues it until one exists. A
+cold launch is handled separately by ``argv_emulation`` plus the CLI parser.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, argv)` |  |

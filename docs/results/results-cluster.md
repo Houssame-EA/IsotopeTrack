@@ -31,6 +31,11 @@
 
 FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.
 
+In certain PySide6 + matplotlib combinations, FigureCanvas.showEvent calls
+self.window().installEventFilter(self) but window() returns a QWidgetItem
+(a layout item) rather than a real QWidget, causing an AttributeError that
+crashes the dialog on first show.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `showEvent` | `(self, event)` |  |
@@ -63,6 +68,19 @@ Full settings dialog opened from right-click → Configure.
 
 Background worker that runs the clustering pipeline off the UI thread.
 
+The worker performs the expensive, CPU-bound stages — data preparation,
+fitting every enabled algorithm, and characterisation — without blocking
+the GUI.  Progress and results are delivered back to the main thread via
+signals; the dialog connects to these and does all drawing on the main
+thread, since matplotlib/Qt widgets are not thread-safe.
+
+Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    som_snapshot (object, int, int): Live SOM convergence frame —
+        ``(weights_copy, current_iter, total_iter)``.
+    done (object): Emitted on success with a results payload dict.
+    failed (str): Emitted on error with the exception message.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, dialog, sel_k, elements, data, enabled, parent=None)` |  |
@@ -71,6 +89,17 @@ Background worker that runs the clustering pipeline off the UI thread.
 ### `_EvalWorker` *(extends `QThread`)*
 
 Background worker that runs K-evaluation off the UI thread.
+
+Mirrors :class:`_ClusterWorker` but for the ① Evaluate K step: it prepares
+the data and runs the (potentially slow) multi-K, multi-algorithm scoring
+sweep — plus the per-sample sweep for multi-sample input — without freezing
+the GUI.  All widget updates happen on the main thread in the dialog's
+``_on_eval_done`` handler.
+
+Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with a results payload dict.
+    failed (str): Emitted on error with the exception message.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -81,6 +110,29 @@ Background worker that runs K-evaluation off the UI thread.
 
 Background worker that runs the K-stability bootstrap off the UI thread.
 
+For each of ``n_boot`` resamples drawn with replacement from the prepared
+data matrix, the full evaluation pipeline is rerun and the per-metric
+optimal K is recorded. Aggregating across resamples yields, per metric, the
+most-frequently selected K and the fraction of resamples that agreed — a
+direct, non-parametric measure of how stable each metric's K choice is to
+sampling variation. This is the bootstrap-stability assessment recommended
+for cluster-validity selection by Ikotun, Habyarimana & Ezugwu
+(*Heliyon* 11, 2025, e41953) and follows the classic non-parametric
+bootstrap of Efron & Tibshirani (*An Introduction to the Bootstrap*,
+Chapman & Hall, 1993).
+
+Running this on a :class:`QThread` (rather than a ``processEvents`` loop on
+the GUI thread) keeps the interface fully responsive and lets the user
+cancel cleanly via a thread-safe flag. Only bootstrap-safe metrics are
+evaluated, so expensive O(n^2) indices are skipped automatically.
+
+Signals:
+    progressed (float, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with
+        ``{'stability': {...}, 'results': {...}, 'cancelled': bool,
+        'completed': int, 'n_boot': int}``.
+    failed (str): Emitted on error with the exception message.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p` |  |
@@ -90,6 +142,28 @@ Background worker that runs the K-stability bootstrap off the UI thread.
 ### `_StabilityWorker` *(extends `QThread`)*
 
 Background worker computing bootstrap assignment stability.
+
+Implements the cluster-wise stability assessment of Hennig (2007): the
+selected algorithm is refit at the selected K on ``n_boot`` bootstrap
+resamples of the prepared data matrix. For every reference cluster the
+best-matching bootstrap cluster is found in each resample and their
+Jaccard coefficient recorded; the mean over resamples is that cluster's
+stability (>= 0.85 highly stable, < 0.5 "dissolved"). Simultaneously a
+per-particle score is accumulated: the fraction of resamples containing
+the particle in which its bootstrap cluster mapped back to its reference
+cluster — a consensus measure of how trustworthy each individual
+assignment is.
+
+References:
+    C. Hennig, "Cluster-wise assessment of cluster stability,"
+    *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+    doi:10.1016/j.csda.2006.11.025.
+
+Signals:
+    progressed (float, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with ``{'algo', 'n_boot',
+        'cluster_jaccard', 'particle_stability', 'cancelled'}``.
+    failed (str): Emitted on error with the exception message.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

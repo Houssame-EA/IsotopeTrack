@@ -26,6 +26,9 @@ without constructing the GUI.
 
 Bundles the user's unit + formatting preferences.
 
+Defaults reproduce the original hardcoded behaviour (fg / fmol / nm,
+decimal notation, 4 decimals for mass, 6 for moles, 2 for diameter).
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `mass_label` | `(self) → str` |  |

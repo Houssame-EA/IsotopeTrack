@@ -34,6 +34,8 @@
 ### `SmartInsightsPanel` *(extends `QWidget`)*
 
 Resizable QWidget embedded as the rightmost pane of the canvas QSplitter.
+Call refresh() to rerun analysis; it runs automatically when the panel
+becomes visible.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

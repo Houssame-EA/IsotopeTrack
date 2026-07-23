@@ -141,7 +141,7 @@ def parse_module(path):
             methods = [(n.name, fmt_sig(n), first_line(ast.get_docstring(n)))
                        for n in node.body
                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            classes.append((node.name, bases, first_line(ast.get_docstring(node)),
+            classes.append((node.name, bases, ast.get_docstring(node),
                             methods))
     return mod_doc, constants, classes, functions
 

@@ -53,6 +53,11 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.
 
 Builds and caches preprocessed matrices for the sweep.
 
+Each ``(data_type, scaling, dim_reduction)`` matrix is computed once and
+reused across every algorithm and cluster count, which is what keeps a large
+grid tractable.  The kept-row set is fixed once from the count matrix so
+ground-truth labels stay aligned across all data types.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, particle_data, elements, filter_zeros=True, tsne_random_state=4` | Initialise the cache and the fixed kept-row mask. |

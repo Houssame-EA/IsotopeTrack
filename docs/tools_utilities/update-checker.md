@@ -35,6 +35,12 @@ Fetches the latest release info from GitHub in a background thread.
 ### `UpdateChecker` *(extends `QObject`)*
 
 Usage (from the main window):
+    self._update_checker = UpdateChecker(self)
+    self._update_checker.check(silent=True)    # automatic, on startup
+    self._update_checker.check(silent=False)   # manual, from a menu item
+
+silent=True  -> only speaks up when an update is found (quiet if offline)
+silent=False -> always reports the result (for a "Check for Updates" menu)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

@@ -9,6 +9,7 @@ File information display dialogs and menus for viewing method and run informatio
 ### `InfoPalette`
 
 Colour tokens used by the file-info dialog and its sub-widgets.
+All fields are hex strings.
 
 ### `Divider` *(extends `QFrame`)*
 

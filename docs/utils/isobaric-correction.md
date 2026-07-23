@@ -55,6 +55,20 @@ Reused from the rest of the app (passed in, never duplicated here):
 
 One TERM of a correction equation for an analyte channel.
 
+The full equation for an analyte is the sum of all its terms:
+
+    corrected(analyte) = max( raw(analyte)
+                              + sign1*R1*chanA1 [op chanB1]
+                              + sign2*R2*chanA2 [op chanB2]
+                              + ..., 0 )
+
+A plain table term is sign=-1, op="" (i.e. "subtract R x monitor").
+A ratio/product term uses op="/" or "*" with a second channel:
+    sign * R * (chanA / chanB)   or   sign * R * (chanA * chanB)
+
+Masses are exact isotope masses (matching the periodic-table data and the
+mass-keyed signal channels). Symbols are element symbols.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `override_key` | `(self) → str` | Key identifying this analyte's custom equation in the overrides file. |
@@ -65,6 +79,15 @@ One TERM of a correction equation for an analyte channel.
 ### `EquationCorrection`
 
 A free-text correction equation for one analyte channel.
+
+The expression is calculator-style and is evaluated element-wise on the
+signal arrays. 'raw' refers to the analyte channel; any token of the form
+Element+mass (e.g. Hg202, Ar38, Cr54) refers to the measured channel at
+that nominal mass. Supported: + - * / ** parentheses and the functions
+log, log10, sqrt, exp, abs.
+
+Example:
+    raw - 0.230074*Hg202 + 2*(Ar38/K39)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

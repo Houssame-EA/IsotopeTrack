@@ -38,6 +38,8 @@ ElementCompositionPlotNode / …DisplayDialog / …Canvas triple.
 ### `CompositionWheelCanvas` *(extends `QWidget`)*
 
 Renders the composition wheel. Holds either a GLViewWidget (3D, GPU) or
+a matplotlib FigureCanvas (2D, and 3D fallback). `render(samples, cfg)`
+is the single entry point; everything else is internal.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

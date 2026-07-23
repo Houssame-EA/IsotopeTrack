@@ -113,6 +113,18 @@ Edit background color and grid.
 
 A vertical shaded band marking an excluded X-range.
 
+Each region carries a ``scope``:
+  - ``'element'`` : applies only to the element currently displayed.
+                    Drawn with a red dashed outline.
+  - ``'sample'``  : applies to every element in the active sample.
+                    Drawn with a thicker blue solid outline so it is
+                    visually distinct from element-scope bands.
+
+Drag the middle to move, drag the edges to resize. Right-click on
+the band for a small menu (Remove / Edit bounds / Change scope /
+Clear all). The widget that owns this region is held as ``_owner``
+so the region can ask the owner to apply the chosen action.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, values, owner, scope='element')` |  |
@@ -194,6 +206,9 @@ Calibration plot with interactive exclusion of outlier points.
 
 Simple editor for a single m/z bar: fill color.
 
+Operates directly on the bar meta-dict so changes are immediately
+reflected in the chart and survive subsequent data refreshes.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, meta, parent=None)` |  |
@@ -204,6 +219,17 @@ Simple editor for a single m/z bar: fill color.
 ### `MzBarPlotWidget` *(extends `pg.PlotWidget`)*
 
 Drop-in pg.PlotWidget for the inline m/z bar chart.
+
+Gives the same double-click-to-edit experience as EnhancedPlotWidget:
+
+  Double-click title       → TitleEditorDialog
+  Double-click left axis   → AxisLabelEditorDialog('left')
+  Double-click bottom axis → AxisLabelEditorDialog('bottom')
+  Double-click a bar       → BarEditorDialog  (fill color)
+  Double-click empty area  → BackgroundEditorDialog
+  Right-click anywhere     → 'Plot Settings…' → PlotSettingsDialog
+                             (Font + Grid tabs; Traces tab omitted
+                              because bars are not PlotDataItem objects)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

@@ -52,6 +52,7 @@ Highlighted 'Worked example' box, styled with the theme accent.
 ### `RefEntry` *(extends `QFrame`)*
 
 One reference in the References section: full citation, where it
+is used in IsotopeTrack, and a clickable link to the study.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

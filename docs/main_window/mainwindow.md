@@ -8,6 +8,9 @@
 
 Custom QDoubleSpinBox that ignores mouse wheel events.
 
+Args:
+    Inherits from QDoubleSpinBox
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `wheelEvent` | `(self, event)` | Ignore mouse wheel scroll events. |
@@ -16,6 +19,9 @@ Custom QDoubleSpinBox that ignores mouse wheel events.
 
 Custom QSpinBox that ignores mouse wheel events.
 
+Args:
+    Inherits from QSpinBox
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `wheelEvent` | `(self, event)` | Ignore mouse wheel scroll events. |
@@ -23,6 +29,9 @@ Custom QSpinBox that ignores mouse wheel events.
 ### `NoWheelComboBox` *(extends `QComboBox`)*
 
 Custom QComboBox that ignores mouse wheel events.
+
+Args:
+    Inherits from QComboBox
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
