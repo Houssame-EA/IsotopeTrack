@@ -2,6 +2,12 @@
 
 tools/update_checker.py
 
+Checks GitHub Releases for a newer version of IsotopeTrack and, if one exists,
+shows a non-blocking notification with a "Download" button.
+
+The network request runs in a background QThread so the UI never freezes.
+Uses only the standard library + PySide6 (no extra dependencies).
+
 ---
 
 ## Constants

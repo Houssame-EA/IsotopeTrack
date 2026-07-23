@@ -1,6 +1,9 @@
 # `element_picker.py`
 
 tools/element_picker.py
+=======================
+ElementGridPopup and ElementPicker widgets — extracted from mainwindow.py to
+keep that file smaller.
 
 ---
 

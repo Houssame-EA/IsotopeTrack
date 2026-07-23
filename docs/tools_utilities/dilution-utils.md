@@ -2,6 +2,10 @@
 
 Dilution factor UI: the per-sample editor dialog and the one-time prompt.
 
+The underlying calculations (dilution detection, effective volume,
+particles/mL, etc.) live in ``utils/dilution.py``. This module only builds
+the Qt dialogs and menu hints.
+
 ---
 
 ## Classes

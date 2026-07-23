@@ -2,6 +2,26 @@
 
 Composition Wheel (2D / 3D) — single & multi-sample particle-signature plot.
 
+A polar "fingerprint" view of single-particle data, inspired by the
+colorguesser composition wheel:
+
+    • angle  = composition  (categorical element OR continuous A/(A+B) ratio)
+    • radius = particle mass / counts (small near centre, large at the rim)
+    • z-axis = particle-count density  OR  sample layer (3D modes)
+    • colour = element  OR  sample
+
+Multi-sample modes:  stacked discs, overlaid, small-multiples.
+The 3D view uses pyqtgraph.opengl when available and transparently falls
+back to a matplotlib 3D canvas otherwise.
+
+Wiring (all shared, no duplication):
+    build_element_matrix, get_sample_color, get_display_name,
+    format_element_label / Renderer, FontSettingsGroup,
+    DownloadConfigDialog / download helpers, sort_elements_by_mass.
+
+Drop-in node for the canvas workflow editor — mirrors the
+ElementCompositionPlotNode / …DisplayDialog / …Canvas triple.
+
 ---
 
 ## Constants

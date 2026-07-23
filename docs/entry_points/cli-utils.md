@@ -1,6 +1,7 @@
 # `cli_utils.py`
 
 File with function and classes that manages arguments that are passed with the
+Command Line Interface (CLI)
 
 ---
 

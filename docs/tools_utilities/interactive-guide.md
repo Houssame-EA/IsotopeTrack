@@ -2,6 +2,13 @@
 
 Interactive user-guide framework.
 
+Renders annotated screenshots of IsotopeTrack windows. Every functional
+region of a screenshot is a clickable hotspot: hovering highlights it,
+clicking shows a detailed explanation section below the image.
+
+Page content (images, hotspot rectangles, and explanation HTML) lives in
+tools/guide_content.py. This module only provides the widgets.
+
 ---
 
 ## Classes

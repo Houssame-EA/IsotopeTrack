@@ -2,6 +2,47 @@
 
 shared_annotations.py — Figure annotation system for IsotopeTrack.
 
+PowerPoint-style overlay for any PyQtGraph plot: click-to-select, drag-to-move,
+resize handles, inspector panel, undo/redo. Designed to plug into any plot node
+via a small integration (see `integrate_with_plot_widget` and `AnnotationManager`).
+
+The annotation state lives in cfg['annotations'] (a list of plain dicts), so it
+serializes with the workflow and can be rendered to either PyQtGraph (interactive)
+or Matplotlib (publication export, future work).
+
+Annotation schema (MVP — 5 types):
+
+    Common fields:
+        'id':    str       — unique identifier (e.g. 'ann_3f9a2b')
+        'type':  str       — 'text' | 'vline' | 'hline' | 'vband' | 'rect'
+        'color': str       — hex, e.g. '#A32D2D'
+        'width': int       — line/border width in px
+        'alpha': float     — 0..1 fill opacity (where applicable)
+
+    Type-specific fields:
+        text:  'x', 'y', 'text', 'font_size', 'box'(bool),
+               'arrow_to': [x, y] | None
+        vline: 'x', 'label', 'style'('solid'|'dash'|'dot')
+        hline: 'y', 'label', 'style'
+        vband: 'x1', 'x2', 'label'
+        rect:  'x1', 'y1', 'x2', 'y2', 'label', 'filled'(bool)
+
+Usage in a display dialog:
+
+    from results.shared_annotations import (
+        AnnotationManager, AnnotationToolbar, AnnotationInspector,
+        draw_annotations,
+    )
+
+    # In _build_ui:
+    self.ann_mgr = AnnotationManager(self.node.config, parent=self)
+    self.ann_toolbar = AnnotationToolbar(self.ann_mgr, parent=self)
+    self.ann_inspector = AnnotationInspector(self.ann_mgr, parent=self)
+    # ... add toolbar to top, inspector to right-side of layout
+
+    # In _refresh, after drawing the plot:
+    self.ann_mgr.attach_plot(plot_item)  # rebuilds annotation items on the plot
+
 ---
 
 ## Constants

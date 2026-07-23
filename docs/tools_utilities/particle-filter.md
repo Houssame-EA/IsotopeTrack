@@ -2,6 +2,23 @@
 
 Particle Filter node for the Workflow Canvas.
 
+A composable filter that sits between sample selector nodes (Single Sample,
+Multi-Sample, or Batch) and any figure node. Several sample nodes can be
+connected to the filter at once: every incoming sample — including each
+summed group inside a Multi-Sample stream — appears in a sample list on the
+left side of the configuration dialog. Each sample carries its own filter
+settings: click a sample, tune its criteria in the right pane, then move to
+the next one.
+
+Per sample, up to three independent criteria axes are available (AND logic
+between active axes): element composition (AND / OR / EXACT match),
+detected-element count, and per-element signal thresholds.
+
+The output is regrouped so figures can read it: one chosen sample is
+re-emitted as single-sample data, several chosen samples are regrouped into
+multi-sample data with their ``source_sample`` tags, so every downstream
+figure node consumes the result transparently.
+
 ---
 
 ## Constants

@@ -2,6 +2,31 @@
 
 Custom Cluster Test — exhaustive pipeline search against known components.
 
+Standalone companion to ``results_cluster.py``.  It reads the same input data
+and re-uses a few side-effect-free helpers when importable, but never modifies
+the existing clustering behaviour.
+
+You provide the components you prepared (for example ``Ag ; Ti ; Ce ; FeNiCo``)
+and the tool sweeps a grid of complete pipelines — data type, scaling,
+dimensionality reduction, algorithm and that algorithm's own hyper-parameters
+(including the cluster count, left open) — scoring every result against the
+ground truth derived from your component list, using external validity indices
+(Adjusted Rand Index, AMI, V-measure, …) alongside the usual internal indices
+(Silhouette, Calinski-Harabasz, …).
+
+It answers two questions: which complete pipeline best reproduces your known
+components, and which scoring metric to trust when no ground truth is available
+(by correlating each internal metric against the external truth across the grid).
+
+Ground truth is decided by each particle's dominant element: if a particle's
+strongest element belongs to a named component the particle is that component,
+otherwise it is the ``"other"`` group (coincidences, outliers, background).
+Nothing is excluded; a pipeline that parks ``"other"`` particles in a noise
+label or its own cluster is rewarded for it.
+
+The engine (everything above the GUI guard) has no Qt dependency and is fully
+usable and testable on its own.  The GUI is defined only when PySide6 imports.
+
 ---
 
 ## Constants
@@ -16,7 +41,7 @@ Custom Cluster Test — exhaustive pipeline search against known components.
 | `ALGORITHMS` | `list(ALGO_PARAM_SPECS.keys())` |
 | `DATA_TYPES` | `list(DATA_KEY_MAP.keys())` |
 | `SCALINGS` | `['None', 'Robust Z-score', 'CLR', 'ILR']` |
-| `DIM_REDUCTIONS` | `['None', 'PCA', 't-SNE']` |
+| `DIM_REDUCTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |
 | `DEFAULT_DATA_TYPES` | `['Counts']` |
 | `DEFAULT_SCALINGS` | `['None']` |
 | `DEFAULT_DIM_REDUCTIONS` | `['None']` |
@@ -44,7 +69,6 @@ Builds and caches preprocessed matrices for the sweep.
 | `_v_measure` | `(truth, pred)` | V-measure (harmonic mean of homogeneity and completeness). |
 | `_homogeneity` | `(truth, pred)` | Homogeneity score: each cluster contains a single truth class. |
 | `_completeness` | `(truth, pred)` | Completeness score: each truth class falls into a single cluster. |
-| `multiplicative_replacement` | `(matrix, frac=0.65, threshold=None)` | Replace zeros in a non-negative composition matrix without distorting ratios. |
 | `parse_components` | `(text)` | Parse a component string into ``[(name, [elements]), ...]``. |
 | `build_ground_truth` | `(raw_matrix, elements, components, other_flags=None)` | Assign each particle to a named component or to ``"other"``. |
 | `_row_for_particle` | `(p, data_type, elements)` | Build one matrix row for a particle in the requested representation. |

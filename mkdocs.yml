@@ -102,9 +102,9 @@ nav:
     - "colors.py": theme/colors.md
 - Data Loading:
     - Overview: loading/index.md
-    - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
     - "import_csv_dialogs.py": loading/import-csv-dialogs.md
+    - "SIA_manager.py": loading/sia-manager.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -121,13 +121,13 @@ nav:
     - "peak_detection.py": peak_detection/peak-detection.md
 - Calibration:
     - Overview: calibration/index.md
+    - "calibration_registry.py": calibration/calibration-registry.md
+    - "ionic_CAL.py": calibration/ionic-cal.md
     - "TE.py": calibration/te.md
+    - "te_common.py": calibration/te-common.md
     - "TE_input.py": calibration/te-input.md
     - "TE_mass.py": calibration/te-mass.md
     - "TE_number.py": calibration/te-number.md
-    - "calibration_registry.py": calibration/calibration-registry.md
-    - "ionic_CAL.py": calibration/ionic-cal.md
-    - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
     - "canvas_widgets.py": canvas_shared/canvas-widgets.md

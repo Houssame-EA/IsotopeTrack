@@ -2,6 +2,41 @@
 
 Isobaric correction engine for spICP-ToF-MS.
 
+This module is pure logic. It does NOT own any element/abundance data and does
+NOT import the GUI. All element data is read through accessors that are passed
+in (the same ones MainWindow already uses), so abundances live in exactly one
+place: PeriodicTableWidget.
+
+Design decisions (agreed in discussion):
+  - Correction is applied UPSTREAM, on the raw signal trace, before particle
+    detection. Everything downstream (detection, counts, mass, size) then reads
+    already-clean data.
+  - Overlaps come exclusively from the known interference list in
+    data/interference_corrections.json (published ICP-MS correction equations),
+    NOT from an automatic abundance scan.
+  - The default factor R and monitor are the table's published values. The user
+    can override both per correction; overrides persist in
+    data/isobaric_overrides.json and the defaults are always kept for Reset.
+  - When the user picks a non-default monitor, R is recomputed as the
+    natural-abundance ratio:
+    R = abundance(interferent @ overlap mass) / abundance(interferent @ monitor mass).
+  - Corrected signal is clamped at zero.
+  - A correction is only *applicable* when the monitor isotope is actually
+    measured (present as a data channel).
+
+The arithmetic:
+    corrected_analyte(t) = max( raw_analyte(t) - R * monitor(t), 0 )
+
+Example (Pb measured at 204, Hg interfering, 202Hg as monitor):
+    R = abundance(204Hg) / abundance(202Hg) = 6.87 / 29.86 = 0.2301
+    corrected_204(t) = max( raw_204(t) - 0.2301 * signal_202Hg(t), 0 )
+
+Reused from the rest of the app (passed in, never duplicated here):
+    get_element_by_symbol(symbol) -> element dict with 'isotopes':
+        [{'mass': float, 'abundance': float (percent), 'label': str}, ...]
+    get_elements()                -> list of those element dicts
+    find_closest_isotope(mass)    -> nearest available data-channel mass (float)
+
 ---
 
 ## Constants

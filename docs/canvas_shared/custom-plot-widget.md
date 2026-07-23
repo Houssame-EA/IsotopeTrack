@@ -7,9 +7,9 @@
 | Name | Value |
 |------|-------|
 | `LINE_STYLE_MAP` | `{'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.Do…` |
-| `LINE_STYLE_REVERSE` | `{v: k for (k, v) in LINE_STYLE_MAP.items()}` |
+| `LINE_STYLE_REVERSE` | `{v: k for k, v in LINE_STYLE_MAP.items()}` |
 | `SCATTER_SYMBOLS` | `{'Circle': 'o', 'Square': 's', 'Triangle Up': 't', 'Trian…` |
-| `SCATTER_SYMBOLS_REVERSE` | `{v: k for (k, v) in SCATTER_SYMBOLS.items()}` |
+| `SCATTER_SYMBOLS_REVERSE` | `{v: k for k, v in SCATTER_SYMBOLS.items()}` |
 
 ## Classes
 

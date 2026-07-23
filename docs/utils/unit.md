@@ -2,6 +2,10 @@
 
 Export unit definitions, formatting, and persistence (non-visual).
 
+The Advanced Export Options *dialog* lives in ``tools/unit.py``; everything
+here is pure logic + QSettings persistence so it can be used and tested
+without constructing the GUI.
+
 ---
 
 ## Constants

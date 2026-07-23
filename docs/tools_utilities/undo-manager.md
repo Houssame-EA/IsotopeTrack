@@ -2,6 +2,21 @@
 
 In-session undo/redo for IsotopeTrack's editable analysis state.
 
+Captures the user-editable inputs — isotope selection, per-element detection
+parameters (including parameters-table edits), calibration values, dilution,
+mass-fraction and density settings — as small pickled snapshots, so Ctrl/Cmd+Z
+steps back through setting changes and Ctrl/Cmd+Shift+Z steps forward again.
+
+The loaded raw signal and the computed particle results are deliberately not
+captured, so snapshots stay in the kilobyte range and undo is fast even with a
+multi-gigabyte dataset open. After an undo the inputs revert and the UI
+refreshes; re-run detection to recompute results from the restored parameters.
+
+Changes are detected by polling rather than by instrumenting every mutation
+site, so no other code needs to know undo exists. The history resets when the
+loaded sample set changes, matching the rule that whole-sample changes are not
+undoable.
+
 ---
 
 ## Constants

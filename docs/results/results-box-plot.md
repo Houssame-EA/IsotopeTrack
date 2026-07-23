@@ -2,6 +2,10 @@
 
 Distribution Plot Node – Box / Violin / Strip / Bar-with-errors.
 
+Keeps **PyQtGraph** for interactive zoom/pan.
+Sidebar replaced by **right-click context menu** + settings dialog.
+Uses shared_plot_utils for fonts, colors, sample helpers, and download.
+
 ---
 
 ## Constants

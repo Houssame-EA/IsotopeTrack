@@ -10,13 +10,13 @@
 | `CVI_FUNCS` | `{'silhouette_scores': lambda d, l: float(silhouette_score…` |
 | `METRIC_REGISTRY` | `{'Silhouette': {'display': 'Silhouette Score', 'key': 'si…` |
 | `METRICS` | `list(METRIC_REGISTRY.keys())` |
-| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for (name, spec) in…` |
+| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for name, spec in M…` |
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
-| `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
+| `METRIC_COLORS` | `{name: spec['color'] for name, spec in METRIC_REGISTRY.it…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
 | `PROGRESS_RESOLUTION` | `1000` |
 | `SCALING_OPTIONS` | `['CLR', 'ILR', 'Robust Z-score', 'None']` |
-| `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE']` |
+| `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |
 | `DATA_TYPE_OPTIONS` | `['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…` |
 | `DATA_KEY_MAP` | `{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…` |
 | `CLUSTER_COLORS` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
@@ -86,6 +86,16 @@ Background worker that runs the K-stability bootstrap off the UI thread.
 | `__init__` | `(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p` |  |
 | `cancel` | `(self)` | Request cancellation; the loop stops after the current resample. |
 | `run` | `(self)` | Execute the bootstrap loop on the worker thread and emit results. |
+
+### `_StabilityWorker` *(extends `QThread`)*
+
+Background worker computing bootstrap assignment stability.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, dialog, data, algo, sel_k, ref_labels, n_boot, seed, parent=Non` |  |
+| `cancel` | `(self)` | Request cancellation; the loop stops after the current resample. |
+| `run` | `(self)` | Execute the stability bootstrap loop and emit aggregated results. |
 
 ### `ClusteringDisplayDialog` *(extends `QDialog`)*
 
@@ -181,7 +191,14 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_characterise` | `(self, elements, data)` | Generate cluster characterisation with real element-% composition labels. |
 | `_rebuild_display_labels` | `(self)` | Recompute cluster_type_short and cluster_type from stored composition. |
 | `_apply_display_settings` | `(self)` | Rebuild display labels and redraw all figures without re-clustering. |
+| `_run_stability` | `(self)` | Launch the assignment-stability bootstrap on a worker thread. |
+| `_cancel_stability` | `(self)` | Request cooperative cancellation of the stability worker. |
+| `_on_stability_done` | `(self, payload)` | Store stability results, persist them, and show the result window. |
+| `_on_stability_failed` | `(self, message)` | Report a stability-worker failure to the user. |
+| `_on_stability_thread_finished` | `(self)` | Restore the toolbar and progress state after the worker exits. |
+| `_show_stability_dialog` | `(self)` | Open a window with the stability figure (Jaccard bars + histogram). |
 | `_export_results` | `(self)` | Serialise clustering results and characterisation to a JSON file. |
+| `_export_methods` | `(self)` | Preview and export an auto-generated methods paragraph. |
 
 ### `ClusteringPlotNode` *(extends `QObject`)*
 
@@ -207,10 +224,6 @@ Clustering analysis node with matplotlib figures.
 | `_vote_optimal_per_metric` | `(eval_results, elbow_fn, enabled_metrics=None)` | Select an optimal K per metric by voting across algorithms. |
 | `_palette_to_plot` | `(pal)` | Map an app ``Palette`` (or None) to the plot/theme keys used here. |
 | `_current_plot_palette` | `()` | Return the active plot/theme dict from the app ThemeManager. |
-| `multiplicative_replacement` | `(matrix, frac=0.65, threshold=None)` | Replace zeros in a non-negative composition matrix without distorting ratios. |
-| `_apply_clr` | `(matrix, zero_replacement='additive')` | Centred-log-ratio transform of a non-negative composition matrix. |
-| `_apply_ilr` | `(matrix, zero_replacement='additive')` | Isometric-log-ratio transform yielding ``p - 1`` orthonormal coordinates. |
-| `_apply_robust_zscore` | `(matrix)` | Robust per-column z-score using a consistent scale estimate. |
 | `_filter_rare_particle_types` | `(matrix, sample_labels, original_indices, min_count)` | Remove particles whose elemental signature occurs fewer than min_count times. |
 | `_som_cluster_cmap` | `(name, n_clusters)` | Build a discrete categorical colormap for the SOM cluster grid. |
 | `_contrast_text_for` | `(cmap_name, norm_value)` | Pick black or white text for legibility over a colormap cell. |
@@ -237,3 +250,6 @@ Clustering analysis node with matplotlib figures.
 | `_consensus_k` | `(per_metric_k)` | Return the consensus K and its agreement fraction from per-metric picks. |
 | `_draw_consensus_summary` | `(fig, eval_results, per_sample_eval, cfg, elbow_fn, optimal_per_metric` | Draw a metric × scope consensus decision table for choosing K. |
 | `_draw_clustering` | `(fig, clustering_results, data_matrix, characterisation, cfg, input_da` | Draw cluster scatter plots on a matplotlib Figure. |
+| `_draw_stability` | `(fig, stab, cfg)` | Draw bootstrap stability results: cluster Jaccard bars + particle histogram. |
+| `_algo_params_str` | `(cfg, algo)` | Return a human-readable parameter summary for one algorithm. |
+| `build_methods_paragraph` | `(cfg, optimal_k=None, algorithm=None, n_particles=None, n_elements=Non` | Generate a publication-ready methods paragraph from the node settings. |

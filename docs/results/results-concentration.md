@@ -2,6 +2,15 @@
 
 Concentration-Comparison Plot Node – dot-and-circle strip chart.
 
+Each element gets a horizontal row.
+Individual sample values are small dots (jittered), group means are large
+open circles.  Numeric mean values displayed on the right.
+
+Single sample  → one column of dots per element.
+Multi-sample   → overlaid colours per sample / group.
+
+Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
+
 ---
 
 ## Constants

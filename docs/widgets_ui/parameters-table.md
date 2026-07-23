@@ -1,6 +1,7 @@
 # `parameters_table.py`
 
 Drop-in replacement for the QTableWidget used as the parameters table in
+IsotopeTrack.
 
 ---
 

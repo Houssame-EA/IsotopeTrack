@@ -10,6 +10,7 @@ serializes with the workflow and can be rendered to either PyQtGraph (interactiv
 or Matplotlib (publication export, future work).
 
 Annotation schema (MVP — 5 types):
+
     Common fields:
         'id':    str       — unique identifier (e.g. 'ann_3f9a2b')
         'type':  str       — 'text' | 'vline' | 'hline' | 'vband' | 'rect'

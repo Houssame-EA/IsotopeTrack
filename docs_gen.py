@@ -113,7 +113,7 @@ def fmt_sig(fn):
 def parse_module(path):
     src = path.read_text(encoding="utf-8", errors="replace")
     tree = ast.parse(src)
-    mod_doc = first_line(ast.get_docstring(tree))
+    mod_doc = ast.get_docstring(tree)
 
     constants, classes, functions = [], [], []
     for node in tree.body:
@@ -204,7 +204,7 @@ def main():
             (outdir / f"{slug(f.name)}.md").write_text(page, encoding="utf-8")
             n_m = sum(len(c[3]) for c in classes)
             idx.append(f"### [`{f.name}`]({slug(f.name)}.md)")
-            idx.append(mod_doc or "")
+            idx.append(first_line(mod_doc) or "")
             idx.append("")
             idx.append(f"**{len(classes)}** classes &nbsp;·&nbsp; "
                        f"**{len(funcs)}** functions &nbsp;·&nbsp; "
