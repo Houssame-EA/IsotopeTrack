@@ -117,7 +117,7 @@ class ElementDataBuilder(ResultDataBuilder):
                 mass_fraction = self.mass_fraction_service.get_mass_fraction(element_key, sample_name)
 
                 element = element_key.split('-')[0]
-                element_density = self.mass_fraction_service.get_density_by_element(element)
+                element_density = self.mass_fraction_service.get_density_by_element(element) # TODO: Make this a periodic info
                 compound_density = self.mass_fraction_service.get_element_density(element_key, sample_name)
 
                 particle['mass_fractions_used'][element_display] = mass_fraction

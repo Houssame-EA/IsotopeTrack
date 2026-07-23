@@ -2,7 +2,6 @@
 This file contains code that help the Mass Fraction Calculator to share its
 data with other parts of the code.
 """
-from _hashlib import HASH
 
 from widget.periodic_table_widget import PeriodicTableWidget
 
@@ -143,7 +142,7 @@ class MassFractionService:
         self.sample_densities: dict = {}
         self.sample_molecular_weights: dict = {}
 
-    def add_fingerprint_to(self, crypto: HASH):
+    def add_fingerprint_to(self, crypto):
         crypto.update(repr(self.element_mass_fractions).encode('utf-8', 'replace'))
         crypto.update(repr(self.element_densities).encode('utf-8', 'replace'))
         crypto.update(repr(self.sample_mass_fractions).encode('utf-8', 'replace'))
