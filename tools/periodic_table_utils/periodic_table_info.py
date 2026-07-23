@@ -43,6 +43,15 @@ class PeriodicTableInfo:
             PeriodicTableWidget.create_elements_data()
         ).set_index(_Col.SYMBOL, drop=False)
 
+    def element_exists(self, element: str) -> bool:
+        """
+        Args:
+            element: element to verify the existence
+        Returns:
+            `True` if the element exists, `False` if it doesn't exist.
+        """
+        return element in self.df.index
+
     def get_mass_by_element(self, element: str) -> Optional[float]:
         """
         Args:
@@ -66,5 +75,18 @@ class PeriodicTableInfo:
         try:
             np_value: np.float64 = self.df.at[element, _Col.DENSITY]
             return np_value
+        except KeyError:
+            return None
+
+    def get_element_by_symbol(self, element: str) -> Optional[dict]:
+        """
+        Args:
+            element: Element symbol
+        Returns:
+            Optional[dict]: A `dict` with the element properties
+        """
+        try:
+            value = self.df.loc[element].to_dict()
+            return value
         except KeyError:
             return None
