@@ -1,5 +1,6 @@
 import sys
 import os
+os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
 from tools.cli_utils import get_argument_parser
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.Run")

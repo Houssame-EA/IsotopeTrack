@@ -50,6 +50,16 @@ import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_cluster_tools")
 
 try:
+    import os as _os
+    _os.environ.setdefault('NUMBA_THREADING_LAYER', 'workqueue')
+    from umap import UMAP as _UMAP_CLS
+    _UMAP_OK = True
+except ImportError:
+    _itk_log.debug("Handled exception in <module>")
+    _UMAP_CLS = None
+    _UMAP_OK = False
+
+try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
     _HDBSCAN_OK = True
 except ImportError:
@@ -63,9 +73,12 @@ except ImportError:
         _HDBSCAN_CLS = None
         _HDBSCAN_OK = False
 
+from results.compositional import (
+    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+)
+
 try:
     from results.results_cluster import (
-        _apply_clr, _apply_ilr, _apply_robust_zscore,
         DATA_KEY_MAP, DENSITY_BASED_ALGOS, CVI_FUNCS, METRIC_REGISTRY,
     )
     _HOST_OK = True
@@ -84,71 +97,6 @@ except Exception:
         'Particle Mole %': 'particle_moles_fmol',
     }
     DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
-
-    def _apply_clr(matrix, zero_replacement='additive'):
-        """Centred-log-ratio transform of a non-negative composition matrix.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
-            zero_replacement (str): ``'additive'`` floors zeros at ``1e-10``
-                (legacy default); ``'multiplicative'`` uses
-                :func:`multiplicative_replacement`.
-
-        Returns:
-            np.ndarray: CLR-transformed matrix.
-        """
-        if zero_replacement == 'multiplicative':
-            X = multiplicative_replacement(matrix)
-        else:
-            eps = 1e-10
-            X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
-        log_X = np.log(X)
-        return log_X - log_X.mean(axis=1, keepdims=True)
-
-    def _apply_ilr(matrix, zero_replacement='additive'):
-        """Isometric-log-ratio transform yielding ``p - 1`` coordinates.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
-            zero_replacement (str): Passed through to :func:`_apply_clr`.
-
-        Returns:
-            np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
-        """
-        clr = _apply_clr(matrix, zero_replacement=zero_replacement)
-        p = clr.shape[1]
-        if p < 2:
-            return clr
-        V = np.zeros((p, p - 1), dtype=np.float64)
-        for j in range(p - 1):
-            k = j + 1
-            scale = np.sqrt(k / (k + 1.0))
-            V[:k, j] = scale / k
-            V[k, j] = -scale
-        return clr @ V
-
-    def _apply_robust_zscore(matrix):
-        """Robust per-column z-score using a consistent scale estimate.
-
-        Centres on the median and divides by ``1.4826 * MAD``, falling back to
-        the column standard deviation when the MAD vanishes and to unit scale for
-        constant columns, so sparse columns cannot be inflated by a near-zero
-        denominator.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
-
-        Returns:
-            np.ndarray: Robust z-score normalised matrix.
-        """
-        X = matrix.astype(np.float64)
-        med = np.median(X, axis=0)
-        mad = np.median(np.abs(X - med), axis=0)
-        scale = 1.4826 * mad
-        std = np.std(X, axis=0)
-        scale = np.where(scale > 1e-10, scale, std)
-        scale = np.where(scale > 1e-10, scale, 1.0)
-        return (X - med) / scale
 
     from sklearn.metrics import (
         silhouette_score, calinski_harabasz_score, davies_bouldin_score,
@@ -371,94 +319,12 @@ ALGORITHMS = list(ALGO_PARAM_SPECS.keys())
 
 DATA_TYPES = list(DATA_KEY_MAP.keys())
 SCALINGS = ['None', 'Robust Z-score', 'CLR', 'ILR']
-DIM_REDUCTIONS = ['None', 'PCA', 't-SNE']
+DIM_REDUCTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
 
 DEFAULT_DATA_TYPES = ['Counts']
 DEFAULT_SCALINGS = ['None']
 DEFAULT_DIM_REDUCTIONS = ['None']
 DEFAULT_ALGORITHMS = ['K-Means']
-
-
-def multiplicative_replacement(matrix, frac=0.65, threshold=None):
-    """Replace zeros in a non-negative composition matrix without distorting ratios.
-
-    Log-ratio transforms (CLR, ILR) are undefined at zero, and the common remedy
-    of substituting a tiny constant such as ``1e-10`` is statistically poor for
-    sparse, zero-inflated data: every zero is mapped to an almost identical, very
-    large negative log value, so the transformed coordinates encode the
-    presence/absence pattern at enormous magnitude and swamp genuine compositional
-    differences. This is acute for single-particle ICP-ToF-MS matrices, where most
-    particles carry signal in only one or a few element channels.
-
-    The multiplicative (a.k.a. simple) replacement strategy substitutes a small
-    positive value ``delta`` for each zero and then multiplicatively rescales the
-    non-zero parts of the same row so the row total is preserved, which keeps the
-    ratios between the observed (non-zero) parts unchanged — the property that
-    makes the replacement coherent for compositional data. ``delta`` is taken as a
-    fraction of a per-column detection floor: by default the smallest strictly
-    positive value seen in each column, which ties the imputed value to the
-    instrument's effective detection limit rather than to an arbitrary constant.
-
-    References:
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-
-    Args:
-        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
-            row is treated as one composition.
-        frac (float): Fraction of the per-column detection floor used as the
-            imputed value ``delta``; ``0.65`` is the value recommended by
-            Martín-Fernández et al. (2003). Must lie in ``(0, 1)``.
-        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
-            detection floor. When ``None`` the smallest strictly positive entry
-            in each column is used, falling back to ``1.0`` for all-zero columns.
-
-    Returns:
-        np.ndarray: A float64 copy of ``matrix`` with zeros replaced and row
-            totals preserved. Rows that are entirely zero are filled with the per-column floor
-            ``delta`` so downstream log-ratios stay finite.
-    """
-    X = np.array(matrix, dtype=np.float64, copy=True)
-    if X.size == 0:
-        return X
-    n_parts = X.shape[1]
-    if threshold is None:
-        floor = np.full(n_parts, np.nan)
-        for j in range(n_parts):
-            col = X[:, j]
-            pos = col[col > 0]
-            floor[j] = pos.min() if pos.size else 1.0
-    else:
-        floor = np.asarray(threshold, dtype=np.float64)
-        if floor.ndim == 0:
-            floor = np.full(n_parts, float(floor))
-    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
-    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
-
-    totals = X.sum(axis=1)
-    out = X.copy()
-    for i in range(X.shape[0]):
-        row = X[i]
-        zero = row <= 0
-        if not zero.any():
-            continue
-        if totals[i] <= 0:
-            out[i] = delta
-            continue
-        imputed = delta[zero]
-        removed = imputed.sum()
-        scale = 1.0 - removed / totals[i]
-        if scale <= 0:
-            out[i] = row + (delta if zero.all() else 0.0)
-            out[i, zero] = delta[zero]
-            continue
-        out[i, ~zero] = row[~zero] * scale
-        out[i, zero] = imputed
-    return out
 
 
 def parse_components(text):
@@ -708,6 +574,11 @@ class Preprocessor:
             perp = min(30, max(5, (m.shape[0] - 1) // 3))
             m = TSNE(n_components=nc, random_state=self.tsne_rs,
                      init='pca', perplexity=perp).fit_transform(m)
+        elif dim_reduction == 'UMAP' and _UMAP_OK and m.shape[1] > 1:
+            nc = min(self.n_components, m.shape[1])
+            nn = min(15, max(2, m.shape[0] - 1))
+            m = _UMAP_CLS(n_components=nc, n_neighbors=nn,
+                          random_state=self.tsne_rs).fit_transform(m)
         self._reduced_cache[key] = m
         return m
 

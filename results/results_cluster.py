@@ -44,6 +44,16 @@ from sklearn.metrics import (
     silhouette_score, calinski_harabasz_score, davies_bouldin_score,
 )
 
+try:
+    import os as _os
+    _os.environ.setdefault('NUMBA_THREADING_LAYER', 'workqueue')
+    from umap import UMAP as _UMAP_CLS
+    _UMAP_OK = True
+except ImportError:
+    _itk_log.debug("Handled exception in <module>")
+    _UMAP_CLS = None
+    _UMAP_OK = False
+
 from scipy.cluster.hierarchy import (
     dendrogram as scipy_dendrogram,
     linkage as scipy_linkage,
@@ -64,6 +74,9 @@ from results.utils_sort import (
     sort_elements_by_mass,
 )
 from results.results_heatmap import draw_combinations_heatmap
+from results.compositional import (
+    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+)
 
 
 class _SafeFigureCanvas(FigureCanvas):
@@ -622,7 +635,7 @@ DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
 PROGRESS_RESOLUTION = 1000
 
 SCALING_OPTIONS = ['CLR', 'ILR', 'Robust Z-score', 'None']
-DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE']
+DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
 
 DATA_TYPE_OPTIONS = [
     'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
@@ -737,196 +750,6 @@ ALGO_LINE_STYLES = {
     'OPTICS':            dict(color='#EA580C', ls='--', marker='*'),
     'Gaussian Mixture':  dict(color='#9333EA', ls='-',  marker='8'),
 }
-
-
-def multiplicative_replacement(matrix, frac=0.65, threshold=None):
-    """Replace zeros in a non-negative composition matrix without distorting ratios.
-
-    Log-ratio transforms are undefined at zero, and substituting a fixed tiny
-    constant such as ``1e-10`` is statistically poor for sparse, zero-inflated
-    data: every zero maps to an almost identical, very large negative log value,
-    so the transformed coordinates end up encoding presence/absence at enormous
-    magnitude and overwhelm genuine compositional differences. This is acute for
-    single-particle ICP-ToF-MS matrices, where most particles carry signal in
-    only one or a few element channels.
-
-    Multiplicative (simple) replacement substitutes a small positive ``delta``
-    for each zero and rescales the non-zero parts of the same row so the row
-    total is preserved, leaving the ratios among the observed parts unchanged —
-    the coherence property required for compositional data. ``delta`` is a
-    fraction of a per-column detection floor (by default the smallest strictly
-    positive value in each column), tying the imputed value to the instrument's
-    effective detection limit rather than to an arbitrary constant.
-
-    References:
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-
-    Args:
-        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
-            row is one composition.
-        frac (float): Fraction of the per-column detection floor used as the
-            imputed value; ``0.65`` follows Martín-Fernández et al. (2003).
-        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
-            detection floor; when ``None`` the smallest strictly positive entry
-            of each column is used, with ``1.0`` for all-zero columns.
-
-    Returns:
-        np.ndarray: A float64 copy with zeros replaced and row totals preserved;
-            all-zero rows are filled with the per-column floor ``delta`` so
-            log-ratios stay finite.
-    """
-    X = np.array(matrix, dtype=np.float64, copy=True)
-    if X.size == 0:
-        return X
-    n_parts = X.shape[1]
-    if threshold is None:
-        floor = np.full(n_parts, np.nan)
-        for j in range(n_parts):
-            col = X[:, j]
-            pos = col[col > 0]
-            floor[j] = pos.min() if pos.size else 1.0
-    else:
-        floor = np.asarray(threshold, dtype=np.float64)
-        if floor.ndim == 0:
-            floor = np.full(n_parts, float(floor))
-    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
-    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
-
-    totals = X.sum(axis=1)
-    out = X.copy()
-    for i in range(X.shape[0]):
-        row = X[i]
-        zero = row <= 0
-        if not zero.any():
-            continue
-        if totals[i] <= 0:
-            out[i] = delta
-            continue
-        removed = delta[zero].sum()
-        scale = 1.0 - removed / totals[i]
-        if scale <= 0:
-            out[i, zero] = delta[zero]
-            continue
-        out[i, ~zero] = row[~zero] * scale
-        out[i, zero] = delta[zero]
-    return out
-
-
-def _apply_clr(matrix, zero_replacement='additive'):
-    """Centred-log-ratio transform of a non-negative composition matrix.
-
-    The CLR maps a composition to log values centred on the per-row geometric
-    mean, giving coordinates suitable for Euclidean-distance clustering of
-    compositional data. Because the logarithm is undefined at zero, zeros must
-    be handled first; the strategy is selectable.
-
-    References:
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
-        zero_replacement (str): ``'additive'`` adds a fixed ``1e-10`` floor
-            (legacy behaviour, retained as the default for reproducibility);
-            ``'multiplicative'`` uses ratio-preserving, detection-limit-aware
-            replacement via :func:`multiplicative_replacement`, which is the
-            statistically preferred treatment for the sparse single-particle case.
-
-    Returns:
-        np.ndarray: CLR-transformed matrix.
-    """
-    if zero_replacement == 'multiplicative':
-        X = multiplicative_replacement(matrix)
-    else:
-        eps = 1e-10
-        X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
-    log_X = np.log(X)
-    return log_X - log_X.mean(axis=1, keepdims=True)
-
-
-def _apply_ilr(matrix, zero_replacement='additive'):
-    """Isometric-log-ratio transform yielding ``p - 1`` orthonormal coordinates.
-
-    The ILR expresses a composition in an orthonormal basis of the Aitchison
-    simplex, removing the singular covariance the CLR leaves behind while
-    preserving Aitchison distances. It is built on the CLR and inherits its zero
-    handling.
-
-    References:
-        J. J. Egozcue, V. Pawlowsky-Glahn, G. Mateu-Figueras and C.
-        Barceló-Vidal, "Isometric logratio transformations for compositional data
-        analysis," *Math. Geol.* 35(3), 2003, 279-300,
-        doi:10.1023/A:1023818214614.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
-        zero_replacement (str): Passed through to :func:`_apply_clr`.
-
-    Returns:
-        np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
-    """
-    clr = _apply_clr(matrix, zero_replacement=zero_replacement)
-    p = clr.shape[1]
-    if p < 2:
-        return clr
-    V = np.zeros((p, p - 1), dtype=np.float64)
-    for j in range(p - 1):
-        k = j + 1
-        scale = np.sqrt(k / (k + 1.0))
-        V[:k, j] = scale / k
-        V[k, j] = -scale
-    return clr @ V
-
-
-def _apply_robust_zscore(matrix):
-    """Robust per-column z-score using a consistent scale estimate.
-
-    Each column is centred on its median and divided by a robust estimate of its
-    standard deviation. The estimate is ``1.4826 * MAD``, where ``1.4826`` is the
-    consistency constant that makes the scaled MAD an unbiased estimator of the
-    standard deviation for Gaussian data.
-
-    The previous implementation divided by the bare MAD and, whenever the MAD was
-    below ``1e-10``, clamped it to ``1e-10``. For single-particle ICP-ToF-MS data
-    that clamp is a trap: any element detected in fewer than half the particles
-    has a median and a MAD of exactly zero, so its column was divided by
-    ``1e-10`` and inflated to magnitudes around ``1e10`` that then dominated every
-    Euclidean distance. Because sparse columns are the rule rather than the
-    exception here, most "Robust Z-score" results were dominated by that
-    artefact. This version instead falls back to the column standard deviation
-    when the MAD vanishes, and to a unit scale only when the column is genuinely
-    constant (in which case the centred column is identically zero and carries no
-    weight), so no column can explode.
-
-    References:
-        P. J. Rousseeuw and C. Croux, "Alternatives to the median absolute
-        deviation," *J. Am. Stat. Assoc.* 88(424), 1993, 1273-1283,
-        doi:10.1080/01621459.1993.10476408.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
-
-    Returns:
-        np.ndarray: Robust z-score normalised matrix with no column inflated by a
-            near-zero scale.
-    """
-    X = matrix.astype(np.float64)
-    med = np.median(X, axis=0)
-    mad = np.median(np.abs(X - med), axis=0)
-    scale = 1.4826 * mad
-    std = np.std(X, axis=0)
-    scale = np.where(scale > 1e-10, scale, std)
-    scale = np.where(scale > 1e-10, scale, 1.0)
-    return (X - med) / scale
 
 
 def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_count):
@@ -2555,7 +2378,10 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
         ax.set_yticks([])
         return
 
-    n = len(active)
+    gmm_res = (eval_results.get('Gaussian Mixture', {})
+               if 'Gaussian Mixture' in algos else {})
+    has_bic = bool(gmm_res.get('gmm_bic'))
+    n = len(active) + (1 if has_bic else 0)
     cols = min(2, n)
     rows = math.ceil(n / cols)
 
@@ -2611,6 +2437,37 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
             leg.get_frame().set_linewidth(0.5)
 
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+    if has_bic:
+        ax = axes[len(active)]
+        k_vals = gmm_res.get('k_values', [])
+        bic = gmm_res.get('gmm_bic', [])
+        aic = gmm_res.get('gmm_aic', [])
+        if k_vals and len(bic) == len(k_vals):
+            ax.plot(k_vals, bic, color='#9333EA', marker='o',
+                    markersize=cfg.get('eval_marker_size', 5),
+                    linewidth=cfg.get('eval_line_width', 1.8),
+                    label='BIC', alpha=0.85)
+            if len(aic) == len(k_vals):
+                ax.plot(k_vals, aic, color='#F59E0B', marker='s',
+                        linestyle='--',
+                        markersize=cfg.get('eval_marker_size', 5) - 1,
+                        linewidth=cfg.get('eval_line_width', 1.8) - 0.2,
+                        label='AIC', alpha=0.85)
+            best_k = k_vals[int(np.argmin(bic))]
+            ax.axvline(best_k, color='#DC2626', linestyle='--',
+                       linewidth=1.5, alpha=0.7,
+                       label=f'min BIC K={best_k}')
+            _style_ax(ax, cfg, xlabel='Number of Clusters (K)',
+                      ylabel='Information criterion',
+                      title=f'BIC / AIC (GMM)  →  K={best_k}')
+            leg = ax.legend(prop=_font_scale(cfg, 'legend')[0],
+                            loc='best', framealpha=0.9,
+                            edgecolor='#CBD5E1')
+            if leg:
+                leg.get_frame().set_linewidth(0.5)
+            ax.xaxis.set_major_locator(
+                mticker.MaxNLocator(integer=True))
 
     total = rows * cols
     for j in range(n, total):
@@ -3086,6 +2943,287 @@ def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg
     fig.tight_layout(pad=1.2)
 
 
+
+def _draw_stability(fig, stab, cfg):
+    """Draw bootstrap stability results: cluster Jaccard bars + particle histogram.
+
+    Left panel: one horizontal bar per reference cluster showing its mean
+    bootstrap Jaccard coefficient, colour-coded with the thresholds of Hennig
+    (2007): >= 0.85 highly stable, 0.6-0.85 usable, < 0.6 unreliable
+    (< 0.5 "dissolved"). Right panel: histogram of per-particle stability —
+    the fraction of resamples in which each particle was reassigned to its
+    original cluster.
+
+    References:
+        C. Hennig, "Cluster-wise assessment of cluster stability,"
+        *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+        doi:10.1016/j.csda.2006.11.025.
+
+    Args:
+        fig (Figure): Target matplotlib figure; cleared on entry.
+        stab (dict): Payload with ``cluster_jaccard`` (``{cid: mean_j}``),
+            ``particle_stability`` (np.ndarray), ``algo`` and ``n_boot``.
+        cfg (dict): Node configuration for fonts and theming.
+    """
+    fig.clear()
+    theme = _plot_theme(cfg)
+    fig.patch.set_facecolor(theme['face'])
+
+    cj = stab.get('cluster_jaccard') or {}
+    ps = np.asarray(stab.get('particle_stability', []))
+    if not cj or ps.size == 0:
+        ax = fig.add_subplot(111)
+        _empty_message(ax, cfg, "No stability results.")
+        return
+
+    algo = stab.get('algo', '')
+    n_boot = stab.get('n_boot', 0)
+    lbl_fp, lbl_col = _font_scale(cfg, 'label')
+    tick_fp, _ = _font_scale(cfg, 'tick')
+
+    ax1 = fig.add_subplot(121)
+    cids = sorted(cj)
+    vals = [cj[c] for c in cids]
+
+    def _bar_color(j):
+        """Return the traffic-light colour for one Jaccard value."""
+        if j >= 0.85:
+            return '#16A34A'
+        if j >= 0.6:
+            return '#F59E0B'
+        return '#DC2626'
+
+    ypos = np.arange(len(cids))
+    ax1.barh(ypos, vals, color=[_bar_color(v) for v in vals],
+             edgecolor=theme['border'], height=0.6)
+    for y, v in zip(ypos, vals):
+        ax1.text(min(v + 0.02, 0.98), y, f'{v:.2f}', va='center',
+                 fontproperties=tick_fp, color=lbl_col)
+    ax1.axvline(0.85, color='#16A34A', linestyle='--', linewidth=1.2,
+                alpha=0.7, label='stable ≥ 0.85')
+    ax1.axvline(0.5, color='#DC2626', linestyle='--', linewidth=1.2,
+                alpha=0.7, label='dissolved < 0.5')
+    ax1.set_yticks(ypos)
+    ax1.set_yticklabels([_cluster_label_short(c) for c in cids],
+                        fontproperties=tick_fp, color=lbl_col)
+    ax1.set_xlim(0, 1.05)
+    ax1.invert_yaxis()
+    _style_ax(ax1, cfg, xlabel='Mean bootstrap Jaccard',
+              title=f'Cluster stability — {algo} (B={n_boot})')
+    leg = ax1.legend(prop=_font_scale(cfg, 'legend')[0], loc='lower right',
+                     framealpha=0.9, edgecolor='#CBD5E1')
+    if leg:
+        leg.get_frame().set_linewidth(0.5)
+
+    ax2 = fig.add_subplot(122)
+    ax2.hist(ps, bins=20, range=(0, 1), color='#2563EB',
+             edgecolor=theme['border'], alpha=0.85)
+    ax2.axvline(float(np.mean(ps)), color='#DC2626', linestyle='--',
+                linewidth=1.5, label=f'mean = {np.mean(ps):.2f}')
+    _style_ax(ax2, cfg, xlabel='Per-particle stability',
+              ylabel='Particles',
+              title='Assignment stability across resamples')
+    leg2 = ax2.legend(prop=_font_scale(cfg, 'legend')[0], loc='upper left',
+                      framealpha=0.9, edgecolor='#CBD5E1')
+    if leg2:
+        leg2.get_frame().set_linewidth(0.5)
+
+    fig.tight_layout(pad=1.5)
+
+
+def _algo_params_str(cfg, algo):
+    """Return a human-readable parameter summary for one algorithm.
+
+    Args:
+        cfg (dict): Node configuration dictionary.
+        algo (str): Algorithm display name (e.g. ``'K-Means'``).
+
+    Returns:
+        str: Comma-separated ``name = value`` pairs for the parameters the
+            selected algorithm actually uses, or an empty string when the
+            algorithm has no exposed parameters.
+    """
+    g = cfg.get
+    parts = {
+        'K-Means': [
+            ('n_init', g('kmeans_n_init', 10)),
+            ('max_iter', g('kmeans_max_iter', 300)),
+        ],
+        'Mini-Batch K-Means': [
+            ('n_init', g('mbkm_n_init', 3)),
+            ('batch_size', g('mbkm_batch_size', 1024)),
+            ('max_iter', g('mbkm_max_iter', 100)),
+        ],
+        'Hierarchical': [
+            ('linkage', g('hier_linkage', 'ward')),
+            ('metric', g('hier_metric', 'euclidean')),
+        ],
+        'DBSCAN': [
+            ('eps', g('dbscan_eps', 0.5)),
+            ('min_samples', g('dbscan_min_samples', 5)),
+            ('metric', g('dbscan_metric', 'euclidean')),
+        ],
+        'HDBSCAN': [
+            ('min_cluster_size', g('hdbscan_min_cluster_size', 5)),
+            ('min_samples', g('hdbscan_min_samples', 5)),
+            ('metric', g('hdbscan_metric', 'euclidean')),
+        ],
+        'OPTICS': [
+            ('min_samples', g('optics_min_samples', 5)),
+            ('metric', g('optics_metric', 'euclidean')),
+            ('cluster_method', g('optics_cluster_method', 'xi')),
+        ],
+        'Mean Shift': [
+            ('bandwidth', 'estimated' if g('meanshift_auto_bw', True)
+             else g('meanshift_bandwidth', 1.0)),
+            ('min_bin_freq', g('meanshift_min_bin_freq', 1)),
+        ],
+        'Spectral': [
+            ('affinity', g('spectral_affinity', 'rbf')),
+            ('n_neighbors', g('spectral_n_neighbors', 10)),
+        ],
+        'GMM': [
+            ('covariance_type', g('gmm_covariance_type', 'full')),
+        ],
+        'Birch': [
+            ('threshold', g('birch_threshold', 0.5)),
+            ('branching_factor', g('birch_branching_factor', 50)),
+        ],
+        'SOM': [
+            ('grid', f"{g('som_rows', 10)} x {g('som_cols', 10)}"),
+            ('sigma', g('som_sigma', 1.0)),
+            ('learning_rate', g('som_lr', 0.5)),
+            ('n_iter', g('som_n_iter', 2000)),
+            ('neuron_clustering', g('som_final_algo', 'Hierarchical (Ward)')),
+        ],
+    }.get(algo, [])
+    return ', '.join(f'{k} = {v}' for k, v in parts)
+
+
+def build_methods_paragraph(cfg, optimal_k=None, algorithm=None,
+                            n_particles=None, n_elements=None):
+    """Generate a publication-ready methods paragraph from the node settings.
+
+    Describes the full pipeline — data type, particle filtering, compositional
+    scaling, dimensionality reduction, clustering algorithm with its parameters
+    and the K-selection procedure — in plain prose with a reference list, so the
+    exact analysis can be pasted into a manuscript's methods section.
+
+    Args:
+        cfg (dict): Node configuration dictionary.
+        optimal_k (int or None): Selected number of clusters, when available.
+        algorithm (str or None): Algorithm actually used; falls back to the
+            configured ``selected_algorithm``.
+        n_particles (int or None): Number of particles in the analysed matrix.
+        n_elements (int or None): Number of element channels in the matrix.
+
+    Returns:
+        str: Methods paragraph followed by a ``References:`` list.
+    """
+    g = cfg.get
+    algo = algorithm or g('selected_algorithm', 'K-Means')
+    refs = []
+
+    size = ''
+    if n_particles is not None and n_elements is not None:
+        size = f' ({n_particles} particles x {n_elements} element channels)'
+    lines = [
+        f"Single-particle multi-element data{size} were clustered on the "
+        f"'{g('data_type_display', 'Counts')}' data type."
+    ]
+    if g('filter_zeros', True):
+        lines.append("Particles with no signal in any selected element "
+                     "channel were removed.")
+    min_count = g('min_particle_type_count', 0)
+    if min_count and min_count > 1:
+        lines.append(f"Particle types (unique element combinations) occurring "
+                     f"fewer than {min_count} times were removed.")
+
+    scaling = g('scaling', 'None')
+    if scaling == 'CLR':
+        lines.append("Compositions were transformed with the centred "
+                     "log-ratio (CLR; Aitchison, 1986), flooring zeros at "
+                     "1e-10 before taking logarithms.")
+        refs.append("Aitchison, J. (1986). The Statistical Analysis of "
+                    "Compositional Data. Chapman & Hall.")
+    elif scaling == 'ILR':
+        lines.append("Compositions were transformed with the isometric "
+                     "log-ratio (ILR; Egozcue et al., 2003), flooring zeros "
+                     "at 1e-10 before taking logarithms.")
+        refs.append("Egozcue, J. J., Pawlowsky-Glahn, V., Mateu-Figueras, G. "
+                    "& Barcelo-Vidal, C. (2003). Isometric logratio "
+                    "transformations for compositional data analysis. "
+                    "Mathematical Geology, 35(3), 279-300.")
+    elif scaling == 'Robust Z-score':
+        lines.append("Each element channel was scaled with a robust z-score "
+                     "(median centring, 1.4826 x MAD; Rousseeuw & Croux, "
+                     "1993).")
+        refs.append("Rousseeuw, P. J. & Croux, C. (1993). Alternatives to "
+                    "the median absolute deviation. Journal of the American "
+                    "Statistical Association, 88(424), 1273-1283.")
+    else:
+        lines.append("No feature scaling was applied.")
+
+    dr = g('dim_reduction', 'None')
+    nc = g('n_components', 2)
+    if dr == 'PCA':
+        lines.append(f"The scaled matrix was reduced to {nc} principal "
+                     f"components (PCA).")
+    elif dr == 't-SNE':
+        lines.append(f"The scaled matrix was embedded into {min(nc, 3)} "
+                     f"dimensions with t-SNE (van der Maaten & Hinton, 2008; "
+                     f"random_state = 42).")
+        refs.append("van der Maaten, L. & Hinton, G. (2008). Visualizing "
+                    "data using t-SNE. Journal of Machine Learning Research, "
+                    "9, 2579-2605.")
+    elif dr == 'UMAP':
+        lines.append(f"The scaled matrix was embedded into {nc} dimensions "
+                     f"with UMAP (McInnes et al., 2018; random_state = 42).")
+        refs.append("McInnes, L., Healy, J. & Melville, J. (2018). UMAP: "
+                    "Uniform Manifold Approximation and Projection for "
+                    "dimension reduction. arXiv:1802.03426.")
+
+    params = _algo_params_str(cfg, algo)
+    k_txt = f" with k = {optimal_k}" if optimal_k else ""
+    if params:
+        lines.append(f"Particles were clustered with {algo}{k_txt} "
+                     f"({params}).")
+    else:
+        lines.append(f"Particles were clustered with {algo}{k_txt}.")
+
+    if algo not in DENSITY_BASED_ALGOS:
+        metrics = g('enabled_metrics') or []
+        metric_txt = (', '.join(metrics) if metrics
+                      else 'the enabled internal validity indices')
+        lines.append(f"The number of clusters was evaluated over "
+                     f"k = {g('min_clusters', 2)}-{g('max_clusters', 10)} "
+                     f"using {metric_txt}, and the optimal k was chosen by "
+                     f"majority vote across indices.")
+        bs_n = g('bootstrap_n', 0)
+        if bs_n:
+            lines.append(f"Stability of the selected k was assessed with "
+                         f"{bs_n} bootstrap resamples "
+                         f"(seed = {g('bootstrap_seed', 42)}).")
+
+    if algo == 'SOM':
+        lines.append("The self-organising map was trained with the "
+                     "application's built-in implementation and its neurons "
+                     "were subsequently grouped as configured.")
+        refs.append("Kohonen, T. (1990). The self-organizing map. "
+                    "Proceedings of the IEEE, 78(9), 1464-1480.")
+    else:
+        lines.append("Clustering algorithms were run with scikit-learn "
+                     "(Pedregosa et al., 2011).")
+        refs.append("Pedregosa, F. et al. (2011). Scikit-learn: Machine "
+                    "learning in Python. Journal of Machine Learning "
+                    "Research, 12, 2825-2830.")
+
+    text = ' '.join(lines)
+    if refs:
+        text += '\n\nReferences:\n' + '\n'.join(f'- {r}' for r in refs)
+    return text
+
+
 class _ClusterWorker(QThread):
     """Background worker that runs the clustering pipeline off the UI thread.
 
@@ -3148,6 +3286,16 @@ class _ClusterWorker(QThread):
                         'n_clusters': len(np.unique(labels[labels >= 0])),
                         'n_noise': int(np.sum(labels == -1)),
                     }
+                    if (algo == 'Gaussian Mixture'
+                            and getattr(dlg, '_last_gmm', None) is not None):
+                        proba = dlg._last_gmm.predict_proba(data)
+                        thr = float(dlg.node.config.get(
+                            'gmm_ambiguous_threshold', 0.7))
+                        max_p = proba.max(axis=1)
+                        final_results[algo]['proba'] = proba
+                        final_results[algo]['max_proba'] = max_p
+                        final_results[algo]['ambiguous'] = int(
+                            (max_p < thr).sum())
 
             dlg.final_results = final_results
             self.progressed.emit(75, "Characterising clusters…")
@@ -3331,6 +3479,128 @@ class _BootstrapWorker(QThread):
             self.failed.emit(str(exc))
 
 
+
+class _StabilityWorker(QThread):
+    """Background worker computing bootstrap assignment stability.
+
+    Implements the cluster-wise stability assessment of Hennig (2007): the
+    selected algorithm is refit at the selected K on ``n_boot`` bootstrap
+    resamples of the prepared data matrix. For every reference cluster the
+    best-matching bootstrap cluster is found in each resample and their
+    Jaccard coefficient recorded; the mean over resamples is that cluster's
+    stability (>= 0.85 highly stable, < 0.5 "dissolved"). Simultaneously a
+    per-particle score is accumulated: the fraction of resamples containing
+    the particle in which its bootstrap cluster mapped back to its reference
+    cluster — a consensus measure of how trustworthy each individual
+    assignment is.
+
+    References:
+        C. Hennig, "Cluster-wise assessment of cluster stability,"
+        *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+        doi:10.1016/j.csda.2006.11.025.
+
+    Signals:
+        progressed (float, str): Percent complete (0-100) and a status message.
+        done (object): Emitted on success with ``{'algo', 'n_boot',
+            'cluster_jaccard', 'particle_stability', 'cancelled'}``.
+        failed (str): Emitted on error with the exception message.
+    """
+
+    progressed = Signal(float, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, dialog, data, algo, sel_k, ref_labels,
+                 n_boot, seed, parent=None):
+        super().__init__(parent)
+        self._dlg = dialog
+        self._data = data
+        self._algo = algo
+        self._sel_k = sel_k
+        self._ref = np.asarray(ref_labels)
+        self._n_boot = n_boot
+        self._seed = seed
+        self._cancel = False
+
+    def cancel(self):
+        """Request cancellation; the loop stops after the current resample."""
+        self._cancel = True
+
+    def run(self):
+        """Execute the stability bootstrap loop and emit aggregated results."""
+        try:
+            dlg = self._dlg
+            data = self._data
+            ref = self._ref
+            n = len(data)
+            rng = np.random.default_rng(self._seed)
+            cids = sorted(int(c) for c in np.unique(ref) if c >= 0)
+            jaccard = {c: [] for c in cids}
+            hits = np.zeros(n, dtype=np.float64)
+            seen = np.zeros(n, dtype=np.float64)
+            completed = 0
+
+            for b in range(self._n_boot):
+                if self._cancel:
+                    break
+                self.progressed.emit(
+                    100.0 * b / self._n_boot,
+                    f"Stability resample {b + 1}/{self._n_boot}…")
+                idx = rng.integers(0, n, n)
+                u = np.unique(idx)
+                if len(u) < 10:
+                    continue
+                lb = dlg._run_algo(self._algo, self._sel_k, data[u])
+                if lb is None:
+                    continue
+                lb = np.asarray(lb)
+                ref_u = ref[u]
+                bcids = [int(c) for c in np.unique(lb) if c >= 0]
+                if not bcids:
+                    continue
+
+                mapping = {}
+                for c in bcids:
+                    mc = lb == c
+                    overlaps = [(int(np.sum(mc & (ref_u == r))), r)
+                                for r in cids]
+                    mapping[c] = max(overlaps)[1]
+
+                for r in cids:
+                    mr = ref_u == r
+                    if not mr.any():
+                        continue
+                    best = 0.0
+                    for c in bcids:
+                        mc = lb == c
+                        union = int(np.sum(mr | mc))
+                        if union:
+                            best = max(best,
+                                       int(np.sum(mr & mc)) / union)
+                    jaccard[r].append(best)
+
+                mapped = np.array([mapping.get(int(v), -9) for v in lb])
+                valid = lb >= 0
+                seen[u] += valid
+                hits[u] += valid & (mapped == ref_u)
+                completed += 1
+
+            particle = hits / np.maximum(seen, 1.0)
+            payload = {
+                'algo': self._algo,
+                'n_boot': completed,
+                'cluster_jaccard': {
+                    c: float(np.mean(v)) for c, v in jaccard.items() if v},
+                'particle_stability': particle,
+                'particle_n_sampled': seen,
+                'cancelled': self._cancel,
+            }
+            self.done.emit(payload)
+        except Exception as exc:
+            _itk_log.exception("Handled exception in run")
+            self.failed.emit(str(exc))
+
+
 class ClusteringDisplayDialog(QDialog):
     """
     Main clustering dialog with toolbar, tabs, and right-click menus.
@@ -3355,6 +3625,7 @@ class ClusteringDisplayDialog(QDialog):
         self.selected_metric = None
         self.bootstrap_results = {}
         self.bootstrap_stability = {}
+        self.cluster_stability = {}
         self._bootstrap_cancel = False
         self.per_sample_eval = {}
         self.per_sample_optk = {}
@@ -3636,6 +3907,15 @@ class ClusteringDisplayDialog(QDialog):
             "that picked the same K — high = stable choice.")
         tl.addWidget(self.bs_btn)
 
+        self.stab_btn = self._make_btn("↻ Stability", '#2563EB',
+                                       self._run_stability)
+        self.stab_btn.setEnabled(False)
+        self.stab_btn.setToolTip(
+            "Refit the selected algorithm on B bootstrap resamples and "
+            "score how reproducible each cluster and each particle "
+            "assignment is (cluster-wise Jaccard, Hennig 2007).")
+        tl.addWidget(self.stab_btn)
+
         self.optimal_label = QLabel("Optimal K: —")
         tl.addWidget(self.optimal_label)
 
@@ -3687,6 +3967,13 @@ class ClusteringDisplayDialog(QDialog):
         self.export_btn = self._make_btn("Export", '#2563EB', self._export_results)
         self.export_btn.setEnabled(False)
         tl.addWidget(self.export_btn)
+
+        self.methods_btn = self._make_btn("Methods", '#2563EB', self._export_methods)
+        self.methods_btn.setEnabled(False)
+        self.methods_btn.setToolTip(
+            "Generate a publication-ready methods paragraph and settings "
+            "JSON describing this analysis.")
+        tl.addWidget(self.methods_btn)
 
         self.progress = QProgressBar()
         self.progress.setFixedWidth(200)
@@ -3907,7 +4194,7 @@ class ClusteringDisplayDialog(QDialog):
                 lambda _, e=_elev, a=_azim: self._set_3d_view(e, a))
             _3d_hl.addWidget(_vbtn)
 
-        self._3d_info = QLabel("ℹ Set Dim. Reduction = PCA or t-SNE, Components = 3")
+        self._3d_info = QLabel("ℹ Set Dim. Reduction = PCA, t-SNE or UMAP, Components = 3")
         self._3d_info.setStyleSheet("color:#6B7280;font-size:10px;")
         _3d_hl.addWidget(self._3d_info)
 
@@ -4605,7 +4892,7 @@ class ClusteringDisplayDialog(QDialog):
             ax = target_fig.add_subplot(111)
             msg = ("No 3D data available.\n\n"
                    "In ⚙ Configure → Preprocessing:\n"
-                   "  • Dim. Reduction = PCA  or  t-SNE\n"
+                   "  • Dim. Reduction = PCA, t-SNE or UMAP\n"
                    "  • Components = 3\n\n"
                    "Then re-run ① Evaluate K → ② Cluster.")
             ax.text(0.5, 0.5, msg, ha='center', va='center',
@@ -4626,6 +4913,8 @@ class ClusteringDisplayDialog(QDialog):
             ax_labels = ('PC 1', 'PC 2', 'PC 3')
         elif dr == 't-SNE':
             ax_labels = ('t-SNE 1', 't-SNE 2', 't-SNE 3')
+        elif dr == 'UMAP':
+            ax_labels = ('UMAP 1', 'UMAP 2', 'UMAP 3')
         else:
             ax_labels = ('Feature 1', 'Feature 2', 'Feature 3')
 
@@ -5310,6 +5599,11 @@ class ClusteringDisplayDialog(QDialog):
         elif dr == 't-SNE':
             nc = min(cfg.get('n_components', 2), 3)
             matrix = TSNE(n_components=nc, random_state=42).fit_transform(matrix)
+        elif dr == 'UMAP' and _UMAP_OK:
+            nc = min(cfg.get('n_components', 2), matrix.shape[1])
+            nn = min(15, max(2, matrix.shape[0] - 1))
+            matrix = _UMAP_CLS(n_components=nc, n_neighbors=nn,
+                               random_state=42).fit_transform(matrix)
 
         return matrix
 
@@ -5358,11 +5652,14 @@ class ClusteringDisplayDialog(QDialog):
                 ).fit_predict(data)
 
             elif name == 'Gaussian Mixture':
-                return GaussianMixture(
+                gm = GaussianMixture(
                     n_components=k,
                     covariance_type=cfg.get('gmm_covariance_type', 'full'),
                     random_state=42,
-                ).fit_predict(data)
+                )
+                labels = gm.fit_predict(data)
+                self._last_gmm = gm
+                return labels
 
             elif name == 'DBSCAN':
                 return DBSCAN(
@@ -5592,6 +5889,10 @@ class ClusteringDisplayDialog(QDialog):
                             continue
                         key = METRIC_REGISTRY[metric]['key']
                         pending[key] = CVI_FUNCS[key](data, labels)
+                    if (algo == 'Gaussian Mixture'
+                            and getattr(self, '_last_gmm', None) is not None):
+                        pending['gmm_bic'] = float(self._last_gmm.bic(data))
+                        pending['gmm_aic'] = float(self._last_gmm.aic(data))
                 except Exception:
                     _itk_log.exception("Handled exception in _evaluate_data")
                     step += 1
@@ -5600,7 +5901,7 @@ class ClusteringDisplayDialog(QDialog):
                     continue
                 res['k_values'].append(k)
                 for mk, sv in pending.items():
-                    res[mk].append(sv)
+                    res.setdefault(mk, []).append(sv)
                 step += 1
                 if progress_cb is not None:
                     progress_cb(step / total_steps)
@@ -6258,6 +6559,7 @@ class ClusteringDisplayDialog(QDialog):
                 'selected_metric': self.selected_metric,
                 'bootstrap_results': self.bootstrap_results,
                 'bootstrap_stability': self.bootstrap_stability,
+                'cluster_stability': self.cluster_stability,
                 'per_sample_eval': self.per_sample_eval,
                 'per_sample_optk': self.per_sample_optk,
                 'data_matrix': self._data_matrix_cache,
@@ -6292,6 +6594,7 @@ class ClusteringDisplayDialog(QDialog):
             self.selected_metric = st.get('selected_metric')
             self.bootstrap_results = st.get('bootstrap_results', {})
             self.bootstrap_stability = st.get('bootstrap_stability', {})
+            self.cluster_stability = st.get('cluster_stability', {})
             self.per_sample_eval = st.get('per_sample_eval', {})
             self.per_sample_optk = st.get('per_sample_optk', {})
             self._data_matrix_cache = st.get('data_matrix')
@@ -6329,6 +6632,8 @@ class ClusteringDisplayDialog(QDialog):
             self._draw_overview()
 
             self.export_btn.setEnabled(True)
+            self.methods_btn.setEnabled(True)
+            self.stab_btn.setEnabled(True)
             sel_k = st.get('sel_k')
             self.status.setText(
                 f"Restored clustering results — K={sel_k}" if sel_k
@@ -6394,8 +6699,19 @@ class ClusteringDisplayDialog(QDialog):
             self._draw_overview()
 
             self.export_btn.setEnabled(True)
+            self.methods_btn.setEnabled(True)
+            self.stab_btn.setEnabled(True)
             self._set_progress(100.0)
-            self.status.setText(f"Clustering complete — K={sel_k}")
+            gmm_fr = self.final_results.get('Gaussian Mixture', {})
+            if 'ambiguous' in gmm_fr:
+                thr = float(self.node.config.get(
+                    'gmm_ambiguous_threshold', 0.7))
+                self.status.setText(
+                    f"Clustering complete — K={sel_k} — GMM: "
+                    f"{gmm_fr['ambiguous']} ambiguous particles "
+                    f"(max membership < {thr:.0%})")
+            else:
+                self.status.setText(f"Clustering complete — K={sel_k}")
             self._persist_results_to_node(sel_k)
 
             if data.shape[1] >= 3:
@@ -6802,6 +7118,145 @@ class ClusteringDisplayDialog(QDialog):
                                input_data=self.node.input_data)
                 self.som_canvas.draw()
 
+    def _run_stability(self):
+        """Launch the assignment-stability bootstrap on a worker thread.
+
+        Requires a completed ② Cluster run. The selected algorithm is refit
+        at the same K on ``bootstrap_n`` resamples; per-cluster Jaccard and
+        per-particle stability scores are shown in a result window when done.
+        """
+        if getattr(self, '_stability_worker', None) is not None \
+                and self._stability_worker.isRunning():
+            return
+        algo = (self.optimal_algo
+                if self.optimal_algo in self.final_results
+                else next(iter(self.final_results), None))
+        if not algo or self._data_matrix_cache is None:
+            QMessageBox.information(
+                self, "Stability",
+                "Run ② Cluster first — stability refits the final model.")
+            return
+        if algo == 'SOM':
+            QMessageBox.information(
+                self, "Stability",
+                "Stability bootstrap is not supported for SOM.")
+            return
+        labels = self.final_results[algo].get('labels')
+        if labels is None or len(labels) != len(self._data_matrix_cache):
+            QMessageBox.information(
+                self, "Stability", "No labels available — re-run ② Cluster.")
+            return
+        cfg = self.node.config
+        n_boot = int(cfg.get('bootstrap_n', 50))
+        seed = int(cfg.get('bootstrap_seed', 42))
+        sel_k = int(self.final_results[algo].get('n_clusters')
+                    or cfg.get('min_clusters', 2))
+
+        self.stab_btn.setText("✕ Stop")
+        self.stab_btn.setStyleSheet(self._btn_style('#DC2626'))
+        try:
+            self.stab_btn.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            _itk_log.exception("Handled exception in _run_stability")
+        self.stab_btn.clicked.connect(self._cancel_stability)
+
+        self.progress.setVisible(True)
+        self._set_progress(0.0)
+        self.eval_btn.setEnabled(False)
+        self.cluster_btn.setEnabled(False)
+        self.status.setText(
+            f"Bootstrapping assignment stability (n={n_boot})…")
+
+        worker = _StabilityWorker(self, self._data_matrix_cache, algo,
+                                  sel_k, labels, n_boot, seed)
+        worker.progressed.connect(self._on_cluster_progress)
+        worker.done.connect(self._on_stability_done)
+        worker.failed.connect(self._on_stability_failed)
+        worker.finished.connect(self._on_stability_thread_finished)
+        self._stability_worker = worker
+        worker.start()
+
+    def _cancel_stability(self):
+        """Request cooperative cancellation of the stability worker."""
+        if getattr(self, '_stability_worker', None) is not None:
+            self._stability_worker.cancel()
+            self.status.setText("Stopping stability bootstrap…")
+
+    def _on_stability_done(self, payload):
+        """Store stability results, persist them, and show the result window.
+
+        Args:
+            payload (dict): Bundle from :class:`_StabilityWorker` with
+                ``cluster_jaccard``, ``particle_stability``, ``algo``,
+                ``n_boot`` and a ``cancelled`` flag.
+        """
+        self.cluster_stability = payload
+        self._persist_results_to_node()
+        ps = np.asarray(payload.get('particle_stability', []))
+        cj = payload.get('cluster_jaccard', {})
+        if ps.size and cj:
+            n_stable = sum(1 for v in cj.values() if v >= 0.85)
+            prefix = ("Stability stopped early"
+                      if payload.get('cancelled') else "Stability done")
+            self.status.setText(
+                f"{prefix} (B={payload.get('n_boot', 0)}) — "
+                f"{n_stable}/{len(cj)} clusters ≥ 0.85 Jaccard · "
+                f"mean particle stability {ps.mean():.0%}")
+            self._show_stability_dialog()
+        else:
+            self.status.setText("Stability done — no results to display.")
+
+    def _on_stability_failed(self, message):
+        """Report a stability-worker failure to the user.
+
+        Args:
+            message (str): Exception message from the worker.
+        """
+        QMessageBox.critical(self, "Error", f"Stability failed:\n{message}")
+        self.status.setText("Stability failed")
+
+    def _on_stability_thread_finished(self):
+        """Restore the toolbar and progress state after the worker exits."""
+        try:
+            self.stab_btn.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            _itk_log.exception(
+                "Handled exception in _on_stability_thread_finished")
+        self.stab_btn.setText("↻ Stability")
+        self.stab_btn.setStyleSheet(self._btn_style('#2563EB'))
+        self.stab_btn.clicked.connect(self._run_stability)
+        self.progress.setVisible(False)
+        self.eval_btn.setEnabled(True)
+        self.cluster_btn.setEnabled(True)
+        self._stability_worker = None
+
+    def _show_stability_dialog(self):
+        """Open a window with the stability figure (Jaccard bars + histogram)."""
+        if not self.cluster_stability:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Clustering — Assignment Stability")
+        dlg.setMinimumSize(900, 560)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(6, 6, 6, 6)
+        fig = Figure(figsize=(12, 7), dpi=110, tight_layout=True)
+        canvas = _SafeFigureCanvas(fig)
+        vl.addWidget(canvas, stretch=1)
+        btn_hl = QHBoxLayout()
+        dl_btn = QPushButton("💾  Save Figure…")
+        dl_btn.setStyleSheet(
+            "QPushButton { background:#2563EB; color:white; padding:5px 12px; "
+            "border-radius:4px; font-size:11px; }")
+        dl_btn.clicked.connect(
+            lambda: download_matplotlib_figure(fig, dlg, 'stability.png'))
+        btn_hl.addStretch()
+        btn_hl.addWidget(dl_btn)
+        vl.addLayout(btn_hl)
+        _draw_stability(fig, self.cluster_stability, self.node.config)
+        canvas.draw()
+        dlg.show()
+
     def _export_results(self):
         """Serialise clustering results and characterisation to a JSON file.
 
@@ -6824,6 +7279,33 @@ class ClusteringDisplayDialog(QDialog):
                 'evaluation_results': self.eval_results,
                 'cluster_characterisation': {},
             }
+            gmm_fr = self.final_results.get('Gaussian Mixture', {})
+            if gmm_fr.get('proba') is not None:
+                mp = np.asarray(gmm_fr['max_proba'])
+                export['gmm_soft_membership'] = {
+                    'ambiguous_threshold': self.node.config.get(
+                        'gmm_ambiguous_threshold', 0.7),
+                    'ambiguous_count': gmm_fr.get('ambiguous'),
+                    'mean_max_probability': float(mp.mean()),
+                    'max_probability_per_particle': [
+                        round(float(v), 4) for v in mp],
+                    'membership_probabilities': np.round(
+                        np.asarray(gmm_fr['proba']), 4).tolist(),
+                }
+            if self.cluster_stability:
+                cs = self.cluster_stability
+                ps = np.asarray(cs.get('particle_stability', []))
+                export['assignment_stability'] = {
+                    'algorithm': cs.get('algo'),
+                    'n_bootstrap': cs.get('n_boot'),
+                    'cluster_jaccard': {
+                        str(c): round(float(v), 4)
+                        for c, v in (cs.get('cluster_jaccard') or {}).items()},
+                    'mean_particle_stability': (
+                        float(ps.mean()) if ps.size else None),
+                    'particle_stability': [
+                        round(float(v), 4) for v in ps],
+                }
             for algo, clusters in self.characterisation.items():
                 export['cluster_characterisation'][algo] = {}
                 for cid, cd in clusters.items():
@@ -6841,6 +7323,78 @@ class ClusteringDisplayDialog(QDialog):
             QMessageBox.information(self, "Success", f"Exported to: {path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Export failed: {e}")
+
+
+    def _export_methods(self):
+        """Preview and export an auto-generated methods paragraph.
+
+        Builds a publication-ready description of the current preprocessing,
+        algorithm and K-selection settings via
+        :func:`build_methods_paragraph`, previews it in a dialog, and offers
+        to copy it to the clipboard or save it as a text file together with a
+        sibling settings JSON for exact reproducibility.
+        """
+        from PySide6.QtWidgets import QFileDialog, QPlainTextEdit, QApplication
+        import json
+        import os
+
+        data = self._data_matrix_cache
+        elements = getattr(self, '_elements_filtered', None) or []
+        text = build_methods_paragraph(
+            self.node.config,
+            optimal_k=self.optimal_k,
+            algorithm=self.optimal_algo
+            or self.node.config.get('selected_algorithm'),
+            n_particles=data.shape[0] if data is not None else None,
+            n_elements=len(elements) or None,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Methods Export")
+        dlg.resize(680, 480)
+        lay = QVBoxLayout(dlg)
+        edit = QPlainTextEdit(text)
+        edit.setReadOnly(True)
+        lay.addWidget(edit)
+
+        row = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        save_btn = QPushButton("Save…")
+        close_btn = QPushButton("Close")
+        row.addStretch()
+        row.addWidget(copy_btn)
+        row.addWidget(save_btn)
+        row.addWidget(close_btn)
+        lay.addLayout(row)
+
+        def _copy():
+            """Copy the methods text to the system clipboard."""
+            QApplication.clipboard().setText(edit.toPlainText())
+            self.status.setText("Methods paragraph copied to clipboard")
+
+        def _save():
+            """Save the methods text and a sibling settings JSON."""
+            path, _ = QFileDialog.getSaveFileName(
+                dlg, "Save Methods", "clustering_methods.txt",
+                "Text (*.txt);;All Files (*)")
+            if not path:
+                return
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(edit.toPlainText())
+                json_path = os.path.splitext(path)[0] + '_settings.json'
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.node.config, f, indent=2, default=str)
+                QMessageBox.information(
+                    dlg, "Success",
+                    f"Saved:\n{path}\n{json_path}")
+            except Exception as e:
+                QMessageBox.critical(dlg, "Error", f"Save failed: {e}")
+
+        copy_btn.clicked.connect(_copy)
+        save_btn.clicked.connect(_save)
+        close_btn.clicked.connect(dlg.accept)
+        dlg.exec()
 
 
 class ClusteringPlotNode(QObject):

@@ -14,11 +14,11 @@ _itk_log = logging.getLogger("IsotopeTrack.processing.peak_detection")
 from tools.logging_utils import log_context
 from processing import detection_registry
 
-os.environ['NUMBA_THREADING_LAYER'] = 'safe'
+os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
 
 try:
     from numba import jit, config
-    config.THREADING_LAYER = 'safe'
+    config.THREADING_LAYER = 'workqueue'
     NUMBA_AVAILABLE = True
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
