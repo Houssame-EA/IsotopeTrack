@@ -4,6 +4,8 @@ from PySide6.QtGui import QCursor
 import numpy as np
 from scipy.stats import chi2
 
+from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
+
 
 # ---------------------------------------------------------------------------
 #  Isotope anomaly detection (abundance from periodic table widget)
@@ -423,7 +425,7 @@ class InfoTooltip(QWidget):
 
     def update_sample_content(self, current_sample, selected_isotopes,
                               detected_peaks, multi_element_particles,
-                              periodic_table_widget=None):
+                              periodic_table_info: PeriodicTableInfo):
         """
         Update the sample content display with isotope information, SNR quality
         metrics, and isotope-consistency anomaly detection.
@@ -433,7 +435,7 @@ class InfoTooltip(QWidget):
             selected_isotopes (dict): {element: [isotope_mass, ...]}
             detected_peaks (dict): {(element, isotope): [peak_dicts]}
             multi_element_particles (list): List of multi-element particles
-            periodic_table_widget: PeriodicTableWidget instance (provides
+            periodic_table_info: PeriodicTableInfo instance (provides
                 abundance data for anomaly detection). If *None*, the anomaly
                 section is simply skipped.
         """
@@ -584,12 +586,12 @@ class InfoTooltip(QWidget):
                 """)
                 sample_layout.addWidget(overall_widget)
 
-            if periodic_table_widget is not None:
+            if periodic_table_info is not None:
                 all_anomalies = []
                 for element, iso_counts in element_detection_counts.items():
                     if len(iso_counts) < 2:
                         continue
-                    element_data = periodic_table_widget.get_element_by_symbol(element)
+                    element_data = periodic_table_info.get_element_by_symbol(element)
                     if element_data is None:
                         continue
                     anomalies = detect_isotope_anomalies(

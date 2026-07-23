@@ -27,6 +27,9 @@ startup means the previous session did not exit cleanly, and the app offers to
 reload the most recent one.
 """
 from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mainwindow import MainWindow
 
 import os
 import time
@@ -56,10 +59,6 @@ _FINGERPRINT_FIELDS = (
     'calibration_results',
     'average_transport_rate',
     'selected_transport_rate_methods',
-    'element_mass_fractions',
-    'element_densities',
-    'sample_mass_fractions',
-    'sample_densities',
     'sample_dilutions',
     'overlap_threshold_percentage',
     '_global_sigma',
@@ -107,10 +106,10 @@ def _pid_alive(pid: int) -> bool:
 class AutosaveManager(QObject):
     """Owns the autosave timer and the recovery files for one MainWindow."""
 
-    def __init__(self, main_window, interval_ms: int | None = None):
+    def __init__(self, main_window: MainWindow, interval_ms: int | None = None):
         """Create the manager and its poll timer (disabled if autosave is off)."""
         super().__init__(main_window)
-        self.main_window = main_window
+        self.main_window: MainWindow = main_window
         self._writing = False
         self._thread = None
 
@@ -203,6 +202,9 @@ class AutosaveManager(QObject):
                 h.update(repr(getattr(mw, f, None)).encode('utf-8', 'replace'))
             except Exception:
                 pass
+
+        mw.mass_fraction_service.add_fingerprint_to(h)
+
         for attr in ('sample_particle_data', 'sample_detected_peaks', 'sample_results_data'):
             d = getattr(mw, attr, None) or {}
             try:
@@ -324,7 +326,7 @@ class AutosaveManager(QObject):
                 _itk_log.exception("Could not remove recovery file %s", p)
 
     @staticmethod
-    def apply_light_overlay(mw, heavy_path):
+    def apply_light_overlay(mw: MainWindow, heavy_path):
         """Overlay the newer light snapshot onto a just-loaded heavy recovery file."""
         light_path = Path(heavy_path).with_suffix('.light')
         if not light_path.exists():
