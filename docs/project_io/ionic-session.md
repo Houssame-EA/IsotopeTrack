@@ -8,6 +8,8 @@
 
 Custom JSON encoder for NumPy data types.
 
+Converts NumPy arrays and numeric types to JSON-serializable Python types.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `default` | `(self, obj)` | Default encoder for NumPy types. |

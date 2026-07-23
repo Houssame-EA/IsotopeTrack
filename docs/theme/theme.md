@@ -19,6 +19,21 @@ A complete color palette. All fields are hex strings '#rrggbb'.
 
 Singleton theme manager.
 
+Emits ``themeChanged(palette_name)`` whenever the active theme changes.
+Widgets should connect to ``themeChanged`` and reapply their stylesheets.
+
+System-theme integration
+------------------------
+On first run (no saved preference) the OS dark/light setting is used
+automatically.  Call ``sync_with_system()`` once after ``QApplication``
+is created to:
+  • Apply the detected OS preference if follow-system is enabled.
+  • Hook into ``QStyleHints.colorSchemeChanged`` for live OS changes
+    (Qt 6.5 / PySide6 ≥ 6.5, macOS 13+, Windows 10+).
+
+The saved setting can be ``'light'``, ``'dark'``, or ``'system'``
+(follow OS automatically).
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__new__` | `(cls)` |  |

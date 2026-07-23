@@ -2,6 +2,24 @@
 
 Isobaric Correction dialog — calculator-style equation editor.
 
+Overlaps come from the known interference list in
+data/interference_corrections.json. Every analyte channel has one correction
+equation. The default is the published table equation; the user can replace
+it with any calculator-style expression:
+
+    raw - 0.230074*Hg202 + 2*(Ar38/K39) - sqrt(Pt195)
+
+'raw' is the analyte channel; Element+mass tokens (Hg202, Ar38, Cr54)
+reference measured channels; + - * / ** parentheses and log, log10, sqrt,
+exp, abs are supported. The result is always clamped at zero.
+
+Custom equations persist in data/isobaric_overrides.json and are restored
+next session. 'Reset to default' brings back the table equation. Analytes are
+listed by atomic mass, lowest first. Open with:
+
+    from widget.isobaric_correction_dialog import IsobaricCorrectionDialog
+    IsobaricCorrectionDialog(self).exec()
+
 ---
 
 ## Classes

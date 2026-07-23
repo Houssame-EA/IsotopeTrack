@@ -4,11 +4,6 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 
 ---
 
-### [`SIA_manager.py`](sia-manager.md)
-
-
-**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **55** methods
-
 ### [`data_thread.py`](data-thread.md)
 
 
@@ -18,6 +13,11 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 
 
 **5** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **67** methods
+
+### [`SIA_manager.py`](sia-manager.md)
+
+
+**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **55** methods
 
 ### [`tofwerk_loading.py`](tofwerk-loading.md)
 Loading data from TOFWERK ICP-ToF.

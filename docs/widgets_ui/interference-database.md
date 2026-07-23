@@ -2,6 +2,24 @@
 
 ICP-MS Interference Database for spICP-ToF-MS
 
+Comprehensive database of known spectral interferences including:
+- Isobaric (same nominal mass from different elements)
+- Polyatomic / Argide (ArO+, ArAr+, ArN+, ArCl+, etc.)
+- Oxide (MO+, MOH+)
+- Chloride (MCl+)
+- Doubly-charged (M2+)
+- Nitride / Hydride adducts
+
+Used for:
+1. Per-particle interference diagnosis
+2. Smart isotope auto-selection (scoring function)
+3. Visual warnings in periodic table and plots
+
+References:
+    May & Wiedmeyer, Atomic Spectroscopy 19(5), 150-155 (1998)
+    Thomas, Practical Guide to ICP-MS, 3rd Ed. (2013)
+    Balcaen et al., Anal. Chim. Acta 894, 7-19 (2015)
+
 ---
 
 ## Constants

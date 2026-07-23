@@ -2,6 +2,16 @@
 
 Non-blocking toast notifications for IsotopeTrack.
 
+A lightweight, theme-aware replacement for transient ``QMessageBox.information``
+popups. Toasts slide in from the top-right of the host window, stack
+vertically, auto-dismiss, and never steal focus or block the UI.
+
+Usage:
+    self.toasts = ToastManager(self)          # once, on the main window
+    self.toasts.show("Project saved", "success")
+
+Levels: "success", "info", "warning", "error".
+
 ---
 
 ## Constants

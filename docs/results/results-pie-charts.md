@@ -76,6 +76,13 @@ Export format, DPI, background colour.
 
 Matplotlib FigureCanvasQTAgg wrapped in a QWidget.
 
+â€¢ Renders one or more pie / donut subplots in a grid.
+â€¢ Every label annotation is individually draggable.
+â€¢ Drag positions are saved back to cfg['label_positions'][key][label]
+  on mouse-button release â€" they persist across redraws.
+â€¢ Right-click is forwarded to the parent dialog via a callback so the
+  existing context-menu code works unchanged.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, cfg: dict, parent=None)` |  |
