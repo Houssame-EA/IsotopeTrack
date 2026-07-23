@@ -2,14 +2,14 @@ import sys
 import gc
 from pathlib import Path
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
-                               QWidget, QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
+                               QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,
                                QRadioButton, QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView,
                                QAbstractItemView, QSpinBox)
 
 from tools.mass_fraction_calculator_utils.mass_fraction_service import MassFractionService
 from tools.parameters_table import (ParametersTableView, COL_SIGMA)
-from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
+from PySide6.QtCore import (Qt,  QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
                             QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import QGuiApplication
 import numpy as np
@@ -8051,10 +8051,9 @@ if __name__ == "__main__":
     """
     initializes MainWindow, and starts event loop.
     """
-    from PySide6.QtCore import Qt, QCoreApplication
+    from PySide6.QtCore import QCoreApplication
 
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
-    from PySide6 import QtWebEngineWidgets
 
     app = QApplication(sys.argv)
     theme.sync_with_system()
