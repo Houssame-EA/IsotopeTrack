@@ -4,15 +4,12 @@ This file contains a readonly service (info) for periodic table data.
 from enum import StrEnum, auto
 from typing import Optional
 
-import numpy as np
-import pandas as pd
-
 from widget.periodic_table_widget import PeriodicTableWidget
 
 
 class _Col(StrEnum):
     """
-    Columns in the dataframe and the maps of the `PeriodicTableInfo`.
+    Columns in the maps of the `PeriodicTableInfo`.
     Notes:
         This is supposed to be an inner class of `PeriodicTableInfo` but,
         for readability it was put outside.
@@ -39,9 +36,9 @@ class PeriodicTableInfo:
     """
 
     def __init__(self):
-        self.df = pd.DataFrame(
-            PeriodicTableWidget.create_elements_data()
-        ).set_index(_Col.SYMBOL, drop=False)
+        self.elements = {element_info[_Col.SYMBOL]: element_info
+                         for element_info in
+                         PeriodicTableWidget.create_elements_data()}
 
     def element_exists(self, element: str) -> bool:
         """
@@ -50,7 +47,7 @@ class PeriodicTableInfo:
         Returns:
             `True` if the element exists, `False` if it doesn't exist.
         """
-        return element in self.df.index
+        return element in self.elements.keys()
 
     def get_mass_by_element(self, element: str) -> Optional[float]:
         """
@@ -59,24 +56,17 @@ class PeriodicTableInfo:
         Returns:
             The mass of the element based on the symbol passed.
         """
-        try:
-            np_value: np.float64 = self.df.at[element, _Col.MASS]
-            return np_value
-        except KeyError:
-            return None
+        return self.elements.get(element, {}).get(_Col.MASS, None)
 
     def get_density_by_element(self, element: str) -> Optional[float]:
         """
         Args:
             element: element symbol
         Returns:
-            Optional[float]: The density of the element based on the symbol passed.
+            Optional[float]: The density of the element based on the
+            symbol passed.
         """
-        try:
-            np_value: np.float64 = self.df.at[element, _Col.DENSITY]
-            return np_value
-        except KeyError:
-            return None
+        return self.elements.get(element, {}).get(_Col.DENSITY, None)
 
     def get_element_by_symbol(self, element: str) -> Optional[dict]:
         """
@@ -85,8 +75,4 @@ class PeriodicTableInfo:
         Returns:
             Optional[dict]: A `dict` with the element properties
         """
-        try:
-            value = self.df.loc[element].to_dict()
-            return value
-        except KeyError:
-            return None
+        return self.elements.get(element, None)

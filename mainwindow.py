@@ -6922,7 +6922,6 @@ class MainWindow(QMainWindow):
                     atomic_mass = self.periodic_table_info.get_mass_by_element(element) or float(isotope)
 
                     mass_fraction = self.mass_fraction_service.get_mass_fraction(element_key, sample_name)
-                    element_density = None
                     compound_density = self.mass_fraction_service.get_element_density(element_key, sample_name)
 
                     element_density = self.periodic_table_info.get_density_by_element(element)
