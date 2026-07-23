@@ -56,10 +56,6 @@ _FINGERPRINT_FIELDS = (
     'calibration_results',
     'average_transport_rate',
     'selected_transport_rate_methods',
-    'element_mass_fractions',
-    'element_densities',
-    'sample_mass_fractions',
-    'sample_densities',
     'sample_dilutions',
     'overlap_threshold_percentage',
     '_global_sigma',
@@ -203,6 +199,11 @@ class AutosaveManager(QObject):
                 h.update(repr(getattr(mw, f, None)).encode('utf-8', 'replace'))
             except Exception:
                 pass
+
+        from mainwindow import MainWindow
+        if isinstance(mw, MainWindow):
+            mw.mass_fraction_service.add_fingerprint_to(h)
+
         for attr in ('sample_particle_data', 'sample_detected_peaks', 'sample_results_data'):
             d = getattr(mw, attr, None) or {}
             try:
