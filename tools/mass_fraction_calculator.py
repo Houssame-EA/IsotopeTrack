@@ -89,7 +89,7 @@ def _element_order_in_formula(formula: str) -> list[str]:
     return order
 
 
-def _reduce_counts(counts: dict) -> dict:
+def reduce_counts(counts: dict) -> dict:
     """Divide all counts by their GCD to get the empirical formula."""
     if not counts:
         return counts
@@ -129,7 +129,7 @@ def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = Non
 
 def canonicalize_preserve_user_order(formula: str) -> str:
     """Reduce stoichiometry but preserve the user's element order."""
-    counts = _reduce_counts(parse_formula_to_counts(formula))
+    counts = reduce_counts(parse_formula_to_counts(formula))
     order = _element_order_in_formula(formula)
     return _join_formula_from_counts(counts, prefer_order=order)
 
@@ -239,7 +239,7 @@ class CSVCompoundDatabase:
 
                     self.formula_to_data.setdefault(raw_formula, []).append(material_data)
 
-                    counts = _reduce_counts(parse_formula_to_counts(raw_formula))
+                    counts = reduce_counts(parse_formula_to_counts(raw_formula))
                     if not counts:
                         continue
                     sig = _signature_from_counts(counts)
@@ -274,7 +274,7 @@ class CSVCompoundDatabase:
     # ------------------------------------------------------------------
 
     def _signature_for_formula(self, formula: str) -> str:
-        return _signature_from_counts(_reduce_counts(parse_formula_to_counts(formula)))
+        return _signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
 
     def get_data_by_formula_or_signature(self, formula: str) -> list[dict]:
         return self.signature_to_data.get(self._signature_for_formula(formula), [])
@@ -561,7 +561,7 @@ class FormulaComboBox(QComboBox):
         dens = picked_density if picked_density > 0 else self.csv_database.best_density_for_formula(user_canon)
         self._set_editor_text(user_canon)
 
-        counts = _reduce_counts(parse_formula_to_counts(user_canon))
+        counts = reduce_counts(parse_formula_to_counts(user_canon))
         if len(counts) >= 2:
             self.filter_to_formula(user_canon)
         else:
@@ -585,7 +585,7 @@ class FormulaComboBox(QComboBox):
         dens = self.csv_database.best_density_for_formula(user_canon)
         self._set_editor_text(user_canon)
 
-        counts = _reduce_counts(parse_formula_to_counts(user_canon))
+        counts = reduce_counts(parse_formula_to_counts(user_canon))
         if len(counts) >= 2:
             self.filter_to_formula(user_canon)
         else:
@@ -1196,7 +1196,7 @@ class MassFractionCalculator(QDialog):
             return
         element = el_item.text()
 
-        counts = _reduce_counts(parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         if not counts:
             mf = 1.0
         else:
@@ -1218,7 +1218,7 @@ class MassFractionCalculator(QDialog):
         self.table.setItem(row, self.COL_MASSFRAC, self._make_readonly_item(f"{mf:.6f}"))
 
     def _calc_molecular_weight(self, row: int, formula: str):
-        counts = _reduce_counts(parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         mw = 0.0
         valid = bool(counts)
         for el, n in counts.items():
@@ -1243,7 +1243,7 @@ class MassFractionCalculator(QDialog):
         self._calc_mass_fraction(row, formula)
         self._calc_molecular_weight(row, formula)
 
-        counts = _reduce_counts(parse_formula_to_counts(formula))
+        counts = reduce_counts(parse_formula_to_counts(formula))
         if len(counts) <= 1:
             el_item = self.table.item(row, self.COL_ELEMENT)
             ed = self._element_data(el_item.text()) if el_item else None

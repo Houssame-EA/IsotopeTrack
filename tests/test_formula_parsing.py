@@ -10,7 +10,7 @@ from tools.mass_fraction_calculator import (
     parse_formula_to_counts,
     _safe_int,
     _element_order_in_formula,
-    _reduce_counts,
+    reduce_counts,
     _signature_from_counts,
     _join_formula_from_counts,
     canonicalize_preserve_user_order,
@@ -71,14 +71,14 @@ class TestElementOrder:
 
 class TestReduceCounts:
     def test_divides_by_gcd(self):
-        assert _reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
-        assert _reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
+        assert reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
+        assert reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
 
     def test_already_reduced_unchanged(self):
-        assert _reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
+        assert reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
 
     def test_empty(self):
-        assert _reduce_counts({}) == {}
+        assert reduce_counts({}) == {}
 
 
 class TestSignature:
