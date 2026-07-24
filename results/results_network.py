@@ -66,6 +66,7 @@ DEFAULT_CONFIG = {
     'edge_width_factor':    3.0,
     'node_radius':          0.06,
     'scale_node_size_by_amount': False,
+    'node_size_max_scale': 3.0,
     'show_labels':          True,
     'show_edge_count':      True,
     'show_sample_count':    True,
@@ -198,18 +199,32 @@ def _node_size_note_text(cfg):
                                                  ## the lengend invariance? 11:26 10/06/2026
     return (
         f"Node size: log10-scaled by {data_type} ({aggregation}); "
-        f"smallest valid node has base radius; max radius = {_node_size_max_scale():g}x base"
+        f"smallest valid node has base radius; max radius = {_node_size_max_scale(cfg):g}x base"
     )
 
 
-def _node_size_max_scale():
-    """Return the current maximum node-radius scale for proportional sizing.
+NODE_SIZE_MAX_SCALE_MIN = 1.5
+NODE_SIZE_MAX_SCALE_MAX = 5.0
+NODE_SIZE_MAX_SCALE_DEFAULT = 3.0
+
+
+def _node_size_max_scale(cfg):
+    """Return the user-configured maximum node-radius scale for proportional sizing.
+
+    Args:
+        cfg (dict): Current plot configuration.
 
     Returns:
         float: Maximum allowed radius multiplier relative to the configured base
-            node radius.
+            node radius, clamped to the supported
+            [``NODE_SIZE_MAX_SCALE_MIN``, ``NODE_SIZE_MAX_SCALE_MAX``] range.
     """
-    return 4.0
+    value = cfg.get('node_size_max_scale', NODE_SIZE_MAX_SCALE_DEFAULT)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = NODE_SIZE_MAX_SCALE_DEFAULT
+    return min(NODE_SIZE_MAX_SCALE_MAX, max(NODE_SIZE_MAX_SCALE_MIN, value))
 
 
 def _node_size_visual_legend_enabled(cfg):
@@ -316,7 +331,6 @@ def _node_size_legend_scales(max_scale):
     Returns:
         list[float]: Ordered example radius multipliers for the visual legend.
     """
-    max_scale = _node_size_max_scale()
     preferred = [1.0, 1.5, 2.0]
     if max_scale >= preferred[-1]:
         return preferred
@@ -419,7 +433,7 @@ def _top_annotation_layout(has_legend, has_node_size_note):
     return layout
 
 
-def _compute_node_radii(elements, node_amounts, base_radius, enabled):
+def _compute_node_radii(elements, node_amounts, base_radius, enabled, max_scale):
     """Compute per-element node radii from aggregated isotope amounts.
 
     When proportional sizing is disabled, or when no valid positive amounts are
@@ -434,6 +448,8 @@ def _compute_node_radii(elements, node_amounts, base_radius, enabled):
             for the currently selected data type.
         base_radius (float): Fixed node radius from plot config.
         enabled (bool): Whether proportional node sizing is active.
+        max_scale (float): User-configured maximum radius multiplier relative
+            to ``base_radius``.
 
     Returns:
         dict[str, float]: Radius to use for each canonical element key.
@@ -451,7 +467,6 @@ def _compute_node_radii(elements, node_amounts, base_radius, enabled):
         return base_radii
 
     min_valid = min(valid_values.values())
-    max_scale = _node_size_max_scale()
     radius_by_element = {}
     for element in elements:
         value = valid_values.get(element)
@@ -607,6 +622,7 @@ class NetworkSettingsDialog(QDialog):
         self.labels_cb = None
         self.scale_node_sizes_cb = None
         self.node_size_agg_combo = None
+        self.node_size_max_scale_spin = None
         self.node_size_note = None
         self.edge_count_cb = None
         self.sample_count_cb = None
@@ -652,6 +668,18 @@ class NetworkSettingsDialog(QDialog):
             self.node_size_agg_combo.setToolTip(
                 "Controls how per-isotope values are aggregated before log10 node-size scaling.")
             f1.addRow("Node Size Aggregation:", self.node_size_agg_combo)
+            self.node_size_max_scale_spin = QDoubleSpinBox()
+            self.node_size_max_scale_spin.setRange(
+                NODE_SIZE_MAX_SCALE_MIN, NODE_SIZE_MAX_SCALE_MAX)
+            self.node_size_max_scale_spin.setDecimals(2)
+            self.node_size_max_scale_spin.setSingleStep(0.1)
+            self.node_size_max_scale_spin.setValue(
+                self._cfg.get('node_size_max_scale', NODE_SIZE_MAX_SCALE_DEFAULT))
+            self.node_size_max_scale_spin.setToolTip(
+                f"Radius of the largest node as a multiple of the smallest (base) node. "
+                f"Must be between {NODE_SIZE_MAX_SCALE_MIN:g}x and {NODE_SIZE_MAX_SCALE_MAX:g}x. "
+                f"Default {NODE_SIZE_MAX_SCALE_DEFAULT:g}x.")
+            f1.addRow("Max Node Size Multiplier:", self.node_size_max_scale_spin)
             self.node_size_note = QLabel(
                 "Sum gives total burden; Mean gives typical contributing-event value. "
                 "Mean is usually more interpretable for diameter-based data types.")
@@ -783,6 +811,7 @@ class NetworkSettingsDialog(QDialog):
             'scale_node_size_by_amount': self.scale_node_sizes_cb.isChecked() if self.scale_node_sizes_cb else self._cfg.get('scale_node_size_by_amount', False),
             'node_size_aggregation': _normalize_node_size_aggregation(
                 self.node_size_agg_combo.currentText() if self.node_size_agg_combo else self._cfg.get('node_size_aggregation', 'Sum')),
+            'node_size_max_scale': self.node_size_max_scale_spin.value() if self.node_size_max_scale_spin else self._cfg.get('node_size_max_scale', NODE_SIZE_MAX_SCALE_DEFAULT),
             'edge_alpha':           self.alpha_spin.value() if self.alpha_spin else self._cfg.get('edge_alpha', 0.6),
             'edge_width_factor':    self.width_spin.value() if self.width_spin else self._cfg.get('edge_width_factor', 3.0),
             'node_radius':          self.node_r.value() if self.node_r else self._cfg.get('node_radius', 0.06),
@@ -820,6 +849,7 @@ class NetworkSettingsDialog(QDialog):
             self.width_spin,
             self.node_r,
             self.radius_spin,
+            self.node_size_max_scale_spin,
         ):
             if widget is not None:
                 widget.interpretText()
@@ -1092,7 +1122,8 @@ class NetworkDisplayDialog(QDialog):
         label_mode = cfg.get('label_mode', 'Symbol')
         fc       = get_font_config(cfg)
         radius_by_element = _compute_node_radii(
-            elements, node_amounts, node_r, scale_node_sizes)
+            elements, node_amounts, node_r, scale_node_sizes,
+            _node_size_max_scale(cfg))
 
         fmt_labels = [format_element_label(el, label_mode, Renderer.MATHTEXT, cfg) for el in elements]
 
@@ -1373,7 +1404,7 @@ class NetworkDisplayDialog(QDialog):
             transform=legend_ax.transAxes,
         )
 
-        scales = _node_size_legend_scales(_node_size_max_scale())
+        scales = _node_size_legend_scales(_node_size_max_scale(cfg))
         labels = _node_size_visual_legend_labels(scales)
         min_text = _legend_base_amount_text(network_payloads, data_type)
 
@@ -1406,6 +1437,7 @@ class NetworkDisplayDialog(QDialog):
                 markeredgecolor='white',
                 markeredgewidth=node_edge_width_points,
                 transform=legend_ax.transAxes,
+                clip_on=False,
             )
             legend_ax.text(
                 0.34, y, label,
