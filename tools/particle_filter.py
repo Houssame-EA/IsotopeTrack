@@ -524,6 +524,68 @@ def effective_criteria(config, stale):
     return comp_labels, mode, count_cfg, thr_unit, thr_values, particle_data
 
 
+def _expand_upstream_entries(u):
+    """Flatten ONE upstream dict into source entries, with no cross-stream
+    dedup — every named sample inside it becomes its own entry, even if
+    another upstream dict (or another name in this same one) repeats the
+    name. This is the shared expansion step behind both
+    :func:`normalize_sources` (which dedups on top of this) and duplicate-
+    sample detection (which needs to see the un-deduped list to notice a
+    collision before it gets silently collapsed).
+
+    Args:
+        u (dict): One upstream data dict.
+
+    Returns:
+        list: Source entries with keys 'name', 'origin', 'particles',
+            'total', 'sample_data', 'conc', 'isotopes' and 'parent_window'.
+    """
+    if not u or u.get('type') not in _FILTERABLE_TYPES:
+        return []
+    out = []
+    if u.get('type') == 'multiple_sample_data':
+        by_name, order = {}, []
+        for p in u.get('particle_data') or []:
+            s = p.get('source_sample', '')
+            if s not in by_name:
+                by_name[s] = []
+                order.append(s)
+            by_name[s].append(p)
+        names = list(u.get('sample_names') or order)
+        for name in names:
+            if not name:
+                continue
+            particles = by_name.get(name, [])
+            out.append({
+                'name': name,
+                'origin': 'multi',
+                'particles': particles,
+                'total': len(particles),
+                'sample_data': (u.get('data') or {}).get(name),
+                'conc': (u.get('concentration_meta') or {}).get(name),
+                'isotopes': u.get('selected_isotopes') or [],
+                'parent_window': u.get('parent_window'),
+            })
+    else:
+        name = u.get('sample_name') or 'Sample'
+        particles = u.get('particle_data') or []
+        out.append({
+            'name': name,
+            'origin': 'single',
+            'particles': particles,
+            # Not u.get('total_particles', ...): that field is the
+            # sample node's pre-isotope-selection raw count, which
+            # doesn't match what actually enters the filter once the
+            # sample node's isotope selection has narrowed 'particles'.
+            'total': len(particles),
+            'sample_data': u.get('data'),
+            'conc': (u.get('concentration_meta') or {}).get(name),
+            'isotopes': u.get('selected_isotopes') or [],
+            'parent_window': u.get('parent_window'),
+        })
+    return out
+
+
 def normalize_sources(upstreams):
     """Flatten the connected upstream dicts into one simple sample list.
 
@@ -541,53 +603,144 @@ def normalize_sources(upstreams):
     """
     sources, seen = [], set()
     for u in upstreams or []:
-        if not u or u.get('type') not in _FILTERABLE_TYPES:
-            continue
-        if u.get('type') == 'multiple_sample_data':
-            by_name, order = {}, []
-            for p in u.get('particle_data') or []:
-                s = p.get('source_sample', '')
-                if s not in by_name:
-                    by_name[s] = []
-                    order.append(s)
-                by_name[s].append(p)
-            names = list(u.get('sample_names') or order)
-            for name in names:
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                particles = by_name.get(name, [])
-                sources.append({
-                    'name': name,
-                    'origin': 'multi',
-                    'particles': particles,
-                    'total': len(particles),
-                    'sample_data': (u.get('data') or {}).get(name),
-                    'conc': (u.get('concentration_meta') or {}).get(name),
-                    'isotopes': u.get('selected_isotopes') or [],
-                    'parent_window': u.get('parent_window'),
-                })
-        else:
-            name = u.get('sample_name') or 'Sample'
-            if name in seen:
+        for entry in _expand_upstream_entries(u):
+            if entry['name'] in seen:
                 continue
-            seen.add(name)
-            particles = u.get('particle_data') or []
-            sources.append({
-                'name': name,
-                'origin': 'single',
-                'particles': particles,
-                # Not u.get('total_particles', ...): that field is the
-                # sample node's pre-isotope-selection raw count, which
-                # doesn't match what actually enters the filter once the
-                # sample node's isotope selection has narrowed 'particles'.
-                'total': len(particles),
-                'sample_data': u.get('data'),
-                'conc': (u.get('concentration_meta') or {}).get(name),
-                'isotopes': u.get('selected_isotopes') or [],
-                'parent_window': u.get('parent_window'),
-            })
+            seen.add(entry['name'])
+            sources.append(entry)
     return sources
+
+
+def _duplicate_signature(entry_a, entry_b):
+    """Stable, content-based key identifying a suspected-duplicate pair.
+
+    Based on names and particle counts (not node/link identity, which isn't
+    stable across a project save/load) so a remembered resolution
+    (:attr:`ParticleFilterNode._duplicate_resolutions`) still applies after
+    reconnecting or reopening the project, as long as the same two sample
+    "shapes" recur.
+
+    Args:
+        entry_a (dict): A source entry (see :func:`_expand_upstream_entries`).
+        entry_b (dict): Another source entry being compared against it.
+
+    Returns:
+        str: Order-independent signature string.
+    """
+    pair = sorted([(entry_a['name'], entry_a['total']),
+                   (entry_b['name'], entry_b['total'])])
+    return f"{pair[0][0]}|{pair[0][1]}|{pair[1][0]}|{pair[1][1]}"
+
+
+def _apply_duplicate_resolutions(entries, resolutions):
+    """Apply previously-decided duplicate-sample resolutions to a raw
+    (un-deduped) entry list, before the final same-name dedup in
+    :func:`resolve_and_normalize_sources`.
+
+    Args:
+        entries (list): Un-deduped source entries from
+            :func:`_expand_upstream_entries`.
+        resolutions (dict): Signature -> resolution dict, as recorded by
+            ``ParticleFilterNode._warn_duplicate_source``. Each resolution
+            has an 'action' of 'keep_separate', 'combine', or 'ignore'.
+
+    Returns:
+        list: Transformed entries (still possibly containing same-name
+            pairs the dedup step downstream will then collapse normally).
+    """
+    if not resolutions or not entries:
+        return entries
+    by_sig = {}
+    for i, e in enumerate(entries):
+        for j, o in enumerate(entries):
+            if i >= j:
+                continue
+            if e['name'] != o['name'] and e['total'] != o['total']:
+                continue
+            sig = _duplicate_signature(e, o)
+            res = resolutions.get(sig)
+            if res:
+                by_sig.setdefault(sig, []).append((i, j, res))
+
+    drop = set()
+    renames = {}
+    combine_groups = []
+    for sig, pairs in by_sig.items():
+        i, j, res = pairs[0]
+        action = res.get('action')
+        if action == 'keep_separate':
+            # Only the entry matching what was originally flagged as "new"
+            # gets renamed — identified by matching name+total against the
+            # stored original signature half tagged 'target'.
+            target_name, target_total = res.get('target', (None, None))
+            for idx in (i, j):
+                e = entries[idx]
+                if e['name'] == target_name and e['total'] == target_total:
+                    renames[idx] = res.get('rename_to') or e['name']
+        elif action == 'combine':
+            combine_groups.append((i, j, res.get('combined_name') or 'Combined'))
+        elif action == 'ignore':
+            target_name, target_total = res.get('target', (None, None))
+            for idx in (i, j):
+                e = entries[idx]
+                if e['name'] == target_name and e['total'] == target_total:
+                    drop.add(idx)
+
+    out = []
+    combined_idx = {}
+    for i, j, cname in combine_groups:
+        combined_idx[i] = cname
+        combined_idx[j] = cname
+    used_combine = set()
+    for idx, e in enumerate(entries):
+        if idx in drop:
+            continue
+        if idx in combined_idx:
+            if idx in used_combine:
+                continue
+            cname = combined_idx[idx]
+            group_indices = [k for k, v in combined_idx.items() if v == cname]
+            used_combine.update(group_indices)
+            members = [entries[k] for k in group_indices]
+            merged_particles = []
+            for m in members:
+                merged_particles.extend(m['particles'])
+            base = members[0]
+            out.append(dict(base, name=cname, particles=merged_particles,
+                            total=len(merged_particles)))
+            continue
+        if idx in renames:
+            out.append(dict(e, name=renames[idx]))
+        else:
+            out.append(e)
+    return out
+
+
+def resolve_and_normalize_sources(upstreams, resolutions=None):
+    """Like :func:`normalize_sources`, but first applies any remembered
+    duplicate-sample resolutions so a decision the user already made
+    (rename, combine, or ignore) is honored on every subsequent recompute
+    instead of only at the moment it was detected.
+
+    Args:
+        upstreams (list): Upstream data dicts from every input link.
+        resolutions (dict): ``ParticleFilterNode._duplicate_resolutions``,
+            or None (behaves exactly like :func:`normalize_sources`).
+
+    Returns:
+        list: Source entries, same shape as :func:`normalize_sources`.
+    """
+    raw = []
+    for u in upstreams or []:
+        raw.extend(_expand_upstream_entries(u))
+    raw = _apply_duplicate_resolutions(raw, resolutions or {})
+    out, seen = [], set()
+    for e in raw:
+        if not e['name'] or e['name'] in seen:
+            continue
+        seen.add(e['name'])
+        out.append(e)
+    return out
 
 
 
@@ -765,7 +918,8 @@ class ParticleFilterDialog(QDialog):
     def __init__(self, parent, upstreams, sample_filters=None,
                  selected_sources=None, merged_name="Combined",
                  owner_node=None, suppress_stale_warning=False,
-                 merge_singles=True, sample_groups=None):
+                 merge_singles=True, sample_groups=None,
+                 duplicate_resolutions=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -782,7 +936,14 @@ class ParticleFilterDialog(QDialog):
         if isinstance(upstreams, dict):
             upstreams = [upstreams]
         self._upstreams = [u for u in (upstreams or []) if u]
-        self._sources = normalize_sources(self._upstreams)
+        # Resolution-aware, not plain normalize_sources: a duplicate the
+        # user chose to "keep as two separate samples" must show up here as
+        # two distinctly-named, independently-configurable rows, or the
+        # whole point of that choice (setting different filters on each)
+        # would be unreachable from this dialog.
+        self._duplicate_resolutions = duplicate_resolutions or {}
+        self._sources = resolve_and_normalize_sources(
+            self._upstreams, self._duplicate_resolutions)
         self._src_by_name = {s['name']: s for s in self._sources}
         self._filters = _copy.deepcopy(sample_filters) if sample_filters else {}
         self._groups = _copy.deepcopy(sample_groups) if sample_groups else {}
@@ -998,7 +1159,7 @@ class ParticleFilterDialog(QDialog):
         pv.setContentsMargins(0, 0, 6, 0)
         pv.setSpacing(8)
         group_row = QHBoxLayout()
-        self._group_lbl = QLabel("Group (optional):")
+        self._group_lbl = QLabel("Group for single samples only (optional):")
         group_row.addWidget(self._group_lbl)
         self._group_edit = QLineEdit()
         self._group_edit.setPlaceholderText(
@@ -1740,17 +1901,24 @@ class ParticleFilterDialog(QDialog):
             kept_by_name[s['name']] = (len(kept), len(s['particles']))
 
         chosen_singles = [s for s in chosen if s.get('origin') == 'single']
+        merge_dominant = self.get_merge_singles()
         grouped, ungrouped, group_order = {}, [], []
-        for s in chosen_singles:
-            gname = (self._groups.get(s['name']) or '').strip()
-            if gname:
-                if gname not in grouped:
-                    grouped[gname] = []
-                    group_order.append(gname)
-                grouped[gname].append(s)
-            else:
-                ungrouped.append(s)
-        merging = len(ungrouped) >= 2 and self.get_merge_singles()
+        if merge_dominant:
+            # Merge-all dominates: every single sample folds into one
+            # bucket for the preview too, regardless of any custom group
+            # name — matches the actual output logic (_get_output_data_impl).
+            ungrouped = list(chosen_singles)
+        else:
+            for s in chosen_singles:
+                gname = (self._groups.get(s['name']) or '').strip()
+                if gname:
+                    if gname not in grouped:
+                        grouped[gname] = []
+                        group_order.append(gname)
+                    grouped[gname].append(s)
+                else:
+                    ungrouped.append(s)
+        merging = len(ungrouped) >= 2 and merge_dominant
 
         parts = []
         for gname in group_order:
@@ -1828,6 +1996,29 @@ class ParticleFilterDialog(QDialog):
                     self, "Invalid Particle Data filter",
                     "Fix the highlighted Particle Data field(s) before "
                     "continuing: " + ", ".join(bad))
+                return
+        if self._current:
+            self._save_pane(self._current)
+        if (self._merge_chk is not None and self._merge_chk.isChecked()
+                and any((v or '').strip() for v in self._groups.values())):
+            from PySide6.QtWidgets import QMessageBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Merge-all overrides custom groups")
+            box.setText(
+                "\"Merge single samples into one\" is checked, and at least "
+                "one sample also has a custom Group name set. Merge-all is "
+                "the coarser control and wins: every single-sample input "
+                "will exit as one sample named "
+                f"\"{self.get_merged_name()}\", and the custom group "
+                "name(s) will be ignored for this filter.\n\nUncheck "
+                "\"Merge single samples into one\" if you want the custom "
+                "groups to take effect instead.")
+            proceed = box.addButton("Merge anyway", QMessageBox.AcceptRole)
+            box.addButton("Go back", QMessageBox.RejectRole)
+            box.setDefaultButton(proceed)
+            box.exec()
+            if box.clickedButton() is not proceed:
                 return
         if not self._suppress_stale_warning:
             from PySide6.QtWidgets import QMessageBox, QCheckBox
@@ -1930,6 +2121,13 @@ class ParticleFilterNode(QObject):
         self.merged_name = "Combined"
         self.merge_singles = True
         self.sample_groups = {}
+        # Signature -> resolution dict (see _duplicate_signature /
+        # _warn_duplicate_source), remembering how a suspected duplicate
+        # sample (same name or same particle count feeding this filter via
+        # two different paths, e.g. a Multi-Sample stream AND a Single
+        # Sample node both carrying "S1") was resolved, so reconnecting or
+        # reopening the project doesn't ask again for the same pair.
+        self.duplicate_resolutions = {}
         self._stale = []
         self._incoming_names = []
         # Per-node opt-out for the "applying this will change open plots"
@@ -1965,7 +2163,7 @@ class ParticleFilterNode(QObject):
             names |= set(self.selected_sources)
         return names
 
-    def reconcile_incoming(self, parent_window=None):
+    def reconcile_incoming(self, parent_window=None, new_link=None):
         """Reconcile stored per-sample settings against the samples actually
         feeding this node right now — call after the input changes (e.g. a
         duplicated filter is wired to a different source). GUI thread only,
@@ -1979,8 +2177,22 @@ class ParticleFilterNode(QObject):
         - Partial mismatch (some stored names present, some gone): keep the
           settings but inform the user which matched and which didn't,
           offering to clear the settings for the samples that are gone.
+
+        Args:
+            parent_window: Dialog parent.
+            new_link (WorkflowLink): The link that was *just* added, if this
+                call was triggered by a fresh connection (scene.add_link) —
+                None for any other trigger. Only when present do we also
+                check whether that new source looks like a duplicate of an
+                already-connected one (see _check_duplicate_source);
+                reusing this same trigger point per the established
+                decision that this check should fire on new connections
+                only, not on every recompute.
         """
-        sources = normalize_sources(self._pull_upstream_all())
+        if new_link is not None:
+            self._check_duplicate_source(new_link, parent_window)
+        sources = resolve_and_normalize_sources(
+            self._pull_upstream_all(), self.duplicate_resolutions)
         incoming = {s['name'] for s in sources}
         stored = self._stored_sample_names()
         if not stored or not incoming:
@@ -1998,6 +2210,135 @@ class ParticleFilterNode(QObject):
             self._warn_partial_mismatch(
                 parent_window, sorted(matched), sorted(missing),
                 sorted(incoming - stored))
+
+    def _check_duplicate_source(self, new_link, parent_window=None):
+        """Detect whether the source that was just wired in looks like a
+        duplicate of one already feeding this filter — same sample name, or
+        same particle count (a cheap heuristic, not a deep content
+        comparison, per explicit design: this needs to stay fast even on
+        large particle sets). If a matching pair is found and hasn't
+        already been resolved once before (see duplicate_resolutions),
+        prompt the user to decide how to handle it.
+
+        Args:
+            new_link (WorkflowLink): The just-added link feeding this node.
+            parent_window: Dialog parent.
+        """
+        scene = self.scene_ref
+        if scene is None:
+            return
+        try:
+            new_entries = _expand_upstream_entries(new_link.get_data())
+        except Exception:
+            _itk_log.exception(
+                "Handled exception in _check_duplicate_source")
+            return
+        if not new_entries:
+            return
+        other_entries = []
+        for lk in getattr(scene, 'workflow_links', []):
+            if lk.sink_node is not self or lk is new_link:
+                continue
+            try:
+                other_entries.extend(_expand_upstream_entries(lk.get_data()))
+            except Exception:
+                _itk_log.exception(
+                    "Handled exception in _check_duplicate_source")
+        for ne in new_entries:
+            for oe in other_entries:
+                same_name = ne['name'] == oe['name']
+                same_count = ne['total'] == oe['total'] and ne['total'] > 0
+                if not (same_name or same_count):
+                    continue
+                sig = _duplicate_signature(ne, oe)
+                if sig in self.duplicate_resolutions:
+                    continue
+                self._warn_duplicate_source(
+                    parent_window, new_link, ne, oe, sig)
+                return
+
+    def _warn_duplicate_source(self, parent_window, new_link, new_entry,
+                               existing_entry, sig):
+        """Ask the user how to handle a suspected duplicate sample.
+
+        Args:
+            parent_window: Dialog parent.
+            new_link (WorkflowLink): The just-added link that triggered
+                this — used directly by the "disconnect" choice.
+            new_entry (dict): The just-connected source entry that triggered
+                this (see _expand_upstream_entries).
+            existing_entry (dict): The already-connected entry it collides
+                with (same name, or same particle count).
+            sig (str): This pair's signature — the key the chosen
+                resolution is remembered under.
+        """
+        from PySide6.QtWidgets import QMessageBox, QInputDialog
+        reason = ("the same sample name" if new_entry['name'] == existing_entry['name']
+                  else "the same particle count")
+        box = QMessageBox(parent_window)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Possible duplicate sample")
+        box.setText(
+            f"\"{new_entry['name']}\" ({new_entry['total']:,} particles) — "
+            f"just connected — looks like it might be the same sample as "
+            f"\"{existing_entry['name']}\" ({existing_entry['total']:,} "
+            f"particles), already connected to this filter. They share "
+            f"{reason}.\n\nThis is a quick name/count check, not a deep "
+            f"comparison — it may be a false positive if these really are "
+            f"two different samples. How should this filter treat them?")
+        keep_btn = box.addButton("Keep as two separate samples…",
+                                 QMessageBox.ActionRole)
+        combine_btn = box.addButton("Combine into one sample…",
+                                    QMessageBox.ActionRole)
+        disconnect_btn = box.addButton("Disconnect the new connection",
+                                       QMessageBox.DestructiveRole)
+        ignore_btn = box.addButton("Ignore one of them",
+                                   QMessageBox.AcceptRole)
+        box.setDefaultButton(ignore_btn)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is keep_btn:
+            name, ok = QInputDialog.getText(
+                parent_window, "Name the new sample",
+                f"\"{new_entry['name']}\" will be kept as a separate entry. "
+                f"What should it be called?",
+                text=f"{new_entry['name']} (2)")
+            if not ok or not name.strip():
+                return
+            self.duplicate_resolutions[sig] = {
+                'action': 'keep_separate',
+                'target': (new_entry['name'], new_entry['total']),
+                'rename_to': name.strip(),
+            }
+        elif clicked is combine_btn:
+            name, ok = QInputDialog.getText(
+                parent_window, "Name the combined sample",
+                f"\"{new_entry['name']}\" and \"{existing_entry['name']}\" "
+                f"will be combined into one sample. What should it be "
+                f"called?",
+                text=new_entry['name'])
+            if not ok or not name.strip():
+                return
+            self.duplicate_resolutions[sig] = {
+                'action': 'combine',
+                'combined_name': name.strip(),
+            }
+        elif clicked is disconnect_btn:
+            scene = self.scene_ref
+            if scene is not None:
+                li = scene.link_items.get(new_link)
+                if li:
+                    scene.delete_link(li)
+            return
+        else:  # ignore_btn or dialog dismissed
+            self.duplicate_resolutions[sig] = {
+                'action': 'ignore',
+                'target': (new_entry['name'], new_entry['total']),
+            }
+        self._recompute_stale(resolve_and_normalize_sources(
+            self._pull_upstream_all(), self.duplicate_resolutions))
+        self.configuration_changed.emit()
 
     def _warn_partial_mismatch(self, parent_window, matched, missing, added):
         """Tell the user the newly connected source only partly matches the
@@ -2041,7 +2382,8 @@ class ParticleFilterNode(QObject):
             if self.selected_sources is not None:
                 self.selected_sources = [s for s in self.selected_sources
                                          if s not in missing]
-            self._recompute_stale(normalize_sources(self._pull_upstream_all()))
+            self._recompute_stale(resolve_and_normalize_sources(
+                self._pull_upstream_all(), self.duplicate_resolutions))
             self.configuration_changed.emit()
 
     def _pull_upstream_all(self):
@@ -2102,7 +2444,8 @@ class ParticleFilterNode(QObject):
                       if u.get('type') in _FILTERABLE_TYPES]
         if not filterable:
             return upstreams[0]
-        sources = normalize_sources(filterable)
+        sources = resolve_and_normalize_sources(
+            filterable, self.duplicate_resolutions)
         self._recompute_stale(sources)
         if self.selected_sources is None:
             chosen = sources
@@ -2143,38 +2486,42 @@ class ParticleFilterNode(QObject):
         others = [(s, k) for s, k in filtered
                   if s.get('origin') != 'single']
 
-        # Singles explicitly tagged with a custom group name (in the dialog's
-        # per-sample "Group" field) always merge under that name, regardless
-        # of the merge_singles toggle — the toggle only governs the
-        # leftover, untagged singles below.
-        grouped, ungrouped, group_order = {}, [], []
-        for s, kept in singles:
-            gname = (self.sample_groups.get(s['name']) or '').strip()
-            if gname:
-                if gname not in grouped:
-                    grouped[gname] = []
-                    group_order.append(gname)
-                grouped[gname].append((s, kept))
-            else:
-                ungrouped.append((s, kept))
-
+        # "Merge single samples into one" dominates over per-sample custom
+        # groups when both are set — it's the coarser, all-or-nothing
+        # control, so it wins rather than being silently overridden by a
+        # finer-grained group name (see ParticleFilterDialog._try_accept,
+        # which warns the user about this precedence before it takes
+        # effect). Only when merge_singles is off do custom group names
+        # actually take effect; singles left ungrouped then stay separate.
         final = []
-        for gname in group_order:
-            members = grouped[gname]
-            merged_kept = []
-            for _s, kept in members:
-                merged_kept.extend(retag_particles(kept, gname))
-            final.append((merge_single_sources(
-                [s for s, _k in members], gname), merged_kept))
-
-        if len(ungrouped) >= 2 and self.merge_singles:
-            name = (self.merged_name or '').strip() or 'Combined'
-            merged_kept = []
-            for _s, kept in ungrouped:
-                merged_kept.extend(retag_particles(kept, name))
-            final.append((merge_single_sources(
-                [s for s, _k in ungrouped], name), merged_kept))
+        if self.merge_singles:
+            if len(singles) >= 2:
+                name = (self.merged_name or '').strip() or 'Combined'
+                merged_kept = []
+                for _s, kept in singles:
+                    merged_kept.extend(retag_particles(kept, name))
+                final.append((merge_single_sources(
+                    [s for s, _k in singles], name), merged_kept))
+            else:
+                final.extend(singles)
         else:
+            grouped, ungrouped, group_order = {}, [], []
+            for s, kept in singles:
+                gname = (self.sample_groups.get(s['name']) or '').strip()
+                if gname:
+                    if gname not in grouped:
+                        grouped[gname] = []
+                        group_order.append(gname)
+                    grouped[gname].append((s, kept))
+                else:
+                    ungrouped.append((s, kept))
+            for gname in group_order:
+                members = grouped[gname]
+                merged_kept = []
+                for _s, kept in members:
+                    merged_kept.extend(retag_particles(kept, gname))
+                final.append((merge_single_sources(
+                    [s for s, _k in members], gname), merged_kept))
             final.extend(ungrouped)
         final.extend(others)
         if len(final) == 1:
@@ -2347,7 +2694,8 @@ class ParticleFilterNode(QObject):
             parent_window, snapshots, self.sample_filters,
             self.selected_sources, self.merged_name, owner_node=self,
             suppress_stale_warning=self.suppress_stale_warning,
-            merge_singles=self.merge_singles, sample_groups=self.sample_groups)
+            merge_singles=self.merge_singles, sample_groups=self.sample_groups,
+            duplicate_resolutions=self.duplicate_resolutions)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
@@ -2355,7 +2703,8 @@ class ParticleFilterNode(QObject):
             self.merge_singles = dlg.get_merge_singles()
             self.sample_groups = dlg.get_sample_groups()
             self.suppress_stale_warning = dlg.stale_warning_suppressed()
-            self._recompute_stale(normalize_sources(snapshots))
+            self._recompute_stale(resolve_and_normalize_sources(
+                snapshots, self.duplicate_resolutions))
             self.configuration_changed.emit()
             ual = _ual()
             if ual:

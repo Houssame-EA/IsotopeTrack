@@ -623,10 +623,33 @@ class NodeItem(QGraphicsWidget):
         dup.triggered.connect(self.duplicate_node)
         conn = menu.addAction(qta.icon('fa6s.link', color=DS.ACCENT), "  Manage Connections")
         conn.triggered.connect(self.manage_connections)
+        if (self.workflow_node.node_type == "temp_pass_through"
+                and self._temp_wired_both_ends()):
+            rr = menu.addAction(
+                qta.icon('fa6s.arrows-left-right', color=DS.ACCENT),
+                "  Remove and Reconnect")
+            rr.setToolTip(
+                "Deletes this Temp Node and directly reconnects whatever "
+                "fed it to everything it fed — only shown when it's wired "
+                "on both ends.")
+            rr.triggered.connect(self.remove_and_reconnect)
         menu.addSeparator()
         dele = menu.addAction(qta.icon('fa6s.trash-can', color=DS.ERROR), "  Delete")
         dele.triggered.connect(self.delete_node)
         menu.exec(global_pos)
+
+    def _temp_wired_both_ends(self):
+        scene = self.scene()
+        if not scene:
+            return False
+        wn = self.workflow_node
+        has_up = any(lk.sink_node is wn for lk in scene.workflow_links)
+        has_down = any(lk.source_node is wn for lk in scene.workflow_links)
+        return has_up and has_down
+
+    def remove_and_reconnect(self):
+        if self.scene():
+            self.scene().remove_and_reconnect_temp(self)
 
     def manage_connections(self):
         scene = self.scene()
@@ -2103,6 +2126,62 @@ class ManageConnectionsDialog(QDialog):
         return [lk for lk in self.scene.workflow_links
                 if lk.sink_node is self.node]
 
+    #: Representative node types probed to describe a Temp Node's current
+    #: connectivity in plain language (see _temp_connectivity_summary).
+    #: Throwaway instances only — never added to the scene.
+    _DISPLAY_CANDIDATE_TYPES = [
+        ("Batch Windows", "batch_sample_selector"),
+        ("Sample Selector", "sample_selector"),
+        ("Multi-Sample Selector", "multiple_sample_selector"),
+        ("Particle Filter", "particle_filter"),
+        ("Particle Classifier", "particle_classifier"),
+        ("Visualization nodes", "histogram_plot"),
+    ]
+
+    def _temp_connectivity_summary(self):
+        """Human-readable description of this Temp Node's current,
+        dynamically-derived connectivity (see
+        EnhancedCanvasScene._check_link_allowed / _temp_real_peers).
+
+        Reflects what's ACTUALLY wired right now, not a fixed label
+        recorded when the node was created — disconnecting either side
+        changes what the other side can newly accept, and a temp with
+        nothing connected at all is an unconstrained blank slate.
+
+        Returns:
+            str: Multi-line plain-text summary for display.
+        """
+        scene = self.scene
+        up = scene._temp_real_peers(self.node, 'upstream')
+        down = scene._temp_real_peers(self.node, 'downstream')
+        if not up and not down:
+            return ("Not connected to anything yet — a blank-slate temp "
+                    "node accepts any input and any output.")
+        lines = [
+            "Input: " + (", ".join(sorted({p.title for p in up}))
+                        if up else "not connected — input slot is open"),
+            "Output: " + (", ".join(sorted({p.title for p in down}))
+                         if down else "not connected to anything yet"),
+        ]
+        if up:
+            compatible = []
+            for label, ntype in self._DISPLAY_CANDIDATE_TYPES:
+                factory = _NODE_FACTORIES.get(ntype)
+                if not factory:
+                    continue
+                probe = factory(None)
+                if all(scene._direct_link_allowed(u, probe)[0] for u in up):
+                    compatible.append(label)
+            lines.append("A new output can be: "
+                        + (", ".join(compatible) or "nothing, currently"))
+            lines.append("Input slot is full — disconnect it to accept a "
+                        "different source.")
+        else:
+            lines.append("A new output can be: anything, since nothing "
+                        "feeds this temp yet.")
+            lines.append("A new input can be: anything (input slot is open).")
+        return "\n".join(lines)
+
     def _build(self):
         p = _app_theme.palette
         root = QVBoxLayout(self)
@@ -2114,6 +2193,15 @@ class ManageConnectionsDialog(QDialog):
             f"font-size:14px; font-weight:700; color:{p.text_primary};")
         title.setWordWrap(True)
         root.addWidget(title)
+
+        if self.node.node_type == "temp_pass_through":
+            summary = QLabel(self._temp_connectivity_summary())
+            summary.setWordWrap(True)
+            summary.setStyleSheet(
+                f"color:{p.text_secondary}; font-size:11.5px; "
+                f"padding:8px; background:{p.accent_soft}; "
+                f"border:1px solid {p.accent}; border-radius:6px;")
+            root.addWidget(summary)
 
         if getattr(self.node, '_has_input', False):
             root.addWidget(self._section_label("Inputs"))
@@ -2227,17 +2315,11 @@ class ManageConnectionsDialog(QDialog):
         parent_window = (getattr(self.node, 'parent_window', None)
                          or getattr(self.scene, 'parent_window', None))
         temp = TempPassThroughNode(parent_window)
-        # The relay adopts the family of the stream it is inserted into, so it
-        # can sit in a batch fan-out (Batch Windows -> sample selectors) just
-        # as well as a sample one. Without this it defaults to the 'sample'
-        # family and every link into/out of it would be rejected as a type
-        # mismatch — which, combined with the delete-then-add below, used to
-        # tear the whole fan-out down (see _io_families). The override is
-        # persisted with the node (project_manager config_attributes).
-        fam = _io_families(self.node)[1]
-        if fam is not None:
-            temp.input_family = fam
-            temp.output_family = fam
+        # No family/type is pinned on the temp itself: a fresh temp with
+        # nothing wired to it yet is a blank slate, so this very first link
+        # (source -> temp) is always allowed regardless of what family the
+        # source is (see EnhancedCanvasScene._check_link_allowed). The
+        # temp's effective connectivity is derived dynamically from there on.
         self.scene.add_node(temp, pos)
         src_ch = selected[0].source_channel
 
@@ -4120,6 +4202,59 @@ class EnhancedCanvasScene(QGraphicsScene):
         self.node_items.pop(wn, None)
         self.removeItem(ni)
 
+    def remove_and_reconnect_temp(self, ni):
+        """Right-click "Remove and Reconnect" on a Temp Node: delete it and
+        directly rewire whatever fed it to everything it fed, preserving
+        the same effective data flow — for once a fan-out has settled into
+        its final shape and the temp (a placeholder holding sinks in place
+        while rewiring) is no longer needed.
+
+        Only meaningful, and only offered in the context menu (see
+        NodeItem.show_context_menu), when the temp is wired on both ends —
+        a no-op otherwise, since there is nothing to bridge.
+
+        Every new direct link this creates was already effectively valid:
+        it's exactly what _check_link_allowed resolved through the temp to
+        check in the first place, so none of these add_link calls are
+        expected to fail. They're still checked (not force-added) and any
+        that unexpectedly does fail is logged rather than silently
+        dropping that sink's connection.
+        """
+        if not isinstance(ni, NodeItem):
+            return
+        wn = ni.workflow_node
+        if getattr(wn, 'node_type', None) != 'temp_pass_through':
+            return
+        up_links = [lk for lk in self.workflow_links if lk.sink_node is wn]
+        down_links = [lk for lk in self.workflow_links if lk.source_node is wn]
+        if not up_links or not down_links:
+            return
+        src_node, src_ch = up_links[0].source_node, up_links[0].source_channel
+        sinks = [(lk.sink_node, lk.sink_channel) for lk in down_links]
+
+        ual = _ual()
+        if ual:
+            ual.log_action(
+                'DATA_OP', f'Removed & reconnected temp: {wn.title}',
+                {'source': src_node.title,
+                 'sinks': [s.title for s, _ in sinks]})
+
+        prev_suppress = self._suppress_data_flow
+        self._suppress_data_flow = True
+        try:
+            self.delete_node(ni)
+            for sink_node, sink_ch in sinks:
+                if self.add_link(src_node, src_ch, sink_node, sink_ch) is None:
+                    _itk_log.warning(
+                        "Remove and Reconnect: could not reconnect %s -> %s "
+                        "directly after removing the temp — this sink is "
+                        "now disconnected.",
+                        getattr(src_node, 'title', src_node),
+                        getattr(sink_node, 'title', sink_node))
+        finally:
+            self._suppress_data_flow = prev_suppress
+        self.flush_data_flow()
+
     def delete_link(self, li):
         if not isinstance(li, LinkItem):
             return
@@ -4191,8 +4326,8 @@ class EnhancedCanvasScene(QGraphicsScene):
                      'sum_replicates', 'replicate_samples',
                      'selected_samples', 'sample_config',
                      'sample_filters', 'selected_sources', 'merged_name',
-                     'merge_singles', 'sample_groups', 'saved_cluster_state',
-                     'input_family', 'output_family',
+                     'merge_singles', 'sample_groups', 'duplicate_resolutions',
+                     'saved_cluster_state',
                      # Particle Classifier (tools/particle_classifier_node.py)
                      # -- same full state list carried by save/load in
                      # save_export/project_manager.py's config_attributes.
@@ -4266,33 +4401,133 @@ class EnhancedCanvasScene(QGraphicsScene):
                     stack.append(lk.sink_node)
         return False
 
+    def _direct_link_allowed(self, src_node, snk_node):
+        """Whether src_node -> snk_node is a valid link on its own terms.
+
+        Ignores cardinality and cycles (those are separate checks in
+        add_link). Assumes NEITHER endpoint is a Temp Node — see
+        _check_link_allowed, which resolves through a temp to its real
+        peer(s) before ever reaching here.
+
+        Returns:
+            tuple: (allowed (bool), refusal_message (str or None)) — the
+                message is only set for a Particle Classifier rule
+                violation (worth surfacing to the user); a plain family
+                mismatch returns (False, None), same as the existing
+                silent-rejection convention for that case.
+        """
+        refusal = validate_classifier_link(src_node, snk_node)
+        if refusal:
+            return False, refusal
+        # Type compatibility: the source's output family must match the
+        # sink's input family (see _NODE_IO_FAMILIES). Blocks nonsensical
+        # wiring like sample→sample or filter→sample-selector.
+        src_out = _io_families(src_node)[1]
+        snk_in = _io_families(snk_node)[0]
+        if src_out is None or snk_in is None or src_out != snk_in:
+            return False, None
+        return True, None
+
+    def _temp_real_peers(self, temp, direction, _seen=None):
+        """The real (non-temp) node(s) currently wired to ``temp`` on
+        ``direction`` ('upstream' or 'downstream'), walking transparently
+        through any chained temp nodes.
+
+        Returns [] when nothing is connected that way — a temp with an
+        empty side imposes no constraint on that side at all. Temp Nodes
+        have never shipped in any prior release, so there is no legacy
+        behavior to preserve here: a disconnected temp being a blank slate
+        is the correct starting position, not a compatibility shim (see
+        _check_link_allowed).
+
+        Args:
+            temp (WorkflowNode): A temp_pass_through node.
+            direction (str): 'upstream' or 'downstream'.
+            _seen (set): Internal recursion guard (temp identities already
+                visited), so a temp accidentally chained back on itself
+                can't recurse forever.
+
+        Returns:
+            list: Real (non-temp) WorkflowNode peers, possibly empty.
+        """
+        if _seen is None:
+            _seen = set()
+        if id(temp) in _seen:
+            return []
+        _seen.add(id(temp))
+        out = []
+        if direction == 'upstream':
+            links = [lk for lk in self.workflow_links if lk.sink_node is temp]
+        else:
+            links = [lk for lk in self.workflow_links if lk.source_node is temp]
+        for lk in links:
+            peer = lk.source_node if direction == 'upstream' else lk.sink_node
+            if getattr(peer, 'node_type', None) == 'temp_pass_through':
+                out.extend(self._temp_real_peers(peer, direction, _seen))
+            else:
+                out.append(peer)
+        return out
+
+    def _check_link_allowed(self, src_node, snk_node):
+        """Temp-aware connectivity check wrapping _direct_link_allowed.
+
+        A Temp Node is fully transparent: connecting something to its
+        empty side is validated against whatever real node is CURRENTLY
+        wired to its OTHER side, as if the temp weren't there at all — not
+        against the temp itself. A side with nothing connected yet
+        imposes no constraint (see _temp_real_peers). This is what makes
+        e.g. ``classifier -> temp -> classifier`` correctly rejected
+        (temp's upstream peer, the first classifier, isn't an allowed
+        upstream type for the second) while ``filter -> temp ->
+        classifier`` is correctly allowed, and why disconnecting one side
+        of a temp frees up what the other side can newly accept.
+
+        Returns:
+            tuple: (allowed (bool), refusal_message (str or None))
+        """
+        if getattr(src_node, 'node_type', None) == 'temp_pass_through':
+            peers = self._temp_real_peers(src_node, 'upstream')
+            if not peers:
+                return True, None
+            for peer in peers:
+                ok, reason = self._check_link_allowed(peer, snk_node)
+                if not ok:
+                    return ok, reason
+            return True, None
+        if getattr(snk_node, 'node_type', None) == 'temp_pass_through':
+            peers = self._temp_real_peers(snk_node, 'downstream')
+            if not peers:
+                return True, None
+            for peer in peers:
+                ok, reason = self._check_link_allowed(src_node, peer)
+                if not ok:
+                    return ok, reason
+            return True, None
+        return self._direct_link_allowed(src_node, snk_node)
+
     def add_link(self, src_node, src_ch, snk_node, snk_ch):
         for lk in self.workflow_links:
             if (lk.source_node == src_node and lk.sink_node == snk_node
                     and lk.source_channel == src_ch and lk.sink_channel == snk_ch):
                 return None
         if self._enforce_connection_rules:
-            # Particle Classifier connectivity (Design §2): upstream limited
-            # to filter/single/multi sample, downstream to non-excluded viz
-            # nodes. Shows a helpful dialog on refusal; a no-op for any link
-            # not touching a classifier. Runs first so the user gets the
-            # specific message rather than a silent generic rejection.
-            refusal = validate_classifier_link(src_node, snk_node)
-            if refusal:
-                _itk_log.warning(
-                    "Blocked link %s -> %s: %s",
-                    getattr(src_node, 'title', src_node),
-                    getattr(snk_node, 'title', snk_node), refusal)
-                QMessageBox.warning(
-                    self.views()[0] if self.views() else None,
-                    "Connection Not Allowed", refusal)
-                return None
-            # Type compatibility: the source's output family must match the
-            # sink's input family (see _NODE_IO_FAMILIES). Blocks nonsensical
-            # wiring like sample→sample or filter→sample-selector.
-            src_out = _io_families(src_node)[1]
-            snk_in = _io_families(snk_node)[0]
-            if src_out is None or snk_in is None or src_out != snk_in:
+            ok, refusal = self._check_link_allowed(src_node, snk_node)
+            if not ok:
+                if refusal:
+                    involves_temp = (
+                        getattr(src_node, 'node_type', None) == 'temp_pass_through'
+                        or getattr(snk_node, 'node_type', None) == 'temp_pass_through')
+                    if involves_temp:
+                        refusal = (
+                            "This connection isn't allowed, based on what "
+                            "the Temp Node is already wired to: " + refusal)
+                    _itk_log.warning(
+                        "Blocked link %s -> %s: %s",
+                        getattr(src_node, 'title', src_node),
+                        getattr(snk_node, 'title', snk_node), refusal)
+                    QMessageBox.warning(
+                        self.views()[0] if self.views() else None,
+                        "Connection Not Allowed", refusal)
                 return None
             # Cardinality: a node that reads a single overwritable input slot
             # can't take a second incoming link (it would silently lose the
@@ -4359,7 +4594,8 @@ class EnhancedCanvasScene(QGraphicsScene):
         if (self._enforce_connection_rules and not self._undoing
                 and hasattr(snk_node, 'reconcile_incoming')):
             QTimer.singleShot(
-                0, lambda n=snk_node: n.reconcile_incoming(self.parent_window))
+                0, lambda n=snk_node, l=wl: n.reconcile_incoming(
+                    self.parent_window, new_link=l))
         return wl
 
     def _trigger_data_flow(self, wl):

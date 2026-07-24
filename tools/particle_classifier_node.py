@@ -60,6 +60,15 @@ EXCLUDED_DOWNSTREAM_TYPES = frozenset({
 def is_allowed_upstream(node_type: str) -> bool:
     """Whether a node type may feed data into a Particle Classifier node.
 
+    Note: a Temp Node is intentionally NOT special-cased here. Its
+    connectivity is resolved dynamically, in
+    ``EnhancedCanvasScene._direct_link_allowed``/``_temp_real_peers``
+    (widget/canvas_widgets.py) — a temp defers to whatever real node is
+    currently wired on its other side (or imposes no constraint at all if
+    that side is empty), rather than being unconditionally transparent
+    here. That is what makes ``classifier -> temp -> classifier`` correctly
+    rejected while ``filter -> temp -> classifier`` is correctly allowed.
+
     Args:
         node_type (str): The candidate upstream node's ``node_type`` string.
 
@@ -71,6 +80,9 @@ def is_allowed_upstream(node_type: str) -> bool:
 
 def is_allowed_downstream(node_type: str, viz_node_types) -> bool:
     """Whether a node type may receive data from a Particle Classifier node.
+
+    Note: see is_allowed_upstream's docstring — a Temp Node is deliberately
+    not special-cased here either, for the same reason.
 
     Args:
         node_type (str): The candidate downstream node's ``node_type``
