@@ -6,15 +6,9 @@ element counts and canonicalise them. They feed the mass-fraction lookup, so a
 parsing error would propagate into reported particle masses. The functions are
 pure; the module imports Qt/pandas only for the dialog and CSV database.
 """
-from tools.mass_fraction_calculator import (
-    parse_formula_to_counts,
-    _safe_int,
-    _element_order_in_formula,
-    reduce_counts,
-    signature_from_counts,
-    _join_formula_from_counts,
-    canonicalize_preserve_user_order,
-)
+from tools.mass_fraction_calculator_utils.formula_utils import parse_formula_to_counts, _safe_int, \
+    _element_order_in_formula, reduce_counts, signature_from_counts, _join_formula_from_counts, \
+    canonicalize_preserve_user_order
 
 
 class TestParseFormulaToCounts:
