@@ -23,7 +23,8 @@ undoable.
 
 | Name | Value |
 |------|-------|
-| `_FIELDS` | `('selected_isotopes', 'sample_parameters', 'isotope_metho…` |
+| `_MAIN_WINDOW_FIELDS` | `('selected_isotopes', 'sample_parameters', 'isotope_metho…` |
+| `_MASS_FRACTION_SERVICE_FIELDS` | `{'element_mass_fractions', 'element_densities', 'element_…` |
 | `MAX_DEPTH` | `40` |
 | `POLL_MS` | `1200` |
 
@@ -35,7 +36,7 @@ Polling, snapshot-based undo/redo for one ``MainWindow``.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, main_window)` | Create the manager and its change-detection timer. |
+| `__init__` | `(self, main_window: MainWindow)` | Create the manager and its change-detection timer. |
 | `start` | `(self)` | Begin watching for input changes. |
 | `stop` | `(self)` | Stop watching for input changes. |
 | `_flush_parameters` | `(self)` | Commit any pending parameters-table edit into ``sample_parameters``. |

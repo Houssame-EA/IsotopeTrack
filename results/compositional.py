@@ -1,7 +1,7 @@
 """Compositional data transforms shared by the clustering modules.
 
 Single home for the zero-replacement, log-ratio and robust scaling helpers
-used by both ``results_cluster.py`` and ``results_cluster_tools.py``, so the
+used by both ``cluster/dialog.py`` and ``cluster/tools.py``, so the
 statistical behaviour of every pipeline is defined exactly once. The module
 depends only on NumPy and is importable without Qt, matplotlib or scikit-learn.
 """

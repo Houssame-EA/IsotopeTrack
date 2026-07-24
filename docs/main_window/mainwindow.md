@@ -189,9 +189,6 @@ Args:
 | `calculate_mass_limits` | `(self)` | Calculate mass detection limits for all elements. |
 | `open_mass_fraction_calculator` | `(self)` | Open mass fraction calculator dialog. |
 | `handle_mass_fractions_updated` | `(self, data)` | Handle mass fraction updates from calculator. |
-| `get_molecular_weight` | `(self, element_key, sample_name=None)` | Get molecular weight for element compound. |
-| `get_mass_fraction` | `(self, element_key, sample_name=None)` | Get mass fraction for element in compound. |
-| `get_element_density` | `(self, element_key, sample_name=None)` | Get density for element compound. |
 | `mass_to_diameter` | `(self, mass_fg, density)` | Convert mass to spherical particle diameter. |
 | `get_sample_dilution` | `(self, sample_name)` | Return the dilution factor stored for a sample. |
 | `set_sample_dilution` | `(self, sample_name, factor)` | Store the dilution factor for a sample. |

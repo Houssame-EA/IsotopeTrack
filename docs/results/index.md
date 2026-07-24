@@ -1,6 +1,6 @@
 # Results
 
-All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, …).
+All plot/analysis result modules (bar charts, isotope ratios, AI, …).
 
 ---
 
@@ -18,16 +18,6 @@ All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, �
 Distribution Plot Node – Box / Violin / Strip / Bar-with-errors.
 
 **3** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **52** methods
-
-### [`results_cluster.py`](results-cluster.md)
-
-
-**9** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **123** methods
-
-### [`results_cluster_tools.py`](results-cluster-tools.md)
-Custom Cluster Test — exhaustive pipeline search against known components.
-
-**1** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **6** methods
 
 ### [`results_composition_wheel.py`](results-composition-wheel.md)
 Composition Wheel (2D / 3D) — single & multi-sample particle-signature plot.

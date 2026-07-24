@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluate K</title>
+<link rel="stylesheet" href="../live_ui/styles.css">
+<style>
+  #curve{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #evalLegend{position:fixed;top:64px;right:16px;z-index:15;background:var(--panel);
+    border:1px solid var(--stroke2);border-radius:12px;padding:11px 13px;
+    box-shadow:var(--shadow);min-width:190px}
+  #evalLegend h4{margin:0 0 7px;font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--muted)}
+  .metricRow{display:flex;align-items:center;gap:8px;font-size:12px;margin:4px 0}
+  .metricRow .sw{width:14px;height:3px;border-radius:2px;flex:none}
+  .metricRow .best{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+  #suggest{margin-top:8px;padding-top:8px;border-top:1px solid var(--stroke2);
+    font-size:12px;color:var(--text)}
+  #suggest b{color:var(--accent)}
+  #applyHint{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:20;
+    background:var(--panel);border:1px solid var(--stroke2);border-radius:12px;
+    padding:8px 16px;box-shadow:var(--shadow);font-size:12.5px;color:var(--muted)}
+</style>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+
+<div id="stage"><canvas id="curve"></canvas></div>
+
+<div id="empty"><div><b>Nothing to evaluate yet.</b><br>
+  Connect particle data, then press <b>Evaluate</b> to sweep K and score each
+  clustering.</div></div>
+
+<div id="topbar">
+  <button id="menuBtn" title="Settings">☰</button>
+  <div id="titleWrap">
+    <div id="algoTitle">Evaluate K</div>
+    <div id="note">Choose a K range and press Evaluate.</div>
+  </div>
+</div>
+
+<div id="evalLegend">
+  <h4>Validity metrics</h4>
+  <div class="metricRow"><span class="sw" id="swSil"></span>Silhouette
+    <span class="best" id="bestSil">—</span></div>
+  <div class="metricRow"><span class="sw" id="swCal"></span>Calinski-H.
+    <span class="best" id="bestCal">—</span></div>
+  <div class="metricRow"><span class="sw" id="swDb"></span>Davies-B.
+    <span class="best" id="bestDb">—</span></div>
+  <div id="suggest">Suggested K: <b id="suggestK">—</b></div>
+</div>
+
+<aside id="panel">
+  <div id="panelHead">
+    <div id="brand"><span class="dot"></span>
+      <div><b>Evaluate K</b><br><span id="varInfo">silhouette · calinski · davies</span></div></div>
+    <button id="panelClose" title="Hide panel">✕</button>
+  </div>
+  <div id="panelBody">
+    <div class="section">
+      <h3>Algorithm</h3>
+      <div class="field"><select id="algoSel"></select></div>
+      <div class="blurb" id="blurb">Sweeps K for this algorithm and scores each
+        clustering on the same projection the Cluster tab uses.</div>
+    </div>
+    <div class="section">
+      <h3>K range</h3>
+      <div class="field"><label>Min K <span class="val" id="vKmin">2</span></label>
+        <input type="range" id="kMin" min="2" max="30" step="1" value="2"></div>
+      <div class="field"><label>Max K <span class="val" id="vKmax">10</span></label>
+        <input type="range" id="kMax" min="3" max="60" step="1" value="10"></div>
+      <div class="btnrow"><button class="primary" id="evalBtn">Evaluate</button></div>
+    </div>
+    <div class="section">
+      <div class="blurb" style="color:var(--muted)">Click a point on the curve to
+        set that K for the next <b>② Cluster</b>.</div>
+    </div>
+  </div>
+</aside>
+
+<div id="tip"></div>
+<div id="status"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

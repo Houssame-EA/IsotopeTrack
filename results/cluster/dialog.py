@@ -16,7 +16,7 @@ import math
 import sys
 import warnings
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster")
+_itk_log = logging.getLogger("IsotopeTrack.results.cluster.dialog")
 warnings.filterwarnings('ignore')
 
 from sklearn.cluster import (
@@ -3647,6 +3647,8 @@ class ClusteringDisplayDialog(QDialog):
         self._hover_ann = {}
         self._som_obj = None
         self._som_neuron_labels = None
+        self.som_tab_idx = -1
+        self.dendro_tab_idx = -1
 
         self._pal = _current_plot_palette()
         self._dark = self._pal['dark']
@@ -3662,7 +3664,7 @@ class ClusteringDisplayDialog(QDialog):
                 _itk_log.exception("Handled exception in __init__")
 
         try:
-            from results.results_cluster_tools import attach_to_dialog
+            from results.cluster.tools import attach_to_dialog
             attach_to_dialog(self)
         except Exception:
             _itk_log.exception("Handled exception in __init__")
@@ -3696,6 +3698,11 @@ class ClusteringDisplayDialog(QDialog):
                 self._draw_overview()
         except Exception:
             _itk_log.exception("Handled exception in _on_app_theme_changed")
+        try:
+            if getattr(self, '_live_tab', None) is not None:
+                self._live_tab.apply_theme()
+        except Exception:
+            _itk_log.exception("Handled exception theming live tab")
 
     def _apply_theme(self):
         """Apply the active palette to the whole dialog as one stylesheet.
@@ -3989,13 +3996,12 @@ class ClusteringDisplayDialog(QDialog):
         self.tabs = QTabWidget()
 
         self._build_eval_tab()
-        self._build_summary_tab()
         self._build_cluster_tab()
         self._build_overview_tab()
-        self._build_dendrogram_tab()
-        self._build_som_tab()
+        self._build_live_tab()      # exploratory "How it works" animation
 
         layout.addWidget(self.tabs)
+        self.tabs.currentChanged.connect(self._on_live_tab_shown)
 
         self.status = QLabel("Ready — connect data and run evaluation")
         self.status.setObjectName("statusbar")
@@ -4062,8 +4068,8 @@ class ClusteringDisplayDialog(QDialog):
         self.eval_canvas.mpl_connect('pick_event', self._on_eval_pick)
         vl.addWidget(self.eval_canvas, stretch=1)
 
-        self.tabs.addTab(tab, "① Evaluation")
-
+        self._eval_tab = None
+        self.eval_tab_idx = self.tabs.addTab(tab, "① Evaluation")
 
     def _build_summary_tab(self):
         """Build the Summary tab holding the consensus decision matrix.
@@ -4264,11 +4270,13 @@ class ClusteringDisplayDialog(QDialog):
         cfg_action = menu.addAction("⚙  Configure…")
         cfg_action.triggered.connect(self._open_settings)
 
-        fig_map = {'eval': self.eval_fig, 'summary': self.summary_fig,
+        fig_map = {'eval': self.eval_fig,
+                   'summary': getattr(self, 'summary_fig', None),
                    'cluster': self.cluster_fig,
                    'overview': self.overview_fig,
-                   'dendro': self.dendro_fig, '3d': self._3d_fig,
-                   'som': self.som_fig}
+                   'dendro': getattr(self, 'dendro_fig', None),
+                   '3d': self._3d_fig,
+                   'som': getattr(self, 'som_fig', None)}
         names   = {'eval': 'evaluation.png', 'summary': 'consensus_summary.png',
                    'cluster': 'clusters.png',
                    'overview': 'overview.png',
@@ -4280,10 +4288,10 @@ class ClusteringDisplayDialog(QDialog):
                                                self, names.get(tab, 'figure.png')))
 
         canvas_map = {'eval': self.eval_canvas,
-                      'summary': self.summary_canvas,
+                      'summary': getattr(self, 'summary_canvas', None),
                       'cluster': self.cluster_canvas,
                       'overview': self.overview_canvas,
-                      'dendro': self.dendro_canvas,
+                      'dendro': getattr(self, 'dendro_canvas', None),
                       '3d': self._3d_canvas,
                       'som': getattr(self, 'som_canvas', None)}
         menu.addSeparator()
@@ -5505,11 +5513,46 @@ class ClusteringDisplayDialog(QDialog):
             self._linkage_cache = None
             self._linkage_cache_key = None
             self._update_live_k_availability()
+            # One shared parameter set: broadcast so every section (④ How it
+            # works, Everything-at-once, node listeners) picks up the change.
+            try:
+                self.node.configuration_changed.emit()
+            except Exception:
+                _itk_log.exception("Handled exception broadcasting settings")
             self.status.setText("Settings updated — re-run ① Evaluate K if preprocessing changed")
+
+    def _sync_live_tab(self):
+        """Push the shared config into the ④ How it works tab.
+
+        Marks it for rebuild and refreshes immediately when it is the visible
+        tab; otherwise it updates on next show. Keeps its parameter panel equal
+        to the shared configuration at all times.
+        """
+        lt = getattr(self, '_live_tab', None)
+        if lt is None:
+            return
+        try:
+            lt.mark_dirty()
+            if self.tabs.currentIndex() == getattr(self, 'live_tab_idx', -1):
+                lt.refresh_data()
+        except Exception:
+            _itk_log.exception("Handled exception syncing live tab")
 
     def _on_node_changed(self):
         self._data_matrix_cache = None
         self._update_color_by_visibility()
+        self._sync_live_tab()
+        # Flag the interactive Cluster tab as needing a rebuild when data/config
+        # changes (isotope selection, Settings edits). It refreshes on next show,
+        # or immediately if it is the current tab — never on a plain tab switch.
+        try:
+            lt = getattr(self, '_live_tab', None)
+            if lt is not None:
+                lt.mark_dirty()
+                if self.tabs.currentIndex() == getattr(self, 'live_tab_idx', -1):
+                    lt.refresh_data()
+        except Exception:
+            _itk_log.exception("Handled exception refreshing live tab on change")
 
 
     def _get_elements(self):
@@ -6467,7 +6510,7 @@ class ClusteringDisplayDialog(QDialog):
         self._set_progress(0.0)
         self.cluster_btn.setEnabled(False)
 
-        if 'SOM' in enabled:
+        if 'SOM' in enabled and self.som_tab_idx >= 0:
             self.tabs.setCurrentIndex(self.som_tab_idx)
 
         worker = _ClusterWorker(self, sel_k, elements,
@@ -6643,7 +6686,8 @@ class ClusteringDisplayDialog(QDialog):
                 self._draw_3d()
 
             if ('SOM' in self.final_results and self._som_obj is not None
-                    and self._som_neuron_labels is not None):
+                    and self._som_neuron_labels is not None
+                    and hasattr(self, 'som_fig')):
                 som_labels = self.final_results['SOM'].get('labels')
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
@@ -6717,7 +6761,8 @@ class ClusteringDisplayDialog(QDialog):
             if data.shape[1] >= 3:
                 self._draw_3d()
 
-            if 'SOM' in self.final_results and self._som_obj is not None:
+            if ('SOM' in self.final_results and self._som_obj is not None
+                    and hasattr(self, 'som_fig')):
                 som_labels = self.final_results['SOM'].get('labels')
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
@@ -6729,7 +6774,8 @@ class ClusteringDisplayDialog(QDialog):
                     self.tabs.setCurrentIndex(self.som_tab_idx)
                     return
             if (self.node.config.get('selected_algorithm') == 'Hierarchical'
-                    and self.node.config.get('hier_show_dendrogram', False)):
+                    and self.node.config.get('hier_show_dendrogram', False)
+                    and hasattr(self, 'dendro_fig')):
                 self._draw_dendrogram()
                 self.tabs.setCurrentIndex(self.dendro_tab_idx)
 
@@ -6825,6 +6871,10 @@ class ClusteringDisplayDialog(QDialog):
             self.k_slider.blockSignals(True)
             self.k_slider.setValue(k)
             self.k_slider.blockSignals(False)
+        # Shared parameter set: the chosen K is also the K the "How it works"
+        # tab uses, so store it and sync that tab.
+        self.node.config['live_k'] = k
+        self._sync_live_tab()
 
     def _on_k_slider_changed(self, k):
         """Sync the combo to the slider and, if live mode is on, schedule a recut.
@@ -6951,6 +7001,48 @@ class ClusteringDisplayDialog(QDialog):
             lambda pos: self._ctx_menu(pos, 'som'))
         vl.addWidget(self.som_canvas, stretch=1)
         self.som_tab_idx = self.tabs.addTab(tab, "⑤ SOM Grid")
+
+    def _build_live_tab(self):
+        """Add the interactive '② Cluster' tab (animated clustering).
+
+        This replaces the old matplotlib Clusters tab in the tab bar. It uses a
+        QWebEngineView so the algorithms can be *watched* building their answer,
+        with PCA/t-SNE/UMAP projections and 2-D/3-D views, on the same data the
+        other tabs use. The authoritative scikit-learn run (toolbar "② Cluster"
+        button) still feeds the strips, heatmap, dendrogram and export.
+
+        Kept optional and fully guarded: if QtWebEngine (or the module) is
+        unavailable the dialog is completely unaffected and simply has no live
+        tab.
+        """
+        self._live_tab = None
+        self.live_tab_idx = -1
+        try:
+            from results.cluster.live import ClusterLiveTab, WEBENGINE_OK
+        except Exception:
+            try:
+                from .live import ClusterLiveTab, WEBENGINE_OK
+            except Exception:
+                _itk_log.exception("Handled exception importing results.cluster.live")
+                return
+        if not WEBENGINE_OK:
+            return
+        try:
+            self._live_tab = ClusterLiveTab(self)
+            self.live_tab_idx = self.tabs.addTab(self._live_tab,
+                                                 "④ How it works")
+        except Exception:
+            _itk_log.exception("Handled exception building live tab")
+            self._live_tab = None
+
+    def _on_live_tab_shown(self, idx):
+        """Refresh the live view's data when its tab is opened."""
+        if (getattr(self, '_live_tab', None) is not None
+                and idx == getattr(self, 'live_tab_idx', -1)):
+            try:
+                self._live_tab.refresh_data()
+            except Exception:
+                _itk_log.exception("Handled exception refreshing live tab")
 
     def _characterise(self, elements, data):
         """Generate cluster characterisation with real element-% composition labels.
@@ -7108,7 +7200,7 @@ class ClusteringDisplayDialog(QDialog):
         if self.eval_results:
             self._refresh_eval_plot()
         if (getattr(self, '_som_obj', None) is not None
-                and self.final_results):
+                and self.final_results and hasattr(self, 'som_fig')):
             som_labels = self.final_results.get('SOM', {}).get('labels')
             if som_labels is not None:
                 _draw_som_grid(self.som_fig, self._som_obj,

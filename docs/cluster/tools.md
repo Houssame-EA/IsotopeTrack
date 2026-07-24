@@ -1,8 +1,8 @@
-# `results_cluster_tools.py`
+# `tools.py`
 
 Custom Cluster Test — exhaustive pipeline search against known components.
 
-Standalone companion to ``results_cluster.py``.  It reads the same input data
+Standalone companion to ``dialog.py``.  It reads the same input data
 and re-uses a few side-effect-free helpers when importable, but never modifies
 the existing clustering behaviour.
 

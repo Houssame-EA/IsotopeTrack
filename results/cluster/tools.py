@@ -1,6 +1,6 @@
 """Custom Cluster Test — exhaustive pipeline search against known components.
 
-Standalone companion to ``results_cluster.py``.  It reads the same input data
+Standalone companion to ``dialog.py``.  It reads the same input data
 and re-uses a few side-effect-free helpers when importable, but never modifies
 the existing clustering behaviour.
 
@@ -47,7 +47,7 @@ from sklearn.metrics import (
     homogeneity_completeness_v_measure,
 )
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster_tools")
+_itk_log = logging.getLogger("IsotopeTrack.results.cluster.tools")
 
 try:
     import os as _os
@@ -78,7 +78,7 @@ from results.compositional import (
 )
 
 try:
-    from results.results_cluster import (
+    from results.cluster.dialog import (
         DATA_KEY_MAP, DENSITY_BASED_ALGOS, CVI_FUNCS, METRIC_REGISTRY,
     )
     _HOST_OK = True
@@ -1594,19 +1594,34 @@ if _QT_OK:
             v.setSpacing(12)
             v.setContentsMargins(6, 6, 6, 6)
 
-            gt = QGroupBox("Known components (ground truth)")
+            gt = QGroupBox("Advanced — known components (ground truth)")
+            gt.setCheckable(True)
+            gt.setChecked(False)
+            gt.setToolTip(
+                "Off (default): components are unknown, so pipelines are ranked "
+                "by internal metrics only.\n"
+                "On: enter the components you prepared and rank the sweep "
+                "against that ground truth with external indices.")
+            self.gt_group = gt
             gtl = QVBoxLayout(gt)
-            gtl.addWidget(QLabel(
+            self.gt_body = QWidget()
+            gtb = QVBoxLayout(self.gt_body)
+            gtb.setContentsMargins(0, 0, 0, 0)
+            gtb.addWidget(QLabel(
                 "Enter the components you prepared, separated by ';'. "
                 "Group alloys/molecules with '+' or fused symbols, e.g. "
                 "<b>107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co</b>"))
             self.components_edit = QLineEdit("107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co")
-            gtl.addWidget(self.components_edit)
-            self.unknown_mode = QCheckBox(
-                "Unknown components — rank by internal metrics only "
-                "(no ground truth)")
-            self.unknown_mode.toggled.connect(self._on_mode_changed)
-            gtl.addWidget(self.unknown_mode)
+            gtb.addWidget(self.components_edit)
+            extrow = QHBoxLayout()
+            extrow.addWidget(self._axis_box(
+                "External metrics (vs truth)", list(EXTERNAL_METRICS.keys()),
+                DEFAULT_EXTERNAL_METRICS, 'ext_boxes'))
+            extrow.addStretch()
+            gtb.addLayout(extrow)
+            gtl.addWidget(self.gt_body)
+            self.gt_body.setVisible(False)
+            gt.toggled.connect(self._on_mode_changed)
             v.addWidget(gt)
 
             axes = QHBoxLayout()
@@ -1663,9 +1678,6 @@ if _QT_OK:
             dr_box.layout().addLayout(krow)
             self._on_kfilter_toggled(False)
             axes.addWidget(dr_box)
-            axes.addWidget(self._axis_box(
-                "External metrics (vs truth)", list(EXTERNAL_METRICS.keys()),
-                DEFAULT_EXTERNAL_METRICS, 'ext_boxes'))
             axes.addWidget(self._axis_box(
                 "Internal metrics", list(METRIC_REGISTRY.keys()),
                 list(METRIC_REGISTRY.keys())[:3], 'int_boxes'))
@@ -1778,7 +1790,7 @@ if _QT_OK:
             current = self.rank_combo.currentText()
             intl_on = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
             ext_on  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
-            if self.unknown_mode.isChecked():
+            if self._is_unknown():
                 items = list(intl_on or METRIC_REGISTRY.keys())
                 if len(intl_on) >= 2:
                     items = items + ['Borda (Internal)']
@@ -1795,11 +1807,17 @@ if _QT_OK:
                 self.rank_combo.setCurrentText(current)
             self.rank_combo.blockSignals(False)
 
-        def _on_mode_changed(self, checked):
-            """Enable/disable truth-only controls when the mode toggles."""
-            self.components_edit.setEnabled(not checked)
-            for cb in self.ext_boxes.values():
-                cb.setEnabled(not checked)
+        def _is_unknown(self):
+            """Return True when no ground truth is provided (default mode).
+
+            The advanced group box acts as the mode switch: collapsed (unchecked)
+            means the components are unknown and only internal metrics apply.
+            """
+            return not self.gt_group.isChecked()
+
+        def _on_mode_changed(self, advanced):
+            """Show/hide the ground-truth controls when the mode toggles."""
+            self.gt_body.setVisible(bool(advanced))
             self._refresh_rank_combo()
 
         def _on_kfilter_toggled(self, checked):
@@ -1809,7 +1827,7 @@ if _QT_OK:
 
         def _gather_kwargs(self):
             """Collect the current setup into :func:`run_sweep` keyword args."""
-            unknown = self.unknown_mode.isChecked()
+            unknown = self._is_unknown()
             algo_selections = {}
             for name, card in self.algo_cards.items():
                 if card.isChecked():
@@ -1861,10 +1879,10 @@ if _QT_OK:
             if not kw['algo_selections']:
                 QMessageBox.warning(self, "Setup", "Select at least one algorithm.")
                 return
-            if self.unknown_mode.isChecked():
+            if self._is_unknown():
                 if not kw['internal_metrics']:
                     QMessageBox.warning(self, "Setup",
-                                        "Unknown mode needs at least one internal metric.")
+                                        "Select at least one internal metric.")
                     return
             elif not kw['external_metrics']:
                 QMessageBox.warning(self, "Setup",
@@ -1920,7 +1938,7 @@ if _QT_OK:
                 QMessageBox.warning(self, "No results", payload['error'])
                 return
             self._last = payload
-            self._last['unknown'] = self.unknown_mode.isChecked()
+            self._last['unknown'] = self._is_unknown()
             self._show_results(payload)
             self._save_state()
             self.tabs.setCurrentIndex(1)
@@ -2182,7 +2200,23 @@ if _QT_OK:
             cfg['enabled_algorithms'] = [result['algorithm']]
             if 'k' in result['params']:
                 cfg['min_clusters'] = cfg['max_clusters'] = int(result['params']['k'])
+                cfg['live_k'] = int(result['params']['k'])
                 cfg['auto_select_k'] = False
+            # Copy every algorithm parameter into the shared config so all
+            # sections (Settings, ② Clusters, ④ How it works) see the same
+            # values. Parameter names match the engine's; the map translates
+            # them to their node.config keys.
+            try:
+                from results.cluster.live import ALGO_PARAM_MAP
+                pmap = ALGO_PARAM_MAP.get(result['algorithm'], {})
+                for pkey, pval in (result.get('params') or {}).items():
+                    if pkey == 'k':
+                        continue
+                    cfgkey = pmap.get(pkey)
+                    if cfgkey:
+                        cfg[cfgkey] = pval
+            except Exception:
+                _itk_log.exception("Handled exception copying params")
             try:
                 self.node.configuration_changed.emit()
             except Exception:
@@ -2325,7 +2359,7 @@ if _QT_OK:
                 'ncomp': self.ncomp.value(),
                 'min_type_count': self.min_type_count.value(),
                 'rank_by': self.rank_combo.currentText(),
-                'unknown': self.unknown_mode.isChecked(),
+                'unknown': self._is_unknown(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
                 'last': self._last,
@@ -2353,8 +2387,8 @@ if _QT_OK:
                 self._set_axis(self.dr_boxes, state.get('dim_reductions'))
                 self._set_axis(self.ext_boxes, state.get('ext'))
                 self._set_axis(self.int_boxes, state.get('int'))
-                self.unknown_mode.setChecked(bool(state.get('unknown', False)))
-                self._on_mode_changed(self.unknown_mode.isChecked())
+                self.gt_group.setChecked(not bool(state.get('unknown', True)))
+                self._on_mode_changed(self.gt_group.isChecked())
                 self.kfilter_cb.setChecked(bool(state.get('kfilter', False)))
                 self._on_kfilter_toggled(self.kfilter_cb.isChecked())
                 if state.get('min_k'):

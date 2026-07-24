@@ -1,4 +1,4 @@
-# `results_cluster.py`
+# `dialog.py`
 
 ---
 
@@ -10,9 +10,9 @@
 | `CVI_FUNCS` | `{'silhouette_scores': lambda d, l: float(silhouette_score…` |
 | `METRIC_REGISTRY` | `{'Silhouette': {'display': 'Silhouette Score', 'key': 'si…` |
 | `METRICS` | `list(METRIC_REGISTRY.keys())` |
-| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for name, spec in M…` |
+| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for (name, spec) in…` |
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
-| `METRIC_COLORS` | `{name: spec['color'] for name, spec in METRIC_REGISTRY.it…` |
+| `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
 | `PROGRESS_RESOLUTION` | `1000` |
 | `SCALING_OPTIONS` | `['CLR', 'ILR', 'Robust Z-score', 'None']` |
@@ -222,6 +222,7 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_on_eval_pick` | `(self, event)` | Click a point on an evaluation curve to set K directly. |
 | `_on_cluster_hover` | `(self, event)` | Show a floating tooltip with element values when hovering scatter points. |
 | `_open_settings` | `(self)` |  |
+| `_sync_live_tab` | `(self)` | Push the shared config into the ④ How it works tab. |
 | `_on_node_changed` | `(self)` |  |
 | `_get_elements` | `(self)` |  |
 | `_prepare_data` | `(self, elements)` | Prepare data matrix — identical logic to original. |
@@ -262,6 +263,8 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_do_live_k` | `(self)` | Recompute clustering for the current slider K on the main thread. |
 | `_hier_recut` | `(self, data, k, cfg)` | Cut a cached hierarchical linkage tree at K clusters. |
 | `_build_som_tab` | `(self)` |  |
+| `_build_live_tab` | `(self)` | Add the interactive '② Cluster' tab (animated clustering). |
+| `_on_live_tab_shown` | `(self, idx)` | Refresh the live view's data when its tab is opened. |
 | `_characterise` | `(self, elements, data)` | Generate cluster characterisation with real element-% composition labels. |
 | `_rebuild_display_labels` | `(self)` | Recompute cluster_type_short and cluster_type from stored composition. |
 | `_apply_display_settings` | `(self)` | Rebuild display labels and redraw all figures without re-clustering. |

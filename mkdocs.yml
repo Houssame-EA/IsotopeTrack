@@ -102,9 +102,9 @@ nav:
     - "colors.py": theme/colors.md
 - Data Loading:
     - Overview: loading/index.md
+    - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
     - "import_csv_dialogs.py": loading/import-csv-dialogs.md
-    - "SIA_manager.py": loading/sia-manager.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -121,13 +121,13 @@ nav:
     - "peak_detection.py": peak_detection/peak-detection.md
 - Calibration:
     - Overview: calibration/index.md
-    - "calibration_registry.py": calibration/calibration-registry.md
-    - "ionic_CAL.py": calibration/ionic-cal.md
     - "TE.py": calibration/te.md
-    - "te_common.py": calibration/te-common.md
     - "TE_input.py": calibration/te-input.md
     - "TE_mass.py": calibration/te-mass.md
     - "TE_number.py": calibration/te-number.md
+    - "calibration_registry.py": calibration/calibration-registry.md
+    - "ionic_CAL.py": calibration/ionic-cal.md
+    - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
     - "canvas_widgets.py": canvas_shared/canvas-widgets.md
@@ -140,8 +140,6 @@ nav:
     - "results_AI.py": results/results-ai.md
     - "results_bar_charts.py": results/results-bar-charts.md
     - "results_box_plot.py": results/results-box-plot.md
-    - "results_cluster.py": results/results-cluster.md
-    - "results_cluster_tools.py": results/results-cluster-tools.md
     - "results_composition_wheel.py": results/results-composition-wheel.md
     - "results_concentration.py": results/results-concentration.md
     - "results_correlation.py": results/results-correlation.md
@@ -156,6 +154,13 @@ nav:
     - "results_reader.py": results/results-reader.md
     - "results_single_multiple.py": results/results-single-multiple.md
     - "results_triangle.py": results/results-triangle.md
+- Clustering:
+    - Overview: cluster/index.md
+    - "dialog.py": cluster/dialog.md
+    - "eval_k.py": cluster/eval-k.md
+    - "live.py": cluster/live.md
+    - "live_engine.py": cluster/live-engine.md
+    - "tools.py": cluster/tools.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
     - "batch_parameters.py": widgets_ui/batch-parameters.md
@@ -182,10 +187,14 @@ nav:
     - "logging_utils.py": tools_utilities/logging-utils.md
     - "mass_fraction_calculator.py": tools_utilities/mass-fraction-calculator.md
     - "particle_filter.py": tools_utilities/particle-filter.md
+    - "periodic_table_info.py": tools_utilities/periodic-table-info.md
     - "toast.py": tools_utilities/toast.md
     - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md
     - "welcome.py": tools_utilities/welcome.md
+- Services:
+    - Overview: services/index.md
+    - "mass_fraction_service.py": services/mass-fraction-service.md
 - Utils (Non-Visual):
     - Overview: utils/index.md
     - "__init__.py": utils/--init--.md

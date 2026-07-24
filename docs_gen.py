@@ -58,8 +58,12 @@ SECTIONS = [
       ROOT / "results/shared_plot_utils.py", ROOT / "results/shared_annotation.py",
       ROOT / "results/utils_sort.py"]),
     ("Results", "results",
-     "All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, …).",
+     "All plot/analysis result modules (bar charts, isotope ratios, AI, …).",
      [p for p in _glob("results/results_*.py")]),
+    ("Clustering", "cluster",
+     "The clustering feature in one package: the dialog, the pipeline sweep, "
+     "the animated teaching view and its NumPy stepper engine.",
+     _glob("results/cluster/*.py", exclude=("__init__.py",))),
     ("Widgets & UI", "widgets_ui",
      "Reusable dialogs, tables, and UI widgets.",
      [p for p in _glob("widget/*.py")

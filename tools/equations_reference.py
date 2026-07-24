@@ -10,7 +10,7 @@ All formulas mirror the actual implementation in
 calibration_methods/ionic_CAL.py, calibration_methods/te_common.py,
 calibration_methods/TE_mass.py, processing/peak_detection.py,
 loading/SIA_manager.py, mainwindow.py, utils/dilution.py,
-tools/mass_fraction_calculator.py and results/results_cluster.py.
+tools/mass_fraction_calculator.py and results/cluster/dialog.py.
 """
 
 from PySide6.QtWidgets import (

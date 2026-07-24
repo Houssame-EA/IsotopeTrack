@@ -20,7 +20,7 @@ Manages project state serialization/deserialization including canvas workflows.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, main_window)` | Initialize the ProjectManager with a reference to the main window. |
+| `__init__` | `(self, main_window: MainWindow)` | Initialize the ProjectManager with a reference to the main window. |
 | `_set_file_icon_cross_platform` | `(self, file_path)` | Set custom icon for the saved project file on both Windows and macOS. |
 | `_set_icon_macos` | `(self, file_path)` | Set custom icon for macOS using native tools. |
 | `_set_icon_windows` | `(self, file_path)` | Set custom icon for Windows by registering file type. |
