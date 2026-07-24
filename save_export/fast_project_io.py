@@ -1,3 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mainwindow import MainWindow
+
 import io
 import json
 import pickle
@@ -210,7 +216,7 @@ def _columnar_to_particles(col_data):
 #  V2 SAVE
 # ---------------------------------------------------------------------------
 
-def build_metadata(mw):
+def build_metadata(mw: MainWindow):
     """Build the light (non-array) project metadata dict for the v2 format.
 
     Contains every persisted attribute except the per-sample raw signal arrays
@@ -239,12 +245,14 @@ def build_metadata(mw):
         '_exclusion_regions_by_sample': getattr(mw, '_exclusion_regions_by_sample', {}),
         'sample_run_info': getattr(mw, 'sample_run_info', {}),
         'sample_method_info': getattr(mw, 'sample_method_info', {}),
-        'element_mass_fractions': getattr(mw, 'element_mass_fractions', {}),
-        'element_densities': getattr(mw, 'element_densities', {}),
-        'element_molecular_weights': getattr(mw, 'element_molecular_weights', {}),
-        'sample_mass_fractions': getattr(mw, 'sample_mass_fractions', {}),
-        'sample_densities': getattr(mw, 'sample_densities', {}),
-        'sample_molecular_weights': getattr(mw, 'sample_molecular_weights', {}),
+
+        'element_mass_fractions': mw.mass_fraction_service.element_mass_fractions,
+        'element_densities': mw.mass_fraction_service.element_densities,
+        'element_molecular_weights': mw.mass_fraction_service.element_molecular_weights,
+        'sample_mass_fractions': mw.mass_fraction_service.sample_mass_fractions,
+        'sample_densities': mw.mass_fraction_service.sample_densities,
+        'sample_molecular_weights': mw.mass_fraction_service.sample_molecular_weights,
+
         'sample_dilutions': getattr(mw, 'sample_dilutions', {}),
         'sample_status': getattr(mw, 'sample_status', {}),
         'detection_states': getattr(mw, 'detection_states', {}),
@@ -283,7 +291,7 @@ def build_metadata(mw):
     return metadata
 
 
-def save_project_v2(filepath, mw, progress_callback=None):
+def save_project_v2(filepath, mw: MainWindow, progress_callback=None):
     """
     Save project in optimized v2 format.
 
@@ -411,7 +419,7 @@ def save_project_v2(filepath, mw, progress_callback=None):
 #  V2 LOAD
 # ---------------------------------------------------------------------------
 
-def load_project_v2(filepath, mw, progress_callback=None):
+def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
     """
     Load project from v2 format.
     
@@ -499,7 +507,7 @@ def load_project_v2(filepath, mw, progress_callback=None):
     return True
 
 
-def _restore_metadata(mw, metadata):
+def _restore_metadata(mw: MainWindow, metadata):
     """
     Restore metadata dict to MainWindow attributes.
     
@@ -516,8 +524,6 @@ def _restore_metadata(mw, metadata):
         'overlap_threshold_percentage', '_global_sigma', '_sigma_mode',
         '_exclusion_regions_by_sample',
         'sample_run_info', 'sample_method_info',
-        'element_mass_fractions', 'element_densities', 'element_molecular_weights',
-        'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
         'sample_dilutions',
         'sample_status', 'detection_states',
         'transport_rate_methods',
@@ -536,6 +542,16 @@ def _restore_metadata(mw, metadata):
     for attr in simple_attrs:
         if attr in metadata:
             setattr(mw, attr, metadata[attr])
+
+    mass_fraction_service_attrs = [
+        'element_mass_fractions', 'element_densities', 'element_molecular_weights',
+        'sample_mass_fractions', 'sample_densities', 'sample_molecular_weights',
+    ]
+
+    for attr in mass_fraction_service_attrs:
+        if attr in metadata:
+            setattr(mw.mass_fraction_service, attr, metadata[attr])
+
 
     if hasattr(mw, '_sync_saturation_filter_ui'):
         mw._sync_saturation_filter_ui()
@@ -569,7 +585,7 @@ def _restore_metadata(mw, metadata):
 #  V1 LOAD (backward compatibility - the old gzip+pickle format)
 # ---------------------------------------------------------------------------
 
-def load_project_v1(filepath, mw, progress_callback=None):
+def load_project_v1(filepath, mw: MainWindow, progress_callback=None):
     """
     Load project from old v1 gzip+pickle format.
     

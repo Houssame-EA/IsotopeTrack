@@ -70,12 +70,15 @@ SECTIONS = [
         ROOT / "tools/signal_selector_dialog.py"]),
     ("Tools & Utilities", "tools_utilities",
      "Support utilities: logging, materials database, filters, updates.",
-     [p for p in _glob("tools/*.py")
+     [p for p in _glob("tools/**/*.py")
       if p.name not in ("cli_utils.py", "progressive_main_window.py",
                         "splash_screen.py", "theme.py", "unit.py",
                         "help_dialogs.py", "tutorial.py", "element_picker.py",
                         "parameters_table.py", "Info_table.py", "info_file.py",
-                        "signal_selector_dialog.py")]),
+                        "signal_selector_dialog.py", "mass_fraction_service.py")]),
+    ("Services", "services",
+     "Data managers and validators at the service of the user.",
+     _glob("tools/**/*service.py")),
     ("Utils (Non-Visual)", "utils",
      "Pure-logic helpers with no Qt UI: versioning, isobaric-interference math, "
      "export units, and dilution/concentration calculations.",
