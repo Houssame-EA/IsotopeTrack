@@ -1,6 +1,7 @@
 # `cli_utils.py`
 
 File with function and classes that manages arguments that are passed with the
+Command Line Interface (CLI)
 
 ---
 
@@ -18,6 +19,8 @@ File with function and classes that manages arguments that are passed with the
 ### `CliArguments`
 
 Object used to work with CLI arguments.
+
+Notes it was mostly used to help the LSP.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

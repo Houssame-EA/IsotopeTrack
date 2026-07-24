@@ -2,6 +2,11 @@
 
 Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
 
+Single sample  → one matrix.
+Multi-sample   → side-by-side or individual subplot matrices.
+
+Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
+
 ---
 
 ## Constants

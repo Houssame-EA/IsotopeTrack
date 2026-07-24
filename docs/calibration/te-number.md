@@ -7,6 +7,8 @@
 ### `CollapsibleSection` *(extends `QWidget`)*
 
 A themed collapsible panel.  Click the header bar to expand / collapse.
+Use ``collapse(status)`` to fold it programmatically and show a summary
+string; use ``expand()`` to re-open it.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

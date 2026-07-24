@@ -16,6 +16,7 @@ Run the heavy project-save work off the UI thread.
 ### `ProjectManager`
 
 Handles saving and loading of IsotopeTrack project files.
+Manages project state serialization/deserialization including canvas workflows.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

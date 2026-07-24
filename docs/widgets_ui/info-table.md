@@ -8,6 +8,9 @@
 
 Custom tooltip widget for displaying sample analysis information and quality metrics.
 
+Uses SNR for per-isotope quality assessment and natural-abundance ratios
+(from the periodic table widget) for isotope consistency anomaly detection.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |

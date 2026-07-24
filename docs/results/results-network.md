@@ -2,6 +2,12 @@
 
 Network / Chord Diagram Node – circular element correlation network.
 
+Elements are arranged around a circle.  Edges represent significant
+pairwise Pearson correlations.  Red = positive, Blue = negative.
+Edge width ∝ |r|.
+
+Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
+
 ---
 
 ## Constants

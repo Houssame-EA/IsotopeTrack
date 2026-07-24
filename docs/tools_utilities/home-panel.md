@@ -2,6 +2,18 @@
 
 Home panel for IsotopeTrack.
 
+Shown in the main plot area only while no data is loaded — so it never
+covers an actual plot. Instead of a blank panel, it offers a quick way to
+pick up where you left off:
+
+* a "Recover unsaved session" card when a previous run crashed
+  (autosave snapshot present), and
+* a list of recently saved projects,
+
+plus Import / Load actions. It tracks the same recent-projects store the
+Welcome screen uses and the autosave recovery files written by
+``AutosaveManager``.
+
 ---
 
 ## Classes

@@ -2,6 +2,32 @@
 
 Autosave and crash recovery for IsotopeTrack.
 
+A long analysis session (loading many samples, per-element parameters,
+calibration, canvas plots) only ever reaches disk when the user explicitly
+saves. If the app crashes, is force-quit, or the machine sleeps and dies, that
+work is lost. This module is the safety net.
+
+Two-tier snapshots
+-------------------
+A saved project embeds the raw signal, which can be gigabytes; rewriting all of
+it every couple of minutes is wasteful. Instead the recovery snapshot is split:
+
+* a **heavy** file (an ordinary ``.itproj``) holding the raw per-sample arrays,
+  written once and refreshed only when the loaded sample set changes; and
+* a **light** file holding just the small, frequently-changing state
+  (parameters, results, calibration, detected particles), rewritten on a
+  debounce after edits settle plus a periodic safety net.
+
+Light writes are atomic (temp file + rename) so a crash mid-write can never
+corrupt the recovery state. On recovery the heavy file is loaded normally and
+the newer light file is overlaid on top.
+
+Crash recovery
+--------------
+A clean exit deletes its recovery files, so any file still present at the next
+startup means the previous session did not exit cleanly, and the app offers to
+reload the most recent one.
+
 ---
 
 ## Constants

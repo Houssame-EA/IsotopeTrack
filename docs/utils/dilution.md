@@ -2,6 +2,11 @@
 
 Dilution and particle-concentration calculations (non-visual).
 
+Pure logic operating on a window-like object that exposes the relevant
+sample data. The dilution editor dialog and prompt UI live in
+``tools/dilution_utils.py``; this module has no Qt-widget dependencies so it
+can be unit-tested without a GUI.
+
 ---
 
 ## Functions

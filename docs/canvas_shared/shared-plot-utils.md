@@ -27,6 +27,10 @@
 
 Event filter: closing a figure window hides it instead of destroying it.
 
+Installed on a figure dialog so its window close button keeps the window
+(and all its state) alive. Set ``dialog._force_close = True`` to allow a
+real close/teardown (e.g. when the owning node is deleted).
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `eventFilter` | `(self, obj, event)` |  |
@@ -34,6 +38,11 @@ Event filter: closing a figure window hides it instead of destroying it.
 ### `_FigureView`
 
 One figure of a node: its own ``config``, shared underlying data.
+
+Passed to a figure dialog in place of the node so several figures of the
+same node can each keep independent settings. ``config`` is private to the
+view; ``extract_plot_data`` runs the node's extraction with this view's
+config swapped in; everything else delegates to the real node.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -46,6 +55,16 @@ One figure of a node: its own ``config``, shared underlying data.
 ### `MplDraggableCanvas` *(extends `_FigureCanvasBase`)*
 
 FigureCanvasQTAgg with built-in axes-drag support.
+
+• Left-click + drag on any axes **background** repositions that subplot
+  within the figure (like the pie-chart node).
+• Middle-click anywhere resets all axes to the auto tight_layout positions.
+• Right-click is forwarded to Qt as usual (context menus work unchanged).
+
+Drop-in replacement for ``FigureCanvasQTAgg``:
+just pass the same ``Figure`` object::
+
+    self.canvas = MplDraggableCanvas(self.figure)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -70,6 +89,14 @@ FigureCanvasQTAgg with built-in axes-drag support.
 
 AxisItem that renders tick labels as HTML using QTextDocument.
 
+Drop-in replacement for the default pg.AxisItem when tick labels
+contain HTML markup — e.g. atomic notation <sup>56</sup>Fe.
+Plain-text labels fall through to the standard QPainter path so
+there is no cost when Atomic Notation is not active.
+
+Usage::
+    pi = layout.addPlot(axisItems={'bottom': HtmlAxisItem('bottom')})
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `generateDrawSpecs` | `(self, p)` | Generate draw specs while recording the rendered width of HTML ticks. |
@@ -80,9 +107,19 @@ AxisItem that renders tick labels as HTML using QTextDocument.
 
 Target rendering engine for element label formatting.
 
+MATHTEXT  — matplotlib axes, titles, colorbars.
+            Atomic Notation uses mathtext: $^{107}\mathrm{Ag}$
+            Normal digits raised by the math engine — same font throughout.
+
+HTML      — pyqtgraph axes, legends, tick labels.
+            Atomic Notation uses Qt HTML: <sup>107</sup>Ag
+            Normal digits raised by Qt — same font throughout.
+
 ### `CustomColorBar`
 
 Visual color bar for scatter plots using plot primitives.
+
+Creates colored rectangles + value labels on the right side of a PlotItem.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -93,6 +130,13 @@ Visual color bar for scatter plots using plot primitives.
 ### `DownloadConfigDialog` *(extends `QDialog`)*
 
 Unified download configuration dialog for all plot types.
+
+Supports PNG (with scale or custom pixel size), SVG, PDF, and CSV output.
+Used by both PyQtGraph and Matplotlib export helpers.
+
+CSV export requires the caller to attach data via set_csv_data() before
+calling exec(). The dialog hides irrelevant resolution/appearance
+controls when CSV is selected.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -109,6 +153,8 @@ Unified download configuration dialog for all plot types.
 
 Reusable font-settings QGroupBox builder.
 
+Call .build() to get the QGroupBox, then .collect() to read current values.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, config: dict)` |  |
@@ -120,6 +166,8 @@ Reusable font-settings QGroupBox builder.
 
 Reusable legend settings QGroupBox builder.
 
+Call .build() to get the QGroupBox, then .collect() to read current values.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, config: dict)` |  |
@@ -129,6 +177,8 @@ Reusable legend settings QGroupBox builder.
 ### `ExportSettingsGroup`
 
 Reusable export settings QGroupBox builder (background colour, format, DPI, figure size).
+
+Call .build() to get the QGroupBox, then .collect() to read current values.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

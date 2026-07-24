@@ -27,6 +27,10 @@ Custom color picker button widget.
 
 Dialog for selecting and configuring multiple signals for simultaneous display.
 
+Supports overlaying signals from multiple samples and multiple elements.
+Each sample has a configurable color. Each element has a configurable color.
+All traces use solid lines.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, main_window, parent=None)` | Initialize the signal selector dialog. |

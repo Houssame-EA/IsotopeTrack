@@ -7,6 +7,34 @@
 ### `SPICPToFMSSimulator`
 
 Background — compound Poisson-lognormal per bin
+------------------------------------------------
+Each dwell bin receives N ~ Poisson(lambda_bg) ions, where each
+ion contributes X_i ~ Lognormal(mu_sir, sigma_sir) with E[X_i]=1.
+Bin signal = sum(X_i).  When N=0 the bin reads exactly zero,
+producing the characteristic sparse, continuous-valued background
+seen in real ToF data.
+
+Particle peak width — derived automatically from dwell time
+-----------------------------------------------------------
+Ion cloud transit duration ~ 400 µs (fixed physical constant).
+
+    peak_bins = max(1, round(400 µs / dwell_µs))
+
+Particle signal model (compound Poisson + lognormal temporal profile)
+---------------------------------------------------------------------
+For each nanoparticle:
+  1. Expected ion yield drawn from Lognormal(µ_size, sigma_size)
+     to represent polydisperse particle size distribution.
+  2. Actual detected ions  N ~ Poisson(expected_yield).
+  3. Each ion contributes  X_i ~ Lognormal(µ_sir, sigma_sir)
+     with E[X_i] = 1  (single-ion response distribution).
+  4. Ions are distributed across peak_bins via Multinomial(N, probs)
+     where probs follow a lognormal temporal envelope:
+       probs[k] ∝ LN_PDF(k + 0.5 | µ_temporal, σ_temporal)
+     This produces the asymmetric peak shape observed in real data:
+     sharp rise as the ion cloud enters the plasma, followed by a
+     longer lognormal tail.
+  5. Per-bin signal = sum of lognormal responses for ions in that bin.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -37,6 +65,9 @@ Background — compound Poisson-lognormal per bin
 ### `PeakIntegrationVisualizer` *(extends `QWidget`)*
 
 Interactive visualizer showing three peak integration methods:
+  - Background: integrate from where signal crosses background level.
+  - Threshold: integrate only the region above the detection threshold.
+  - Midpoint: integrate from where signal crosses (background + threshold) / 2.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -47,6 +78,11 @@ Interactive visualizer showing three peak integration methods:
 ### `IterativeThresholdVisualizer` *(extends `QWidget`)*
 
 The algorithm is a fixed-point iteration:
+    T_{n+1} = f(mean(signal[signal < T_n]))
+
+Aitken acceleration uses three consecutive iterates to extrapolate
+directly to the fixed point:
+    T_accel = T0 - (T1 - T0)^2 / (T2 - 2*T1 + T0)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -57,6 +93,20 @@ The algorithm is a fixed-point iteration:
 ### `WatershedSplittingVisualizer` *(extends `QWidget`)*
 
 Interactive visualizer for the 1D watershed peak splitting algorithm.
+
+The algorithm detects merged (overlapping) particle events and splits them:
+  1. Find local maxima above the threshold in a contiguous region.
+  2. For each pair of adjacent maxima, find the valley minimum.
+  3. Check two criteria:
+       a) Valley depth ratio:  valley / min(peak_left, peak_right)  < valley_ratio
+       b) Prominence: both sub-peaks have prominence > threshold × min_prominence_factor
+  4. If both criteria are met, split at the valley minimum.
+
+References
+----------
+Beucher, S. & Lantuéjoul, C. "Use of Watersheds in Contour Detection."
+    Int. Workshop on Image Processing, CCETT/IRISA, Rennes (1979).
+Adapted to 1D peak splitting for spICP-ToF-MS by IsotopeTrack.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -75,6 +125,15 @@ Interactive visualizer for the 1D watershed peak splitting algorithm.
 ### `_LUTHeatmapWidget` *(extends `QWidget`)*
 
 Colour-coded threshold grid loaded directly from cpln_quantiles.npz.
+
+Improvements over the original:
+- Fully theme-aware (dark-mode safe) — no hardcoded light colours.
+- Heatmap grid is horizontally centred inside a scroll area.
+- Row *and* column of the selected cell are highlighted with a subtle
+  accent ring so the user can trace λ and σ at a glance.
+- The info bar at the top of the heatmap sub-tab is now inside this
+  widget so it re-reads the theme when the dialog is re-shown.
+- A compact "selected cell" details strip lives below the grid.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

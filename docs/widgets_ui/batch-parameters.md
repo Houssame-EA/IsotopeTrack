@@ -8,6 +8,9 @@
 
 A lightweight collapsible container with a toggle header.
 
+Used to hide 'Advanced' parameters that most users don't need to touch,
+keeping the default dialog view short and focused.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, title: str, parent=None)` |  |

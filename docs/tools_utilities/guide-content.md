@@ -2,6 +2,13 @@
 
 Content definitions for the interactive user guide.
 
+Each SECTION contains PAGES; each page shows one screenshot from the
+images/ folder with clickable hotspots. Hotspot rectangles are
+(x, y, w, h) normalised to the image size (0..1). The 'body' HTML is
+shown in the detail panel when the region is clicked.
+
+Rendering is done by tools/interactive_guide.py.
+
 ---
 
 ## Constants

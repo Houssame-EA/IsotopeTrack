@@ -14,6 +14,9 @@
 
 Custom animated button for periodic table elements with isotope selection support.
 
+This button displays element symbols and handles mouse interactions for isotope selection.
+It supports visual highlighting based on isotope abundance and progressive selection modes.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` | Initialize the compact animated button. |
@@ -28,6 +31,9 @@ Custom animated button for periodic table elements with isotope selection suppor
 
 Selectable label widget for individual isotopes with visual feedback.
 
+Displays isotope information and handles click events for selection.
+Visual styling changes based on selection state and availability.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, text, isotope_mass, is_available=False, parent=None)` | Initialize the selectable isotope label. |
@@ -40,6 +46,10 @@ Selectable label widget for individual isotopes with visual feedback.
 ### `CompactIsotopeDisplay` *(extends `QFrame`)*
 
 Popup panel displaying available isotopes for an element with selection capability.
+
+This widget appears next to element buttons and shows a list of isotopes with
+their abundances. It supports progressive selection, individual selection,
+and animated show/hide transitions.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -67,6 +77,10 @@ Popup panel displaying available isotopes for an element with selection capabili
 
 Interactive periodic table widget with isotope selection capabilities.
 
+Displays a compact periodic table where elements can be clicked to select specific
+isotopes. Elements are color-coded by category and can be enabled/disabled based
+on available isotopes in the data.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` | Initialize the periodic table widget. |
@@ -91,6 +105,8 @@ Interactive periodic table widget with isotope selection capabilities.
 ### `IsotopeChipSelector` *(extends `QWidget`)*
 
 Compact chip-based isotope selector.
+Shows available isotopes grouped by element as clickable toggle chips.
+Much simpler UX than the full periodic table for quick sample configuration.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

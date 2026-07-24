@@ -25,6 +25,9 @@
 
 Thin strip between two stacked broken-axis panels.
 
+Draws the classic diagonal double-slash break marks centered on the
+left and right axis spines of the panels above and below it.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, ref_plot, height=16)` | Store the reference panel used to locate the axis spines. |
@@ -34,6 +37,11 @@ Thin strip between two stacked broken-axis panels.
 ### `BrokenYAxisEditor` *(extends `QGroupBox`)*
 
 Settings-dialog group box for configuring broken Y-axis cuts.
+
+Purely value-driven: an enable checkbox plus one row per cut, each row
+being "cut from [low] to [high]" spin boxes with a remove button, and
+an "+ Add cut" button for multiple cuts. The whole group is disabled
+while log Y is checked because the two features do not combine.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -47,6 +55,12 @@ Settings-dialog group box for configuring broken Y-axis cuts.
 ### `_PlotWidgetAdapter`
 
 Wraps a (GraphicsLayoutWidget, PlotItem) pair so that all editor
+dialogs from custom_plot_widget.py treat it like a pg.PlotWidget.
+
+``custom_axis_labels`` and ``persistent_dialog_settings`` are stored
+directly on the PlotItem (prefixed with '_') so they survive across
+multiple double-click events even though the adapter is re-created
+each time.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -65,6 +79,16 @@ Wraps a (GraphicsLayoutWidget, PlotItem) pair so that all editor
 ### `EnhancedGraphicsLayoutWidget` *(extends `pg.GraphicsLayoutWidget`)*
 
 GraphicsLayoutWidget with double-click inline editing.
+
+Double-clicking on any subplot opens the same editor dialogs that
+EnhancedPlotWidget uses in the main signal window:
+  • Title label      → TitleEditorDialog
+  • Left axis        → AxisLabelEditorDialog('left')
+  • Bottom axis      → AxisLabelEditorDialog('bottom')
+  • Legend           → LegendEditorDialog
+  • Background area  → BackgroundEditorDialog
+
+Works correctly across all multi-subplot display modes.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -86,6 +110,10 @@ GraphicsLayoutWidget with double-click inline editing.
 ### `_ClickableLegendSwatch` *(extends `pg.BarGraphItem`)*
 
 Legend swatch item that forwards click events to a visibility callback.
+
+The swatch stores a raw histogram element/isotope key and emits that key
+through ``toggle_callback`` when clicked. This keeps histogram visibility
+state keyed by raw identifiers instead of formatted legend labels.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -127,6 +155,11 @@ Full settings dialog for histogram node.
 
 Global visual-format settings dialog for Histogram plots.
 
+This dialog is intentionally config-driven and plot-global: it collects
+only presentation settings (fonts, labels, visual toggles, and element
+colors) and relies on Histogram redraw to apply those settings uniformly
+across all subplot PlotItems.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, config, is_multi, sample_names, parent=None, available_elements` | Initialize the histogram format-only settings dialog. |
@@ -139,6 +172,11 @@ Global visual-format settings dialog for Histogram plots.
 ### `HistogramDisplayDialog` *(extends `QDialog`)*
 
 Full-figure histogram dialog with PyQtGraph and right-click menu.
+
+This dialog owns parent-level histogram visibility state for legend-click
+hiding/showing of both raw isotope/element keys and raw sample keys.
+Visibility state is UI-local and render-only; scientific calculations and
+extracted data remain unchanged.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -180,6 +218,10 @@ Full-figure histogram dialog with PyQtGraph and right-click menu.
 
 Independent child dialog that decomposes one histogram panel by isotope.
 
+This window renders one single-series histogram panel per element/isotope
+using a snapshot of parent panel data, with no write-back to parent node
+or project lifecycle state.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, config_snapshot, panel_label, panel_element_data, parent=None, ` | Preserved behavior: |
@@ -208,6 +250,9 @@ Independent child dialog that decomposes one histogram panel by isotope.
 ### `HistogramPlotNode` *(extends `QObject`)*
 
 Histogram visualization node with element grouping support.
+
+Element groups sum selected element values PER PARTICLE into a
+single combined value, then plot the histogram of those sums.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

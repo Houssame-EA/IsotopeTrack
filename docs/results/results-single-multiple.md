@@ -2,6 +2,10 @@
 
 Single vs Multiple Element Analysis Node – Pie charts & heatmaps.
 
+Uses **Matplotlib** for publication-quality figures (pie/heatmap).
+Sidebar replaced by **right-click context menu** + settings dialog.
+Uses shared_plot_utils for fonts, colors, sample helpers, and download.
+
 ---
 
 ## Constants
