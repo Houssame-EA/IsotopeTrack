@@ -11,7 +11,7 @@ from tools.mass_fraction_calculator import (
     _safe_int,
     _element_order_in_formula,
     reduce_counts,
-    _signature_from_counts,
+    signature_from_counts,
     _join_formula_from_counts,
     canonicalize_preserve_user_order,
 )
@@ -83,12 +83,12 @@ class TestReduceCounts:
 
 class TestSignature:
     def test_order_independent(self):
-        a = _signature_from_counts({"O": 2, "H": 2})
-        b = _signature_from_counts({"H": 2, "O": 2})
+        a = signature_from_counts({"O": 2, "H": 2})
+        b = signature_from_counts({"H": 2, "O": 2})
         assert a == b == "H2|O2"
 
     def test_empty(self):
-        assert _signature_from_counts({}) == ""
+        assert signature_from_counts({}) == ""
 
 
 class TestJoinFormula:

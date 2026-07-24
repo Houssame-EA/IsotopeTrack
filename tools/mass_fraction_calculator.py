@@ -102,7 +102,7 @@ def reduce_counts(counts: dict) -> dict:
     return {k: v // g for k, v in counts.items()}
 
 
-def _signature_from_counts(counts: dict) -> str:
+def signature_from_counts(counts: dict) -> str:
     """Order-independent canonical key for matching equivalent formulas."""
     if not counts:
         return ''
@@ -242,7 +242,7 @@ class CSVCompoundDatabase:
                     counts = reduce_counts(parse_formula_to_counts(raw_formula))
                     if not counts:
                         continue
-                    sig = _signature_from_counts(counts)
+                    sig = signature_from_counts(counts)
 
                     self.signature_to_formula.setdefault(sig, raw_formula)
                     self.signature_to_data.setdefault(sig, []).append(material_data)
@@ -274,7 +274,7 @@ class CSVCompoundDatabase:
     # ------------------------------------------------------------------
 
     def _signature_for_formula(self, formula: str) -> str:
-        return _signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
+        return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
 
     def get_data_by_formula_or_signature(self, formula: str) -> list[dict]:
         return self.signature_to_data.get(self._signature_for_formula(formula), [])
