@@ -937,15 +937,79 @@ def _cell_spread_value(vals, spread):
     return None
 
 
-def _fmt_cell_number(v, is_pct):
-    """Format one numeric cell value with the heatmap's standard precision."""
-    if is_pct:
-        return f'{v:.1f}%'
+def _fmt_cell_number(v):
+    """Format one numeric cell value with the heatmap's standard precision.
+
+    Units are deliberately omitted. The colorbar and the Data Type setting
+    already state whether the matrix is in fg, fmol or %, so repeating a suffix
+    in every cell only adds clutter — the sole exception is CV, which is a
+    percentage *of the mean* rather than of the data type and so carries its
+    own '%' at the call site.
+    """
     if v >= 1000:
         return f'{v:.0f}'
     if v >= 1:
         return f'{v:.1f}'
     return f'{v:.2f}'
+
+
+def _per_particle_percentages(total_values):
+    """Convert a combination's raw per-element values into per-particle %.
+
+    ``total_values`` is ``{element: [v_particle0, v_particle1, ...]}`` and the
+    lists are parallel: index *i* is the same particle in every element, because
+    a combination is defined by the exact element set its particles share. Each
+    particle is therefore normalised on its own total, giving a distribution of
+    composition percentages per element instead of a single bulk number. That
+    distribution is what makes Mean/Median/Mode and SD/SEM/IQR meaningful for
+    the ``%`` data types.
+
+    Args:
+        total_values (dict): ``{element: [values...]}`` for one combination.
+
+    Returns:
+        dict | None: ``{element: [pct...]}`` with one percentage per particle,
+        or None when the lists are not parallel (e.g. synthesised rows from the
+        clustering Overview tab), in which case the caller falls back to the
+        bulk percentage.
+    """
+    elems = [e for e, v in total_values.items() if v]
+    if not elems:
+        return None
+
+    lengths = {len(total_values[e]) for e in elems}
+    if len(lengths) != 1:
+        return None
+    n = lengths.pop()
+    if n == 0:
+        return None
+
+    arrs = {}
+    for e in elems:
+        a = np.asarray(total_values[e], dtype=float)
+        arrs[e] = np.nan_to_num(a, nan=0.0)
+
+    totals = np.zeros(n, dtype=float)
+    for a in arrs.values():
+        totals += a
+
+    valid = totals > 0
+    if not np.any(valid):
+        return None
+
+    return {e: (a[valid] / totals[valid] * 100.0) for e, a in arrs.items()}
+
+
+def _bulk_percentages(total_values):
+    """Bulk composition %: each element's summed signal over the grand total.
+
+    Used as the fallback when per-particle normalisation isn't possible.
+    """
+    sums = {e: float(np.nansum(v)) for e, v in total_values.items() if v}
+    grand = sum(sums.values())
+    if grand <= 0:
+        return None
+    return {e: [s / grand * 100.0] for e, s in sums.items()}
 
 
 def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
@@ -1053,21 +1117,19 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
             labels.append(f"{fmt} ({count})")
 
         is_pct = dt.endswith('%')
-        total_sum = 0
+        pct_values = None
         if is_pct:
-            for vals in d['total_values'].values():
-                if vals:
-                    total_sum += np.sum(vals)
+            pct_values = (_per_particle_percentages(d['total_values'])
+                          or _bulk_percentages(d['total_values'])
+                          or {})
 
         row = []
         spread_row = []
         for elem in all_elems:
-            vals = d['total_values'].get(elem, [])
-            if not vals:
+            vals = (pct_values.get(elem, []) if is_pct
+                    else d['total_values'].get(elem, []))
+            if len(vals) == 0:
                 row.append(0)
-                spread_row.append(None)
-            elif is_pct:
-                row.append((np.sum(vals) / total_sum * 100) if total_sum > 0 else 0)
                 spread_row.append(None)
             else:
                 row.append(_cell_center(vals, cell_stat))
@@ -1127,7 +1189,6 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     eff_fs = ann_fs if ann_fs else fc['size']
     if show_nums and plot_matrix.size < 1000:
-        is_pct = dt.endswith('%')
         weight = 'bold' if fc['bold'] else 'normal'
         mx = np.nanmax(plot_matrix) if not np.all(np.isnan(plot_matrix)) else 1
         for i in range(len(labels)):
@@ -1136,16 +1197,19 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                 v_orig = matrix[i, j]
                 if not np.isnan(v) and v_orig > 0:
                     tc = 'white' if v > mx * 0.5 else 'black'
-                    txt = _fmt_cell_number(v_orig, is_pct)
+                    txt = _fmt_cell_number(v_orig)
                     sp = spread_matrix[i][j]
-                    if sp is not None and not is_pct:
+                    if sp is not None:
+                        # CV is a percentage of the mean, not of the data type,
+                        # so it keeps its own '%'. Everything else inherits the
+                        # cell's units and is printed bare.
                         if isinstance(sp, tuple) and sp[0] == '%':
                             txt = f'{txt} ({sp[1]:.0f}%)'
                         elif isinstance(sp, tuple):
-                            txt = (f'{txt} ({_fmt_cell_number(sp[0], False)}'
-                                   f'–{_fmt_cell_number(sp[1], False)})')
+                            txt = (f'{txt} ({_fmt_cell_number(sp[0])}'
+                                   f'–{_fmt_cell_number(sp[1])})')
                         else:
-                            txt = f'{txt} ± {_fmt_cell_number(sp, False)}'
+                            txt = f'{txt} ± {_fmt_cell_number(sp)}'
                     ax.text(j, i, txt, ha='center', va='center',
                             color=tc, fontsize=eff_fs,
                             fontfamily=fc['family'], weight=weight,
