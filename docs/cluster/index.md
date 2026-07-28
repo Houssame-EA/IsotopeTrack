@@ -9,11 +9,6 @@ The clustering feature in one package: the dialog, the pipeline sweep, the anima
 
 **9** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **126** methods
 
-### [`eval_k.py`](eval-k.md)
-Interactive 'Evaluate K' web tab for the Clustering Analysis dialog.
-
-**3** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **23** methods
-
 ### [`live.py`](live.md)
 Interactive *live* clustering tab for the Clustering Analysis dialog.
 

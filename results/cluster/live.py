@@ -52,18 +52,20 @@ try:
 except Exception:
     from . import live_engine as engine
 
+from utils.numba_guard import numba_serial
+
 try:
     from results.compositional import (
         _apply_clr, _apply_ilr, _apply_robust_zscore,
     )
 except Exception:
-    from .compositional import _apply_clr, _apply_ilr, _apply_robust_zscore
+    from results.compositional import _apply_clr, _apply_ilr, _apply_robust_zscore
 
 try:
     from tools.theme import theme as _app_theme
 except Exception:
     try:
-        from ..tools.theme import theme as _app_theme
+        from tools.theme import theme as _app_theme
     except Exception:
         _app_theme = None
 
@@ -122,12 +124,18 @@ DATA_KEY_MAP = {
     'Particle Mole %': 'particle_moles_fmol',
 }
 
-CLUSTER_COLORS = [
-    '#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED',
-    '#0891B2', '#DB2777', '#65A30D', '#EA580C', '#4F46E5',
-    '#0D9488', '#C026D3', '#CA8A04', '#E11D48', '#2DD4BF',
-    '#6366F1', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6',
-]
+try:
+    from results.cluster.palette import (
+        CLUSTER_COLORS, NOISE_COLOR, clear_color_overrides, color_overrides,
+        set_color_override,
+    )
+    from results.cluster.prep import reduction_components
+except ImportError:
+    from .palette import (
+        CLUSTER_COLORS, NOISE_COLOR, clear_color_overrides, color_overrides,
+        set_color_override,
+    )
+    from .prep import reduction_components
 
 ALGO_PARAM_MAP = {
     'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'kmeans_n_init'},
@@ -157,6 +165,24 @@ ALGO_PARAM_MAP = {
 
 PROJECTION_TO_DIMRED = {'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP',
                         'None': 'None'}
+
+
+def _last_dir():
+    """Folder that file dialogs should open in, via the app's shared memory."""
+    try:
+        from utils.file_dialog_memory import load_last_directory
+        return load_last_directory()
+    except Exception:
+        return os.path.expanduser("~")
+
+
+def _remember_dir(path):
+    """Persist *path* as the folder future file dialogs should start in."""
+    try:
+        from utils.file_dialog_memory import save_last_directory
+        save_last_directory(path)
+    except Exception:
+        _log.debug("Handled exception remembering the export folder")
 
 
 def _theme_vars():
@@ -221,6 +247,60 @@ def _propagate_labels(sub_raw, sub_labels, raw_full):
         return out
 
 
+#: Particles used to *fit* t-SNE and UMAP. Both scale poorly, so the embedding
+#: is learned from this many and every remaining particle is then placed into
+#: it. All particles are drawn either way.
+EMBED_FIT_MAX = 3000
+
+
+def _embed_fit_index(n):
+    """Row indices used to fit an embedding.
+
+    Args:
+        n (int): Number of particles available.
+
+    Returns:
+        np.ndarray: Sorted indices — all of them when the set is small enough,
+        otherwise a reproducible random sample of :data:`EMBED_FIT_MAX`.
+    """
+    if n <= EMBED_FIT_MAX:
+        return np.arange(n)
+    rng = np.random.default_rng(0)
+    return np.sort(rng.choice(n, EMBED_FIT_MAX, replace=False))
+
+
+def _place_rest(Xs, fit_idx, Pf):
+    """Give every particle a position in an embedding fitted on a subset.
+
+    t-SNE has no out-of-sample transform, so particles outside the fitted
+    subset take the position of their nearest fitted neighbour in the scaled
+    feature space. Their coordinates are therefore approximate — they show
+    where a particle belongs rather than an independently optimised position —
+    but no particle is left out of the plot.
+
+    Args:
+        Xs (np.ndarray): Scaled matrix for every particle.
+        fit_idx (np.ndarray): Rows the embedding was fitted on.
+        Pf (np.ndarray): Embedded coordinates of those rows.
+
+    Returns:
+        np.ndarray: Coordinates for every row of ``Xs``.
+    """
+    n = len(Xs)
+    if len(fit_idx) == n:
+        return Pf
+    P = np.zeros((n, Pf.shape[1]), float)
+    P[fit_idx] = Pf
+    rest = np.setdiff1d(np.arange(n), fit_idx, assume_unique=True)
+    ref = Xs[fit_idx]
+    step = max(1, int(2e6 // max(1, ref.shape[0] * ref.shape[1])))
+    for i in range(0, len(rest), step):
+        chunk = Xs[rest[i:i + step]]
+        d = ((chunk[:, None, :] - ref[None, :, :]) ** 2).sum(2)
+        P[rest[i:i + step]] = Pf[d.argmin(1)]
+    return P
+
+
 def _embed(Xs, projection, n_dims):
     """Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method.
 
@@ -236,10 +316,13 @@ def _embed(Xs, projection, n_dims):
     if projection == "t-SNE" and n >= 5:
         try:
             from sklearn.manifold import TSNE
-            perp = min(30, max(5, (n - 1) // 3))
-            P = TSNE(n_components=n_dims, random_state=42, init="pca",
-                     perplexity=perp).fit_transform(Xs)
-            return np.asarray(P, float), [float("nan")] * n_dims, "t-SNE"
+            fit_idx = _embed_fit_index(n)
+            Xf = Xs[fit_idx]
+            perp = min(30, max(5, (len(Xf) - 1) // 3))
+            Pf = TSNE(n_components=n_dims, random_state=42, init="pca",
+                      perplexity=perp).fit_transform(Xf)
+            P = _place_rest(Xs, fit_idx, np.asarray(Pf, float))
+            return P, [float("nan")] * n_dims, "t-SNE"
         except Exception:
             _log.exception("t-SNE unavailable; using PCA")
     elif projection == "UMAP" and n >= 5:
@@ -247,15 +330,26 @@ def _embed(Xs, projection, n_dims):
             import os as _os
             _os.environ.setdefault("NUMBA_THREADING_LAYER", "workqueue")
             from umap import UMAP
-            nn = min(15, max(2, n - 1))
-            P = UMAP(n_components=n_dims, n_neighbors=nn,
-                     random_state=42).fit_transform(Xs)
-            return np.asarray(P, float), [float("nan")] * n_dims, "UMAP"
+            fit_idx = _embed_fit_index(n)
+            Xf = Xs[fit_idx]
+            nn = min(15, max(2, len(Xf) - 1))
+            with numba_serial("UMAP (live projection)"):
+                model = UMAP(n_components=n_dims, n_neighbors=nn,
+                             random_state=42).fit(Xf)
+                if len(fit_idx) == n:
+                    P = np.asarray(model.embedding_, float)
+                else:
+                    P = np.asarray(model.transform(Xs), float)
+            return P, [float("nan")] * n_dims, "UMAP"
         except Exception:
             _log.exception("UMAP unavailable; using PCA")
 
     Xc = Xs - Xs.mean(axis=0)
-    _, Sv, Vt = np.linalg.svd(Xc, full_matrices=False)
+    U, Sv, Vt = np.linalg.svd(Xc, full_matrices=False)
+    max_abs = np.argmax(np.abs(Vt), axis=1)
+    signs = np.sign(Vt[range(Vt.shape[0]), max_abs])
+    signs[signs == 0] = 1.0
+    Vt = Vt * signs[:, np.newaxis]
     comps = Vt[:n_dims]
     P = Xc @ comps.T
     if P.shape[1] < n_dims:
@@ -368,10 +462,8 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
     else:
         Xs = matrix.astype(float)
 
-    if max_points is None:
-        max_points = 3000 if projection in ("t-SNE", "UMAP") else 20000
     n_total = int(Xs.shape[0])
-    if n_total > max_points:
+    if max_points is not None and n_total > max_points:
         rng = np.random.default_rng(0)
         sel = np.sort(rng.choice(n_total, max_points, replace=False))
         Xs, raw, samples, kept = Xs[sel], raw[sel], samples[sel], kept[sel]
@@ -382,17 +474,93 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
     else:
         P, var, proj_used = _embed(Xs, projection, n_dims)
 
-    span = np.percentile(np.abs(P), 99, axis=0)
-    span[span == 0] = 1.0
-    P = P / span
 
     return {
         "xy": P, "raw": raw, "samples": samples, "kept_index": kept,
+        "scaled": Xs,
         "sample_names": list(sample_names) if is_multi else ["Sample"],
         "elements": list(elements), "n": int(P.shape[0]), "n_total": n_total,
         "dims": int(P.shape[1]), "projection": proj_used,
         "var_ratio": [float(v) for v in var], "axis_labels": axis_labels,
     }
+
+
+def sklearn_cluster(Xs, cfg, k):
+    """Cluster ``Xs`` exactly the way the ② Cluster tab would.
+
+    Applies the configured ``dim_reduction`` to the scaled matrix and fits the
+    configured algorithm with scikit-learn, so the result is the authoritative
+    one rather than the educational NumPy stepper's.
+
+    Args:
+        Xs (np.ndarray): Scaled full-feature matrix for the displayed particles.
+        cfg (dict): The shared ``node.config``.
+        k (int): Cluster count for the algorithms that take one.
+
+    Returns:
+        tuple: ``(labels, info)`` where ``labels`` is an int array aligned with
+        ``Xs`` rows (-1 marks noise) and ``info`` is a dict describing what was
+        fitted (``note``, ``fit_dims``, ``fit_space``). On failure ``labels`` is
+        None and ``info`` is a plain string explaining why.
+    """
+    try:
+        from results.cluster import tools as _tools
+    except Exception:
+        from . import tools as _tools
+
+    X = np.asarray(Xs, float)
+    dr = cfg.get("dim_reduction", "None")
+    nc = reduction_components(dr, X.shape[1])
+    try:
+        if dr == "PCA" and X.shape[1] > 1:
+            from sklearn.decomposition import PCA
+            X = PCA(n_components=min(nc, X.shape[0])).fit_transform(X)
+        elif dr == "t-SNE" and X.shape[1] > 1:
+            from sklearn.manifold import TSNE
+            X = TSNE(n_components=nc, random_state=42).fit_transform(X)
+        elif dr == "UMAP" and X.shape[1] > 1:
+            from umap import UMAP
+            nn = min(15, max(2, X.shape[0] - 1))
+            with numba_serial("UMAP (comparison pane)"):
+                X = UMAP(n_components=nc, n_neighbors=nn,
+                         random_state=42).fit_transform(X)
+    except Exception:
+        _log.exception("comparison reduction failed; using the scaled matrix")
+
+    algo = cfg.get("selected_algorithm", "K-Means")
+    params = _sklearn_params(algo, cfg, k)
+    try:
+        labels = _tools.run_algorithm(algo, params, X)
+    except Exception:
+        _log.exception("sklearn comparison run failed")
+        return None, "scikit-learn run failed"
+    if labels is None:
+        return None, f"{algo} is unavailable in this install"
+    labels = np.asarray(labels, int)
+    space = "scaled features" if dr in (None, "None") else f"{dr} space"
+    return labels, {"note": f"{algo} on {X.shape[1]}-D {space}",
+                    "fit_dims": int(X.shape[1]), "fit_space": space}
+
+
+def _sklearn_params(algo, cfg, k):
+    """Translate ``node.config`` into the parameter names run_algorithm expects.
+
+    Inverts :data:`ALGO_PARAM_MAP`, which maps engine parameter keys to their
+    config keys, and adds the shared cluster count.
+
+    Args:
+        algo (str): Algorithm name.
+        cfg (dict): The shared ``node.config``.
+        k (int): Cluster count.
+
+    Returns:
+        dict: Parameters for :func:`results.cluster.tools.run_algorithm`.
+    """
+    params = {"k": int(k), "n_clusters": int(k)}
+    for pkey, cfgkey in ALGO_PARAM_MAP.get(algo, {}).items():
+        if cfgkey in cfg:
+            params[pkey] = cfg[cfgkey]
+    return params
 
 
 class _FrameWorker(QThread):
@@ -433,6 +601,63 @@ class _FrameWorker(QThread):
                                    "cancelled": self._cancel}))
 
 
+class _SkWorker(QThread):
+    """QThread that computes the authoritative scikit-learn labels."""
+    done = Signal(str)
+
+    def __init__(self, Xs, xy, cfg, k, seq=0, settle=False, parent=None):
+        """Store the matrices and config for one comparison run.
+
+        Args:
+            Xs (np.ndarray): Scaled full-feature matrix for the shown particles.
+            xy (np.ndarray): Display coordinates, row-aligned with ``Xs``.
+            cfg (dict): Snapshot of the shared node config.
+            k (int): Cluster count.
+            seq (int): State sequence this fit belongs to, so the page can
+                discard a result that a later projection change superseded.
+            settle (bool): Whether the page should adopt this as the final
+                animation frame rather than only as a comparison.
+        """
+        super().__init__(parent)
+        self._Xs = Xs
+        self._xy = np.asarray(xy, float)
+        self._cfg = dict(cfg or {})
+        self._k = int(k)
+        self._seq = int(seq)
+        self._settle = bool(settle)
+
+    def run(self):
+        """Fit with scikit-learn and emit one frame in the page's frame shape."""
+        try:
+            labels, info = sklearn_cluster(self._Xs, self._cfg, self._k)
+        except Exception as exc:
+            _log.exception("sklearn comparison worker failed")
+            self.done.emit(json.dumps({"error": str(exc)}))
+            return
+        if labels is None:
+            self.done.emit(json.dumps({"error": str(info),
+                                       "settle": self._settle}))
+            return
+
+        centroids = []
+        for c in sorted({int(v) for v in labels if v >= 0}):
+            pts = self._xy[labels == c]
+            if pts.size:
+                centroids.append(np.nan_to_num(pts.mean(axis=0)).tolist())
+        payload = {
+            "error": None,
+            "seq": self._seq,
+            "settle": self._settle,
+            "note": info["note"],
+            "fit_dims": info["fit_dims"],
+            "fit_space": info["fit_space"],
+            "labels": labels.astype(int).tolist(),
+            "centroids": centroids,
+            "metrics": engine.cheap_metrics(self._xy, labels),
+        }
+        self.done.emit(_safe_dumps(payload))
+
+
 class _ProjWorker(QThread):
     """Compute a projection off the UI thread (t-SNE/UMAP can take seconds)."""
     done = Signal(object)
@@ -470,6 +695,11 @@ class ClusterLiveBridge(QObject):
         self._page = None
         self._pending = []
         self._proj_worker = None
+        self._sk_worker = None
+        self._sk_again = False
+        self._sk_again_settle = False
+        self._color_timer = None
+        self._anim_labels = None
         self._last_labels = None
         self._state_seq = 0
         self._ov_timer = QTimer(self)
@@ -480,7 +710,7 @@ class ClusterLiveBridge(QObject):
         cfg = getattr(dialog.node, "config", {}) or {}
         dr = cfg.get("dim_reduction", "PCA")
         self._proj = dr if dr in PROJECTION_TO_DIMRED else "PCA"
-        self._dims = 3 if int(cfg.get("n_components", 2)) == 3 else 2
+        self._dims = 3 if int(cfg.get("live_dims", 2)) == 3 else 2
 
     def attach_page(self, page):
         """Give the bridge direct access to the page for runJavaScript pushes.
@@ -593,12 +823,20 @@ class ClusterLiveBridge(QObject):
             "filter_zeros": cfg.get("filter_zeros", True),
             "min_particle_type_count": int(cfg.get("min_particle_type_count", 5)),
             "algorithm": cfg.get("selected_algorithm", "K-Means"),
+            "label_mode": cfg.get("label_mode",
+                                  cfg.get("overview_label_mode", "Symbol")),
+            "display_max_isotopes": int(cfg.get("display_max_isotopes", 4)),
+            "display_min_pct": float(cfg.get("display_min_pct", 1.0)),
         }
 
     def _state_payload(self):
         """Assemble the full state dict that is sent to the page."""
         v = self._view
+        cfg = getattr(self._dialog.node, "config", {}) or {}
         base = {"config": self._cfg_snapshot(), "palette": CLUSTER_COLORS,
+                "noise_color": NOISE_COLOR,
+                "cluster_colors": {str(k): v
+                                   for k, v in color_overrides(cfg).items()},
                 "algorithm": self._cfg_snapshot()["algorithm"], "seq": self._state_seq,
                 "animate": self._next_animate,
                 "param_values": self._param_values(), "theme": _theme_vars()}
@@ -640,18 +878,118 @@ class ClusterLiveBridge(QObject):
             self.rebuild()
         return _safe_dumps(self._state_payload())
 
+    @Slot(str)
+    def set_label_mode(self, mode):
+        """Persist the element label style and repaint the other views.
+
+        Args:
+            mode (str): 'Symbol', 'Mass + Symbol' or 'Atomic Notation'.
+        """
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None or not mode:
+            return
+        if cfg.get("label_mode") == mode:
+            return
+        cfg["label_mode"] = mode
+        try:
+            self._dialog._rebuild_display_labels()
+        except Exception:
+            _log.exception("Handled exception rebuilding display labels")
+        self._redraw_host_figures()
+
+    @Slot(int, str)
+    def set_cluster_color(self, cid, color):
+        """Persist one cluster's colour and repaint the other views.
+
+        Stored on ``node.config`` so the ② Cluster scatters, the Overview
+        strips and the heatmap use the same colour, and so the choice is saved
+        with the project.
+
+        Args:
+            cid (int): Cluster label (0-based, as the engine emits it).
+            color (str): ``#RRGGBB``, or empty to revert to the palette.
+        """
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None:
+            return
+        if set_color_override(cfg, cid, color or None):
+            self._redraw_host_figures()
+
+    @Slot()
+    def reset_cluster_colors(self):
+        """Drop every colour override and repaint the other views."""
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None:
+            return
+        if clear_color_overrides(cfg):
+            self._redraw_host_figures()
+
+    def _redraw_host_figures(self):
+        """Redraw the dialog's figures after a shared appearance change.
+
+        Coalesced through a short timer because the colour picker fires on
+        every drag, and each redraw rebuilds several matplotlib figures.
+        """
+        try:
+            if self._color_timer is None:
+                self._color_timer = QTimer(self)
+                self._color_timer.setSingleShot(True)
+                self._color_timer.setInterval(180)
+                self._color_timer.timeout.connect(self._do_redraw_host)
+            self._color_timer.start()
+        except Exception:
+            _log.exception("Handled exception scheduling a host redraw")
+
+    def _do_redraw_host(self):
+        """Repaint the dialog's figures without re-running the clustering."""
+        fn = getattr(self._dialog, "_apply_display_settings", None)
+        if fn is None:
+            return
+        try:
+            fn()
+        except Exception:
+            _log.exception("Handled exception redrawing the host figures")
+
+    @Slot(str, result=str)
+    def pick_color(self, initial):
+        """Open the native colour dialog and return the chosen ``#RRGGBB``.
+
+        Qt WebEngine ships no colour chooser, so ``<input type="color">`` on
+        the page is inert; the JS picker calls this instead. Returns an empty
+        string when the user cancels (or on any failure), which the page reads
+        as "keep the current colour".
+
+        :param initial: Starting colour as ``#RRGGBB``.
+        :returns: Chosen colour as ``#RRGGBB``, or ``''`` if cancelled.
+        """
+        try:
+            from PySide6.QtWidgets import QColorDialog
+            from PySide6.QtGui import QColor
+            start = QColor(initial or "#2563EB")
+            if not start.isValid():
+                start = QColor("#2563EB")
+            parent = self._dialog if isinstance(self._dialog, QWidget) else None
+            col = QColorDialog.getColor(start, parent, "Cluster colour")
+            if col.isValid():
+                return col.name()          # '#rrggbb'
+        except Exception:
+            _log.exception("Handled exception opening colour dialog")
+        return ""
+
     @Slot(str, int)
     def set_projection(self, projection, dims):
         """Change projection / dimensionality, persist to config, re-project.
 
-        Mirrors the app's ``dim_reduction`` and ``n_components`` config so the
-        Settings dialog and the Cluster tab stay in sync.
+        Mirrors the app's ``dim_reduction`` so the Settings dialog and the
+        Cluster tab stay in sync. The 2-D/3-D choice is display-only and does
+        not change the space the clustering runs in.
         """
         self._proj = projection or "PCA"
         self._dims = 3 if int(dims) == 3 else 2
         cfg = self._dialog.node.config
         cfg["dim_reduction"] = PROJECTION_TO_DIMRED.get(self._proj, "PCA")
-        cfg["n_components"] = self._dims
+        cfg["live_dims"] = self._dims
+        self._invalidate_host_matrix()
         self.rebuild_async(animate=True)
 
     @Slot(str)
@@ -682,7 +1020,19 @@ class ClusterLiveBridge(QObject):
         if "algorithm" in patch:
             cfg["selected_algorithm"] = patch["algorithm"]
             cfg["enabled_algorithms"] = [patch["algorithm"]]
+        self._invalidate_host_matrix()
         self.rebuild_async(animate=True)
+
+    def _invalidate_host_matrix(self):
+        """Drop the dialog's cached matrix so the next run re-prepares it."""
+        dlg = self._dialog
+        for attr in ("_data_matrix_cache", "_linkage_cache",
+                     "_linkage_cache_key"):
+            try:
+                if hasattr(dlg, attr):
+                    setattr(dlg, attr, None)
+            except Exception:
+                _log.exception("Handled exception invalidating %s", attr)
 
     @Slot(str, str, str)
     def set_param(self, algo, key, value_json):
@@ -734,6 +1084,62 @@ class ClusterLiveBridge(QObject):
         self._worker = w
         w.start()
 
+    @Slot()
+    @Slot(bool)
+    def run_sklearn(self, settle=False):
+        """Compute the authoritative scikit-learn labels for the shown particles.
+
+        Fits in the same space the ② Cluster tab uses (scaled features, then the
+        configured ``dim_reduction``). The result reaches the page through
+        ``__clusterLive.compareReady``.
+
+        Args:
+            settle: When True the page also appends the result as the final
+                animation frame, so the view settles on the real answer instead
+                of the stepper's approximation.
+        """
+        if self._view is None:
+            self.rebuild()
+        if self._view is None or self._view.get("scaled") is None:
+            self._push_compare(json.dumps({"error": "no data"}))
+            return
+        if self._sk_worker is not None and self._sk_worker.isRunning():
+            self._sk_again = True
+            self._sk_again_settle = self._sk_again_settle or bool(settle)
+            return
+        self._sk_again = False
+        cfg = getattr(self._dialog.node, "config", {}) or {}
+        self.status.emit("Computing result…")
+        w = _SkWorker(self._view["scaled"], self._view["xy"], cfg,
+                      self._current_k(), self._state_seq, bool(settle))
+        w.done.connect(self._push_compare)
+        w.done.connect(self._sk_finished)
+        self._sk_worker = w
+        w.start()
+
+    @Slot(str)
+    def _sk_finished(self, payload):
+        """Adopt the settled labels, then re-run if a request was queued."""
+        try:
+            res = json.loads(payload or "{}")
+            if res.get("settle") and res.get("labels") is not None:
+                self._last_labels = np.asarray(res["labels"], int)
+                self.status.emit("Done")
+                self._ov_timer.start()
+        except Exception:
+            _log.exception("Handled exception adopting the settled labels")
+        if self._sk_again:
+            self._sk_again = False
+            again_settle = self._sk_again_settle
+            self._sk_again_settle = False
+            QTimer.singleShot(0, lambda: self.run_sklearn(again_settle))
+
+    @Slot(str)
+    def _push_compare(self, s):
+        """Main-thread relay: deliver the comparison result to the page."""
+        self._push_js(
+            "window.__clusterLive && window.__clusterLive.compareReady(%s);" % s)
+
     @Slot(str)
     def _relay_frame(self, s):
         """Main-thread relay: deliver a frame to the page.
@@ -766,27 +1172,35 @@ class ClusterLiveBridge(QObject):
         self._worker = None
 
     def _on_done(self, summary):
-        """Flush remaining frames, notify the page, and refresh the Overview."""
+        """Flush remaining frames, then settle the view on the real result.
+
+        The animation illustrates the method; the answer it leaves on screen is
+        replaced by the scikit-learn fit so the tab, ② Cluster and the Overview
+        all show one clustering. That also restores the algorithms the stepper
+        can only approximate — most importantly HDBSCAN, whose cluster count is
+        derived from the data rather than taken from the shared ``k``.
+        """
         self._flush_frames()
         self._push_js(
             "window.__clusterLive && window.__clusterLive.runDone(%s);" % summary)
         self.runFinished.emit(summary)
-        self.status.emit("Done")
         if self._worker is not None:
-            self._last_labels = self._worker.last_labels
-        # The Overview is driven by the authoritative sklearn run (toolbar
-        # "② Cluster"); the exploratory "How it works" tab no longer feeds it,
-        # so its (different) result can never overwrite the official figures.
+            self._anim_labels = self._worker.last_labels
+        self.run_sklearn(settle=True)
 
     def _apply_to_overview(self):
         """Feed the Cluster tab's result into the Overview strips/heatmap.
 
-        Extends the sampled cluster labels to every particle and populates the
-        dialog's ``final_results``/``characterisation`` caches, then draws the
-        Overview — so the strips and heatmap persistently show exactly the
-        clustering the Cluster tab produced. Skipped while an authoritative
-        cluster/eval/bootstrap run is active (the only case that could race the
-        shared caches). Fully guarded.
+        Runs on the *settled* labels — the scikit-learn fit adopted in
+        :meth:`_sk_finished`, not the animation's approximation — so the strips
+        and heatmap show the same clustering as ② Cluster. This is why the feed
+        is safe to enable: the tab no longer has an answer of its own that could
+        overwrite the official figures.
+
+        Extends those labels to every particle and populates the dialog's
+        ``final_results``/``characterisation`` caches, then draws the Overview.
+        Skipped while an authoritative cluster/eval/bootstrap run is active (the
+        only case that could race the shared caches). Fully guarded.
         """
         dlg = self._dialog
         if self._view is None or self._last_labels is None:
@@ -867,11 +1281,78 @@ class ClusterLiveTab(QWidget):
         self.channel.registerObject("backend", self.backend)
         self.view.page().setWebChannel(self.channel)
         self.view.loadFinished.connect(self._on_load_finished)
+        self._connect_downloads()
 
         index = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "live_ui", "index.html")
         self.view.load(QUrl.fromLocalFile(index))
         layout.addWidget(self.view)
+
+    def _connect_downloads(self):
+        """Accept image exports from the page and let the user choose where.
+
+        Qt cancels any ``QWebEngineDownloadRequest`` that nothing accepts, so
+        without this the page's ``<a download>`` exports are silently discarded
+        while the page still reports success.
+        """
+        try:
+            profile = self.view.page().profile()
+            profile.downloadRequested.connect(self._on_download)
+        except Exception:
+            _log.exception("could not connect the download handler")
+
+    def _on_download(self, item):
+        """Prompt for a destination and accept or cancel the download.
+
+        Args:
+            item (QWebEngineDownloadRequest): The pending download.
+        """
+        from PySide6.QtWidgets import QFileDialog
+
+        try:
+            name = item.downloadFileName() or "cluster-lab.png"
+        except Exception:
+            name = "cluster-lab.png"
+        try:
+            start = os.path.join(_last_dir(), name)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save image", start, "PNG image (*.png);;All files (*)")
+            if not path:
+                item.cancel()
+                return
+            if not os.path.splitext(path)[1]:
+                path += ".png"
+            item.setDownloadDirectory(os.path.dirname(path))
+            item.setDownloadFileName(os.path.basename(path))
+            for sig in ("isFinishedChanged", "stateChanged"):
+                s = getattr(item, sig, None)
+                if s is not None:
+                    s.connect(lambda *_a, it=item: self._on_download_done(it))
+                    break
+            item.accept()
+            _remember_dir(os.path.dirname(path))
+        except Exception:
+            _log.exception("download handling failed")
+            try:
+                item.cancel()
+            except Exception:
+                pass
+
+    def _on_download_done(self, item):
+        """Report the saved path (or the failure) on the page's status line."""
+        try:
+            if not item.isFinished():
+                return
+            state = item.state()
+            done = getattr(type(item).DownloadState, "DownloadCompleted", None)
+            ok = (state == done) if done is not None else True
+            path = os.path.join(item.downloadDirectory(), item.downloadFileName())
+            msg = ("Saved " + path) if ok else ("Export failed: " + path)
+            self.backend.status.emit(msg)
+            self.backend._push_js(
+                "window.showStatus && window.showStatus(%s);" % json.dumps(msg))
+        except Exception:
+            _log.exception("Handled exception reporting a finished download")
 
     def _inject_qwebchannel(self):
         """Load qwebchannel.js from the Qt resource and inject at doc creation."""

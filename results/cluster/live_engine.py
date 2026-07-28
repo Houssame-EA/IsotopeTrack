@@ -54,9 +54,12 @@ Depends only on NumPy.
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
+
+_log = logging.getLogger("IsotopeTrack.results.cluster.live_engine")
 
 
 SCALINGS = ["None", "CLR", "Robust Z-score", "Standardize"]
@@ -269,40 +272,6 @@ def calinski_harabasz(P, labels):
     if wg <= 0:
         return float("nan")
     return float((bg / (k - 1)) / (wg / (n - k)))
-
-
-def evaluate_k(P, algo, params, k_min=2, k_max=10, seed=42):
-    """Sweep k for ``algo`` and yield validity scores per k (for the score test).
-
-    For each k the algorithm is run to completion on ``P`` and scored with
-    silhouette, Calinski-Harabasz and Davies-Bouldin (all JSON-safe: NaN→None).
-    Only meaningful for algorithms that take a ``k`` parameter.
-
-    Yields:
-        dict: ``{"k", "silhouette", "calinski", "davies_bouldin",
-        "n_clusters", "done", "total"}``.
-    """
-    spec = ALGORITHMS.get(algo)
-    if spec is None or not any(p["key"] == "k" for p in spec["params"]):
-        return
-    P = np.asarray(P, dtype=np.float64)
-    ks = list(range(int(k_min), int(k_max) + 1))
-    for i, k in enumerate(ks):
-        rng = np.random.default_rng(seed)
-        p = dict(params)
-        p["k"] = k
-        last = None
-        for fr in spec["fn"](P, p, rng):
-            last = fr
-        labels = np.asarray(last["labels"]) if last else np.zeros(len(P), int)
-        yield {
-            "k": int(k),
-            "silhouette": _finite_or_none(silhouette(P, labels, rng=rng)),
-            "calinski": _finite_or_none(calinski_harabasz(P, labels)),
-            "davies_bouldin": _finite_or_none(davies_bouldin(P, labels)),
-            "n_clusters": int(len(np.unique(labels[labels >= 0]))),
-            "done": i + 1, "total": len(ks),
-        }
 
 
 def _finite_or_none(x):
@@ -975,11 +944,68 @@ def step_hierarchical(P, params, rng):
             yield _fr(step, f"Reached target of {k} clusters", lab,
                       extra=_ins(active, f"tree cut at k={k}"),
                       converged=True, P=P)
+            full = full_hierarchical(P, k, linkage, metric)
+            if full is not None and len(P) > n:
+                yield _fr(step + 1,
+                          f"Settled: {linkage} linkage recomputed on all "
+                          f"{len(P)} particles — the animation above followed "
+                          f"{n} representatives",
+                          full,
+                          extra=_ins(active, f"dendrogram shows the {n} "
+                                             f"animated representatives; the "
+                                             f"colours are the full-data cut"),
+                          converged=True, P=P)
             return
     yield _fr(step, "Merged to a single cluster",
               _expand(P, idx, _sub_labels(clusters, n, active)),
               extra=_ins(active, "everything fused into one root"),
               converged=True, P=P)
+
+
+#: Largest point count for which the full-data linkage is attempted. SciPy's
+#: agglomerative solvers need the condensed distance matrix, which is
+#: ``n(n-1)/2`` doubles — about 245 MB at n = 8000 and 1 GB at n = 16000.
+FULL_LINKAGE_MAX = 12000
+
+#: SciPy spells some metrics differently from scikit-learn.
+_SCIPY_METRIC = {"manhattan": "cityblock", "l1": "cityblock", "l2": "euclidean"}
+
+
+def full_hierarchical(P, k, linkage="ward", metric="euclidean"):
+    """Agglomerative partition of *every* point, not just the animated sample.
+
+    The animation builds its dendrogram from a small sample because it streams
+    one frame per merge and rescans every remaining pair each time, which is
+    O(n^3) — unusable beyond a few hundred points. This computes the same
+    partition on the whole set instead, using SciPy's nearest-neighbour-chain
+    solver, so the settled result reflects all the data.
+
+    Args:
+        P (np.ndarray): Every point, shape (n, d).
+        k (int): Number of clusters to cut the tree at.
+        linkage (str): ``'ward'``, ``'single'``, ``'complete'`` or ``'average'``.
+        metric (str): Point distance; ignored for Ward, which requires Euclidean.
+
+    Returns:
+        np.ndarray or None: Integer labels aligned with ``P``, or None when the
+        set is too large, too small, or SciPy is unavailable.
+    """
+    n = len(P)
+    if n < 2 or k < 1 or n > FULL_LINKAGE_MAX:
+        return None
+    try:
+        from scipy.cluster.hierarchy import linkage as _link, fcluster
+    except Exception:
+        _log.exception("SciPy unavailable; keeping the sampled linkage")
+        return None
+    m = "euclidean" if linkage == "ward" else _SCIPY_METRIC.get(
+        str(metric).lower(), str(metric).lower())
+    try:
+        Z = _link(np.asarray(P, float), method=linkage, metric=m)
+        return (fcluster(Z, t=int(k), criterion="maxclust") - 1).astype(int)
+    except Exception:
+        _log.exception("full linkage failed; keeping the sampled result")
+        return None
 
 
 def _linkage_dist(Q, ca, cb, cea, ceb, linkage, metric="euclidean"):
@@ -1555,9 +1581,10 @@ ALGORITHMS = {
         "params": [
             _p("k", "Clusters (k)", "int", 4, 2, 100, 1, help="Number of clusters"),
             _p("max_iter", "Max iterations", "int", 60, 5, 500, 5),
-            _p("n_init", "N init", "int", 10, 1, 50, 1, applies=False,
-               help="This view animates a single seeding so you can follow it; "
-                    "② Cluster runs all n_init restarts and keeps the best."),
+            _p("n_init", "N init", "int", 10, 1, 50, 1,
+               help="Restarts from different seedings; the tightest one wins. "
+                    "The animation follows a single seeding so you can watch "
+                    "it, but this value shapes the result."),
         ],
     },
     "MiniBatch K-Means": {
@@ -1569,9 +1596,10 @@ ALGORITHMS = {
             _p("k", "Clusters (k)", "int", 4, 2, 100, 1),
             _p("batch_size", "Batch size", "int", 256, 32, 4096, 32),
             _p("max_iter", "Max iterations", "int", 80, 5, 500, 5),
-            _p("n_init", "N init", "int", 3, 1, 20, 1, applies=False,
-               help="This view animates a single seeding; ② Cluster runs all "
-                    "n_init restarts and keeps the best."),
+            _p("n_init", "N init", "int", 3, 1, 20, 1,
+               help="Restarts from different seedings; the tightest one wins. "
+                    "The animation follows a single seeding, but this value "
+                    "shapes the result."),
         ],
     },
     "Gaussian Mixture": {

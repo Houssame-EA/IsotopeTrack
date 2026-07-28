@@ -887,3 +887,453 @@ def test_find_batch_node():
     batch = FakeNode("batch_sample_selector")
     assert rr._find_batch_node(FakeScene([batch])) is batch
     assert rr._find_batch_node(FakeScene([FakeNode("sample_selector")])) is None
+
+
+
+def sized_particles(n, element="56Fe", modes=((40.0, 0.35), (150.0, 0.65)),
+                    sigma=0.16, seed=11, counts=True):
+    """Generate particles whose diameters fall into the given log-normal modes.
+
+    Args:
+        n: How many particles to create.
+        element: Element label to populate.
+        modes: ``(centre_nm, share)`` pairs. One entry makes a single
+            population; two make a split one.
+        sigma: Width of each mode in log space.
+        seed: Seed for reproducibility.
+        counts: Also populate the ``elements`` key with unrelated values.
+
+    Returns:
+        A list of particle dicts carrying ``element_diameter_nm``.
+    """
+    rng = random.Random(seed)
+    out = []
+    for _ in range(n):
+        roll, centre = rng.random(), modes[-1][0]
+        cumulative = 0.0
+        for candidate, share in modes:
+            cumulative += share
+            if roll <= cumulative:
+                centre = candidate
+                break
+        particle = {"element_diameter_nm":
+                    {element: math.exp(rng.gauss(math.log(centre), sigma))}}
+        if counts:
+            particle["elements"] = {element: rng.uniform(50, 500)}
+        out.append(particle)
+    return out
+
+
+def _ctx_for_pool(pool):
+    """Build a context spanning every sample in *pool*.
+
+    Args:
+        pool: Sample name to particle dicts.
+
+    Returns:
+        The analysis context.
+    """
+    return rr.build_context(FakeScene([]), FakeWindow(pool))
+
+
+def test_available_data_keys_reports_what_is_present():
+    """Only the measurements the particles actually carry are listed."""
+    ctx = _ctx_for(sized_particles(200))
+    assert set(ctx.available_data_keys()) == {"elements", "element_diameter_nm"}
+
+
+def test_available_data_keys_empty_without_measurements():
+    """Particles carrying nothing report no keys."""
+    ctx = _ctx_for([{"elements": {}} for _ in range(10)])
+    assert ctx.available_data_keys() == []
+
+
+def test_matrix_for_builds_other_units_on_demand():
+    """A non-count matrix is built when asked for and then reused."""
+    ctx = _ctx_for(sized_particles(200))
+    assert "element_diameter_nm" not in ctx.unit_matrices
+
+    matrix, mask = ctx.matrix_for("element_diameter_nm")
+    assert "56Fe" in matrix
+    assert len(matrix["56Fe"]) == ctx.n
+    assert mask["56Fe"].any()
+    assert ctx.matrix_for("element_diameter_nm")[0] is matrix
+
+
+def test_matrix_for_counts_returns_the_prebuilt_matrix():
+    """Raw counts are already built, so no second copy is made."""
+    ctx = _ctx_for(sized_particles(200))
+    assert ctx.matrix_for("elements")[0] is ctx.matrix
+
+
+def test_matrix_for_unknown_key_is_empty():
+    """A measurement the data lacks yields an empty matrix, not an error."""
+    ctx = _ctx_for(sized_particles(200))
+    assert ctx.matrix_for("particle_moles_fmol") == ({}, {})
+
+
+
+def test_bimodality_coefficient_separates_one_hump_from_two():
+    """Two separated groups score above the threshold; one group does not."""
+    rng = np.random.default_rng(1)
+    two = np.concatenate([rng.normal(10, 0.3, 500), rng.normal(13, 0.3, 500)])
+    one = rng.normal(10, 1.0, 1000)
+    assert rr._bimodality_coefficient(two) > 0.555
+    assert rr._bimodality_coefficient(one) < 0.555
+
+
+def test_bimodality_coefficient_handles_degenerate_input():
+    """Too few values, or no variation, scores zero rather than raising."""
+    assert rr._bimodality_coefficient(np.array([1.0, 2.0])) == 0.0
+    assert rr._bimodality_coefficient(np.full(50, 4.0)) == 0.0
+
+
+def test_detect_bimodality_finds_two_planted_modes():
+    """The two populations are recovered near where they were planted."""
+    values = np.array([p["element_diameter_nm"]["56Fe"]
+                       for p in sized_particles(900)])
+    found = rr._detect_bimodality(values)
+    assert found is not None
+    low, high = found["modes"]
+    assert 30 < low < 55
+    assert 120 < high < 190
+    assert 30 < found["split"] < 120
+    assert found["minor_share"] > 0.10
+
+
+def test_detect_bimodality_rejects_a_single_population():
+    """One log-normal population is not reported as a split."""
+    values = np.array([p["element_diameter_nm"]["56Fe"] for p in
+                       sized_particles(900, modes=((80.0, 1.0),), sigma=0.5)])
+    assert rr._detect_bimodality(values) is None
+
+
+def test_detect_bimodality_rejects_a_heavy_tail():
+    """A long right tail alone is not two populations."""
+    values = np.array([p["element_diameter_nm"]["56Fe"] for p in
+                       sized_particles(900, modes=((60.0, 1.0),), sigma=1.1)])
+    assert rr._detect_bimodality(values) is None
+
+
+def test_detect_bimodality_needs_enough_particles():
+    """Below the minimum count nothing is claimed either way."""
+    values = np.array([p["element_diameter_nm"]["56Fe"]
+                       for p in sized_particles(30)])
+    assert rr._detect_bimodality(values) is None
+
+
+def test_bimodality_scan_reports_size_with_the_right_node_config():
+    """A size split becomes a histogram already set to the diameter unit."""
+    cards = rr._scan_bimodality(_ctx_for(sized_particles(900)))
+    assert cards
+    card = cards[0]
+    assert card.node_type == "histogram_plot"
+    assert card.config["data_type_display"] == "Element Diameter (nm)"
+    assert card.config["element"] == "56Fe"
+    assert card.elements == ("56Fe",)
+    assert card.category == "distribution"
+    assert "nm" in card.reasoning
+
+
+def test_bimodality_scan_prefers_size_over_counts():
+    """When a split shows in several units, only the size card is kept."""
+    rng = random.Random(21)
+    particles = []
+    for _ in range(900):
+        small = rng.random() < 0.4
+        particles.append({
+            "elements": {"56Fe": math.exp(rng.gauss(math.log(
+                100 if small else 900), 0.16))},
+            "element_diameter_nm": {"56Fe": math.exp(rng.gauss(math.log(
+                40 if small else 150), 0.16))},
+        })
+    cards = rr._scan_bimodality(_ctx_for(particles))
+    units = [c.config["data_type_display"] for c in cards]
+    assert units == ["Element Diameter (nm)"]
+
+
+def test_bimodality_scan_quiet_on_a_single_population():
+    """Nothing is reported when every element has one population."""
+    particles = sized_particles(900, modes=((80.0, 1.0),), sigma=0.5)
+    assert rr._scan_bimodality(_ctx_for(particles)) == []
+
+
+def test_distribution_analyser_includes_split_and_spread_cards():
+    """The category reports both the split and the ordinary spread cards."""
+    cards = rr._analyse_distribution(_ctx_for(sized_particles(900)))
+    kinds = {s.node_type for s in cards}
+    assert "histogram_plot" in kinds
+    assert "box_plot" in kinds
+    assert any("populations" in s.title for s in cards)
+
+
+def test_dedupe_keeps_several_distinct_histograms():
+    """Histograms for different elements or units are not merged."""
+    def card(element, unit, confidence):
+        """Build a histogram suggestion for one element and unit.
+
+        Args:
+            element: Element the card describes.
+            unit: Display name of the measurement.
+            confidence: Ranking weight.
+
+        Returns:
+            The suggestion.
+        """
+        return rr.Suggestion(
+            title=f"{element} {unit}", reasoning="", category="distribution",
+            confidence=confidence, node_type="histogram_plot",
+            config={"element": element, "data_type_display": unit},
+            elements=(element,))
+
+    kept = rr._dedupe_suggestions([
+        card("56Fe", "Element Diameter (nm)", 0.9),
+        card("55Mn", "Element Diameter (nm)", 0.8),
+        card("56Fe", "Counts", 0.7),
+    ])
+    assert len(kept) == 3
+
+
+def test_dedupe_drops_an_identical_repeat():
+    """The same node over the same elements and unit appears once."""
+    def card(confidence):
+        """Build the same histogram suggestion at a given confidence.
+
+        Args:
+            confidence: Ranking weight.
+
+        Returns:
+            The suggestion.
+        """
+        return rr.Suggestion(
+            title="x", reasoning="", category="distribution",
+            confidence=confidence, node_type="histogram_plot",
+            config={"element": "56Fe", "data_type_display": "Counts"},
+            elements=("56Fe",))
+
+    kept = rr._dedupe_suggestions([card(0.9), card(0.5)])
+    assert len(kept) == 1
+    assert kept[0].confidence == 0.9
+
+
+
+def marked_sample(n=500, marker=None, seed=0):
+    """Generate a sample optionally carrying a marker element.
+
+    Args:
+        n: How many particles to create.
+        marker: Element present in roughly half the particles, or ``None``.
+        seed: Seed for reproducibility.
+
+    Returns:
+        A list of particle dicts.
+    """
+    rng = random.Random(seed)
+    out = []
+    for _ in range(n):
+        elements = {"56Fe": rng.uniform(10, 100), "27Al": rng.uniform(10, 100)}
+        if rng.random() < 0.5:
+            elements["28Si"] = rng.uniform(10, 100)
+        if marker and rng.random() < 0.45:
+            elements[marker] = rng.uniform(10, 100)
+        out.append({"elements": elements})
+    return out
+
+
+def test_signature_finds_an_element_present_in_only_one_sample():
+    """An element in one sample and absent from another is called out."""
+    ctx = _ctx_for_pool({"S1": marked_sample(marker="208Pb", seed=1),
+                         "S2": marked_sample(seed=2)})
+    cards = rr._analyse_signature(ctx)
+    element_card = next(s for s in cards
+                        if s.node_type == "element_composition_plot")
+    assert "208Pb" in element_card.title
+    assert "S1" in element_card.title
+    assert "none of S2" in element_card.reasoning
+    assert element_card.elements == ("208Pb",)
+
+
+def test_signature_reports_a_distinctive_combination():
+    """A combination belonging to one sample is reported with its share."""
+    ctx = _ctx_for_pool({"S1": marked_sample(marker="208Pb", seed=1),
+                         "S2": marked_sample(seed=2)})
+    combo = next(s for s in rr._analyse_signature(ctx)
+                 if s.node_type == "pie_chart_plot")
+    assert "208Pb" in combo.elements
+    assert "absent" in combo.reasoning
+
+
+def test_signature_says_nothing_for_matching_samples():
+    """Two samples with the same makeup produce no signature card."""
+    ctx = _ctx_for_pool({"A": marked_sample(marker="208Pb", seed=3),
+                         "B": marked_sample(marker="208Pb", seed=4)})
+    assert rr._analyse_signature(ctx) == []
+
+
+def test_signature_needs_more_than_one_sample():
+    """A single-sample scope has nothing to contrast."""
+    assert rr._analyse_signature(_ctx_for(marked_sample(marker="208Pb"))) == []
+
+
+def test_signature_wording_distinguishes_absence_from_enrichment():
+    """A merely commoner element is described as enriched, not as a marker."""
+
+    def sample(rate, seed):
+        """Build a sample carrying 208Pb at the given detection rate.
+
+        Args:
+            rate: Share of particles carrying the marker.
+            seed: Seed for reproducibility.
+
+        Returns:
+            A list of particle dicts.
+        """
+        r = random.Random(seed)
+        out = []
+        for _ in range(600):
+            elements = {"56Fe": r.uniform(10, 100)}
+            if r.random() < rate:
+                elements["208Pb"] = r.uniform(10, 100)
+            out.append({"elements": elements})
+        return out
+
+    ctx = _ctx_for_pool({"S1": sample(0.60, 1), "S2": sample(0.30, 2)})
+    cards = [s for s in rr._analyse_signature(ctx)
+             if s.node_type == "element_composition_plot"]
+    assert cards
+    assert "enriched" in cards[0].title
+    assert "marks" not in cards[0].title
+
+
+def test_signature_is_disabled_for_a_small_sample():
+    """Samples too small to trust are excluded from the comparison."""
+    ctx = _ctx_for_pool({"BIG": marked_sample(400, marker="208Pb", seed=1),
+                         "TINY": marked_sample(5, seed=2)})
+    assert rr._analyse_signature(ctx) == []
+
+
+
+def joint_outlier_particles(n=800, extreme=25, seed=5):
+    """Generate particles with a group that is extreme in two elements at once.
+
+    Args:
+        n: How many ordinary particles to create.
+        extreme: How many doubly-extreme particles to add.
+        seed: Seed for reproducibility.
+
+    Returns:
+        A list of particle dicts.
+    """
+    rng = random.Random(seed)
+    out = [{"elements": {"56Fe": math.exp(rng.gauss(2, 0.4)),
+                         "208Pb": math.exp(rng.gauss(2, 0.4)),
+                         "27Al": math.exp(rng.gauss(2, 0.4))}}
+           for _ in range(n)]
+    out += [{"elements": {"56Fe": math.exp(rng.gauss(9, 0.2)),
+                          "208Pb": math.exp(rng.gauss(9, 0.2)),
+                          "27Al": math.exp(rng.gauss(2, 0.4))}}
+            for _ in range(extreme)]
+    return out
+
+
+def test_joint_outliers_name_the_co_extreme_pair():
+    """Particles extreme in two elements at once are found and identified."""
+    cards = rr._analyse_joint_outlier(_ctx_for(joint_outlier_particles()))
+    assert cards
+    assert set(cards[0].elements) == {"56Fe", "208Pb"}
+    assert cards[0].node_type == "correlation_plot"
+    assert cards[0].category == "outlier"
+
+
+def test_joint_outliers_absent_from_ordinary_data():
+    """Data without a doubly-extreme group produces nothing."""
+    ctx = _ctx_for(joint_outlier_particles(extreme=0))
+    assert rr._analyse_joint_outlier(ctx) == []
+
+
+def test_joint_outliers_need_two_elements():
+    """A single element cannot produce a joint outlier."""
+    assert rr._analyse_joint_outlier(
+        _ctx_for(lognormal_particles(300, "56Fe", 1.0))) == []
+
+
+def test_outlier_category_runs_both_tests():
+    """The category covers the single-element and joint tests together."""
+    cards = rr._ANALYSERS["outlier"].run(_ctx_for(joint_outlier_particles()), None)
+    assert any(s.node_type == "correlation_plot" for s in cards)
+
+
+
+class PlacedItem:
+    """Stand-in for a placed node item with a position and a size."""
+
+    width, height = 130, 105
+
+    def __init__(self, point):
+        """Remember where the item sits.
+
+        Args:
+            point: The item's top-left corner.
+        """
+        self._point = point
+
+    def pos(self):
+        """Return the item's position."""
+        return self._point
+
+
+class PlacementScene:
+    """Scene stand-in holding only the node items placement cares about."""
+
+    def __init__(self):
+        """Start with an empty canvas."""
+        self.node_items = {}
+
+
+def _overlaps(a, b, width=130, height=105):
+    """Report whether two placed nodes would visually collide.
+
+    Args:
+        a: First ``(x, y)`` position.
+        b: Second ``(x, y)`` position.
+        width: Node width.
+        height: Node height.
+
+    Returns:
+        True when the two boxes intersect.
+    """
+    return abs(a[0] - b[0]) < width and abs(a[1] - b[1]) < height
+
+
+def test_empty_canvas_uses_the_preferred_position():
+    """With nothing placed, the caller's choice is honoured."""
+    from PySide6.QtCore import QPointF
+    point = rr._free_position(PlacementScene(), QPointF(7, 9))
+    assert (point.x(), point.y()) == (7, 9)
+
+
+def test_placement_never_overlaps():
+    """Repeated placements from the same anchor all land clear of each other."""
+    from PySide6.QtCore import QPointF
+    scene = PlacementScene()
+    placed = []
+    for i in range(12):
+        point = rr._free_position(scene, QPointF(300, 200))
+        scene.node_items[i] = PlacedItem(point)
+        placed.append((point.x(), point.y()))
+
+    for i in range(len(placed)):
+        for j in range(i + 1, len(placed)):
+            assert not _overlaps(placed[i], placed[j]), f"{placed[i]} vs {placed[j]}"
+
+
+def test_placement_wraps_to_a_new_row():
+    """Once a row is full, placement continues on the row below."""
+    from PySide6.QtCore import QPointF
+    scene = PlacementScene()
+    rows = set()
+    for i in range(rr._SLOT_SPAN + 2):
+        point = rr._free_position(scene, QPointF(0, 0))
+        scene.node_items[i] = PlacedItem(point)
+        rows.add(point.y())
+    assert len(rows) > 1

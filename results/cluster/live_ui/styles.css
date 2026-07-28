@@ -118,6 +118,9 @@ button.ghost:hover{border-color:var(--accent);color:var(--text)}
 .leg{display:flex;align-items:center;gap:8px;font-size:.86em;cursor:pointer;padding:2px 3px;border-radius:6px}
 .leg:hover{background:var(--bg2)}
 .leg.off{opacity:.35}
+.leg.dim{opacity:.42}
+.leg.on{background:var(--bg2);box-shadow:inset 0 0 0 1px var(--stroke2);font-weight:650}
+.leg.on .ct{color:var(--text)}
 .leg .sw{width:11px;height:11px;border-radius:3px;flex:none}
 .leg .ct{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.79em}
 
@@ -233,6 +236,12 @@ button.ghost:hover{border-color:var(--accent);color:var(--text)}
 #swatches .sw2{width:22px;height:22px;border-radius:6px;cursor:pointer;
   border:1px solid var(--stroke2)}
 #swatches .sw2:hover{outline:2px solid var(--accent)}
+
+  border:1px solid var(--stroke2);border-radius:11px;box-shadow:var(--shadow)}
+  border:1px solid var(--stroke2)}
+  color:var(--text);border-radius:7px;padding:5px 7px;font-size:.82em;
+  font-variant-numeric:tabular-nums}
+  border-radius:7px;padding:5px 9px;font-size:.8em;cursor:pointer}
 #infoTable{font-size:.86em}
 #infoTable .irow{display:flex;justify-content:space-between;gap:16px;padding:5px 0;
   border-bottom:1px solid var(--stroke2)}

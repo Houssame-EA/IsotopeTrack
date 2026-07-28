@@ -157,7 +157,6 @@ nav:
 - Clustering:
     - Overview: cluster/index.md
     - "dialog.py": cluster/dialog.md
-    - "eval_k.py": cluster/eval-k.md
     - "live.py": cluster/live.md
     - "live_engine.py": cluster/live-engine.md
     - "tools.py": cluster/tools.md

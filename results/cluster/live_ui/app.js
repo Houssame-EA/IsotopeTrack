@@ -12,6 +12,17 @@ function colorFor(c){
   const o = S.ui.colors[c];
   return o || PALETTE[c % PALETTE.length];
 }
+ /**
+ * User-facing name of a cluster.
+ *
+ * Labels are 0-based internally but displayed from 1, matching
+ * ``_cluster_label_short`` in the main dialog so C1 means the same thing in
+ * both places.
+ *
+ * @param {number} c Internal cluster id, negative for noise.
+ * @returns {string} 'C1', 'C2', … or 'Noise'.
+ */
+function clusterTag(c){ return c < 0 ? 'Noise' : 'C' + (c + 1); }
 
 const THEME = { noise:'#888', text:'#d4d4d4', bg:'#1e1e1e', accent:'#007acc' };
 
@@ -19,14 +30,16 @@ const S = {
   backend:null, schema:null, data:null, palette:PALETTE,
   algo:'K-Means', params:{},
   frames:[], t:0, playing:false, fps:7, loop:false, lastTick:0,
-  running:false, hidden:new Set(), hoverIdx:-1, inertiaHist:[],
+  running:false, hidden:new Set(), focus:null, tween:null, hoverIdx:-1, inertiaHist:[],
+  split:false, cmp:null, cmpPending:false, animEnd:null, settlePending:false,
   view:{scale:1, ox:0, oy:0}, dragScrub:false,
   proj:'PCA', projInfo:{}, paramEls:{}, dims:2, rot:{az:0.7, el:0.35}, drag3d:null,
   v3:{scale:1, cx:0, cy:0, center:[0,0,0]},
   insetOn:true, insetCollapsed:false, insetDrag:null, insetResize:null,
   eqOn:true, eqCollapsed:false, legendOn:true,
   ui:{font:'system', fontStyle:'normal', fontSize:13.5,
-      labelMode:'Mass + Symbol', pointSize:0, centSize:6.5, colors:{}},
+      labelMode:'Mass + Symbol', pointSize:0, centSize:6.5, colors:{},
+      maxIso:4, minPct:1.0},
   exp:{scale:3, fontBoost:1.25, transparent:false},
 };
 
@@ -107,7 +120,93 @@ window.__clusterLive = {
   setState(st){ receiveState(st); },
   runDone(_s){ S.running=false; },
   projecting(proj,dims){ $('note').textContent=`Computing ${proj} ${dims}D projection…`; },
+  compareReady(res){ receiveCompare(res); },
 };
+ /**
+ * Store the scikit-learn comparison result pushed by the bridge.
+ * @param {Object} res ``{error, note, labels, centroids, metrics}``.
+ */
+function receiveCompare(res){
+  if(res && res.seq!=null && receiveState._seq!=null && res.seq!==receiveState._seq){
+    return;
+  }
+  S.cmpPending=false;
+  if(!res || res.error || !res.labels){
+    S.cmp=null;
+    showStatus(res && res.error ? 'scikit-learn: '+res.error
+                                : 'scikit-learn result unavailable');
+  } else {
+    S.cmp=res;
+    if(res.settle) settleOnCompare();
+  }
+  fitView();
+}
+ /**
+ * Append the scikit-learn result as the animation's final frame.
+ *
+ * The stepper illustrates the method; the answer left on screen is the real
+ * one. ``S.animEnd`` remembers where the animation itself ended so the split
+ * view can still show what the stepper concluded.
+ */
+function settleOnCompare(){
+  const cmp=S.cmp;
+  if(!cmp || !cmp.labels || !S.data || cmp.labels.length!==S.data.n) return;
+  if(S.playing && S.t < S.frames.length-1){ S.settlePending=true; return; }
+  S.settlePending=false;
+  if(S.frames.length && S.frames[S.frames.length-1].settled) S.frames.pop();
+  S.animEnd=Math.max(0,S.frames.length-1);
+  const prev=S.frames.length?frameAt(S.animEnd):null;
+  const m=cmp.metrics||{};
+  S.frames.push({
+    iter:(prev?prev.iter:0)+1,
+    note:cmp.note||'Result',
+    labels:cmp.labels,
+    centroids:cmp.centroids||null,
+    positions:null,
+    extra:carryExtra(prev),
+    converged:true, settled:true,
+    metrics:{n_clusters:m.n_clusters, n_noise:m.n_noise},
+  });
+  S.t=S.frames.length-1;
+  S.playing=false; syncPlayBtn();
+  const sc=$('scrub'); if(sc){ sc.max=String(S.frames.length-1); sc.value=String(S.t); }
+}
+ /**
+ * Copy a frame's detail view and worked example for the settled frame.
+ *
+ * Both describe the last step the algorithm took, so their subtitles are
+ * marked as belonging to the animation rather than to the settled numbers.
+ *
+ * @param {?Object} prev The animation's final frame.
+ * @returns {Object} An ``extra`` payload, empty when there is nothing to carry.
+ */
+function carryExtra(prev){
+  const src=prev && prev.extra;
+  if(!src) return {};
+  const out={};
+  if(src.inset){
+    out.inset=Object.assign({}, src.inset);
+    out.inset.subtitle=(out.inset.subtitle?out.inset.subtitle+' · ':'')
+      +'from the final animation step';
+  }
+  if(src.equation){
+    out.equation=Object.assign({}, src.equation);
+    out.equation.note=(out.equation.note?out.equation.note+' ':'')
+      +'(the last step of the animation)';
+  }
+  return out;
+}
+/**
+ * Ask the bridge to compute the authoritative scikit-learn labels.
+ *
+ * No-op when the page is running outside the app, where no bridge exists.
+ */
+function requestCompare(){
+  if(!S.backend || typeof S.backend.run_sklearn!=='function') return;
+  S.cmpPending=true;
+  try{ S.backend.run_sklearn(); }
+  catch(e){ S.cmpPending=false; }
+}
 
 /** Apply the app palette CSS variables and canvas colours to the page. */
 function applyTheme(v){
@@ -117,7 +216,7 @@ function applyTheme(v){
     stroke2:'--stroke2',text:'--text',muted:'--muted',muted2:'--muted2',accent:'--accent',
     accent2:'--accent2',good:'--good',warn:'--warn',bad:'--bad'};
   for(const k in map) if(v[k]) root.setProperty(map[k], v[k]);
-  THEME.noise = v.muted2 || v.muted || '#888';
+  if(!S.noiseLocked) THEME.noise = v.muted2 || v.muted || '#888';
   THEME.text  = v.text || '#d4d4d4';
   THEME.bg    = v.bg || '#1e1e1e';
   THEME.accent= v.accent || '#007acc';
@@ -130,12 +229,22 @@ function onState(state){
   S.dims = state.dims || 2;
   if(state.projection) S.proj = state.projection;
   if(state.palette && state.palette.length){ PALETTE=state.palette; S.palette=state.palette; }
+  if(state.noise_color){ THEME.noise=state.noise_color; S.noiseLocked=true; }
+  if(state.cluster_colors){
+    S.ui.colors={};
+    for(const k in state.cluster_colors){
+      const v=state.cluster_colors[k];
+      if(v) S.ui.colors[parseInt(k,10)]=v;
+    }
+  }
   if(state.theme) applyTheme(state.theme);
   S.paramValues = state.param_values || S.paramValues || {};
   if(state.algorithm) S.algo = state.algorithm;
   reflectConfig(state);
   if(S.schema){ const as=$('algoSel'); if(as) as.value=S.algo; buildAlgoParams(); }
   S.hidden.clear();
+  S.focus=null; S.tween=null;
+  S.cmp=null; S.animEnd=null; S.settlePending=false;
   // Drop frames from the previous dataset so draw never mixes old labels with
   // the new point set (a new run repopulates them).
   S.frames=[]; S.t=0;
@@ -158,17 +267,48 @@ function onState(state){
 /** Return the current display dimensionality (2 or 3). */
 function curDims(){ return (S.data && S.data.dims) || 2; }
 
+ /**
+ * Width of the plot area in CSS pixels.
+ * @returns {number} The canvas width.
+ */
+function paneW(){ return canvas.clientWidth; }
+
+ /**
+ * 2-D view parameters that frame a bounding box in the canvas.
+ * @param {number} x0 Left edge in data units.
+ * @param {number} y0 Bottom edge in data units.
+ * @param {number} x1 Right edge in data units.
+ * @param {number} y1 Top edge in data units.
+ * @param {number} [pad=64] Screen-pixel margin kept around the box.
+ * @returns {{scale:number, ox:number, oy:number}} Scale and origin offsets.
+ */
+function viewFor(x0, y0, x1, y1, pad){
+  const w=paneW(), h=canvas.clientHeight;
+  pad = pad==null ? 64 : pad;
+  const sc=Math.min((w-2*pad)/((x1-x0)||1),(h-2*pad)/((y1-y0)||1));
+  return {scale:sc,
+    ox:pad+(w-2*pad-sc*(x1-x0))/2-sc*x0,
+    oy:h-pad-(h-2*pad-sc*(y1-y0))/2+sc*y0};
+}
+ /**
+ * Bounding box of the whole 2-D point cloud.
+ * @returns {?number[]} [x0, y0, x1, y1], or null when there is no data.
+ */
+function dataBounds2(){
+  const P=S.data && S.data.xy;
+  if(!P || !P.length) return null;
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+  for(const p of P){ const x=p[0],y=p[1]; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
+  return [x0,y0,x1,y1];
+}
 /** Fit the 2-D or 3-D view to the current point cloud. */
 function fitView(){
   if(!S.data) return;
+  S.tween=null;
   if(curDims()===3){ fitView3(); return; }
-  const P=S.data.xy; let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
-  for(const p of P){ const x=p[0],y=p[1]; if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y; }
-  const w=canvas.clientWidth,h=canvas.clientHeight,pad=64;
-  const sc=Math.min((w-2*pad)/((x1-x0)||1),(h-2*pad)/((y1-y0)||1));
-  S.view.scale=sc;
-  S.view.ox=pad+(w-2*pad-sc*(x1-x0))/2-sc*x0;
-  S.view.oy=h-pad-(h-2*pad-sc*(y1-y0))/2+sc*y0;
+  const b=dataBounds2(); if(!b) return;
+  const v=viewFor(b[0],b[1],b[2],b[3]);
+  S.view.scale=v.scale; S.view.ox=v.ox; S.view.oy=v.oy;
 }
 /** Compute the centre and scale for the 3-D orthographic view. */
 function fitView3(){
@@ -177,7 +317,7 @@ function fitView3(){
   c[0]/=P.length; c[1]/=P.length; c[2]/=P.length;
   let mx=1e-6;
   for(const p of P){ const d=Math.hypot(p[0]-c[0],p[1]-c[1],(p[2]||0)-c[2]); if(d>mx)mx=d; }
-  const w=canvas.clientWidth,h=canvas.clientHeight;
+  const w=paneW(),h=canvas.clientHeight;
   S.v3.cx=w/2; S.v3.cy=h/2; S.v3.center=c;
   S.v3.baseScale=(Math.min(w,h)*0.40)/mx;
   if(!S.v3.zoom) S.v3.zoom=1;
@@ -185,6 +325,181 @@ function fitView3(){
 }
 const wx=(x)=>S.view.ox+x*S.view.scale;
 const wy=(y)=>S.view.oy-y*S.view.scale;
+const ux=(px)=>(px-S.view.ox)/S.view.scale;
+const uy=(py)=>(S.view.oy-py)/S.view.scale;
+
+ /**
+ * Round tick values spanning [lo, hi] at a 1/2/5 × 10ⁿ step.
+ *
+ * @param {number} lo Lower bound in data units.
+ * @param {number} hi Upper bound in data units.
+ * @param {number} target Roughly how many ticks are wanted.
+ * @returns {{values:number[], step:number}} Ticks and the step between them.
+ */
+function niceTicks(lo, hi, target){
+  if(!(hi>lo) || !isFinite(lo) || !isFinite(hi)) return {values:[], step:1};
+  const raw=(hi-lo)/Math.max(1,target);
+  const mag=Math.pow(10, Math.floor(Math.log10(raw)));
+  const n=raw/mag;
+  const step=(n<1.5?1:n<3?2:n<7?5:10)*mag;
+  const values=[];
+  for(let v=Math.ceil(lo/step)*step; v<=hi+step*1e-6; v+=step){
+    values.push(Math.abs(v)<step*1e-6 ? 0 : v);
+    if(values.length>200) break;
+  }
+  return {values, step};
+}
+ /**
+ * Format a tick value at a precision suited to the step between ticks.
+ *
+ * @param {number} v The value.
+ * @param {number} step Spacing between ticks.
+ * @returns {string} Display text.
+ */
+function fmtTick(v, step){
+  if(v===0) return '0';
+  const a=Math.abs(step);
+  if(a>=1e4 || a<1e-3) return v.toExponential(1).replace('e+','e');
+  return v.toFixed(Math.max(0, Math.ceil(-Math.log10(a))));
+}
+
+const DIM_ALPHA = 0.13;
+const FOCUS_MAX_ZOOM = 9;
+const TWEEN_MS = 420;
+
+ /**
+ * Whether cluster `c` should be drawn faded because another cluster has focus.
+ * @param {number} c Cluster id.
+ * @returns {boolean} True when a different cluster is focused.
+ */
+function isDimmed(c){ return S.focus!=null && c!==S.focus; }
+ /**
+ * Positions and labels of the frame currently on screen.
+ * @returns {?{pos:number[][], labels:number[]}} Null when no frame matches the
+ *   current dataset (e.g. mid re-projection).
+ */
+function currentCloud(){
+  const fr=S.frames.length?frameAt(Math.floor(S.t)):null;
+  const labels=fr && fr.labels ? fr.labels : null;
+  const pos=(fr && fr.positions) ? fr.positions : (S.data && S.data.xy);
+  if(!labels || !pos || labels.length!==pos.length) return null;
+  return {pos, labels};
+}
+ /**
+ * Ease-in-out cubic.
+ * @param {number} k Progress in [0,1].
+ * @returns {number} Eased progress in [0,1].
+ */
+function ease(k){ return k<0.5 ? 4*k*k*k : 1-Math.pow(-2*k+2,3)/2; }
+ /**
+ * Start an animated view transition.
+ * @param {string} kind '2d' (scale/ox/oy) or '3d' (zoom/center).
+ * @param {Object} from View parameters to animate away from.
+ * @param {Object} to View parameters to animate towards.
+ */
+function startTween(kind, from, to){
+  S.tween={kind, from, to, t0:(performance.now?performance.now():Date.now()), dur:TWEEN_MS};
+}
+ /**
+ * Advance the running view tween, clearing it once complete.
+ * @param {number} now Current timestamp in milliseconds.
+ */
+function stepTween(now){
+  const T=S.tween; if(!T) return;
+  const k=Math.min(1,(now-T.t0)/T.dur), e=ease(k);
+  const mix=(a,b)=>a+(b-a)*e;
+  if(T.kind==='2d'){
+    S.view.scale=mix(T.from.scale,T.to.scale);
+    S.view.ox=mix(T.from.ox,T.to.ox);
+    S.view.oy=mix(T.from.oy,T.to.oy);
+  } else {
+    S.v3.zoom=mix(T.from.zoom,T.to.zoom);
+    S.v3.center=[mix(T.from.center[0],T.to.center[0]),
+                 mix(T.from.center[1],T.to.center[1]),
+                 mix(T.from.center[2],T.to.center[2])];
+    S.v3.scale=(S.v3.baseScale||1)*S.v3.zoom;
+  }
+  if(k>=1) S.tween=null;
+}
+ /**
+ * Zoom the view onto cluster `c`; pass null to return to the full cloud.
+ * Other clusters stay on screen (dimmed), so the context is never lost.
+ * @param {?number} c Cluster id, or null to reset.
+ * @param {boolean} [instant] Skip the animation (used on resize).
+ */
+function zoomToCluster(c, instant){
+  if(!S.data || S.data.empty) return;
+  const cloud=currentCloud();
+  const three=curDims()===3;
+
+  if(c==null || !cloud){
+    if(three){
+      const from={zoom:S.v3.zoom||1, center:(S.v3.center||[0,0,0]).slice()};
+      fitView3(); const to={zoom:1, center:(S.v3.center||[0,0,0]).slice()};
+      S.v3.zoom=from.zoom; S.v3.center=from.center;
+      S.v3.scale=(S.v3.baseScale||1)*S.v3.zoom;
+      if(instant){ S.v3.zoom=to.zoom; S.v3.center=to.center;
+        S.v3.scale=(S.v3.baseScale||1); S.tween=null; }
+      else startTween('3d', from, to);
+    } else {
+      const b=dataBounds2(); if(!b) return;
+      const to=viewFor(b[0],b[1],b[2],b[3]);
+      if(instant){ S.view.scale=to.scale; S.view.ox=to.ox; S.view.oy=to.oy; S.tween=null; }
+      else startTween('2d', {scale:S.view.scale, ox:S.view.ox, oy:S.view.oy}, to);
+    }
+    return;
+  }
+
+  const {pos, labels}=cloud;
+  if(three){
+    const cen=[0,0,0]; let n=0;
+    for(let i=0;i<pos.length;i++){ if(labels[i]!==c) continue;
+      cen[0]+=pos[i][0]; cen[1]+=pos[i][1]; cen[2]+=(pos[i][2]||0); n++; }
+    if(!n) return;
+    cen[0]/=n; cen[1]/=n; cen[2]/=n;
+    let r=1e-6;
+    for(let i=0;i<pos.length;i++){ if(labels[i]!==c) continue;
+      const d=Math.hypot(pos[i][0]-cen[0],pos[i][1]-cen[1],(pos[i][2]||0)-cen[2]);
+      if(d>r) r=d; }
+    const full=(Math.min(paneW(),canvas.clientHeight)*0.40)/(S.v3.baseScale||1);
+    const zoom=Math.max(1, Math.min(FOCUS_MAX_ZOOM, full/(r*1.6)));
+    const from={zoom:S.v3.zoom||1, center:(S.v3.center||[0,0,0]).slice()};
+    if(instant){ S.v3.zoom=zoom; S.v3.center=cen;
+      S.v3.scale=(S.v3.baseScale||1)*zoom; S.tween=null; }
+    else startTween('3d', from, {zoom, center:cen});
+    return;
+  }
+
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,n=0;
+  for(let i=0;i<pos.length;i++){ if(labels[i]!==c) continue;
+    const p=pos[i];
+    if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0];
+    if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1]; n++; }
+  if(!n) return;
+  const b=dataBounds2()||[x0,y0,x1,y1];
+  const minSpan=Math.max((b[2]-b[0]),(b[3]-b[1]))*0.02 || 1e-6;
+  if(x1-x0<minSpan){ const m=(x0+x1)/2; x0=m-minSpan/2; x1=m+minSpan/2; }
+  if(y1-y0<minSpan){ const m=(y0+y1)/2; y0=m-minSpan/2; y1=m+minSpan/2; }
+  const mx=(x1-x0)*0.18, my=(y1-y0)*0.18;
+  let to=viewFor(x0-mx, y0-my, x1+mx, y1+my);
+  const base=viewFor(b[0],b[1],b[2],b[3]);
+  if(to.scale > base.scale*FOCUS_MAX_ZOOM){
+    const cx=(x0+x1)/2, cy=(y0+y1)/2, sc=base.scale*FOCUS_MAX_ZOOM;
+    to={scale:sc, ox:paneW()/2-sc*cx, oy:canvas.clientHeight/2+sc*cy};
+  }
+  if(instant){ S.view.scale=to.scale; S.view.ox=to.ox; S.view.oy=to.oy; S.tween=null; }
+  else startTween('2d', {scale:S.view.scale, ox:S.view.ox, oy:S.view.oy}, to);
+}
+ /**
+ * Focus a cluster: zoom to it, dim the others and refresh the legend.
+ * Focusing the already-focused cluster clears the focus instead.
+ * @param {?number} c Cluster id, or null to clear the focus.
+ */
+function setFocus(c){
+  S.focus = (c==null || S.focus===c) ? null : c;
+  zoomToCluster(S.focus);
+  refreshLegend();
+}
 
 /** Project a data point to screen coordinates (2-D pan/zoom or 3-D rotate). */
 function screen(p){
@@ -212,6 +527,7 @@ function run(animate){
   S.frames=[]; S.t=0; S.inertiaHist=[]; S.running=true; S.playing=S._animate;
   syncPlayBtn();
   _seenRun++; receiveFrame._last=null;
+  S.cmp=null; S.animEnd=null; S.settlePending=false;
   $('algoTitle').textContent=S.algo;
   S.backend.run(S.algo, JSON.stringify(S.params));
   clearTimeout(run._wd);
@@ -231,8 +547,10 @@ let _lastW=0, _lastH=0;
 function tick(now){
   if(canvas.clientWidth!==_lastW || canvas.clientHeight!==_lastH){
     _lastW=canvas.clientWidth; _lastH=canvas.clientHeight;
-    if(_lastW>0 && _lastH>0){ resize(); if(S.data && !S.data.empty) fitView(); }
+    if(_lastW>0 && _lastH>0){ resize();
+      if(S.data && !S.data.empty){ fitView(); if(S.focus!=null) zoomToCluster(S.focus, true); } }
   }
+  stepTween(now);
   if(!S.lastTick) S.lastTick=now;
   const dt=(now-S.lastTick)/1000; S.lastTick=now;
   if(S.playing && S.frames.length){
@@ -240,6 +558,7 @@ function tick(now){
     if(S.t>=end){ if(S.running) S.t=end; else if(S.loop) S.t=0;
       else { S.t=end; S.playing=false; syncPlayBtn(); } }
   }
+  if(S.settlePending && !S.playing) settleOnCompare();
   draw();
   requestAnimationFrame(tick);
 }
@@ -252,11 +571,25 @@ function draw(){
   ctx.clearRect(0,0,w,h);
   if(EXPORT && !S.exp.transparent){ ctx.fillStyle=THEME.bg; ctx.fillRect(0,0,w,h); }
   if(!S.data||S.data.empty||!S.data.xy||!S.data.xy.length) return;
-  drawAxes();
-  const P=S.data.xy,n=S.data.n;
+
   const A=S.frames.length?frameAt(Math.floor(S.t)):null;
-  // Ignore frames that don't match the current dataset (e.g. mid re-projection).
-  if(!A || !A.labels || A.labels.length!==n){ drawPoints(P,new Array(n).fill(-1)); return; }
+  drawFrame(A);
+  if(EXPORT || !A) return;
+  updateHud(A);
+  drawInset(A);
+  drawEquation(A);
+}
+ /**
+ * Render the axes, particles and centroids of one frame.
+ * @param {?Object} A The frame currently on screen, or null.
+ */
+function drawFrame(A){
+  const P=S.data.xy, n=S.data.n;
+  ctx.save();
+  drawAxes();
+  if(!A || !A.labels || A.labels.length!==n){
+    drawPoints(P,new Array(n).fill(-1)); ctx.restore(); return;
+  }
   const i0=Math.floor(S.t),f=S.t-i0,i1=Math.min(i0+1,S.frames.length-1);
   const B=frameAt(i1),labels=A.labels;
   let pos=P;
@@ -267,10 +600,7 @@ function draw(){
   let cen=A.centroids;
   if(cen && B.centroids && B.centroids.length===cen.length) cen=lerpPts(cen,B.centroids,f);
   if(cen) drawCentroids(cen);
-  if(EXPORT) return;
-  updateHud(A);
-  drawInset(A);
-  drawEquation(A);
+  ctx.restore();
 }
 
 /**
@@ -723,19 +1053,27 @@ function drawPoints(pos,labels){
     const sc=new Array(pos.length), vis=[];
     for(let i=0;i<pos.length;i++){ if(S.hidden.has(labels[i])) continue;
       sc[i]=screen(pos[i]); vis.push(i); }
-    vis.sort((a,b)=>sc[a][2]-sc[b][2]);
+    vis.sort((a,b)=>{
+      const fa=isDimmed(labels[a])?0:1, fb=isDimmed(labels[b])?0:1;
+      return fa!==fb ? fa-fb : sc[a][2]-sc[b][2];
+    });
     for(const i of vis){ const c=labels[i];
-      ctx.globalAlpha=(c<0)?0.4:0.85; ctx.fillStyle=colorFor(c);
+      ctx.globalAlpha=((c<0)?0.4:0.85)*(isDimmed(c)?DIM_ALPHA:1); ctx.fillStyle=colorFor(c);
       ctx.beginPath(); ctx.arc(sc[i][0],sc[i][1],r,0,6.283); ctx.fill(); }
     ctx.globalAlpha=1;
   } else {
     const groups=new Map();
     for(let i=0;i<pos.length;i++){ const c=labels[i]; if(S.hidden.has(c)) continue;
-      const key=colorFor(c); if(!groups.has(key)) groups.set(key,[]); groups.get(key).push(i); }
-    for(const [col,idxs] of groups){
-      ctx.fillStyle=col; ctx.globalAlpha=(col===THEME.noise)?0.45:0.88;
+      const col=colorFor(c), dim=isDimmed(c), key=col+'|'+(dim?'1':'0');
+      let g=groups.get(key);
+      if(!g){ g={col, dim, idxs:[]}; groups.set(key,g); }
+      g.idxs.push(i); }
+    const order=[...groups.values()].sort((a,b)=>(a.dim?0:1)-(b.dim?0:1));
+    for(const g of order){
+      ctx.fillStyle=g.col;
+      ctx.globalAlpha=((g.col===THEME.noise)?0.45:0.88)*(g.dim?DIM_ALPHA:1);
       ctx.beginPath();
-      for(const i of idxs){ const s=screen(pos[i]); ctx.moveTo(s[0]+r,s[1]); ctx.arc(s[0],s[1],r,0,6.283); }
+      for(const i of g.idxs){ const s=screen(pos[i]); ctx.moveTo(s[0]+r,s[1]); ctx.arc(s[0],s[1],r,0,6.283); }
       ctx.fill();
     }
     ctx.globalAlpha=1;
@@ -747,15 +1085,22 @@ function drawPoints(pos,labels){
 }
 /** Draw cluster centroids as ringed markers. */
 function drawCentroids(cen){
-  const order=cen.map((_,k)=>k).filter(k=>!S.hidden.has(k));
-  if(curDims()===3){ const d=cen.map(screen); order.sort((a,b)=>d[a][2]-d[b][2]); }
+  const order=cen.map((_,k)=>k).filter(k=>cen[k] && !S.hidden.has(k));
+  if(curDims()===3){
+    const d={};
+    for(const k of order) d[k]=screen(cen[k]);
+    order.sort((a,b)=>d[a][2]-d[b][2]);
+  }
+  order.sort((a,b)=>(isDimmed(a)?0:1)-(isDimmed(b)?0:1));
   const R=Math.max(2, S.ui.centSize), halo=R*1.69, ring=R*1.38;
   for(const k of order){
     const s=screen(cen[k]),x=s[0],y=s[1],col=colorFor(k);
-    ctx.beginPath(); ctx.arc(x,y,halo,0,6.283); ctx.fillStyle=col; ctx.globalAlpha=.22; ctx.fill(); ctx.globalAlpha=1;
+    const a=isDimmed(k)?DIM_ALPHA:1;
+    ctx.beginPath(); ctx.arc(x,y,halo,0,6.283); ctx.fillStyle=col; ctx.globalAlpha=.22*a; ctx.fill();
+    ctx.globalAlpha=a;
     ctx.beginPath(); ctx.arc(x,y,R,0,6.283); ctx.fillStyle=col; ctx.fill();
     ctx.lineWidth=Math.max(1.5,R*0.38); ctx.strokeStyle=THEME.bg; ctx.stroke();
-    ctx.lineWidth=1.5; ctx.strokeStyle=THEME.text; ctx.globalAlpha=.8;
+    ctx.lineWidth=1.5; ctx.strokeStyle=THEME.text; ctx.globalAlpha=.8*a;
     ctx.beginPath(); ctx.arc(x,y,ring,0,6.283); ctx.stroke(); ctx.globalAlpha=1;
   }
 }
@@ -789,26 +1134,118 @@ function axesAreElements(){
   return (d.projection==='None') && !!(d.axis_labels && d.axis_labels.length);
 }
 /** Draw one axis caption, formatting it as an element when appropriate. */
+ /**
+ * Draw tick marks and values along the 2-D axes.
+ *
+ * The ticks are derived from the visible data range, so zooming changes the
+ * numbers rather than leaving the frame looking identical.
+ *
+ * @param {number} w Canvas width in CSS pixels.
+ * @param {number} h Canvas height in CSS pixels.
+ * @param {number} ox Screen x of the vertical axis.
+ * @param {number} oy Screen y of the horizontal axis.
+ */
+function drawTicks(w, h, ox, oy){
+  const size=Math.max(7, uiSize()*0.68);
+  ctx.font=(size.toFixed(1))+'px '+uiFontStack();
+  ctx.strokeStyle=THEME.text; ctx.fillStyle=THEME.text; ctx.lineWidth=1;
+
+  const xs=niceTicks(ux(0), ux(w), 8);
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  const yLab=Math.min(h-size-3, oy+5);
+  for(const v of xs.values){
+    const px=wx(v);
+    if(px<14 || px>w-14) continue;
+    ctx.globalAlpha=.30;
+    ctx.beginPath(); ctx.moveTo(px, oy-3); ctx.lineTo(px, oy+3); ctx.stroke();
+    if(v===0) continue;
+    ctx.globalAlpha=.55; ctx.fillText(fmtTick(v, xs.step), px, yLab);
+  }
+
+  const ys=niceTicks(uy(h), uy(0), 6);
+  ctx.textAlign='left'; ctx.textBaseline='middle';
+  const xLab=Math.min(w-4, ox+6);
+  for(const v of ys.values){
+    const py=wy(v);
+    if(py<10 || py>h-10) continue;
+    ctx.globalAlpha=.30;
+    ctx.beginPath(); ctx.moveTo(ox-3, py); ctx.lineTo(ox+3, py); ctx.stroke();
+    if(v===0) continue;
+    ctx.globalAlpha=.55; ctx.fillText(fmtTick(v, ys.step), xLab, py);
+  }
+  ctx.globalAlpha=1; ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+}
+/**
+ * Draw one axis name, rendering it as an element when the axes are elements.
+ *
+ * @param {number} i Axis index: 0 = x, 1 = y, 2 = z.
+ * @param {number} x Screen x of the caption.
+ * @param {number} y Screen y of the caption.
+ * @param {string} align Canvas text alignment.
+ */
 function drawAxisCaption(i,x,y,align){
   const size=Math.max(8, uiSize()*0.85);
   if(axesAreElements()) drawElementLabel(ctx, axisName(i), x, y, size, align);
   else { ctx.textAlign=align; ctx.fillText(axisName(i), x, y); }
 }
+ /**
+ * Draw the 3-D axis triad with graduated ticks.
+ *
+ * Each arm is extended to a whole number of round steps rather than a fixed
+ * length, so zooming changes the tick values and the graduations rather than
+ * leaving an identical-looking cross on screen. The arm covers roughly the
+ * same fraction of the canvas at any zoom, so it never collapses to a stub or
+ * runs off the edge.
+ */
+function drawAxes3(){
+  const c=S.v3.center||[0,0,0], o=screen(c);
+  const px=0.38*Math.min(paneW(), canvas.clientHeight);
+  const reach=px/(S.v3.scale || 1);
+  const t=niceTicks(0, reach, 4);
+  const step=t.step||reach||1;
+  const n=Math.max(1, Math.min(12, Math.floor(reach/step)));
+  const L=step*n;
+  const tickPx=Math.max(3, px*0.018);
+  const small=Math.max(7, uiSize()*0.62);
+
+  for(let i=0;i<3;i++){
+    const end=c.slice(); end[i]=c[i]+L;
+    const s=screen(end);
+    ctx.globalAlpha=.35; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(o[0],o[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
+
+    const dx=s[0]-o[0], dy=s[1]-o[1], len=Math.hypot(dx,dy)||1;
+    const nx=-dy/len*tickPx, ny=dx/len*tickPx;
+    ctx.font=(small.toFixed(1))+'px '+uiFontStack();
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    for(let k=1;k<=n;k++){
+      const p=c.slice(); p[i]=c[i]+step*k;
+      const q=screen(p);
+      ctx.globalAlpha=.30;
+      ctx.beginPath(); ctx.moveTo(q[0]-nx,q[1]-ny); ctx.lineTo(q[0]+nx,q[1]+ny); ctx.stroke();
+      if(k===n) continue;
+      ctx.globalAlpha=.45; ctx.fillStyle=THEME.text;
+      ctx.fillText(fmtTick(c[i]+step*k, step), q[0]+nx*2.1, q[1]+ny*2.1);
+    }
+
+    ctx.globalAlpha=.75; ctx.fillStyle=THEME.text;
+    ctx.font=uiFont(0.85);
+    drawAxisCaption(i, s[0], s[1]-4, 'center');
+  }
+  ctx.globalAlpha=1; ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+}
 /** Draw labelled X/Y (and Z in 3-D) axes. */
 function drawAxes(){
   ctx.save(); ctx.font=uiFont(0.85);
   if(curDims()===3){
-    const c=S.v3.center||[0,0,0], L=1.15, o=screen(c);
-    const ends=[[c[0]+L,c[1],c[2]],[c[0],c[1]+L,c[2]],[c[0],c[1],c[2]+L]];
-    for(let i=0;i<3;i++){ const s=screen(ends[i]);
-      ctx.globalAlpha=.35; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(o[0],o[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
-      ctx.globalAlpha=.75; ctx.fillStyle=THEME.text;
-      drawAxisCaption(i, s[0], s[1]-4, 'center'); }
+    drawAxes3();
   } else {
-    const w=canvas.clientWidth,h=canvas.clientHeight, ox=wx(0), oy=wy(0);
+    const w=canvas.clientWidth, h=canvas.clientHeight;
+    const ox=Math.max(0.5, Math.min(w-0.5, wx(0)));
+    const oy=Math.max(0.5, Math.min(h-0.5, wy(0)));
     ctx.globalAlpha=.28; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(0,oy); ctx.lineTo(w,oy); ctx.moveTo(ox,0); ctx.lineTo(ox,h); ctx.stroke();
+    drawTicks(w, h, ox, oy);
     ctx.globalAlpha=.7; ctx.fillStyle=THEME.text;
     ctx.textBaseline='bottom'; drawAxisCaption(0, w-8, oy-5, 'right');
     ctx.textBaseline='top';    drawAxisCaption(1, ox+6, 8+uiSize()*0.6, 'left');
@@ -896,7 +1333,10 @@ function drawElementLabel(c, key, x, y, size, align){
 }
 /** Linearly interpolate between two arrays of N-D points. */
 function lerpPts(a,b,f){ const o=new Array(a.length);
-  for(let i=0;i<a.length;i++){ const ai=a[i],bi=b[i],m=ai.length,r=new Array(m);
+  for(let i=0;i<a.length;i++){
+    const ai=a[i],bi=b[i];
+    if(!ai || !bi){ o[i]=ai||bi||null; continue; }
+    const m=ai.length,r=new Array(m);
     for(let j=0;j<m;j++) r[j]=ai[j]+((bi[j]||0)-ai[j])*f; o[i]=r; } return o; }
 
 /** Update the note, cluster-count chips and legend. */
@@ -916,49 +1356,266 @@ function setChip(id,v){ const el=$(id); if(el) el.textContent=v; }
  * @param {number} c Cluster id to summarise.
  * @returns {string} Up to two element symbols joined by '·', or ''.
  */
+ /**
+ * Render one legend token, which may be the overflow marker rather than an
+ * element.
+ *
+ * @param {string} tok An element key, or a '+N…' overflow count.
+ * @returns {string} HTML for the token.
+ */
+function elementTokenHTML(tok){
+  return /^\+\d/.test(tok) ? esc(tok) : elementLabelHTML(tok);
+}
+/**
+ * The elements that dominate a cluster's mean composition.
+ *
+ * Applies the same limits as the ② Cluster legends: elements contributing less
+ * than ``S.ui.minPct`` are dropped, the top ``S.ui.maxIso`` are kept, and any
+ * remainder is reported as a '+N…' token.
+ *
+ * @param {number[]} labels Per-point cluster ids for the current frame.
+ * @param {number} c Cluster id.
+ * @returns {string[]} Element keys in descending abundance, plus any overflow
+ *   token. Empty when the cluster holds no signal.
+ */
 function clusterTopElements(labels, c){
   const raw=S.data&&S.data.raw, els=S.data&&S.data.elements;
-  if(!raw||!els) return '';
+  if(!raw||!els) return [];
   const sums=new Array(els.length).fill(0); let cnt=0;
   for(let i=0;i<labels.length;i++){ if(labels[i]!==c) continue;
     const r=raw[i]; for(let j=0;j<els.length;j++) sums[j]+=r[j]; cnt++; }
   if(!cnt) return [];
-  return els.map((e,j)=>[e,sums[j]]).sort((a,b)=>b[1]-a[1])
-    .filter(p=>p[1]>0).slice(0,2).map(p=>p[0]);
+  const total=sums.reduce((a,b)=>a+b,0);
+  if(!(total>0)) return [];
+  const ranked=els.map((e,j)=>[e, sums[j]/total*100])
+    .filter(p=>p[1]>=S.ui.minPct)
+    .sort((a,b)=>b[1]-a[1]);
+  const keep=ranked.slice(0, S.ui.maxIso).map(p=>p[0]);
+  if(ranked.length>S.ui.maxIso) keep.push('+'+(ranked.length-S.ui.maxIso)+'…');
+  return keep;
 }
-/** Open a colour picker for cluster `c` and repaint once a colour is chosen. */
-function pickClusterColor(c, labels){
+const PICKER_EXTRA = ['#111827','#475569','#94A3B8','#E11D48','#F59E0B','#FACC15',
+  '#84CC16','#10B981','#06B6D4','#3B82F6','#8B5CF6','#EC4899'];
+
+ /**
+ * Persist one cluster's colour to the shared config.
+ *
+ * The dialog redraws its own figures from there, so the scatters, strips and
+ * heatmap follow the choice made here and it is saved with the project.
+ *
+ * @param {number} c Cluster id.
+ * @param {?string} hex ``#RRGGBB``, or null to revert to the palette.
+ */
+function pushClusterColor(c, hex){
+  if(!S.backend || typeof S.backend.set_cluster_color!=='function') return;
+  try{ S.backend.set_cluster_color(c, hex||''); }
+  catch(e){ }
+}
+
+let _cpop=null;
+/** Close the cluster-colour popup and drop its global listeners. */
+function closeColorPop(){
+  if(!_cpop) return;
+  _cpop.remove(); _cpop=null;
+  window.removeEventListener('mousedown', _cpopOutside, true);
+  window.removeEventListener('keydown', _cpopKey, true);
+}
+ /**
+ * Close the colour popup when a click lands outside it.
+ * @param {MouseEvent} e Capture-phase mousedown event.
+ */
+function _cpopOutside(e){ if(_cpop && !_cpop.contains(e.target)) closeColorPop(); }
+ /**
+ * Close the colour popup on Escape, without disturbing other handlers.
+ * @param {KeyboardEvent} e Capture-phase keydown event.
+ */
+function _cpopKey(e){ if(e.key==='Escape'){ e.stopPropagation(); closeColorPop(); } }
+
+ /**
+ * Open a colour picker for cluster `c` and repaint once a colour is chosen.
+ *
+ * Implemented as an in-page popup rather than `<input type="color">`: Qt
+ * WebEngine ships no colour-chooser dialog, so the native control silently
+ * does nothing and the cluster never gets recoloured.
+ *
+ * @param {number} c Cluster id (noise, i.e. < 0, is not recolourable).
+ * @param {number[]} labels Per-point cluster ids for the current frame.
+ * @param {Element} [anchor] Element to position the popup against.
+ */
+function pickClusterColor(c, labels, anchor){
   if(c<0) return;
-  const inp=document.createElement('input');
-  inp.type='color'; inp.value=colorFor(c);
-  inp.style.position='fixed'; inp.style.left='-9999px';
-  document.body.appendChild(inp);
-  const apply=()=>{ S.ui.colors[c]=inp.value; buildLegend(labels); };
-  inp.addEventListener('input', apply);
-  inp.addEventListener('change', ()=>{ apply(); inp.remove(); });
-  inp.click();
+  closeColorPop();
+  const pop=document.createElement('div'); pop.id='cpick';
+  const apply=(hex)=>{
+    if(hex==null) delete S.ui.colors[c]; else S.ui.colors[c]=hex;
+    pushClusterColor(c, hex);
+    if(labels && labels.length) buildLegend(labels); else refreshLegend();
+    buildSwatches();
+  };
+
+  const cur=colorFor(c).toLowerCase();
+  const seen=new Set(), grid=document.createElement('div'); grid.className='cpgrid';
+  for(const hex of [...(S.palette||PALETTE), ...PICKER_EXTRA]){
+    const key=String(hex).toLowerCase();
+    if(seen.has(key)) continue; seen.add(key);
+    const b=document.createElement('button');
+    b.className='cpsw'+(key===cur?' on':'');
+    b.style.background=hex; b.title=hex; b.type='button';
+    b.onclick=()=>{ apply(hex); closeColorPop(); };
+    grid.appendChild(b);
+  }
+  pop.appendChild(grid);
+
+  const row=document.createElement('div'); row.className='cprow';
+  const hexIn=document.createElement('input');
+  hexIn.type='text'; hexIn.className='cphex'; hexIn.value=colorFor(c);
+  hexIn.spellcheck=false; hexIn.maxLength=7; hexIn.setAttribute('aria-label','Hex colour');
+  hexIn.oninput=()=>{
+    const v=hexIn.value.trim();
+    if(/^#[0-9a-fA-F]{6}$/.test(v)) apply(v);
+  };
+  hexIn.onkeydown=(e)=>{ if(e.key==='Enter') closeColorPop(); };
+  const more=document.createElement('button');
+  more.className='cpbtn'; more.type='button'; more.textContent='Custom…';
+  more.title='Open the system colour picker';
+  more.onclick=()=>{
+    const start=colorFor(c);
+    closeColorPop();
+    if(S.backend && typeof S.backend.pick_color==='function'){
+      try{ S.backend.pick_color(start, (hex)=>{ if(hex) apply(hex); }); return; }
+      catch(e){ }
+    }
+    const inp=document.createElement('input');
+    inp.type='color'; inp.value=start;
+    inp.style.position='fixed'; inp.style.left='-9999px';
+    document.body.appendChild(inp);
+    inp.addEventListener('input', ()=>apply(inp.value));
+    inp.addEventListener('change', ()=>{ apply(inp.value); inp.remove(); });
+    inp.click();
+  };
+  const rst=document.createElement('button');
+  rst.className='cpbtn'; rst.type='button'; rst.textContent='Default';
+  rst.title='Use the palette colour for this cluster';
+  rst.onclick=()=>{ apply(null); closeColorPop(); };
+  row.appendChild(hexIn); row.appendChild(more); row.appendChild(rst);
+  pop.appendChild(row);
+
+  document.body.appendChild(pop);
+  const r=(anchor && anchor.getBoundingClientRect) ? anchor.getBoundingClientRect() : null;
+  const pw=pop.offsetWidth, ph=pop.offsetHeight;
+  const vw=window.innerWidth, vh=window.innerHeight;
+  let x=r ? r.left : (vw-pw)/2, y=r ? r.bottom+6 : (vh-ph)/2;
+  x=Math.max(6, Math.min(x, vw-pw-6));
+  if(y+ph>vh-6) y=r ? Math.max(6, r.top-ph-6) : Math.max(6, vh-ph-6);
+  pop.style.left=x+'px'; pop.style.top=y+'px';
+
+  _cpop=pop;
+  setTimeout(()=>{
+    if(!_cpop) return;
+    window.addEventListener('mousedown', _cpopOutside, true);
+    window.addEventListener('keydown', _cpopKey, true);
+  },0);
+  hexIn.focus(); hexIn.select();
 }
 /**
- * Rebuild the cluster legend: colour swatch, dominant-element label and point
- * count per cluster. Clicking an entry toggles that cluster's visibility.
+ * Legend rows kept alive across frames, keyed by cluster id.
+ * @type {Map<number, Object>}
+ */
+let _legRows=new Map();
+ /**
+ * Refresh the cluster legend: colour swatch, dominant-element label and point
+ * count per cluster.
+ *
+ * Rows are updated in place and only recreated when the set of cluster ids
+ * changes. ``draw`` calls this on every animation frame, and replacing the
+ * nodes each time would destroy the element between mousedown and mouseup, so
+ * clicks would only register if both landed inside the same frame.
+ *
+ * Click an entry to *focus* that cluster — the view zooms to its particles and
+ * every other cluster is dimmed rather than hidden, so the surrounding context
+ * stays visible. Click it again (or press Escape) to zoom back out.
+ * Alt-click still toggles a cluster's visibility outright.
+ *
  * @param {number[]} labels Per-point cluster ids for the current frame.
  */
 function buildLegend(labels){
   const counts=new Map(); for(const c of labels) counts.set(c,(counts.get(c)||0)+1);
-  const keys=[...counts.keys()].sort((a,b)=>a-b); const box=$('legItems'); box.innerHTML='';
-  for(const c of keys){ const div=document.createElement('div');
-    div.className='leg'+(S.hidden.has(c)?' off':'');
-    const top=c<0?[]:clusterTopElements(labels,c);
-    const name=c<0 ? 'noise'
-      : 'C'+c+(top.length?' · '+top.map(elementLabelHTML).join('·'):'');
-    div.innerHTML=`<span class="sw" title="Click to recolour" `+
-      `style="background:${colorFor(c)}"></span>`+
-      `<span>${name}</span><span class="ct">${counts.get(c)}</span>`;
-    div.onclick=(e)=>{
-      if(e.target.classList.contains('sw')){ pickClusterColor(c, labels); return; }
-      if(S.hidden.has(c))S.hidden.delete(c); else S.hidden.add(c);
-      buildLegend(labels); };
-    box.appendChild(div); }
+  const keys=[...counts.keys()].sort((a,b)=>{
+    if(a<0) return 1;
+    if(b<0) return -1;
+    return (counts.get(b)-counts.get(a)) || (a-b);
+  });
+  const box=$('legItems'); if(!box) return;
+
+  if(_legRows.size!==keys.length || box.children.length!==keys.length
+     || !keys.every(c=>_legRows.has(c))){
+    box.innerHTML=''; _legRows=new Map();
+    for(const c of keys) box.appendChild(makeLegendRow(c));
+  }
+
+  for(const c of keys){
+    const row=_legRows.get(c); if(!row) continue;
+    const cls='leg'+(S.hidden.has(c)?' off':'')
+      +(S.focus===c?' on':'')+(isDimmed(c)?' dim':'');
+    if(row.div.className!==cls) row.div.className=cls;
+    const title=S.focus===c ? 'Click to zoom back out'
+                            : 'Click to zoom to this cluster (⌥-click to hide it)';
+    if(row.div.title!==title) row.div.title=title;
+    const col=colorFor(c);
+    if(row.col!==col){ row.sw.style.background=col; row.col=col; }
+    if(row.labels!==labels || row.name==null){
+      const top=c<0?[]:clusterTopElements(labels,c);
+      const name=clusterTag(c)
+        +(top.length?' · '+top.map(elementTokenHTML).join('·'):'');
+      if(row.name!==name){ row.nm.innerHTML=name; row.name=name; }
+      row.labels=labels;
+    }
+    const ct=String(counts.get(c));
+    if(row.ct.textContent!==ct) row.ct.textContent=ct;
+  }
+
+  if(!S.playing){
+    let out=false;
+    for(let i=0;i<keys.length;i++){
+      const row=_legRows.get(keys[i]);
+      if(!row || box.children[i]!==row.div){ out=true; break; }
+    }
+    if(out){
+      for(const c of keys){
+        const row=_legRows.get(c);
+        if(row) box.appendChild(row.div);
+      }
+    }
+  }
+}
+ /**
+ * Build one legend row and register it in :data:`_legRows`.
+ *
+ * The row's handlers are bound once and read the latest frame labels from the
+ * row record, so :func:`buildLegend` never has to replace the node.
+ *
+ * @param {number} c Cluster id (negative for noise).
+ * @returns {HTMLElement} The row element, not yet attached to the legend.
+ */
+function makeLegendRow(c){
+  const div=document.createElement('div');
+  const sw=document.createElement('span');
+  sw.className='sw'; sw.title='Click to recolour';
+  const nm=document.createElement('span');
+  const ct=document.createElement('span'); ct.className='ct';
+  div.appendChild(sw); div.appendChild(nm); div.appendChild(ct);
+  const row={div, sw, nm, ct, labels:null, name:null, col:null};
+  div.onclick=(e)=>{
+    if(e.target===sw){ pickClusterColor(c, row.labels||[], sw); return; }
+    if(e.altKey){
+      if(S.hidden.has(c)) S.hidden.delete(c); else S.hidden.add(c);
+      if(S.hidden.has(c) && S.focus===c){ S.focus=null; zoomToCluster(null); }
+      refreshLegend(); return;
+    }
+    setFocus(c);
+  };
+  _legRows.set(c, row);
+  return div;
 }
 
 /** Populate a select element with options and optionally set its value. */
@@ -1042,6 +1699,12 @@ function reflectConfig(state){
   }
   if($('viewSel') && state.dims) $('viewSel').value=String(state.dims);
   if($('view3dHint')) $('view3dHint').style.display=(state.dims===3)?'block':'none';
+  if(c.label_mode){
+    S.ui.labelMode=c.label_mode;
+    const lm=$('labelMode'); if(lm) lm.value=c.label_mode;
+  }
+  if(c.display_max_isotopes!=null) S.ui.maxIso=Math.max(1,+c.display_max_isotopes);
+  if(c.display_min_pct!=null) S.ui.minPct=Math.max(0,+c.display_min_pct);
 }
 /** Send a preprocessing config change to the backend. */
 function pushConfig(patch){
@@ -1142,6 +1805,9 @@ function choiceField(p,val){
 function syncPlayBtn(){ const b=$('playBtn'); if(b) b.textContent=S.playing?'❚❚':'▶'; }
 /** Wire up all panel, projection and canvas interactions. */
 function bindControls(){
+  window.addEventListener('keydown',(e)=>{
+    if(e.key==='Escape' && !_cpop && S.focus!=null){ setFocus(null); }
+  });
   $('menuBtn').onclick=()=>$('panel').classList.toggle('open');
   const pc=$('panelClose'); if(pc) pc.onclick=()=>$('panel').classList.remove('open');
   // Cluster button: run (animated) and leave the panel exactly as it is.
@@ -1177,14 +1843,16 @@ function bindControls(){
   bindMenu();
   bindSettings();
 
-  canvas.addEventListener('mousedown',(e)=>{ if(curDims()===3)
-    S.drag3d={x:e.clientX,y:e.clientY,az:S.rot.az,el:S.rot.el}; });
+  canvas.addEventListener('mousedown',(e)=>{ if(curDims()===3){
+    S.tween=null;
+    S.drag3d={x:e.clientX,y:e.clientY,az:S.rot.az,el:S.rot.el}; } });
   window.addEventListener('mouseup',()=>{ S.drag3d=null; });
   canvas.addEventListener('mousemove',(e)=>{ if(!S.drag3d) return;
     S.rot.az=S.drag3d.az+(e.clientX-S.drag3d.x)*0.01;
     S.rot.el=Math.max(-1.45,Math.min(1.45,S.drag3d.el+(e.clientY-S.drag3d.y)*0.01)); });
   canvas.addEventListener('wheel',(e)=>{ if(curDims()!==3) return; e.preventDefault();
-    S.v3.zoom=Math.max(0.3,Math.min(4,(S.v3.zoom||1)*(e.deltaY<0?1.1:0.9)));
+    S.tween=null;
+    S.v3.zoom=Math.max(0.3,Math.min(FOCUS_MAX_ZOOM,(S.v3.zoom||1)*(e.deltaY<0?1.1:0.9)));
     S.v3.scale=(S.v3.baseScale||1)*S.v3.zoom; },{passive:false});
 
   canvas.addEventListener('mousemove',onHover);
@@ -1283,7 +1951,7 @@ function bindMenu(){
     else if(act==='export') openSettings('tExport');
     else if(act==='detail'){ S.insetOn=!S.insetOn; syncSettings(); }
     else if(act==='equation'){ S.eqOn=!S.eqOn; syncSettings(); }
-    else if(act==='fit'){ S.v3.zoom=1; fitView(); }
+    else if(act==='fit'){ S.v3.zoom=1; S.focus=null; fitView(); refreshLegend(); }
     else if(act==='boxes'){ resetBox('inset','insetBody'); resetBox('eqbox','eqBody'); }
     else if(act==='colors') resetColors();
     closeMenu();
@@ -1296,7 +1964,13 @@ function refreshLegend(){
   if(fr && fr.labels) buildLegend(fr.labels);
 }
 /** Drop every per-cluster colour override. */
-function resetColors(){ S.ui.colors={}; refreshLegend(); buildSwatches(); }
+function resetColors(){
+  closeColorPop(); S.ui.colors={};
+  if(S.backend && typeof S.backend.reset_cluster_colors==='function'){
+    try{ S.backend.reset_cluster_colors(); }catch(e){ }
+  }
+  refreshLegend(); buildSwatches();
+}
 /** Rebuild the colour swatch row in the settings dialog. */
 function buildSwatches(){
   const box=$('swatches'); if(!box) return;
@@ -1306,8 +1980,8 @@ function buildSwatches(){
   box.innerHTML='';
   for(const c of [...ids].sort((a,b)=>a-b)){
     const d=document.createElement('div');
-    d.className='sw2'; d.style.background=colorFor(c); d.title='Cluster '+c;
-    d.onclick=()=>{ pickClusterColor(c, fr?fr.labels:[]); setTimeout(buildSwatches,300); };
+    d.className='sw2'; d.style.background=colorFor(c); d.title=clusterTag(c);
+    d.onclick=()=>{ pickClusterColor(c, fr?fr.labels:[], d); };
     box.appendChild(d);
   }
 }
@@ -1380,7 +2054,13 @@ function bindSettings(){
     $('vFontSize').textContent=fs.value;
     root.setProperty('--ui-size', S.ui.fontSize+'px'); pct(fs,8,40); };
     pct(fs,8,40); }
-  if(lm) lm.onchange=()=>{ S.ui.labelMode=lm.value; refreshLegend(); };
+  if(lm) lm.onchange=()=>{
+    S.ui.labelMode=lm.value;
+    if(S.backend && typeof S.backend.set_label_mode==='function'){
+      try{ S.backend.set_label_mode(lm.value); }catch(e){ }
+    }
+    refreshLegend();
+  };
   if(ps){ ps.oninput=()=>{ S.ui.pointSize=parseFloat(ps.value);
     $('vPointSize').textContent=S.ui.pointSize>0?ps.value:'auto'; pct(ps,0,14); };
     pct(ps,0,14); }
@@ -1413,7 +2093,7 @@ function downloadCanvas(cv, name){
     const a=document.createElement('a');
     a.href=cv.toDataURL('image/png'); a.download=name;
     document.body.appendChild(a); a.click(); a.remove();
-    showStatus('Saved '+name);
+    showStatus('Choose where to save '+name+'…');
   }catch(e){ showStatus('Export failed: '+e.message); }
 }
 /** Filename stem for an export, e.g. "cluster-lab_K-Means_3x". */
@@ -1470,7 +2150,8 @@ function exportInsetPNG(){
 /** Show a tooltip for the particle nearest the cursor. */
 function onHover(e){
   if(!S.data||S.data.empty||S.drag3d){ return; }
-  const rect=canvas.getBoundingClientRect(), mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
   const fr=S.frames.length?frameAt(Math.round(S.t)):null;
   const pos=(fr&&fr.positions)?fr.positions:S.data.xy;
   let best=-1,bd=144;
@@ -1480,7 +2161,8 @@ function onHover(e){
   const raw=S.data.raw[best],els=S.data.elements;
   const pairs=els.map((e,j)=>[e,raw[j]]).filter(p=>p[1]>0).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const cl=fr?fr.labels[best]:-1;
-  tip.innerHTML=`<div class="th">${cl<0?'noise':'cluster '+cl} <span style="color:${colorFor(cl)}">●</span></div>`+
+  tip.innerHTML=`<div class="th">${clusterTag(cl)} `+
+    `<span style="color:${colorFor(cl)}">●</span></div>`+
     pairs.map(p=>`<div class="row"><span>${elementLabelHTML(p[0])}</span>`+
       `<b>${esc(p[1])}</b></div>`).join('');
   tip.style.display='block';
@@ -1518,6 +2200,13 @@ function makeMockBackend(){
   b.set_config=(_j)=>{};
   b.set_param=(_a,_k,_v)=>{};
   b.stop=()=>{};
+  b.run_sklearn=()=>{
+    const labels=xy.map(p=>{ let best=0,bd=1e9;
+      for(let k=0;k<blobs.length;k++){ const d=Math.hypot(p[0]-blobs[k][0],p[1]-blobs[k][1]);
+        if(d<bd){bd=d;best=k;} } return best; });
+    setTimeout(()=>receiveCompare({error:null,note:'preview mock',labels,
+      centroids:blobs.map(b2=>b2.slice()),metrics:{n_clusters:blobs.length,n_noise:0}}),400);
+  };
   b.run=(algo,pj)=>{ const k=JSON.parse(pj).k||4; let C=blobs.slice(0,k).map(c=>[c[0]+.3,c[1]+.3]),step=0;
     const iv=setInterval(()=>{ const labels=xy.map(p=>{let bi=0,bd=1e9;C.forEach((c,j)=>{const d=(c[0]-p[0])**2+(c[1]-p[1])**2;if(d<bd){bd=d;bi=j;}});return bi;});
       for(let j=0;j<k;j++){const pts=xy.filter((_,i)=>labels[i]===j); if(pts.length)C[j]=[pts.reduce((s,p)=>s+p[0],0)/pts.length,pts.reduce((s,p)=>s+p[1],0)/pts.length];}

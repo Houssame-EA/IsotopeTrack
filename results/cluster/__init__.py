@@ -18,12 +18,16 @@ Modules
     Pure-NumPy per-iteration steppers that feed that animation, plus the
     per-algorithm *detail view* payloads (dendrogram, reachability plot,
     U-matrix, objective curves …).
-``eval_k``
-    The K-evaluation sweep behind the "① Evaluate K" panel.
+``palette``
+    Per-cluster colour overrides shared by the dialog and the live tab.
+
+The "① Evaluate K" sweep and its matplotlib panel live in ``dialog`` itself
+(``_run_evaluation`` / ``_EvalWorker`` / ``_build_eval_tab``), not in a
+separate module.
 
 Asset folders
 -------------
-``live_ui/`` and ``eval_ui/`` hold the HTML/CSS/JS served to QWebEngine.
+``live_ui/`` holds the HTML/CSS/JS served to QWebEngine.
 
 Nothing is imported eagerly: the dialog pulls in the heavier pieces only when
 the corresponding tab is opened, so importing this package stays cheap.

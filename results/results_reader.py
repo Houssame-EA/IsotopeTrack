@@ -57,6 +57,7 @@ _CAT_META: dict[str, dict] = {
     "distribution": {"icon": "▦", "label": "Distribution"},
     "composition":  {"icon": "◔", "label": "Composition"},
     "comparison":   {"icon": "⇄", "label": "Comparison"},
+    "signature":    {"icon": "⌘", "label": "Signature"},
     "outlier":      {"icon": "↑", "label": "Outlier"},
 }
 
@@ -71,6 +72,78 @@ MIN_ABS_CORRELATION = 0.50
 
 MAX_CORRELATION_CARDS = 4
 """Most correlation pairs to surface from one scan."""
+
+_DATA_KEY_LABELS: dict[str, str] = {
+    "elements": "Counts",
+    "element_mass_fg": "Element Mass (fg)",
+    "particle_mass_fg": "Particle Mass (fg)",
+    "element_moles_fmol": "Element Moles (fmol)",
+    "particle_moles_fmol": "Particle Moles (fmol)",
+    "element_diameter_nm": "Element Diameter (nm)",
+    "particle_diameter_nm": "Particle Diameter (nm)",
+}
+"""Measurement keys mapped to the display names the plot nodes expect."""
+
+_DATA_KEY_UNITS: dict[str, str] = {
+    "elements": "counts",
+    "element_mass_fg": "fg",
+    "particle_mass_fg": "fg",
+    "element_moles_fmol": "fmol",
+    "particle_moles_fmol": "fmol",
+    "element_diameter_nm": "nm",
+    "particle_diameter_nm": "nm",
+}
+"""Short unit suffixes for writing measured values into card text."""
+
+_DATA_KEY_NOUNS: dict[str, str] = {
+    "elements": "intensity",
+    "element_mass_fg": "mass",
+    "particle_mass_fg": "particle mass",
+    "element_moles_fmol": "molar",
+    "particle_moles_fmol": "particle molar",
+    "element_diameter_nm": "size",
+    "particle_diameter_nm": "particle size",
+}
+"""How to name each measurement in a sentence."""
+
+BIMODALITY_SCAN_ORDER = (
+    "element_diameter_nm",
+    "particle_diameter_nm",
+    "element_mass_fg",
+    "particle_mass_fg",
+    "elements",
+)
+"""Units searched for split distributions, most physically meaningful first.
+
+Size leads because two size populations is the clearest result to act on, then
+mass, then raw counts as a fallback when nothing has been calibrated.
+"""
+
+MIN_BIMODALITY_PARTICLES = 60
+"""Particles an element needs before its distribution shape is worth testing."""
+
+MIN_MODE_SEPARATION = 0.30
+"""Minimum gap between two modes, in log10 units, so about a factor of two."""
+
+MIN_MINOR_MODE_SHARE = 0.10
+"""Smallest share of particles the lesser mode must hold to count as real."""
+
+MIN_VALLEY_DEPTH = 0.40
+"""How far the dip between two modes must fall below the lower peak."""
+
+MAX_BIMODALITY_CARDS = 3
+"""Most split-distribution cards to surface from one scan."""
+
+SIGNATURE_ABSENCE_RATIO = 0.30
+"""How rare a feature must be elsewhere before it counts as a fingerprint.
+
+Present in 40% of one sample and 30% of another is a difference in degree, not
+a signature. The lesser sample has to hold well under a third of the leader's
+rate before a finding is worded as belonging to one sample.
+"""
+
+SIGNATURE_MIN_COMBO_GAP = 0.12
+"""Smallest share difference for an element combination to be worth reporting."""
 
 @dataclass
 class Suggestion:
@@ -140,7 +213,7 @@ def _safe_float(v) -> float | None:
 
 
 def _build_matrix(
-    particles: list[dict],
+    particles: list[dict], data_key: str = "elements",
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Build the element matrix in a single sparse pass.
 
@@ -151,8 +224,10 @@ def _build_matrix(
     ``Decimal``, ``None``) falling back to :func:`_safe_float`.
 
     Args:
-        particles: Particle dicts, each optionally holding an ``elements``
-            mapping of element label to concentration.
+        particles: Particle dicts, each optionally holding a mapping of element
+            label to measured value under *data_key*.
+        data_key: Which measurement to read, such as ``"elements"`` for raw
+            counts or ``"element_diameter_nm"`` for size.
 
     Returns:
         A ``(matrix, det_mask)`` pair. Both are keyed by element label and
@@ -172,7 +247,7 @@ def _build_matrix(
     vals: dict[str, list[float]] = {}
     isnan = math.isnan
     for i, p in enumerate(particles):
-        for el, raw in (p.get("elements") or {}).items():
+        for el, raw in (p.get(data_key) or {}).items():
             if type(raw) is float:
                 if not (raw > 0.0) or isnan(raw):
                     continue
@@ -298,6 +373,124 @@ def _benjamini_hochberg(pvalues: list[float], q: float = FDR_Q) -> tuple[np.ndar
     return significant, adjusted
 
 
+def _bimodality_coefficient(values: np.ndarray) -> float:
+    """Score how two-humped a distribution looks, from skewness and kurtosis.
+
+    Values above about 0.555, the figure for a uniform distribution, suggest
+    two populations rather than one. This is only a prefilter: it is cheap
+    enough to run on every element, but a heavy tail can push it up on its own,
+    so anything it flags is confirmed by :func:`_detect_bimodality`.
+
+    The kurtosis term is *excess* kurtosis. Using the raw fourth moment inflates
+    the denominator and drives the score below the threshold almost regardless
+    of the data, which is a common way to get this formula wrong.
+
+    Args:
+        values: Positive measurements for a single element.
+
+    Returns:
+        The sample-corrected coefficient, or ``0.0`` when there are too few
+        values or no variation at all.
+    """
+    values = values[values > 0]
+    n = len(values)
+    if n < 8:
+        return 0.0
+    std = values.std()
+    if std == 0:
+        return 0.0
+
+    centred = values - values.mean()
+    skew = float(np.mean(centred ** 3)) / (std ** 3 + 1e-30)
+    kurtosis = float(np.mean(centred ** 4)) / (std ** 4 + 1e-30) - 3.0
+    correction = 3.0 * ((n - 1) ** 2) / ((n - 2) * (n - 3) + 1e-9)
+    return (skew ** 2 + 1.0) / (kurtosis + correction)
+
+
+def _detect_bimodality(values: np.ndarray) -> dict | None:
+    """Look for two separated populations in one element's measurements.
+
+    The test runs on log10 values, because particle measurements span orders of
+    magnitude and a split that is obvious on a log axis is invisible on a
+    linear one. A kernel density estimate is evaluated across the range, its
+    local maxima are found, and the two tallest are kept.
+
+    Three conditions must all hold before this reports a split, which together
+    rule out the long right tail that is normal in this data:
+
+    * the modes sit at least :data:`MIN_MODE_SEPARATION` apart in log10,
+    * the dip between them falls at least :data:`MIN_VALLEY_DEPTH` below the
+      lower of the two peaks,
+    * the smaller population holds at least :data:`MIN_MINOR_MODE_SHARE` of the
+      particles.
+
+    Args:
+        values: Positive measurements for a single element.
+
+    Returns:
+        A dict describing the split, with ``modes`` in the original units,
+        ``split`` at the dividing value, ``minor_share``, ``separation``,
+        ``valley_depth`` and the prefilter ``bc``. ``None`` when the data is
+        too small, too flat, or better described by a single population.
+    """
+    values = values[values > 0]
+    if len(values) < MIN_BIMODALITY_PARTICLES:
+        return None
+
+    logged = np.log10(values)
+    if logged.std() < 1e-9:
+        return None
+
+    bc = _bimodality_coefficient(logged)
+    if bc < 0.555:
+        return None
+
+    try:
+        density = _stats.gaussian_kde(logged)
+    except Exception:
+        _itk_log.exception("[Insights] KDE failed")
+        return None
+
+    grid = np.linspace(logged.min(), logged.max(), 256)
+    curve = density(grid)
+
+    peaks = [i for i in range(1, len(curve) - 1)
+             if curve[i] > curve[i - 1] and curve[i] >= curve[i + 1]]
+    if len(peaks) < 2:
+        return None
+
+    peaks.sort(key=lambda i: -curve[i])
+    first, second = sorted(peaks[:2])
+    lower_peak = min(curve[first], curve[second])
+    if lower_peak <= 0:
+        return None
+
+    separation = float(grid[second] - grid[first])
+    if separation < MIN_MODE_SEPARATION:
+        return None
+
+    valley_index = first + int(np.argmin(curve[first:second + 1]))
+    valley_depth = float(1.0 - curve[valley_index] / lower_peak)
+    if valley_depth < MIN_VALLEY_DEPTH:
+        return None
+
+    split = float(grid[valley_index])
+    below = float(np.mean(logged < split))
+    minor_share = min(below, 1.0 - below)
+    if minor_share < MIN_MINOR_MODE_SHARE:
+        return None
+
+    return {
+        "modes": (float(10 ** grid[first]), float(10 ** grid[second])),
+        "split": float(10 ** split),
+        "minor_share": minor_share,
+        "separation": separation,
+        "valley_depth": valley_depth,
+        "bc": bc,
+        "n": int(len(values)),
+    }
+
+
 def _isotope_symbol(name: str) -> str | None:
     """Extract the element symbol from an isotope label.
 
@@ -387,6 +580,80 @@ def _find_batch_node(scene):
         if getattr(node, "node_type", "") == "batch_sample_selector":
             return node
     return None
+
+
+_NODE_SLOT_W = 150
+_NODE_SLOT_H = 125
+_SLOT_SPAN = 6
+
+
+def _occupied_rects(scene) -> list[tuple[float, float, float, float]]:
+    """List the space every node on the canvas already takes up.
+
+    Args:
+        scene: The canvas scene.
+
+    Returns:
+        One ``(left, top, right, bottom)`` box per placed node.
+    """
+    boxes = []
+    for item in getattr(scene, "node_items", {}).values():
+        try:
+            pos = item.pos()
+            left, top = float(pos.x()), float(pos.y())
+        except Exception:
+            continue
+        width = float(getattr(item, "width", 0) or _NODE_SLOT_W)
+        height = float(getattr(item, "height", 0) or _NODE_SLOT_H)
+        boxes.append((left, top, left + width, top + height))
+    return boxes
+
+
+def _free_position(scene, preferred):
+    """Find a spot for a new node that no existing node is sitting on.
+
+    The old placement walked a fixed diagonal, which looks fine for the first
+    couple of nodes and then starts dropping them on top of each other. This
+    starts from where the node ideally wants to go, works rightwards along the
+    row, and wraps to the next row once the row is full.
+
+    Args:
+        scene: The canvas scene.
+        preferred: The ``QPointF`` the caller would like to use.
+
+    Returns:
+        A ``QPointF`` that overlaps nothing, or *preferred* when the canvas is
+        empty.
+    """
+    boxes = _occupied_rects(scene)
+    if not boxes:
+        return preferred
+
+    def clear(x: float, y: float) -> bool:
+        """Report whether a node placed at this corner would overlap anything.
+
+        Args:
+            x: Left edge of the candidate slot.
+            y: Top edge of the candidate slot.
+
+        Returns:
+            True when the slot is free.
+        """
+        right, bottom = x + _NODE_SLOT_W, y + _NODE_SLOT_H
+        for left, top, r, b in boxes:
+            if x < r and right > left and y < b and bottom > top:
+                return False
+        return True
+
+    start_x, start_y = float(preferred.x()), float(preferred.y())
+    for step in range(64):
+        row, column = divmod(step, _SLOT_SPAN)
+        x = start_x + column * _NODE_SLOT_W
+        y = start_y + row * _NODE_SLOT_H
+        if clear(x, y):
+            return QPointF(x, y)
+
+    return QPointF(start_x + 65 * _NODE_SLOT_W, start_y)
 
 
 def _isotope_entries(parent_window, scene, labels) -> list[dict]:
@@ -637,6 +904,9 @@ class AnalysisContext:
         sample_idx: For each particle, the index of its sample within
             ``scope.sample_names``. This is what lets between-sample analyses
             group particles that carry no ``source_sample`` key of their own.
+        unit_matrices: Matrices for measurements other than raw counts, built
+            on first use and keyed by data key. Scanning sizes costs nothing
+            until something actually asks for them.
     """
 
     scope: AnalysisScope
@@ -645,6 +915,7 @@ class AnalysisContext:
     det_mask: dict[str, np.ndarray]
     det_counts: dict[str, int]
     sample_idx: np.ndarray
+    unit_matrices: dict = field(default_factory=dict)
 
     @property
     def n(self) -> int:
@@ -684,6 +955,49 @@ class AnalysisContext:
         """
         floor = max(min_abs, self.n * min_frac)
         return [el for el in self.elements_by_abundance() if self.det_counts[el] >= floor]
+
+    def matrix_for(self, data_key: str) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Return the matrix and detection mask for one measurement.
+
+        Anything other than raw counts is built the first time it is asked for
+        and kept for the life of the context, so a scan that walks several
+        units pays for each only once.
+
+        Args:
+            data_key: Measurement to read, e.g. ``"element_diameter_nm"``.
+
+        Returns:
+            The ``(matrix, det_mask)`` pair for *data_key*.
+        """
+        if data_key == "elements":
+            return self.matrix, self.det_mask
+        cached = self.unit_matrices.get(data_key)
+        if cached is None:
+            cached = _build_matrix(self.particles, data_key)
+            self.unit_matrices[data_key] = cached
+        return cached
+
+    def available_data_keys(self, sample_size: int = 400) -> list[str]:
+        """List the measurements these particles actually carry.
+
+        Which units exist depends on how far the data was calibrated, so this
+        looks rather than assumes. Only the first *sample_size* particles are
+        inspected, since a key present at all is almost always present broadly.
+
+        Args:
+            sample_size: How many particles to inspect.
+
+        Returns:
+            Data keys found, in :data:`_DATA_KEY_LABELS` order.
+        """
+        seen: set[str] = set()
+        for p in self.particles[:sample_size]:
+            for key in _DATA_KEY_LABELS:
+                if key not in seen and p.get(key):
+                    seen.add(key)
+            if len(seen) == len(_DATA_KEY_LABELS):
+                break
+        return [k for k in _DATA_KEY_LABELS if k in seen]
 
     def particle_mask_for(self, elements) -> np.ndarray:
         """Mark the particles carrying at least one of *elements*.
@@ -997,22 +1311,89 @@ def _analyse_isotope(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     return out
 
 
-def _analyse_distribution(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
-    """Rank elements by how widely their concentrations vary.
+def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Look for elements whose measurements fall into two separate populations.
 
-    A high coefficient of variation means particles carry wildly different
-    amounts of that element, which is worth seeing as a distribution rather
-    than reading as a single average.
+    Units are searched in :data:`BIMODALITY_SCAN_ORDER`, so a split in particle
+    size is reported ahead of the same split expressed as mass or raw counts.
+    Once an element has been reported in one unit it is not reported again in
+    another, since that would be the same finding worded differently.
 
     Args:
         ctx: The shared analysis context.
         progress: Optional callable receiving status strings.
 
     Returns:
-        A box plot suggestion across the most variable elements and a histogram
-        suggestion for the single most variable one.
+        Up to :data:`MAX_BIMODALITY_CARDS` histogram suggestions, each
+        configured to open on the unit the split was found in.
     """
     out: list[Suggestion] = []
+    available = set(ctx.available_data_keys())
+    if not available:
+        return out
+
+    reported: set[str] = set()
+    for data_key in BIMODALITY_SCAN_ORDER:
+        if data_key not in available or len(out) >= MAX_BIMODALITY_CARDS:
+            continue
+
+        noun = _DATA_KEY_NOUNS.get(data_key, "value")
+        _say(progress, f"Checking {noun} distributions…")
+        matrix, det_mask = ctx.matrix_for(data_key)
+        if not matrix:
+            continue
+
+        findings = []
+        for el in sorted(matrix, key=lambda e: -int(det_mask[e].sum())):
+            if el in reported:
+                continue
+            split = _detect_bimodality(matrix[el][det_mask[el]])
+            if split is not None:
+                findings.append((el, split))
+
+        findings.sort(key=lambda f: -(f[1]["valley_depth"] * f[1]["minor_share"]))
+        unit = _DATA_KEY_UNITS.get(data_key, "")
+        label = _DATA_KEY_LABELS.get(data_key, "Counts")
+
+        for el, split in findings:
+            if len(out) >= MAX_BIMODALITY_CARDS:
+                break
+            reported.add(el)
+            low, high = split["modes"]
+            out.append(Suggestion(
+                title=f"Two {noun} populations: {el}",
+                reasoning=(
+                    f"{el} splits at about {split['split']:.3g} {unit} into groups "
+                    f"near {low:.3g} and {high:.3g} {unit}. The smaller holds "
+                    f"{split['minor_share'] * 100:.0f}% of "
+                    f"{split['n']:,} particles."
+                ),
+                category="distribution",
+                confidence=min(0.55 + split["valley_depth"] * 0.4, 0.94),
+                node_type="histogram_plot",
+                config={"element": el, "data_type_display": label},
+                elements=(el,),
+            ))
+    return out
+
+
+def _analyse_distribution(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Describe the shape and spread of individual element distributions.
+
+    Two things are looked for: elements that split into two populations, which
+    is the more interesting finding and is searched across size, mass and count
+    units, and elements whose values simply vary very widely, which is worth
+    seeing as a distribution rather than read as an average.
+
+    Args:
+        ctx: The shared analysis context.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Any split-distribution suggestions, plus a box plot across the most
+        variable elements and a histogram for the single most variable one.
+    """
+    out: list[Suggestion] = _scan_bimodality(ctx, progress)
     els = ctx.frequent_elements()
     if not els:
         return out
@@ -1175,6 +1556,153 @@ def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]
     return out
 
 
+def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Find what one sample contains that another does not.
+
+    This asks a different question from the comparison analysis. Comparison
+    asks how *much* of an element a sample carries; signature asks whether the
+    element is there at all. An element found in a third of one sample's
+    particles and in none of another's is a fingerprint, however similar the
+    concentrations happen to be where both are present.
+
+    Presence rates are compared with Fisher's exact test between the samples
+    holding the most and least of each element, and the family of tests is
+    corrected for false discovery. The same is then done for whole element
+    combinations, which is what makes a card like "Al+Fe+Si+Pb is 18% of S1 and
+    absent from S2" possible.
+
+    Args:
+        ctx: The shared analysis context.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Up to two element suggestions and one combination suggestion, or
+        nothing for a single-sample scope.
+    """
+    out: list[Suggestion] = []
+    if not ctx.is_multi:
+        return out
+
+    _say(progress, "Comparing sample signatures…")
+    names = ctx.sample_names
+    sizes = [int((ctx.sample_idx == i).sum()) for i in range(len(names))]
+    usable = [i for i, size in enumerate(sizes) if size >= 20]
+    if len(usable) < 2:
+        return out
+
+    tests: list[tuple] = []
+    for el, mask in ctx.det_mask.items():
+        rates = []
+        for i in usable:
+            in_sample = ctx.sample_idx == i
+            hits = int((mask & in_sample).sum())
+            rates.append((hits / sizes[i], hits, sizes[i], i))
+        rates.sort(key=lambda r: -r[0])
+        top, bottom = rates[0], rates[-1]
+        if top[0] < 0.05 or top[0] - bottom[0] < 0.15:
+            continue
+        try:
+            _odds, p_value = _stats.fisher_exact([
+                [top[1], top[2] - top[1]],
+                [bottom[1], bottom[2] - bottom[1]],
+            ])
+        except Exception:
+            continue
+        tests.append((el, float(p_value), top, bottom))
+
+    if tests:
+        significant, adjusted = _benjamini_hochberg([t[1] for t in tests])
+        kept = [(t, float(adjusted[k])) for k, t in enumerate(tests) if significant[k]]
+        kept.sort(key=lambda x: -(x[0][2][0] - x[0][3][0]))
+
+        for (el, _p, top, bottom), q_value in kept[:2]:
+            absent = bottom[1] == 0
+            distinctive = bottom[0] <= top[0] * SIGNATURE_ABSENCE_RATIO
+            out.append(Suggestion(
+                title=(f"{el} marks {names[top[3]]}" if distinctive
+                       else f"{el} is enriched in {names[top[3]]}"),
+                reasoning=(
+                    f"{el} appears in {top[0] * 100:.0f}% of {names[top[3]]} particles "
+                    + (f"and in none of {names[bottom[3]]}." if absent
+                       else f"but only {bottom[0] * 100:.1f}% of {names[bottom[3]]}.")
+                    + f" Fisher q = {q_value:.2g}."
+                ),
+                category="signature",
+                confidence=min(0.5 + (top[0] - bottom[0]) * 0.5, 0.95),
+                node_type="element_composition_plot",
+                config={},
+                elements=(el,),
+            ))
+
+    combo_card = _signature_combination(ctx, usable, sizes, names)
+    if combo_card is not None:
+        out.append(combo_card)
+    return out
+
+
+def _signature_combination(ctx: AnalysisContext, usable, sizes, names) -> Suggestion | None:
+    """Find an element combination that belongs to one sample alone.
+
+    Args:
+        ctx: The shared analysis context.
+        usable: Indices of samples large enough to draw conclusions from.
+        sizes: Particle count per sample, indexed as ``ctx.sample_names``.
+        names: Sample names.
+
+    Returns:
+        A suggestion naming the most distinctive combination, or ``None`` when
+        no combination is common in one sample and rare in the rest.
+    """
+    counts: dict[tuple, dict[int, int]] = {}
+    for position, p in enumerate(ctx.particles):
+        detected = tuple(sorted(
+            el for el, v in (p.get("elements") or {}).items()
+            if _safe_float(v) is not None
+        ))
+        if len(detected) < 2:
+            continue
+        counts.setdefault(detected, {})
+        sample = int(ctx.sample_idx[position])
+        counts[detected][sample] = counts[detected].get(sample, 0) + 1
+
+    best = None
+    for combo, per_sample in counts.items():
+        shares = [(per_sample.get(i, 0) / sizes[i], i) for i in usable]
+        shares.sort(key=lambda s: -s[0])
+        top, bottom = shares[0], shares[-1]
+        if top[0] < 0.05:
+            continue
+        gap = top[0] - bottom[0]
+        if gap < SIGNATURE_MIN_COMBO_GAP:
+            continue
+        if bottom[0] > top[0] * SIGNATURE_ABSENCE_RATIO:
+            continue
+        if best is None or gap > best[0]:
+            best = (gap, combo, top, bottom)
+
+    if best is None:
+        return None
+
+    gap, combo, top, bottom = best
+    absent = bottom[0] == 0
+    shown = " + ".join(combo[:5])
+    return Suggestion(
+        title=f"{names[top[1]]} signature: {shown}",
+        reasoning=(
+            f"Particles carrying {shown} make up {top[0] * 100:.0f}% of "
+            f"{names[top[1]]} "
+            + (f"and are absent from {names[bottom[1]]}."
+               if absent else
+               f"against {bottom[0] * 100:.1f}% of {names[bottom[1]]}.")
+        ),
+        category="signature",
+        confidence=min(0.5 + gap * 0.5, 0.92),
+        node_type="pie_chart_plot",
+        config={},
+        elements=tuple(combo[:5]),
+    )
+
+
 def _analyse_outlier(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     """Find elements with a detached population of unusually high particles.
 
@@ -1229,6 +1757,86 @@ def _analyse_outlier(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     return out
 
 
+def _analyse_joint_outlier(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Find particles that are extreme in more than one element at once.
+
+    A particle high in a single element is unremarkable in a heavy-tailed
+    dataset. A particle high in two elements simultaneously is a much stronger
+    signal, and usually means a genuinely different kind of particle rather
+    than the tail of the usual one.
+
+    Extremes are measured with the median and the median absolute deviation on
+    log values, so a few very large particles cannot inflate the threshold and
+    hide the rest, as the mean and standard deviation would allow.
+
+    Args:
+        ctx: The shared analysis context.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        At most one suggestion, proposing the scatter of the two elements that
+        most often go extreme together.
+    """
+    out: list[Suggestion] = []
+    els = ctx.frequent_elements()
+    if len(els) < 2:
+        return out
+
+    _say(progress, "Looking for joint outliers…")
+    extreme: dict[str, np.ndarray] = {}
+    for el in els:
+        detected = ctx.det_mask[el]
+        values = ctx.matrix[el][detected]
+        if len(values) < 30:
+            continue
+        logged = np.log10(values)
+        median = float(np.median(logged))
+        deviation = float(np.median(np.abs(logged - median)))
+        if deviation <= 0:
+            continue
+        scores = 0.6745 * (logged - median) / deviation
+        flags = np.zeros(ctx.n, dtype=bool)
+        flags[detected] = scores > 3.5
+        if flags.any():
+            extreme[el] = flags
+
+    if len(extreme) < 2:
+        return out
+
+    stacked = np.vstack(list(extreme.values()))
+    hits = stacked.sum(axis=0)
+    joint = int(np.sum(hits >= 2))
+    if joint < 5:
+        return out
+
+    joint_mask = hits >= 2
+    pairs: dict[tuple[str, str], int] = {}
+    labels = list(extreme)
+    for i in range(len(labels)):
+        for j in range(i + 1, len(labels)):
+            both = int(np.sum(extreme[labels[i]] & extreme[labels[j]] & joint_mask))
+            if both:
+                pairs[(labels[i], labels[j])] = both
+    if not pairs:
+        return out
+
+    (first, second), together = max(pairs.items(), key=lambda kv: kv[1])
+    out.append(Suggestion(
+        title=f"Joint outliers: {first} + {second}",
+        reasoning=(
+            f"{joint:,} particles are extreme in two or more elements at once, "
+            f"{together:,} of them in {first} and {second} together. Being "
+            "unusual twice over is far less likely than a single long tail."
+        ),
+        category="outlier",
+        confidence=min(0.55 + joint / ctx.n * 4, 0.88),
+        node_type="correlation_plot",
+        config={"x_element": first, "y_element": second},
+        elements=(first, second),
+    ))
+    return out
+
+
 @dataclass(frozen=True)
 class InsightCategory:
     """One family of tests the user can run from the panel.
@@ -1246,6 +1854,19 @@ class InsightCategory:
     run: object
 
 
+def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Run every anomaly test the outlier category covers.
+
+    Args:
+        ctx: The shared analysis context.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Single-element outlier suggestions followed by joint ones.
+    """
+    return _analyse_outlier(ctx, progress) + _analyse_joint_outlier(ctx, progress)
+
+
 _ANALYSERS: dict[str, InsightCategory] = {
     key: InsightCategory(key, meta["label"], meta["icon"], fn)
     for key, meta, fn in (
@@ -1254,7 +1875,8 @@ _ANALYSERS: dict[str, InsightCategory] = {
         ("distribution", _CAT_META["distribution"], _analyse_distribution),
         ("composition", _CAT_META["composition"], _analyse_composition),
         ("comparison", _CAT_META["comparison"], _analyse_comparison),
-        ("outlier", _CAT_META["outlier"], _analyse_outlier),
+        ("signature", _CAT_META["signature"], _analyse_signature),
+        ("outlier", _CAT_META["outlier"], _analyse_anomaly),
     )
 }
 
@@ -1268,12 +1890,28 @@ def category_keys() -> list[str]:
     return list(_ANALYSERS)
 
 
-def _dedupe_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
-    """Rank suggestions and drop near-duplicates.
+_NODE_TYPE_CARD_LIMITS: dict[str, int] = {
+    "correlation_plot": 2,
+    "histogram_plot": 3,
+}
+"""Node types allowed more than one card, because each says something new.
 
-    Two cards proposing the same node type are usually the same idea twice, so
-    only the strongest survives. Correlation plots are allowed a second entry,
-    since a different element pair is a genuinely different plot.
+A second correlation plot is a different element pair, and a second histogram
+is a different element or a different unit. Everything else repeats itself.
+"""
+
+_DEFAULT_CARD_LIMIT = 1
+
+_MULTI_SAMPLE_CATEGORIES = ("comparison", "signature")
+"""Categories that need at least two samples in scope to say anything."""
+
+
+def _dedupe_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
+    """Rank suggestions and drop the ones that repeat each other.
+
+    Two cards are treated as the same idea when they would build the same node
+    over the same elements in the same unit. Beyond that, each node type is
+    capped so that one prolific analysis cannot crowd out the rest.
 
     Args:
         suggestions: Suggestions from one or more analysers.
@@ -1281,13 +1919,21 @@ def _dedupe_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
     Returns:
         The surviving suggestions, most confident first.
     """
-    seen: dict[str, int] = {}
+    seen: set[tuple] = set()
+    counts: dict[str, int] = {}
     out: list[Suggestion] = []
+
     for s in sorted(suggestions, key=lambda x: -x.confidence):
-        limit = 2 if s.node_type == "correlation_plot" else 1
-        if seen.get(s.node_type, 0) < limit:
-            out.append(s)
-            seen[s.node_type] = seen.get(s.node_type, 0) + 1
+        signature = (s.node_type, tuple(sorted(s.elements)),
+                     s.config.get("data_type_display", ""))
+        if signature in seen:
+            continue
+        limit = _NODE_TYPE_CARD_LIMITS.get(s.node_type, _DEFAULT_CARD_LIMIT)
+        if counts.get(s.node_type, 0) >= limit:
+            continue
+        seen.add(signature)
+        counts[s.node_type] = counts.get(s.node_type, 0) + 1
+        out.append(s)
     return out
 
 
@@ -1863,8 +2509,8 @@ class SmartInsightsPanel(QWidget):
     def _sync_chips(self, scope: AnalysisScope | None = None):
         """Update which chip reads as active and which are worth offering.
 
-        Comparison is disabled for a single-sample scope, where it has nothing
-        to compare.
+        Comparison and Signature are disabled for a single-sample scope, where
+        neither has anything to compare against.
 
         Args:
             scope: Scope the chips describe. Resolved when omitted.
@@ -1873,10 +2519,11 @@ class SmartInsightsPanel(QWidget):
             scope = resolve_scope(self._scene, self._pw)
         for key, chip in self._chips.items():
             chip.setChecked(key == self._active_category)
-            if key == "comparison":
+            if key in _MULTI_SAMPLE_CATEGORIES:
                 chip.setEnabled(scope.is_multi)
                 chip.setToolTip(
-                    "Compare samples" if scope.is_multi
+                    f"Scan for {_CAT_META[key]['label'].lower()} insights"
+                    if scope.is_multi
                     else "Needs more than one sample in scope"
                 )
 
@@ -2097,22 +2744,22 @@ class SmartInsightsPanel(QWidget):
         selector = self._build_scoped_selector(s, _NODE_FACTORIES)
         source = selector or _find_source_node(scene)
 
-        existing = len(scene.workflow_nodes)
-        base = QPointF(300 + existing * 12, 200 + existing * 12)
-        if selector is None and source is not None:
+        anchor = QPointF(300, 200)
+        if source is not None:
             item = scene.node_items.get(source)
             if item is not None:
-                base = QPointF(item.pos().x() + 220 + (existing % 3) * 8,
-                               item.pos().y() + (existing // 3) * 130)
+                anchor = QPointF(item.pos().x() + _NODE_SLOT_W,
+                                 item.pos().y())
 
         if selector is not None:
+            base = _free_position(scene, anchor)
             scene.add_node(selector, base)
             upstream = _find_batch_node(scene)
             if upstream is not None:
                 scene.add_link(upstream, "output", selector, "input")
-            base = QPointF(base.x() + 220, base.y())
+            anchor = QPointF(base.x() + _NODE_SLOT_W, base.y())
 
-        scene.add_node(plot_node, base)
+        scene.add_node(plot_node, _free_position(scene, anchor))
         if source is not None and getattr(source, "_has_output", False):
             scene.add_link(source, "output", plot_node, "input")
 

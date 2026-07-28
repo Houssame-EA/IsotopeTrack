@@ -1200,9 +1200,7 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                     txt = _fmt_cell_number(v_orig)
                     sp = spread_matrix[i][j]
                     if sp is not None:
-                        # CV is a percentage of the mean, not of the data type,
-                        # so it keeps its own '%'. Everything else inherits the
-                        # cell's units and is printed bare.
+                      
                         if isinstance(sp, tuple) and sp[0] == '%':
                             txt = f'{txt} ({sp[1]:.0f}%)'
                         elif isinstance(sp, tuple):

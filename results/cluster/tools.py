@@ -59,6 +59,13 @@ except ImportError:
     _UMAP_CLS = None
     _UMAP_OK = False
 
+from utils.numba_guard import numba_serial
+
+try:
+    from results.cluster.prep import reduction_components
+except ImportError:
+    from .prep import reduction_components
+
 try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
     _HDBSCAN_OK = True
@@ -482,7 +489,7 @@ class Preprocessor:
     """
 
     def __init__(self, particle_data, elements, filter_zeros=True,
-                 tsne_random_state=42, n_components=2, min_type_count=1):
+                 tsne_random_state=42, min_type_count=1):
         """Initialise the cache and the fixed kept-row mask.
 
         Args:
@@ -490,7 +497,6 @@ class Preprocessor:
             elements (list[str]): Active element columns, in order.
             filter_zeros (bool): Drop all-zero rows to match the host pipeline.
             tsne_random_state (int): Seed for reproducible t-SNE.
-            n_components (int): Target dimensionality for PCA / t-SNE.
             min_type_count (int): Minimum number of particles that must share an
                 elemental combination (the set of elements present) for that
                 combination to be kept. A particle is dropped when its
@@ -499,7 +505,6 @@ class Preprocessor:
                 mirrors the host pipeline's "Min. particles per type" control.
         """
         self.elements = list(elements)
-        self.n_components = int(n_components)
         self.tsne_rs = tsne_random_state
         self.min_type_count = max(1, int(min_type_count))
 
@@ -562,23 +567,22 @@ class Preprocessor:
 
     def matrix(self, data_type, scaling, dim_reduction):
         """Return the fully preprocessed matrix for one pipeline (cached)."""
-        key = (data_type, scaling, dim_reduction, self.n_components)
+        key = (data_type, scaling, dim_reduction)
         if key in self._reduced_cache:
             return self._reduced_cache[key]
         m = self._scaled(data_type, scaling)
+        nc = reduction_components(dim_reduction, m.shape[1])
         if dim_reduction == 'PCA' and m.shape[1] > 1:
-            nc = min(self.n_components, m.shape[1])
-            m = PCA(n_components=nc).fit_transform(m)
+            m = PCA(n_components=min(nc, m.shape[0])).fit_transform(m)
         elif dim_reduction == 't-SNE' and m.shape[1] > 1:
-            nc = min(self.n_components, 3)
             perp = min(30, max(5, (m.shape[0] - 1) // 3))
             m = TSNE(n_components=nc, random_state=self.tsne_rs,
                      init='pca', perplexity=perp).fit_transform(m)
         elif dim_reduction == 'UMAP' and _UMAP_OK and m.shape[1] > 1:
-            nc = min(self.n_components, m.shape[1])
             nn = min(15, max(2, m.shape[0] - 1))
-            m = _UMAP_CLS(n_components=nc, n_neighbors=nn,
-                          random_state=self.tsne_rs).fit_transform(m)
+            with numba_serial("UMAP (sweep reduction)"):
+                m = _UMAP_CLS(n_components=nc, n_neighbors=nn,
+                              random_state=self.tsne_rs).fit_transform(m)
         self._reduced_cache[key] = m
         return m
 
@@ -648,10 +652,11 @@ def run_algorithm(name, params, data, som_runner=None):
         if name == 'HDBSCAN':
             if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                 return None
-            return _HDBSCAN_CLS(min_cluster_size=int(params.get('min_cluster_size', 5)),
-                                min_samples=int(params.get('min_samples', 5)),
-                                metric=params.get('metric', 'euclidean')
-                                ).fit_predict(data)
+            with numba_serial("HDBSCAN (sweep)"):
+                return _HDBSCAN_CLS(min_cluster_size=int(params.get('min_cluster_size', 5)),
+                                    min_samples=int(params.get('min_samples', 5)),
+                                    metric=params.get('metric', 'euclidean')
+                                    ).fit_predict(data)
         if name == 'OPTICS':
             return OPTICS(min_samples=int(params.get('min_samples', 5)),
                           metric=params.get('metric', 'euclidean'),
@@ -789,7 +794,7 @@ def _params_str(algo, params):
 def run_sweep(particle_data, elements, components, *,
               data_types, scalings, dim_reductions,
               algo_selections, internal_metrics, external_metrics,
-              n_components=2, other_flags=None, filter_zeros=True,
+              other_flags=None, filter_zeros=True,
               min_type_count=1, min_clusters=2, max_clusters=30,
               som_runner=None, progress_cb=None, cancel_event=None):
     """Run the full pipeline grid and score every result against ground truth.
@@ -802,7 +807,6 @@ def run_sweep(particle_data, elements, components, *,
         algo_selections (dict): ``{algo: {param: [values]}}``.
         internal_metrics (list[str]): Internal index names to compute.
         external_metrics (list[str]): External (truth) index names to compute.
-        n_components (int): PCA / t-SNE target dimensionality.
         other_flags (np.ndarray or None): Optional coincidence/outlier mask over
             the original particle rows.
         filter_zeros (bool): Drop all-zero rows.
@@ -824,7 +828,7 @@ def run_sweep(particle_data, elements, components, *,
             recoverable via :func:`summarize_sweep_failures`.
     """
     pre = Preprocessor(particle_data, elements, filter_zeros=filter_zeros,
-                       n_components=n_components, min_type_count=min_type_count)
+                       min_type_count=min_type_count)
     if pre.n_rows < 2:
         return {'results': [], 'truth': {}, 'completed': 0, 'total': 0,
                 'cancelled': False, 'failures': [], 'attempts': {},
@@ -1525,7 +1529,6 @@ if _QT_OK:
             self._som_runner = som_runner
             self._worker = None
             self._last = None
-            self._last_ncomp = 2
             self._last_min_type = 1
             self._ranked = []
             self._detail_pre = None
@@ -1633,12 +1636,11 @@ if _QT_OK:
             dr_box = self._axis_box("Dim. reduction", DIM_REDUCTIONS,
                                     DEFAULT_DIM_REDUCTIONS, 'dr_boxes')
             ncrow = QHBoxLayout()
-            ncrow.addWidget(QLabel("n_components:"))
-            self.ncomp = QSpinBox()
-            self.ncomp.setRange(2, 3)
-            self.ncomp.setValue(2)
-            ncrow.addWidget(self.ncomp)
-            ncrow.addStretch()
+            _nc_note = QLabel("PCA keeps every component (a rotation), so no "
+                              "element information is lost.")
+            _nc_note.setWordWrap(True)
+            _nc_note.setStyleSheet("color:#64748B;font-size:10px;")
+            ncrow.addWidget(_nc_note)
             dr_box.layout().addLayout(ncrow)
             mtrow = QHBoxLayout()
             mtrow.addWidget(QLabel("Min. particles per type:"))
@@ -1849,7 +1851,6 @@ if _QT_OK:
                 algo_selections=algo_selections,
                 internal_metrics=[o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 external_metrics=external,
-                n_components=self.ncomp.value(),
                 min_type_count=self.min_type_count.value(),
                 min_clusters=min_c,
                 max_clusters=max_c,
@@ -1896,7 +1897,6 @@ if _QT_OK:
                     "Proceed?")
                 if ok != QMessageBox.Yes:
                     return
-            self._last_ncomp = kw['n_components']
             self._last_min_type = kw['min_type_count']
             self.run_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
@@ -2089,7 +2089,6 @@ if _QT_OK:
                 if self._detail_pre is None:
                     self._detail_pre = Preprocessor(
                         self._get_particle_data(), self._get_elements(),
-                        n_components=self._last_ncomp,
                         min_type_count=self._last_min_type)
                 data = self._detail_pre.matrix(
                     result['data_type'], result['scaling'], result['dim_reduction'])
@@ -2195,7 +2194,6 @@ if _QT_OK:
             cfg['scaling'] = {'None': 'Standard'}.get(
                 result['scaling'], result['scaling'])
             cfg['dim_reduction'] = result['dim_reduction']
-            cfg['n_components'] = self._last_ncomp
             cfg['selected_algorithm'] = result['algorithm']
             cfg['enabled_algorithms'] = [result['algorithm']]
             if 'k' in result['params']:
@@ -2356,14 +2354,12 @@ if _QT_OK:
                 'int': [o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 'min_k': self.min_k.value(),
                 'max_k': self.max_k.value(),
-                'ncomp': self.ncomp.value(),
                 'min_type_count': self.min_type_count.value(),
                 'rank_by': self.rank_combo.currentText(),
                 'unknown': self._is_unknown(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
                 'last': self._last,
-                'last_ncomp': self._last_ncomp,
                 'last_min_type': self._last_min_type,
             }
 
@@ -2395,8 +2391,6 @@ if _QT_OK:
                     self.min_k.setValue(state['min_k'])
                 if state.get('max_k'):
                     self.max_k.setValue(state['max_k'])
-                if state.get('ncomp'):
-                    self.ncomp.setValue(state['ncomp'])
                 if state.get('min_type_count'):
                     self.min_type_count.setValue(state['min_type_count'])
                 if state.get('rank_by'):
@@ -2405,7 +2399,6 @@ if _QT_OK:
                 for n, st in state.get('algos', {}).items():
                     if n in self.algo_cards:
                         self.algo_cards[n].set_state(st)
-                self._last_ncomp = state.get('last_ncomp', 2)
                 self._last_min_type = state.get('last_min_type', 1)
                 self._last = state.get('last')
                 if self._last:
