@@ -408,8 +408,8 @@ app = BUNDLE(
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.10.7',
-        'CFBundleVersion': '1.10.7',
+        'CFBundleShortVersionString': '1.10.8',
+        'CFBundleVersion': '1.10.8',
         'CFBundleDisplayName': 'IsotopeTrack',
         'CFBundleName': 'IsotopeTrack',
         'NSRequiresAquaSystemAppearance': 'False',
