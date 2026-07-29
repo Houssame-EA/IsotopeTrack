@@ -2,6 +2,7 @@ import logging
 import re
 from functools import reduce
 from math import gcd
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 _TOKEN_RE = re.compile(r'([A-Z][a-z]?|\(|\))(\d*(?:\.\d+)?)')
 
 
-def parse_formula_to_counts(formula: str) -> dict:
+def parse_formula_to_counts(formula: Optional[str]) -> dict:
     """Parse a chemical formula string into {element: integer_count}.
 
     Handles parenthesised groups such as Ca(OH)2 → {'Ca': 1, 'O': 2, 'H': 2}.
@@ -91,6 +92,25 @@ def signature_from_counts(counts: dict) -> str:
     if not counts:
         return ''
     return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
+
+
+def signature_from_formula(formula: str) -> str: # TODO: tests
+    """Order-independent canonical key for matching equivalent formulas."""
+    return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
+
+
+def elements_with_count_from_formula(formula: str) -> list[str]: # TODO: tests
+    """
+    Transforms a formula in a list of element-count strings.
+    Notes:
+        If the count is of 1 (or less), it won't be added to the string.
+    Args:
+        formula: Formula to convert to element-count strings.
+    Returns:
+        Element-counts of the formula.
+    """
+    return [f"{element}{'' if count <= 1 else count}"
+            for element, count in parse_formula_to_counts(formula).items()]
 
 
 def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = None) -> str:

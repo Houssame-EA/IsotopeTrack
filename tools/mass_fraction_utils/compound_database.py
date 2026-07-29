@@ -1,31 +1,82 @@
+from __future__ import annotations
+
 import logging
+from enum import StrEnum, auto, IntEnum
 from pathlib import Path
+from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
+from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt, QObject
 
-from tools.mass_fraction_utils.formula_utils import reduce_counts, parse_formula_to_counts, \
-    signature_from_counts, canonicalize_preserve_user_order
+from tools.mass_fraction_utils.formula_utils import (
+    parse_formula_to_counts,
+    canonicalize_preserve_user_order,
+    signature_from_formula,
+    elements_with_count_from_formula
+)
+from tools.mass_fraction_utils.compound import Compound
+from widget.periodic_table_widget import PeriodicTableWidget
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# CSV compound database
-# ---------------------------------------------------------------------------
+
+class _MFCol(StrEnum):
+    FORMULA = auto()
+    DENSITY = auto()
+    MATERIAL_ID = auto()
+    SPACE_GROUP = auto()
+    MP_URL = auto()
+    SIGNATURE = auto()
+    DISPLAY_TEXT = auto()
+
 
 class CSVCompoundDatabase:
-    """Database loader for materials from CSV with signature-based lookup."""
+    """Service that manages the querying of the data of a `CSVCompoundDatabase`"""
 
-    def __init__(self):
-        self.data: pd.DataFrame | None = None
-        self.formula_to_data: dict[str, list[dict]] = {}
-        self.element_to_compounds: dict[str, dict[str, float]] = {}
-        self.signature_to_formula: dict[str, str] = {}
-        self.signature_to_data: dict[str, list[dict]] = {}
-        self.is_loaded: bool = False
+    def __init__(self, tracked_elements: list[str] | None = None):
+        self.analysed_elements = tracked_elements
 
-    # ------------------------------------------------------------------
-    # Loading
-    # ------------------------------------------------------------------
+        self.df_og: pd.DataFrame = pd.DataFrame()
+        self.df: pd.DataFrame = self.df_og
+        self.is_loaded = False
+
+    def _init_df_with_analysed_elements(self):
+        """
+        Initializes `self.df`with the periodic table elements and narrows
+        down the search space to compounds containing analyzed elements.
+        """
+        self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
+
+        if self.analysed_elements:
+            self.df = self.df[
+                self.df["formula"].str
+                .contains("|".join(self.analysed_elements),
+                          regex=True)
+            ]
+
+    @staticmethod
+    def _elements_as_compound_df() -> pd.DataFrame:
+        """Returns a `DataFrame` with elements of the periodic table."""
+        elements_list = []
+        elements_data = PeriodicTableWidget.create_elements_data()  # TODO: change for PeriodicTableInfo
+        for element in elements_data:
+            element_formula = element["symbol"]
+            element_density = element["density"]
+            element_display_text = f"{element_formula} - {element_density} g/cm³"
+            element_signature = signature_from_formula(element_formula)
+
+            element_row = {
+                _MFCol.FORMULA: element_formula,
+                _MFCol.DENSITY: element_density,
+                _MFCol.MATERIAL_ID: "",
+                _MFCol.MP_URL: "",
+                _MFCol.SPACE_GROUP: "",
+                _MFCol.SIGNATURE: element_signature,
+                _MFCol.DISPLAY_TEXT: element_display_text
+            }
+            elements_list.append(element_row)
+        return pd.DataFrame(elements_list)
 
     def auto_load_csv(self) -> bool:
         """Try to load CSV from standard locations, preferring trimmed/compressed versions.
@@ -47,7 +98,7 @@ class CSVCompoundDatabase:
         ])
 
         filenames = [
-            'materials_trimmed.csv.gz',
+            'materials_trimmed.csv.gz',  # TODO: Generate the V2
         ]
         for base in base_dirs:
             for fname in filenames:
@@ -59,83 +110,63 @@ class CSVCompoundDatabase:
         return False
 
     def load_csv(self, csv_path: str | Path) -> bool:
-        """Load CSV and build signature-based indices.
-
-        Uses ``itertuples()`` for ~5-10× speed-up over ``iterrows()``.
-        """
+        """Load CSV and build signature-based indices."""
         if self.is_loaded:
             return True
         try:
             csv_path = Path(csv_path)
             logger.info("Loading CSV from %s", csv_path)
-            self.data = pd.read_csv(csv_path)
-            logger.info("CSV loaded with %d rows", len(self.data))
+            self.df_og = pd.read_csv(csv_path)
+            if not isinstance(self.df_og, pd.DataFrame):
+                return False
+            logger.info("CSV loaded with %d rows", len(self.df_og))
 
-            self.formula_to_data.clear()
-            self.element_to_compounds.clear()
-            self.signature_to_formula.clear()
-            self.signature_to_data.clear()
+            for col in (_MFCol.FORMULA, _MFCol.DENSITY, _MFCol.MATERIAL_ID, _MFCol.SPACE_GROUP):
+                if col not in self.df_og.columns:
+                    self.df_og[col] = ''
 
-            for col in ('formula', 'density', 'material_id', 'mp_url', 'space_group'):
-                if col not in self.data.columns:
-                    self.data[col] = ''
+            self.df_og[_MFCol.FORMULA] = (self.df_og[_MFCol.FORMULA]
+                                          .str.strip()
+                                          .replace('', np.nan)
+                                          .dropna())
 
-            processed = 0
+            self.df_og[_MFCol.DENSITY] = (self.df_og[_MFCol.DENSITY]
+                                          .astype(float)
+                                          .replace(np.nan, 0.0))
 
-            for row in self.data.itertuples(index=False):
-                try:
-                    raw_formula = getattr(row, 'formula', '')
-                    if not isinstance(raw_formula, str) or not raw_formula.strip():
-                        continue
-                    raw_formula = raw_formula.strip()
+            self.df_og[_MFCol.MATERIAL_ID] = (self.df_og[_MFCol.MATERIAL_ID]
+                                              .str.strip()
+                                              .replace(np.nan, ''))
 
-                    density_raw = getattr(row, 'density', None)
-                    density = float(density_raw) if density_raw is not None and pd.notna(density_raw) else 0.0
+            if _MFCol.MP_URL not in self.df_og.columns:
+                self.df_og[_MFCol.MP_URL] = self.df_og.material_id.apply(self._mp_url_from_material_id)
+            else:
+                self.df_og[_MFCol.MP_URL] = self.df_og[_MFCol.MP_URL].str.strip()
 
-                    mid_raw = getattr(row, 'material_id', '')
-                    material_id = str(mid_raw).strip() if pd.notna(mid_raw) else ''
+                self.df_og.loc[self.df_og[_MFCol.MP_URL] == '', _MFCol.MP_URL] = (
+                    self.df_og.loc[self.df_og[_MFCol.MP_URL] == '', _MFCol.MATERIAL_ID]
+                    .apply(self._mp_url_from_material_id)
+                )
 
-                    url_raw = getattr(row, 'mp_url', '')
-                    mp_url = str(url_raw).strip() if pd.notna(url_raw) else ''
-                    if not mp_url and material_id:
-                        mp_url = f"https://materialsproject.org/materials/{material_id}"
+            self.df_og[_MFCol.SPACE_GROUP] = self.df_og[_MFCol.SPACE_GROUP].replace(np.nan, '')
 
-                    sg_raw = getattr(row, 'space_group', '')
-                    space_group = str(sg_raw) if pd.notna(sg_raw) else ''
+            if _MFCol.SIGNATURE not in self.df_og.columns:
+                self.df_og[_MFCol.SIGNATURE] = self.df_og.formula.apply(signature_from_formula)
 
-                    material_data = {
-                        'material_id': material_id,
-                        'density': density,
-                        'formula': raw_formula,
-                        'space_group': space_group,
-                        'mp_url': mp_url,
-                    }
+            if _MFCol.DISPLAY_TEXT not in self.df_og.columns:
+                self.df_og[_MFCol.DISPLAY_TEXT] = (
+                        self.df_og[_MFCol.FORMULA]
+                        + " [" + self.df_og[_MFCol.SPACE_GROUP]
+                        + "] (" + self.df_og[_MFCol.DENSITY].map("{:.3f}".format)
+                        + " g/cm³) - " + self.df_og[_MFCol.MATERIAL_ID])
 
-                    self.formula_to_data.setdefault(raw_formula, []).append(material_data)
-
-                    counts = reduce_counts(parse_formula_to_counts(raw_formula))
-                    if not counts:
-                        continue
-                    sig = signature_from_counts(counts)
-
-                    self.signature_to_formula.setdefault(sig, raw_formula)
-                    self.signature_to_data.setdefault(sig, []).append(material_data)
-
-                    canon_display = self.signature_to_formula[sig]
-                    for element in counts:
-                        bucket = self.element_to_compounds.setdefault(element, {})
-                        best = bucket.get(canon_display, 0.0)
-                        bucket[canon_display] = density if density > 0 else best
-
-                    processed += 1
-                except Exception:
-                    logger.debug("Skipping row during CSV indexing", exc_info=True)
-                    continue
+            # Adds the periodic table elements
+            self._init_df_with_analysed_elements()
 
             self.is_loaded = True
             logger.info(
                 "Database loaded: %d rows processed, %d canonical compounds indexed",
-                processed, len(self.signature_to_formula),
+                len(self.df_og), len(self.df_og.groupby(_MFCol.FORMULA)),
             )
             return True
 
@@ -143,103 +174,119 @@ class CSVCompoundDatabase:
             logger.exception("Error loading CSV")
             return False
 
-    # ------------------------------------------------------------------
-    # Lookup helpers
-    # ------------------------------------------------------------------
-
-    def _signature_for_formula(self, formula: str) -> str:
-        return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
-
-    def get_data_by_formula_or_signature(self, formula: str) -> list[dict]:
-        return self.signature_to_data.get(self._signature_for_formula(formula), [])
-
-    def best_density_for_formula(self, formula: str) -> float:
-        for r in self.get_data_by_formula_or_signature(formula):
-            if r.get('density', 0) > 0:
-                return float(r['density'])
-        return 0.0
-
-    def best_url_for_formula(self, formula: str) -> str:
-        for r in self.get_data_by_formula_or_signature(formula):
-            url = (r.get('mp_url') or '').strip()
-            if url:
-                return url
-        for r in self.get_data_by_formula_or_signature(formula):
-            mid = (r.get('material_id') or '').strip()
-            if mid:
-                return f"https://materialsproject.org/materials/{mid}"
-        canon = canonicalize_preserve_user_order(formula)
-        return f"https://materialsproject.org/?search={canon}"
-
-    def get_compounds_for_element(self, element: str) -> list[dict]:
-        """Get one entry per canonical formula for initial browsing.
-
-        For multi-polymorph formulas, this shows the first density found.
-        Use get_variants_for_formula() to expand into all polymorphs.
+    def get_compound(self, index: int) -> Compound:
         """
-        if element not in self.element_to_compounds:
-            return []
-        compounds = []
-        for display_formula, dens in self.element_to_compounds[element].items():
-            sig = self._signature_for_formula(display_formula)
-            n_variants = len(self.signature_to_data.get(sig, []))
-            if dens > 0:
-                display_text = f"{display_formula} ({dens:.3f} g/cm³)"
-            else:
-                display_text = display_formula
-            if n_variants > 1:
-                display_text += f"  [{n_variants} structures]"
-            compounds.append({
-                'formula': display_formula,
-                'density': float(dens),
-                'display_text': display_text,
-            })
-        compounds.sort(key=lambda x: x['formula'])
-        return compounds
-
-    def get_variants_for_formula(self, formula: str) -> list[dict]:
-        """Get ALL polymorphs/structures for a given formula.
-
-        Returns one entry per material_id, each with its own density,
-        space group, and URL — so the user can pick the right polymorph.
+        Gets the compound based on it's index
+        Args:
+            index: index to retrieve
         """
-        sig = self._signature_for_formula(formula)
-        rows = self.signature_to_data.get(sig, [])
-        if not rows:
-            return []
+        return self._row_to_compound(self.df.iloc[index])
 
-        canon = canonicalize_preserve_user_order(formula)
-        variants = []
-        seen_ids = set()
+    @staticmethod
+    def _row_to_compound(row) -> Compound:
+        return Compound(**row.to_dict())
 
-        for r in rows:
-            mid = r.get('material_id', '')
-            if mid in seen_ids:
-                continue
-            seen_ids.add(mid)
+    @staticmethod
+    def _dicts_to_compound(dicts: list[dict]) -> list[Compound]:
+        return list(map(lambda x: Compound(**x), dicts))
 
-            dens = r.get('density', 0.0)
-            sg = r.get('space_group', '')
+    def __len__(self):
+        return len(self.df)
 
-            parts = [canon]
-            if sg:
-                parts.append(f"[{sg}]")
-            if dens > 0:
-                parts.append(f"({dens:.3f} g/cm³)")
-            if mid:
-                parts.append(f"— {mid}")
+    def search_compounds_by_formula(self, formula: str, max_count: int = 50) -> list[Compound]:
+        """
+        Searches for the `max_count` (default 50) shortest compounds
+        fitting the formula.
 
-            variants.append({
-                'formula': canon,
-                'density': float(dens),
-                'space_group': sg,
-                'material_id': mid,
-                'mp_url': r.get('mp_url', ''),
-                'display_text': ' '.join(parts),
-            })
+        Args:
+            formula: The formula that we want to look for closest match.
+            max_count: (default=`50`) Maximum amount of matches returned.
+        Returns:
+            A list of the `max_count` closest matches.
+        """
+        # Regex that checks if all elements are present without ordering.
+        regex_product_of_elements = "".join([f"(?=.*{element})"
+                                             for element in elements_with_count_from_formula(formula)])
 
-        variants.sort(key=lambda x: (x['space_group'], -x['density']))
-        return variants
+        rows_with_formula_elements_sorted_by_length = self.df[
+            self.df[_MFCol.SIGNATURE].str.contains(regex_product_of_elements, regex=True)
+        ].sort_values(by=_MFCol.FORMULA,
+                      key=lambda x: x.str.len())[:max_count]
 
-    def get_material_data(self, formula: str) -> list[dict]:
-        return self.formula_to_data.get(formula, [])
+        return self._dicts_to_compound(
+            rows_with_formula_elements_sorted_by_length.to_dict("records"))
+
+    def get_searchable_model(self,
+                             base_formula: Optional[str] = None,
+                             parent: QObject | Any = None) -> CompoundDatabaseModel:
+        """
+        Gives a usable searchable model.
+
+        Args:
+            base_formula: the formula which elements are mandatory when
+            searching.
+            parent: parent of the resulting `CompoundDatabaseModel`.
+        Returns:
+            `CompoundDatabaseModel` that can be used to query the `CompoundService`.
+        """
+        return CompoundDatabaseModel(self, base_formula, parent)
+
+    @staticmethod
+    def _mp_url_from_material_id(material_id: str) -> str:
+        """Creates a url from the `material_id`"""
+        if material_id:
+            return f"https://materialsproject.org/materials/{material_id}"
+        else:
+            return ""
+
+
+class CompoundDatabaseModel(QAbstractListModel):
+    """Adaptor between `CompoundService` and `QAbstractListModel`"""
+    class DataColumn(IntEnum):
+        DISPLAY_TEXT = Qt.ItemDataRole.DisplayRole
+        FORMULA = Qt.ItemDataRole.EditRole
+        COMPOUND = Qt.ItemDataRole.UserRole | 0x00
+        DENSITY = Qt.ItemDataRole.UserRole | 0x01
+
+
+    def __init__(self,
+                 database: CSVCompoundDatabase,
+                 base_formula: Optional[str] = None,
+                 parent: QObject | Any = None):
+        super().__init__(parent=parent)
+        self.db = database
+        self.base_formula = (canonicalize_preserve_user_order(base_formula)
+                             if base_formula
+                             else None)
+        self.results: list[Compound] = []
+        self.search(self.base_formula or "")
+
+    def rowCount(self, /, parent=QModelIndex()):
+        return len(self.results)
+
+    def data(self, index, /, role=DataColumn.DISPLAY_TEXT):
+        if role == self.DataColumn.DISPLAY_TEXT:
+            return self.results[index.row()].display_text
+        if role == self.DataColumn.FORMULA:
+            return self.results[index.row()].formula
+        if role == self.DataColumn.DENSITY:
+            return self.results[index.row()].density
+        if role == self.DataColumn.COMPOUND:
+            return self.results[index.row()]
+        return None
+
+    def search(self, text: str):
+        """
+        Updates the model results with the passed `text
+        Args:
+            text: String that will be used to search
+        """
+        # Adds the base formula/element
+        element_counts = parse_formula_to_counts(self.base_formula)
+        for element in element_counts.keys():
+            if element not in text:
+                text += element
+
+        self.beginResetModel()
+        self.results = self.db.search_compounds_by_formula(text)
+        self.endResetModel()
