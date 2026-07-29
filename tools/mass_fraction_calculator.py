@@ -1,3 +1,5 @@
+from typing import Any
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
     QTableWidgetItem, QPushButton, QLabel, QLineEdit,
@@ -17,6 +19,7 @@ from tools.mass_fraction_utils import (
     reduce_counts,
     FormulaComboBox,
 )
+from tools.mass_fraction_utils.compound import Compound
 from tools.theme import theme
 
 _itk_log = logging.getLogger("IsotopeTrack.tools.mass_fraction_calculator")
@@ -97,7 +100,10 @@ class MassFractionCalculator(QDialog):
     COL_COMP_DENS = 5
     COL_STRUCTURE = 6
 
-    def __init__(self, selected_isotopes: dict, periodic_table_widget, parent=None):
+    def __init__(self,
+                 selected_isotopes: dict,
+                 periodic_table_widget,
+                 parent: QWidget | Any=None):
         super().__init__(parent)
         self.selected_isotopes = selected_isotopes
         self.periodic_table_widget = periodic_table_widget
@@ -574,12 +580,11 @@ class MassFractionCalculator(QDialog):
             el_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, self.COL_ELEMENT, el_item)
 
-            combo = FormulaComboBox(
-                element, self.csv_database,
-                tracked_elements=self.tracked_elements,
-                parent=self,
-            )
-            combo.formula_selected.connect(lambda f, d, r=row: self._on_compound_selected(r, f, d))
+            # TODO: give the selected_elements around here
+            combo = FormulaComboBox(self.csv_database.get_searchable_model(),
+                                    default_formula=element,
+                                    parent=self, )
+            combo.compound_selected.connect(lambda f, d, r=row: self._on_compound_selected(r, f, d))
             self.table.setCellWidget(row, self.COL_FORMULA, combo)
 
             mf = self._make_readonly_item("1.000000")
