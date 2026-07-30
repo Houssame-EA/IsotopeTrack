@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 import gc
 from pathlib import Path
@@ -6767,7 +6768,8 @@ class MainWindow(QMainWindow):
             from tools.mass_fraction_calculator import MassFractionCalculator
             calculator = MassFractionCalculator(
                 self.selected_isotopes,
-                self.periodic_table_widget,
+                self.periodic_table_info,
+                self.compound_db,
                 self
             )
             calculator.mass_fractions_updated.connect(self.handle_mass_fractions_updated)

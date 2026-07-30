@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget,
@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QWidget, QRadioButton, QButtonGroup,
     QStyledItemDelegate,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QLocale
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
 from PySide6.QtCore import QUrl
 import logging
@@ -20,6 +20,7 @@ from tools.mass_fraction_utils import (
     FormulaComboBox,
 )
 from tools.mass_fraction_utils.compound import Compound
+from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from tools.theme import theme
 
 _itk_log = logging.getLogger("IsotopeTrack.tools.mass_fraction_calculator")
@@ -104,11 +105,13 @@ class MassFractionCalculator(QDialog):
 
     def __init__(self,
                  selected_isotopes: dict,
-                 periodic_table_widget,
+                 periodic_table_info: PeriodicTableInfo,
+                 compound_db: CSVCompoundDatabase,
+                 /,
                  parent: QWidget | Any=None):
         super().__init__(parent)
         self.selected_isotopes = selected_isotopes
-        self.periodic_table_widget = periodic_table_widget
+        self.periodic_table_info = periodic_table_info
         self.parent_window = parent
         self.mass_fractions: dict[str, float] = {}
         self.densities: dict[str, float] = {}
@@ -120,19 +123,7 @@ class MassFractionCalculator(QDialog):
         if parent and hasattr(parent, 'sample_to_folder_map'):
             self.available_samples = list(parent.sample_to_folder_map.keys())
 
-        self.csv_database: CSVCompoundDatabase = getattr(parent, '_cached_csv_database', None)
-        if self.csv_database is None:
-            self.csv_database = CSVCompoundDatabase()
-            self.csv_database.auto_load_csv()
-            if parent is not None:
-                try:
-                    parent._cached_csv_database = self.csv_database
-                except AttributeError:
-                    _itk_log.exception("Handled exception in __init__")
-
-        self.periodic_table_data = (
-            periodic_table_widget.get_elements() if periodic_table_widget else []
-        )
+        self.compound_db: CSVCompoundDatabase = compound_db
 
         self.setWindowTitle("Mass Fraction Calculator")
         self.setMinimumSize(1100, 550)
@@ -156,6 +147,7 @@ class MassFractionCalculator(QDialog):
     def closeEvent(self, event):
         """Disconnect theme signal so we don't leak slots on closed dialogs."""
         try:
+            self._save_state()
             theme.themeChanged.disconnect(self.apply_theme)
         except (TypeError, RuntimeError):
             _itk_log.exception("Handled exception in closeEvent")
@@ -388,7 +380,7 @@ class MassFractionCalculator(QDialog):
 
     def _refresh_db_status_style(self):
         p = theme.palette
-        if self.csv_database.is_loaded:
+        if self.compound_db.is_loaded:
             color = p.success
         else:
             color = p.warning
@@ -494,16 +486,15 @@ class MassFractionCalculator(QDialog):
         header.addWidget(title)
         header.addStretch()
 
-        if self.csv_database.is_loaded:
-            n = len(self.csv_database.signature_to_formula)
-            txt = f"database: {n}"
+        if self.compound_db.is_loaded:
+            txt = f"database: {self.compound_db.row_count()}"
         else:
             txt = "database: Not found"
 
         self.db_status_label = QLabel(txt)
         header.addWidget(self.db_status_label)
 
-        if not self.csv_database.is_loaded:
+        if not self.compound_db.is_loaded:
             load_btn = QPushButton("Load CSV")
             load_btn.clicked.connect(self._manual_load_csv)
             header.addWidget(load_btn)
@@ -570,7 +561,7 @@ class MassFractionCalculator(QDialog):
     def _populate_table(self):
         sorted_elems = []
         for element in self.selected_isotopes:
-            ed = self._element_data(element)
+            ed = self.periodic_table_info.get_element_by_symbol(element)
             if ed:
                 sorted_elems.append((ed['atomic_number'], element, ed))
         sorted_elems.sort()
@@ -583,10 +574,10 @@ class MassFractionCalculator(QDialog):
             self.table.setItem(row, self.COL_ELEMENT, el_item)
 
             # TODO: give the selected_elements around here
-            combo = FormulaComboBox(self.csv_database.get_searchable_model(),
+            combo = FormulaComboBox(self.compound_db,
                                     default_formula=element,
-                                    parent=self, )
-            combo.compound_selected.connect(lambda f, d, r=row: self._on_compound_selected(r, f, d))
+                                    parent=self)
+            combo.compound_changed.connect(lambda compound, r=row: self._on_compound_selected(r, compound))
             self.table.setCellWidget(row, self.COL_FORMULA, combo)
 
             mf = self._make_readonly_item("1.000000")
@@ -614,15 +605,12 @@ class MassFractionCalculator(QDialog):
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
-    def _element_data(self, symbol: str) -> dict | None:
-        for e in self.periodic_table_data:
-            if e['symbol'] == symbol:
-                return e
-        return None
-
     def _current_formula(self, row: int) -> str:
         combo = self.table.cellWidget(row, self.COL_FORMULA)
-        return combo.current_formula() if combo else ''
+        if isinstance(combo, FormulaComboBox):
+            return combo.text() # TODO: empiric testing
+        else:
+            return ''
 
     def _calc_mass_fraction(self, row: int, formula: str):
         el_item = self.table.item(row, self.COL_ELEMENT)
@@ -637,7 +625,7 @@ class MassFractionCalculator(QDialog):
             total = target = 0.0
             unknown_element = False
             for el, n in counts.items():
-                ed = self._element_data(el)
+                ed = self.periodic_table_info.get_element_by_symbol(el)
                 if ed:
                     m = float(ed['mass']) * n
                     total += m
@@ -656,7 +644,7 @@ class MassFractionCalculator(QDialog):
         mw = 0.0
         valid = bool(counts)
         for el, n in counts.items():
-            ed = self._element_data(el)
+            ed = self.periodic_table_info.get_element_by_symbol(el)
             if ed:
                 mw += float(ed['mass']) * n
             else:
@@ -666,24 +654,29 @@ class MassFractionCalculator(QDialog):
         if not valid or mw <= 0:
             el_item = self.table.item(row, self.COL_ELEMENT)
             if el_item:
-                ed = self._element_data(el_item.text())
+                ed = self.periodic_table_info.get_element_by_symbol(el_item.text())
                 mw = float(ed['mass']) if ed else 0.0
             else:
                 mw = 0.0
 
         self.table.setItem(row, self.COL_MW, self._make_readonly_item(f"{mw:.6f}"))
 
-    def _on_compound_selected(self, row: int, formula: str, density_csv: float):
+    def _on_compound_selected(self, row: int, compound: Optional[Compound]):
+        # TODO: Check if we can change farther down stream the formula thingy.
+        print("Compound selected :", compound)
+        if compound is None:
+            return
+        formula = compound.formula
         self._calc_mass_fraction(row, formula)
         self._calc_molecular_weight(row, formula)
 
         counts = reduce_counts(parse_formula_to_counts(formula))
         if len(counts) <= 1:
             el_item = self.table.item(row, self.COL_ELEMENT)
-            ed = self._element_data(el_item.text()) if el_item else None
+            ed = self.periodic_table_info.get_element_by_symbol(el_item.text()) if el_item else None
             d = float(ed.get('density', 0) or 0) if ed else 0.0
         else:
-            d = float(density_csv or 0.0)
+            d = float(compound.density or 0.0)
 
         cd_item = QTableWidgetItem(f"{d:.6f}")
         cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -721,14 +714,13 @@ class MassFractionCalculator(QDialog):
         for row in range(self.table.rowCount()):
             el_item = self.table.item(row, self.COL_ELEMENT)
             combo = self.table.cellWidget(row, self.COL_FORMULA)
-            if not el_item or not combo:
+            if not el_item or not isinstance(combo, FormulaComboBox):
                 continue
             element = el_item.text()
-            ed = self._element_data(element)
+            ed = self.periodic_table_info.get_element_by_symbol(element)
 
-            combo._set_editor_text(element)
-            combo.reset_items()
-            combo.formula_selected.emit(element, 0.0)
+            combo.set_formula(element)
+            combo.reset_formula()
 
             self.table.setItem(row, self.COL_MASSFRAC, self._make_readonly_item("1.000000"))
             mass = float(ed['mass']) if ed else 0.0
@@ -741,20 +733,20 @@ class MassFractionCalculator(QDialog):
     def _select_all_samples(self):
         for i in range(self.sample_list.count()):
             w = self.sample_list.itemWidget(self.sample_list.item(i))
-            if w:
+            if isinstance(w, CheckableListItem):
                 w.set_checked(True)
 
     def _select_no_samples(self):
         for i in range(self.sample_list.count()):
             w = self.sample_list.itemWidget(self.sample_list.item(i))
-            if w:
+            if isinstance(w, CheckableListItem):
                 w.set_checked(False)
 
     def _get_selected_samples(self) -> list[str]:
         out = []
         for i in range(self.sample_list.count()):
             w = self.sample_list.itemWidget(self.sample_list.item(i))
-            if w and w.is_checked():
+            if isinstance(w, CheckableListItem) and w.is_checked():
                 out.append(w.sample_name)
         return out
 
@@ -819,11 +811,9 @@ class MassFractionCalculator(QDialog):
             element = el_item.text()
             if element in formulas:
                 combo = self.table.cellWidget(row, self.COL_FORMULA)
-                if combo:
+                if isinstance(combo, FormulaComboBox):
                     saved = formulas[element]
-                    combo._set_editor_text(saved)
-                    dens = self.csv_database.best_density_for_formula(saved)
-                    self._on_compound_selected(row, saved, dens)
+                    combo.set_formula(saved)
 
             if element in saved_densities:
                 custom_density = saved_densities[element]
@@ -832,10 +822,10 @@ class MassFractionCalculator(QDialog):
                 self.table.setItem(row, self.COL_COMP_DENS, cd_item)
 
     def _manual_load_csv(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select CSV", "", "CSV Files (*.csv)")
-        if path and self.csv_database.load_csv(path):
-            self._setup_ui()
-            self._populate_table()
+        path, _ = QFileDialog.getOpenFileName(self, "Select CSV", "", "CSV Files (*.csv, *.csv.gz)")
+        if path and self.compound_db.load_csv(path):
+            self.db_status_label.setText(f"database: {self.compound_db.row_count()}")
+            self._refresh_db_status_style()
             QMessageBox.information(self, "Success", "Database loaded!")
 
     def _open_structure(self, row: int):
@@ -843,7 +833,7 @@ class MassFractionCalculator(QDialog):
         if not formula:
             QMessageBox.warning(self, "No compound", "Please choose a compound first.")
             return
-        url = self.csv_database.best_url_for_formula(formula)
+        url = self.compound_db.best_url_for_formula(formula)
         QDesktopServices.openUrl(QUrl(url))
 
     def _apply_mass_fractions(self):
@@ -897,10 +887,6 @@ class MassFractionCalculator(QDialog):
             'selected_samples': selected if not apply_all else [],
         })
         self.accept()
-
-    def closeEvent(self, event):
-        self._save_state()
-        super().closeEvent(event)
 
     def reject(self):
         self._save_state()

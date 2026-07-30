@@ -243,6 +243,18 @@ class CSVCompoundDatabase:
         else:
             return ""
 
+    def row_count(self) -> int:
+        return len(self.df)
+
+    def get_first_compound_by_formula(self, formula) -> Optional[Compound]:
+        # Regex that checks if all elements are present without ordering.
+        rows_matching_formula = self.df[self.df[_MFCol.FORMULA] == formula]
+
+        if len(rows_matching_formula) > 0:
+            return self._row_to_compound(rows_matching_formula.iloc[0])
+        else:
+            return None
+
 
 class CompoundDatabaseModel(QAbstractListModel):
     """Adaptor between `CompoundService` and `QAbstractListModel`"""
