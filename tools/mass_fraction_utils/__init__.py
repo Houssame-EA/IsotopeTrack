@@ -6,6 +6,7 @@ from tools.mass_fraction_utils.formula_utils import (
     canonicalize_preserve_user_order,
 )
 from tools.mass_fraction_utils.formula_editor import FormulaComboBox
+from tools.mass_fraction_utils.mass_fraction_service import MassFractionService
 
 __all__ = [
     'CSVCompoundDatabase',
@@ -14,4 +15,5 @@ __all__ = [
     'signature_from_counts',
     'canonicalize_preserve_user_order',
     'FormulaComboBox',
+    'MassFractionService'
 ]
