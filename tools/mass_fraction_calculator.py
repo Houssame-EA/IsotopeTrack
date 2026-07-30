@@ -69,7 +69,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
         return editor
 
     def setEditorData(self, editor, index):
-        editor.setText(index.data(Qt.DisplayRole) or '')
+        editor.setText(index.data(Qt.ItemDataRole.DisplayRole) or '')
 
     def setModelData(self, editor, model, index):
         text = editor.text().strip()
@@ -80,7 +80,7 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
         except ValueError:
             _itk_log.exception("Handled exception in setModelData")
             return
-        model.setData(index, f"{val:.6f}", Qt.EditRole)
+        model.setData(index, f"{val:.6f}", Qt.ItemDataRole.EditRole)
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ class MassFractionCalculator(QDialog):
 
     def _setup_ui(self):
         main_layout = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Horizontal)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
         # ---- left panel: sample selection ----------------------------
         left_panel = self._build_sample_panel()
@@ -522,13 +522,13 @@ class MassFractionCalculator(QDialog):
         ])
 
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(self.COL_ELEMENT, QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_FORMULA, QHeaderView.Stretch)
-        hdr.setSectionResizeMode(self.COL_MASSFRAC, QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_MW, QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_ELEM_DENS, QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_COMP_DENS, QHeaderView.Fixed)
-        hdr.setSectionResizeMode(self.COL_STRUCTURE, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(self.COL_ELEMENT, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_FORMULA, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(self.COL_MASSFRAC, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_MW, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_ELEM_DENS, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_COMP_DENS, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_STRUCTURE, QHeaderView.ResizeMode.Fixed)
 
         self.table.setColumnWidth(self.COL_ELEMENT, 80)
         self.table.setColumnWidth(self.COL_MASSFRAC, 120)
@@ -576,8 +576,8 @@ class MassFractionCalculator(QDialog):
 
         for row, (_, element, ed) in enumerate(sorted_elems):
             el_item = QTableWidgetItem(element)
-            el_item.setFlags(el_item.flags() & ~Qt.ItemIsEditable)
-            el_item.setTextAlignment(Qt.AlignCenter)
+            el_item.setFlags(el_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            el_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.COL_ELEMENT, el_item)
 
             # TODO: give the selected_elements around here
@@ -597,7 +597,7 @@ class MassFractionCalculator(QDialog):
             self.table.setItem(row, self.COL_ELEM_DENS, self._make_readonly_item(f"{edens:.6f}"))
 
             cd_item = QTableWidgetItem(f"{edens:.6f}")
-            cd_item.setTextAlignment(Qt.AlignCenter)
+            cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.COL_COMP_DENS, cd_item)
 
             btn = QPushButton("Open")
@@ -608,8 +608,8 @@ class MassFractionCalculator(QDialog):
     @staticmethod
     def _make_readonly_item(text: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
-        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-        item.setTextAlignment(Qt.AlignCenter)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
     def _element_data(self, symbol: str) -> dict | None:
@@ -684,7 +684,7 @@ class MassFractionCalculator(QDialog):
             d = float(density_csv or 0.0)
 
         cd_item = QTableWidgetItem(f"{d:.6f}")
-        cd_item.setTextAlignment(Qt.AlignCenter)
+        cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, self.COL_COMP_DENS, cd_item)
 
         self._highlight_tracked(row, formula)
@@ -733,7 +733,7 @@ class MassFractionCalculator(QDialog):
             self.table.setItem(row, self.COL_MW, self._make_readonly_item(f"{mass:.6f}"))
             d = float(ed.get('density', 0) or 0) if ed else 0.0
             cd = QTableWidgetItem(f"{d:.6f}")
-            cd.setTextAlignment(Qt.AlignCenter)
+            cd.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.COL_COMP_DENS, cd)
 
     def _select_all_samples(self):
@@ -826,7 +826,7 @@ class MassFractionCalculator(QDialog):
             if element in saved_densities:
                 custom_density = saved_densities[element]
                 cd_item = QTableWidgetItem(f"{custom_density:.6f}")
-                cd_item.setTextAlignment(Qt.AlignCenter)
+                cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, self.COL_COMP_DENS, cd_item)
 
     def _manual_load_csv(self):
