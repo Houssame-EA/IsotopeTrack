@@ -65,7 +65,9 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
 
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
-        editor.setValidator(QDoubleValidator(0.0, 1e6, 6, editor))
+        validator = QDoubleValidator(0.0, 1e6, 6, editor)
+        validator.setLocale(QLocale.c())
+        editor.setValidator(validator)
         return editor
 
     def setEditorData(self, editor, index):
