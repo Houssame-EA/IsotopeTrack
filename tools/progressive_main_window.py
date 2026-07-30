@@ -46,7 +46,7 @@ class ProgressiveMainWindow(QObject):
             (70, "Configuring menu systems...", self.step_setup_menus),
             (85, "Connecting signals...", self.step_connect_signals),
             (90, "Finalizing interface...", self.step_finalize),
-            (95, "Parssing CLI arguments...", self.step_parse_cli_arguments),
+            (95, "Parsing CLI arguments...", self.step_parse_cli_arguments),
             (100, "Ready!", self.step_complete)
         ]
 
@@ -197,12 +197,10 @@ class ProgressiveMainWindow(QObject):
 
         This step loads the CSV database during splash screen to avoid lag later.
         """
-        if not self.main_window:
+        if not isinstance(self.main_window, MainWindow):
             return
         try:
-            db = CSVCompoundDatabase()
-            db.auto_load_csv()
-            setattr(self.main_window, "_cached_csv_database", db)
+            self.main_window.compound_db.auto_load_csv()
             QApplication.processEvents()
         except Exception as e:
             _itk_log.exception("Handled exception in step_preload_mass_fraction_db")

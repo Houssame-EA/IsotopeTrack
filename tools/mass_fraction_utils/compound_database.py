@@ -46,6 +46,7 @@ class CSVCompoundDatabase:
         Initializes `self.df`with the periodic table elements and narrows
         down the search space to compounds containing analyzed elements.
         """
+        logger.info("Initializing with elements (from periodic table).")
         self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
 
         if self.analysed_elements:
@@ -107,6 +108,7 @@ class CSVCompoundDatabase:
                     logger.info("Found CSV at %s", p)
                     return self.load_csv(p)
         logger.warning("No CSV file found in standard locations")
+        self._init_df_with_analysed_elements()
         return False
 
     def load_csv(self, csv_path: str | Path) -> bool:
@@ -118,6 +120,8 @@ class CSVCompoundDatabase:
             logger.info("Loading CSV from %s", csv_path)
             self.df_og = pd.read_csv(csv_path)
             if not isinstance(self.df_og, pd.DataFrame):
+                self._init_df_with_analysed_elements()
+
                 return False
             logger.info("CSV loaded with %d rows", len(self.df_og))
 
