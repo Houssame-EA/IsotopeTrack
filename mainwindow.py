@@ -93,7 +93,7 @@ def element_chip_qss(p) -> str:
 from tools.element_picker import ElementPicker
 
 try:
-    from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
+    from loading.csv import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
@@ -2493,7 +2493,7 @@ class MainWindow(QMainWindow):
             if not CSVStructureDialog:
                 QMessageBox.critical(self, "Import Error",
                                      "File import functionality is not available. "
-                                     "Please ensure the import_csv_dialogs.py file is present.")
+                                     "Please ensure the loading/csv package is present.")
                 return
 
             file_paths, _ = QFileDialog.getOpenFileNames(
@@ -3914,15 +3914,37 @@ class MainWindow(QMainWindow):
             self._mark_results_changed()
         self.unsaved_changes = True
 
-    def find_closest_isotope(self, target_mass):
-        """Find closest isotope mass in loaded data.
+    ISOTOPE_MATCH_TOLERANCE = 0.5
+
+    def find_closest_isotope(self, target_mass, data=None, tolerance=None):
+        """Find the channel in a sample's data that carries one isotope.
+
+        The channel is looked up in ``data`` when given, and in the sample on
+        screen otherwise. Passing the sample's own data matters whenever
+        several samples are processed in a row: resolving every sample against
+        the one currently displayed returns that sample's masses, so a sample
+        holding different channels appears to hold none at all.
+
+        A match must also be within ``tolerance`` atomic mass units. Taking the
+        nearest key unconditionally always returns something, so an isotope
+        that is simply absent would silently bind to the closest other element.
+
+        Args:
+            target_mass (float): Isotope mass being looked for.
+            data (dict | None): Channels to search, or None for the open sample.
+            tolerance (float | None): Largest accepted difference in amu.
 
         Returns:
-            float or None: Closest mass key in data dictionary
+            float or None: The matching mass key, or None when there is none.
         """
-        if not self.data:
+        source = self.data if data is None else data
+        if not source:
             return None
-        return min(self.data.keys(), key=lambda x: abs(x - target_mass))
+        limit = self.ISOTOPE_MATCH_TOLERANCE if tolerance is None else tolerance
+        closest = min(source.keys(), key=lambda x: abs(x - target_mass))
+        if abs(closest - target_mass) > limit:
+            return None
+        return closest
 
     def get_formatted_label(self, element_key):
         """Get proper isotope label from periodic table data with caching.
@@ -4754,13 +4776,27 @@ class MainWindow(QMainWindow):
         exclusion_map = getattr(self, '_exclusion_regions_by_sample', {}) or {}
 
         def _element_key_to_isotope_key(sample_name, element_key):
+            """Return the channel one element occupies in a given sample.
+
+            The sample matters: its channels are not necessarily the ones the
+            open sample has, and resolving against the wrong sample masks the
+            wrong signal.
+
+            Args:
+                sample_name (str): Sample the element belongs to.
+                element_key (str): Element key such as ``"Ag-106.9051"``.
+
+            Returns:
+                float | None: The matching mass key, or None when absent.
+            """
             try:
                 _el, iso_str = element_key.rsplit('-', 1)
                 iso = float(iso_str)
             except Exception:
                 _itk_log.exception("Handled exception in _element_key_to_isotope_key")
                 return None
-            return self.find_closest_isotope(iso)
+            return self.find_closest_isotope(
+                iso, self.data_by_sample.get(sample_name))
 
         for sname, entries in exclusion_map.items():
             if not entries or sname not in self.data_by_sample:
@@ -5318,7 +5354,7 @@ class MainWindow(QMainWindow):
         for (element, isotope), particles in self.sample_detected_peaks[sname].items():
             if not particles:
                 continue
-            isotope_key = self.find_closest_isotope(isotope)
+            isotope_key = self.find_closest_isotope(isotope, sample_data)
             if isotope_key and isotope_key in sample_data:
                 signal = sample_data[isotope_key]
                 all_particles.append({

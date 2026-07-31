@@ -19,7 +19,7 @@ import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 
-_itk_log = logging.getLogger("IsotopeTrack.loading.csv_preview_model")
+_itk_log = logging.getLogger("IsotopeTrack.loading.csv.preview_model")
 
 DISK_CHUNK_ROWS = 2000
 INITIAL_VISIBLE_ROWS = 20
@@ -70,6 +70,7 @@ def detect_encoding(path: str | Path) -> str:
 
 
 LAYOUT_SCAN_LINES = 120
+LAYOUT_SCAN_LIMIT = 20000
 
 
 def _sample_lines(path: str | Path, encoding: str,
@@ -99,18 +100,84 @@ def _sample_lines(path: str | Path, encoding: str,
         return []
 
 
+def _numeric_shape(fields) -> tuple[int, int]:
+    """Return how many of a split line's values are numbers.
+
+    Args:
+        fields: The line already split on a candidate separator.
+
+    Returns:
+        tuple[int, int]: Count of values that parse as numbers, and count of
+            non-empty values.
+    """
+    filled = [f.strip() for f in fields if f.strip()]
+    if not filled:
+        return 0, 0
+    parsed = 0
+    for value in filled:
+        try:
+            float(value)
+        except ValueError:
+            continue
+        parsed += 1
+    return parsed, len(filled)
+
+
+def _longest_data_run(rows, minimum_values: int) -> tuple[int, int, int]:
+    """Return the longest stretch of consecutive rows that look like readings.
+
+    A row counts as data when most of its values are numbers. Half is enough
+    rather than nearly all, because runs commonly carry a label or flag column
+    alongside the measurements, and demanding that every value be numeric would
+    reject the very rows being looked for.
+
+    Args:
+        rows: Lines already split on a candidate separator.
+        minimum_values (int): How many numbers a row needs before it can count
+            as data.
+
+    Returns:
+        tuple[int, int, int]: Length of the run, its width, and where it starts.
+    """
+    flags = []
+    widths = []
+    for fields in rows:
+        numeric, filled = _numeric_shape(fields)
+        flags.append(numeric >= minimum_values and numeric * 2 >= filled)
+        widths.append(filled)
+
+    best = (0, 0, 0)
+    index = 0
+    while index < len(flags):
+        if not flags[index]:
+            index += 1
+            continue
+        end = index
+        while end + 1 < len(flags) and flags[end + 1]:
+            end += 1
+        candidate = (end - index + 1, widths[index], index)
+        if candidate[:2] > best[:2]:
+            best = candidate
+        index = end + 1
+    return best
+
+
 def detect_layout(path: str | Path, encoding: str) -> tuple[str, int]:
-    """Return the separator and the line where the data table starts.
+    """Return the separator and the line that names the columns.
 
-    Instrument exports routinely open with a block of metadata before the real
-    header: an acquisition path, an operator name, a batch date. Those lines
-    split into a different number of fields than the table does, so the table
-    can be found as the longest run of consecutive lines that all split into
-    the same number of fields. The first line of that run is the header.
+    Instrument exports open with a block of metadata before the real header: an
+    acquisition path, an operator name, a batch date. Those lines are found by
+    looking for where the *numbers* begin rather than by counting fields,
+    because exports routinely pad every line to the same width with trailing
+    separators. A file whose metadata lines end in ``,,,`` has exactly as many
+    fields as its data rows, and counting alone would call line one the header.
 
-    Scoring prefers the longest run, then the widest, which stops a two-field
-    metadata line such as ``Batch,2024-09-18`` from being mistaken for the
-    start of the data.
+    The data is the longest run of consecutive lines whose values parse as
+    numbers; the header is the line immediately above it.
+
+    A short sample is tried first and widened only if it found nothing, so the
+    common file costs a hundred lines of reading while a file with an unusually
+    long preamble is still found rather than silently mis-read.
 
     Args:
         path (str | Path): File to inspect.
@@ -119,32 +186,27 @@ def detect_layout(path: str | Path, encoding: str) -> tuple[str, int]:
     Returns:
         tuple[str, int]: The separator, and how many lines precede the header.
     """
-    lines = _sample_lines(path, encoding)
-    if not lines:
-        return ',', 0
+    for limit in (LAYOUT_SCAN_LINES, LAYOUT_SCAN_LIMIT):
+        lines = _sample_lines(path, encoding, limit)
+        if not lines:
+            return ',', 0
 
-    best_delimiter = ','
-    best_start = 0
-    best_score = (0, 0)
+        for minimum in (2, 1):
+            best_delimiter = ','
+            best_run = (0, 0, 0)
+            for candidate in CANDIDATE_DELIMITERS:
+                rows = [line.split(candidate) for line in lines]
+                run = _longest_data_run(rows, minimum)
+                if run[:2] > best_run[:2]:
+                    best_run = run
+                    best_delimiter = candidate
+            if best_run[0]:
+                return best_delimiter, max(0, best_run[2] - 1)
 
-    for candidate in CANDIDATE_DELIMITERS:
-        counts = [line.count(candidate) + 1 for line in lines]
-        index = 0
-        while index < len(counts):
-            if counts[index] < 2:
-                index += 1
-                continue
-            end = index
-            while end + 1 < len(counts) and counts[end + 1] == counts[index]:
-                end += 1
-            score = (end - index + 1, counts[index])
-            if score > best_score:
-                best_score = score
-                best_delimiter = candidate
-                best_start = index
-            index = end + 1
+        if len(lines) < limit:
+            break
 
-    return best_delimiter, best_start
+    return ',', 0
 
 
 def detect_delimiter(path: str | Path, encoding: str, skip_rows: int = 0) -> str:
@@ -174,19 +236,24 @@ def sniff_delimited_settings(path: str | Path, skip_rows: int | None = None) -> 
     """
     encoding = detect_encoding(path)
     delimiter, detected_skip = detect_layout(path, encoding)
+    width, full_width = detect_table_width(path, encoding, delimiter)
     return {
         'encoding': encoding,
         'delimiter': delimiter,
         'skip_rows': detected_skip if skip_rows is None else max(0, skip_rows),
-        'width': detect_table_width(path, encoding, delimiter),
+        'width': width,
+        'full_width': full_width,
     }
 
 
-def detect_table_width(path: str | Path, encoding: str, delimiter: str) -> int:
-    """Return how many columns the widest sampled line splits into.
+def detect_table_width(path: str | Path, encoding: str,
+                       delimiter: str) -> tuple[int, int]:
+    """Return how many columns a file has, before and after trimming padding.
 
-    Reading a file raw needs a column count up front, and the preamble lines
-    are narrower than the table, so the widest line is the one to size by.
+    Exports often end every line with a run of separators, which parses as
+    columns that are empty from top to bottom. They are an artefact of the
+    writer, not data, so they are trimmed from what the user is shown. The
+    untrimmed count is still needed to parse the lines correctly.
 
     Args:
         path (str | Path): File to inspect.
@@ -194,12 +261,22 @@ def detect_table_width(path: str | Path, encoding: str, delimiter: str) -> int:
         delimiter (str): Separator to split on.
 
     Returns:
-        int: The column count, at least one.
+        tuple[int, int]: Columns worth showing, and columns actually present.
     """
-    lines = _sample_lines(path, encoding)
+    lines = _sample_lines(path, encoding, LAYOUT_SCAN_LIMIT)
     if not lines:
-        return 1
-    return max(1, max(line.count(delimiter) + 1 for line in lines))
+        return 1, 1
+
+    rows = [line.split(delimiter) for line in lines]
+    full = max(1, max(len(row) for row in rows))
+
+    width = full
+    while width > 1:
+        column = width - 1
+        if any(len(row) > column and row[column].strip() for row in rows):
+            break
+        width -= 1
+    return width, full
 
 
 def describe_delimiter(delimiter: str) -> str:
@@ -465,7 +542,8 @@ class DelimitedRowSource(RowSource):
 
     def __init__(self, path: str | Path, delimiter: str = ",",
                  encoding: str = "utf-8", skip_rows: int = 0,
-                 header_row: int | None = 0, width: int | None = None):
+                 header_row: int | None = 0, width: int | None = None,
+                 full_width: int | None = None):
         """Open ``path`` for chunked reading and capture its column names.
 
         Passing ``header_row=None`` reads the file raw: every physical line
@@ -480,7 +558,9 @@ class DelimitedRowSource(RowSource):
                 so a byte-order mark never corrupts the first column name.
             skip_rows (int): Leading rows to discard before the header.
             header_row (int | None): Header row index, or None to read raw.
-            width (int | None): Column count to impose when reading raw.
+            width (int | None): Columns to keep when reading raw.
+            full_width (int | None): Columns actually present in the file, which
+                can exceed ``width`` when the export pads its lines.
         """
         super().__init__(path)
         self.delimiter = "\t" if delimiter == "\\t" else (delimiter or ",")
@@ -488,6 +568,7 @@ class DelimitedRowSource(RowSource):
         self.skip_rows = max(0, int(skip_rows))
         self.header_row = header_row
         self.width = width
+        self.full_width = full_width or width
         self._iterator = None
         self._open()
 
@@ -522,10 +603,14 @@ class DelimitedRowSource(RowSource):
         }
         if self.header_row is not None and self.header_row >= 0:
             kwargs['header'] = self.header_row
+            if self.width and self.full_width and self.full_width > self.width:
+                kwargs['usecols'] = list(range(self.width))
         else:
             kwargs['header'] = None
             if self.width:
-                kwargs['names'] = list(range(self.width))
+                kwargs['names'] = list(range(self.full_width or self.width))
+                if self.full_width and self.full_width > self.width:
+                    kwargs['usecols'] = list(range(self.width))
         if self.skip_rows > 0:
             kwargs['skiprows'] = list(range(self.skip_rows))
         kwargs.update(extra)
@@ -739,7 +824,8 @@ def build_row_source(path: str | Path, settings: dict,
             encoding=settings.get('encoding', 'utf-8'),
             skip_rows=skip_rows,
             header_row=header_row,
-            width=settings.get('width') if raw else None,
+            width=settings.get('width'),
+            full_width=settings.get('full_width'),
         )
     elif kind == 'excel':
         source = ExcelRowSource(

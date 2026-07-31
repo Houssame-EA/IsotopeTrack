@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,17 +21,20 @@ from PySide6.QtWidgets import (
 
 from widget.periodic_table_widget import PeriodicTableWidget
 from tools.theme import theme, dialog_qss
-from loading.csv_preview_model import (
+from loading.csv.preview_model import (
     DELIMITED_EXTS, EXCEL_EXTS, INITIAL_VISIBLE_ROWS, LazyPreviewModel,
     build_row_source, describe_delimiter, file_type_of, find_first_stopping_row,
     read_columns_only, sniff_delimited_settings,
 )
-from loading.import_exclusions import (
+from loading.csv.exclusions import (
     SCOPE_FILE, ExclusionManager, apply_exclusions,
 )
-from loading.file_list_panel import FileListPanel
+from loading.csv.file_list import THUMB_ROWS, FileListPanel
+from loading.csv.profiles import (
+    ImportProfile, clear_profiles, load_profiles, save_profile,
+)
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.loading.import_csv_dialogs")
+_itk_log = logging.getLogger("IsotopeTrack.loading.csv.dialog")
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +549,106 @@ class IsotopePickerDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Remembered setup picker
+# ---------------------------------------------------------------------------
+
+class RecentSetupsDialog(QDialog):
+    """Pick one of the recently used import setups.
+
+    Repeating a batch of the same instrument export otherwise means redoing
+    the same header row, the same mappings and the same dwell every time.
+    """
+
+    def __init__(self, profiles, parent=None):
+        """List the remembered setups, newest first.
+
+        Args:
+            profiles: The ``ImportProfile`` records to offer.
+            parent: Optional Qt parent.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Use a previous setup")
+        self.setModal(True)
+        self.resize(430, 340)
+        self._profiles = list(profiles)
+
+        layout = QVBoxLayout(self)
+        heading = QLabel(
+            "Apply the header row, isotope mappings, removed columns and time "
+            "settings from an earlier import. Columns are matched by name, so "
+            "anything that no longer exists is reported rather than guessed.")
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+
+        self.list = QListWidget()
+        for profile in self._profiles:
+            item = QListWidgetItem(
+                f"{profile.label}\n{profile.describe()}"
+                + (f"\n{profile.when()}" if profile.when() else ""))
+            self.list.addItem(item)
+        self.list.itemDoubleClicked.connect(self._accept_current)
+        layout.addWidget(self.list, 1)
+
+        buttons = QHBoxLayout()
+        self._forget = QPushButton("Forget all")
+        self._forget.setToolTip("Remove every remembered setup")
+        self._forget.clicked.connect(self._forget_all)
+        buttons.addWidget(self._forget)
+        buttons.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        buttons.addWidget(cancel)
+        self.use_button = QPushButton("Use this setup")
+        self.use_button.setDefault(True)
+        self.use_button.clicked.connect(self._accept_current)
+        buttons.addWidget(self.use_button)
+        layout.addLayout(buttons)
+
+        self.list.currentRowChanged.connect(self._refresh_state)
+        if self._profiles:
+            self.list.setCurrentRow(0)
+        self._refresh_state()
+        try:
+            self.setStyleSheet(dialog_qss(theme.palette))
+        except Exception:
+            _itk_log.debug("Could not style the setup picker", exc_info=True)
+
+    def selected_profile(self):
+        """Return the chosen setup, or None when nothing is selected."""
+        row = self.list.currentRow()
+        if 0 <= row < len(self._profiles):
+            return self._profiles[row]
+        return None
+
+    def cleared(self) -> bool:
+        """Return True when the user asked to forget every setup."""
+        return not self._profiles
+
+    def _accept_current(self, *_):
+        """Confirm the highlighted setup."""
+        if self.selected_profile() is not None:
+            self.accept()
+
+    def _forget_all(self):
+        """Drop every remembered setup and close."""
+        clear_profiles()
+        self._profiles = []
+        self.list.clear()
+        self.reject()
+
+    def _refresh_state(self, *_):
+        """Enable the confirm button only when a setup is highlighted.
+
+        Guarded because Qt emits the row-changed signal during construction on
+        some styles, before the buttons this touches have been created.
+        """
+        if not hasattr(self, 'use_button'):
+            return
+        self.use_button.setEnabled(self.selected_profile() is not None)
+        self._forget.setEnabled(bool(self._profiles))
+
+
+# ---------------------------------------------------------------------------
 # Apply-target picker
 # ---------------------------------------------------------------------------
 
@@ -648,7 +752,13 @@ class ApplyTargetsDialog(QDialog):
         self._refresh_state()
 
     def _refresh_state(self, *_):
-        """Keep the Apply button in step with how many files are ticked."""
+        """Keep the Apply button in step with how many files are ticked.
+
+        Guarded for the same reason as the setup picker: the list can emit a
+        change while the dialog is still being built.
+        """
+        if not hasattr(self, 'apply_button'):
+            return
         count = len(self.selected_indexes())
         self.apply_button.setEnabled(count > 0)
         self.apply_button.setText(
@@ -710,6 +820,8 @@ class DataProcessThread(QThread):
             for key, target in (('delimiter', 'delimiter'),
                                 ('encoding', 'encoding'),
                                 ('sheet_index', 'sheet_name'),
+                                ('width', 'width'),
+                                ('full_width', 'full_width'),
                                 ('time_column', 'time_column'),
                                 ('time_unit', 'time_unit'),
                                 ('dwell_time_ms', 'dwell_time_ms'),
@@ -754,25 +866,59 @@ class DataProcessThread(QThread):
             return None
 
     def _load_delimited(self, file_path, settings):
+        """Read a delimited file with the settings the preview showed.
+
+        The padding columns an export leaves behind are dropped here too, so
+        the worker sees the same table the user was looking at rather than a
+        handful of extra unnamed columns.
+
+        Args:
+            file_path (str): File to read.
+            settings (dict): Parse settings for this file.
+
+        Returns:
+            pandas.DataFrame: The file's data, trimmed at any trailing footer.
+        """
         delim = settings['delimiter']
         if delim == "\\t":
             delim = "\t"
-        df = pd.read_csv(
-            file_path,
-            delimiter=delim,
-            header=settings['header_row'] if settings['header_row'] >= 0 else None,
-            skiprows=range(settings['skip_rows']) if settings['skip_rows'] > 0 else None,
-            encoding=settings['encoding'],
-        )
+
+        read_args = {
+            'delimiter': delim,
+            'header': (settings['header_row']
+                       if settings['header_row'] >= 0 else None),
+            'encoding': settings['encoding'],
+            'low_memory': False,
+        }
+        if settings['skip_rows'] > 0:
+            read_args['skiprows'] = range(settings['skip_rows'])
+        width = settings.get('width')
+        full_width = settings.get('full_width')
+        if width and full_width and full_width > width:
+            read_args['usecols'] = list(range(width))
+
+        df = pd.read_csv(file_path, **read_args)
         stop = find_first_stopping_row(df)
         if stop < len(df):
             df = df.iloc[:stop].copy()
         return df
 
     def _load_excel(self, file_path, settings):
+        """Read a worksheet with the settings the preview showed.
+
+        The reader is imported by name rather than fetched dynamically so that
+        a frozen build can see the dependency without being told about it in
+        the packaging spec.
+
+        Args:
+            file_path (str): Workbook to read.
+            settings (dict): Parse settings for this file.
+
+        Returns:
+            pandas.DataFrame: The sheet's data, trimmed at any trailing footer.
+        """
         try:
-            import importlib
-            importlib.import_module('openpyxl')
+            import openpyxl
         except ImportError:
             raise ImportError(
                 "openpyxl is required for Excel files. "
@@ -782,7 +928,7 @@ class DataProcessThread(QThread):
         header_row  = settings['header_row'] if settings['header_row'] >= 0 else None
         skip_rows   = max(0, settings['skip_rows'])
 
-        read_args = {'sheet_name': sheet_index, 'engine': 'openpyxl'}
+        read_args = {'sheet_name': sheet_index, 'engine': openpyxl.__name__}
         if skip_rows > 0:
             read_args['skiprows'] = list(range(skip_rows))
         if header_row is not None:
@@ -901,6 +1047,8 @@ class FileStructureDialog(QDialog):
         self._build_ui()
         self._apply_theme()
         theme.themeChanged.connect(self._apply_theme)
+
+        self._refresh_recent_button()
 
         if self.file_paths:
             self._load_file(self.file_paths[0])
@@ -1075,6 +1223,13 @@ class FileStructureDialog(QDialog):
         self.restore_button.clicked.connect(self._restore_everything)
         row.addWidget(self.restore_button)
 
+        self.recent_button = QPushButton("Previous setup…")
+        self.recent_button.setToolTip(
+            "Reuse the header row, isotope mappings, removed columns and time "
+            "settings from one of your last few imports")
+        self.recent_button.clicked.connect(self._use_previous_setup)
+        row.addWidget(self.recent_button)
+
         self.detect_button = QPushButton("Detect isotopes")
         self.detect_button.setToolTip(
             "Read the column names of this file and assign the isotopes they "
@@ -1210,7 +1365,7 @@ class FileStructureDialog(QDialog):
 
         primary = ('import_button', 'remove_button')
         secondary = ('apply_all_button', 'cancel_button', 'restore_button',
-                     'detect_button', 'load_all_button')
+                     'detect_button', 'recent_button', 'load_all_button')
         for name in primary:
             button = getattr(self, name, None)
             if button is not None:
@@ -1556,7 +1711,7 @@ class FileStructureDialog(QDialog):
         frame = model.frame()
         start = (model.header_row() or 0) + 1 if model.is_raw() else 0
         rows = [list(frame.iloc[r])
-                for r in range(start, min(start + 5, len(frame)))]
+                for r in range(start, min(start + THUMB_ROWS, len(frame)))]
         self._set_card_thumbnail(index, self._current_columns, rows)
 
     def _set_card_thumbnail(self, index: int, columns, rows):
@@ -1578,9 +1733,9 @@ class FileStructureDialog(QDialog):
         Each file is sniffed on its own, so a batch that mixes a comma export
         with a semicolon one still shows both correctly.
 
-        Only the header and five rows are read per file, which keeps opening a
-        large batch cheap while still letting the strip show what each file
-        looks like rather than a row of identical placeholders.
+        Only the header and the first few rows are read per file, which keeps
+        opening a large batch cheap while still letting each card show the
+        corner of its own data rather than a placeholder.
         """
         for index, path in enumerate(self.file_paths):
             if index == self.current_file_index:
@@ -1589,7 +1744,7 @@ class FileStructureDialog(QDialog):
             try:
                 settings = self._detected_settings(index)
                 source = build_row_source(path, settings)
-                frame = source.fetch(5)
+                frame = source.fetch(THUMB_ROWS)
                 rows = [list(frame.iloc[r]) for r in range(len(frame))]
                 self._set_card_thumbnail(index, source.columns, rows)
             except Exception:
@@ -2382,6 +2537,127 @@ class FileStructureDialog(QDialog):
 
     # -- Apply-to-all-files ---------------------------------------------
 
+    def _capture_profile(self) -> ImportProfile:
+        """Describe the current setup so it can be recalled next time.
+
+        Columns are recorded by name rather than by position, because the same
+        instrument can emit the same channels in a different order.
+
+        Returns:
+            ImportProfile: The setup as it stands for the file on screen.
+        """
+        index = self.current_file_index
+        settings = self._detected_settings(index)
+        name = Path(self.file_paths[index]).name
+        others = len(self.file_paths) - 1
+        return ImportProfile(
+            created=datetime.now().isoformat(timespec='seconds'),
+            label=f"{name}" + (f" and {others} more" if others else ""),
+            file_count=len(self.file_paths),
+            header_row=settings.get('skip_rows', 0),
+            delimiter=settings.get('delimiter', ','),
+            params=dict(self._params_for_config(index)),
+            mappings=[
+                {'column': m['column_name'], 'isotope': dict(m['isotope'])}
+                for m in self._effective_mappings(index).values()
+            ],
+            removed_columns=sorted(self.exclusions.excluded_columns(index)),
+        )
+
+    def _refresh_recent_button(self):
+        """Offer the previous setups only when there are some to offer."""
+        if not hasattr(self, 'recent_button'):
+            return
+        count = len(load_profiles())
+        self.recent_button.setEnabled(count > 0)
+        self.recent_button.setText(
+            "Previous setup…" if count else "No previous setup")
+
+    def _use_previous_setup(self):
+        """Let the user pick an earlier setup and apply it to every file."""
+        profiles = load_profiles()
+        if not profiles:
+            return
+        picker = RecentSetupsDialog(profiles, self)
+        chosen = picker.selected_profile() if picker.exec() == QDialog.Accepted \
+            else None
+        self._refresh_recent_button()
+        if chosen is None:
+            return
+
+        applied, missing = self._apply_profile(chosen)
+        message = (f"Applied a previous setup to {applied} file(s), "
+                   f"{sum(len(self._effective_mappings(i)) for i in range(len(self.file_paths)))}"
+                   " columns mapped")
+        if missing:
+            message += f" · {len(missing)} not found: {', '.join(sorted(set(missing))[:4])}"
+        self._row_status_label.setText(message)
+
+    def _apply_profile(self, profile) -> tuple[int, list[str]]:
+        """Put a remembered setup onto every file in the batch.
+
+        Args:
+            profile (ImportProfile): The setup to apply.
+
+        Returns:
+            tuple[int, list[str]]: Files updated, and the column names that no
+                file could supply.
+        """
+        missing: list[str] = []
+        applied = 0
+
+        self.exclusions.begin_batch("Apply a previous setup")
+        try:
+            for index in range(len(self.file_paths)):
+                settings = dict(self._detected_settings(index))
+                if settings['file_type'] == 'delimited':
+                    candidate = dict(settings)
+                    candidate['skip_rows'] = profile.header_row
+                    if read_columns_only(self.file_paths[index], candidate):
+                        settings = candidate
+                        self._detected[index] = settings
+
+                columns = read_columns_only(self.file_paths[index], settings)
+                if not columns:
+                    continue
+                applied += 1
+
+                self._params[index] = dict(profile.params)
+                for key in [k for k, v in self.column_mappings.items()
+                            if v['file_index'] == index]:
+                    del self.column_mappings[key]
+
+                present = {str(c) for c in columns}
+                self.exclusions.set_columns_removed(
+                    index, set(profile.removed_columns) & present, True,
+                    SCOPE_FILE)
+
+                excluded = self.exclusions.excluded_columns(index)
+                for saved in profile.mappings:
+                    wanted = str(saved.get('column', '')).strip()
+                    isotope = saved.get('isotope') or {}
+                    position, _ = self._verify_mapping(columns, wanted, isotope)
+                    if position is None:
+                        missing.append(wanted)
+                        continue
+                    if str(columns[position]) in excluded:
+                        continue
+                    self.column_mappings[f"{index}_{position}"] = {
+                        'file_index': index,
+                        'column_index': position,
+                        'column_name': str(columns[position]),
+                        'isotope': dict(isotope),
+                    }
+        finally:
+            self.exclusions.end_batch()
+
+        self._load_file(self.file_paths[self.current_file_index])
+        self._refresh_mapped_columns_highlight()
+        self._refresh_mappings_list()
+        self._refresh_file_list_status()
+        self._validate_configuration()
+        return applied, missing
+
     def _apply_targets(self) -> list[int]:
         """Return the files an apply would write to.
 
@@ -2721,6 +2997,8 @@ class FileStructureDialog(QDialog):
                 'skip_rows': current['skip_rows'],
                 'encoding': current['encoding'],
                 'sheet_name': current['sheet_index'],
+                'width': current.get('width'),
+                'full_width': current.get('full_width'),
                 'sheet_label': (self.sheet_combo.currentText()
                                 if current['file_type'] == 'excel' else 'N/A'),
                 'time_column': current_params['time_column'],
@@ -2743,6 +3021,8 @@ class FileStructureDialog(QDialog):
                 'encoding': detected['encoding'],
                 'sheet_index': detected['sheet_index'],
                 'skip_rows': detected['skip_rows'],
+                'width': detected.get('width'),
+                'full_width': detected.get('full_width'),
                 **self._params_for_config(i),
             })
         return config
@@ -2786,6 +3066,10 @@ class FileStructureDialog(QDialog):
             msg.setDefaultButton(QMessageBox.No)
             if msg.exec() != QMessageBox.Yes:
                 return
+        try:
+            save_profile(self._capture_profile())
+        except Exception:
+            _itk_log.debug("Could not remember this setup", exc_info=True)
         self.file_configured.emit(self._build_import_config())
         self.accept()
 

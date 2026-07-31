@@ -11,15 +11,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from loading.csv_preview_model import (
+from loading.csv.preview_model import (
     INITIAL_VISIBLE_COLUMNS, INITIAL_VISIBLE_ROWS, MIN_GRID_COLUMNS,
     MIN_GRID_ROWS, DelimitedRowSource,
     ExcelRowSource, LazyPreviewModel,
     build_row_source, describe_delimiter, detect_delimiter, detect_encoding,
     file_type_of, find_first_stopping_row, format_cell, read_columns_only,
-    detect_layout, sniff_delimited_settings,
+    detect_layout, detect_table_width, sniff_delimited_settings,
 )
-from loading.import_exclusions import (
+from loading.csv.exclusions import (
     SCOPE_ALL, SCOPE_FILE, ExclusionManager, apply_exclusions,
 )
 
@@ -580,8 +580,8 @@ class TestParseDetection:
     def test_prefers_the_consistent_separator(self, tmp_path):
         """A comma inside quoted text does not outrank the real separator."""
         path = tmp_path / "quoted.csv"
-        lines = ["Time;Label"]
-        lines += [f'0.{i};"a, b, c, d"' for i in range(8)]
+        lines = ["Time;Ag107;Label"]
+        lines += [f'0.{i};{i};"a, b, c, d"' for i in range(8)]
         path.write_text("\n".join(lines), encoding="utf-8")
         assert detect_delimiter(path, "utf-8") == ";"
 
@@ -1008,3 +1008,147 @@ class TestGridPadding:
         model.load_all()
         assert model.rowCount() == 500
         model.close()
+
+
+@pytest.fixture
+def padded_export(tmp_path):
+    """Write a CSV shaped like a real Agilent time-resolved export.
+
+    Every line is padded to five fields with trailing separators, including
+    the metadata block, and the file ends with blank lines and a printed-on
+    stamp. Line endings are CRLF, as the instrument writes them.
+    """
+    path = tmp_path / "Sample1_1.csv"
+    lines = [
+        r"D:\Agilent\ICPMH\1\DATA\Mary\2024_HDSP\CHDS1.b\Sample1.d,,,,",
+        "Intensity Vs Time,Counts,,,",
+        "Acquired      : 2024-09-18 1:39:01 PM using Batch CHDS1.b,,,,",
+        "Time [Sec],Ti48 -> 64,,,",
+    ]
+    lines += [f"{0.02112 + i * 0.0001:.5f},{300 + i}.06,,," for i in range(400)]
+    lines += [",,,,", ",,,,", "          Printed:2024-09-18 1:44:58 PM,,,,"]
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
+    return path
+
+
+class TestPaddedExport:
+    """A file whose every line is padded to the same width.
+
+    Counting fields cannot find the header in these, because the metadata rows
+    are padded to the width of the table. This shape reduced the preview to one
+    column named after the acquisition path and no rows at all.
+    """
+
+    def test_header_is_found_despite_the_padding(self, padded_export):
+        """The header is the line above where the numbers start."""
+        delimiter, skip = detect_layout(padded_export, "utf-8-sig")
+        assert delimiter == ","
+        assert skip == 3
+
+    def test_padding_columns_are_trimmed(self, padded_export):
+        """Columns empty from top to bottom are not shown as data."""
+        width, full = detect_table_width(padded_export, "utf-8-sig", ",")
+        assert (width, full) == (2, 5)
+
+    def test_settings_carry_both_widths(self, padded_export):
+        """Parsing needs the full width; display needs the trimmed one."""
+        settings = sniff_delimited_settings(padded_export)
+        assert settings["width"] == 2
+        assert settings["full_width"] == 5
+        assert settings["skip_rows"] == 3
+
+    def test_reads_the_instrument_columns(self, padded_export):
+        """The real column names come through, not the acquisition path."""
+        settings = sniff_delimited_settings(padded_export)
+        source = build_row_source(padded_export, settings)
+        assert source.columns == ["Time [Sec]", "Ti48 -> 64"]
+        source.close()
+
+    def test_reads_every_data_row(self, padded_export):
+        """All readings load, and the printed-on footer is left behind."""
+        settings = sniff_delimited_settings(padded_export)
+        model = LazyPreviewModel(build_row_source(padded_export, settings))
+        assert model.load_all() == 400
+        model.close()
+
+    def test_raw_preview_keeps_the_preamble_visible(self, qapp, padded_export):
+        """The metadata lines stay on screen above the marked header row."""
+        from PySide6.QtCore import Qt
+        settings = sniff_delimited_settings(padded_export)
+        source = build_row_source(padded_export, settings, raw=True)
+        model = LazyPreviewModel(source, header_row=settings["skip_rows"])
+        assert "Sample1.d" in model.data(model.index(0, 0), Qt.DisplayRole)
+        assert model.header_row() == 3
+        assert model.columns == ["Time [Sec]", "Ti48 -> 64"]
+        model.close()
+
+    def test_crlf_does_not_reach_the_values(self, padded_export):
+        """Carriage returns are stripped rather than parsed into a column."""
+        settings = sniff_delimited_settings(padded_export)
+        source = build_row_source(padded_export, settings)
+        frame = source.fetch(3)
+        assert "\r" not in str(frame.iloc[0, 1])
+        source.close()
+
+
+class TestNothingIsSilentlyDropped:
+    """Guards on the two places sampling could lose data."""
+
+    def test_a_named_column_is_never_trimmed(self, tmp_path):
+        """A column the header names survives even if it is empty for a while.
+
+        Trimming looks at the sampled lines, and the header is one of them, so
+        a named column can never be mistaken for the writer's padding.
+        """
+        path = tmp_path / "sparse.csv"
+        lines = ["Time,Ag107,LateCol"]
+        for i in range(400):
+            late = "" if i < 300 else str(i)
+            lines.append(f"{i * 0.001},{i % 9},{late}")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        assert detect_table_width(path, "utf-8-sig", ",") == (3, 3)
+
+    def test_a_column_with_late_values_is_never_trimmed(self, tmp_path):
+        """An unnamed column holding values further down is still kept."""
+        path = tmp_path / "stray.csv"
+        lines = ["Time,Ag107,,"]
+        for i in range(400):
+            stray = "stray" if i == 250 else ""
+            lines.append(f"{i * 0.001},{i % 9},,{stray}")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        width, _ = detect_table_width(path, "utf-8-sig", ",")
+        assert width == 4
+
+    def test_a_long_preamble_is_still_found(self, tmp_path):
+        """A preamble longer than the first sample does not defeat detection."""
+        path = tmp_path / "long.csv"
+        lines = [f"metadata line {i},,," for i in range(150)]
+        lines.append("Time,Ag107,,")
+        lines += [f"{i * 0.001},{i % 9},," for i in range(200)]
+        path.write_text("\n".join(lines), encoding="utf-8")
+        assert sniff_delimited_settings(path)["skip_rows"] == 150
+
+    def test_every_data_row_after_a_long_preamble_loads(self, qapp, tmp_path):
+        """Widening the scan finds the header without costing rows."""
+        path = tmp_path / "long.csv"
+        lines = [f"metadata line {i},,," for i in range(150)]
+        lines.append("Time,Ag107,,")
+        lines += [f"{i * 0.001},{i % 9},," for i in range(200)]
+        path.write_text("\n".join(lines), encoding="utf-8")
+        settings = sniff_delimited_settings(path)
+        model = LazyPreviewModel(build_row_source(path, settings))
+        assert model.load_all() == 200
+        model.close()
+
+    def test_loading_everything_matches_a_plain_read(self, qapp, numeric_csv):
+        """The windowed reader returns the same values as one plain read.
+
+        The preview windows what it shows; it must not window what it holds.
+        """
+        settings = sniff_delimited_settings(numeric_csv)
+        model = LazyPreviewModel(build_row_source(numeric_csv, settings))
+        model.load_all()
+        plain = pd.read_csv(numeric_csv)
+        assert model.loaded_row_count() == len(plain)
+        assert np.allclose(model.frame()["Ag107"].to_numpy(),
+                           plain["Ag107"].to_numpy())

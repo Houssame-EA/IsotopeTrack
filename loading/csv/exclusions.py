@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, Signal
 
-_itk_log = logging.getLogger("IsotopeTrack.loading.import_exclusions")
+_itk_log = logging.getLogger("IsotopeTrack.loading.csv.exclusions")
 
 MAX_HISTORY = 150
 

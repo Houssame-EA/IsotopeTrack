@@ -2079,7 +2079,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV calibration dialog and processes files with configuration.
         """
-        from loading.import_csv_dialogs import show_csv_calibration_dialog
+        from loading.csv import show_csv_calibration_dialog
         
         config = show_csv_calibration_dialog(file_paths, self)
         
@@ -2475,7 +2475,7 @@ class MassMethodWidget(QMainWindow):
             
         Shows CSV structure configuration dialog and initiates import.
         """
-        from loading.import_csv_dialogs import show_csv_structure_dialog
+        from loading.csv import show_csv_structure_dialog
         
         config = show_csv_structure_dialog(file_paths, self)
         
@@ -2496,7 +2496,7 @@ class MassMethodWidget(QMainWindow):
             progress.setWindowModality(Qt.WindowModal)
             progress.show()
             
-            from loading.import_csv_dialogs import CSVDataProcessThread
+            from loading.csv import CSVDataProcessThread
             
             self.csv_thread = CSVDataProcessThread(config)
             self.csv_thread.progress.connect(progress.setValue)

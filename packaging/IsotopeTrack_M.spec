@@ -266,7 +266,12 @@ a = Analysis(
 
         'loading',
         'loading.data_thread',
-        'loading.import_csv_dialogs',
+        'loading.csv',
+        'loading.csv.preview_model',
+        'loading.csv.exclusions',
+        'loading.csv.file_list',
+        'loading.csv.dialog',
+        'loading.csv.profiles',
         'loading.SIA_manager',
         'loading.tofwerk_loading',
         'loading.vitesse_loading',

@@ -30,7 +30,7 @@ import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.TE_number")
 
 try:
-    from loading.import_csv_dialogs import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
+    from loading.csv import CSVStructureDialog, CSVDataProcessThread, show_csv_structure_dialog
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
     CSVStructureDialog = None
@@ -740,7 +740,7 @@ class NumberMethodWidget(QMainWindow):
         try:
             if not show_csv_structure_dialog:
                 QMessageBox.critical(self, "Import Error", 
-                    "Data file import functionality is not available. Please ensure the import_csv_dialogs.py file is present.")
+                    "Data file import functionality is not available. Please ensure the loading/csv package is present.")
                 return
                     
             file_paths, _ = QFileDialog.getOpenFileNames(

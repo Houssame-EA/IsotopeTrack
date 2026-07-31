@@ -104,7 +104,7 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
-    - "import_csv_dialogs.py": loading/import-csv-dialogs.md
+    - "csv/": loading/csv.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:

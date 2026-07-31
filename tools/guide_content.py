@@ -413,75 +413,224 @@ SECTION_GETTING_STARTED = dict(
         ),
         dict(
             title="File Import Configuration",
-            image="csv_file.png",
+            image="csv.png",
             intro="""
-            <p>Shown when importing delimited data files. Isotopes are
-            auto-detected from column names; you can adjust everything
-            before importing.</p>
+            <p>Shown when importing delimited data files (CSV, TXT) or
+            spreadsheets. The file is displayed exactly as it sits on disk,
+            including any metadata lines the instrument wrote above the
+            table, so you can see what you are importing before you import
+            it.</p>
+            <p>Nothing is assigned automatically. The separator, the encoding
+            and the row holding the column names are detected for you, but
+            the isotopes are yours to map, with <b>Detect isotopes</b> as a
+            shortcut rather than a decision taken on your behalf.</p>
             """,
             hotspots=[
                 dict(
-                    id="file_bar",
-                    title="File info bar",
-                    rect=(0.060, 0.097, 0.878, 0.070),
+                    id="remove_restore",
+                    title="Remove selected · Restore all",
+                    rect=(0.048, 0.137, 0.156, 0.026),
                     body="""
-                    <p>The file being configured, with its detected shape
-                    (rows × columns), size and format (e.g. DELIMITED).
-                    When several files are imported, each can be configured
-                    and the settings applied to all.</p>
+                    <p>Select cells in the preview, or click a column or row
+                    header to take a whole one, then press <b>Remove
+                    selected</b>. Columns and rows can be selected together
+                    and are removed in one step.</p>
+                    <p>Nothing disappears: removed cells stay visible, struck
+                    through and greyed, so a removal is always something you
+                    can see. <b>Restore all</b> puts everything back across
+                    every file. <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes a single
+                    removal.</p>
                     """),
                 dict(
-                    id="advanced",
-                    title="Advanced file settings",
-                    rect=(0.055, 0.180, 0.115, 0.030),
+                    id="previous_setup",
+                    title="Previous setup…",
+                    rect=(0.208, 0.137, 0.079, 0.026),
                     body="""
-                    <p>Expands delimiter, header-row and decimal-separator
-                    options for files that are not detected correctly.</p>
+                    <p>Recalls one of your last five imports: the header row,
+                    the isotope mappings, the removed columns and the time
+                    settings, applied to every file in the batch.</p>
+                    <p>Columns are matched by <i>name</i>, never by position,
+                    so a setup still lands correctly on an export whose
+                    columns moved. Anything that no longer exists is reported
+                    rather than guessed at.</p>
+                    <p>A setup is remembered when you press <b>Import
+                    data</b>, so an import you abandoned is not saved.</p>
+                    """),
+                dict(
+                    id="detect_isotopes",
+                    title="Detect isotopes",
+                    rect=(0.291, 0.137, 0.078, 0.026),
+                    body="""
+                    <p>Reads the column names of the file on screen and
+                    assigns the isotopes they look like — <code>Cd111 -&gt;
+                    111</code> becomes <b>111Cd</b>, and <code>107Ag</code>
+                    or <code>Ag107</code> both become <b>107Ag</b>.</p>
+                    <p>It only ever runs because you pressed it, and it only
+                    touches the open file. Use <b>Apply to files…</b> to
+                    carry the result to the rest of the batch.</p>
+                    """),
+                dict(
+                    id="load_all_rows",
+                    title="Load all rows",
+                    rect=(0.653, 0.137, 0.075, 0.026),
+                    body="""
+                    <p>The preview opens on a small window and pulls more
+                    from disk as you scroll, so a multi-gigabyte time series
+                    opens as quickly as a short one. This reads the rest of
+                    the file straight away instead of waiting for
+                    scrolling, and reveals every column at the same time.</p>
+                    """),
+                dict(
+                    id="badge_bar",
+                    title="Isotope badges",
+                    rect=(0.047, 0.169, 0.215, 0.026),
+                    body="""
+                    <p>One badge sits above each column. A mapped column
+                    shows its isotope (<b>111Cd</b>); the <b>✕</b> unmaps it.
+                    An unmapped column shows <b>+ assign</b> — click it to
+                    pick an isotope from the periodic table.</p>
+                    <p>Mapping a column by hand is always available; you do
+                    not have to use detection at all.</p>
+                    """),
+                dict(
+                    id="header_row",
+                    title="Header row",
+                    rect=(0.047, 0.311, 0.678, 0.023),
+                    body="""
+                    <p>The row holding the column names, found automatically
+                    and marked in bold with an accent wash. The row numbers
+                    on the left show which section you are in: <b>·</b> for
+                    the metadata above the header, <b>▸</b> for the header
+                    itself, then <b>1, 2, 3…</b> counting data rows.</p>
+                    <p>If the guess is wrong, right-click any row and choose
+                    <b>Use this row as the column names</b>. The columns
+                    relabel instantly — the whole file is already loaded, so
+                    nothing is re-read. <b>Detect the header again</b> goes
+                    back to the automatic choice.</p>
+                    """),
+                dict(
+                    id="preview_table",
+                    title="Preview",
+                    rect=(0.047, 0.204, 0.678, 0.470),
+                    body="""
+                    <p>The file as it is on disk, metadata lines included.
+                    The grid keeps a full shape even for a narrow file, so a
+                    two-column export still looks like a table rather than a
+                    pair of stripes.</p>
+                    <p>Rows arrive as you scroll down and columns as you
+                    scroll right, so a wide instrument export does not have
+                    to render hundreds of channels before you can look at
+                    it.</p>
+                    <p>Mapped columns are tinted green. Removed rows and
+                    columns are struck through.</p>
+                    """),
+                dict(
+                    id="status_line",
+                    title="Status line",
+                    rect=(0.047, 0.697, 0.500, 0.020),
+                    body="""
+                    <p>Reports what has just happened, and how the file was
+                    read: how many rows are loaded, which line the column
+                    names came from, and the separator and encoding that were
+                    detected — for example <i>read as comma-separated,
+                    utf-8</i>.</p>
+                    <p>It also warns when a file ends in a footer, naming the
+                    row where the data stops.</p>
+                    """),
+                dict(
+                    id="effective_line",
+                    title="What will be imported",
+                    rect=(0.047, 0.859, 0.450, 0.018),
+                    body="""
+                    <p>A running summary of what this file contributes once
+                    removals are taken into account: how many rows, how many
+                    signal columns, the dwell in use and where it came from,
+                    and the resulting acquisition duration.</p>
+                    <p>Worth a glance before importing — a duration that
+                    looks wrong usually means the wrong time unit.</p>
                     """),
                 dict(
                     id="time_format",
-                    title="Time · Data Format",
-                    rect=(0.060, 0.222, 0.579, 0.178),
+                    title="Time and data format",
+                    rect=(0.044, 0.729, 0.686, 0.151),
                     body="""
                     <ul>
-                      <li><b>Time column</b> — pick the column holding time,
-                          or <i>None — generate from dwell</i> to build the
-                          time axis from the dwell time.</li>
-                      <li><b>Time unit</b> — seconds, ms or ns.</li>
-                      <li><b>Dwell time</b> — calculate from the time data,
-                          or enter it manually in ms.</li>
-                      <li><b>Data type</b> — the signal unit
-                          (<i>Counts</i>).</li>
+                      <li><b>Time column</b> — the column holding time, or
+                          <i>None — generate from dwell</i> to build the time
+                          axis from the dwell instead.</li>
+                      <li><b>Time unit</b> — seconds, milliseconds,
+                          microseconds or nanoseconds.</li>
+                      <li><b>Dwell time</b> — <i>Calculate from time data</i>
+                          reads the spacing between readings and shows it in
+                          the Dwell box, which becomes read-only so it is
+                          clear the number is derived. <i>Manual entry</i>
+                          lets you type it.</li>
+                      <li><b>Data type</b> — whether the signal is in
+                          <i>Counts</i> or <i>Counts per second</i>.</li>
                     </ul>
+                    <p>These settings belong to the file on screen. Moving to
+                    another sample shows that sample's own values, so a
+                    survey run and a long acquisition in the same batch can
+                    keep different dwells.</p>
                     """),
                 dict(
-                    id="preview_mapping",
-                    title="Preview / column mapping",
-                    rect=(0.060, 0.411, 0.579, 0.432),
+                    id="files_panel",
+                    title="Files",
+                    rect=(0.735, 0.079, 0.225, 0.395),
                     body="""
-                    <p>Preview of the parsed table. Isotopes are auto-detected
-                    from column names (e.g. <code>107Ag</code>); click the
-                    badge above a column to change or unmap it, or
-                    <b>+ assign</b> to map an unrecognised column. Errors
-                    (like an unreadable file) are reported here.</p>
+                    <p>The batch, one file at a time. Each card carries a
+                    miniature of that file's own first rows, so a
+                    two-column rinse and a six-column run are told apart
+                    without reading anything.</p>
+                    <p>Page through with the <b>‹ ›</b> arrows, the mouse
+                    wheel, the arrow keys, or by clicking a neighbouring
+                    card. The dots below show your position. Selecting a
+                    file loads it into the preview.</p>
+                    <p>The heading counts how many files are ready:
+                    <i>12 of 12 mapped</i>.</p>
                     """),
                 dict(
-                    id="current_mappings",
-                    title="Current mappings",
-                    rect=(0.645, 0.232, 0.293, 0.551),
+                    id="mappings_panel",
+                    title="Mappings",
+                    rect=(0.735, 0.485, 0.225, 0.395),
                     body="""
-                    <p>The list of column → isotope assignments that will be
-                    imported. <b>Remove selected</b> unmaps entries;
-                    <b>Re-detect isotopes</b> re-runs auto-detection.</p>
+                    <p>The column → isotope assignments for the file on
+                    screen. A mapping whose column has been removed is shown
+                    greyed and marked <i>column removed</i>; it is paused
+                    rather than deleted, so restoring the column brings the
+                    isotope back with it.</p>
                     """),
                 dict(
-                    id="bottom_buttons",
-                    title="Apply to all files / Cancel / Import data",
-                    rect=(0.625, 0.862, 0.313, 0.036),
+                    id="apply_to_files",
+                    title="Apply to files…",
+                    rect=(0.044, 0.890, 0.070, 0.028),
                     body="""
-                    <p><b>Apply to all files</b> copies this configuration to
-                    every file in the batch; <b>Import data</b> loads the
-                    file(s) as samples.</p>
+                    <p>Gives other files this file's whole setup: the header
+                    row, the removed columns and rows, and the isotope
+                    mappings. A checklist appears so you can choose which
+                    files — everything is ticked to begin with, and unticking
+                    lets a batch that needs two different setups have
+                    both.</p>
+                    <p>Each mapping is verified against the target file's own
+                    column names. An identical name is applied; a different
+                    name that resolves to the same isotope is applied and
+                    reported; anything else is left unmapped and reported.
+                    Nothing is guessed.</p>
+                    <p>Each chosen file is then checked for isotopes of its
+                    own, so a run carrying an extra channel picks it up
+                    without being opened.</p>
+                    """),
+                dict(
+                    id="import_cancel",
+                    title="Cancel · Import data",
+                    rect=(0.820, 0.890, 0.140, 0.028),
+                    body="""
+                    <p><b>Import data</b> loads the files as samples and
+                    remembers this setup for <b>Previous setup…</b>. If any
+                    file has no mapped columns it says so first, since such a
+                    file would import with no data.</p>
+                    <p><b>Cancel</b> closes without importing and without
+                    remembering anything.</p>
                     """),
             ],
         ),

@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 from PySide6.QtWidgets import QApplication
 
-from loading.import_csv_dialogs import FileStructureDialog
-from loading.import_exclusions import SCOPE_FILE
+from loading.csv import FileStructureDialog
+from loading.csv.exclusions import SCOPE_FILE
 
 
 def write_files(directory: pathlib.Path) -> list[str]:
@@ -230,14 +230,32 @@ def main() -> int:
                              "comma-separated" in dialog._row_status_label.text()))
         dialog.exclusions.undo()
 
-        print("File list")
-        results.append(check("three rows", dialog.file_list.count() == 3))
-        results.append(check("open file has a thumbnail",
+        print("File slider")
+        results.append(check("three cards", dialog.file_list.count() == 3))
+        results.append(check("shows one file at a time",
+                             dialog.file_list.current_index() == 0))
+        dialog.file_list.slider.step(1)
+        results.append(check("next pages forward",
+                             dialog.file_list.current_index() == 1))
+        results.append(check("paging drives the preview",
+                             dialog.current_file_index == 1))
+        dialog.file_list.slider.step(-1)
+        results.append(check("previous pages back",
+                             dialog.file_list.current_index() == 0))
+        dialog.file_list.slider.step(-1)
+        results.append(check("paging stops at the first file",
+                             dialog.file_list.current_index() == 0))
+        results.append(check("open file's card shows its columns",
                              bool(dialog.file_list.card(0).header)))
+        results.append(check("and real values under them",
+                             bool(dialog.file_list.card(0).cells)))
         dialog._load_all_thumbnails()
-        results.append(check("every card has a thumbnail",
+        results.append(check("every card carries data",
                              all(dialog.file_list.card(i).header
+                                 and dialog.file_list.card(i).cells
                                  for i in range(3))))
+        results.append(check("cards show up to ten rows",
+                             len(dialog.file_list.card(0).cells) == 10))
         results.append(check("starts on the first file",
                              dialog.file_list.current_index() == 0))
         dialog.file_list.set_current(2)
@@ -278,7 +296,7 @@ def main() -> int:
         dialog.file_list.set_current(0)
         dialog.exclusions.restore_all()
         from PySide6.QtCore import Qt
-        from loading.import_csv_dialogs import ApplyTargetsDialog
+        from loading.csv import ApplyTargetsDialog
         candidates = [(i, pathlib.Path(p).name)
                       for i, p in enumerate(paths) if i != 0]
         picker = ApplyTargetsDialog(candidates, "sample_0.csv")
@@ -311,6 +329,37 @@ def main() -> int:
         results.append(check("no file needs opening to be mapped",
                              all(dialog._effective_mappings(i) for i in range(3))))
         dialog.exclusions.restore_all()
+
+        print("Remembering the setup")
+        from loading.csv import profiles as _profiles
+        _original_key = _profiles.SETTINGS_KEY
+        _profiles.SETTINGS_KEY = "csv_import/smoke_setups"
+        _profiles.clear_profiles()
+        try:
+            dialog.file_list.set_current(0)
+            captured = dialog._capture_profile()
+            results.append(check("setup records the header row",
+                                 captured.header_row == 3))
+            results.append(check("setup records the mappings",
+                                 len(captured.mappings) >= 1))
+            results.append(check("setup records the time settings",
+                                 "data_type" in captured.params))
+            _profiles.save_profile(captured)
+            results.append(check("setup is remembered",
+                                 len(_profiles.load_profiles()) == 1))
+
+            dialog.exclusions.restore_all()
+            for key in list(dialog.column_mappings):
+                del dialog.column_mappings[key]
+            applied, missing = dialog._apply_profile(_profiles.load_profiles()[0])
+            results.append(check("setup reapplies to every file", applied == 3))
+            results.append(check("nothing went missing", missing == []))
+            results.append(check("mappings come back",
+                                 all(dialog._effective_mappings(i)
+                                     for i in range(3))))
+        finally:
+            _profiles.clear_profiles()
+            _profiles.SETTINGS_KEY = _original_key
 
         print("Parse detection")
         detected = dialog._detected_settings(0)
@@ -383,10 +432,10 @@ def main() -> int:
                              all('delimiter' in f for f in config['files'])))
 
         print("Worker applies the exclusions")
-        from loading.import_csv_dialogs import DataProcessThread
+        from loading.csv import DataProcessThread
         worker = DataProcessThread(config)
         frame = worker._load_delimited(first['path'], config['settings'])
-        from loading.import_exclusions import apply_exclusions
+        from loading.csv.exclusions import apply_exclusions
         filtered = apply_exclusions(frame, first['excluded_columns'],
                                     first['excluded_rows'])
         results.append(check("Notes dropped at import",
