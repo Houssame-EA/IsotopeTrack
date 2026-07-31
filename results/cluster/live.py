@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import logging
 
 import numpy as np
@@ -1283,8 +1284,15 @@ class ClusterLiveTab(QWidget):
         self.view.loadFinished.connect(self._on_load_finished)
         self._connect_downloads()
 
-        index = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "live_ui", "index.html")
+        base = getattr(sys, "_MEIPASS", None)
+        if base:
+            index = os.path.join(base, "results", "cluster",
+                                 "live_ui", "index.html")
+        else:
+            index = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "live_ui", "index.html")
+        if not os.path.isfile(index):
+            _log.error("live_ui assets missing at %s", index)
         self.view.load(QUrl.fromLocalFile(index))
         layout.addWidget(self.view)
 
