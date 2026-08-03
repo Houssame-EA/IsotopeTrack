@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QLocale
 from PySide6.QtGui import QDesktopServices, QDoubleValidator
-from PySide6.QtCore import QUrl
 import logging
 
 from tools.mass_fraction_utils import (
@@ -101,14 +100,14 @@ class MassFractionCalculator(QDialog):
     COL_MW = 3
     COL_ELEM_DENS = 4
     COL_COMP_DENS = 5
-    COL_STRUCTURE = 6
+    COL_STRUCTURE_BTN = 6
 
     def __init__(self,
                  selected_isotopes: dict,
                  periodic_table_info: PeriodicTableInfo,
                  compound_db: CSVCompoundDatabase,
                  /,
-                 parent: QWidget | Any=None):
+                 parent: QWidget | Any = None):
         super().__init__(parent)
         self.selected_isotopes = selected_isotopes
         self.periodic_table_info = periodic_table_info
@@ -521,14 +520,14 @@ class MassFractionCalculator(QDialog):
         hdr.setSectionResizeMode(self.COL_MW, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(self.COL_ELEM_DENS, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(self.COL_COMP_DENS, QHeaderView.ResizeMode.Fixed)
-        hdr.setSectionResizeMode(self.COL_STRUCTURE, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(self.COL_STRUCTURE_BTN, QHeaderView.ResizeMode.Fixed)
 
         self.table.setColumnWidth(self.COL_ELEMENT, 80)
         self.table.setColumnWidth(self.COL_MASSFRAC, 120)
         self.table.setColumnWidth(self.COL_MW, 140)
         self.table.setColumnWidth(self.COL_ELEM_DENS, 140)
         self.table.setColumnWidth(self.COL_COMP_DENS, 160)
-        self.table.setColumnWidth(self.COL_STRUCTURE, 110)
+        self.table.setColumnWidth(self.COL_STRUCTURE_BTN, 110)
 
         self.table.setItemDelegateForColumn(
             self.COL_COMP_DENS, _PositiveDoubleDelegate(self.table)
@@ -593,10 +592,7 @@ class MassFractionCalculator(QDialog):
             cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, self.COL_COMP_DENS, cd_item)
 
-            btn = QPushButton("Open")
-            btn.setToolTip("Open structure page on Materials Project")
-            btn.clicked.connect(lambda _, r=row: self._open_structure(r))
-            self.table.setCellWidget(row, self.COL_STRUCTURE, btn)
+            self._update_compound_btn(row, Compound(formula=element))
 
     @staticmethod
     def _make_readonly_item(text: str) -> QTableWidgetItem:
@@ -608,7 +604,7 @@ class MassFractionCalculator(QDialog):
     def _current_formula(self, row: int) -> str:
         combo = self.table.cellWidget(row, self.COL_FORMULA)
         if isinstance(combo, FormulaComboBox):
-            return combo.text() # TODO: empiric testing
+            return combo.text()  # TODO: empiric testing
         else:
             return ''
 
@@ -662,13 +658,13 @@ class MassFractionCalculator(QDialog):
         self.table.setItem(row, self.COL_MW, self._make_readonly_item(f"{mw:.6f}"))
 
     def _on_compound_selected(self, row: int, compound: Optional[Compound]):
-        # TODO: Check if we can change farther down stream the formula thingy.
-        print("Compound selected :", compound)
+        # TODO: Check if we can change farther down stream the formula thingy
         if compound is None:
             return
         formula = compound.formula
         self._calc_mass_fraction(row, formula)
         self._calc_molecular_weight(row, formula)
+        self._update_compound_btn(row, compound)
 
         counts = reduce_counts(parse_formula_to_counts(formula))
         if len(counts) <= 1:
@@ -828,14 +824,6 @@ class MassFractionCalculator(QDialog):
             self._refresh_db_status_style()
             QMessageBox.information(self, "Success", "Database loaded!")
 
-    def _open_structure(self, row: int):
-        formula = self._current_formula(row)
-        if not formula:
-            QMessageBox.warning(self, "No compound", "Please choose a compound first.")
-            return
-        url = self.compound_db.best_url_for_formula(formula)
-        QDesktopServices.openUrl(QUrl(url))
-
     def _apply_mass_fractions(self):
         selected = self._get_selected_samples()
         apply_all = self.radio_all.isChecked()
@@ -891,3 +879,23 @@ class MassFractionCalculator(QDialog):
     def reject(self):
         self._save_state()
         super().reject()
+
+    def _update_compound_btn(self, row: int, compound: Compound):
+        btn_widget = self.table.cellWidget(row, self.COL_STRUCTURE_BTN)
+        if not isinstance(btn_widget, QPushButton):
+            if isinstance(btn_widget, QWidget):
+                btn_widget.hide()
+                btn_widget.deleteLater()
+
+            btn_widget = QPushButton("Open")
+            self.table.setCellWidget(row, self.COL_STRUCTURE_BTN, btn_widget)
+
+        btn_widget.clicked.disconnect()
+
+        if compound.mp_url:
+            btn_widget.clicked.connect(lambda: QDesktopServices.openUrl(compound.mp_url))
+            btn_widget.setToolTip(f"Opens default browser at: {compound.mp_url}")
+            btn_widget.setDisabled(False)
+        else:
+            btn_widget.setDisabled(True)
+            btn_widget.setToolTip("No online material found")
