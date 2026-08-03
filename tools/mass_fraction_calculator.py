@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
 )
 from PySide6.QtCore import Qt, Signal, QLocale
-from PySide6.QtGui import QDesktopServices, QDoubleValidator
+from PySide6.QtGui import QDesktopServices, QDoubleValidator, QColor, QBrush
 import logging
 
 from tools.mass_fraction_utils import (
@@ -84,6 +84,11 @@ class _PositiveDoubleDelegate(QStyledItemDelegate):
             _itk_log.exception("Handled exception in setModelData")
             return
         model.setData(index, f"{val:.6f}", Qt.ItemDataRole.EditRole)
+        model.setData(
+            index,
+            QBrush(QColor("yellow")) if val == 0 else QBrush(Qt.BrushStyle.NoBrush),
+            Qt.ItemDataRole.BackgroundRole,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -592,8 +597,8 @@ class MassFractionCalculator(QDialog):
             edens = float(ed.get('density', 0) or 0)
             self.table.setItem(row, _MfcCol.ELEM_DENS, self._make_readonly_item(f"{edens:.6f}"))
 
-            cd_item = QTableWidgetItem(f"{edens:.6f}")
-            cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            cd_item = QTableWidgetItem()
+            self._set_compound_density_item(cd_item, edens)
             self.table.setItem(row, _MfcCol.COMP_DENS, cd_item)
 
             self._update_compound_btn(row, Compound(formula=element))
@@ -604,6 +609,15 @@ class MassFractionCalculator(QDialog):
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
+
+    @staticmethod
+    def _set_compound_density_item(item: QTableWidgetItem, density: float) -> None:
+        """Display zero compound densities as a warning without overriding normal cells."""
+        item.setText(f"{density:.6f}")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setBackground(
+            QBrush(QColor("yellow")) if density == 0 else QBrush(Qt.BrushStyle.NoBrush)
+        )
 
     def _current_formula(self, row: int) -> str:
         combo = self.table.cellWidget(row, _MfcCol.FORMULA)
@@ -678,8 +692,8 @@ class MassFractionCalculator(QDialog):
         else:
             d = float(compound.density or 0.0)
 
-        cd_item = QTableWidgetItem(f"{d:.6f}")
-        cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        cd_item = self.table.item(row, _MfcCol.COMP_DENS) or QTableWidgetItem()
+        self._set_compound_density_item(cd_item, d)
         self.table.setItem(row, _MfcCol.COMP_DENS, cd_item)
 
         self._highlight_tracked(row, formula)
@@ -726,8 +740,8 @@ class MassFractionCalculator(QDialog):
             mass = float(ed['mass']) if ed else 0.0
             self.table.setItem(row, _MfcCol.MW, self._make_readonly_item(f"{mass:.6f}"))
             d = float(ed.get('density', 0) or 0) if ed else 0.0
-            cd = QTableWidgetItem(f"{d:.6f}")
-            cd.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            cd = QTableWidgetItem()
+            self._set_compound_density_item(cd, d)
             self.table.setItem(row, _MfcCol.COMP_DENS, cd)
 
     def _select_all_samples(self):
@@ -817,8 +831,8 @@ class MassFractionCalculator(QDialog):
 
             if element in saved_densities:
                 custom_density = saved_densities[element]
-                cd_item = QTableWidgetItem(f"{custom_density:.6f}")
-                cd_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cd_item = QTableWidgetItem()
+                self._set_compound_density_item(cd_item, custom_density)
                 self.table.setItem(row, _MfcCol.COMP_DENS, cd_item)
 
     def _manual_load_csv(self):
