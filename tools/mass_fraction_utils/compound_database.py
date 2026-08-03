@@ -246,7 +246,7 @@ class CSVCompoundDatabase:
     def row_count(self) -> int:
         return len(self.df)
 
-    def get_first_compound_by_formula(self, formula) -> Optional[Compound]:
+    def get_first_compound_by_formula(self, formula: str) -> Optional[Compound]:
         # Regex that checks if all elements are present without ordering.
         rows_matching_formula = self.df[self.df[_MFCol.FORMULA] == formula]
 
