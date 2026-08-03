@@ -306,3 +306,6 @@ class CompoundDatabaseModel(QAbstractListModel):
         self.beginResetModel()
         self.results = self.db.search_compounds_by_formula(text)
         self.endResetModel()
+
+    def get_first_compound(self) -> Optional[Compound]:
+        return self.results[0] if len(self.results) > 0 else None
