@@ -4,6 +4,7 @@ from tools.mass_fraction_utils.formula_utils import (
     reduce_counts,
     signature_from_counts,
     canonicalize_preserve_user_order,
+    reduced_counts_from_formula,
 )
 from tools.mass_fraction_utils.formula_editor import FormulaComboBox
 from tools.mass_fraction_utils.mass_fraction_service import MassFractionService
@@ -15,5 +16,6 @@ __all__ = [
     'signature_from_counts',
     'canonicalize_preserve_user_order',
     'FormulaComboBox',
-    'MassFractionService'
+    'MassFractionService',
+    'reduced_counts_from_formula',
 ]

@@ -15,7 +15,7 @@ import logging
 from tools.mass_fraction_utils import (
     CSVCompoundDatabase,
     parse_formula_to_counts,
-    reduce_counts,
+    reduced_counts_from_formula,
     FormulaComboBox,
 )
 from tools.mass_fraction_utils.compound import Compound
@@ -614,7 +614,7 @@ class MassFractionCalculator(QDialog):
             return
         element = el_item.text()
 
-        counts = reduce_counts(parse_formula_to_counts(formula))
+        counts = reduced_counts_from_formula(formula)
         if not counts:
             mf = 1.0
         else:
@@ -636,7 +636,7 @@ class MassFractionCalculator(QDialog):
         self.table.setItem(row, self.COL_MASSFRAC, self._make_readonly_item(f"{mf:.6f}"))
 
     def _calc_molecular_weight(self, row: int, formula: str):
-        counts = reduce_counts(parse_formula_to_counts(formula))
+        counts = reduced_counts_from_formula(formula)
         mw = 0.0
         valid = bool(counts)
         for el, n in counts.items():
@@ -666,11 +666,11 @@ class MassFractionCalculator(QDialog):
         self._calc_molecular_weight(row, formula)
         self._update_compound_btn(row, compound)
 
-        counts = reduce_counts(parse_formula_to_counts(formula))
+        counts = reduced_counts_from_formula(formula)
         if len(counts) <= 1:
             el_item = self.table.item(row, self.COL_ELEMENT)
-            ed = self.periodic_table_info.get_element_by_symbol(el_item.text()) if el_item else None
-            d = float(ed.get('density', 0) or 0) if ed else 0.0
+            density = self.periodic_table_info.get_density_by_element(el_item.text()) if el_item else None
+            d = density if density else 0.0
         else:
             d = float(compound.density or 0.0)
 

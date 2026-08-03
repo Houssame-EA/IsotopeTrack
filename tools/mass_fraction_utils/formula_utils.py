@@ -87,6 +87,11 @@ def reduce_counts(counts: dict) -> dict:
     return {k: v // g for k, v in counts.items()}
 
 
+def reduced_counts_from_formula(formula: str) -> dict: # TODO: tests
+    """Prases the formula and returns it's reduced counts."""
+    return reduce_counts(parse_formula_to_counts(formula))
+
+
 def signature_from_counts(counts: dict) -> str:
     """Order-independent canonical key for matching equivalent formulas."""
     if not counts:
@@ -96,7 +101,7 @@ def signature_from_counts(counts: dict) -> str:
 
 def signature_from_formula(formula: str) -> str: # TODO: tests
     """Order-independent canonical key for matching equivalent formulas."""
-    return signature_from_counts(reduce_counts(parse_formula_to_counts(formula)))
+    return signature_from_counts(reduced_counts_from_formula(formula))
 
 
 def elements_with_count_from_formula(formula: str) -> list[str]: # TODO: tests
@@ -133,6 +138,6 @@ def _join_formula_from_counts(counts: dict, prefer_order: list[str] | None = Non
 
 def canonicalize_preserve_user_order(formula: str) -> str:
     """Reduce stoichiometry but preserve the user's element order."""
-    counts = reduce_counts(parse_formula_to_counts(formula))
+    counts = reduced_counts_from_formula(formula)
     order = _element_order_in_formula(formula)
     return _join_formula_from_counts(counts, prefer_order=order)
