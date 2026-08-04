@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QRadioButton, QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView,
                                QAbstractItemView, QSpinBox)
 
-from tools.mass_fraction_utils import MassFractionService, CSVCompoundDatabase
+from tools.mass_fraction_utils import MassFractionService, CompoundDatabase
 from tools.parameters_table import (ParametersTableView, COL_SIGMA)
 from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
                             QEvent, QEventLoop, QSettings)
@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
         self.user_action_logger.log_action('STARTUP', 'Application started')
 
         self.periodic_table_info = PeriodicTableInfo()
-        self.compound_db: CSVCompoundDatabase = CSVCompoundDatabase()
+        self.compound_db: CompoundDatabase = CompoundDatabase()
 
         self.unsaved_changes = False
         self.folder_paths = []

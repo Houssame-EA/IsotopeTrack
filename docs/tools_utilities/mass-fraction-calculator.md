@@ -11,7 +11,7 @@
 
 ## Classes
 
-### `CSVCompoundDatabase`
+### `CompoundDatabase`
 
 Database loader for materials from CSV with signature-based lookup.
 
@@ -40,7 +40,7 @@ Key design decisions that prevent the old recursion crash:
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, element: str, csv_database: CSVCompoundDatabase, tracked_elemen` |  |
+| `__init__` | `(self, element: str, csv_database: CompoundDatabase, tracked_elemen` |  |
 | `_setup_compounds` | `(self)` | Build the full item list but only load a capped subset into the widget. |
 | `_rebuild_items` | `(self, items: list[dict])` | Replace dropdown items, blocking ALL signals to prevent recursion. |
 | `_do_filter` | `(self)` | Actually perform the filter (called by debounce timer). |

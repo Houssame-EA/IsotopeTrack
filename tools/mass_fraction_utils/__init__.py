@@ -1,4 +1,5 @@
-from tools.mass_fraction_utils.compound_database import CSVCompoundDatabase
+"""This package ensures the logical part of the mass fraction and formula manipulations."""
+from tools.mass_fraction_utils.compound_database import CompoundDatabase
 from tools.mass_fraction_utils.formula_utils import (
     parse_formula_to_counts,
     reduce_counts,
@@ -22,7 +23,7 @@ __all__ = [
     'elements_with_count_from_formula',
     'canonicalize_preserve_user_order',
 
-    'CSVCompoundDatabase',
+    'CompoundDatabase',
     'CompoundDatabaseModel',
 
     'FormulaEditor',

@@ -31,8 +31,8 @@ class _MFCol(StrEnum):
     DISPLAY_TEXT = auto()
 
 
-class CSVCompoundDatabase:
-    """Service that manages the querying of the data of a `CSVCompoundDatabase`"""
+class CompoundDatabase:
+    """Service that manages the querying of the data of a `CompoundDatabase`"""
 
     def __init__(self, tracked_elements: list[str] | None = None):
         self.analysed_elements = tracked_elements
@@ -266,7 +266,7 @@ class CompoundDatabaseModel(QAbstractListModel):
 
 
     def __init__(self,
-                 database: CSVCompoundDatabase,
+                 database: CompoundDatabase,
                  base_formula: Optional[str] = None,
                  parent: QObject | Any = None):
         super().__init__(parent=parent)

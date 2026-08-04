@@ -16,7 +16,7 @@ from tools.mass_fraction_calculator_widgets import (
     SampleSelectionWidget,
 )
 from tools.mass_fraction_table_model import MassFractionTableModel
-from tools.mass_fraction_utils import CSVCompoundDatabase
+from tools.mass_fraction_utils import CompoundDatabase
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from tools.theme import theme
 
@@ -31,7 +31,7 @@ class MassFractionCalculator(QDialog):
     def __init__(self,
                  selected_isotopes: dict,
                  periodic_table_info: PeriodicTableInfo,
-                 compound_db: CSVCompoundDatabase,
+                 compound_db: CompoundDatabase,
                  /,
                  parent: QWidget | Any = None, ):
         super().__init__(parent)

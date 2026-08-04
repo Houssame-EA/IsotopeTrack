@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QLineEdit, QWidget, QCompleter
 
 from tools.theme import theme
 from tools.mass_fraction_utils.compound import Compound
-from tools.mass_fraction_utils.compound_database import CSVCompoundDatabase, CompoundDatabaseModel
+from tools.mass_fraction_utils.compound_database import CompoundDatabase, CompoundDatabaseModel
 from tools.mass_fraction_utils.formula_utils import signature_from_formula
 
 
@@ -24,7 +24,7 @@ class FormulaEditor(QLineEdit):
     compound_changed = Signal(Compound)
 
     def __init__(self,
-                 compound_db: CSVCompoundDatabase,
+                 compound_db: CompoundDatabase,
                  default_formula: str = "",
                  parent: QWidget | Any = None):
         super().__init__(parent=parent)

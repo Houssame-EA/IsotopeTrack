@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.mass_fraction_table_model import MassFractionColumn, MassFractionTableModel
-from tools.mass_fraction_utils import CSVCompoundDatabase, FormulaEditor
+from tools.mass_fraction_utils import CompoundDatabase, FormulaEditor
 from tools.mass_fraction_utils.compound import Compound
 
 
@@ -99,7 +99,7 @@ class SampleSelectionWidget(QGroupBox):
 
 
 class _FormulaDelegate(QStyledItemDelegate):
-    def __init__(self, compound_db: CSVCompoundDatabase, parent=None):
+    def __init__(self, compound_db: CompoundDatabase, parent=None):
         super().__init__(parent)
         self.compound_db = compound_db
 
@@ -158,7 +158,7 @@ class _StructureDelegate(QStyledItemDelegate):
 class MassFractionTableWidget(QTableView):
     """View layer for a :class:`MassFractionTableModel`."""
 
-    def __init__(self, model: MassFractionTableModel, compound_db: CSVCompoundDatabase, parent=None):
+    def __init__(self, model: MassFractionTableModel, compound_db: CompoundDatabase, parent=None):
         super().__init__(parent)
         self.setModel(model)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
