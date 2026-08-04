@@ -1,12 +1,11 @@
-from typing import Any, Optional
+from typing import Any
 
-from PySide6.QtCore import Signal, QTimer, QModelIndex, Qt
-from PySide6.QtWidgets import QComboBox, QLineEdit, QWidget, QCompleter
+from PySide6.QtCore import Signal, QModelIndex
+from PySide6.QtWidgets import QLineEdit, QWidget, QCompleter
 
-from tools.mass_fraction_utils import CSVCompoundDatabase, canonicalize_preserve_user_order, reduce_counts, \
-    parse_formula_to_counts
+from tools.theme import theme
 from tools.mass_fraction_utils.compound import Compound
-from tools.mass_fraction_utils.compound_database import CompoundDatabaseModel
+from tools.mass_fraction_utils.compound_database import CSVCompoundDatabase, CompoundDatabaseModel
 from tools.mass_fraction_utils.formula_utils import signature_from_formula
 
 
@@ -39,11 +38,15 @@ class FormulaComboBox(QLineEdit):
         self.textChanged.connect(self.set_formula)
 
     def _setup_completion(self):
-        formula_completion = DirectQCompleter()
-        formula_completion.setParent(self)
-
+        formula_completion = DirectQCompleter(parent=self)
+        formula_completion.popup().setStyleSheet(
+            f"""
+            QListView {{ 
+                background-color: {theme.palette.bg_secondary}; 
+                color: {theme.palette.text_primary}; 
+            }}""")
         self.compound_model.setParent(formula_completion)
-        formula_completion.setModel(self.compound_model) # Check if parent would be completer or self.
+        formula_completion.setModel(self.compound_model)
         self.textEdited.connect(self.compound_model.search)
         formula_completion.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         formula_completion.activated[QModelIndex].connect(self._formula_selected)
@@ -56,7 +59,7 @@ class FormulaComboBox(QLineEdit):
         self.blockSignals(False)
         self.compound_changed.emit(compound)
 
-    def set_formula(self, formula:str):
+    def set_formula(self, formula: str):
         self.formula = formula
 
     def current_formula(self) -> str:
