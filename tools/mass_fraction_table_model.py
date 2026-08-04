@@ -5,13 +5,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Any
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QObject, QPersistentModelIndex
 from PySide6.QtGui import QBrush, QColor
 
 from tools.mass_fraction_utils import reduced_counts_from_formula
 from tools.mass_fraction_utils.compound import Compound
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
+from tools.theme import theme
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,10 @@ class MassFractionRow:
 class MassFractionTableModel(QAbstractTableModel):
     """Owns editable mass-fraction data, validation, and derived values."""
 
-    def __init__(self, selected_isotopes: dict, periodic_table_info: PeriodicTableInfo, parent=None):
+    def __init__(self,
+                 selected_isotopes: dict,
+                 periodic_table_info: PeriodicTableInfo,
+                 parent: QObject | Any = None):
         super().__init__(parent)
         self.periodic_table_info = periodic_table_info
         self._rows = self._initial_rows(selected_isotopes)
@@ -66,18 +71,23 @@ class MassFractionTableModel(QAbstractTableModel):
             ))
         return rows
 
-    def rowCount(self, parent=QModelIndex()):
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()):
         return 0 if parent.isValid() else len(self._rows)
 
-    def columnCount(self, parent=QModelIndex()):
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()):
         return 0 if parent.isValid() else len(MassFractionColumn)
 
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+    def headerData(self,
+                   section: int,
+                   orientation: Qt.Orientation,
+                   role: int = Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return HEADERS[section]
         return super().headerData(section, orientation, role)
 
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+    def data(self,
+             index: QModelIndex | QPersistentModelIndex,
+             role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         row, column = self._rows[index.row()], MassFractionColumn(index.column())
@@ -92,20 +102,39 @@ class MassFractionTableModel(QAbstractTableModel):
                 MassFractionColumn.STRUCTURE: "Open",
             }
             return values[column]
+
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            return int(Qt.AlignmentFlag.AlignCenter)
-        if role == Qt.ItemDataRole.BackgroundRole and column == MassFractionColumn.COMPOUND_DENSITY and row.compound_density == 0:
-            return QBrush(QColor("yellow"))
+            return Qt.AlignmentFlag.AlignCenter
+
+        if role == Qt.ItemDataRole.BackgroundRole:
+            if (column == MassFractionColumn.COMPOUND_DENSITY
+                    and row.compound_density == 0):
+                return QBrush(QColor(theme.palette.warning_bg))
+
+            if (column == MassFractionColumn.FORMULA
+                    and (not row.formula
+                         or self._formula_has_unknown_elements(row.formula)
+                         or not self._formula_has_base_element(row.formula, row.element))):
+                return QBrush(QColor(theme.palette.danger_border))
+
         if role == Qt.ItemDataRole.ToolTipRole:
             if column == MassFractionColumn.FORMULA:
-                return self._formula_tooltip(row.formula)
-            if column == MassFractionColumn.STRUCTURE and not row.compound.mp_url:
-                return "No online material found"
+                return self._formula_tooltip(row.formula, row.element)
+            if (column == MassFractionColumn.COMPOUND_DENSITY
+                    and row.compound_density == 0.0):
+                return "Density not found. Please enter density manually."
+
+            if column == MassFractionColumn.STRUCTURE:
+                if not row.compound.mp_url:
+                    return "No online material found."
+                else:
+                    return f"Default Browser: {row.compound.mp_url}"
+
         if role == Qt.ItemDataRole.UserRole:
             return row.compound
         return None
 
-    def flags(self, index):
+    def flags(self, index: QModelIndex | QPersistentModelIndex):
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -113,7 +142,10 @@ class MassFractionTableModel(QAbstractTableModel):
             flags |= Qt.ItemFlag.ItemIsEditable
         return flags
 
-    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+    def setData(self,
+                index: QModelIndex | QPersistentModelIndex,
+                value: Any,
+                role: int = Qt.ItemDataRole.EditRole):
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
             return False
         if index.column() != MassFractionColumn.COMPOUND_DENSITY:
@@ -128,7 +160,9 @@ class MassFractionTableModel(QAbstractTableModel):
         self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.BackgroundRole])
         return True
 
-    def set_compound(self, row_number: int, compound: Compound) -> None:
+    def set_compound(self,
+                     row_number: int,
+                     compound: Compound) -> None:
         if not 0 <= row_number < len(self._rows):
             return
         row = self._rows[row_number]
@@ -210,14 +244,24 @@ class MassFractionTableModel(QAbstractTableModel):
             weight += mass * count
         return weight if weight > 0 else float(self.periodic_table_info.get_mass_by_element(fallback_element) or 0)
 
-    def _formula_tooltip(self, formula: str) -> str:
+    def _formula_tooltip(self, formula: str, base_element: str) -> str:
         tracked = set(row.element for row in self._rows)
         counts = reduced_counts_from_formula(formula)
+        if not counts:
+            return f"<span style='color: {theme.palette.danger}'>No formula</span>"
+
+        if base_element not in counts.keys():
+            return f"<span style='color: {theme.palette.danger}'>Missing base element</span>"
+
         if len(counts) < 2:
             return ""
+
+        unknown_elements = set(counts) - self.periodic_table_info.get_all_elements_as_set()
         tracked_in = sorted(set(counts) & tracked)
-        other = sorted(set(counts) - tracked)
-        return "\n".join(filter(None, (
+        other = sorted(set(counts) - tracked - unknown_elements)
+
+        return "<br>".join(filter(None, (
+            f"<span style='color: {theme.palette.danger}'>Unknown: {', '.join(sorted(unknown_elements))}</span>" if unknown_elements else "",
             f"Tracked: {', '.join(tracked_in)}" if tracked_in else "",
             f"Not tracked: {', '.join(other)}" if other else "",
         )))
@@ -228,3 +272,11 @@ class MassFractionTableModel(QAbstractTableModel):
     def _emit_all_changed(self) -> None:
         if self._rows:
             self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, self.columnCount() - 1))
+
+    def _formula_has_unknown_elements(self, formula):
+        unknown_elements = (set(reduced_counts_from_formula(formula))
+                            - self.periodic_table_info.get_all_elements_as_set())
+        return len(unknown_elements) > 0
+
+    def _formula_has_base_element(self, formula, element):
+        return element in reduced_counts_from_formula(formula).keys()
