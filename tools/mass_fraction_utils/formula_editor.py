@@ -20,7 +20,7 @@ class DirectQCompleter(QCompleter):
         return [""]
 
 
-class FormulaComboBox(QLineEdit):
+class FormulaEditor(QLineEdit):
     compound_changed = Signal(Compound)
 
     def __init__(self,

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.mass_fraction_table_model import MassFractionColumn, MassFractionTableModel
-from tools.mass_fraction_utils import CSVCompoundDatabase, FormulaComboBox
+from tools.mass_fraction_utils import CSVCompoundDatabase, FormulaEditor
 from tools.mass_fraction_utils.compound import Compound
 
 
@@ -104,12 +104,12 @@ class _FormulaDelegate(QStyledItemDelegate):
         self.compound_db = compound_db
 
     def createEditor(self, parent, option, index):
-        editor = FormulaComboBox(self.compound_db, default_formula=index.data() or "", parent=parent)
+        editor = FormulaEditor(self.compound_db, default_formula=index.data() or "", parent=parent)
         editor.compound_changed.connect(lambda compound, row=index.row(): self._set_compound(row, compound))
         return editor
 
     def setEditorData(self, editor, index):
-        if isinstance(editor, FormulaComboBox):
+        if isinstance(editor, FormulaEditor):
             editor.blockSignals(True)
             editor.set_formula(index.data(Qt.ItemDataRole.EditRole) or "")
             editor.blockSignals(False)

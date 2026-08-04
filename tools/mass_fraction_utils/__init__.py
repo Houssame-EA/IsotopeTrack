@@ -8,7 +8,7 @@ from tools.mass_fraction_utils.formula_utils import (
     elements_with_count_from_formula,
     canonicalize_preserve_user_order,
 )
-from tools.mass_fraction_utils.formula_editor import FormulaComboBox
+from tools.mass_fraction_utils.formula_editor import FormulaEditor
 from tools.mass_fraction_utils.mass_fraction_service import MassFractionService
 from tools.mass_fraction_utils.compound import Compound
 from tools.mass_fraction_utils.compound_database import CompoundDatabaseModel
@@ -25,7 +25,7 @@ __all__ = [
     'CSVCompoundDatabase',
     'CompoundDatabaseModel',
 
-    'FormulaComboBox',
+    'FormulaEditor',
     'MassFractionService',
     'Compound',
 ]

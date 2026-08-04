@@ -28,7 +28,7 @@ Database loader for materials from CSV with signature-based lookup.
 | `get_variants_for_formula` | `(self, formula: str) → list[dict]` | Get ALL polymorphs/structures for a given formula. |
 | `get_material_data` | `(self, formula: str) → list[dict]` |  |
 
-### `FormulaComboBox` *(extends `QComboBox`)*
+### `FormulaEditor` *(extends `QComboBox`)*
 
 Editable combobox for chemical formulas with debounced filtering.
 
