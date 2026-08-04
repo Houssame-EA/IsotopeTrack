@@ -6763,7 +6763,7 @@ class MainWindow(QMainWindow):
                                 "Please select elements from the periodic table first.")
             return
         if not self.compound_db.is_loaded:
-            self.compound_db.auto_load_csv()  # TODO: check if it can crash something...
+            self.compound_db.auto_load_csv()
         try:
             from tools.mass_fraction_calculator import MassFractionCalculator
             calculator = MassFractionCalculator(

@@ -37,6 +37,7 @@ class MassFractionCalculator(QDialog):
         super().__init__(parent)
         self.parent_window = parent
         self.compound_db = compound_db
+        self.compound_db.init_with_analysed_elements(list(selected_isotopes.keys()))
         self.setWindowTitle("Mass Fraction Calculator")
         self.setMinimumSize(1100, 550)
         self.resize(1500, 700)
@@ -95,7 +96,9 @@ class MassFractionCalculator(QDialog):
 
     def _refresh_database_status(self) -> None:
         if self.compound_db.is_loaded:
-            self.db_status_label.setText(f"database: {self.compound_db.row_count()}")
+            self.db_status_label.setText(
+                f"database: {self.compound_db.total_row_count()} "
+                f"({self.compound_db.row_count()} w/ tracked elements)")
             self.load_button.hide()
         else:
             self.db_status_label.setText("database: Not found")

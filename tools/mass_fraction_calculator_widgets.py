@@ -158,7 +158,10 @@ class _StructureDelegate(QStyledItemDelegate):
 class MassFractionTableWidget(QTableView):
     """View layer for a :class:`MassFractionTableModel`."""
 
-    def __init__(self, model: MassFractionTableModel, compound_db: CompoundDatabase, parent=None):
+    def __init__(self,
+                 model: MassFractionTableModel,
+                 compound_db: CompoundDatabase,
+                 parent=None):
         super().__init__(parent)
         self.setModel(model)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)

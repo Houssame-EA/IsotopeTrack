@@ -34,14 +34,14 @@ class _MFCol(StrEnum):
 class CompoundDatabase:
     """Service that manages the querying of the data of a `CompoundDatabase`"""
 
-    def __init__(self, tracked_elements: list[str] | None = None):
-        self.analysed_elements = tracked_elements
+    def __init__(self, analysed_elements: list[str] | None = None):
+        self.analysed_elements = analysed_elements
 
         self.df_og: pd.DataFrame = pd.DataFrame()
         self.df: pd.DataFrame = self.df_og
         self.is_loaded = False
 
-    def _init_df_with_analysed_elements(self):
+    def init_with_analysed_elements(self, analysed_elements: list[str] | None = None):
         """
         Initializes `self.df`with the periodic table elements and narrows
         down the search space to compounds containing analyzed elements.
@@ -49,6 +49,7 @@ class CompoundDatabase:
         logger.info("Initializing with elements (from periodic table).")
         self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
 
+        self.analysed_elements = analysed_elements
         if self.analysed_elements:
             self.df = self.df[
                 self.df["formula"].str
@@ -108,7 +109,7 @@ class CompoundDatabase:
                     logger.info("Found CSV at %s", p)
                     return self.load_csv(p)
         logger.warning("No CSV file found in standard locations")
-        self._init_df_with_analysed_elements()
+        self.init_with_analysed_elements(self.analysed_elements)
         return False
 
     def load_csv(self, csv_path: str | Path) -> bool:
@@ -120,7 +121,7 @@ class CompoundDatabase:
             logger.info("Loading CSV from %s", csv_path)
             self.df_og = pd.read_csv(csv_path)
             if not isinstance(self.df_og, pd.DataFrame):
-                self._init_df_with_analysed_elements()
+                self.init_with_analysed_elements(self.analysed_elements)
 
                 return False
             logger.info("CSV loaded with %d rows", len(self.df_og))
@@ -165,7 +166,7 @@ class CompoundDatabase:
                         + " g/cm³) - " + self.df_og[_MFCol.MATERIAL_ID])
 
             # Adds the periodic table elements
-            self._init_df_with_analysed_elements()
+            self.init_with_analysed_elements(self.analysed_elements)
 
             self.is_loaded = True
             logger.info(
@@ -243,6 +244,9 @@ class CompoundDatabase:
         else:
             return ""
 
+    def total_row_count(self) -> int:
+        return len(self.df_og)
+
     def row_count(self) -> int:
         return len(self.df)
 
@@ -258,12 +262,12 @@ class CompoundDatabase:
 
 class CompoundDatabaseModel(QAbstractListModel):
     """Adaptor between `CompoundService` and `QAbstractListModel`"""
+
     class DataColumn(IntEnum):
         DISPLAY_TEXT = Qt.ItemDataRole.DisplayRole
         FORMULA = Qt.ItemDataRole.EditRole
         COMPOUND = Qt.ItemDataRole.UserRole | 0x00
         DENSITY = Qt.ItemDataRole.UserRole | 0x01
-
 
     def __init__(self,
                  database: CompoundDatabase,
@@ -275,7 +279,6 @@ class CompoundDatabaseModel(QAbstractListModel):
                              if base_formula
                              else None)
         self.results: list[Compound] = []
-        self.search(self.base_formula or "")
 
     def rowCount(self, /, parent=QModelIndex()):
         return len(self.results)
