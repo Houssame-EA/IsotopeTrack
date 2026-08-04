@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QGroupBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton,
     QRadioButton, QStyledItemDelegate, QStyleOptionViewItem, QTableView,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget
 )
 
 from tools.mass_fraction_table_model import MassFractionColumn, MassFractionTableModel
@@ -24,10 +24,9 @@ class _CheckableSampleItem(QWidget):
         self.sample_name = sample_name
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 5, 2)
-        self.checkbox = QCheckBox()
+        self.checkbox = QCheckBox(sample_name)
         self.checkbox.setChecked(True)
         layout.addWidget(self.checkbox)
-        layout.addWidget(QLabel(sample_name))
         layout.addStretch()
 
 
@@ -72,8 +71,6 @@ class SampleSelectionWidget(QGroupBox):
         layout.addWidget(apply_group)
         layout.addStretch()
 
-    def _setup_ui(self):
-        pass
     def selected_samples(self) -> list[str]:
         result = []
         for row in range(self.sample_list.count()):
@@ -141,7 +138,7 @@ class _DensityDelegate(QStyledItemDelegate):
 
 class _StructureDelegate(QStyledItemDelegate):
     def paint(self, painter, option: QStyleOptionViewItem, index):
-        button = QPushButton("Open")
+        button = QPushButton("Open", parent=option.widget)
         button.setEnabled(bool(index.data(Qt.ItemDataRole.UserRole).mp_url))
         button.resize(option.rect.size())
         painter.save()
@@ -164,7 +161,6 @@ class MassFractionTableWidget(QTableView):
     def __init__(self, model: MassFractionTableModel, compound_db: CSVCompoundDatabase, parent=None):
         super().__init__(parent)
         self.setModel(model)
-        self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.setItemDelegateForColumn(MassFractionColumn.FORMULA, _FormulaDelegate(compound_db, self))
         self.setItemDelegateForColumn(MassFractionColumn.COMPOUND_DENSITY, _DensityDelegate(self))

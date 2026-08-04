@@ -176,7 +176,7 @@ class MassFractionCalculator(QDialog):
         return f"""
             QDialog {{ background-color: {p.bg_primary}; color: {p.text_primary}; }}
             QWidget, QLabel, QCheckBox, QRadioButton {{ color: {p.text_primary}; }}
-            QGroupBox {{ color: {p.text_primary}; background-color: {p.bg_secondary}; border: 1px solid {p.border};
+            QGroupBox {{ color: {p.text_primary}; border: 1px solid {p.border};
                 border-radius: 6px; margin-top: 12px; padding-top: 10px; font-weight: 600; }}
             QGroupBox::title {{ subcontrol-origin: margin; padding: 0 8px; }}
             QListWidget, QTableView {{ background-color: {p.bg_secondary}; color: {p.text_primary}; border: 1px solid {p.border};
@@ -193,5 +193,10 @@ class MassFractionCalculator(QDialog):
                 border-radius: 4px; padding: 6px 14px; min-width: 80px; }}
             QPushButton:hover {{ background-color: {p.bg_hover}; border-color: {p.accent}; }}
             QPushButton:disabled {{ color: {p.text_muted}; background-color: {p.bg_secondary}; }}
-            QSplitter::handle {{ background-color: {p.border}; width: 1px; }}
+            QSplitter::handle {{ background-color: {p.border}; width: 5px; }}
+            QSplitter::handle:horizontal {{ width: 1px; }}
+            QRadioButton, QCheckBox {{ background-color: transparent; }}
+            QRadioButton::indicator {{ border-radius: 8px; }}
+            QRadioButton::indicator:unchecked, QCheckBox::indicator:unchecked {{ border: 2px solid {p.border}; background-color: {p.bg_tertiary};}}
+            QRadioButton::indicator:checked, QCheckBox::indicator:checked {{ border: 2px solid {p.accent}; background-color: {p.accent}; }}
         """
