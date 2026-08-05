@@ -318,6 +318,7 @@ a = Analysis(
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
+        'tools.render_settings',
         'tools.particle_filter',
         'tools.element_picker',
         'tools.update_checker',

@@ -1081,6 +1081,18 @@ class MainWindow(QMainWindow):
         )
         theme.themeChanged.connect(self._theme_follow_system_slot)
 
+        from tools.render_settings import cluster_gpu_enabled
+        view_menu.addSeparator()
+        self._cluster_gpu_action = QAction(
+            "Use GPU for Cluster Animation", self)
+        self._cluster_gpu_action.setCheckable(True)
+        self._cluster_gpu_action.setChecked(cluster_gpu_enabled())
+        self._cluster_gpu_action.setToolTip(
+            "Turn this off if the Clusters tab fails to open on this "
+            "computer. Takes effect after restarting IsotopeTrack.")
+        self._cluster_gpu_action.triggered.connect(self._set_cluster_gpu)
+        view_menu.addAction(self._cluster_gpu_action)
+
         help_menu = menu_bar.addMenu("Help")
         self._menu_icon_items.append((help_menu, 'fa6s.circle-question'))
 
@@ -1103,6 +1115,23 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
         help_menu.addAction(update_action)
         help_menu.addAction(about_action)
+
+    def _set_cluster_gpu(self, enabled):
+        """Store the cluster GPU preference and say when it applies.
+
+        Chromium reads the flag once, before the application starts, so the
+        change cannot take effect until the next launch.
+
+        Args:
+            enabled (bool): True to allow GPU rendering for the Clusters tab.
+        """
+        from tools.render_settings import set_cluster_gpu_enabled
+        set_cluster_gpu_enabled(enabled)
+        state = "enabled" if enabled else "disabled"
+        QMessageBox.information(
+            self, "Cluster Animation",
+            f"GPU rendering for the Clusters tab is {state}.\n"
+            "This takes effect the next time IsotopeTrack starts.")
 
     def open_new_window(self):
         self.user_action_logger.log_action('NEW_WINDOW', 'Opened new analysis window')

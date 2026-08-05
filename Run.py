@@ -16,7 +16,9 @@ from PySide6.QtCore import Qt, QEvent, QCoreApplication
 
 QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
 
-if sys.platform == "win32":
+from tools.render_settings import cluster_gpu_enabled
+
+if not cluster_gpu_enabled():
     _chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     if "--disable-gpu" not in _chromium_flags:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
