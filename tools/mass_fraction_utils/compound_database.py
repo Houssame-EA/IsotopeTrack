@@ -74,7 +74,7 @@ class CompoundDatabase:
     def _elements_as_compound_df() -> pd.DataFrame:
         """Returns a `DataFrame` with elements of the periodic table."""
         elements_list = []
-        elements_data = PeriodicTableWidget.create_elements_data()  # TODO: change for PeriodicTableInfo
+        elements_data = PeriodicTableWidget.create_elements_data()
         for element in elements_data:
             element_formula = element["symbol"]
             element_density = element["density"]
