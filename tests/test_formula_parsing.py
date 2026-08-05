@@ -6,6 +6,8 @@ element counts and canonicalise them. They feed the mass-fraction lookup, so a
 parsing error would propagate into reported particle masses. The functions are
 pure; the module imports Qt/pandas only for the dialog and CSV database.
 """
+from tools.mass_fraction_utils import reduced_counts_from_formula, signature_from_formula, \
+    elements_with_count_from_formula
 from tools.mass_fraction_utils.formula_utils import parse_formula_to_counts, _safe_int, \
     _element_order_in_formula, reduce_counts, signature_from_counts, _join_formula_from_counts, \
     canonicalize_preserve_user_order
@@ -102,3 +104,31 @@ class TestCanonicalize:
 
     def test_irreducible_roundtrips(self):
         assert canonicalize_preserve_user_order("Fe2O3") == "Fe2O3"
+
+
+class TestReducedCountsFromFormula:
+    def test_reduced_counts_from_formula_reduction(self):
+        counts = reduced_counts_from_formula("H2O2")
+        assert counts["H"] == 1
+        assert counts["O"] == 1
+
+    def test_reduced_counts_from_formula_no_reduction(self):
+        counts = reduced_counts_from_formula("H2O")
+        assert counts["H"] == 2
+        assert counts["O"] == 1
+
+
+class TestSignatureFromFormula:
+    def test_signature_from_formula_with_reduction_mixed(self):
+        assert signature_from_formula("H2O4") == signature_from_formula("O4H2")
+
+    def test_signature_from_formula_different_but_similar(self):
+        assert signature_from_formula("H2O4") != signature_from_formula("H2O2")
+
+class TestElementsWithCountFromFormula:
+    def test_elements_with_count_from_formula(self):
+        elements = elements_with_count_from_formula("CoO1H2Ni2")
+        assert "Co" in elements
+        assert "O" in elements
+        assert "H2" in elements
+        assert "Ni2" in elements

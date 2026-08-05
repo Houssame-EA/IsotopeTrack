@@ -91,7 +91,7 @@ def reduce_counts(counts: dict) -> dict:
     return {k: v // g for k, v in counts.items()}
 
 
-def reduced_counts_from_formula(formula: str) -> dict: # TODO: tests
+def reduced_counts_from_formula(formula: str) -> dict:
     """Prases the formula and returns it's reduced counts."""
     return reduce_counts(parse_formula_to_counts(formula))
 
@@ -103,12 +103,12 @@ def signature_from_counts(counts: dict) -> str:
     return '|'.join(f'{el}{n}' for el, n in sorted(counts.items()))
 
 
-def signature_from_formula(formula: str) -> str: # TODO: tests
+def signature_from_formula(formula: str) -> str:
     """Order-independent canonical key for matching equivalent formulas."""
     return signature_from_counts(reduced_counts_from_formula(formula))
 
 
-def elements_with_count_from_formula(formula: str) -> list[str]: # TODO: tests
+def elements_with_count_from_formula(formula: str) -> list[str]:
     """
     Transforms a formula in a list of element-count strings.
     Notes:
