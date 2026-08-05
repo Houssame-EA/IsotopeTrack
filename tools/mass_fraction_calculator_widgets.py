@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.mass_fraction_table_model import MassFractionColumn, MassFractionTableModel
-from tools.mass_fraction_utils import CompoundDatabase, FormulaEditor
+from tools.mass_fraction_utils import CompoundDatabase, FormulaEditor, parse_formula_to_counts
 from tools.mass_fraction_utils.compound import Compound
 
 
@@ -110,9 +110,12 @@ class _FormulaDelegate(QStyledItemDelegate):
 
     def setEditorData(self, editor, index):
         if isinstance(editor, FormulaEditor):
-            editor.blockSignals(True)
-            editor.set_formula(index.data(Qt.ItemDataRole.EditRole) or "")
-            editor.blockSignals(False)
+            # modifies the formula only if necessary
+            formula = index.data(Qt.ItemDataRole.EditRole)
+            if parse_formula_to_counts(formula) != parse_formula_to_counts(editor.text()):
+                editor.blockSignals(True)
+                editor.set_formula(index.data(Qt.ItemDataRole.EditRole) or "")
+                editor.blockSignals(False)
 
     def setModelData(self, editor, model, index):
         # FormulaComboBox updates the calculator model as the user types.
@@ -120,8 +123,8 @@ class _FormulaDelegate(QStyledItemDelegate):
 
     def _set_compound(self, row: int, compound: Compound) -> None:
         parent = self.parent()
-        if isinstance(parent, QTableView) and isinstance(parent.model(), MassFractionTableModel):
-            parent.model().set_compound(row, compound)
+        if isinstance(parent, QTableView) and isinstance(model := parent.model(), MassFractionTableModel):
+            model.set_compound(row, compound)
 
 
 class _DensityDelegate(QStyledItemDelegate):
