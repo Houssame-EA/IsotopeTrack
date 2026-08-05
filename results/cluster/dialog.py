@@ -3840,8 +3840,8 @@ class ClusteringDisplayDialog(QDialog):
         self.tabs = QTabWidget()
 
         self._build_eval_tab()
-        self._build_live_tab()
         self._build_overview_tab()
+        self._build_live_tab()
 
         layout.addWidget(self.tabs)
         self.tabs.currentChanged.connect(self._on_live_tab_shown)
@@ -4279,7 +4279,7 @@ class ClusteringDisplayDialog(QDialog):
             lambda pos: self._ctx_menu(pos, 'overview'))
         vl.addWidget(self.overview_canvas, stretch=1)
 
-        self.tabs.addTab(tab, "③ Overview")
+        self.tabs.addTab(tab, "② Overview")
 
     def _on_overview_view_changed(self, text):
         """Handle a change to the Strips/Heatmap toggle in the Overview toolbar.
@@ -5906,6 +5906,10 @@ class ClusteringDisplayDialog(QDialog):
             sel_k = payload['sel_k']
             self._data_matrix_cache = data
 
+            _lt = getattr(self, '_live_tab', None)
+            if _lt is not None:
+                _lt.arm()
+
             self.node.config['_sample_arr'] = self._particle_samples
             self.node.config['_sample_names'] = (
                 list(np.unique(self._particle_samples))
@@ -6211,7 +6215,7 @@ class ClusteringDisplayDialog(QDialog):
             return
         try:
             self._live_tab = ClusterLiveTab(self)
-            self.live_tab_idx = self.tabs.addTab(self._live_tab, "② Clusters")
+            self.live_tab_idx = self.tabs.addTab(self._live_tab, "③ Clusters")
         except Exception:
             _itk_log.exception("Handled exception building live tab")
             self._live_tab = None

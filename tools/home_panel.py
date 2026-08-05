@@ -18,11 +18,31 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
     QListWidgetItem, QFrame,
 )
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QPainter, QColor
 import logging
 
 from tools.theme import theme
+
+
+def _alive(obj):
+    """Return True when ``obj``'s underlying C++ object still exists.
+
+    Args:
+        obj (QObject | None): Candidate widget.
+    Returns:
+        bool: True when the object is safe to touch.
+    """
+    if obj is None:
+        return False
+    try:
+        from shiboken6 import isValid
+    except Exception:
+        return True
+    try:
+        return bool(isValid(obj))
+    except Exception:
+        return False
 
 try:
     import qtawesome as qta
@@ -185,13 +205,29 @@ class HomePanel(QWidget):
 
     def _open_recent(self, item):
         path = item.data(Qt.UserRole)
-        if path and callable(self._on_open_project):
-            self._recent_list.setEnabled(False)
-            try:
-                self._on_open_project(path)
-            except Exception:
-                _itk_log.exception("Open recent failed")
-            finally:
+        if not (path and callable(self._on_open_project)):
+            return
+        self._recent_list.setEnabled(False)
+        QTimer.singleShot(0, lambda p=path: self._load_recent(p))
+
+    def _load_recent(self, path):
+        """Load a recent project once the click handler has returned.
+
+        Opening a project replaces this panel, destroying the list that
+        emitted the click. Qt is still inside that list's mouse handler while
+        a directly-connected slot runs, so tearing the widget down there
+        leaves Qt using freed memory. Deferring to the event loop lets the
+        handler finish first.
+
+        Args:
+            path (str): Project file to open.
+        """
+        try:
+            self._on_open_project(path)
+        except Exception:
+            _itk_log.exception("Open recent failed")
+        finally:
+            if _alive(self._recent_list):
                 self._recent_list.setEnabled(True)
 
     # -- styling ---------------------------------------------------------------

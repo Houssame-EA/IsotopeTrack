@@ -6,6 +6,7 @@ All notable changes to IsotopeTrack are documented here.
 
 ## v1.10.8 — 2026-07-29
 
+- Improve csv loading files
 - Improving the docstring information 
 - Updating cluster analysis more information how the cluster work
 - Removing the components from the cluster parameters 

@@ -22,6 +22,34 @@ import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.project_manager")
 
 
+class ProjectLoadCancelled(Exception):
+    """Raised when the target window is closed while a project is loading."""
+
+
+def _alive(obj):
+    """Return True when ``obj``'s underlying C++ object still exists.
+
+    Closing a window destroys its widgets while the Python wrappers survive,
+    so any callback still running against that window must check this before
+    touching it or PySide6 raises ``Internal C++ object already deleted``.
+
+    Args:
+        obj (QObject | None): Candidate widget or window.
+    Returns:
+        bool: True when the object is safe to touch.
+    """
+    if obj is None:
+        return False
+    try:
+        from shiboken6 import isValid
+    except Exception:
+        return True
+    try:
+        return bool(isValid(obj))
+    except Exception:
+        return False
+
+
 class SaveProjectThread(QThread):
     """Run the heavy project-save work off the UI thread."""
 
@@ -276,14 +304,13 @@ Terminal=false
             filepath = current
 
         self.main_window.save_current_parameters()
-        self.main_window.progress_bar.setVisible(True)
-        self.main_window.progress_bar.setValue(0)
+        self._ui_progress(pct=0, visible=True)
 
         if blocking:
             return self._save_blocking(filepath, on_complete)
 
         if getattr(self, '_save_thread', None) is not None and self._save_thread.isRunning():
-            self.main_window.status_label.setText("A save is already in progress…")
+            self._ui_progress(msg="A save is already in progress…")
             if on_complete:
                 on_complete(False)
             return None
@@ -296,6 +323,34 @@ Terminal=false
         self._save_thread.start()
         return None
 
+    def _ui_progress(self, pct=None, msg=None, visible=None):
+        """Drive the window's progress widgets, skipping destroyed ones.
+
+        Every field is optional so callers can update any combination without
+        touching widgets they do not care about. Returns early and reports
+        failure when the owning window has already been closed.
+
+        Args:
+            pct (int | None): Progress percentage to display, if any.
+            msg (str | None): Status text to display, if any.
+            visible (bool | None): Progress bar visibility to apply, if any.
+        Returns:
+            bool: True when the owning window was still alive.
+        """
+        mw = self.main_window
+        if not _alive(mw):
+            return False
+        bar = getattr(mw, 'progress_bar', None)
+        if _alive(bar):
+            if visible is not None:
+                bar.setVisible(visible)
+            if pct is not None:
+                bar.setValue(int(pct))
+        label = getattr(mw, 'status_label', None)
+        if msg is not None and _alive(label):
+            label.setText(msg)
+        return True
+
     def _on_save_progress(self, pct, msg):
         """Update the progress bar and status label during a threaded save.
 
@@ -303,15 +358,14 @@ Terminal=false
             pct (int): Progress percentage (0–100).
             msg (str): Status message.
         """
-        self.main_window.progress_bar.setValue(pct)
-        self.main_window.status_label.setText(msg)
+        self._ui_progress(pct=pct, msg=msg)
 
     def _finalize_save_success(self, filepath):
         """Apply the post-save UI updates after a successful write."""
         self._set_file_icon_cross_platform(filepath)
-        self.main_window.progress_bar.setVisible(False)
+        if not self._ui_progress(msg=f"Project saved: {filepath}", visible=False):
+            return
         self.main_window.unsaved_changes = False
-        self.main_window.status_label.setText(f"Project saved: {filepath}")
         self.main_window.update_window_title(filepath)
         # The project is now safely on disk; drop the autosave recovery snapshot.
         autosave = getattr(self.main_window, '_autosave', None)
@@ -327,9 +381,9 @@ Terminal=false
 
     def _on_save_failed(self, message):
         """Handle the worker thread's failure signal on the UI thread."""
-        self.main_window.progress_bar.setVisible(False)
+        self._ui_progress(visible=False)
         QMessageBox.critical(
-            self.main_window, "Save Error",
+            self.main_window if _alive(self.main_window) else None, "Save Error",
             f"Error saving project: {message}"
         )
         callback, self._save_on_complete = getattr(self, '_save_on_complete', None), None
@@ -352,8 +406,7 @@ Terminal=false
                 pct (int): Progress percentage (0–100).
                 msg (str): Status message.
             """
-            self.main_window.progress_bar.setValue(int(pct))
-            self.main_window.status_label.setText(msg)
+            self._ui_progress(pct=pct, msg=msg)
             QApplication.processEvents()
 
         try:
@@ -363,10 +416,10 @@ Terminal=false
                 on_complete(True)
             return True
         except Exception as e:
-            self.main_window.progress_bar.setVisible(False)
+            self._ui_progress(visible=False)
             _itk_log.exception("Handled exception in _save_blocking")
             QMessageBox.critical(
-                self.main_window, "Save Error",
+                self.main_window if _alive(self.main_window) else None, "Save Error",
                 f"Error saving project: {str(e)}"
             )
             if on_complete:
@@ -397,31 +450,49 @@ Terminal=false
         try:
             self.main_window.reset_data_structures()
 
-            self.main_window.progress_bar.setVisible(True)
-            self.main_window.progress_bar.setValue(0)
+            self._ui_progress(pct=0, visible=True)
 
             def progress_callback(pct, msg):
-                self.main_window.progress_bar.setValue(pct)
-                self.main_window.status_label.setText(msg)
+                """Report load progress, aborting if the window has closed.
+
+                ``processEvents`` below lets the user act mid-load, including
+                closing this window, so the callback must verify the target
+                still exists on every tick.
+
+                Args:
+                    pct (int): Progress percentage (0–100).
+                    msg (str): Status message.
+                """
+                if not self._ui_progress(pct=pct, msg=msg):
+                    raise ProjectLoadCancelled()
                 QApplication.processEvents()
 
             result = load_project_auto(filepath, self.main_window, progress_callback)
+
+            if not _alive(self.main_window):
+                raise ProjectLoadCancelled()
 
             if isinstance(result, dict):
                 self._restore_project_data(result)
 
             self._finalize_load()
 
-            self.main_window.progress_bar.setVisible(False)
+            if not self._ui_progress(msg=f"Project loaded: {filepath}",
+                                     visible=False):
+                return False
             self.main_window.unsaved_changes = False
-            self.main_window.status_label.setText(f"Project loaded: {filepath}")
             self.main_window.update_window_title(filepath)
             return True
 
+        except ProjectLoadCancelled:
+            _itk_log.info("Project load abandoned: window closed during load")
+            return False
+
         except Exception as e:
-            self.main_window.progress_bar.setVisible(False)
+            self._ui_progress(visible=False)
             QMessageBox.critical(
-                self.main_window, "Load Error",
+                self.main_window if _alive(self.main_window) else None,
+                "Load Error",
                 f"Error loading project: {str(e)}"
             )
             return False

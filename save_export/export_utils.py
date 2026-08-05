@@ -471,8 +471,6 @@ def export_data(main_window: MainWindow):
     if not export_dir:
         return False
 
-    # Built here rather than in the worker: get_formatted_label fills a cache on
-    # the main window, so warming it now keeps the worker free of shared writes.
     all_elements = []
     for element, isotopes in main_window.selected_isotopes.items():
         for isotope in isotopes:

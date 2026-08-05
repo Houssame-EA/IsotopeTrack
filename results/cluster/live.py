@@ -24,7 +24,7 @@ import logging
 
 import numpy as np
 
-from PySide6.QtCore import QObject, Signal, Slot, QThread, QUrl, QTimer
+from PySide6.QtCore import QObject, Signal, Slot, QThread, QUrl, QTimer, Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 _log = logging.getLogger("IsotopeTrack.results.cluster.live")
@@ -810,6 +810,7 @@ class ClusterLiveBridge(QObject):
         self._ov_timer.setInterval(600)
         self._ov_timer.timeout.connect(self._apply_to_overview)
         self._next_animate = False
+        self._armed = False
         cfg = getattr(dialog.node, "config", {}) or {}
         dr = cfg.get("dim_reduction", "PCA")
         self._proj = dr if dr in PROJECTION_TO_DIMRED else "PCA"
@@ -852,7 +853,13 @@ class ClusterLiveBridge(QObject):
         (True for a user parameter change, False for just opening the tab).
         Used for every projection/dimension change so t-SNE / UMAP never freeze
         the UI. The page shows a 'computing…' note until the state arrives.
+
+        Does nothing until the tab has been armed by a clustering run, so the
+        page loading or restoring its own defaults cannot start a run the user
+        never asked for.
         """
+        if not self._armed:
+            return
         self._next_animate = bool(animate)
         try:
             elements = self._dialog._get_elements()
@@ -982,8 +989,13 @@ class ClusterLiveBridge(QObject):
 
     @Slot(result=str)
     def get_state(self):
-        """Return the current view state as JSON, building it if needed."""
-        if self._view is None:
+        """Return the current view state as JSON, building it if needed.
+
+        Before the tab is armed the projection is not built, so the payload
+        reports itself as empty and the page leaves the canvas blank instead
+        of scheduling a run of its own.
+        """
+        if self._view is None and self._armed:
             self.rebuild()
         return _safe_dumps(self._state_payload())
 
@@ -1396,22 +1408,50 @@ class ClusterLiveTab(QWidget):
     """QWidget hosting the interactive clustering web view."""
 
     def __init__(self, dialog):
-        """Build the web view, bridge and channel that make up the tab."""
+        """Set up the tab shell without starting the web engine."""
         super().__init__()
         self._dialog = dialog
         self._loaded = False
         self._dirty = True
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._armed = False
+        self.view = None
+        self.backend = None
+        self.channel = None
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
 
         if not WEBENGINE_OK:
             msg = QLabel("The interactive clustering view needs QtWebEngine, "
                          "which isn't available in this build.\nThe other tabs "
                          "work as usual.")
             msg.setWordWrap(True)
-            layout.addWidget(msg)
-            self.view = None
+            self._layout.addWidget(msg)
+            self._placeholder = None
             return
+
+        self._placeholder = QLabel(
+            "Run ② Cluster to build the interactive view.")
+        self._placeholder.setWordWrap(True)
+        self._placeholder.setAlignment(Qt.AlignCenter)
+        self._layout.addWidget(self._placeholder)
+
+    def ensure_view(self):
+        """Create the web view the first time this tab is actually shown.
+
+        Constructing a ``QWebEngineView`` starts a Chromium child process,
+        which is the most environment-sensitive part of the application: it
+        depends on the graphics driver, the sandbox and the OS build, and a
+        failure there aborts the whole process below Python where no
+        ``try``/``except`` can intercept it. Building it on demand keeps that
+        risk out of every session that never opens this tab.
+        """
+        if not WEBENGINE_OK or self.view is not None:
+            return
+
+        if self._placeholder is not None:
+            self._layout.removeWidget(self._placeholder)
+            self._placeholder.deleteLater()
+            self._placeholder = None
 
         self.view = QWebEngineView(self)
         st = self.view.settings()
@@ -1420,7 +1460,8 @@ class ClusterLiveTab(QWidget):
 
         self._inject_qwebchannel()
 
-        self.backend = ClusterLiveBridge(dialog, self)
+        self.backend = ClusterLiveBridge(self._dialog, self)
+        self.backend._armed = self._armed
         self.backend._view_widget = self.view
         self.backend.attach_page(self.view.page())
         self.channel = QWebChannel(self.view.page())
@@ -1439,7 +1480,32 @@ class ClusterLiveTab(QWidget):
         if not os.path.isfile(index):
             _log.error("live_ui assets missing at %s", index)
         self.view.load(QUrl.fromLocalFile(index))
-        layout.addWidget(self.view)
+        self._layout.addWidget(self.view)
+
+    def showEvent(self, event):
+        """Build the web view on first display, then behave normally.
+
+        Args:
+            event (QShowEvent): The show event delivered by Qt.
+        """
+        super().showEvent(event)
+        self.ensure_view()
+
+    def arm(self):
+        """Allow the view to draw, once a clustering run has produced results.
+
+        Until this is called the tab stays blank even if it is opened, so
+        merely opening the dialog never triggers an animation the user did
+        not ask for. When the tab is already visible the redraw is deferred to
+        the event loop so it runs after the calling handler has finished
+        publishing its results.
+        """
+        self._armed = True
+        self._dirty = True
+        if self.backend is not None:
+            self.backend._armed = True
+        if self.isVisible():
+            QTimer.singleShot(0, self.refresh_data)
 
     def _connect_downloads(self):
         """Accept image exports from the page and let the user choose where.
@@ -1556,7 +1622,7 @@ class ClusterLiveTab(QWidget):
         animation is not replayed — it only runs on a parameter change or the
         Cluster button.
         """
-        if self.view is None or not self._loaded:
+        if self.view is None or not self._loaded or not self._armed:
             return
         if not (force or self._dirty):
             return

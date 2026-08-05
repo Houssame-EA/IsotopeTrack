@@ -16,11 +16,11 @@ from PySide6.QtCore import Qt, QEvent, QCoreApplication
 
 QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
 
-try:
-    from PySide6.QtWebEngineQuick import QtWebEngineQuick
-    QtWebEngineQuick.initialize()
-except Exception:
-    _itk_log.warning("QtWebEngineQuick unavailable; skipping initialize()")
+if sys.platform == "win32":
+    _chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--disable-gpu" not in _chromium_flags:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            _chromium_flags + " --disable-gpu").strip()
 
 from tools.splash_screen import SplashCoordinator
 from utils.pyqtgraph_patches import apply_pyqtgraph_patches
@@ -117,9 +117,6 @@ if __name__ == "__main__":
             _itk_log.exception("Handled exception in <module>")
     app.main_windows.clear()
 
-    # scikit-learn keeps its joblib worker pool warm between fits, so it is
-    # still alive here and its semaphores outlive the interpreter unless the
-    # pool is closed first. Nothing may have created one, hence the guard.
     try:
         from joblib.externals.loky import get_reusable_executor
         get_reusable_executor().shutdown(wait=True)
