@@ -113,7 +113,7 @@ class CompoundDatabase:
         ])
 
         filenames = [
-            'material_trimmed.csv.gz',
+            'materials_trimmed.csv.gz',
         ]
         for base in base_dirs:
             for fname in filenames:
