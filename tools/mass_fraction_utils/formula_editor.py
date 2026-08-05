@@ -54,7 +54,7 @@ class FormulaEditor(QLineEdit):
 
     def _formula_selected(self, index: QModelIndex):
         compound = self.compound_model.data(index, role=CompoundDatabaseModel.DataColumn.COMPOUND)
-        self._formula = compound.formula
+        self._set_formula_no_notify(compound.formula)
         self.compound_changed.emit(compound)
 
     def set_formula(self, formula: str):
@@ -72,9 +72,7 @@ class FormulaEditor(QLineEdit):
 
     @formula.setter
     def formula(self, value: str):
-        self._formula = value
-        if value != self.text():
-            self.setText(value)
+        self._set_formula_no_notify(value)
         # Get the best compound based on the formula
         compound = self.compound_model.get_first_compound()
 
@@ -83,3 +81,8 @@ class FormulaEditor(QLineEdit):
             self.compound_changed.emit(compound)
         else:
             self.compound_changed.emit(Compound(formula=self.formula, density=0))
+
+    def _set_formula_no_notify(self, formula: str):
+        self._formula = formula
+        if formula != self.text():
+            self.setText(formula)
