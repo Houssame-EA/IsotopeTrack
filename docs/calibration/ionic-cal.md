@@ -102,7 +102,7 @@
 | `handle_tofwerk_import` | `(self, h5_file_paths)` | Handle TOFWERK .h5 file import for calibration. |
 | `select_nu_folders` | `(self)` | Handle NU folder selection for calibration. |
 | `select_data_files` | `(self)` | Handle data file selection for CSV, TXT, and Excel formats. |
-| `handle_csv_import` | `(self, selected_paths)` | Handle CSV/Excel file import using import_csv_dialogs. |
+| `handle_csv_import` | `(self, selected_paths)` | Handle CSV/Excel file import using loading.csv. |
 | `handle_folder_import` | `(self, selected_paths)` | Handle folder import with mass range validation. |
 | `load_data` | `(self)` | Load data from folders or files. |
 | `prompt_save_changes` | `(self)` | Prompt user to save changes if data is modified. |

@@ -14,11 +14,6 @@ Instrument data readers: Nu Vitesse, TOFWERK, CSV, and background threads.
 
 **1** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **8** methods
 
-### [`import_csv_dialogs.py`](import-csv-dialogs.md)
-
-
-**5** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **67** methods
-
 ### [`tofwerk_loading.py`](tofwerk-loading.md)
 Loading data from TOFWERK ICP-ToF.
 

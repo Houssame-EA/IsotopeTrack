@@ -14,16 +14,14 @@
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
 | `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
+| `DEFAULT_K_RANGE` | `list(range(2, 16))` |
 | `PROGRESS_RESOLUTION` | `1000` |
 | `SCALING_OPTIONS` | `['CLR', 'ILR', 'Robust Z-score', 'None']` |
 | `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |
 | `DATA_TYPE_OPTIONS` | `['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…` |
 | `DATA_KEY_MAP` | `{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…` |
-| `CLUSTER_COLORS` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
 | `ALGO_LINE_STYLES` | `{'K-Means': dict(color='#2563EB', ls='-', marker='o'), 'H…` |
 | `_ELEMENT_PALETTE` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
-| `SAMPLE_MARKERS` | `['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '<', '>', 'p']` |
-| `SAMPLE_PALETTE` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
 
 ## Classes
 
@@ -190,16 +188,11 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_build_eval_tab` | `(self)` |  |
 | `_build_summary_tab` | `(self)` | Build the Summary tab holding the consensus decision matrix. |
 | `_refresh_summary` | `(self)` | Redraw the consensus summary table from the latest evaluation state. |
-| `_build_cluster_tab` | `(self)` | Build the Clusters tab containing both 2-D and 3-D scatter views, |
-| `_switch_cluster_view` | `(self, mode)` | Toggle between 2-D scatter and 3-D scatter within the Clusters tab. |
 | `_ctx_menu` | `(self, pos, tab)` |  |
 | `_make_popout_btn` | `(self, slot)` |  |
 | `_pop_out_figure` | `(self, tab: str)` | Redraw the requested figure into a standalone resizable window. |
 | `_edit_figure` | `(self, tab: str)` | Open the per-figure display settings dialog. |
 | `_redraw_figure` | `(self, tab: str)` |  |
-| `_cl_drag_press` | `(self, event)` |  |
-| `_cl_drag_motion` | `(self, event)` |  |
-| `_cl_drag_release` | `(self, _event)` |  |
 | `_set` | `(self, key, value)` |  |
 | `_build_overview_tab` | `(self)` |  |
 | `_on_overview_view_changed` | `(self, text)` | Handle a change to the Strips/Heatmap toggle in the Overview toolbar. |
@@ -207,20 +200,12 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_clear_overview_elements` | `(self)` | Empty the selected-elements list and redraw. |
 | `_refresh_overview_elem_btn` | `(self)` | Sync the picker button's label with the current selection. |
 | `_build_dendrogram_tab` | `(self)` |  |
-| `_open_3d_sample_picker` | `(self)` | Checkable menu to show/hide samples in the 3D scatter. |
-| `_show_all_3d_samples` | `(self)` | Clear the hidden-sample set and redraw the 3D scatter. |
-| `_on_3d_scroll` | `(self, event)` | Zoom the 3D axes under the cursor in/out on mouse-wheel scroll. |
-| `_set_3d_view` | `(self, elev, azim)` | Snap all 3D axes to a preset view angle. |
-| `_draw_3d` | `(self)` |  |
-| `_on_3d_hover` | `(self, event)` | Show a tooltip with cluster and element information on 3D hover. |
-| `_draw_3d_into` | `(self, target_fig)` |  |
 | `_draw_dendrogram` | `(self)` |  |
 | `_draw_dendrogram_into` | `(self, target_fig)` |  |
 | `_draw_overview` | `(self)` | Render the Overview tab: composition strips (or heatmap) on the |
 | `_draw_overview_into` | `(self, target_fig)` | Draw the Overview content into an arbitrary Figure. |
 | `_restyle_heatmap_axes` | `(self, ax, fig, cfg)` | Re-apply font and theme to an externally-drawn heatmap axes. |
 | `_on_eval_pick` | `(self, event)` | Click a point on an evaluation curve to set K directly. |
-| `_on_cluster_hover` | `(self, event)` | Show a floating tooltip with element values when hovering scatter points. |
 | `_open_settings` | `(self)` |  |
 | `_sync_live_tab` | `(self)` | Push the shared config into the ④ How it works tab. |
 | `_on_node_changed` | `(self)` |  |
@@ -299,6 +284,7 @@ Clustering analysis node with matplotlib figures.
 | `_dunn_sym_score` | `(data, labels, max_points=2000, random_state=0)` | Dunn-Symmetric (Sym-Dunn) cluster validity index (higher is better). |
 | `_c_index_score` | `(data, labels, max_points=2000, random_state=0)` | C-index cluster validity index (lower is better, bounded in ``[0, 1]``). |
 | `_vote_optimal_per_metric` | `(eval_results, elbow_fn, enabled_metrics=None)` | Select an optimal K per metric by voting across algorithms. |
+| `_cluster_col` | `(cid, cfg=None)` | Colour for a cluster label, honouring the user's saved overrides. |
 | `_palette_to_plot` | `(pal)` | Map an app ``Palette`` (or None) to the plot/theme keys used here. |
 | `_current_plot_palette` | `()` | Return the active plot/theme dict from the app ThemeManager. |
 | `_filter_rare_particle_types` | `(matrix, sample_labels, original_indices, min_count)` | Remove particles whose elemental signature occurs fewer than min_count times. |
@@ -326,7 +312,6 @@ Clustering analysis node with matplotlib figures.
 | `_draw_evaluation_per_sample` | `(fig, per_sample_eval, cfg, per_sample_optk=None, view_algo='All Algor` | Draw per-sample evaluation curves as a single metric × sample grid. |
 | `_consensus_k` | `(per_metric_k)` | Return the consensus K and its agreement fraction from per-metric picks. |
 | `_draw_consensus_summary` | `(fig, eval_results, per_sample_eval, cfg, elbow_fn, optimal_per_metric` | Draw a metric × scope consensus decision table for choosing K. |
-| `_draw_clustering` | `(fig, clustering_results, data_matrix, characterisation, cfg, input_da` | Draw cluster scatter plots on a matplotlib Figure. |
 | `_draw_stability` | `(fig, stab, cfg)` | Draw bootstrap stability results: cluster Jaccard bars + particle histogram. |
 | `_algo_params_str` | `(cfg, algo)` | Return a human-readable parameter summary for one algorithm. |
 | `build_methods_paragraph` | `(cfg, optimal_k=None, algorithm=None, n_particles=None, n_elements=Non` | Generate a publication-ready methods paragraph from the node settings. |

@@ -61,6 +61,8 @@ Depends only on NumPy.
 |------|-------|
 | `SCALINGS` | `['None', 'CLR', 'Robust Z-score', 'Standardize']` |
 | `_SUPERSCRIPT` | `str.maketrans('0123456789-', '⁰¹²³⁴⁵⁶⁷⁸⁹⁻')` |
+| `FULL_LINKAGE_MAX` | `12000` |
+| `_SCIPY_METRIC` | `{'manhattan': 'cityblock', 'l1': 'cityblock', 'l2': 'eucl…` |
 | `_METRICS` | `['euclidean', 'manhattan', 'cosine', 'l1', 'l2']` |
 | `ALGORITHMS` | `{'K-Means': {'fn': step_kmeans, 'true_iteration': True, '…` |
 
@@ -80,9 +82,12 @@ Depends only on NumPy.
 | `davies_bouldin` | `(P, labels, centroids=None)` | Davies-Bouldin cluster-validity index (lower is better). |
 | `cheap_metrics` | `(P, labels, centroids=None)` | Fast per-frame metrics: cluster count, noise, inertia and sizes. |
 | `calinski_harabasz` | `(P, labels)` | Calinski-Harabasz index (variance-ratio criterion; higher is better). |
-| `evaluate_k` | `(P, algo, params, k_min=2, k_max=10, seed=42)` | Sweep k for ``algo`` and yield validity scores per k (for the score test). |
 | `_finite_or_none` | `(x)` | Return ``x`` if it is a finite number, otherwise ``None`` (JSON-safe). |
 | `full_metrics` | `(P, labels, centroids=None, rng=None)` | Cheap metrics plus silhouette and Davies-Bouldin scores (JSON-safe). |
+| `_pairwise` | `(A, B=None, metric='euclidean')` | Pairwise distances between two point sets under the chosen metric. |
+| `_metric_label` | `(metric)` | Human name of a metric, for the notes and worked examples. |
+| `_shape_covs` | `(covs, cov_type, d, Nk=None)` | Constrain fitted covariances to the requested family. |
+| `_affinity_note` | `(affinity, nn)` | Narration for the graph-building step of spectral clustering. |
 | `_kpp_init` | `(P, k, rng)` | k-means++ seeding. |
 | `_inset` | `(kind, title, subtitle='', **payload)` | Build the algorithm-specific *detail view* payload for the UI inset. |
 | `_n` | `(v, p=3)` | Format one number for a worked example (compact, never NaN/inf). |
@@ -92,9 +97,10 @@ Depends only on NumPy.
 | `step_gmm` | `(P, params, rng)` | Stream Gaussian-mixture EM iterations as frames. |
 | `step_dbscan` | `(P, params, rng)` | Stream DBSCAN density region-growing as frames. |
 | `step_meanshift` | `(P, params, rng)` | Stream mean-shift density ascent as frames. |
-| `_merge_modes` | `(pts, tol)` | Group collapsed points into modes by snapping to a coarse grid. |
+| `_merge_modes` | `(pts, tol, min_bin_freq=1)` | Group collapsed points into modes by snapping to a coarse grid. |
 | `step_hierarchical` | `(P, params, rng)` | Stream agglomerative merges as frames. |
-| `_linkage_dist` | `(Q, ca, cb, cea, ceb, linkage)` | Linkage distance between two clusters for the chosen method. |
+| `full_hierarchical` | `(P, k, linkage='ward', metric='euclidean')` | Agglomerative partition of *every* point, not just the animated sample. |
+| `_linkage_dist` | `(Q, ca, cb, cea, ceb, linkage, metric='euclidean')` | Linkage distance between two clusters under the chosen metric. |
 | `_subsample` | `(P, max_points, rng)` | Return indices of a representative subset (all points if small enough). |
 | `_nn_map` | `(P, idx)` | Index of the nearest representative (row of ``P[idx]``) for every point. |
 | `_expand` | `(P, idx, lab_sub)` | Assign every point the label of its nearest representative. |

@@ -206,6 +206,93 @@ def _theme_vars():
     }
 
 
+#: ``node.config`` key holding ``{sample_name: shape}`` marker assignments.
+SHAPE_OVERRIDE_KEY = 'cluster_sample_shapes'
+
+#: ``node.config`` key holding the colour-by-element colormap name.
+OVERLAY_CMAP_KEY = 'cluster_overlay_colormap'
+
+try:
+    from widget.colors import colorheatmap as OVERLAY_COLORMAPS
+except Exception:
+    _log.exception("widget.colors unavailable; falling back to viridis only")
+    OVERLAY_COLORMAPS = ['viridis']
+
+DEFAULT_OVERLAY_CMAP = OVERLAY_COLORMAPS[0] if OVERLAY_COLORMAPS else 'viridis'
+
+_CMAP_STOPS = None
+
+
+def colormap_stops(n_stops=32):
+    """Sample every offered colormap into plain hex stops for the web view.
+
+    The ② Cluster tab paints on a canvas and has no access to matplotlib, so
+    each colormap in :data:`OVERLAY_COLORMAPS` is evaluated here and handed
+    over as a short list of hex colours that the page interpolates between.
+    Sampling once and caching keeps this off the per-state path — the stops
+    never change during a session.
+
+    Args:
+        n_stops (int): Colours sampled per map. 32 is dense enough that the
+            kinked maps (turbo, cubehelix) interpolate without visible banding.
+
+    Returns:
+        dict: Colormap name to a list of ``'#RRGGBB'`` strings. Empty when
+            matplotlib cannot be imported, in which case the page uses its own
+            built-in viridis.
+    """
+    global _CMAP_STOPS
+    if _CMAP_STOPS is not None:
+        return _CMAP_STOPS
+    out = {}
+    try:
+        from matplotlib import colormaps
+        from matplotlib.colors import to_hex
+        for name in OVERLAY_COLORMAPS:
+            try:
+                cmap = colormaps[name]
+            except Exception:
+                _log.debug("Unknown colormap %r, skipping", name)
+                continue
+            out[name] = [to_hex(cmap(i / (n_stops - 1))) for i in range(n_stops)]
+    except Exception:
+        _log.exception("matplotlib unavailable; the page will use its own ramp")
+    _CMAP_STOPS = out
+    return out
+
+
+def overlay_colormap(cfg):
+    """Return the colour-by-element colormap saved on the node config.
+
+    Args:
+        cfg (dict | None): The node config.
+
+    Returns:
+        str: A name from :data:`OVERLAY_COLORMAPS`, defaulting to the first.
+    """
+    name = (cfg or {}).get(OVERLAY_CMAP_KEY)
+    return name if name in OVERLAY_COLORMAPS else DEFAULT_OVERLAY_CMAP
+
+
+def sample_shape_overrides(cfg):
+    """Return the per-sample marker shapes stored on the node config.
+
+    Colour encodes the cluster in every clustering view, so the marker shape is
+    the channel left for telling samples apart. The mapping is saved with the
+    project, which keeps a figure looking the same when the dialog is reopened.
+
+    Args:
+        cfg (dict | None): The node config.
+
+    Returns:
+        dict: Sample name to shape key. Empty when nothing was assigned.
+    """
+    raw = (cfg or {}).get(SHAPE_OVERRIDE_KEY) or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v) for k, v in raw.items() if v}
+
+
 def _rare_filter(matrix, samples, min_count):
     """Drop particles whose non-zero element signature is rarer than min_count."""
     from collections import Counter
@@ -305,14 +392,19 @@ def _place_rest(Xs, fit_idx, Pf):
 def _embed(Xs, projection, n_dims):
     """Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method.
 
-    Returns (P, var_ratio, projection_used). t-SNE/UMAP fall back to PCA if
-    scikit-learn / umap aren't importable, so this never hard-fails.
+    Returns (P, var_ratio, projection_used, loadings). ``loadings`` is the
+    ``(n_features, n_dims)`` matrix of principal-component coefficients used to
+    draw the biplot arrows, and is None for the embeddings — t-SNE and UMAP are
+    non-linear, so no feature maps onto a straight direction in their output.
+
+    t-SNE/UMAP fall back to PCA if scikit-learn / umap aren't importable, so
+    this never hard-fails.
     """
     n_dims = 3 if int(n_dims) == 3 else 2
     n = len(Xs)
     if Xs.shape[1] < 2:
         P = np.column_stack([Xs[:, 0]] + [np.zeros(n)] * (n_dims - 1))
-        return P, [1.0] + [0.0] * (n_dims - 1), "PCA"
+        return P, [1.0] + [0.0] * (n_dims - 1), "PCA", None
 
     if projection == "t-SNE" and n >= 5:
         try:
@@ -323,7 +415,7 @@ def _embed(Xs, projection, n_dims):
             Pf = TSNE(n_components=n_dims, random_state=42, init="pca",
                       perplexity=perp).fit_transform(Xf)
             P = _place_rest(Xs, fit_idx, np.asarray(Pf, float))
-            return P, [float("nan")] * n_dims, "t-SNE"
+            return P, [float("nan")] * n_dims, "t-SNE", None
         except Exception:
             _log.exception("t-SNE unavailable; using PCA")
     elif projection == "UMAP" and n >= 5:
@@ -341,7 +433,7 @@ def _embed(Xs, projection, n_dims):
                     P = np.asarray(model.embedding_, float)
                 else:
                     P = np.asarray(model.transform(Xs), float)
-            return P, [float("nan")] * n_dims, "UMAP"
+            return P, [float("nan")] * n_dims, "UMAP", None
         except Exception:
             _log.exception("UMAP unavailable; using PCA")
 
@@ -358,7 +450,11 @@ def _embed(Xs, projection, n_dims):
     var = Sv ** 2
     ratio = (var / var.sum()) if var.sum() > 0 else var
     vr = [float(v) for v in ratio[:n_dims]] + [0.0] * max(0, n_dims - len(ratio))
-    return P, vr[:n_dims], "PCA"
+    loadings = comps.T
+    if loadings.shape[1] < n_dims:
+        pad = np.zeros((loadings.shape[0], n_dims - loadings.shape[1]))
+        loadings = np.hstack([loadings, pad])
+    return P, vr[:n_dims], "PCA", loadings
 
 
 def _raw_axes(Xs, elements, n_dims):
@@ -470,11 +566,16 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
         Xs, raw, samples, kept = Xs[sel], raw[sel], samples[sel], kept[sel]
 
     axis_labels = None
+    loadings = None
     if projection == "None":
         P, var, proj_used, axis_labels = _raw_axes(Xs, elements, n_dims)
     else:
-        P, var, proj_used = _embed(Xs, projection, n_dims)
+        P, var, proj_used, loadings = _embed(Xs, projection, n_dims)
 
+    # ILR replaces the elements with D-1 balance coordinates, so a loading no
+    # longer belongs to any single element and cannot be drawn as its arrow.
+    if loadings is not None and loadings.shape[0] != len(elements):
+        loadings = None
 
     return {
         "xy": P, "raw": raw, "samples": samples, "kept_index": kept,
@@ -483,6 +584,7 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
         "elements": list(elements), "n": int(P.shape[0]), "n_total": n_total,
         "dims": int(P.shape[1]), "projection": proj_used,
         "var_ratio": [float(v) for v in var], "axis_labels": axis_labels,
+        "loadings": loadings,
     }
 
 
@@ -838,6 +940,8 @@ class ClusterLiveBridge(QObject):
                 "noise_color": NOISE_COLOR,
                 "cluster_colors": {str(k): v
                                    for k, v in color_overrides(cfg).items()},
+                "sample_shapes": sample_shape_overrides(cfg),
+                "overlay_colormap": overlay_colormap(cfg),
                 "algorithm": self._cfg_snapshot()["algorithm"], "seq": self._state_seq,
                 "animate": self._next_animate,
                 "param_values": self._param_values(), "theme": _theme_vars()}
@@ -854,6 +958,8 @@ class ClusterLiveBridge(QObject):
             "var_ratio": v["var_ratio"],
             "dims": v.get("dims", 2), "projection": v.get("projection", "PCA"),
             "axis_labels": v.get("axis_labels"),
+            "loadings": (None if v.get("loadings") is None
+                         else np.round(v["loadings"], 5).tolist()),
         })
         return base
 
@@ -865,6 +971,8 @@ class ClusterLiveBridge(QObject):
             "scalings": SCALING_OPTIONS,
             "data_types": DATA_TYPE_OPTIONS,
             "projections": _projection_options(),
+            "colormaps": colormap_stops(),
+            "colormap_order": list(OVERLAY_COLORMAPS),
         })
 
     @Slot(result=str)
@@ -924,6 +1032,43 @@ class ClusterLiveBridge(QObject):
             return
         if clear_color_overrides(cfg):
             self._redraw_host_figures()
+
+    @Slot(str, str)
+    def set_sample_shape(self, sample, shape):
+        """Persist the marker shape used for one sample.
+
+        Args:
+            sample (str): Sample name as it appears in the particle data.
+            shape (str): Shape key chosen in the page, e.g. 'square'.
+        """
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None or not sample:
+            return
+        current = sample_shape_overrides(cfg)
+        if current.get(sample) == shape:
+            return
+        current[sample] = shape
+        cfg[SHAPE_OVERRIDE_KEY] = current
+
+    @Slot()
+    def reset_sample_shapes(self):
+        """Drop every marker-shape assignment, restoring the default cycle."""
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None or not cfg.get(SHAPE_OVERRIDE_KEY):
+            return
+        cfg[SHAPE_OVERRIDE_KEY] = {}
+
+    @Slot(str)
+    def set_overlay_colormap(self, name):
+        """Persist the colormap used by the colour-by-element overlay.
+
+        Args:
+            name (str): A colormap name from :data:`OVERLAY_COLORMAPS`.
+        """
+        cfg = getattr(self._dialog.node, "config", None)
+        if cfg is None or name not in OVERLAY_COLORMAPS:
+            return
+        cfg[OVERLAY_CMAP_KEY] = name
 
     def _redraw_host_figures(self):
         """Redraw the dialog's figures after a shared appearance change.

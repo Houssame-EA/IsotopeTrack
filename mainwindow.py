@@ -7890,6 +7890,14 @@ class MainWindow(QMainWindow):
             elif reply == QMessageBox.Cancel:
                 event.ignore()
                 return
+        export_thread = getattr(self, '_export_thread', None)
+        if export_thread is not None and export_thread.isRunning():
+            # Half-written CSVs are worse than a moment's wait, so let the
+            # current file finish rather than killing the thread outright.
+            export_thread.cancel()
+            if not export_thread.wait(10000):
+                _itk_log.warning("Export thread did not stop before shutdown")
+
         if getattr(self, '_autosave', None) is not None:
             self._autosave.stop()
             self._autosave.clear()

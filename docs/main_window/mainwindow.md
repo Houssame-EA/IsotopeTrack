@@ -128,7 +128,7 @@ Args:
 | `show_periodic_table_after_load` | `(self)` | Show periodic table after data is loaded. |
 | `handle_isotopes_selected` | `(self, selected_isotopes)` | Handle confirmed isotope selections from periodic table. |
 | `handle_isotopes_selection_from_calibration` | `(self, selected_isotopes)` | Handle isotope selections from ionic calibration window. |
-| `find_closest_isotope` | `(self, target_mass)` | Find closest isotope mass in loaded data. |
+| `find_closest_isotope` | `(self, target_mass, data=None, tolerance=None)` | Find the channel in a sample's data that carries one isotope. |
 | `get_formatted_label` | `(self, element_key)` | Get proper isotope label from periodic table data with caching. |
 | `clear_element_caches` | `(self)` | Clear element-related caches when data changes. |
 | `_build_element_lookup_cache` | `(self)` | Build fast lookup cache for element display labels. |

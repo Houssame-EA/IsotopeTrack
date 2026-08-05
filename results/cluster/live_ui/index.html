@@ -30,7 +30,18 @@
   </div>
 </div>
 
-<div id="legend"><h4>Clusters</h4><div id="legItems"></div></div>
+<div id="legend">
+  <h4>Clusters</h4><div id="legItems"></div>
+  <div id="sampSec" style="display:none">
+    <h4>Samples</h4><div id="sampItems"></div>
+  </div>
+  <div id="ovSec" style="display:none">
+    <h4 id="ovTitle">Element</h4>
+    <canvas id="ovBar"></canvas>
+    <div class="ovscale"><span id="ovLo"></span><span id="ovHi"></span></div>
+    <div class="ovnote" id="ovNote"></div>
+  </div>
+</div>
 
 <div id="inset">
   <div id="insetHead">
@@ -142,17 +153,26 @@
             recolour that cluster everywhere.</div>
           <div class="btnrow"><button class="ghost" id="colorReset">Reset colours</button></div>
         </div>
+        <div class="field" id="shapeField" style="display:none">
+          <label class="toggle"><input type="checkbox" id="shapeBySample" checked>
+            <span class="track"></span> Marker shape by sample</label>
+          <div class="hint">Colour keeps showing the cluster; the shape shows
+            which sample the particle came from. Click a sample in the legend to
+            show only its data.</div>
+          <div id="sampleShapes"></div>
+          <div class="btnrow"><button class="ghost" id="shapeReset">Reset shapes</button></div>
+        </div>
       </div>
 
       <div class="spane" id="tBoxes">
-        <div class="field"><label class="toggle"><input type="checkbox" id="insetOn" checked>
+        <div class="field"><label class="toggle"><input type="checkbox" id="insetOn">
           <span class="track"></span> Detail view — the algorithm's own figure</label>
           <div class="hint">Dendrogram for Hierarchical, reachability plot for
             OPTICS, U-matrix for SOM, objective curve for K-Means / GMM…
             Drag its header to move it, its bottom-right corner to resize it in
             both directions.</div>
         </div>
-        <div class="field"><label class="toggle"><input type="checkbox" id="eqOn" checked>
+        <div class="field"><label class="toggle"><input type="checkbox" id="eqOn">
           <span class="track"></span> Worked example — the equation with your numbers</label>
           <div class="hint">States the equation the current step is evaluating,
             then substitutes this frame's actual values into it.</div>
@@ -226,6 +246,27 @@
         </select>
         <div class="hint" id="projHint">Linear, fast and reproducible; axes carry
           an explained-variance share.</div>
+      </div>
+      <div class="field" id="biplotField" style="display:none">
+        <label class="toggle"><input type="checkbox" id="biplotOn" checked>
+          <span class="track"></span> Element arrows (biplot)</label>
+        <div class="hint">Each arrow points the way particles rich in that
+          element lie, and its length is how much that element drives the
+          components on screen.</div>
+        <label>Arrows shown <span class="val" id="vBiplotN">8</span></label>
+        <input type="range" id="biplotN" min="1" max="30" step="1" value="8">
+      </div>
+      <div class="field">
+        <label>Colour by element</label>
+        <select id="overlaySel"></select>
+        <div class="hint">Shades every particle by how much of that element it
+          holds. Works on any projection, so it answers what the PCA arrows
+          answer even on t-SNE and UMAP.</div>
+      </div>
+      <div class="field" id="cmapField" style="display:none">
+        <label>Colormap</label>
+        <select id="cmapSel"></select>
+        <canvas id="cmapBar"></canvas>
       </div>
       <div class="field"><label>Dimensions</label>
         <select id="viewSel">

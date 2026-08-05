@@ -123,6 +123,24 @@ button.ghost:hover{border-color:var(--accent);color:var(--text)}
 .leg.on .ct{color:var(--text)}
 .leg .sw{width:11px;height:11px;border-radius:3px;flex:none}
 .leg .ct{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums;font-size:.79em}
+.leg .gl{width:13px;height:13px;flex:none}
+#sampSec{margin-top:8px;padding-top:7px;border-top:1px solid var(--stroke2);
+  display:flex;flex-direction:column;gap:3px}
+#sampItems{display:flex;flex-direction:column;gap:3px}
+
+#cmapBar{display:block;width:100%;height:8px;border-radius:3px;margin-top:6px}
+
+#ovSec{margin-top:8px;padding-top:7px;border-top:1px solid var(--stroke2)}
+#ovBar{display:block;width:100%;height:10px;border-radius:3px}
+.ovscale{display:flex;justify-content:space-between;margin-top:3px;
+  color:var(--muted);font-size:.74em;font-variant-numeric:tabular-nums}
+.ovnote{color:var(--muted);font-size:.72em;margin-top:2px}
+
+.shaperow{display:flex;align-items:center;gap:8px;margin-top:5px}
+.shaperow .gl{width:14px;height:14px;flex:none}
+.shaperow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-size:.86em}
+.shaperow select{flex:none;width:auto;min-width:120px}
 
 #inset{position:fixed;right:14px;bottom:16px;z-index:16;width:min(390px,42vw);
   min-width:210px;min-height:120px;max-width:96vw;max-height:92vh;

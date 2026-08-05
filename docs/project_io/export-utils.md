@@ -2,6 +2,32 @@
 
 ---
 
+## Classes
+
+### `_ExportWorker` *(extends `QThread`)*
+
+Background worker that writes the export files off the UI thread.
+
+Building a summary row means walking every particle of every selected
+sample, so a large project used to lock the interface for the whole export
+and the window stopped repainting. The worker performs only the file
+writing; everything that reads a widget — sample selection, unit choices,
+mass-limit recalculation and the isotope label cache — is resolved on the
+main thread before the worker starts, so nothing here touches Qt.
+
+Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on completion with ``{'successful': int,
+        'failed': [(name, error), ...], 'cancelled': bool}``.
+    failed (str): Emitted when the run aborts with an unexpected error.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, main_window, export_dir, export_type, selected_samples, sample_` | Store everything the run needs, already resolved from the UI. |
+| `cancel` | `(self)` | Request cancellation; the loop stops before the next file. |
+| `_steps` | `(self)` | Number of files this run will attempt to write. |
+| `run` | `(self)` | Write every requested file, reporting progress as each completes. |
+
 ## Functions
 
 | Function | Signature | Description |

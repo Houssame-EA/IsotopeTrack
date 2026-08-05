@@ -29,6 +29,11 @@ Isobaric correction engine for spICP-ToF-MS.
 
 **2** classes &nbsp;·&nbsp; **25** functions &nbsp;·&nbsp; **7** methods
 
+### [`numba_guard.py`](numba-guard.md)
+Process-wide serialisation of Numba parallel regions.
+
+**0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
+
 ### [`pyqtgraph_patches.py`](pyqtgraph-patches.md)
 Runtime compatibility patches for third-party libraries.
 

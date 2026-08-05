@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QGroupBox,
                                QFileDialog, QMessageBox, QHBoxLayout,
                                QLabel, QFrame, QPushButton, QButtonGroup,
                                QSizePolicy)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 import numpy as np
 import math
 import time
@@ -35,9 +35,134 @@ def is_pure_element(mass_fraction):
     return math.isclose(mass_fraction, 1.0, abs_tol=1e-6)
 
 
+class _ExportWorker(QThread):
+    """Background worker that writes the export files off the UI thread.
+
+    Building a summary row means walking every particle of every selected
+    sample, so a large project used to lock the interface for the whole export
+    and the window stopped repainting. The worker performs only the file
+    writing; everything that reads a widget — sample selection, unit choices,
+    mass-limit recalculation and the isotope label cache — is resolved on the
+    main thread before the worker starts, so nothing here touches Qt.
+
+    Signals:
+        progressed (int, str): Percent complete (0-100) and a status message.
+        done (object): Emitted on completion with ``{'successful': int,
+            'failed': [(name, error), ...], 'cancelled': bool}``.
+        failed (str): Emitted when the run aborts with an unexpected error.
+    """
+
+    progressed = Signal(int, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, main_window, export_dir, export_type, selected_samples,
+                 sample_dilutions, all_elements, element_labels, data_type,
+                 export_units, parent=None):
+        """Store everything the run needs, already resolved from the UI.
+
+        Args:
+            main_window (MainWindow): Provides the data and the pure conversion
+                helpers used while writing.
+            export_dir (str): Directory the files are written into.
+            export_type (str): 'all', 'samples' or 'summary'.
+            selected_samples (list[str]): Samples to export.
+            sample_dilutions (dict): Dilution factor per sample.
+            all_elements (list[tuple]): Element tuples built on the main thread.
+            element_labels (list[str]): Display labels for those elements.
+            data_type (str): 'particle' or 'element'.
+            export_units (ExportUnits): Unit preferences for the run.
+            parent (QObject): Optional Qt parent.
+        """
+        super().__init__(parent)
+        self._mw = main_window
+        self._dir = export_dir
+        self._type = export_type
+        self._samples = list(selected_samples)
+        self._dilutions = dict(sample_dilutions)
+        self._all_elements = all_elements
+        self._element_labels = element_labels
+        self._data_type = data_type
+        self._units = export_units
+        self._cancel = False
+
+    def cancel(self):
+        """Request cancellation; the loop stops before the next file."""
+        self._cancel = True
+
+    def _steps(self):
+        """Number of files this run will attempt to write.
+
+        Returns:
+            int: At least 1, so the progress fraction is never divided by zero.
+        """
+        n = 1 if self._type in ("all", "summary") else 0
+        if self._type in ("all", "samples"):
+            n += len(self._samples)
+        return max(1, n)
+
+    def run(self):
+        """Write every requested file, reporting progress as each completes."""
+        successful = 0
+        failed = []
+        total = self._steps()
+        step = 0
+        try:
+            if self._type in ("all", "summary") and not self._cancel:
+                self.progressed.emit(0, "Writing summary file…")
+                summary_path = f"{self._dir}/{time.strftime('%H-%M-%S')}summary_results.csv"
+                try:
+                    with open(summary_path, 'w') as summary_file:
+                        export_summary_file_with_mass_fractions(
+                            self._mw, summary_file, self._samples,
+                            self._all_elements, self._element_labels,
+                            self._dilutions, self._data_type,
+                            units=self._units,
+                        )
+                    successful += 1
+                except Exception as e:
+                    _itk_log.exception("Handled exception writing the summary file")
+                    failed.append(("Summary file", str(e)))
+                step += 1
+                self.progressed.emit(int(step / total * 100), "Summary file written")
+
+            if self._type in ("all", "samples"):
+                for sample_name in self._samples:
+                    if self._cancel:
+                        break
+                    self.progressed.emit(int(step / total * 100),
+                                         f"Exporting {sample_name}…")
+                    try:
+                        safe_name = "".join(x for x in sample_name
+                                            if x.isalnum() or x in (' ', '-', '_'))
+                        file_path = f"{self._dir}/{safe_name}_results.csv"
+
+                        ionic_data = self._mw.calibration_results.get("Ionic Calibration", {})
+                        threshold_data = self._mw.element_thresholds.get(sample_name, {})
+                        dilution_factor = self._dilutions[sample_name]
+
+                        export_sample_file_with_mass_fractions(
+                            self._mw, sample_name, file_path, self._all_elements,
+                            ionic_data, threshold_data, dilution_factor,
+                            self._data_type, units=self._units,
+                        )
+                        successful += 1
+                    except Exception as e:
+                        _itk_log.exception("Handled exception exporting a sample")
+                        failed.append((sample_name, str(e)))
+                    step += 1
+                    self.progressed.emit(int(step / total * 100), f"Exported {sample_name}")
+
+            self.done.emit({'successful': successful, 'failed': failed,
+                            'cancelled': self._cancel})
+        except Exception as e:
+            _itk_log.exception("Handled exception in the export worker")
+            self.failed.emit(str(e))
+
+
 def export_data(main_window: MainWindow):
     """
-    Export all sample data and summary file in one unified process with mass fraction, 
+    Export all sample data and summary file in one unified process with mass fraction,
     mole support, dilution factors, and data type selection.
     
     Args:
@@ -48,6 +173,13 @@ def export_data(main_window: MainWindow):
     """
     if not main_window.data_by_sample:
         QMessageBox.warning(main_window, "Warning", "No data available to export.")
+        return False
+
+    running = getattr(main_window, '_export_thread', None)
+    if running is not None and running.isRunning():
+        QMessageBox.information(main_window, "Export in progress",
+                                "An export is already running. Wait for it to "
+                                "finish before starting another one.")
         return False
 
     export_dialog = QDialog(main_window)
@@ -339,64 +471,27 @@ def export_data(main_window: MainWindow):
     if not export_dir:
         return False
 
-    try:
-        successful_exports = 0
-        failed_exports = []
+    # Built here rather than in the worker: get_formatted_label fills a cache on
+    # the main window, so warming it now keeps the worker free of shared writes.
+    all_elements = []
+    for element, isotopes in main_window.selected_isotopes.items():
+        for isotope in isotopes:
+            element_key = f"{element}-{isotope:.4f}"
+            display_label = main_window.get_formatted_label(element_key)
+            atomic_mass = isotope
+            all_elements.append((element_key, display_label, element, isotope, atomic_mass))
 
-        current_date = time.strftime('%Y-%m-%d')
-        current_time = time.strftime('%H:%M:%S')
+    all_elements.sort(key=lambda x: x[3])
+    element_labels = [display_label for _, display_label, _, _, _ in all_elements]
 
-        all_elements = []
-        for element, isotopes in main_window.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                display_label = main_window.get_formatted_label(element_key)
-                atomic_mass = isotope
-                all_elements.append((element_key, display_label, element, isotope, atomic_mass))
+    def _on_progress(pct, message):
+        main_window.progress_bar.setValue(int(pct))
+        main_window.status_label.setText(message)
 
-        all_elements.sort(key=lambda x: x[3])
-        element_labels = [display_label for _, display_label, _, _, _ in all_elements]
-
-        if export_type in ["all", "summary"]:
-            summary_file_path = f"{export_dir}/{time.strftime('%H-%M-%S')}summary_results.csv"
-            try:
-                with open(summary_file_path, 'w') as summary_file:
-                    export_summary_file_with_mass_fractions(
-                        main_window, summary_file, selected_samples, all_elements, element_labels, sample_dilutions,
-                        data_type,
-                        units=export_units,
-                    )
-
-                successful_exports += 1
-
-            except Exception as e:
-                _itk_log.exception("Handled exception in export_data")
-                failed_exports.append(("Summary file", str(e)))
-                _itk_log.error(f"Error creating summary file: {str(e)}")
-
-        if export_type in ["all", "samples"]:
-            for sample_name in selected_samples:
-                try:
-                    safe_sample_name = "".join(x for x in sample_name if x.isalnum() or x in (' ', '-', '_'))
-                    file_path = f"{export_dir}/{safe_sample_name}_results.csv"
-
-                    ionic_data = main_window.calibration_results.get("Ionic Calibration", {})
-                    threshold_data = main_window.element_thresholds.get(sample_name, {})
-                    dilution_factor = sample_dilutions[sample_name]
-
-                    export_sample_file_with_mass_fractions(
-                        main_window, sample_name, file_path, all_elements, ionic_data, threshold_data, dilution_factor,
-                        data_type,
-                        units=export_units,
-                    )
-
-                    successful_exports += 1
-
-                except Exception as e:
-                    _itk_log.exception("Handled exception in export_data")
-                    failed_exports.append((sample_name, str(e)))
-                    _itk_log.error(f"Error exporting {sample_name}: {str(e)}")
-                    continue
+    def _on_done(payload):
+        successful_exports = payload.get('successful', 0)
+        failed_exports = payload.get('failed', [])
+        main_window.progress_bar.setValue(100)
 
         if successful_exports > 0:
             if failed_exports:
@@ -421,12 +516,33 @@ def export_data(main_window: MainWindow):
             QMessageBox.critical(main_window, "Export Error", f"Failed to export any files:\n\n{error_details}")
 
         main_window.status_label.setText(f"Exported {successful_exports} file(s) to {export_dir}")
-        return True
 
-    except Exception as e:
-        QMessageBox.critical(main_window, "Export Error", f"Error during export: {str(e)}")
-        _itk_log.error(f"Export error: {str(e)}")
-        return False
+    def _on_failed(message):
+        QMessageBox.critical(main_window, "Export Error", f"Error during export: {message}")
+        _itk_log.error(f"Export error: {message}")
+        main_window.status_label.setText("Export failed")
+
+    def _on_finished():
+        main_window.progress_bar.setVisible(False)
+        worker = getattr(main_window, '_export_thread', None)
+        if worker is not None:
+            worker.deleteLater()
+            main_window._export_thread = None
+
+    main_window.progress_bar.setVisible(True)
+    main_window.progress_bar.setValue(0)
+    main_window.status_label.setText("Preparing export…")
+
+    worker = _ExportWorker(main_window, export_dir, export_type, selected_samples,
+                           sample_dilutions, all_elements, element_labels,
+                           data_type, export_units, parent=main_window)
+    worker.progressed.connect(_on_progress)
+    worker.done.connect(_on_done)
+    worker.failed.connect(_on_failed)
+    worker.finished.connect(_on_finished)
+    main_window._export_thread = worker
+    worker.start()
+    return True
 
 
 def export_saturation_filter_info(main_window, summary_file, selected_samples):

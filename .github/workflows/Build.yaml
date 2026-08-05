@@ -48,11 +48,28 @@ jobs:
       # with the project entitlements so JIT memory is permitted.
       - name: Re-sign .app with entitlements (allow numba/llvmlite JIT)
         run: |
-          codesign --force --deep --options runtime \
+          set -e
+          APP=dist/IsotopeTrack.app
+          HELPER="$APP/Contents/Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Helpers/QtWebEngineProcess.app"
+
+          if [ ! -d "$HELPER" ]; then
+            echo "::error::QtWebEngineProcess.app not found at $HELPER"
+            exit 1
+          fi
+
+          codesign --force --options runtime \
+            --entitlements "$HELPER/Contents/Resources/QtWebEngineProcess.entitlements" \
+            --sign - "$HELPER"
+
+          codesign --force --options runtime \
             --entitlements packaging/entitlements.plist \
-            --sign - dist/IsotopeTrack.app
+            --sign - "$APP"
+
           echo "Entitlements now embedded in the app:"
-          codesign -d --entitlements - dist/IsotopeTrack.app || true
+          codesign -d --entitlements - "$APP" || true
+          echo "Entitlements on the QtWebEngine helper:"
+          codesign -d --entitlements - "$HELPER" || true
+          codesign --verify --verbose=2 "$APP" || true
 
       - name: Build DMG
         run: |

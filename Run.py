@@ -117,6 +117,15 @@ if __name__ == "__main__":
             _itk_log.exception("Handled exception in <module>")
     app.main_windows.clear()
 
+    # scikit-learn keeps its joblib worker pool warm between fits, so it is
+    # still alive here and its semaphores outlive the interpreter unless the
+    # pool is closed first. Nothing may have created one, hence the guard.
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        get_reusable_executor().shutdown(wait=True)
+    except Exception:
+        _itk_log.debug("No loky executor to shut down")
+
     logging.shutdown()
     if sys.stdout is not None:
         sys.stdout.flush()

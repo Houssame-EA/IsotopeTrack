@@ -24,6 +24,247 @@ function colorFor(c){
  */
 function clusterTag(c){ return c < 0 ? 'Noise' : 'C' + (c + 1); }
 
+/**
+ * Marker shapes available for distinguishing samples.
+ *
+ * Colour always encodes the cluster, so a second visual channel is needed to
+ * tell samples apart without splitting the scatter. The order is the default
+ * cycle: the first sample gets a circle, the second a square, and so on.
+ *
+ * @type {string[]}
+ */
+const SHAPES = ['circle','square','triangle','diamond',
+                'cross','plus','star','hexagon','down-triangle','bowtie'];
+
+/**
+ * Human-readable names for the shape keys, used by the settings dropdowns.
+ * @type {Object<string,string>}
+ */
+const SHAPE_LABELS = {
+  'circle':'● Circle', 'square':'■ Square', 'triangle':'▲ Triangle',
+  'diamond':'◆ Diamond', 'cross':'✕ Cross', 'plus':'✚ Plus',
+  'star':'★ Star', 'hexagon':'⬢ Hexagon', 'down-triangle':'▼ Down triangle',
+  'bowtie':'⧓ Bowtie',
+};
+
+/**
+ * Every sample name present in the current dataset, in backend order.
+ * @returns {string[]} Sample names, or an empty list when no data is loaded.
+ */
+function sampleNames(){
+  const d = S.data || {};
+  return Array.isArray(d.sample_names) ? d.sample_names : [];
+}
+
+/**
+ * Whether the dataset holds more than one sample.
+ *
+ * Single-sample input gets no shape controls and no sample legend, since every
+ * particle would carry the same marker.
+ *
+ * @returns {boolean} True when at least two samples are present.
+ */
+function isMultiSample(){ return sampleNames().length > 1; }
+
+/**
+ * Sample name of particle `i`.
+ * @param {number} i Particle index within the current view.
+ * @returns {string} The sample the particle came from, or '' when unknown.
+ */
+function sampleOf(i){
+  const s = S.data && S.data.samples;
+  return (s && s[i] != null) ? s[i] : '';
+}
+
+/**
+ * Marker shape assigned to a sample, honouring any override from the settings.
+ *
+ * Unassigned samples fall back to their position in :data:`SHAPES`, so the
+ * defaults stay stable as long as the sample list does.
+ *
+ * @param {string} name Sample name.
+ * @returns {string} A key from :data:`SHAPES`.
+ */
+function shapeFor(name){
+  if(!S.ui.shapeBySample || !isMultiSample()) return 'circle';
+  const o = S.ui.shapes[name];
+  if(o && SHAPES.indexOf(o) >= 0) return o;
+  const i = sampleNames().indexOf(name);
+  return SHAPES[(i < 0 ? 0 : i) % SHAPES.length];
+}
+
+/**
+ * Add one marker outline to the current path of `c`.
+ *
+ * Every shape is a closed sub-path so a whole group of points can be traced
+ * into one path and filled in a single call, which is what keeps the scatter
+ * fast at tens of thousands of particles.
+ *
+ * @param {CanvasRenderingContext2D} c Target context.
+ * @param {string} shape A key from :data:`SHAPES`.
+ * @param {number} x Centre x in screen pixels.
+ * @param {number} y Centre y in screen pixels.
+ * @param {number} r Nominal radius in screen pixels.
+ */
+function traceMarker(c, shape, x, y, r){
+  const poly=(pts)=>{ c.moveTo(x+pts[0][0]*r, y+pts[0][1]*r);
+    for(let i=1;i<pts.length;i++) c.lineTo(x+pts[i][0]*r, y+pts[i][1]*r);
+    c.closePath(); };
+  const ring=(n, rot, rad)=>{ const p=[];
+    for(let i=0;i<n;i++){ const a=rot+i*2*Math.PI/n;
+      p.push([Math.cos(a)*rad, Math.sin(a)*rad]); }
+    return p; };
+  switch(shape){
+    case 'square':        poly(ring(4, Math.PI/4, 1.20)); break;
+    case 'triangle':      poly(ring(3, -Math.PI/2, 1.35)); break;
+    case 'down-triangle': poly(ring(3, Math.PI/2, 1.35)); break;
+    case 'diamond':       poly(ring(4, -Math.PI/2, 1.38)); break;
+    case 'hexagon':       poly(ring(6, -Math.PI/2, 1.15)); break;
+    case 'plus': {
+      const a=0.40, b=1.25;
+      poly([[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],
+            [a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]]);
+      break;
+    }
+    case 'cross': {
+      const a=0.40, b=1.25, k=Math.SQRT1_2;
+      const pts=[[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],
+                 [a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+      poly(pts.map(([px,py])=>[(px-py)*k, (px+py)*k]));
+      break;
+    }
+    case 'star': {
+      const p=[];
+      for(let i=0;i<10;i++){ const a=-Math.PI/2 + i*Math.PI/5;
+        const rad=(i%2 ? 0.62 : 1.55);
+        p.push([Math.cos(a)*rad, Math.sin(a)*rad]); }
+      poly(p);
+      break;
+    }
+    case 'bowtie':
+      poly([[-1.25,-1.05],[1.25,1.05],[1.25,-1.05],[-1.25,1.05]]);
+      break;
+    default:
+      c.moveTo(x+r, y); c.arc(x, y, r, 0, 6.283);
+  }
+}
+
+/**
+ * Per-element colours, matching ``_ELEMENT_PALETTE`` in the main dialog so an
+ * element keeps one colour across the biplot and the composition figures.
+ * @type {string[]}
+ */
+const ELEMENT_PALETTE = [
+  '#2563EB','#DC2626','#16A34A','#D97706','#7C3AED',
+  '#0891B2','#DB2777','#65A30D','#EA580C','#4F46E5',
+  '#0D9488','#C026D3','#CA8A04','#E11D48','#2DD4BF',
+  '#6366F1','#F59E0B','#10B981','#EF4444','#8B5CF6',
+  '#0EA5E9','#A855F7','#F97316','#84CC16','#06B6D4'];
+
+/**
+ * Deterministic colour for an element symbol.
+ *
+ * The palette index is the element's position in the dataset's element list, so
+ * the same symbol keeps the same colour across redraws and matches
+ * ``_element_color`` in the main dialog.
+ *
+ * @param {string} key Element key, e.g. 'Fe' or '107Ag'.
+ * @returns {string} A '#RRGGBB' colour.
+ */
+function elementColor(key){
+  const els=(S.data&&S.data.elements)||[];
+  let i=els.indexOf(key);
+  if(i<0){ let h=0; const s=String(key);
+    for(let j=0;j<s.length;j++) h=(h*31+s.charCodeAt(j))|0;
+    i=Math.abs(h); }
+  return ELEMENT_PALETTE[i % ELEMENT_PALETTE.length];
+}
+
+/**
+ * Fade a colour toward the page background.
+ *
+ * Mixing against the background rather than lowering the alpha keeps the result
+ * pale in light mode and softly muted in dark mode, and leaves the marks opaque
+ * so overlapping arrows do not stack into darker patches.
+ *
+ * @param {string} hex A '#RRGGBB' colour.
+ * @param {number} amount Share of background to mix in, 0 (unchanged) to 1.
+ * @returns {string} The mixed colour as 'rgb(r,g,b)'.
+ */
+function paleColor(hex, amount){
+  const c=hexToRgb(hex); if(!c) return hex;
+  const b=hexToRgb(THEME.bg) || [255,255,255];
+  const k=Math.max(0, Math.min(1, amount));
+  const mix=c.map((v,i)=>Math.round(v+(b[i]-v)*k));
+  return 'rgb('+mix[0]+','+mix[1]+','+mix[2]+')';
+}
+
+/**
+ * Parse a '#RRGGBB' string into an [r, g, b] triple.
+ * @param {string} h Hex colour, with or without the leading '#'.
+ * @returns {?number[]} The channel values, or null when unparseable.
+ */
+function hexToRgb(h){
+  const m=/^#?([0-9a-f]{6})$/i.exec(String(h||'').trim());
+  if(!m) return null;
+  const v=parseInt(m[1],16);
+  return [(v>>16)&255,(v>>8)&255,v&255];
+}
+
+/**
+ * Viridis stops, used when the backend sends no colormaps.
+ *
+ * The Python side samples every map in ``widget.colors.colorheatmap`` with
+ * matplotlib and hands the stops over in the schema; this is the fallback for
+ * the browser preview and for an install where matplotlib fails to import.
+ *
+ * @type {string[]}
+ */
+const VIRIDIS_FALLBACK = ['#440154','#482878','#3E4989','#31688E','#26828E',
+                          '#1F9E89','#35B779','#6DCD59','#B4DE2C','#FDE725'];
+
+/**
+ * The active colormap expanded to 256 CSS strings, rebuilt when it changes.
+ * @type {{key: ?string, arr: ?string[]}}
+ */
+let _ramp = {key:null, arr:null};
+
+/**
+ * Stops of the colormap currently chosen for the overlay.
+ * @returns {number[][]} At least two [r, g, b] control points.
+ */
+function rampStops(){
+  const name=S.ui.overlayCmap;
+  const hex=(S.schema && S.schema.colormaps && S.schema.colormaps[name]) || null;
+  const rgb=(hex||[]).map(hexToRgb).filter(Boolean);
+  return rgb.length>1 ? rgb : VIRIDIS_FALLBACK.map(hexToRgb);
+}
+
+/**
+ * Colour for one step of the overlay ramp.
+ *
+ * The 256 steps are interpolated from the colormap's stops once and cached, so
+ * the draw loop only indexes an array however many particles are on screen.
+ *
+ * @param {number} i Step index, 0 to 255.
+ * @returns {string} An 'rgb(r,g,b)' colour.
+ */
+function rampColor(i){
+  const name=S.ui.overlayCmap;
+  if(_ramp.key!==name || !_ramp.arr){
+    const stops=rampStops(), last=stops.length-1;
+    const arr=new Array(256);
+    for(let k=0;k<256;k++){
+      const t=k/255*last;
+      const a=Math.floor(t), b=Math.min(last, a+1), f=t-a;
+      const c=stops[a].map((v,j)=>Math.round(v+(stops[b][j]-v)*f));
+      arr[k]='rgb('+c[0]+','+c[1]+','+c[2]+')';
+    }
+    _ramp={key:name, arr};
+  }
+  return _ramp.arr[Math.max(0, Math.min(255, i|0))];
+}
+
 const THEME = { noise:'#888', text:'#d4d4d4', bg:'#1e1e1e', accent:'#007acc' };
 
 const S = {
@@ -31,15 +272,19 @@ const S = {
   algo:'K-Means', params:{},
   frames:[], t:0, playing:false, fps:7, loop:false, lastTick:0,
   running:false, hidden:new Set(), focus:null, tween:null, hoverIdx:-1, inertiaHist:[],
+  sampleHidden:new Set(), sampleFocus:null,
   split:false, cmp:null, cmpPending:false, animEnd:null, settlePending:false,
   view:{scale:1, ox:0, oy:0}, dragScrub:false,
   proj:'PCA', projInfo:{}, paramEls:{}, dims:2, rot:{az:0.7, el:0.35}, drag3d:null,
   v3:{scale:1, cx:0, cy:0, center:[0,0,0]},
-  insetOn:true, insetCollapsed:false, insetDrag:null, insetResize:null,
-  eqOn:true, eqCollapsed:false, legendOn:true,
+  insetOn:false, insetCollapsed:false, insetDrag:null, insetResize:null,
+  eqOn:false, eqCollapsed:false, legendOn:true,
   ui:{font:'system', fontStyle:'normal', fontSize:13.5,
       labelMode:'Mass + Symbol', pointSize:0, centSize:6.5, colors:{},
+      shapes:{}, shapeBySample:true,
+      biplotOn:true, biplotN:8, overlayEl:'', overlayCmap:'viridis',
       maxIso:4, minPct:1.0},
+  overlay:null,
   exp:{scale:3, fontBoost:1.25, transparent:false},
 };
 
@@ -220,6 +465,8 @@ function applyTheme(v){
   THEME.text  = v.text || '#d4d4d4';
   THEME.bg    = v.bg || '#1e1e1e';
   THEME.accent= v.accent || '#007acc';
+  for(const row of _sampRows.values()) row.col=null;
+  refreshLegend();
 }
 window.applyTheme = applyTheme;
 
@@ -242,12 +489,26 @@ function onState(state){
   if(state.algorithm) S.algo = state.algorithm;
   reflectConfig(state);
   if(S.schema){ const as=$('algoSel'); if(as) as.value=S.algo; buildAlgoParams(); }
+  if(state.sample_shapes){
+    S.ui.shapes={};
+    for(const k in state.sample_shapes){
+      const v=state.sample_shapes[k];
+      if(v) S.ui.shapes[k]=v;
+    }
+  }
   S.hidden.clear();
+  S.sampleHidden.clear(); S.sampleFocus=null;
   S.focus=null; S.tween=null;
   S.cmp=null; S.animEnd=null; S.settlePending=false;
   // Drop frames from the previous dataset so draw never mixes old labels with
   // the new point set (a new run repopulates them).
   S.frames=[]; S.t=0;
+  if(state.overlay_colormap) S.ui.overlayCmap=state.overlay_colormap;
+  updateBiplotAvailability();
+  buildColormapPicker();
+  buildOverlayPicker();
+  rebuildOverlay();
+  buildOverlayLegend();
   $('empty').classList.toggle('show', !!state.empty);
   if(state.empty){ return; }
   fitView();
@@ -373,6 +634,27 @@ const TWEEN_MS = 420;
  * @returns {boolean} True when a different cluster is focused.
  */
 function isDimmed(c){ return S.focus!=null && c!==S.focus; }
+ /**
+ * Whether sample `name` should be drawn faded because another sample is soloed.
+ * @param {string} name Sample name.
+ * @returns {boolean} True when a different sample holds the focus.
+ */
+function isSampleDimmed(name){
+  return S.sampleFocus!=null && name!==S.sampleFocus;
+}
+ /**
+ * Whether particle `i` is excluded from the scatter entirely.
+ *
+ * A particle is dropped when either its cluster or its sample has been hidden
+ * from the legend, so the two filters compose instead of overriding one another.
+ *
+ * @param {number} i Particle index within the current view.
+ * @param {number} c The particle's cluster id.
+ * @returns {boolean} True when the particle must not be drawn.
+ */
+function isPointHidden(i, c){
+  return S.hidden.has(c) || S.sampleHidden.has(sampleOf(i));
+}
  /**
  * Positions and labels of the frame currently on screen.
  * @returns {?{pos:number[][], labels:number[]}} Null when no frame matches the
@@ -588,7 +870,7 @@ function drawFrame(A){
   ctx.save();
   drawAxes();
   if(!A || !A.labels || A.labels.length!==n){
-    drawPoints(P,new Array(n).fill(-1)); ctx.restore(); return;
+    drawPoints(P,new Array(n).fill(-1)); drawBiplot(); ctx.restore(); return;
   }
   const i0=Math.floor(S.t),f=S.t-i0,i1=Math.min(i0+1,S.frames.length-1);
   const B=frameAt(i1),labels=A.labels;
@@ -597,6 +879,7 @@ function drawFrame(A){
     if(B.positions && B.positions.length===A.positions.length) pos=lerpPts(A.positions,B.positions,f); }
   if(A.extra && A.extra.som_nodes) drawSom(A,B,f);
   drawPoints(pos,labels);
+  drawBiplot();
   let cen=A.centroids;
   if(cen && B.centroids && B.centroids.length===cen.length) cen=lerpPts(cen,B.centroids,f);
   if(cen) drawCentroids(cen);
@@ -772,11 +1055,11 @@ function insetAxes(w,h,opts){
   const T = Math.max(10, fs*0.8);
   const B = (o.ylabel||o.xlabel) ? Math.max(22, fs*1.8) : Math.max(14, fs*1.2);
   const r = {x:L, y:T, w:Math.max(10,w-L-R), h:Math.max(10,h-T-B)};
-  ictx.strokeStyle=THEME.text; ictx.globalAlpha=.18; ictx.lineWidth=1;
+  ictx.strokeStyle=THEME.text; ictx.globalAlpha=1; ictx.lineWidth=1;
   ictx.beginPath();
   ictx.moveTo(r.x, r.y); ictx.lineTo(r.x, r.y+r.h); ictx.lineTo(r.x+r.w, r.y+r.h);
   ictx.stroke(); ictx.globalAlpha=1;
-  ictx.fillStyle=THEME.text; ictx.globalAlpha=.55;
+  ictx.fillStyle=THEME.text; ictx.globalAlpha=1;
   if(o.xlabel){ ictx.textAlign='right'; ictx.textBaseline='top';
     ictx.fillText(o.xlabel, r.x+r.w, r.y+r.h+6); }
   if(o.ylabel){ ictx.textAlign='left'; ictx.textBaseline='top';
@@ -786,7 +1069,7 @@ function insetAxes(w,h,opts){
 }
 /** Draw min/max tick labels on the inset y axis. */
 function insetYTicks(r, lo, hi){
-  ictx.fillStyle=THEME.text; ictx.globalAlpha=.5;
+  ictx.fillStyle=THEME.text; ictx.globalAlpha=1;
   ictx.textAlign='right'; ictx.textBaseline='middle';
   const fmt=(v)=>Math.abs(v)>=1000||(v!==0&&Math.abs(v)<0.01)
     ? v.toExponential(1) : (+v.toFixed(2)+'');
@@ -817,7 +1100,7 @@ function drawInset(A){
     else if(d.kind==='dendrogram') insetDendro(d,w,h);
     else if(d.kind==='grid') insetGrid(d,w,h);
   }catch(e){
-    ictx.fillStyle=THEME.text; ictx.globalAlpha=.6; ictx.textAlign='left';
+    ictx.fillStyle=THEME.text; ictx.globalAlpha=1; ictx.textAlign='left';
     ictx.fillText('detail view unavailable', 8, 16); ictx.globalAlpha=1;
   }
 }
@@ -828,7 +1111,7 @@ function insetCurve(d,w,h){
   const barH = bars.length ? 30 : 0;
   const r = insetAxes(w, h-barH, {xlabel:d.xlabel, ylabel:d.ylabel});
   if(!series.length){
-    ictx.fillStyle=THEME.text; ictx.globalAlpha=.45; ictx.textAlign='center';
+    ictx.fillStyle=THEME.text; ictx.globalAlpha=1; ictx.textAlign='center';
     ictx.fillText('collecting…', r.x+r.w/2, r.y+r.h/2); ictx.globalAlpha=1;
   }
   const left=series.filter(s=>s.axis!=='right'), right=series.filter(s=>s.axis==='right');
@@ -873,7 +1156,7 @@ function insetCurve(d,w,h){
   let ly=r.y+2; const lh=Math.max(10, uiSize()*0.82);
   ictx.textAlign='left'; ictx.textBaseline='top';
   for(const s of series){ ictx.fillStyle=themeColor(s.color||'accent');
-    ictx.globalAlpha=.9; ictx.fillText('— '+(s.label||''), r.x+5, ly); ly+=lh; }
+    ictx.globalAlpha=1; ictx.fillText('— '+(s.label||''), r.x+5, ly); ly+=lh; }
   ictx.globalAlpha=1;
   if(bars.length) insetBarStrip(bars[0], r.x, h-barH+4, r.w, barH-10);
 }
@@ -888,7 +1171,7 @@ function insetBarStrip(bar, x, y, w, h){
     ictx.globalAlpha=.85;
     ictx.fillRect(x + i*(w/vals.length), y+h-bh, bw, bh);
   }
-  ictx.globalAlpha=.55; ictx.fillStyle=THEME.text;
+  ictx.globalAlpha=1; ictx.fillStyle=THEME.text;
   ictx.textAlign='left'; ictx.textBaseline='bottom';
   ictx.fillText(bar.label||'', x, y+h+9); ictx.globalAlpha=1;
 }
@@ -896,7 +1179,7 @@ function insetBarStrip(bar, x, y, w, h){
 function insetBars(d,w,h){
   const vals=(d.values||[]).map(v=>(v==null||!isFinite(v))?null:v);
   const r=insetAxes(w,h,{xlabel:d.xlabel, ylabel:d.ylabel});
-  if(!vals.length){ ictx.fillStyle=THEME.text; ictx.globalAlpha=.45;
+  if(!vals.length){ ictx.fillStyle=THEME.text; ictx.globalAlpha=1;
     ictx.textAlign='center'; ictx.fillText('collecting…', r.x+r.w/2, r.y+r.h/2);
     ictx.globalAlpha=1; return; }
   let hi=-Infinity, lo=0;
@@ -1040,40 +1323,58 @@ function insetGrid(d,w,h){
       ictx.beginPath(); ictx.arc(x+cs/2,y+cs/2,Math.max(1.4,cs*0.16),0,6.283); ictx.fill(); }
   }
   ictx.globalAlpha=1;
-  ictx.fillStyle=THEME.text; ictx.globalAlpha=.5;
+  ictx.fillStyle=THEME.text; ictx.globalAlpha=1;
   ictx.textAlign='left'; ictx.textBaseline='bottom';
   ictx.fillText('light = similar neighbours · dark = cluster boundary', pad, h-3);
   ictx.globalAlpha=1;
 }
 
-/** Draw the particle scatter, depth-sorted in 3-D. */
+ /**
+ * Draw the particle scatter, depth-sorted in 3-D.
+ *
+ * Colour carries the cluster and marker shape carries the sample, so a
+ * multi-sample dataset can be read on both channels at once without splitting
+ * the figure. Points are batched per (colour, shape, dim state) and filled in
+ * one pass each, which keeps the frame rate up on large particle counts.
+ *
+ * @param {number[][]} pos Point coordinates in data space.
+ * @param {number[]} labels Cluster id per point.
+ */
 function drawPoints(pos,labels){
   const r=pointRadius();
   if(curDims()===3){
     const sc=new Array(pos.length), vis=[];
-    for(let i=0;i<pos.length;i++){ if(S.hidden.has(labels[i])) continue;
+    for(let i=0;i<pos.length;i++){ if(isPointHidden(i,labels[i])) continue;
       sc[i]=screen(pos[i]); vis.push(i); }
     vis.sort((a,b)=>{
-      const fa=isDimmed(labels[a])?0:1, fb=isDimmed(labels[b])?0:1;
+      const fa=(isDimmed(labels[a])||isSampleDimmed(sampleOf(a)))?0:1;
+      const fb=(isDimmed(labels[b])||isSampleDimmed(sampleOf(b)))?0:1;
       return fa!==fb ? fa-fb : sc[a][2]-sc[b][2];
     });
     for(const i of vis){ const c=labels[i];
-      ctx.globalAlpha=((c<0)?0.4:0.85)*(isDimmed(c)?DIM_ALPHA:1); ctx.fillStyle=colorFor(c);
-      ctx.beginPath(); ctx.arc(sc[i][0],sc[i][1],r,0,6.283); ctx.fill(); }
+      const dim=isDimmed(c)||isSampleDimmed(sampleOf(i));
+      const col=pointColor(i,c);
+      const faint=(S.overlay ? col===THEME.noise : c<0);
+      ctx.globalAlpha=(faint?0.4:0.85)*(dim?DIM_ALPHA:1); ctx.fillStyle=col;
+      ctx.beginPath(); traceMarker(ctx, shapeFor(sampleOf(i)), sc[i][0], sc[i][1], r);
+      ctx.fill(); }
     ctx.globalAlpha=1;
   } else {
     const groups=new Map();
-    for(let i=0;i<pos.length;i++){ const c=labels[i]; if(S.hidden.has(c)) continue;
-      const col=colorFor(c), dim=isDimmed(c), key=col+'|'+(dim?'1':'0');
+    for(let i=0;i<pos.length;i++){ const c=labels[i]; if(isPointHidden(i,c)) continue;
+      const sh=shapeFor(sampleOf(i));
+      const col=pointColor(i,c), dim=isDimmed(c)||isSampleDimmed(sampleOf(i));
+      const key=col+'|'+(dim?'1':'0')+'|'+sh;
       let g=groups.get(key);
-      if(!g){ g={col, dim, idxs:[]}; groups.set(key,g); }
+      if(!g){ g={col, dim, shape:sh, idxs:[]}; groups.set(key,g); }
       g.idxs.push(i); }
     const order=[...groups.values()].sort((a,b)=>(a.dim?0:1)-(b.dim?0:1));
     for(const g of order){
       ctx.fillStyle=g.col;
       ctx.globalAlpha=((g.col===THEME.noise)?0.45:0.88)*(g.dim?DIM_ALPHA:1);
       ctx.beginPath();
-      for(const i of g.idxs){ const s=screen(pos[i]); ctx.moveTo(s[0]+r,s[1]); ctx.arc(s[0],s[1],r,0,6.283); }
+      for(const i of g.idxs){ const s=screen(pos[i]);
+        traceMarker(ctx, g.shape, s[0], s[1], r); }
       ctx.fill();
     }
     ctx.globalAlpha=1;
@@ -1156,10 +1457,10 @@ function drawTicks(w, h, ox, oy){
   for(const v of xs.values){
     const px=wx(v);
     if(px<14 || px>w-14) continue;
-    ctx.globalAlpha=.30;
+    ctx.globalAlpha=1;
     ctx.beginPath(); ctx.moveTo(px, oy-3); ctx.lineTo(px, oy+3); ctx.stroke();
     if(v===0) continue;
-    ctx.globalAlpha=.55; ctx.fillText(fmtTick(v, xs.step), px, yLab);
+    ctx.globalAlpha=1; ctx.fillText(fmtTick(v, xs.step), px, yLab);
   }
 
   const ys=niceTicks(uy(h), uy(0), 6);
@@ -1168,10 +1469,10 @@ function drawTicks(w, h, ox, oy){
   for(const v of ys.values){
     const py=wy(v);
     if(py<10 || py>h-10) continue;
-    ctx.globalAlpha=.30;
+    ctx.globalAlpha=1;
     ctx.beginPath(); ctx.moveTo(ox-3, py); ctx.lineTo(ox+3, py); ctx.stroke();
     if(v===0) continue;
-    ctx.globalAlpha=.55; ctx.fillText(fmtTick(v, ys.step), xLab, py);
+    ctx.globalAlpha=1; ctx.fillText(fmtTick(v, ys.step), xLab, py);
   }
   ctx.globalAlpha=1; ctx.textAlign='start'; ctx.textBaseline='alphabetic';
 }
@@ -1211,7 +1512,7 @@ function drawAxes3(){
   for(let i=0;i<3;i++){
     const end=c.slice(); end[i]=c[i]+L;
     const s=screen(end);
-    ctx.globalAlpha=.35; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
+    ctx.globalAlpha=1; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(o[0],o[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
 
     const dx=s[0]-o[0], dy=s[1]-o[1], len=Math.hypot(dx,dy)||1;
@@ -1221,14 +1522,14 @@ function drawAxes3(){
     for(let k=1;k<=n;k++){
       const p=c.slice(); p[i]=c[i]+step*k;
       const q=screen(p);
-      ctx.globalAlpha=.30;
+      ctx.globalAlpha=1;
       ctx.beginPath(); ctx.moveTo(q[0]-nx,q[1]-ny); ctx.lineTo(q[0]+nx,q[1]+ny); ctx.stroke();
       if(k===n) continue;
-      ctx.globalAlpha=.45; ctx.fillStyle=THEME.text;
+      ctx.globalAlpha=1; ctx.fillStyle=THEME.text;
       ctx.fillText(fmtTick(c[i]+step*k, step), q[0]+nx*2.1, q[1]+ny*2.1);
     }
 
-    ctx.globalAlpha=.75; ctx.fillStyle=THEME.text;
+    ctx.globalAlpha=1; ctx.fillStyle=THEME.text;
     ctx.font=uiFont(0.85);
     drawAxisCaption(i, s[0], s[1]-4, 'center');
   }
@@ -1243,15 +1544,157 @@ function drawAxes(){
     const w=canvas.clientWidth, h=canvas.clientHeight;
     const ox=Math.max(0.5, Math.min(w-0.5, wx(0)));
     const oy=Math.max(0.5, Math.min(h-0.5, wy(0)));
-    ctx.globalAlpha=.28; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
+    ctx.globalAlpha=1; ctx.strokeStyle=THEME.text; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(0,oy); ctx.lineTo(w,oy); ctx.moveTo(ox,0); ctx.lineTo(ox,h); ctx.stroke();
     drawTicks(w, h, ox, oy);
-    ctx.globalAlpha=.7; ctx.fillStyle=THEME.text;
+    ctx.globalAlpha=1; ctx.fillStyle=THEME.text;
     ctx.textBaseline='bottom'; drawAxisCaption(0, w-8, oy-5, 'right');
     ctx.textBaseline='top';    drawAxisCaption(1, ox+6, 8+uiSize()*0.6, 'left');
   }
   ctx.restore(); ctx.globalAlpha=1; ctx.textBaseline='alphabetic';
 }
+ /**
+ * Recompute the colour-by-element overlay for the selected element.
+ *
+ * Answers the same question the PCA biplot answers — where do the particles
+ * rich in this element sit — but by colouring the points themselves, so it
+ * stays valid on t-SNE and UMAP, where no element has a direction to point
+ * along.
+ *
+ * Particle composition data is heavily skewed, so the ramp spans the 2nd to
+ * 98th percentile of the *detected* values rather than the full range: a
+ * single saturated particle would otherwise flatten every other point to the
+ * bottom of the scale. Particles where the element was not detected are
+ * flagged separately and drawn in the noise colour, since zero is a different
+ * statement from "a little".
+ *
+ * Stores the result in ``S.overlay`` as byte ramp indices, so the draw loop
+ * does no arithmetic per point per frame.
+ */
+function rebuildOverlay(){
+  S.overlay=null;
+  const key=S.ui.overlayEl, d=S.data;
+  if(!key || !d || !d.raw || !d.elements) return;
+  const j=d.elements.indexOf(key);
+  if(j<0) return;
+
+  const n=d.raw.length;
+  const vals=new Float64Array(n);
+  const seen=[];
+  for(let i=0;i<n;i++){
+    const v=+d.raw[i][j] || 0;
+    vals[i]=v;
+    if(v>0) seen.push(v);
+  }
+  if(!seen.length) return;
+  seen.sort((a,b)=>a-b);
+  const q=(p)=>seen[Math.max(0, Math.min(seen.length-1, Math.round(p*(seen.length-1))))];
+  let lo=q(0.02), hi=q(0.98);
+  if(!(hi>lo)){ lo=seen[0]; hi=seen[seen.length-1]; }
+  if(!(hi>lo)) hi=lo+1;
+
+  const idx=new Uint8Array(n), has=new Uint8Array(n);
+  for(let i=0;i<n;i++){
+    if(vals[i]<=0) continue;
+    has[i]=1;
+    idx[i]=Math.round(Math.max(0, Math.min(1, (vals[i]-lo)/(hi-lo)))*255);
+  }
+  S.overlay={key, col:j, lo, hi, idx, has, vals, detected:seen.length, total:n};
+}
+
+ /**
+ * Fill colour for particle `i`.
+ *
+ * The overlay takes over the colour channel when it is active — cluster
+ * identity is still readable from the legend, the centroids and the marker
+ * shapes, so nothing is lost by handing colour to the element values.
+ *
+ * @param {number} i Particle index within the current view.
+ * @param {number} c The particle's cluster id.
+ * @returns {string} A CSS colour.
+ */
+function pointColor(i, c){
+  const ov=S.overlay;
+  if(!ov) return colorFor(c);
+  return ov.has[i] ? rampColor(ov.idx[i]) : THEME.noise;
+}
+
+ /**
+ * The element arrows to draw for the current PCA view, longest first.
+ *
+ * An element's loading vector says how strongly that element pushes along each
+ * plotted component, so its arrow points the way particles rich in it lie and
+ * its length says how much of the picture it accounts for. Only the longest
+ * ``S.ui.biplotN`` are returned — every element at once is unreadable, and the
+ * short arrows are the ones carrying least information.
+ *
+ * @returns {Array<{key:string, vec:number[], len:number}>} Empty when the view
+ *   is not a PCA of the element columns, or when the arrows are switched off.
+ */
+function biplotVectors(){
+  const d=S.data||{};
+  if(!S.ui.biplotOn || d.projection!=='PCA') return [];
+  const L=d.loadings, els=d.elements;
+  if(!L || !els || L.length!==els.length) return [];
+  const dims=curDims();
+  const out=[];
+  for(let j=0;j<els.length;j++){
+    const v=L[j]; if(!v) continue;
+    const vec=[v[0]||0, v[1]||0, dims===3?(v[2]||0):0];
+    const len=Math.hypot(vec[0], vec[1], vec[2]);
+    if(!(len>1e-9)) continue;
+    out.push({key:els[j], vec, len});
+  }
+  out.sort((a,b)=>b.len-a.len);
+  return out.slice(0, Math.max(1, S.ui.biplotN));
+}
+
+ /**
+ * Draw the PCA biplot: one labelled arrow per element, from the cloud's centre.
+ *
+ * PCA is mean-centred, so the data origin is the centre of the particle cloud
+ * and every arrow starts there. All arrows share one scale factor, chosen so
+ * the longest reaches a fixed fraction of the visible cloud — their lengths
+ * stay comparable to each other while the group always fits on screen at any
+ * zoom.
+ */
+function drawBiplot(){
+  const vecs=biplotVectors();
+  if(!vecs.length) return;
+  const b=dataBounds2(); if(!b) return;
+  const span=Math.max(b[2]-b[0], b[3]-b[1]);
+  if(!(span>0)) return;
+  const k=(span*0.42)/vecs[0].len;
+  const o=screen([0,0,0]);
+  const head=Math.max(5, uiSize()*0.42);
+
+  ctx.save();
+  ctx.font=uiFont(0.78);
+  ctx.lineWidth=1.6;
+  for(const v of vecs){
+    const s=screen([v.vec[0]*k, v.vec[1]*k, v.vec[2]*k]);
+    const dx=s[0]-o[0], dy=s[1]-o[1], len=Math.hypot(dx,dy);
+    if(len<2) continue;
+    const ux=dx/len, uy=dy/len;
+    const col=elementColor(v.key);
+    const pale=paleColor(col, 0.52);
+    ctx.strokeStyle=pale; ctx.fillStyle=pale;
+    ctx.beginPath(); ctx.moveTo(o[0],o[1]); ctx.lineTo(s[0],s[1]); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(s[0], s[1]);
+    ctx.lineTo(s[0]-ux*head - uy*head*0.42, s[1]-uy*head + ux*head*0.42);
+    ctx.lineTo(s[0]-ux*head + uy*head*0.42, s[1]-uy*head - ux*head*0.42);
+    ctx.closePath(); ctx.fill();
+    const lx=s[0]+ux*head*1.5, ly=s[1]+uy*head*1.5;
+    ctx.textBaseline = uy<0 ? 'bottom' : 'top';
+    ctx.fillStyle=col;
+    drawElementLabel(ctx, v.key, lx, ly, uiSize()*0.78,
+                     ux<-0.15 ? 'right' : (ux>0.15 ? 'left' : 'center'));
+  }
+  ctx.restore();
+  ctx.textAlign='start'; ctx.textBaseline='alphabetic';
+}
+
 /** Return the point radius — the Appearance slider, or auto by particle count. */
 function pointRadius(){
   if(S.ui.pointSize>0) return S.ui.pointSize;
@@ -1346,6 +1789,7 @@ function updateHud(fr){
   setChip('cK', m.n_clusters!=null?m.n_clusters:'–');
   setChip('cNoise', m.n_noise!=null?m.n_noise:'–');
   buildLegend(fr.labels);
+  buildSampleLegend(fr.labels);
 }
 /** Set a metric chip's text. */
 function setChip(id,v){ const el=$(id); if(el) el.textContent=v; }
@@ -1618,6 +2062,153 @@ function makeLegendRow(c){
   return div;
 }
 
+/**
+ * Sample legend rows kept alive across frames, keyed by sample name.
+ * @type {Map<string, Object>}
+ */
+let _sampRows=new Map();
+
+ /**
+ * Paint one marker shape into a small canvas used as a legend or settings glyph.
+ *
+ * @param {HTMLCanvasElement} cv Target canvas, sized in CSS pixels.
+ * @param {string} shape A key from :data:`SHAPES`.
+ * @param {string} [color] Fill colour; defaults to the theme's text colour.
+ */
+function paintGlyph(cv, shape, color){
+  const px=cv.clientWidth||13, py=cv.clientHeight||13, dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(px*dpr); cv.height=Math.round(py*dpr);
+  const g=cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,px,py);
+  g.fillStyle=color||THEME.text;
+  g.beginPath(); traceMarker(g, shape, px/2, py/2, Math.min(px,py)*0.30);
+  g.fill();
+}
+
+ /**
+ * Build one sample legend row and register it in :data:`_sampRows`.
+ *
+ * Clicking the row isolates that sample — every particle from the other
+ * samples fades out so only the selected sample's data is readable, while the
+ * cluster colours stay exactly as they are. Clicking the shape glyph cycles to
+ * the next marker, and ⌥-click removes the sample from the plot outright.
+ *
+ * @param {string} name Sample name.
+ * @returns {HTMLElement} The row element, not yet attached to the legend.
+ */
+function makeSampleRow(name){
+  const div=document.createElement('div');
+  const gl=document.createElement('canvas');
+  gl.className='gl'; gl.title='Click to change this sample’s marker shape';
+  const nm=document.createElement('span'); nm.textContent=name;
+  const ct=document.createElement('span'); ct.className='ct';
+  div.appendChild(gl); div.appendChild(nm); div.appendChild(ct);
+  const row={div, gl, nm, ct, shape:null, col:null};
+  div.onclick=(e)=>{
+    if(e.target===gl){ cycleSampleShape(name); return; }
+    if(e.altKey){
+      if(S.sampleHidden.has(name)) S.sampleHidden.delete(name);
+      else S.sampleHidden.add(name);
+      if(S.sampleHidden.has(name) && S.sampleFocus===name) S.sampleFocus=null;
+      refreshLegend(); return;
+    }
+    setSampleFocus(name);
+  };
+  _sampRows.set(name, row);
+  return div;
+}
+
+ /**
+ * Refresh the sample legend: marker glyph, sample name and particle count.
+ *
+ * Mirrors :func:`buildLegend` — rows are updated in place and only rebuilt when
+ * the sample list itself changes, so a click is never destroyed between
+ * mousedown and mouseup by an animation frame. The whole block is hidden for
+ * single-sample input, where every particle would carry the same marker.
+ *
+ * @param {number[]} labels Per-point cluster ids for the current frame.
+ */
+function buildSampleLegend(labels){
+  const box=$('sampItems'), sec=$('sampSec');
+  if(!box || !sec) return;
+  if(!isMultiSample()){ sec.style.display='none'; return; }
+  sec.style.display='';
+  const names=sampleNames();
+  const counts=new Map();
+  for(const n of names) counts.set(n, 0);
+  const src=S.data && S.data.samples;
+  if(src) for(let i=0;i<src.length;i++){
+    if(labels && labels[i]!=null && S.hidden.has(labels[i])) continue;
+    counts.set(src[i], (counts.get(src[i])||0)+1);
+  }
+
+  if(_sampRows.size!==names.length || box.children.length!==names.length
+     || !names.every(n=>_sampRows.has(n))){
+    box.innerHTML=''; _sampRows=new Map();
+    for(const n of names) box.appendChild(makeSampleRow(n));
+  }
+
+  for(const n of names){
+    const row=_sampRows.get(n); if(!row) continue;
+    const cls='leg'+(S.sampleHidden.has(n)?' off':'')
+      +(S.sampleFocus===n?' on':'')+(isSampleDimmed(n)?' dim':'');
+    if(row.div.className!==cls) row.div.className=cls;
+    const title=S.sampleFocus===n ? 'Click to show every sample again'
+      : 'Click to show only this sample (⌥-click to hide it)';
+    if(row.div.title!==title) row.div.title=title;
+    const sh=shapeFor(n);
+    if(row.shape!==sh || row.col!==THEME.text){
+      paintGlyph(row.gl, sh); row.shape=sh; row.col=THEME.text;
+    }
+    const ct=String(counts.get(n)||0);
+    if(row.ct.textContent!==ct) row.ct.textContent=ct;
+  }
+}
+
+ /**
+ * Isolate one sample: every other sample fades to the dimmed alpha.
+ * Selecting the already-selected sample clears the isolation instead.
+ * @param {?string} name Sample name, or null to show every sample.
+ */
+function setSampleFocus(name){
+  S.sampleFocus = (name==null || S.sampleFocus===name) ? null : name;
+  refreshLegend();
+}
+
+ /**
+ * Advance one sample to the next marker shape and persist the choice.
+ * @param {string} name Sample name.
+ */
+function cycleSampleShape(name){
+  const cur=shapeFor(name);
+  const next=SHAPES[(SHAPES.indexOf(cur)+1) % SHAPES.length];
+  setSampleShape(name, next);
+}
+
+ /**
+ * Assign a marker shape to a sample and save it on the shared node config.
+ *
+ * @param {string} name Sample name.
+ * @param {string} shape A key from :data:`SHAPES`.
+ */
+function setSampleShape(name, shape){
+  S.ui.shapes[name]=shape;
+  if(S.backend && typeof S.backend.set_sample_shape==='function'){
+    try{ S.backend.set_sample_shape(name, shape); }catch(e){ }
+  }
+  refreshLegend(); buildShapeRows();
+}
+
+ /** Drop every per-sample shape override, returning samples to the default cycle. */
+function resetSampleShapes(){
+  S.ui.shapes={};
+  if(S.backend && typeof S.backend.reset_sample_shapes==='function'){
+    try{ S.backend.reset_sample_shapes(); }catch(e){ }
+  }
+  refreshLegend(); buildShapeRows();
+}
+
 /** Populate a select element with options and optionally set its value. */
 function fillSelect(id, opts, val){
   const s=$(id); if(!s) return; s.innerHTML='';
@@ -1661,6 +2252,123 @@ function fillProjections(opts, val){
   S.proj=pick;
   updateProjHint();
 }
+ /**
+ * Repopulate the colour-by-element dropdown from the current element list.
+ *
+ * The selection is kept when the element survives a data change and dropped
+ * when it does not, so changing the isotope set never leaves the plot coloured
+ * by something that is no longer there.
+ */
+function buildOverlayPicker(){
+  const sel=$('overlaySel'); if(!sel) return;
+  const els=(S.data&&S.data.elements)||[];
+  if(S.ui.overlayEl && els.indexOf(S.ui.overlayEl)<0) S.ui.overlayEl='';
+  sel.innerHTML='';
+  const off=document.createElement('option');
+  off.value=''; off.textContent='Off — colour by cluster';
+  sel.appendChild(off);
+  for(const e of els){
+    const o=document.createElement('option');
+    o.value=e; o.textContent=elementLabelText(e);
+    sel.appendChild(o);
+  }
+  sel.value=S.ui.overlayEl;
+  const cf=$('cmapField');
+  if(cf) cf.style.display = S.ui.overlayEl ? '' : 'none';
+}
+
+ /**
+ * Fill the colormap dropdown from the list the backend sampled.
+ *
+ * The order is ``widget.colors.colorheatmap``, so the choices here are the same
+ * ones the Overview heatmap offers and in the same sequence.
+ */
+function buildColormapPicker(){
+  const sel=$('cmapSel'); if(!sel || !S.schema) return;
+  const names=S.schema.colormap_order
+    || Object.keys(S.schema.colormaps||{});
+  if(!names.length) return;
+  if(names.indexOf(S.ui.overlayCmap)<0) S.ui.overlayCmap=names[0];
+  sel.innerHTML='';
+  for(const n of names){
+    const o=document.createElement('option');
+    o.value=n; o.textContent=n;
+    sel.appendChild(o);
+  }
+  sel.value=S.ui.overlayCmap;
+  paintColormapPreview();
+}
+
+ /** Repaint the gradient strip under the colormap dropdown. */
+function paintColormapPreview(){
+  const cv=$('cmapBar'); if(!cv) return;
+  const w=cv.clientWidth||180, h=cv.clientHeight||8, dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  const g=cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  for(let x=0;x<w;x++){
+    g.fillStyle=rampColor(Math.round(x/Math.max(1,w-1)*255));
+    g.fillRect(x,0,1,h);
+  }
+}
+
+ /**
+ * Format an overlay scale bound compactly for the colour bar.
+ * @param {number} v Value from the raw data matrix.
+ * @returns {string} A short decimal or exponential string.
+ */
+function fmtOverlayValue(v){
+  if(!isFinite(v)) return '–';
+  const a=Math.abs(v);
+  if(a>=1e5 || (a>0 && a<1e-2)) return v.toExponential(1);
+  return (Math.round(v*100)/100).toString();
+}
+
+ /**
+ * Redraw the overlay colour bar, or hide it when no element is selected.
+ *
+ * The bar reports the percentile bounds actually in use rather than the data
+ * minimum and maximum, so the scale on screen matches the scale the points
+ * were coloured with.
+ */
+function buildOverlayLegend(){
+  const sec=$('ovSec'); if(!sec) return;
+  const ov=S.overlay;
+  if(!ov){ sec.style.display='none'; return; }
+  sec.style.display='';
+  const t=$('ovTitle'); if(t) t.innerHTML=elementLabelHTML(ov.key);
+  const lo=$('ovLo'), hi=$('ovHi');
+  if(lo) lo.textContent=fmtOverlayValue(ov.lo);
+  if(hi) hi.textContent=fmtOverlayValue(ov.hi);
+  const note=$('ovNote');
+  if(note) note.textContent=(ov.total-ov.detected)+' not detected';
+  const cv=$('ovBar'); if(!cv) return;
+  const w=cv.clientWidth||140, h=cv.clientHeight||10, dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  const g=cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  for(let x=0;x<w;x++){
+    g.fillStyle=rampColor(Math.round(x/Math.max(1,w-1)*255));
+    g.fillRect(x,0,1,h);
+  }
+}
+
+ /**
+ * Show or hide the biplot controls to match the active projection.
+ *
+ * The arrows only exist for a PCA of the element columns, so the field is
+ * hidden for the embeddings, for the raw-axis view, and for ILR scaling, where
+ * the backend sends no loadings because the columns are balances rather than
+ * elements.
+ */
+function updateBiplotAvailability(){
+  const f=$('biplotField'); if(!f) return;
+  const d=S.data||{};
+  const ok=(d.projection==='PCA') && !!d.loadings;
+  f.style.display = ok ? '' : 'none';
+  const n=$('biplotN');
+  if(ok && n && d.elements) n.max=Math.max(2, d.elements.length);
+}
 /** Update the hint under the Projection dropdown for the current choice. */
 function updateProjHint(){
   const el=$('projHint'), s=$('projSel'); if(!el||!s) return;
@@ -1680,6 +2388,7 @@ function buildPanel(){
   fillSelect('scalingSel', S.schema.scalings||['CLR','ILR','Robust Z-score','None']);
   fillSelect('dataTypeSel', S.schema.data_types||['Counts']);
   fillProjections(S.schema.projections, S.proj);
+  buildColormapPicker();
   buildAlgoParams();
 }
 /** Reflect the shared node config in the Data, View and Algorithm controls. */
@@ -1806,7 +2515,10 @@ function syncPlayBtn(){ const b=$('playBtn'); if(b) b.textContent=S.playing?'❚
 /** Wire up all panel, projection and canvas interactions. */
 function bindControls(){
   window.addEventListener('keydown',(e)=>{
-    if(e.key==='Escape' && !_cpop && S.focus!=null){ setFocus(null); }
+    if(e.key==='Escape' && !_cpop){
+      if(S.focus!=null) setFocus(null);
+      else if(S.sampleFocus!=null) setSampleFocus(null);
+    }
   });
   $('menuBtn').onclick=()=>$('panel').classList.toggle('open');
   const pc=$('panelClose'); if(pc) pc.onclick=()=>$('panel').classList.remove('open');
@@ -1834,6 +2546,26 @@ function bindControls(){
   if(scalingSel) scalingSel.onchange=()=>pushConfig({scaling:scalingSel.value});
   if(dataTypeSel) dataTypeSel.onchange=()=>pushConfig({data_type:dataTypeSel.value});
   if(filterZeros) filterZeros.onchange=()=>pushConfig({filter_zeros:filterZeros.checked});
+  const ovSel=$('overlaySel'), cmSel=$('cmapSel');
+  if(ovSel) ovSel.onchange=()=>{ S.ui.overlayEl=ovSel.value;
+    const cf=$('cmapField');
+    if(cf) cf.style.display = S.ui.overlayEl ? '' : 'none';
+    rebuildOverlay(); buildOverlayLegend(); };
+  if(cmSel) cmSel.onchange=()=>{
+    S.ui.overlayCmap=cmSel.value;
+    if(S.backend && typeof S.backend.set_overlay_colormap==='function'){
+      try{ S.backend.set_overlay_colormap(cmSel.value); }catch(e){ }
+    }
+    paintColormapPreview(); buildOverlayLegend();
+  };
+
+  const bpOn=$('biplotOn'), bpN=$('biplotN');
+  if(bpOn) bpOn.onchange=()=>{ S.ui.biplotOn=bpOn.checked; };
+  if(bpN){ bpN.oninput=()=>{ S.ui.biplotN=+bpN.value;
+    $('vBiplotN').textContent=bpN.value;
+    bpN.style.setProperty('--pct',((bpN.value-1)/(29)*100)+'%'); };
+    bpN.style.setProperty('--pct',((S.ui.biplotN-1)/(29)*100)+'%'); }
+
   const minType=$('minType');
   if(minType){ minType.oninput=()=>{ $('vMinType').textContent=minType.value;
     minType.style.setProperty('--pct',((minType.value-1)/(100-1)*100)+'%');
@@ -1951,17 +2683,19 @@ function bindMenu(){
     else if(act==='export') openSettings('tExport');
     else if(act==='detail'){ S.insetOn=!S.insetOn; syncSettings(); }
     else if(act==='equation'){ S.eqOn=!S.eqOn; syncSettings(); }
-    else if(act==='fit'){ S.v3.zoom=1; S.focus=null; fitView(); refreshLegend(); }
+    else if(act==='fit'){ S.v3.zoom=1; S.focus=null;
+      S.sampleFocus=null; S.sampleHidden.clear(); fitView(); refreshLegend(); }
     else if(act==='boxes'){ resetBox('inset','insetBody'); resetBox('eqbox','eqBody'); }
     else if(act==='colors') resetColors();
     closeMenu();
   });
 }
 
-/** Repaint the legend from the frame currently on screen. */
+/** Repaint the cluster and sample legends from the frame currently on screen. */
 function refreshLegend(){
   const fr=S.frames.length?frameAt(Math.floor(S.t)):null;
   if(fr && fr.labels) buildLegend(fr.labels);
+  buildSampleLegend(fr && fr.labels ? fr.labels : null);
 }
 /** Drop every per-cluster colour override. */
 function resetColors(){
@@ -1983,6 +2717,38 @@ function buildSwatches(){
     d.className='sw2'; d.style.background=colorFor(c); d.title=clusterTag(c);
     d.onclick=()=>{ pickClusterColor(c, fr?fr.labels:[], d); };
     box.appendChild(d);
+  }
+}
+ /**
+ * Rebuild the per-sample marker-shape rows in the settings dialog.
+ *
+ * One row per sample: a live glyph, the sample name and a dropdown holding
+ * every shape in :data:`SHAPES`. The whole field is hidden for single-sample
+ * input, where a second visual channel would carry no information.
+ */
+function buildShapeRows(){
+  const field=$('shapeField'), box=$('sampleShapes');
+  if(!field || !box) return;
+  if(!isMultiSample()){ field.style.display='none'; return; }
+  field.style.display='';
+  const tgl=$('shapeBySample');
+  if(tgl) tgl.checked=S.ui.shapeBySample;
+  box.innerHTML='';
+  for(const name of sampleNames()){
+    const row=document.createElement('div'); row.className='shaperow';
+    const gl=document.createElement('canvas'); gl.className='gl';
+    const nm=document.createElement('span'); nm.className='nm'; nm.textContent=name;
+    const sel=document.createElement('select');
+    for(const sh of SHAPES){
+      const o=document.createElement('option');
+      o.value=sh; o.textContent=SHAPE_LABELS[sh]||sh; sel.appendChild(o);
+    }
+    sel.value=shapeFor(name);
+    sel.disabled=!S.ui.shapeBySample;
+    sel.onchange=()=>{ setSampleShape(name, sel.value); };
+    row.appendChild(gl); row.appendChild(nm); row.appendChild(sel);
+    box.appendChild(row);
+    paintGlyph(gl, shapeFor(name));
   }
 }
 /** Fill the Info tab with the dataset and view details. */
@@ -2018,7 +2784,7 @@ function syncSettings(){
 /** Open the settings dialog, optionally on a given tab. */
 function openSettings(tab){
   const m=$('modal'); if(!m) return;
-  syncSettings(); buildSwatches(); buildInfo();
+  syncSettings(); buildSwatches(); buildShapeRows(); buildInfo();
   if(tab) selectTab(tab);
   m.classList.add('show');
 }
@@ -2068,6 +2834,11 @@ function bindSettings(){
     $('vCentSize').textContent=cs.value; pct(cs,3,28); };
     pct(cs,3,28); }
   if(cr) cr.onclick=resetColors;
+
+  const sbs=$('shapeBySample'), sr=$('shapeReset');
+  if(sbs) sbs.onchange=()=>{ S.ui.shapeBySample=sbs.checked;
+    refreshLegend(); buildShapeRows(); };
+  if(sr) sr.onclick=resetSampleShapes;
 
   const io=$('insetOn'), eo=$('eqOn'), lo=$('legendOn'), br=$('boxReset');
   if(io) io.onchange=()=>{ S.insetOn=io.checked; };
@@ -2161,8 +2932,10 @@ function onHover(e){
   const raw=S.data.raw[best],els=S.data.elements;
   const pairs=els.map((e,j)=>[e,raw[j]]).filter(p=>p[1]>0).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const cl=fr?fr.labels[best]:-1;
+  const samp=isMultiSample()
+    ? `<div class="row"><span>Sample</span><b>${esc(sampleOf(best))}</b></div>` : '';
   tip.innerHTML=`<div class="th">${clusterTag(cl)} `+
-    `<span style="color:${colorFor(cl)}">●</span></div>`+
+    `<span style="color:${colorFor(cl)}">●</span></div>`+ samp +
     pairs.map(p=>`<div class="row"><span>${elementLabelHTML(p[0])}</span>`+
       `<b>${esc(p[1])}</b></div>`).join('');
   tip.style.display='block';

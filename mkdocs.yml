@@ -104,7 +104,6 @@ nav:
     - Overview: loading/index.md
     - "SIA_manager.py": loading/sia-manager.md
     - "data_thread.py": loading/data-thread.md
-    - "csv/": loading/csv.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -159,6 +158,8 @@ nav:
     - "dialog.py": cluster/dialog.md
     - "live.py": cluster/live.md
     - "live_engine.py": cluster/live-engine.md
+    - "palette.py": cluster/palette.md
+    - "prep.py": cluster/prep.md
     - "tools.py": cluster/tools.md
 - Widgets & UI:
     - Overview: widgets_ui/index.md
@@ -201,5 +202,6 @@ nav:
     - "dilution.py": utils/dilution.md
     - "file_dialog_memory.py": utils/file-dialog-memory.md
     - "isobaric_correction.py": utils/isobaric-correction.md
+    - "numba_guard.py": utils/numba-guard.md
     - "pyqtgraph_patches.py": utils/pyqtgraph-patches.md
     - "unit.py": utils/unit.md
