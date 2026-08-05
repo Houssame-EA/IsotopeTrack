@@ -95,7 +95,7 @@ class ProjectManager:
             main_window (object): Reference to the MainWindow instance
         """
         self.main_window: MainWindow = main_window
-        self.project_version = '1.10.8'
+        self.project_version = '1.10.9'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -245,7 +245,7 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.10.8
+Version=1.10.9
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
@@ -667,7 +667,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.10.8',
+            'application_version': '1.10.9',
         }
     
     def _restore_project_data(self, project_data):

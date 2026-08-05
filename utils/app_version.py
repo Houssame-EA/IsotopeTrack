@@ -7,4 +7,4 @@ Other modules should import from here rather than hard-coding a version:
     from utils.app_version import __version__
 """
 
-__version__ = "1.10.8"
+__version__ = "1.10.9"
