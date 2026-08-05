@@ -1,3 +1,8 @@
+"""
+This module contains the formula editor, a `QLineEdit` that can have
+compound prediction that dispatches known compound information through a
+signal.
+"""
 from typing import Any
 
 from PySide6.QtCore import Signal, QModelIndex
@@ -9,10 +14,6 @@ from tools.mass_fraction_utils.compound_database import CompoundDatabase, Compou
 from tools.mass_fraction_utils.formula_utils import signature_from_formula
 
 
-# ---------------------------------------------------------------------------
-# FormulaComboBox – editable combo with live filtering
-# ---------------------------------------------------------------------------
-
 class DirectQCompleter(QCompleter):
     """Enables a `QCompleter` to show all model results regardless of the input"""
 
@@ -21,6 +22,10 @@ class DirectQCompleter(QCompleter):
 
 
 class FormulaEditor(QLineEdit):
+    """
+    Formula editor with compound completion. When editing, the changes can
+    be observed by other component.
+    """
     compound_changed = Signal(Compound)
 
     def __init__(self,
@@ -58,12 +63,16 @@ class FormulaEditor(QLineEdit):
         self.compound_changed.emit(compound)
 
     def set_formula(self, formula: str):
+        """Sets the formula and notifies."""
         self.formula = formula
 
-    def current_formula(self) -> str:
-        return self.formula
-
     def reset_formula(self):
+        """
+        Resets the formula to what it originally was.
+
+        Notes:
+            It notifies listeners
+        """
         self.formula = self.default_formula
 
     @property

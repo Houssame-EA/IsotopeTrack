@@ -1,3 +1,4 @@
+"""This module manages the data loading and querying of compounds."""
 from __future__ import annotations
 
 import logging
@@ -22,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 class _MFCol(StrEnum):
+    """
+    Enum of the columns of the `CompoundDatabase`'s dataframe.
+
+    When more columns get added please change this `enum`.
+    """
     FORMULA = auto()
     DENSITY = auto()
     MATERIAL_ID = auto()
@@ -32,9 +38,14 @@ class _MFCol(StrEnum):
 
 
 class CompoundDatabase:
-    """Service that manages the querying of the data of a `CompoundDatabase`"""
+    """Service that manages the loading and querying of compound data"""
 
     def __init__(self, analysed_elements: list[str] | None = None):
+        """
+        Args:
+            analysed_elements: List of elements labels that will help
+                scope down the research space.
+        """
         self.analysed_elements = analysed_elements
 
         self.df_og: pd.DataFrame = pd.DataFrame()
@@ -43,16 +54,18 @@ class CompoundDatabase:
 
     def init_with_analysed_elements(self, analysed_elements: list[str] | None = None):
         """
-        Initializes `self.df`with the periodic table elements and narrows
-        down the search space to compounds containing analyzed elements.
+        Initializes the queried dataframe (`self.df`) with the periodic
+        table elements and narrows down the search space to compounds
+        containing analyzed elements if there's any.
         """
-        logger.info("Initializing with elements (from periodic table).")
-        self.df = pd.concat([self.df_og, self._elements_as_compound_df()], ignore_index=True)
+        logger.info("Initializing DataFrame with elements from the periodic table.")
+        self.df = pd.concat([self.df_og, self._elements_as_compound_df()],
+                            ignore_index=True)
 
         self.analysed_elements = analysed_elements
         if self.analysed_elements:
             self.df = self.df[
-                self.df["formula"].str
+                self.df[_MFCol.FORMULA].str
                 .contains("|".join(self.analysed_elements),
                           regex=True)
             ]
@@ -100,7 +113,7 @@ class CompoundDatabase:
         ])
 
         filenames = [
-            'materials_trimmed.csv.gz',  # TODO: Generate the V2
+            'material_trimmed.csv.gz',
         ]
         for base in base_dirs:
             for fname in filenames:
@@ -113,17 +126,21 @@ class CompoundDatabase:
         return False
 
     def load_csv(self, csv_path: str | Path) -> bool:
-        """Load CSV and build signature-based indices."""
+        """Loads the CSV and initializes with the analyzed elements."""
         if self.is_loaded:
             return True
         try:
             csv_path = Path(csv_path)
+            if not csv_path.exists() or not csv_path.is_file():
+                return False
+
             logger.info("Loading CSV from %s", csv_path)
             self.df_og = pd.read_csv(csv_path)
+
             if not isinstance(self.df_og, pd.DataFrame):
                 self.init_with_analysed_elements(self.analysed_elements)
-
                 return False
+
             logger.info("CSV loaded with %d rows", len(self.df_og))
 
             for col in (_MFCol.FORMULA, _MFCol.DENSITY, _MFCol.MATERIAL_ID, _MFCol.SPACE_GROUP):
@@ -179,20 +196,26 @@ class CompoundDatabase:
             logger.exception("Error loading CSV")
             return False
 
-    def get_compound(self, index: int) -> Compound:
-        """
-        Gets the compound based on it's index
-        Args:
-            index: index to retrieve
-        """
-        return self._row_to_compound(self.df.iloc[index])
-
     @staticmethod
     def _row_to_compound(row) -> Compound:
+        """
+        Maps a row to a `Compound`.
+        Args:
+            row: row to map
+        Returns:
+            `Compound` that represents the row.
+        """
         return Compound(**row.to_dict())
 
     @staticmethod
     def _dicts_to_compound(dicts: list[dict]) -> list[Compound]:
+        """
+        Maps multiples rows to compounds.
+        Args:
+            dicts: dictionaries to map to the `Compound` class
+        Returns:
+            List of the `Compound`s represented by the dictionaries.
+        """
         return list(map(lambda x: Compound(**x), dicts))
 
     def __len__(self):
@@ -203,6 +226,8 @@ class CompoundDatabase:
         Searches for the `max_count` (default 50) shortest compounds
         fitting the formula.
 
+        Notes:
+            The order is from the shortest to the longest fitting formula.
         Args:
             formula: The formula that we want to look for closest match.
             max_count: (default=`50`) Maximum amount of matches returned.
@@ -225,14 +250,15 @@ class CompoundDatabase:
                              base_formula: Optional[str] = None,
                              parent: QObject | Any = None) -> CompoundDatabaseModel:
         """
-        Gives a usable searchable model.
+        Gives a searchable model for Qt Views.
 
         Args:
             base_formula: the formula which elements are mandatory when
             searching.
             parent: parent of the resulting `CompoundDatabaseModel`.
         Returns:
-            `CompoundDatabaseModel` that can be used to query the `CompoundService`.
+            `CompoundDatabaseModel` that can be used to query the
+            `CompoundService` with Qt Views.
         """
         return CompoundDatabaseModel(self, base_formula, parent)
 
@@ -245,12 +271,28 @@ class CompoundDatabase:
             return ""
 
     def total_row_count(self) -> int:
+        """Total loaded row count without the periodic table elements"""
         return len(self.df_og)
 
     def row_count(self) -> int:
+        """
+        Total loaded row count with the periodic table but with only
+        compounds containing analyzed elements.
+        """
         return len(self.df)
 
     def get_first_compound_by_formula(self, formula: str) -> Optional[Compound]:
+        """
+        Gives the first compound associated with the formula.
+
+        Notes:
+             Since there's no formal ordering the "first" is arbitrary.
+        Args:
+            formula: Formula that
+
+        Returns:
+            The `Compound` if it exists. Otherwise, it returns `None`.
+        """
         # Regex that checks if all elements are present without ordering.
         rows_matching_formula = self.df[self.df[_MFCol.FORMULA] == formula]
 
@@ -261,9 +303,19 @@ class CompoundDatabase:
 
 
 class CompoundDatabaseModel(QAbstractListModel):
-    """Adaptor between `CompoundService` and `QAbstractListModel`"""
+    """
+    Adaptor between `CompoundService` and `QAbstractListModel`.
+
+    Note that It's not a direct adaptor because it has the added
+    functionality of further obligating the presence of elements
+    of the base formula.
+    """
 
     class DataColumn(IntEnum):
+        """
+        Adaptor for the `Qt.ItemDataRole` enum that better explains what
+        is returned from the model.
+        """
         DISPLAY_TEXT = Qt.ItemDataRole.DisplayRole
         FORMULA = Qt.ItemDataRole.EditRole
         COMPOUND = Qt.ItemDataRole.UserRole | 0x00
@@ -281,9 +333,11 @@ class CompoundDatabaseModel(QAbstractListModel):
         self.results: list[Compound] = []
 
     def rowCount(self, /, parent=QModelIndex()):
+        """Returns the amount of compounds from the last search."""
         return len(self.results)
 
     def data(self, index, /, role=DataColumn.DISPLAY_TEXT):
+        """Returns data based on the index row and the role."""
         if role == self.DataColumn.DISPLAY_TEXT:
             return self.results[index.row()].display_text
         if role == self.DataColumn.FORMULA:
@@ -296,7 +350,7 @@ class CompoundDatabaseModel(QAbstractListModel):
 
     def search(self, text: str):
         """
-        Updates the model results with the passed `text
+        Updates the model results with the passed `text` and base formula.
         Args:
             text: String that will be used to search
         """
@@ -311,4 +365,14 @@ class CompoundDatabaseModel(QAbstractListModel):
         self.endResetModel()
 
     def get_first_compound(self) -> Optional[Compound]:
+        """
+        Returns the first `Compound` based on the last research.
+
+        Notes:
+            The order is defined by
+            `CompoundDatabase.search_compounds_by_formula`.
+        Returns:
+            The first `Compound` in the results or None if there's no
+            results.
+        """
         return self.results[0] if len(self.results) > 0 else None

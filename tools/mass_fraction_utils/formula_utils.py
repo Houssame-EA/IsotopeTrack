@@ -1,3 +1,7 @@
+"""
+The functions of this module are there to help with formula manipulations
+and stoichiometry.
+"""
 import logging
 import re
 from functools import reduce
@@ -16,7 +20,7 @@ _TOKEN_RE = re.compile(r'([A-Z][a-z]?|\(|\))(\d*(?:\.\d+)?)')
 def parse_formula_to_counts(formula: Optional[str]) -> dict:
     """Parse a chemical formula string into {element: integer_count}.
 
-    Handles parenthesised groups such as Ca(OH)2 → {'Ca': 1, 'O': 2, 'H': 2}.
+    Handles parenthesized groups such as Ca(OH)2 → {'Ca': 1, 'O': 2, 'H': 2}.
     Nested parentheses are supported.
 
     Args:

@@ -72,6 +72,11 @@ class SampleSelectionWidget(QGroupBox):
         layout.addStretch()
 
     def selected_samples(self) -> list[str]:
+        """
+        List of the selected samples names.
+        Returns:
+            A list of the selected sample names.
+        """
         result = []
         for row in range(self.sample_list.count()):
             widget = self.sample_list.itemWidget(self.sample_list.item(row))
@@ -80,9 +85,24 @@ class SampleSelectionWidget(QGroupBox):
         return result
 
     def apply_to_all(self) -> bool:
+        """
+        Is "apply to all" selected or not.
+        Returns:
+            A `bool` that is `True` if the "apply to all" radio is selected,
+            and `False` if the "apply to all" radio is not selected.
+        """
         return self.all_radio.isChecked()
 
     def restore_state(self, state: dict) -> None:
+        """
+        Restores the state of the widget at the last opening.
+        Args:
+            state:
+                State of the last opening. Needed keys:
+
+                * `apply_to_all`: `bool`
+                * `selected_samples`: `list[str]`
+        """
         self.all_radio.setChecked(state.get("apply_to_all", False))
         self.selected_radio.setChecked(not state.get("apply_to_all", False))
         selected = set(state.get("selected_samples", []))
@@ -159,7 +179,7 @@ class _StructureDelegate(QStyledItemDelegate):
 
 
 class MassFractionTableWidget(QTableView):
-    """View layer for a :class:`MassFractionTableModel`."""
+    """View layer for a `MassFractionTableModel`."""
 
     def __init__(self,
                  model: MassFractionTableModel,
@@ -172,12 +192,11 @@ class MassFractionTableWidget(QTableView):
         self.setItemDelegateForColumn(MassFractionColumn.COMPOUND_DENSITY, _DensityDelegate(self))
         self.setItemDelegateForColumn(MassFractionColumn.STRUCTURE, _StructureDelegate(self))
         header = self.horizontalHeader()
-        header.setSectionResizeMode(MassFractionColumn.ELEMENT, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(MassFractionColumn.FORMULA, QHeaderView.ResizeMode.Stretch)
         for column in (
-                MassFractionColumn.MASS_FRACTION, MassFractionColumn.MOLECULAR_WEIGHT,
-                MassFractionColumn.ELEMENT_DENSITY, MassFractionColumn.COMPOUND_DENSITY,
-                MassFractionColumn.STRUCTURE,
+                MassFractionColumn.ELEMENT, MassFractionColumn.MASS_FRACTION,
+                MassFractionColumn.MOLECULAR_WEIGHT, MassFractionColumn.ELEMENT_DENSITY,
+                MassFractionColumn.COMPOUND_DENSITY, MassFractionColumn.STRUCTURE,
         ):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
         for column, width in ((MassFractionColumn.ELEMENT, 80), (MassFractionColumn.MASS_FRACTION, 120),
@@ -190,6 +209,7 @@ class MassFractionTableWidget(QTableView):
 
 
 class CalculationActionsWidget(QWidget):
+    """Buttons that are related to mass fraction data."""
     reset_requested = Signal()
     calculate_requested = Signal()
 
@@ -206,6 +226,7 @@ class CalculationActionsWidget(QWidget):
 
 
 class DialogActionsWidget(QWidget):
+    """Buttons that are related to modal window management."""
     apply_requested = Signal()
     cancel_requested = Signal()
 

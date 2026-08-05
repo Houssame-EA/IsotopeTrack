@@ -1,4 +1,7 @@
-"""Mass-fraction calculator dialog composed from focused widgets."""
+"""
+Mass-fraction calculator dialog is the widget that handles mass fraction
+definition based on known compounds or user entries.
+"""
 
 from __future__ import annotations
 
@@ -155,6 +158,7 @@ class MassFractionCalculator(QDialog):
         super().reject()
 
     def closeEvent(self, event) -> None:
+        """Handles window closing that saves the state to reload"""
         self._save_state()
         try:
             theme.themeChanged.disconnect(self.apply_theme)
@@ -163,6 +167,7 @@ class MassFractionCalculator(QDialog):
         super().closeEvent(event)
 
     def apply_theme(self) -> None:
+        """Applies the theme to the window and it's component."""
         self.setStyleSheet(self._build_stylesheet())
         self._refresh_database_status()
         palette = theme.palette

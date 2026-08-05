@@ -10,7 +10,7 @@ from typing import Any
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QObject, QPersistentModelIndex
 from PySide6.QtGui import QBrush, QColor
 
-from tools.mass_fraction_utils import reduced_counts_from_formula
+from tools.mass_fraction_utils import reduced_counts_from_formula, parse_formula_to_counts
 from tools.mass_fraction_utils.compound import Compound
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from tools.theme import theme
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class MassFractionColumn(IntEnum):
+    """Enum of the columns in the mass fraction with their index."""
     ELEMENT = 0
     FORMULA = 1
     MASS_FRACTION = 2
@@ -36,6 +37,10 @@ HEADERS = (
 
 @dataclass
 class MassFractionRow:
+    """
+    Dataclass that contains the data related to one row of the mass
+    fraction table.
+    """
     element: str
     formula: str
     mass_fraction: float
@@ -163,10 +168,21 @@ class MassFractionTableModel(QAbstractTableModel):
     def set_compound(self,
                      row_number: int,
                      compound: Compound) -> None:
+        """
+        Sets compound for a certain row and updates all
+        Args:
+            row_number:
+            compound:
+
+        Returns:
+
+        """
         if not 0 <= row_number < len(self._rows):
             return
         row = self._rows[row_number]
-        row.formula = compound.formula
+        # Avoids overriding the user's input
+        if parse_formula_to_counts(row.formula) != parse_formula_to_counts(compound.formula):
+            row.formula = compound.formula
         row.compound = compound
         row.mass_fraction = self._mass_fraction(row.element, row.formula)
         row.molecular_weight = self._molecular_weight(row.element, row.formula)
@@ -178,6 +194,7 @@ class MassFractionTableModel(QAbstractTableModel):
         self._emit_row_changed(row_number)
 
     def reset_to_pure_elements(self) -> None:
+        """Resets the model to the pure element state."""
         for row in self._rows:
             info = self.periodic_table_info.get_element_by_symbol(row.element) or {}
             row.formula = row.element
@@ -188,12 +205,23 @@ class MassFractionTableModel(QAbstractTableModel):
         self._emit_all_changed()
 
     def recalculate_all(self) -> None:
+        """Recalculate all mass fractions and molecular weights."""
         for row in self._rows:
             row.mass_fraction = self._mass_fraction(row.element, row.formula)
             row.molecular_weight = self._molecular_weight(row.element, row.formula)
         self._emit_all_changed()
 
     def export_values(self) -> dict:
+        """
+        Data for the `MassFractionService`.
+        Returns:
+            dict:
+                A `dict` containing the following entries:
+
+                * `mass_fraction`: `dict[str, float]` (key: element, value: mass fraction)
+                * `densities`: `dict[str, float]` (key: element, value: density)
+                * `molecular_weights`: `dict[str, float]` (key: element, value: molecular weight)
+        """
         return {
             "mass_fractions": {row.element: row.mass_fraction for row in self._rows},
             "densities": {row.element: row.compound_density for row in self._rows if row.compound_density > 0},
@@ -201,12 +229,29 @@ class MassFractionTableModel(QAbstractTableModel):
         }
 
     def save_state(self) -> dict:
+        """
+        Saves the state of the model by returning a `dict`
+        Returns:
+            a `dict` of the current state.
+        """
         values = self.export_values()
         values["formulas"] = {row.element: row.formula for row in self._rows}
         values["densities"] = {row.element: row.compound_density for row in self._rows}
         return values
 
     def restore_state(self, state: dict) -> None:
+        """
+        Restores the previous state of the model by formulas and densities.
+
+        Other columns are calculated as the table is created.
+
+        Args:
+            state:
+                `dict` that contains the previous state. It must contain:
+
+                * `formulas`: dict[str, str] (key: element, value: formula)
+                * `densities`: dict[str, float] (key: element, value: density)
+        """
         formulas, densities = state.get("formulas", {}), state.get("densities", {})
         for row in self._rows:
             if row.element in formulas:
