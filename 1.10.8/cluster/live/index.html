@@ -4761,6 +4761,22 @@ of the dialog is unaffected.</p>
 <td><code>{'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP', 'None': …</code></td>
 </tr>
 <tr>
+<td><code>SHAPE_OVERRIDE_KEY</code></td>
+<td><code>'cluster_sample_shapes'</code></td>
+</tr>
+<tr>
+<td><code>OVERLAY_CMAP_KEY</code></td>
+<td><code>'cluster_overlay_colormap'</code></td>
+</tr>
+<tr>
+<td><code>DEFAULT_OVERLAY_CMAP</code></td>
+<td><code>OVERLAY_COLORMAPS[0] if OVERLAY_COLORMAPS else 'viridis'</code></td>
+</tr>
+<tr>
+<td><code>_CMAP_STOPS</code></td>
+<td><code>None</code></td>
+</tr>
+<tr>
 <td><code>EMBED_FIT_MAX</code></td>
 <td><code>3000</code></td>
 </tr>
@@ -4931,6 +4947,21 @@ of the dialog is unaffected.</p>
 <td><code>reset_cluster_colors</code></td>
 <td><code>(self)</code></td>
 <td>Drop every colour override and repaint the other views.</td>
+</tr>
+<tr>
+<td><code>set_sample_shape</code></td>
+<td><code>(self, sample, shape)</code></td>
+<td>Persist the marker shape used for one sample.</td>
+</tr>
+<tr>
+<td><code>reset_sample_shapes</code></td>
+<td><code>(self)</code></td>
+<td>Drop every marker-shape assignment, restoring the default cycle.</td>
+</tr>
+<tr>
+<td><code>set_overlay_colormap</code></td>
+<td><code>(self, name)</code></td>
+<td>Persist the colormap used by the colour-by-element overlay.</td>
 </tr>
 <tr>
 <td><code>_redraw_host_figures</code></td>
@@ -5106,6 +5137,21 @@ of the dialog is unaffected.</p>
 <td><code>_theme_vars</code></td>
 <td><code>()</code></td>
 <td>Map the active app Palette to the CSS variables the page consumes.</td>
+</tr>
+<tr>
+<td><code>colormap_stops</code></td>
+<td><code>(n_stops=32)</code></td>
+<td>Sample every offered colormap into plain hex stops for the web view.</td>
+</tr>
+<tr>
+<td><code>overlay_colormap</code></td>
+<td><code>(cfg)</code></td>
+<td>Return the colour-by-element colormap saved on the node config.</td>
+</tr>
+<tr>
+<td><code>sample_shape_overrides</code></td>
+<td><code>(cfg)</code></td>
+<td>Return the per-sample marker shapes stored on the node config.</td>
 </tr>
 <tr>
 <td><code>_rare_filter</code></td>

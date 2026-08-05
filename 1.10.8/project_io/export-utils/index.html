@@ -1505,6 +1505,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_exportworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _ExportWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4517,6 +4545,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_exportworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _ExportWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4549,6 +4605,51 @@
 
 <h1 id="export_utilspy"><code>export_utils.py</code><a class="headerlink" href="#export_utilspy" title="Permanent link">&para;</a></h1>
 <hr />
+<h2 id="classes">Classes<a class="headerlink" href="#classes" title="Permanent link">&para;</a></h2>
+<h3 id="_exportworker-extends-qthread"><code>_ExportWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#_exportworker-extends-qthread" title="Permanent link">&para;</a></h3>
+<p>Background worker that writes the export files off the UI thread.</p>
+<p>Building a summary row means walking every particle of every selected
+sample, so a large project used to lock the interface for the whole export
+and the window stopped repainting. The worker performs only the file
+writing; everything that reads a widget — sample selection, unit choices,
+mass-limit recalculation and the isotope label cache — is resolved on the
+main thread before the worker starts, so nothing here touches Qt.</p>
+<p>Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on completion with <code>{'successful': int,
+        'failed': [(name, error), ...], 'cancelled': bool}</code>.
+    failed (str): Emitted when the run aborts with an unexpected error.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, main_window, export_dir, export_type, selected_samples, sample_</code></td>
+<td>Store everything the run needs, already resolved from the UI.</td>
+</tr>
+<tr>
+<td><code>cancel</code></td>
+<td><code>(self)</code></td>
+<td>Request cancellation; the loop stops before the next file.</td>
+</tr>
+<tr>
+<td><code>_steps</code></td>
+<td><code>(self)</code></td>
+<td>Number of files this run will attempt to write.</td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td><code>(self)</code></td>
+<td>Write every requested file, reporting progress as each completes.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
