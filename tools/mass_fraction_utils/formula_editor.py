@@ -54,9 +54,7 @@ class FormulaEditor(QLineEdit):
 
     def _formula_selected(self, index: QModelIndex):
         compound = self.compound_model.data(index, role=CompoundDatabaseModel.DataColumn.COMPOUND)
-        self.blockSignals(True)
-        self.formula = compound.formula
-        self.blockSignals(False)
+        self._formula = compound.formula
         self.compound_changed.emit(compound)
 
     def set_formula(self, formula: str):
