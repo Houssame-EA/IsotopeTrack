@@ -157,13 +157,13 @@ def _multi(names, combos):
 
 
 class TestMultiInput:
-    """Two-or-more input links are pooled into one "Combined" sample so
-    every source's particles get classified (no silent data drop). A single
-    input link keeps its own per-sample structure. The node item now sets
+    """Two-or-more input links are kept as DISTINCT samples — the classifier
+    never pools/merges its inputs. Every source's particles get classified
+    under their own name (repeated names disambiguated with " (N)"), and a
+    single input link keeps its own per-sample structure. The node item sets
     scene_ref (via itemChange) so _pull_upstream_all sees every link."""
 
     def _two_source_scene(self, cw):
-        from tools.particle_classifier_node import MERGED_SAMPLE_NAME
         scene = cw.EnhancedCanvasScene(parent_window=None)
         a = _StubSource(_multi(['Alpha'], [['60Ni']]))
         b = _StubSource(_multi(['Beta'], [['197Au']]))
@@ -172,40 +172,61 @@ class TestMultiInput:
             scene.add_node(n, cw.QPointF(*p))
         assert scene.add_link(a, "output", clf, "input") is not None
         assert scene.add_link(b, "output", clf, "input") is not None
-        return scene, clf, MERGED_SAMPLE_NAME
+        return scene, clf
 
     def test_second_input_link_is_allowed(self, cw):
-        """Multiple inputs are supported (merged), not blocked."""
+        """Multiple inputs are supported (kept distinct), not blocked."""
         self._two_source_scene(cw)  # asserts both links created
 
     def test_item_sets_scene_ref(self, cw):
         """Regression: the classifier item must set scene_ref on scene add,
         or _pull_upstream_all can't see the input links and multi-input
         silently collapses to the last push."""
-        _scene, clf, _name = self._two_source_scene(cw)
+        _scene, clf = self._two_source_scene(cw)
         assert clf.scene_ref is not None
 
-    def test_incoming_names_collapse_to_combined(self, cw):
-        _scene, clf, name = self._two_source_scene(cw)
-        assert clf._incoming_names == [name]
+    def test_incoming_names_stay_distinct(self, cw):
+        """Differently-named inputs each keep their own name — no 'Combined'."""
+        _scene, clf = self._two_source_scene(cw)
+        assert clf._incoming_names == ['Alpha', 'Beta']
 
-    def test_both_inputs_are_classified_under_combined(self, cw):
-        """The fix: both sources' particles survive and get classified,
-        pooled under the one 'Combined' sample."""
-        _scene, clf, name = self._two_source_scene(cw)
-        clf.definitions = [_def('60Ni', name, group='Ni'),
-                           _def('197Au', name, group='Au')]
+    def test_both_inputs_are_classified_distinctly(self, cw):
+        """Both sources' particles survive and get classified, each under its
+        own sample name rather than pooled together."""
+        _scene, clf = self._two_source_scene(cw)
+        clf.definitions = [_def('60Ni', 'Alpha', group='Ni'),
+                           _def('197Au', 'Beta', group='Au')]
         clf.groups = {'Ni': '#111', 'Au': '#222'}
         out = clf.get_output_data()
-        assert out['sample_names'] == [name]
-        labels = [set((p.get('elements') or {}).keys())
-                  for p in out['particle_data']]
-        assert {'Ni'} in labels and {'Au'} in labels   # neither dropped
+        assert out['sample_names'] == ['Alpha', 'Beta']
+        by_sample = {}
+        for p in out['particle_data']:
+            by_sample.setdefault(p.get('source_sample'), set()).update(
+                (p.get('elements') or {}).keys())
+        assert by_sample['Alpha'] == {'Ni'}
+        assert by_sample['Beta'] == {'Au'}
+
+    def test_same_named_inputs_are_disambiguated(self, cw):
+        """Two input links carrying the SAME sample name stay separate: the
+        second becomes 'S1 (2)' instead of one silently winning."""
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        a = _StubSource(_multi(['S1'], [['60Ni']]))
+        b = _StubSource(_multi(['S1'], [['197Au']]))
+        clf = ParticleClassifierNode()
+        for n, p in ((a, (0, 0)), (b, (0, 200)), (clf, (300, 100))):
+            scene.add_node(n, cw.QPointF(*p))
+        scene.add_link(a, "output", clf, "input")
+        scene.add_link(b, "output", clf, "input")
+        assert clf._incoming_names == ['S1', 'S1 (2)']
+        out = clf.get_output_data()
+        assert out['sample_names'] == ['S1', 'S1 (2)']
+        # Both instances' particles survive, tagged under distinct names.
+        tags = {p.get('source_sample') for p in out['particle_data']}
+        assert tags == {'S1', 'S1 (2)'}
 
     def test_single_input_keeps_its_own_sample_name(self, cw):
-        """A lone input link is NOT renamed to Combined -- only 2+ links
-        merge, so a single Multiple-Sample node keeps its per-sample
-        structure."""
+        """A lone input link is passed through unchanged — a single
+        Multiple-Sample node keeps its per-sample structure."""
         scene = cw.EnhancedCanvasScene(parent_window=None)
         a = _StubSource(_multi(['Alpha'], [['60Ni']]))
         clf = ParticleClassifierNode()

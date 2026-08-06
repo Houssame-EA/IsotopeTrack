@@ -166,3 +166,95 @@ class TestParticlePasses:
         result = pf.particle_passes(
             p, set(), "AND", {"op": op, "value": value}, "elements", {})
         assert result is expected
+
+
+# --------------------------------------------------------------------------- #
+# Sample-name handling: append-not-drop disambiguation + (filt xN) provenance
+# --------------------------------------------------------------------------- #
+
+def _single(name, n=3, iso="60Ni"):
+    """A minimal single-sample upstream dict with n one-isotope particles."""
+    parts = [{"elements": {iso: float(i + 1)}, "source_sample": name}
+             for i in range(n)]
+    return {"type": "sample_data", "sample_name": name, "particle_data": parts,
+            "data": {name: {}}, "selected_isotopes": [{"label": iso}],
+            "total_particles": n,
+            "concentration_meta": {name: {"volume_ml": 2.0,
+                                          "dilution_factor": 1.0}},
+            "parent_window": None}
+
+
+class TestDisambiguateName:
+    def test_free_name_unchanged(self):
+        assert pf._disambiguate_name("S1", set()) == "S1"
+
+    def test_collision_appends_incrementing_number(self):
+        seen = set()
+        got = []
+        for _ in range(3):
+            nm = pf._disambiguate_name("S1", seen)
+            seen.add(nm)
+            got.append(nm)
+        assert got == ["S1", "S1 (2)", "S1 (3)"]
+
+    def test_literal_numbered_name_just_gets_another_suffix(self):
+        assert pf._disambiguate_name("S1 (2)", {"S1 (2)"}) == "S1 (2) (2)"
+
+
+class TestNormalizeSourcesAppends:
+    def test_same_named_sources_are_kept_not_dropped(self):
+        srcs = pf.normalize_sources([_single("S1"), _single("S1"), _single("S2")])
+        assert [s["name"] for s in srcs] == ["S1", "S1 (2)", "S2"]
+
+    def test_blank_single_sample_name_defaults_to_Sample(self):
+        # _expand_upstream_entries defaults a blank single-sample name to
+        # "Sample" rather than dropping it, so normalize keeps one entry.
+        srcs = pf.normalize_sources([_single("")])
+        assert [s["name"] for s in srcs] == ["Sample"]
+
+    def test_resolve_and_normalize_also_appends(self):
+        srcs = pf.resolve_and_normalize_sources(
+            [_single("S1"), _single("S1")], {})
+        assert [s["name"] for s in srcs] == ["S1", "S1 (2)"]
+
+
+class TestFiltSuffix:
+    def test_fresh_name_gains_x1(self):
+        assert pf._bump_filt_suffix("S1") == "S1 (filt x1)"
+
+    def test_existing_suffix_increments(self):
+        assert pf._bump_filt_suffix("S1 (filt x1)") == "S1 (filt x2)"
+        assert pf._bump_filt_suffix("S1 (filt x9)") == "S1 (filt x10)"
+
+    def test_merged_name_restarts_at_x1(self):
+        assert pf._bump_filt_suffix("Combined") == "Combined (filt x1)"
+
+    def test_literal_number_then_filt(self):
+        assert pf._bump_filt_suffix("S1 (2)") == "S1 (2) (filt x1)"
+
+
+class TestDuplicateResolutionIgnoreDropsOne:
+    """Regression: when two duplicates are identical in BOTH name and count,
+    an 'ignore' resolution must drop exactly ONE (not the whole pair, which
+    would emit nothing)."""
+
+    def _entries(self):
+        return pf.normalize_sources([_single("S1", n=5), _single("S1", n=5)])
+
+    def test_ignore_drops_exactly_one_of_identical_pair(self):
+        entries = [dict(e) for e in
+                   (pf._expand_upstream_entries(_single("S1", n=5))
+                    + pf._expand_upstream_entries(_single("S1", n=5)))]
+        sig = pf._duplicate_signature(entries[0], entries[1])
+        resolutions = {sig: {"action": "ignore", "target": ("S1", 5)}}
+        out = pf._apply_duplicate_resolutions(entries, resolutions)
+        assert len(out) == 1  # one survives, not zero
+
+    def test_keep_separate_keeps_both_of_identical_pair(self):
+        entries = (pf._expand_upstream_entries(_single("S1", n=5))
+                   + pf._expand_upstream_entries(_single("S1", n=5)))
+        sig = pf._duplicate_signature(entries[0], entries[1])
+        resolutions = {sig: {"action": "keep_separate", "target": ("S1", 5),
+                             "rename_to": "S1 copy"}}
+        out = pf._apply_duplicate_resolutions(entries, resolutions)
+        assert len(out) == 2

@@ -20,6 +20,7 @@ figure node consumes the result transparently.
 """
 
 import math
+import re
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
@@ -586,13 +587,47 @@ def _expand_upstream_entries(u):
     return out
 
 
+def _disambiguate_name(name, seen):
+    """Return a unique sample name, appending ``" (N)"`` on collision.
+
+    When ``name`` is already taken (present in ``seen``), the smallest free
+    ``"name (2)"``, ``"name (3)"``, … is returned instead of dropping the
+    entry. This is deliberately naive: a name that already ends in a literal
+    ``" (2)"`` simply gets another suffix appended (``"S1 (2) (2)"``) rather
+    than trying to parse and increment the existing number — same lightweight
+    rule the classifier relies on so two identically-named input samples both
+    stay visible and independently configurable instead of one silently
+    winning (see :func:`normalize_sources`).
+
+    Args:
+        name (str): The desired sample name.
+        seen (set): Names already assigned in this pass.
+
+    Returns:
+        str: ``name`` if free, else the first free ``"name (N)"``.
+    """
+    if name not in seen:
+        return name
+    k = 2
+    while f"{name} ({k})" in seen:
+        k += 1
+    return f"{name} ({k})"
+
+
 def normalize_sources(upstreams):
     """Flatten the connected upstream dicts into one simple sample list.
 
     Every incoming sample — whether it arrives from a Single Sample node or
     as one of the samples / summed groups inside a Multi-Sample stream —
     becomes one entry, so the dialog can show a single easy-to-read list.
-    Duplicate sample names are listed once (first occurrence wins).
+    Same-named samples are NOT dropped: the second and later occurrences are
+    disambiguated with a ``" (N)"`` suffix (see :func:`_disambiguate_name`)
+    so every distinct input sample stays visible and independently
+    addressable — the user may deliberately wire two instances of the same
+    sample in to configure them differently. The particle payloads keep their
+    original ``source_sample`` tag; each consumer retags to the (possibly
+    renamed) entry name itself when it needs the grouping to follow the new
+    name.
 
     Args:
         upstreams (list): Upstream data dicts from every input link.
@@ -604,9 +639,12 @@ def normalize_sources(upstreams):
     sources, seen = [], set()
     for u in upstreams or []:
         for entry in _expand_upstream_entries(u):
-            if entry['name'] in seen:
+            if not entry['name']:
                 continue
-            seen.add(entry['name'])
+            name = _disambiguate_name(entry['name'], seen)
+            seen.add(name)
+            if name != entry['name']:
+                entry = dict(entry, name=name)
             sources.append(entry)
     return sources
 
@@ -685,6 +723,11 @@ def _apply_duplicate_resolutions(entries, resolutions):
                 e = entries[idx]
                 if e['name'] == target_name and e['total'] == target_total:
                     drop.add(idx)
+                    # Drop only ONE of the pair. When the two duplicates are
+                    # identical in both name AND count, the target matches
+                    # both entries — without this break we'd drop the pair
+                    # entirely and emit nothing, instead of ignoring one.
+                    break
 
     out = []
     combined_idx = {}
@@ -736,9 +779,12 @@ def resolve_and_normalize_sources(upstreams, resolutions=None):
     raw = _apply_duplicate_resolutions(raw, resolutions or {})
     out, seen = [], set()
     for e in raw:
-        if not e['name'] or e['name'] in seen:
+        if not e['name']:
             continue
-        seen.add(e['name'])
+        name = _disambiguate_name(e['name'], seen)
+        seen.add(name)
+        if name != e['name']:
+            e = dict(e, name=name)
         out.append(e)
     return out
 
@@ -873,6 +919,189 @@ def merge_single_sources(sources, name):
         'isotopes': isotopes,
         'parent_window': next((s.get('parent_window') for s in sources
                                if s.get('parent_window')), None),
+    }
+
+
+_FILT_SUFFIX_RE = re.compile(r'^(?P<base>.*?)\s*\(filt x(?P<n>\d+)\)\s*$')
+
+
+def _bump_filt_suffix(name):
+    """Append or increment a ``"(filt xN)"`` provenance suffix on a sample name.
+
+    Every pass through a Particle Filter stamps its output samples with this
+    suffix so a downstream node (and the user) can tell a filtered sample from
+    an unfiltered one, and see how many filter hops it has been through. The
+    count reflects filter hops only — it is bumped unconditionally, even by a
+    filter with no active criteria (an inert pass-through still counts as a
+    hop), so the number is stable regardless of the filter's configuration.
+
+    A name that already carries the suffix has its number incremented
+    (``"S1 (filt x1)"`` → ``"S1 (filt x2)"``); a fresh name gains
+    ``"(filt x1)"``. A merged/grouped output (e.g. ``"Combined"`` or a custom
+    group name) is a fresh name and therefore starts back at ``x1`` — the
+    prior per-member hop counts are genuinely ambiguous once merged, so this
+    just records "filtered by this node" rather than fabricating a combined
+    count.
+
+    Args:
+        name (str): The sample name to stamp.
+
+    Returns:
+        str: The name with its filter-provenance suffix added/incremented.
+    """
+    m = _FILT_SUFFIX_RE.match(name or '')
+    if m:
+        return f"{m.group('base')} (filt x{int(m.group('n')) + 1})"
+    return f"{name} (filt x1)"
+
+
+def _retag_copy(p, name):
+    """Shallow-copy a particle and regroup the copy under ``name``.
+
+    Unlike :func:`retag_particles` (which mutates in place, for particles the
+    caller already owns), this never touches the input dict — used when the
+    particles are still shared references to upstream data that must not be
+    mutated. The previous ``source_sample`` is preserved in ``original_sample``.
+
+    Args:
+        p (dict): One particle dict (possibly an upstream reference).
+        name (str): The new sample name.
+
+    Returns:
+        dict: A retagged shallow copy.
+    """
+    c = p.copy()
+    if c.get('source_sample') != name:
+        if c.get('source_sample'):
+            c.setdefault('original_sample', c['source_sample'])
+        c['source_sample'] = name
+    return c
+
+
+def _apply_filt_provenance(out):
+    """Stamp a filter output dict's sample names with ``"(filt xN)"``.
+
+    Renames every sample-facing name in ``out`` (``sample_name`` /
+    ``sample_names`` plus the matching ``data`` / ``concentration_meta`` keys
+    and each particle's ``source_sample``) via :func:`_bump_filt_suffix`.
+    Particles are copied, never mutated, so this is safe on the fast-path
+    returns where ``particle_data`` may still reference upstream particles.
+    Non-sample dict types (which a filter can't meaningfully stamp) pass
+    through unchanged.
+
+    Args:
+        out (dict): A filter output data dict.
+
+    Returns:
+        dict: A new dict with stamped names, or ``out`` unchanged when it is
+            not a sample/multiple-sample payload.
+    """
+    if not isinstance(out, dict):
+        return out
+    t = out.get('type')
+    if t == 'sample_data':
+        old = out.get('sample_name') or 'Sample'
+        new = _bump_filt_suffix(old)
+        out = dict(out)
+        out['sample_name'] = new
+        cm = out.get('concentration_meta')
+        if isinstance(cm, dict) and old in cm:
+            cm = dict(cm)
+            cm[new] = cm.pop(old)
+            out['concentration_meta'] = cm
+        pd = out.get('particle_data')
+        if isinstance(pd, list):
+            out['particle_data'] = [_retag_copy(p, new) for p in pd]
+        return out
+    if t == 'multiple_sample_data':
+        names = list(out.get('sample_names') or [])
+        rename = {n: _bump_filt_suffix(n) for n in names}
+        out = dict(out)
+        out['sample_names'] = [rename[n] for n in names]
+        data = out.get('data')
+        if isinstance(data, dict):
+            out['data'] = {rename.get(k, k): v for k, v in data.items()}
+        cm = out.get('concentration_meta')
+        if isinstance(cm, dict):
+            out['concentration_meta'] = {
+                rename.get(k, k): v for k, v in cm.items()}
+        pd = out.get('particle_data')
+        if isinstance(pd, list):
+            out['particle_data'] = [
+                _retag_copy(p, rename.get(p.get('source_sample'),
+                                          p.get('source_sample')))
+                for p in pd]
+        return out
+    return out
+
+
+def build_multi_sample_dict(sources, parent_window=None):
+    """Assemble a ``multiple_sample_data`` dict from normalized source entries.
+
+    Used to combine several input links into one multi-sample stream while
+    keeping every sample DISTINCT (the classifier's multi-input path): each
+    entry in ``sources`` becomes its own sample, so two links carrying the
+    same-named sample stay separate under their disambiguated names (see
+    :func:`normalize_sources`) rather than collapsing into one pooled bucket.
+    Per-sample ``data`` and ``concentration_meta`` are preserved. Particles
+    are only copied when their ``source_sample`` tag needs to change to match a
+    disambiguated name; otherwise the upstream references are reused, so a
+    caller that mutates the result's particles must copy first (the classifier
+    relabel step already copies every particle).
+
+    Args:
+        sources (list): Source entries from :func:`normalize_sources`.
+        parent_window: Fallback parent window for the assembled dict.
+
+    Returns:
+        dict | None: A ``multiple_sample_data`` dict, or None if empty.
+    """
+    if not sources:
+        return None
+    combined = []
+    for s in sources:
+        name = s['name']
+        for p in s.get('particles') or []:
+            if p.get('source_sample') == name:
+                combined.append(p)
+            else:
+                combined.append(_retag_copy(p, name))
+    adt, csd = {}, {}
+    for s in sources:
+        sd = s.get('sample_data')
+        if not sd:
+            continue
+        csd[s['name']] = sd
+        for dt, dv in sd.items():
+            if isinstance(dv, dict):
+                adt.setdefault(dt, {})
+                for el, val in dv.items():
+                    adt[dt].setdefault(el, []).append(val)
+    isotopes, seen = [], set()
+    for s in sources:
+        for iso in s.get('isotopes') or []:
+            lbl = iso.get('label') if isinstance(iso, dict) else str(iso)
+            if lbl and lbl not in seen:
+                seen.add(lbl)
+                isotopes.append(iso)
+    pw = next((s.get('parent_window') for s in sources
+               if s.get('parent_window')), parent_window)
+    names = [s['name'] for s in sources]
+    return {
+        'type': 'multiple_sample_data',
+        'sample_names': names,
+        'original_sample_names': list(names),
+        'sample_config': None,
+        'data_types': adt,
+        'data': csd,
+        'particle_data': combined,
+        'selected_isotopes': isotopes,
+        'total_particles': sum(s.get('total', 0) for s in sources),
+        'filtered_particles': len(combined),
+        'sum_replicates': False,
+        'concentration_meta': {
+            s['name']: s.get('conc') or _empty_conc_meta() for s in sources},
+        'parent_window': pw,
     }
 
 
@@ -2294,7 +2523,13 @@ class ParticleFilterNode(QObject):
                                        QMessageBox.DestructiveRole)
         ignore_btn = box.addButton("Ignore one of them",
                                    QMessageBox.AcceptRole)
-        box.setDefaultButton(ignore_btn)
+        # Default to the non-destructive choice: keeping both. Dropping a
+        # sample must be an explicit, deliberate click (see the dismissal
+        # branch below), never what happens when the user just hits Enter or
+        # closes the dialog — that would contradict the filter's
+        # append-not-drop default (normalize_sources) and silently discard
+        # data.
+        box.setDefaultButton(keep_btn)
         box.exec()
         clicked = box.clickedButton()
 
@@ -2331,11 +2566,16 @@ class ParticleFilterNode(QObject):
                 if li:
                     scene.delete_link(li)
             return
-        else:  # ignore_btn or dialog dismissed
+        elif clicked is ignore_btn:
+            # Explicit, deliberate choice to drop one of the duplicates.
             self.duplicate_resolutions[sig] = {
                 'action': 'ignore',
                 'target': (new_entry['name'], new_entry['total']),
             }
+        # else: dialog dismissed (Esc / window close) with no explicit
+        # choice — keep BOTH samples. Store no resolution and fall through to
+        # the recompute below, so the append-not-drop default disambiguates
+        # them ("S1" / "S1 (2)") rather than silently discarding one.
         self._recompute_stale(resolve_and_normalize_sources(
             self._pull_upstream_all(), self.duplicate_resolutions))
         self.configuration_changed.emit()
@@ -2466,7 +2706,8 @@ class ParticleFilterNode(QObject):
         if len(filterable) == 1 and len(chosen) == len(sources):
             data = filterable[0]
             if not any_active:
-                return data
+                # Inert pass-through still counts as a filter hop.
+                return _apply_filt_provenance(data)
             combined = []
             for s in sources:
                 kept, _stale = apply_sample_filter(
@@ -2475,7 +2716,7 @@ class ParticleFilterNode(QObject):
             out = dict(data)
             out['particle_data'] = combined
             out['filtered_particles'] = len(combined)
-            return out
+            return _apply_filt_provenance(out)
         filtered = []
         for s in chosen:
             kept, _stale = apply_sample_filter(
@@ -2524,6 +2765,18 @@ class ParticleFilterNode(QObject):
                     [s for s, _k in members], gname), merged_kept))
             final.extend(ungrouped)
         final.extend(others)
+        # Stamp each output sample with the filter-provenance suffix
+        # (base → base (filt x1); an already-filtered base (filt x1) →
+        # base (filt x2); a merged/grouped name restarts at x1). Done here,
+        # on the output names only, so the per-sample INPUT keys used above
+        # (sample_filters / sample_groups / selected_sources) are untouched.
+        # retag_particles mutates the already-owned filtered copies in place,
+        # so this adds no extra allocation.
+        stamped = []
+        for s, kept in final:
+            nm = _bump_filt_suffix(s['name'])
+            stamped.append((dict(s, name=nm), retag_particles(kept, nm)))
+        final = stamped
         if len(final) == 1:
             return self._build_single_output(final[0][0], final[0][1])
         sources_f = [s for s, _k in final]

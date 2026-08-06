@@ -60,7 +60,7 @@ from tools.particle_filter import (
 from tools.particle_classifier_node import (
     ParticleClassifierNode, build_particle_classifier_node_item,
     is_allowed_upstream, is_allowed_downstream, EXCLUDED_DOWNSTREAM_TYPES,
-    maybe_show_classifier_onboarding)
+    WIP_EXCLUDED_DOWNSTREAM_TYPES, maybe_show_classifier_onboarding)
 
 import qtawesome as qta
 
@@ -5142,10 +5142,13 @@ def validate_classifier_link(src_node, snk_node):
     """Check a proposed link against Particle Classifier connectivity rules.
 
     Design §2: upstream limited to Particle Filter / Single Sample /
-    Multiple Sample; downstream limited to Visualization-category nodes
-    excluding Clustering, AI Data Assistant, and Dashboard. Only fires when
-    one endpoint of the link actually is a Particle Classifier node — every
-    other link pair in the app is unaffected.
+    Multiple Sample; downstream limited to Visualization-category nodes,
+    excluding AI Data Assistant (permanently, unrelated reason) and the
+    work-in-progress set in ``WIP_EXCLUDED_DOWNSTREAM_TYPES`` (Clustering,
+    Dashboard, Single/Multiple, Correlation Matrix, Network, Molar Ratio,
+    Isotopic Ratio, Ternary Plot). Only fires when one endpoint of the link
+    actually is a Particle Classifier node — every other link pair in the
+    app is unaffected.
 
     Args:
         src_node: The link's source ``WorkflowNode``.
@@ -5163,10 +5166,15 @@ def validate_classifier_link(src_node, snk_node):
     if getattr(src_node, 'node_type', None) == "particle_classifier":
         snk_type = getattr(snk_node, 'node_type', None)
         if not is_allowed_downstream(snk_type, _VIZ_NODE_TYPES):
+            if snk_type in WIP_EXCLUDED_DOWNSTREAM_TYPES:
+                title = getattr(snk_node, 'title', None) or "This chart type"
+                return (
+                    f"Particle Classifier → {title}: this is still a "
+                    f"work in progress and is temporarily disabled.")
             if snk_type in EXCLUDED_DOWNSTREAM_TYPES:
                 return (
-                    "Particle Classifier cannot connect to Clustering, "
-                    "AI Data Assistant, or Dashboard nodes.")
+                    "Particle Classifier cannot connect to AI Data "
+                    "Assistant nodes.")
             return (
                 "Particle Classifier can only connect to Visualization "
                 "nodes.")
