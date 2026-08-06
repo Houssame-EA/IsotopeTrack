@@ -25,3 +25,4 @@ of the periodic table.
 | `get_mass_by_element` | `(self, element: str) → Optional[float]` | Args: |
 | `get_density_by_element` | `(self, element: str) → Optional[float]` | Args: |
 | `get_element_by_symbol` | `(self, element: str) → Optional[dict]` | Args: |
+| `get_all_elements_as_set` | `(self) → set[str]` | Gets all symboles of the periodic table. |
