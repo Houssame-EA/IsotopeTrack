@@ -29,6 +29,9 @@ of the dialog is unaffected.
 | `ALGO_PARAM_MAP` | `{'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'km…` |
 | `PROJECTION_TO_DIMRED` | `{'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP', 'None': …` |
 | `SHAPE_OVERRIDE_KEY` | `'cluster_sample_shapes'` |
+| `OVERLAY_CMAP_KEY` | `'cluster_overlay_colormap'` |
+| `DEFAULT_OVERLAY_CMAP` | `OVERLAY_COLORMAPS[0] if OVERLAY_COLORMAPS else 'viridis'` |
+| `_CMAP_STOPS` | `None` |
 | `EMBED_FIT_MAX` | `3000` |
 
 ## Classes
@@ -85,6 +88,7 @@ QWebChannel object bridging the NumPy engine to the web page.
 | `reset_cluster_colors` | `(self)` | Drop every colour override and repaint the other views. |
 | `set_sample_shape` | `(self, sample, shape)` | Persist the marker shape used for one sample. |
 | `reset_sample_shapes` | `(self)` | Drop every marker-shape assignment, restoring the default cycle. |
+| `set_overlay_colormap` | `(self, name)` | Persist the colormap used by the colour-by-element overlay. |
 | `_redraw_host_figures` | `(self)` | Redraw the dialog's figures after a shared appearance change. |
 | `_do_redraw_host` | `(self)` | Repaint the dialog's figures without re-running the clustering. |
 | `pick_color` | `(self, initial)` | Open the native colour dialog and return the chosen ``#RRGGBB``. |
@@ -108,7 +112,10 @@ QWidget hosting the interactive clustering web view.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dialog)` | Build the web view, bridge and channel that make up the tab. |
+| `__init__` | `(self, dialog)` | Set up the tab shell without starting the web engine. |
+| `ensure_view` | `(self)` | Create the web view the first time this tab is actually shown. |
+| `showEvent` | `(self, event)` | Build the web view on first display, then behave normally. |
+| `arm` | `(self)` | Allow the view to draw, once a clustering run has produced results. |
 | `_connect_downloads` | `(self)` | Accept image exports from the page and let the user choose where. |
 | `_on_download` | `(self, item)` | Prompt for a destination and accept or cancel the download. |
 | `_on_download_done` | `(self, item)` | Report the saved path (or the failure) on the page's status line. |
@@ -127,6 +134,8 @@ QWidget hosting the interactive clustering web view.
 | `_last_dir` | `()` | Folder that file dialogs should open in, via the app's shared memory. |
 | `_remember_dir` | `(path)` | Persist *path* as the folder future file dialogs should start in. |
 | `_theme_vars` | `()` | Map the active app Palette to the CSS variables the page consumes. |
+| `colormap_stops` | `(n_stops=32)` | Sample every offered colormap into plain hex stops for the web view. |
+| `overlay_colormap` | `(cfg)` | Return the colour-by-element colormap saved on the node config. |
 | `sample_shape_overrides` | `(cfg)` | Return the per-sample marker shapes stored on the node config. |
 | `_rare_filter` | `(matrix, samples, min_count)` | Drop particles whose non-zero element signature is rarer than min_count. |
 | `_propagate_labels` | `(sub_raw, sub_labels, raw_full)` | Give every particle the label of its nearest labelled sample particle. |

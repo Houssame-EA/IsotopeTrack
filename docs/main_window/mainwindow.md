@@ -64,6 +64,7 @@ Args:
 | `_mark_results_changed` | `(self)` | Flag that the stored results are now out of date. |
 | `create_sidebar` | `(self)` | Create sidebar with calibration and sample management tools. |
 | `create_menu_bar` | `(self)` | Create application menu bar with actions. |
+| `_set_cluster_gpu` | `(self, enabled)` | Store the cluster GPU preference and say when it applies. |
 | `open_new_window` | `(self)` |  |
 | `close_all_windows` | `(self)` | Close all open windows and quit application. |
 | `create_status_bar` | `(self)` | Create application status bar with progress indicator. |

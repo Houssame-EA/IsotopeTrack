@@ -1,123 +1,28 @@
 # `mass_fraction_calculator.py`
 
+Mass-fraction calculator dialog is the widget that handles mass fraction
+definition based on known compounds or user entries.
+
 ---
-
-## Constants
-
-| Name | Value |
-|------|-------|
-| `_TOKEN_RE` | `re.compile('([A-Z][a-z]?\|\\(\|\\))(\\d*(?:\\.\\d+)?)')` |
-| `_ELEMENT_ORDER_RE` | `re.compile('([A-Z][a-z]?)')` |
 
 ## Classes
 
-### `CSVCompoundDatabase`
-
-Database loader for materials from CSV with signature-based lookup.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self)` |  |
-| `auto_load_csv` | `(self) → bool` | Try to load CSV from standard locations, preferring trimmed/compressed versions. |
-| `load_csv` | `(self, csv_path: str \| Path) → bool` | Load CSV and build signature-based indices. |
-| `_signature_for_formula` | `(self, formula: str) → str` |  |
-| `get_data_by_formula_or_signature` | `(self, formula: str) → list[dict]` |  |
-| `best_density_for_formula` | `(self, formula: str) → float` |  |
-| `best_url_for_formula` | `(self, formula: str) → str` |  |
-| `get_compounds_for_element` | `(self, element: str) → list[dict]` | Get one entry per canonical formula for initial browsing. |
-| `get_variants_for_formula` | `(self, formula: str) → list[dict]` | Get ALL polymorphs/structures for a given formula. |
-| `get_material_data` | `(self, formula: str) → list[dict]` |  |
-
-### `FormulaComboBox` *(extends `QComboBox`)*
-
-Editable combobox for chemical formulas with debounced filtering.
-
-Key design decisions that prevent the old recursion crash:
-1. Both the combobox AND lineEdit signals are blocked during rebuilds
-2. Filtering is debounced (300 ms) so rapid typing doesn't queue rebuilds
-3. Only the top MAX_DROPDOWN_ITEMS matches are shown, not thousands
-4. Minimum 2 characters before filtering starts (avoids huge result sets)
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self, element: str, csv_database: CSVCompoundDatabase, tracked_elemen` |  |
-| `_setup_compounds` | `(self)` | Build the full item list but only load a capped subset into the widget. |
-| `_rebuild_items` | `(self, items: list[dict])` | Replace dropdown items, blocking ALL signals to prevent recursion. |
-| `_do_filter` | `(self)` | Actually perform the filter (called by debounce timer). |
-| `filter_to_formula` | `(self, user_canon_formula: str)` | Show all polymorphs/structures for the confirmed formula. |
-| `reset_items` | `(self)` | Restore the capped default list. |
-| `_set_editor_text` | `(self, text: str)` | Set the lineEdit text without triggering any slots. |
-| `current_formula` | `(self) → str` |  |
-| `_on_text_changed` | `(self, text: str)` | Debounce: restart timer on every keystroke, filter when typing pauses. |
-| `_on_item_activated` | `(self, index: int)` |  |
-| `_on_editing_finished` | `(self)` |  |
-
-### `CheckableListItem` *(extends `QWidget`)*
-
-Compact widget with checkbox + label for sample list.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self, sample_name: str, parent=None)` |  |
-| `is_checked` | `(self) → bool` |  |
-| `set_checked` | `(self, checked: bool)` |  |
-
-### `_PositiveDoubleDelegate` *(extends `QStyledItemDelegate`)*
-
-Only accept positive floats when editing density cells.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `createEditor` | `(self, parent, option, index)` |  |
-| `setEditorData` | `(self, editor, index)` |  |
-| `setModelData` | `(self, editor, model, index)` |  |
-
 ### `MassFractionCalculator` *(extends `QDialog`)*
 
-Mass fraction calculator with sample selection and molecular weight calculations.
+Coordinates calculator widgets and commits their working state on Apply.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, selected_isotopes: dict, periodic_table_widget, parent=None)` |  |
-| `apply_theme` | `(self)` | Apply the currently active theme palette to this dialog. |
-| `closeEvent` | `(self, event)` | Disconnect theme signal so we don't leak slots on closed dialogs. |
-| `_build_stylesheet` | `(self) → str` | Dark/light aware stylesheet for the whole dialog. |
-| `_refresh_db_status_style` | `(self)` |  |
-| `_refresh_apply_button_style` | `(self)` |  |
-| `_setup_ui` | `(self)` |  |
-| `_build_sample_panel` | `(self) → QGroupBox` |  |
+| `__init__` | `(self, selected_isotopes: dict, periodic_table_info: PeriodicTableInfo` |  |
+| `_setup_ui` | `(self) → None` |  |
 | `_build_header` | `(self) → QHBoxLayout` |  |
-| `_build_table` | `(self)` |  |
-| `_build_buttons` | `(self) → QHBoxLayout` |  |
-| `_populate_table` | `(self)` |  |
-| `_make_readonly_item` | `(text: str) → QTableWidgetItem` |  |
-| `_element_data` | `(self, symbol: str) → dict \| None` |  |
-| `_current_formula` | `(self, row: int) → str` |  |
-| `_calc_mass_fraction` | `(self, row: int, formula: str)` |  |
-| `_calc_molecular_weight` | `(self, row: int, formula: str)` |  |
-| `_on_compound_selected` | `(self, row: int, formula: str, density_csv: float)` |  |
-| `_highlight_tracked` | `(self, row: int, formula: str)` | Set a tooltip showing which elements in the compound are being tracked. |
-| `_calculate_all` | `(self)` |  |
-| `_reset_to_default` | `(self)` |  |
-| `_select_all_samples` | `(self)` |  |
-| `_select_no_samples` | `(self)` |  |
-| `_get_selected_samples` | `(self) → list[str]` |  |
-| `_save_state` | `(self)` |  |
-| `_restore_previous_state` | `(self)` |  |
-| `_manual_load_csv` | `(self)` |  |
-| `_open_structure` | `(self, row: int)` |  |
-| `_apply_mass_fractions` | `(self)` |  |
-| `closeEvent` | `(self, event)` |  |
-| `reject` | `(self)` |  |
-
-## Functions
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `_parse_formula_to_counts` | `(formula: str) → dict` | Parse a chemical formula string into {element: integer_count}. |
-| `_safe_int` | `(s: str, *, default: int=1) → int` | Convert a numeric string to a positive int, rounding floats. |
-| `_element_order_in_formula` | `(formula: str) → list[str]` | Return elements in the order they first appear in *formula*. |
-| `_reduce_counts` | `(counts: dict) → dict` | Divide all counts by their GCD to get the empirical formula. |
-| `_signature_from_counts` | `(counts: dict) → str` | Order-independent canonical key for matching equivalent formulas. |
-| `_join_formula_from_counts` | `(counts: dict, prefer_order: list[str] \| None=None) → str` | Build a human-readable formula string from counts. |
-| `canonicalize_preserve_user_order` | `(formula: str) → str` | Reduce stoichiometry but preserve the user's element order. |
+| `_connect_signals` | `(self) → None` |  |
+| `_refresh_database_status` | `(self) → None` |  |
+| `_manual_load_csv` | `(self) → None` |  |
+| `_apply_mass_fractions` | `(self) → None` |  |
+| `_save_state` | `(self) → None` |  |
+| `_restore_previous_state` | `(self) → None` |  |
+| `reject` | `(self) → None` | Cancel leaves MainWindow unchanged but retains this dialog's draft. |
+| `closeEvent` | `(self, event) → None` | Handles window closing that saves the state to reload |
+| `apply_theme` | `(self) → None` | Applies the theme to the window and it's component. |
+| `_build_stylesheet` | `() → str` |  |

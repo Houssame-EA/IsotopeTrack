@@ -10,9 +10,9 @@
 | `CVI_FUNCS` | `{'silhouette_scores': lambda d, l: float(silhouette_score…` |
 | `METRIC_REGISTRY` | `{'Silhouette': {'display': 'Silhouette Score', 'key': 'si…` |
 | `METRICS` | `list(METRIC_REGISTRY.keys())` |
-| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for (name, spec) in…` |
+| `METRIC_KEYS` | `{name: (spec['display'], spec['key']) for name, spec in M…` |
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
-| `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
+| `METRIC_COLORS` | `{name: spec['color'] for name, spec in METRIC_REGISTRY.it…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
 | `DEFAULT_K_RANGE` | `list(range(2, 16))` |
 | `PROGRESS_RESOLUTION` | `1000` |

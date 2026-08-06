@@ -1,7 +1,7 @@
 import hashlib
 import unittest
 
-from tools.mass_fraction_calculator_utils.mass_fraction_service import MassFractionService
+from tools.mass_fraction_utils import MassFractionService
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 
 

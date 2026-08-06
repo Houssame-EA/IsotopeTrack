@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 import gc
 from pathlib import Path
@@ -7,9 +8,9 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayo
                                QRadioButton, QGroupBox, QMenu, QTextEdit, QHeaderView, QListView, QTreeView,
                                QAbstractItemView, QSpinBox)
 
-from tools.mass_fraction_calculator_utils.mass_fraction_service import MassFractionService
+from tools.mass_fraction_utils import MassFractionService, CompoundDatabase
 from tools.parameters_table import (ParametersTableView, COL_SIGMA)
-from PySide6.QtCore import (Qt,  QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
+from PySide6.QtCore import (Qt, QTimer, QParallelAnimationGroup, QPropertyAnimation, QEasingCurve, QSize, QPoint,
                             QEvent, QEventLoop, QSettings)
 from PySide6.QtGui import QGuiApplication
 import numpy as np
@@ -174,6 +175,7 @@ class MainWindow(QMainWindow):
         self.user_action_logger.log_action('STARTUP', 'Application started')
 
         self.periodic_table_info = PeriodicTableInfo()
+        self.compound_db: CompoundDatabase = CompoundDatabase()
 
         self.unsaved_changes = False
         self.folder_paths = []
@@ -6760,12 +6762,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Elements Selected",
                                 "Please select elements from the periodic table first.")
             return
-
+        if not self.compound_db.is_loaded:
+            self.compound_db.auto_load_csv()
         try:
             from tools.mass_fraction_calculator import MassFractionCalculator
             calculator = MassFractionCalculator(
                 self.selected_isotopes,
-                self.periodic_table_widget,
+                self.periodic_table_info,
+                self.compound_db,
                 self
             )
             calculator.mass_fractions_updated.connect(self.handle_mass_fractions_updated)
@@ -7008,7 +7012,8 @@ class MainWindow(QMainWindow):
 
                         particle_mass_fg = element_mass_fg / mass_fraction
 
-                        compound_molecular_weight = self.mass_fraction_service.get_molecular_weight(element_key, sample_name)
+                        compound_molecular_weight = self.mass_fraction_service.get_molecular_weight(element_key,
+                                                                                                    sample_name)
 
                         if compound_molecular_weight and compound_molecular_weight > 0:
                             particle_moles_fmol = particle_mass_fg / compound_molecular_weight

@@ -12,7 +12,7 @@ The clustering feature in one package: the dialog, the pipeline sweep, the anima
 ### [`live.py`](live.md)
 Interactive *live* clustering tab for the Clustering Analysis dialog.
 
-**5** classes &nbsp;·&nbsp; **15** functions &nbsp;·&nbsp; **50** methods
+**5** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **54** methods
 
 ### [`live_engine.py`](live-engine.md)
 Pure-NumPy clustering engine with per-iteration *steppers* for Cluster Lab.
