@@ -44,6 +44,13 @@ Table of top correlations — double-click to jump to that pair.
 
 Two-tab popup showing per-sample r and a cross-sample CDF correlation matrix.
 
+Tab 1 — Per-sample r: Pearson r(x_element, y_element) computed within
+each sample's own particle population.
+
+Tab 2 — Cross-sample matrix: Pearson r between the empirical CDFs of a
+chosen element across sample pairs. Uses np.quantile on a shared grid so
+unequal sample sizes are handled naturally. Diagonal = 1.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, cfg: dict, plot_data: dict, parent=None)` |  |
@@ -59,6 +66,10 @@ Two-tab popup showing per-sample r and a cross-sample CDF correlation matrix.
 ### `CorrelationPlotDisplayDialog` *(extends `QDialog`)*
 
 Full-figure correlation dialog.
+
+The dialog follows the four-button Results contract for settings, reset, and
+export. Right-click stays minimal with quick visual toggles, isotope-label
+rendering modes, and the correlation-specific auto-detect action.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -104,6 +115,12 @@ Full-figure correlation dialog.
 ### `CorrelationGraphicsLayoutWidget` *(extends `EnhancedGraphicsLayoutWidget`)*
 
 Correlation GraphicsLayout widget.
+
+Uses the shared inline double-click editors, uniform with the other plots:
+clicking a sample's scatter series opens a colour picker that persists to
+config (``single_sample_color`` / ``sample_colors``), while the axis, title,
+legend and background use the shared editors. The scatter series are tagged
+with their colour identity in ``_plot_scatter`` so no override is needed.
 
 ### `CorrelationPlotNode` *(extends `QObject`)*
 

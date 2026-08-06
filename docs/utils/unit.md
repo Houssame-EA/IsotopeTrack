@@ -2,6 +2,10 @@
 
 Export unit definitions, formatting, and persistence (non-visual).
 
+The Advanced Export Options *dialog* lives in ``tools/unit.py``; everything
+here is pure logic + QSettings persistence so it can be used and tested
+without constructing the GUI.
+
 ---
 
 ## Constants
@@ -21,6 +25,9 @@ Export unit definitions, formatting, and persistence (non-visual).
 ### `ExportUnits`
 
 Bundles the user's unit + formatting preferences.
+
+Defaults reproduce the original hardcoded behaviour (fg / fmol / nm,
+decimal notation, 4 decimals for mass, 6 for moles, 2 for diameter).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

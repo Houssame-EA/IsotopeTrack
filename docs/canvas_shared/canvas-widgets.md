@@ -188,6 +188,15 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 
 Runs a node's ``get_output_data()`` off the GUI thread.
 
+The Single- and Multi-Sample selector nodes filter and combine the raw
+particle data when their selection is confirmed (the OK button). On large
+datasets this can take a noticeable amount of time. Doing it here keeps the
+canvas responsive instead of freezing while the calculation runs.
+
+The ``finished_ok`` / ``failed`` signals are emitted from the worker thread
+but, because the receiving node lives on the GUI thread, Qt delivers them
+back on the GUI thread — so the slots are free to touch the scene/UI.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, compute_fn, parent=None)` |  |
@@ -240,6 +249,9 @@ Custom floating tooltip with glow effect.
 
 Small framed thumbnail preview of a node's figure, shown on hover.
 
+Styled like the figure cards in the spread prototype: a compact white card
+with rounded corners, a soft drop shadow and the plot tucked inside.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |
@@ -265,6 +277,9 @@ One animated figure card in the hover fan (rotates/scales into place).
 
 Hover fan of a node's open figures: spread, animated cards you pick/kill.
 
+Mirrors the spread prototype: cards emerge from a pivot near the node and
+fan out (rotation + scale + fade), staggered.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, parent=None)` |  |
@@ -278,6 +293,7 @@ Hover fan of a node's open figures: spread, animated cards you pick/kill.
 ### `StickyNoteItem` *(extends `QGraphicsWidget`)*
 
 A movable, editable sticky note with color, font-size and transparency support.
+Right-click empty canvas → Add Note. Double-click to edit.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

@@ -730,13 +730,21 @@ class CompactPeriodicTableWidget(QWidget):
         try:
             _app_theme.themeChanged.disconnect(self._pt_theme_handler)
         except Exception:
-            _itk_log.exception("Handled exception in _pt_disconnect_theme")
+            # Already disconnected or signal source gone — expected during teardown
+            _itk_log.debug("Theme handler already disconnected")
 
     def _safe_apply_theme_bg(self):
+        import shiboken6
+        if not shiboken6.isValid(self):
+            # C++ widget already deleted — unsubscribe so this never fires again
+            self._pt_disconnect_theme()
+            return
         try:
             self._apply_theme_bg()
         except RuntimeError:
-            _itk_log.exception("Handled exception in _safe_apply_theme_bg")
+            # Deleted between the check and the call — unsubscribe quietly
+            self._pt_disconnect_theme()
+            _itk_log.debug("Theme handler removed for deleted widget")
 
     def _apply_theme_bg(self):
         p = _app_theme.palette
@@ -1070,13 +1078,21 @@ class IsotopeChipSelector(QWidget):
         try:
             _app_theme.themeChanged.disconnect(self._chip_theme_handler)
         except Exception:
-            _itk_log.exception("Handled exception in _chip_disconnect_theme")
+            # Already disconnected or signal source gone — expected during teardown
+            _itk_log.debug("Theme handler already disconnected")
 
     def _safe_restyle(self):
+        import shiboken6
+        if not shiboken6.isValid(self):
+            # C++ widget already deleted — unsubscribe so this never fires again
+            self._chip_disconnect_theme()
+            return
         try:
             self._restyle_all()
         except RuntimeError:
-            _itk_log.exception("Handled exception in _safe_restyle")
+            # Deleted between the check and the call — unsubscribe quietly
+            self._chip_disconnect_theme()
+            _itk_log.debug("Theme handler removed for deleted widget")
 
     # ── build ──────────────────────────────────────────────────────────────
     def _setup(self):

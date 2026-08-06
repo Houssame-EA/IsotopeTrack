@@ -86,6 +86,8 @@ Heatmap plot node with multiple sample support.
 | `_mode_estimate` | `(arr)` | Estimate the mode of continuous values from the densest histogram bin. |
 | `_cell_center` | `(vals, stat)` | Central value for one heatmap cell: Mean, Median, Mode, or Geo. Mean. |
 | `_cell_spread_value` | `(vals, spread)` | Secondary value shown after a cell centre. |
-| `_fmt_cell_number` | `(v, is_pct)` | Format one numeric cell value with the heatmap's standard precision. |
+| `_fmt_cell_number` | `(v)` | Format one numeric cell value with the heatmap's standard precision. |
+| `_per_particle_percentages` | `(total_values)` | Convert a combination's raw per-element values into per-particle %. |
+| `_bulk_percentages` | `(total_values)` | Bulk composition %: each element's summed signal over the grand total. |
 | `draw_combinations_heatmap` | `(ax, fig, sample_data, cfg, title='', is_multi=False)` | Draw a combinations heatmap onto an arbitrary axes/figure. |
 | `_build_combinations` | `(particles, data_key, pml_factor=0.0)` | Build combination dict from a list of particle dicts. |

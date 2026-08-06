@@ -2,6 +2,16 @@
 
 Ternary Plot Node — full-figure view with right-click context menu.
 
+Features:
+- Three-element ternary composition diagram (mpltern)
+- Scatter and density (tribin) plot types
+- Color-by-fourth-element option for scatter plots
+- Average point with optional 2σ confidence ellipse
+- Particle statistics bar (total, filtered, per-sample)
+- Multiple sample support (overlaid, subplots, combined)
+- Right-click context menu replaces sidebar for all settings
+- Shared font, color, and export utilities via shared_plot_utils
+
 ---
 
 ## Constants

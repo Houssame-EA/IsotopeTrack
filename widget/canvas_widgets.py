@@ -37,7 +37,7 @@ from results.results_bar_charts import (
 )
 from results.results_correlation import CorrelationPlotDisplayDialog, CorrelationPlotNode
 from results.results_isotope import IsotopicRatioDisplayDialog, IsotopicRatioPlotNode
-from results.results_cluster import ClusteringDisplayDialog, ClusteringPlotNode
+from results.cluster.dialog import ClusteringDisplayDialog, ClusteringPlotNode
 from results.results_triangle import TriangleDisplayDialog, TrianglePlotNode
 from results.results_AI import AIAssistantNode
 from results.results_box_plot import BoxPlotDisplayDialog, BoxPlotNode

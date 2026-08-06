@@ -58,6 +58,8 @@
 ### `ProbeWorker` *(extends `QThread`)*
 
 Briefly probe localhost for a running model server so the assistant can
+self-configure on first open — no need to visit settings. Ollama is checked
+first, then MLX. Emits at most one signal.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -90,6 +92,7 @@ Visual file-attachment card on the user side. No thumbnail — just icon + name 
 ### `AttachmentPreview` *(extends `QFrame`)*
 
 with an image thumbnail (or file icon), filename, and a remove (×) button
+overlaid on the top-right corner.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -119,6 +122,22 @@ with an image thumbnail (or file icon), filename, and a remove (×) button
 ### `ExplorationBubble` *(extends `QFrame`)*
 
 Collapsible bubble showing an exploration session.
+
+Layout:
+  ┌─────────────────────────────────────────┐
+  │ Exploring: <question>                │
+  │ Turn 3 of 10 — running query…           │
+  │ [▶ Show 3 steps]                         │
+  │                                          │
+  │   ── steps area (hidden by default) ──   │
+  │   Turn 1: <code>                         │
+  │     stdout / table / chart               │
+  │   Turn 2: <code>                         │
+  │     ...                                  │
+  │                                          │
+  │ ── Findings ──                           │
+  │ <final summary text>                     │
+  └─────────────────────────────────────────┘
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -178,6 +197,7 @@ Fallback plain-text output for non-tabular results.
 ### `ChartBubble` *(extends `QFrame`)*
 
 Renders charts from sandbox show_chart/show_pie/show_histogram calls.
+Includes a type-switcher bar so the user can flip between bar/barh/pie/line.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -190,6 +210,8 @@ Renders charts from sandbox show_chart/show_pie/show_histogram calls.
 ### `AutoGrowTextEdit` *(extends `QPlainTextEdit`)*
 
 Text input that grows and shrinks with content. Enter sends; Shift+Enter newline.
+Can also be manually resized via set_forced_height() — when set, auto-grow is
+bypassed and the input stays at the user-chosen height.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -207,6 +229,7 @@ Text input that grows and shrinks with content. Enter sends; Shift+Enter newline
 ### `ComposerResizeHandle` *(extends `QFrame`)*
 
 Thin horizontal bar at the top of the composer — drag it up to make the
+input taller, drag down to shrink. Emits delta_y on each drag step.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -232,6 +255,8 @@ Font size, chart quality, and display options.
 ### `Conversation`
 
 One chat session: its history, widgets, and dedicated chat scroll area.
+Each Conversation owns a QScrollArea + content widget so we can keep all
+bubbles alive when switching tabs (no rebuild needed).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

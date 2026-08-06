@@ -15,6 +15,10 @@
 
 Compound Poisson-Lognormal distribution using analytical approximation.
 
+Implements analytical approximation for compound Poisson distributions
+where individual events follow a log-normal distribution using the
+Fenton-Wilkinson approximation for summing log-normal distributions.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get_threshold` | `(self, lambda_bkgd, alpha, sigma=0.55)` | Calculate compound Poisson threshold using log-normal approximation. |
@@ -22,6 +26,7 @@ Compound Poisson-Lognormal distribution using analytical approximation.
 ### `CompoundPoissonLognormalOptimized`
 
 Optimized Compound Poisson-Lognormal with dict cache
+keyed on rounded (lambda, alpha, sigma) + faster quantile approximation.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -33,6 +38,34 @@ Optimized Compound Poisson-Lognormal with dict cache
 
 Lookup-table based Compound Poisson-Lognormal threshold.
 
+Loads a pre-computed .npz table (cpln_quantiles.npz) of zero-truncated CPLN
+quantiles (Lockwood et al., JAAS 2025) and serves thresholds via
+trilinear interpolation in (log-λ, σ, y₀) space.
+
+Expected .npz keys:
+    lambdas   shape (nL,)          background Poisson means
+    sigmas    shape (nS,)          single-ion lognormal shape parameters
+    ys        shape (nY,)          zero-truncated cumulative probabilities
+    quantiles shape (nL, nS, nY)   quantile values, assuming single-ion
+                                   lognormal with unit mean (μ = -σ²/2)
+
+Per the paper (Eqn 1), the desired probability y = 1 - α is first
+converted to its zero-truncated form before lookup:
+
+    y₀ = (y - exp(-λ)) / (1 - exp(-λ))
+
+Routing:
+    λ ≤ 0              → threshold = 0
+    0 < λ ≤ table max  → table lookup (with Eqn-1 transform)
+    λ > table max      → analytical CPLN (lognormal) fallback
+    y₀ ≤ 0             → threshold = 0 (the (1-α) quantile lies
+                          inside the zero atom)
+    table not loaded   → analytical CPLN (lognormal) fallback
+
+The unit-mean convention matches CompoundPoissonLognormal and
+CompoundPoissonLognormalOptimized in this module, so callers can mix
+methods without rescaling.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, lut_path: str \| None=None)` |  |
@@ -43,6 +76,28 @@ Lookup-table based Compound Poisson-Lognormal threshold.
 ### `PeakDetection`
 
 Features:
+- Iterative threshold calculation with Aitken Δ² acceleration
+- Vectorized NumPy operations + Numba JIT
+- Batch threshold processing with caching
+- Rolling-window (dynamic) background
+- Analytical log-normal compound Poisson for ToF data
+- Multiple integration methods (Background, Threshold, Midpoint)
+- Five peak-splitting methods (see PEAK_SPLIT_METHODS)
+
+Threshold methods:
+  "Compound Poisson LogNormal"     - Analytical CPLN (Fenton-Wilkinson)
+  "CPLN table" - Pre-computed lookup table (default)
+                                     Falls back to LogNormal for lambda > 300.
+  "Manual"                         - User-specified threshold
+
+Integration methods:
+  "Background"  - signal - lambda_bkgd  (full peak region)
+  "Threshold"   - signal - threshold    (only above threshold)
+  "Midpoint"    - signal - midpoint     (only above midpoint)
+
+Peak splitting methods:
+  "No Splitting"  - baseline, no change
+  "1D Watershed"  - valley-depth ratio criterion (default, ratio=0.50)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

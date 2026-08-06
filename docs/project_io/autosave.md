@@ -2,6 +2,32 @@
 
 Autosave and crash recovery for IsotopeTrack.
 
+A long analysis session (loading many samples, per-element parameters,
+calibration, canvas plots) only ever reaches disk when the user explicitly
+saves. If the app crashes, is force-quit, or the machine sleeps and dies, that
+work is lost. This module is the safety net.
+
+Two-tier snapshots
+-------------------
+A saved project embeds the raw signal, which can be gigabytes; rewriting all of
+it every couple of minutes is wasteful. Instead the recovery snapshot is split:
+
+* a **heavy** file (an ordinary ``.itproj``) holding the raw per-sample arrays,
+  written once and refreshed only when the loaded sample set changes; and
+* a **light** file holding just the small, frequently-changing state
+  (parameters, results, calibration, detected particles), rewritten on a
+  debounce after edits settle plus a periodic safety net.
+
+Light writes are atomic (temp file + rename) so a crash mid-write can never
+corrupt the recovery state. On recovery the heavy file is loaded normally and
+the newer light file is overlaid on top.
+
+Crash recovery
+--------------
+A clean exit deletes its recovery files, so any file still present at the next
+startup means the previous session did not exit cleanly, and the app offers to
+reload the most recent one.
+
 ---
 
 ## Constants
@@ -22,7 +48,7 @@ Owns the autosave timer and the recovery files for one MainWindow.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, main_window, interval_ms: int \| None=None)` | Create the manager and its poll timer (disabled if autosave is off). |
+| `__init__` | `(self, main_window: MainWindow, interval_ms: int \| None=None)` | Create the manager and its poll timer (disabled if autosave is off). |
 | `_now_ms` | `() → int` | Monotonic millisecond clock for debounce/safety timing. |
 | `start` | `(self)` | Begin the autosave poll timer (no-op if autosave is disabled). |
 | `stop` | `(self)` | Stop the timer and wait for any in-flight heavy snapshot write. |
@@ -40,7 +66,7 @@ Owns the autosave timer and the recovery files for one MainWindow.
 | `_write_light` | `(self) → bool` | Atomically write the small light snapshot (metadata + particle data). |
 | `_toast` | `(self)` | Show the brief 'Autosaved' confirmation if the window supports it. |
 | `clear` | `(self)` | Delete this window's recovery files (on a clean save or clean exit). |
-| `apply_light_overlay` | `(mw, heavy_path)` | Overlay the newer light snapshot onto a just-loaded heavy recovery file. |
+| `apply_light_overlay` | `(mw: MainWindow, heavy_path)` | Overlay the newer light snapshot onto a just-loaded heavy recovery file. |
 | `find_recovery_files` | `()` | Heavy recovery files from crashed (not currently-running) sessions. |
 | `discard_recovery_files` | `(paths)` | Delete the given heavy recovery files and their light companions. |
 | `reconfigure` | `(self, enabled: bool, interval_ms: int)` | Apply new settings at runtime and persist to QSettings. |

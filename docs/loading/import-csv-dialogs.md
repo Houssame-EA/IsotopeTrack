@@ -29,6 +29,13 @@ Themed preview table; column selection enabled for mapping.
 ### `IsotopeBadgeBar` *(extends `QWidget`)*
 
 Horizontal strip of one clickable badge per data column, positioned
+directly above the preview table. Each badge shows the current isotope
+mapping (or a faint '+ assign' placeholder) and opens an isotope picker
+popover on click.
+
+We use a widget strip (rather than custom-painted header labels) because
+QHeaderView does not natively host arbitrary widgets, and this approach
+gives us full theming/hover/popover control with minimal fuss.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -42,6 +49,8 @@ Horizontal strip of one clickable badge per data column, positioned
 ### `IsotopePickerDialog` *(extends `QDialog`)*
 
 Modal popover for selecting an isotope. Opened from a column badge.
+Pre-filters the list with the column name so the user lands on the
+most likely match when an auto-detection was ambiguous.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

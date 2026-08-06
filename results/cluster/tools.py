@@ -1,6 +1,6 @@
 """Custom Cluster Test — exhaustive pipeline search against known components.
 
-Standalone companion to ``results_cluster.py``.  It reads the same input data
+Standalone companion to ``dialog.py``.  It reads the same input data
 and re-uses a few side-effect-free helpers when importable, but never modifies
 the existing clustering behaviour.
 
@@ -47,7 +47,24 @@ from sklearn.metrics import (
     homogeneity_completeness_v_measure,
 )
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster_tools")
+_itk_log = logging.getLogger("IsotopeTrack.results.cluster.tools")
+
+try:
+    import os as _os
+    _os.environ.setdefault('NUMBA_THREADING_LAYER', 'workqueue')
+    from umap import UMAP as _UMAP_CLS
+    _UMAP_OK = True
+except ImportError:
+    _itk_log.debug("Handled exception in <module>")
+    _UMAP_CLS = None
+    _UMAP_OK = False
+
+from utils.numba_guard import numba_serial
+
+try:
+    from results.cluster.prep import reduction_components
+except ImportError:
+    from .prep import reduction_components
 
 try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
@@ -63,9 +80,12 @@ except ImportError:
         _HDBSCAN_CLS = None
         _HDBSCAN_OK = False
 
+from results.compositional import (
+    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+)
+
 try:
-    from results.results_cluster import (
-        _apply_clr, _apply_ilr, _apply_robust_zscore,
+    from results.cluster.dialog import (
         DATA_KEY_MAP, DENSITY_BASED_ALGOS, CVI_FUNCS, METRIC_REGISTRY,
     )
     _HOST_OK = True
@@ -84,71 +104,6 @@ except Exception:
         'Particle Mole %': 'particle_moles_fmol',
     }
     DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
-
-    def _apply_clr(matrix, zero_replacement='additive'):
-        """Centred-log-ratio transform of a non-negative composition matrix.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
-            zero_replacement (str): ``'additive'`` floors zeros at ``1e-10``
-                (legacy default); ``'multiplicative'`` uses
-                :func:`multiplicative_replacement`.
-
-        Returns:
-            np.ndarray: CLR-transformed matrix.
-        """
-        if zero_replacement == 'multiplicative':
-            X = multiplicative_replacement(matrix)
-        else:
-            eps = 1e-10
-            X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
-        log_X = np.log(X)
-        return log_X - log_X.mean(axis=1, keepdims=True)
-
-    def _apply_ilr(matrix, zero_replacement='additive'):
-        """Isometric-log-ratio transform yielding ``p - 1`` coordinates.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, >= 0.
-            zero_replacement (str): Passed through to :func:`_apply_clr`.
-
-        Returns:
-            np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
-        """
-        clr = _apply_clr(matrix, zero_replacement=zero_replacement)
-        p = clr.shape[1]
-        if p < 2:
-            return clr
-        V = np.zeros((p, p - 1), dtype=np.float64)
-        for j in range(p - 1):
-            k = j + 1
-            scale = np.sqrt(k / (k + 1.0))
-            V[:k, j] = scale / k
-            V[k, j] = -scale
-        return clr @ V
-
-    def _apply_robust_zscore(matrix):
-        """Robust per-column z-score using a consistent scale estimate.
-
-        Centres on the median and divides by ``1.4826 * MAD``, falling back to
-        the column standard deviation when the MAD vanishes and to unit scale for
-        constant columns, so sparse columns cannot be inflated by a near-zero
-        denominator.
-
-        Args:
-            matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
-
-        Returns:
-            np.ndarray: Robust z-score normalised matrix.
-        """
-        X = matrix.astype(np.float64)
-        med = np.median(X, axis=0)
-        mad = np.median(np.abs(X - med), axis=0)
-        scale = 1.4826 * mad
-        std = np.std(X, axis=0)
-        scale = np.where(scale > 1e-10, scale, std)
-        scale = np.where(scale > 1e-10, scale, 1.0)
-        return (X - med) / scale
 
     from sklearn.metrics import (
         silhouette_score, calinski_harabasz_score, davies_bouldin_score,
@@ -371,94 +326,12 @@ ALGORITHMS = list(ALGO_PARAM_SPECS.keys())
 
 DATA_TYPES = list(DATA_KEY_MAP.keys())
 SCALINGS = ['None', 'Robust Z-score', 'CLR', 'ILR']
-DIM_REDUCTIONS = ['None', 'PCA', 't-SNE']
+DIM_REDUCTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
 
 DEFAULT_DATA_TYPES = ['Counts']
 DEFAULT_SCALINGS = ['None']
 DEFAULT_DIM_REDUCTIONS = ['None']
 DEFAULT_ALGORITHMS = ['K-Means']
-
-
-def multiplicative_replacement(matrix, frac=0.65, threshold=None):
-    """Replace zeros in a non-negative composition matrix without distorting ratios.
-
-    Log-ratio transforms (CLR, ILR) are undefined at zero, and the common remedy
-    of substituting a tiny constant such as ``1e-10`` is statistically poor for
-    sparse, zero-inflated data: every zero is mapped to an almost identical, very
-    large negative log value, so the transformed coordinates encode the
-    presence/absence pattern at enormous magnitude and swamp genuine compositional
-    differences. This is acute for single-particle ICP-ToF-MS matrices, where most
-    particles carry signal in only one or a few element channels.
-
-    The multiplicative (a.k.a. simple) replacement strategy substitutes a small
-    positive value ``delta`` for each zero and then multiplicatively rescales the
-    non-zero parts of the same row so the row total is preserved, which keeps the
-    ratios between the observed (non-zero) parts unchanged — the property that
-    makes the replacement coherent for compositional data. ``delta`` is taken as a
-    fraction of a per-column detection floor: by default the smallest strictly
-    positive value seen in each column, which ties the imputed value to the
-    instrument's effective detection limit rather than to an arbitrary constant.
-
-    References:
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-
-    Args:
-        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
-            row is treated as one composition.
-        frac (float): Fraction of the per-column detection floor used as the
-            imputed value ``delta``; ``0.65`` is the value recommended by
-            Martín-Fernández et al. (2003). Must lie in ``(0, 1)``.
-        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
-            detection floor. When ``None`` the smallest strictly positive entry
-            in each column is used, falling back to ``1.0`` for all-zero columns.
-
-    Returns:
-        np.ndarray: A float64 copy of ``matrix`` with zeros replaced and row
-            totals preserved. Rows that are entirely zero are filled with the per-column floor
-            ``delta`` so downstream log-ratios stay finite.
-    """
-    X = np.array(matrix, dtype=np.float64, copy=True)
-    if X.size == 0:
-        return X
-    n_parts = X.shape[1]
-    if threshold is None:
-        floor = np.full(n_parts, np.nan)
-        for j in range(n_parts):
-            col = X[:, j]
-            pos = col[col > 0]
-            floor[j] = pos.min() if pos.size else 1.0
-    else:
-        floor = np.asarray(threshold, dtype=np.float64)
-        if floor.ndim == 0:
-            floor = np.full(n_parts, float(floor))
-    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
-    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
-
-    totals = X.sum(axis=1)
-    out = X.copy()
-    for i in range(X.shape[0]):
-        row = X[i]
-        zero = row <= 0
-        if not zero.any():
-            continue
-        if totals[i] <= 0:
-            out[i] = delta
-            continue
-        imputed = delta[zero]
-        removed = imputed.sum()
-        scale = 1.0 - removed / totals[i]
-        if scale <= 0:
-            out[i] = row + (delta if zero.all() else 0.0)
-            out[i, zero] = delta[zero]
-            continue
-        out[i, ~zero] = row[~zero] * scale
-        out[i, zero] = imputed
-    return out
 
 
 def parse_components(text):
@@ -616,7 +489,7 @@ class Preprocessor:
     """
 
     def __init__(self, particle_data, elements, filter_zeros=True,
-                 tsne_random_state=42, n_components=2, min_type_count=1):
+                 tsne_random_state=42, min_type_count=1):
         """Initialise the cache and the fixed kept-row mask.
 
         Args:
@@ -624,7 +497,6 @@ class Preprocessor:
             elements (list[str]): Active element columns, in order.
             filter_zeros (bool): Drop all-zero rows to match the host pipeline.
             tsne_random_state (int): Seed for reproducible t-SNE.
-            n_components (int): Target dimensionality for PCA / t-SNE.
             min_type_count (int): Minimum number of particles that must share an
                 elemental combination (the set of elements present) for that
                 combination to be kept. A particle is dropped when its
@@ -633,7 +505,6 @@ class Preprocessor:
                 mirrors the host pipeline's "Min. particles per type" control.
         """
         self.elements = list(elements)
-        self.n_components = int(n_components)
         self.tsne_rs = tsne_random_state
         self.min_type_count = max(1, int(min_type_count))
 
@@ -696,18 +567,22 @@ class Preprocessor:
 
     def matrix(self, data_type, scaling, dim_reduction):
         """Return the fully preprocessed matrix for one pipeline (cached)."""
-        key = (data_type, scaling, dim_reduction, self.n_components)
+        key = (data_type, scaling, dim_reduction)
         if key in self._reduced_cache:
             return self._reduced_cache[key]
         m = self._scaled(data_type, scaling)
+        nc = reduction_components(dim_reduction, m.shape[1])
         if dim_reduction == 'PCA' and m.shape[1] > 1:
-            nc = min(self.n_components, m.shape[1])
-            m = PCA(n_components=nc).fit_transform(m)
+            m = PCA(n_components=min(nc, m.shape[0])).fit_transform(m)
         elif dim_reduction == 't-SNE' and m.shape[1] > 1:
-            nc = min(self.n_components, 3)
             perp = min(30, max(5, (m.shape[0] - 1) // 3))
             m = TSNE(n_components=nc, random_state=self.tsne_rs,
                      init='pca', perplexity=perp).fit_transform(m)
+        elif dim_reduction == 'UMAP' and _UMAP_OK and m.shape[1] > 1:
+            nn = min(15, max(2, m.shape[0] - 1))
+            with numba_serial("UMAP (sweep reduction)"):
+                m = _UMAP_CLS(n_components=nc, n_neighbors=nn,
+                              random_state=self.tsne_rs).fit_transform(m)
         self._reduced_cache[key] = m
         return m
 
@@ -777,10 +652,11 @@ def run_algorithm(name, params, data, som_runner=None):
         if name == 'HDBSCAN':
             if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                 return None
-            return _HDBSCAN_CLS(min_cluster_size=int(params.get('min_cluster_size', 5)),
-                                min_samples=int(params.get('min_samples', 5)),
-                                metric=params.get('metric', 'euclidean')
-                                ).fit_predict(data)
+            with numba_serial("HDBSCAN (sweep)"):
+                return _HDBSCAN_CLS(min_cluster_size=int(params.get('min_cluster_size', 5)),
+                                    min_samples=int(params.get('min_samples', 5)),
+                                    metric=params.get('metric', 'euclidean')
+                                    ).fit_predict(data)
         if name == 'OPTICS':
             return OPTICS(min_samples=int(params.get('min_samples', 5)),
                           metric=params.get('metric', 'euclidean'),
@@ -918,7 +794,7 @@ def _params_str(algo, params):
 def run_sweep(particle_data, elements, components, *,
               data_types, scalings, dim_reductions,
               algo_selections, internal_metrics, external_metrics,
-              n_components=2, other_flags=None, filter_zeros=True,
+              other_flags=None, filter_zeros=True,
               min_type_count=1, min_clusters=2, max_clusters=30,
               som_runner=None, progress_cb=None, cancel_event=None):
     """Run the full pipeline grid and score every result against ground truth.
@@ -931,7 +807,6 @@ def run_sweep(particle_data, elements, components, *,
         algo_selections (dict): ``{algo: {param: [values]}}``.
         internal_metrics (list[str]): Internal index names to compute.
         external_metrics (list[str]): External (truth) index names to compute.
-        n_components (int): PCA / t-SNE target dimensionality.
         other_flags (np.ndarray or None): Optional coincidence/outlier mask over
             the original particle rows.
         filter_zeros (bool): Drop all-zero rows.
@@ -953,7 +828,7 @@ def run_sweep(particle_data, elements, components, *,
             recoverable via :func:`summarize_sweep_failures`.
     """
     pre = Preprocessor(particle_data, elements, filter_zeros=filter_zeros,
-                       n_components=n_components, min_type_count=min_type_count)
+                       min_type_count=min_type_count)
     if pre.n_rows < 2:
         return {'results': [], 'truth': {}, 'completed': 0, 'total': 0,
                 'cancelled': False, 'failures': [], 'attempts': {},
@@ -1654,7 +1529,6 @@ if _QT_OK:
             self._som_runner = som_runner
             self._worker = None
             self._last = None
-            self._last_ncomp = 2
             self._last_min_type = 1
             self._ranked = []
             self._detail_pre = None
@@ -1723,19 +1597,34 @@ if _QT_OK:
             v.setSpacing(12)
             v.setContentsMargins(6, 6, 6, 6)
 
-            gt = QGroupBox("Known components (ground truth)")
+            gt = QGroupBox("Advanced — known components (ground truth)")
+            gt.setCheckable(True)
+            gt.setChecked(False)
+            gt.setToolTip(
+                "Off (default): components are unknown, so pipelines are ranked "
+                "by internal metrics only.\n"
+                "On: enter the components you prepared and rank the sweep "
+                "against that ground truth with external indices.")
+            self.gt_group = gt
             gtl = QVBoxLayout(gt)
-            gtl.addWidget(QLabel(
+            self.gt_body = QWidget()
+            gtb = QVBoxLayout(self.gt_body)
+            gtb.setContentsMargins(0, 0, 0, 0)
+            gtb.addWidget(QLabel(
                 "Enter the components you prepared, separated by ';'. "
                 "Group alloys/molecules with '+' or fused symbols, e.g. "
                 "<b>107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co</b>"))
             self.components_edit = QLineEdit("107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co")
-            gtl.addWidget(self.components_edit)
-            self.unknown_mode = QCheckBox(
-                "Unknown components — rank by internal metrics only "
-                "(no ground truth)")
-            self.unknown_mode.toggled.connect(self._on_mode_changed)
-            gtl.addWidget(self.unknown_mode)
+            gtb.addWidget(self.components_edit)
+            extrow = QHBoxLayout()
+            extrow.addWidget(self._axis_box(
+                "External metrics (vs truth)", list(EXTERNAL_METRICS.keys()),
+                DEFAULT_EXTERNAL_METRICS, 'ext_boxes'))
+            extrow.addStretch()
+            gtb.addLayout(extrow)
+            gtl.addWidget(self.gt_body)
+            self.gt_body.setVisible(False)
+            gt.toggled.connect(self._on_mode_changed)
             v.addWidget(gt)
 
             axes = QHBoxLayout()
@@ -1747,12 +1636,11 @@ if _QT_OK:
             dr_box = self._axis_box("Dim. reduction", DIM_REDUCTIONS,
                                     DEFAULT_DIM_REDUCTIONS, 'dr_boxes')
             ncrow = QHBoxLayout()
-            ncrow.addWidget(QLabel("n_components:"))
-            self.ncomp = QSpinBox()
-            self.ncomp.setRange(2, 3)
-            self.ncomp.setValue(2)
-            ncrow.addWidget(self.ncomp)
-            ncrow.addStretch()
+            _nc_note = QLabel("PCA keeps every component (a rotation), so no "
+                              "element information is lost.")
+            _nc_note.setWordWrap(True)
+            _nc_note.setStyleSheet("color:#64748B;font-size:10px;")
+            ncrow.addWidget(_nc_note)
             dr_box.layout().addLayout(ncrow)
             mtrow = QHBoxLayout()
             mtrow.addWidget(QLabel("Min. particles per type:"))
@@ -1792,9 +1680,6 @@ if _QT_OK:
             dr_box.layout().addLayout(krow)
             self._on_kfilter_toggled(False)
             axes.addWidget(dr_box)
-            axes.addWidget(self._axis_box(
-                "External metrics (vs truth)", list(EXTERNAL_METRICS.keys()),
-                DEFAULT_EXTERNAL_METRICS, 'ext_boxes'))
             axes.addWidget(self._axis_box(
                 "Internal metrics", list(METRIC_REGISTRY.keys()),
                 list(METRIC_REGISTRY.keys())[:3], 'int_boxes'))
@@ -1907,7 +1792,7 @@ if _QT_OK:
             current = self.rank_combo.currentText()
             intl_on = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
             ext_on  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
-            if self.unknown_mode.isChecked():
+            if self._is_unknown():
                 items = list(intl_on or METRIC_REGISTRY.keys())
                 if len(intl_on) >= 2:
                     items = items + ['Borda (Internal)']
@@ -1924,11 +1809,17 @@ if _QT_OK:
                 self.rank_combo.setCurrentText(current)
             self.rank_combo.blockSignals(False)
 
-        def _on_mode_changed(self, checked):
-            """Enable/disable truth-only controls when the mode toggles."""
-            self.components_edit.setEnabled(not checked)
-            for cb in self.ext_boxes.values():
-                cb.setEnabled(not checked)
+        def _is_unknown(self):
+            """Return True when no ground truth is provided (default mode).
+
+            The advanced group box acts as the mode switch: collapsed (unchecked)
+            means the components are unknown and only internal metrics apply.
+            """
+            return not self.gt_group.isChecked()
+
+        def _on_mode_changed(self, advanced):
+            """Show/hide the ground-truth controls when the mode toggles."""
+            self.gt_body.setVisible(bool(advanced))
             self._refresh_rank_combo()
 
         def _on_kfilter_toggled(self, checked):
@@ -1938,7 +1829,7 @@ if _QT_OK:
 
         def _gather_kwargs(self):
             """Collect the current setup into :func:`run_sweep` keyword args."""
-            unknown = self.unknown_mode.isChecked()
+            unknown = self._is_unknown()
             algo_selections = {}
             for name, card in self.algo_cards.items():
                 if card.isChecked():
@@ -1960,7 +1851,6 @@ if _QT_OK:
                 algo_selections=algo_selections,
                 internal_metrics=[o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 external_metrics=external,
-                n_components=self.ncomp.value(),
                 min_type_count=self.min_type_count.value(),
                 min_clusters=min_c,
                 max_clusters=max_c,
@@ -1990,10 +1880,10 @@ if _QT_OK:
             if not kw['algo_selections']:
                 QMessageBox.warning(self, "Setup", "Select at least one algorithm.")
                 return
-            if self.unknown_mode.isChecked():
+            if self._is_unknown():
                 if not kw['internal_metrics']:
                     QMessageBox.warning(self, "Setup",
-                                        "Unknown mode needs at least one internal metric.")
+                                        "Select at least one internal metric.")
                     return
             elif not kw['external_metrics']:
                 QMessageBox.warning(self, "Setup",
@@ -2007,7 +1897,6 @@ if _QT_OK:
                     "Proceed?")
                 if ok != QMessageBox.Yes:
                     return
-            self._last_ncomp = kw['n_components']
             self._last_min_type = kw['min_type_count']
             self.run_btn.setEnabled(False)
             self.cancel_btn.setEnabled(True)
@@ -2049,7 +1938,7 @@ if _QT_OK:
                 QMessageBox.warning(self, "No results", payload['error'])
                 return
             self._last = payload
-            self._last['unknown'] = self.unknown_mode.isChecked()
+            self._last['unknown'] = self._is_unknown()
             self._show_results(payload)
             self._save_state()
             self.tabs.setCurrentIndex(1)
@@ -2200,7 +2089,6 @@ if _QT_OK:
                 if self._detail_pre is None:
                     self._detail_pre = Preprocessor(
                         self._get_particle_data(), self._get_elements(),
-                        n_components=self._last_ncomp,
                         min_type_count=self._last_min_type)
                 data = self._detail_pre.matrix(
                     result['data_type'], result['scaling'], result['dim_reduction'])
@@ -2306,12 +2194,27 @@ if _QT_OK:
             cfg['scaling'] = {'None': 'Standard'}.get(
                 result['scaling'], result['scaling'])
             cfg['dim_reduction'] = result['dim_reduction']
-            cfg['n_components'] = self._last_ncomp
             cfg['selected_algorithm'] = result['algorithm']
             cfg['enabled_algorithms'] = [result['algorithm']]
             if 'k' in result['params']:
                 cfg['min_clusters'] = cfg['max_clusters'] = int(result['params']['k'])
+                cfg['live_k'] = int(result['params']['k'])
                 cfg['auto_select_k'] = False
+            # Copy every algorithm parameter into the shared config so all
+            # sections (Settings, ② Clusters, ④ How it works) see the same
+            # values. Parameter names match the engine's; the map translates
+            # them to their node.config keys.
+            try:
+                from results.cluster.live import ALGO_PARAM_MAP
+                pmap = ALGO_PARAM_MAP.get(result['algorithm'], {})
+                for pkey, pval in (result.get('params') or {}).items():
+                    if pkey == 'k':
+                        continue
+                    cfgkey = pmap.get(pkey)
+                    if cfgkey:
+                        cfg[cfgkey] = pval
+            except Exception:
+                _itk_log.exception("Handled exception copying params")
             try:
                 self.node.configuration_changed.emit()
             except Exception:
@@ -2451,14 +2354,12 @@ if _QT_OK:
                 'int': [o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 'min_k': self.min_k.value(),
                 'max_k': self.max_k.value(),
-                'ncomp': self.ncomp.value(),
                 'min_type_count': self.min_type_count.value(),
                 'rank_by': self.rank_combo.currentText(),
-                'unknown': self.unknown_mode.isChecked(),
+                'unknown': self._is_unknown(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
                 'last': self._last,
-                'last_ncomp': self._last_ncomp,
                 'last_min_type': self._last_min_type,
             }
 
@@ -2482,16 +2383,14 @@ if _QT_OK:
                 self._set_axis(self.dr_boxes, state.get('dim_reductions'))
                 self._set_axis(self.ext_boxes, state.get('ext'))
                 self._set_axis(self.int_boxes, state.get('int'))
-                self.unknown_mode.setChecked(bool(state.get('unknown', False)))
-                self._on_mode_changed(self.unknown_mode.isChecked())
+                self.gt_group.setChecked(not bool(state.get('unknown', True)))
+                self._on_mode_changed(self.gt_group.isChecked())
                 self.kfilter_cb.setChecked(bool(state.get('kfilter', False)))
                 self._on_kfilter_toggled(self.kfilter_cb.isChecked())
                 if state.get('min_k'):
                     self.min_k.setValue(state['min_k'])
                 if state.get('max_k'):
                     self.max_k.setValue(state['max_k'])
-                if state.get('ncomp'):
-                    self.ncomp.setValue(state['ncomp'])
                 if state.get('min_type_count'):
                     self.min_type_count.setValue(state['min_type_count'])
                 if state.get('rank_by'):
@@ -2500,7 +2399,6 @@ if _QT_OK:
                 for n, st in state.get('algos', {}).items():
                     if n in self.algo_cards:
                         self.algo_cards[n].set_state(st)
-                self._last_ncomp = state.get('last_ncomp', 2)
                 self._last_min_type = state.get('last_min_type', 1)
                 self._last = state.get('last')
                 if self._last:

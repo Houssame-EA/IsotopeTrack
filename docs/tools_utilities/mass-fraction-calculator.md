@@ -32,6 +32,12 @@ Database loader for materials from CSV with signature-based lookup.
 
 Editable combobox for chemical formulas with debounced filtering.
 
+Key design decisions that prevent the old recursion crash:
+1. Both the combobox AND lineEdit signals are blocked during rebuilds
+2. Filtering is debounced (300 ms) so rapid typing doesn't queue rebuilds
+3. Only the top MAX_DROPDOWN_ITEMS matches are shown, not thousands
+4. Minimum 2 characters before filtering starts (avoids huge result sets)
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, element: str, csv_database: CSVCompoundDatabase, tracked_elemen` |  |

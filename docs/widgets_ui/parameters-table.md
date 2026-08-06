@@ -1,6 +1,7 @@
 # `parameters_table.py`
 
 Drop-in replacement for the QTableWidget used as the parameters table in
+IsotopeTrack.
 
 ---
 
@@ -37,6 +38,7 @@ Drop-in replacement for the QTableWidget used as the parameters table in
 ### `ParametersModel` *(extends `QAbstractTableModel`)*
 
 Stores all parameter data as a list of plain Python dicts.
+No Qt widgets are ever created here.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

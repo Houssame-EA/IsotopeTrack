@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explore (live)</title>
+<link rel="stylesheet" href="styles.css">
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+</head>
+<body>
+
+<div id="stage"><canvas id="plot"></canvas></div>
+
+<div id="empty"><div><b>No data to explore yet.</b><br>
+  Connect particle data and run <b>① Evaluate K</b> or pick isotopes, then come
+  back to this tab — it will project your particles and let you watch each
+  algorithm cluster them in real time.</div></div>
+
+<div id="topbar">
+  <button id="menuBtn" title="Parameters">☰</button>
+  <div id="titleWrap">
+    <div id="algoTitle">K-Means</div>
+    <div id="note">Setting up…</div>
+    <div id="disclaimer" style="font-size:10.5px;color:var(--muted)"></div>
+  </div>
+  <div class="spacer"></div>
+  <div id="metrics">
+    <div class="chip"><div class="k">Clusters</div><div class="v" id="cK">–</div></div>
+    <div class="chip"><div class="k">Noise</div><div class="v" id="cNoise">–</div></div>
+  </div>
+</div>
+
+<div id="legend">
+  <h4>Clusters</h4><div id="legItems"></div>
+  <div id="sampSec" style="display:none">
+    <h4>Samples</h4><div id="sampItems"></div>
+  </div>
+  <div id="ovSec" style="display:none">
+    <h4 id="ovTitle">Element</h4>
+    <canvas id="ovBar"></canvas>
+    <div class="ovscale"><span id="ovLo"></span><span id="ovHi"></span></div>
+    <div class="ovnote" id="ovNote"></div>
+  </div>
+</div>
+
+<div id="inset">
+  <div id="insetHead">
+    <div id="insetTitles">
+      <div id="insetTitle">Detail</div>
+      <div id="insetSub"></div>
+    </div>
+    <button id="insetToggle" title="Hide detail view">▾</button>
+  </div>
+  <div id="insetBody"><canvas id="insetPlot"></canvas></div>
+  <div id="insetGrip" title="Drag to resize"></div>
+</div>
+
+<div id="eqbox" class="floatbox">
+  <div id="eqHead" class="fhead">
+    <div class="ftitles">
+      <div id="eqTitle">Worked example</div>
+      <div id="eqFormula" class="formula"></div>
+    </div>
+    <button id="eqToggle" title="Collapse">▾</button>
+  </div>
+  <div id="eqBody"></div>
+  <div id="eqGrip" class="fgrip" title="Drag to resize"></div>
+</div>
+
+<div id="floatShow">
+  <button id="insetShow" title="Show detail view">◱ Detail view</button>
+  <button id="eqShow" title="Show worked example">∑ Example</button>
+</div>
+
+<div id="ctxmenu">
+  <button data-act="settings">Plot settings…</button>
+  <button data-act="export">Export image…</button>
+  <hr>
+  <button data-act="detail">Show / hide detail view</button>
+  <button data-act="equation">Show / hide worked example</button>
+  <hr>
+  <button data-act="fit">Reset view</button>
+  <button data-act="boxes">Reset boxes</button>
+  <button data-act="colors">Reset cluster colours</button>
+</div>
+
+<div id="modal">
+  <div id="settings">
+    <div id="setHead">
+      <div><b>Plot settings</b><div class="hint" id="setInfo"></div></div>
+      <button id="setClose" title="Close">✕</button>
+    </div>
+    <div id="setTabs">
+      <button class="stab on" data-tab="tAppearance">Appearance</button>
+      <button class="stab" data-tab="tBoxes">Boxes</button>
+      <button class="stab" data-tab="tExport">Export</button>
+      <button class="stab" data-tab="tInfo">Info</button>
+    </div>
+    <div id="setBody">
+
+      <div class="spane on" id="tAppearance">
+        <div class="grid2">
+          <div class="field"><label>Font family</label>
+            <select id="fontSel">
+              <option value="system">System UI</option>
+              <option value="'Times New Roman',Times,serif">Times New Roman</option>
+              <option value="Georgia,'Times New Roman',serif">Georgia</option>
+              <option value="Helvetica,Arial,sans-serif">Helvetica / Arial</option>
+              <option value="'Segoe UI',Tahoma,sans-serif">Segoe UI / Tahoma</option>
+              <option value="Verdana,Geneva,sans-serif">Verdana</option>
+              <option value="'Courier New',monospace">Courier New</option>
+              <option value="'Palatino Linotype',Palatino,serif">Palatino</option>
+            </select>
+          </div>
+          <div class="field"><label>Font style</label>
+            <select id="fontStyleSel">
+              <option value="normal">Regular</option>
+              <option value="bold">Bold</option>
+              <option value="italic">Italic</option>
+              <option value="bold italic">Bold italic</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Font size <span class="val" id="vFontSize">13.5</span></label>
+          <input type="range" id="fontSize" min="8" max="40" step="0.5" value="13.5">
+          <div class="hint">Up to 40 px — big enough to stay legible in a
+            screenshot or an exported figure.</div>
+        </div>
+        <div class="field"><label>Element labels</label>
+          <select id="labelMode">
+            <option value="Symbol">Symbol — Ag</option>
+            <option value="Mass + Symbol" selected>Mass + Symbol — 107Ag</option>
+            <option value="Atomic Notation">Atomic Notation — ¹⁰⁷Ag</option>
+          </select>
+          <div class="hint">Same three styles as the clustering figures.</div>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label>Node size <span class="val" id="vPointSize">auto</span></label>
+            <input type="range" id="pointSize" min="0" max="14" step="0.5" value="0">
+            <div class="hint">0 = auto by particle count.</div>
+          </div>
+          <div class="field">
+            <label>Centroid size <span class="val" id="vCentSize">6.5</span></label>
+            <input type="range" id="centSize" min="3" max="28" step="0.5" value="6.5">
+          </div>
+        </div>
+        <div class="field">
+          <label>Cluster colours</label>
+          <div id="swatches"></div>
+          <div class="hint">Click a swatch here or in the Clusters legend to
+            recolour that cluster everywhere.</div>
+          <div class="btnrow"><button class="ghost" id="colorReset">Reset colours</button></div>
+        </div>
+        <div class="field" id="shapeField" style="display:none">
+          <label class="toggle"><input type="checkbox" id="shapeBySample" checked>
+            <span class="track"></span> Marker shape by sample</label>
+          <div class="hint">Colour keeps showing the cluster; the shape shows
+            which sample the particle came from. Click a sample in the legend to
+            show only its data.</div>
+          <div id="sampleShapes"></div>
+          <div class="btnrow"><button class="ghost" id="shapeReset">Reset shapes</button></div>
+        </div>
+      </div>
+
+      <div class="spane" id="tBoxes">
+        <div class="field"><label class="toggle"><input type="checkbox" id="insetOn">
+          <span class="track"></span> Detail view — the algorithm's own figure</label>
+          <div class="hint">Dendrogram for Hierarchical, reachability plot for
+            OPTICS, U-matrix for SOM, objective curve for K-Means / GMM…
+            Drag its header to move it, its bottom-right corner to resize it in
+            both directions.</div>
+        </div>
+        <div class="field"><label class="toggle"><input type="checkbox" id="eqOn">
+          <span class="track"></span> Worked example — the equation with your numbers</label>
+          <div class="hint">States the equation the current step is evaluating,
+            then substitutes this frame's actual values into it.</div>
+        </div>
+        <div class="field"><label class="toggle"><input type="checkbox" id="legendOn" checked>
+          <span class="track"></span> Cluster legend</label></div>
+        <div class="btnrow"><button class="ghost" id="boxReset">Reset size &amp; position</button></div>
+      </div>
+
+      <div class="spane" id="tExport">
+        <div class="field"><label>Resolution</label>
+          <select id="expScale">
+            <option value="2">2× — screen quality, larger</option>
+            <option value="3" selected>3× — print quality (recommended)</option>
+            <option value="4">4× — poster quality</option>
+            <option value="6">6× — maximum</option>
+          </select>
+        </div>
+        <div class="field"><label>Text enlargement <span class="val" id="vExpFont">1.25×</span></label>
+          <input type="range" id="expFont" min="1" max="2.5" step="0.05" value="1.25">
+          <div class="hint">Fonts, numbers and markers are drawn larger relative
+            to the figure so they stay readable when the image is scaled down.</div>
+        </div>
+        <div class="field"><label class="toggle"><input type="checkbox" id="expTransparent">
+          <span class="track"></span> Transparent background</label></div>
+        <div class="btnrow">
+          <button class="primary" id="expPlot">Export main plot</button>
+          <button class="primary" id="expInset">Export detail view</button>
+        </div>
+        <div class="hint" id="expInfo"></div>
+      </div>
+
+      <div class="spane" id="tInfo">
+        <div id="infoTable"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<aside id="panel">
+  <div id="panelHead">
+    <div id="brand"><span class="dot"></span>
+      <div><b>How it works</b><br><span id="varInfo">PCA view</span></div></div>
+    <button id="panelClose" title="Hide panel">✕</button>
+  </div>
+  <div id="panelBody">
+    <div class="section">
+      <h3>Data</h3>
+      <div class="field"><label>Data type</label><select id="dataTypeSel"></select></div>
+      <div class="field"><label>Scaling</label><select id="scalingSel"></select>
+        <div class="hint">CLR is the compositional default for particle data.</div>
+      </div>
+      <div class="field"><label class="toggle"><input type="checkbox" id="filterZeros" checked>
+        <span class="track"></span> Drop all-zero particles</label></div>
+      <div class="field">
+        <label>Min particles / type <span class="val" id="vMinType">5</span></label>
+        <input type="range" id="minType" min="1" max="100" step="1" value="5">
+        <div class="hint">Drop particle types rarer than this before clustering.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>View</h3>
+      <div class="field"><label>Projection</label>
+        <select id="projSel">
+          <option value="PCA">PCA</option>
+          <option value="t-SNE">t-SNE</option>
+          <option value="UMAP">UMAP</option>
+          <option value="None">None</option>
+        </select>
+        <div class="hint" id="projHint">Linear, fast and reproducible; axes carry
+          an explained-variance share.</div>
+      </div>
+      <div class="field" id="biplotField" style="display:none">
+        <label class="toggle"><input type="checkbox" id="biplotOn" checked>
+          <span class="track"></span> Element arrows (biplot)</label>
+        <div class="hint">Each arrow points the way particles rich in that
+          element lie, and its length is how much that element drives the
+          components on screen.</div>
+        <label>Arrows shown <span class="val" id="vBiplotN">8</span></label>
+        <input type="range" id="biplotN" min="1" max="30" step="1" value="8">
+      </div>
+      <div class="field">
+        <label>Colour by element</label>
+        <select id="overlaySel"></select>
+        <div class="hint">Shades every particle by how much of that element it
+          holds. Works on any projection, so it answers what the PCA arrows
+          answer even on t-SNE and UMAP.</div>
+      </div>
+      <div class="field" id="cmapField" style="display:none">
+        <label>Colormap</label>
+        <select id="cmapSel"></select>
+        <canvas id="cmapBar"></canvas>
+      </div>
+      <div class="field"><label>Dimensions</label>
+        <select id="viewSel">
+          <option value="2">2D</option>
+          <option value="3">3D</option>
+        </select>
+        <div class="hint" id="view3dHint" style="display:none">Drag to rotate · scroll to zoom</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Algorithm</h3>
+      <div class="field"><select id="algoSel"></select></div>
+      <div class="blurb" id="blurb"></div>
+      <div id="algoParams"></div>
+      <div class="btnrow"><button class="primary" id="runBtn">▶ Cluster</button></div>
+    </div>
+    <div class="section">
+      <h3>Playback</h3>
+      <div class="field">
+        <label>Speed <span class="val" id="vSpeed">7×</span></label>
+        <input type="range" id="speed" min="1" max="30" step="1" value="7">
+      </div>
+    </div>
+  </div>
+</aside>
+
+<div id="tip"></div>
+<div id="status"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

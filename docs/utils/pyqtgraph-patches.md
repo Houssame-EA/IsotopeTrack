@@ -2,6 +2,17 @@
 
 Runtime compatibility patches for third-party libraries.
 
+pyqtgraph's built-in export dialog (right-click on a plot, then Export)
+crashes on some PySide6 builds because ``QTreeWidget.headerItem()`` returns
+a mis-wrapped ``QWidgetItem`` that lacks ``setText``. The patch below makes
+the dialog's UI setup tolerant of that binding bug so the dialog opens
+normally. The affected header rows are hidden immediately after creation,
+so skipping the text assignment has no visible effect.
+
+The dialog is also styled from the application's active ``ThemeManager``
+palette and restyled live whenever the theme changes, so it follows the
+app's dark and light modes instead of the default Qt look.
+
 ---
 
 ## Classes

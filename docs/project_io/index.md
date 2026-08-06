@@ -12,7 +12,7 @@ Autosave and crash recovery for IsotopeTrack.
 ### [`export_utils.py`](export-utils.md)
 
 
-**0** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **6** functions &nbsp;·&nbsp; **4** methods
 
 ### [`fast_project_io.py`](fast-project-io.md)
 

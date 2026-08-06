@@ -49,3 +49,4 @@ threadpoolctl==3.6.0
 packaging==26.0
 platformdirs==4.9.4
 setuptools==69.5.1
+umap-learn==0.5.9.post2

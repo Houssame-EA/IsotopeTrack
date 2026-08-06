@@ -8,6 +8,9 @@
 
 Custom QDoubleSpinBox that ignores mouse wheel events.
 
+Args:
+    Inherits from QDoubleSpinBox
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `wheelEvent` | `(self, event)` | Ignore mouse wheel scroll events. |
@@ -16,6 +19,9 @@ Custom QDoubleSpinBox that ignores mouse wheel events.
 
 Custom QSpinBox that ignores mouse wheel events.
 
+Args:
+    Inherits from QSpinBox
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `wheelEvent` | `(self, event)` | Ignore mouse wheel scroll events. |
@@ -23,6 +29,9 @@ Custom QSpinBox that ignores mouse wheel events.
 ### `NoWheelComboBox` *(extends `QComboBox`)*
 
 Custom QComboBox that ignores mouse wheel events.
+
+Args:
+    Inherits from QComboBox
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -119,7 +128,7 @@ Custom QComboBox that ignores mouse wheel events.
 | `show_periodic_table_after_load` | `(self)` | Show periodic table after data is loaded. |
 | `handle_isotopes_selected` | `(self, selected_isotopes)` | Handle confirmed isotope selections from periodic table. |
 | `handle_isotopes_selection_from_calibration` | `(self, selected_isotopes)` | Handle isotope selections from ionic calibration window. |
-| `find_closest_isotope` | `(self, target_mass)` | Find closest isotope mass in loaded data. |
+| `find_closest_isotope` | `(self, target_mass, data=None, tolerance=None)` | Find the channel in a sample's data that carries one isotope. |
 | `get_formatted_label` | `(self, element_key)` | Get proper isotope label from periodic table data with caching. |
 | `clear_element_caches` | `(self)` | Clear element-related caches when data changes. |
 | `_build_element_lookup_cache` | `(self)` | Build fast lookup cache for element display labels. |
@@ -180,9 +189,6 @@ Custom QComboBox that ignores mouse wheel events.
 | `calculate_mass_limits` | `(self)` | Calculate mass detection limits for all elements. |
 | `open_mass_fraction_calculator` | `(self)` | Open mass fraction calculator dialog. |
 | `handle_mass_fractions_updated` | `(self, data)` | Handle mass fraction updates from calculator. |
-| `get_molecular_weight` | `(self, element_key, sample_name=None)` | Get molecular weight for element compound. |
-| `get_mass_fraction` | `(self, element_key, sample_name=None)` | Get mass fraction for element in compound. |
-| `get_element_density` | `(self, element_key, sample_name=None)` | Get density for element compound. |
 | `mass_to_diameter` | `(self, mass_fg, density)` | Convert mass to spherical particle diameter. |
 | `get_sample_dilution` | `(self, sample_name)` | Return the dilution factor stored for a sample. |
 | `set_sample_dilution` | `(self, sample_name, factor)` | Store the dilution factor for a sample. |

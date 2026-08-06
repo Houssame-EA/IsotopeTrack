@@ -72,6 +72,15 @@ if os.path.exists('processing/cpln_quantiles.npz'):
 else:
     print("WARNING: processing/cpln_quantiles.npz not found — peak detection LUT will be missing!")
 
+# Web assets for the interactive Cluster tab.
+for _ui_dir in ('results/cluster/live_ui',):
+    if os.path.exists(_ui_dir):
+        for _ui in os.listdir(_ui_dir):
+            _uip = os.path.join(_ui_dir, _ui)
+            if os.path.isfile(_uip):
+                data_files.append((os.path.abspath(_uip), _ui_dir))
+        print(f"Including web UI assets: {_ui_dir}")
+
 print(f"Total data files to include: {len(data_files)}")
 
 a = Analysis(
@@ -83,10 +92,13 @@ a = Analysis(
         'pytz',
         'tzdata',
         'PySide6',
+        'shiboken6',
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
         'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebChannel',
         'PySide6.QtOpenGL',
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
@@ -254,7 +266,12 @@ a = Analysis(
 
         'loading',
         'loading.data_thread',
-        'loading.import_csv_dialogs',
+        'loading.csv',
+        'loading.csv.preview_model',
+        'loading.csv.exclusions',
+        'loading.csv.file_list',
+        'loading.csv.dialog',
+        'loading.csv.profiles',
         'loading.SIA_manager',
         'loading.tofwerk_loading',
         'loading.vitesse_loading',
@@ -267,8 +284,11 @@ a = Analysis(
         'results.results_AI',
         'results.results_bar_charts',
         'results.results_box_plot',
-        'results.results_cluster',
-        'results.results_cluster_tools',
+        'results.cluster.dialog',
+        'results.cluster.tools',
+        'results.cluster.live',
+        'results.cluster.live_engine',
+        'results.cluster.palette',
         'results.results_composition_wheel',
         'results.results_concentration',
         'results.results_correlation',
@@ -298,6 +318,7 @@ a = Analysis(
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
+        'tools.render_settings',
         'tools.particle_filter',
         'tools.element_picker',
         'tools.update_checker',
@@ -366,10 +387,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=True,
+    argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
@@ -381,7 +402,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='IsotopeTrack',
 )

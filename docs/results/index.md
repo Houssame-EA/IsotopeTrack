@@ -1,6 +1,6 @@
 # Results
 
-All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, …).
+All plot/analysis result modules (bar charts, isotope ratios, AI, …).
 
 ---
 
@@ -18,16 +18,6 @@ All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, �
 Distribution Plot Node – Box / Violin / Strip / Bar-with-errors.
 
 **3** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **52** methods
-
-### [`results_cluster.py`](results-cluster.md)
-
-
-**8** classes &nbsp;·&nbsp; **39** functions &nbsp;·&nbsp; **113** methods
-
-### [`results_cluster_tools.py`](results-cluster-tools.md)
-Custom Cluster Test — exhaustive pipeline search against known components.
-
-**1** classes &nbsp;·&nbsp; **20** functions &nbsp;·&nbsp; **6** methods
 
 ### [`results_composition_wheel.py`](results-composition-wheel.md)
 Composition Wheel (2D / 3D) — single & multi-sample particle-signature plot.
@@ -52,7 +42,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_heatmap.py`](results-heatmap.md)
 
 
-**3** classes &nbsp;·&nbsp; **10** functions &nbsp;·&nbsp; **39** methods
+**3** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **39** methods
 
 ### [`results_isotope.py`](results-isotope.md)
 
@@ -85,9 +75,9 @@ Network / Chord Diagram Node – circular element correlation network.
 **12** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **82** methods
 
 ### [`results_reader.py`](results-reader.md)
+Smart Insights for the Workflow Builder canvas.
 
-
-**4** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **18** methods
+**7** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **45** methods
 
 ### [`results_single_multiple.py`](results-single-multiple.md)
 Single vs Multiple Element Analysis Node – Pie charts & heatmaps.

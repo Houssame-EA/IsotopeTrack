@@ -7,6 +7,7 @@
 ### `DataProcessThread` *(extends `QThread`)*
 
 Thread for processing data from Nu Instruments or TOFWERK formats.
+Handles loading, mass selection, and data extraction in background.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

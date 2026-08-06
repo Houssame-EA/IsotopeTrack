@@ -4243,7 +4243,7 @@ class IonicCalibrationWindow(QMainWindow):
                 pass
             except ImportError:
                 QMessageBox.critical(self, "Import Error", 
-                    "Data file import functionality is not available. Please ensure the import_csv_dialogs.py file is present.")
+                    "Data file import functionality is not available. Please ensure the loading/csv package is present.")
                 return
                     
             file_paths, _ = QFileDialog.getOpenFileNames(
@@ -4266,7 +4266,7 @@ class IonicCalibrationWindow(QMainWindow):
                     
     def handle_csv_import(self, selected_paths):
         """
-        Handle CSV/Excel file import using import_csv_dialogs.
+        Handle CSV/Excel file import using loading.csv.
         
         Args:
             selected_paths: List of file paths to import
@@ -4275,7 +4275,7 @@ class IonicCalibrationWindow(QMainWindow):
         CSV structure dialog configuration.
         """
         try:
-            from loading.import_csv_dialogs import show_csv_structure_dialog
+            from loading.csv import show_csv_structure_dialog
             
             config = show_csv_structure_dialog(selected_paths, self)
             if not config:
@@ -4291,7 +4291,7 @@ class IonicCalibrationWindow(QMainWindow):
             self.folder_paths = []
             self.all_masses = set()
             
-            from loading.import_csv_dialogs import DataProcessThread
+            from loading.csv import DataProcessThread
             
             process_thread = DataProcessThread(config)
             
@@ -4342,7 +4342,7 @@ class IonicCalibrationWindow(QMainWindow):
             
         except ImportError:
             QMessageBox.critical(self, "Module Error", 
-                            "CSV import module not available. Please ensure import_csv_dialogs.py is in the project.")
+                            "CSV import module not available. Please ensure loading/csv is in the project.")
         except Exception as e:
             if 'progress' in locals():
                 progress.close()

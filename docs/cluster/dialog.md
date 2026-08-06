@@ -1,4 +1,4 @@
-# `results_cluster.py`
+# `dialog.py`
 
 ---
 
@@ -14,22 +14,25 @@
 | `DEFAULT_METRICS` | `['Silhouette', 'Calinski-Harabasz', 'Davies-Bouldin']` |
 | `METRIC_COLORS` | `{name: spec['color'] for (name, spec) in METRIC_REGISTRY.…` |
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
+| `DEFAULT_K_RANGE` | `list(range(2, 16))` |
 | `PROGRESS_RESOLUTION` | `1000` |
 | `SCALING_OPTIONS` | `['CLR', 'ILR', 'Robust Z-score', 'None']` |
-| `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE']` |
+| `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |
 | `DATA_TYPE_OPTIONS` | `['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…` |
 | `DATA_KEY_MAP` | `{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…` |
-| `CLUSTER_COLORS` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
 | `ALGO_LINE_STYLES` | `{'K-Means': dict(color='#2563EB', ls='-', marker='o'), 'H…` |
 | `_ELEMENT_PALETTE` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
-| `SAMPLE_MARKERS` | `['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '<', '>', 'p']` |
-| `SAMPLE_PALETTE` | `['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '…` |
 
 ## Classes
 
 ### `_SafeFigureCanvas` *(extends `FigureCanvas`)*
 
 FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.
+
+In certain PySide6 + matplotlib combinations, FigureCanvas.showEvent calls
+self.window().installEventFilter(self) but window() returns a QWidgetItem
+(a layout item) rather than a real QWidget, causing an AttributeError that
+crashes the dialog on first show.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -63,6 +66,19 @@ Full settings dialog opened from right-click → Configure.
 
 Background worker that runs the clustering pipeline off the UI thread.
 
+The worker performs the expensive, CPU-bound stages — data preparation,
+fitting every enabled algorithm, and characterisation — without blocking
+the GUI.  Progress and results are delivered back to the main thread via
+signals; the dialog connects to these and does all drawing on the main
+thread, since matplotlib/Qt widgets are not thread-safe.
+
+Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    som_snapshot (object, int, int): Live SOM convergence frame —
+        ``(weights_copy, current_iter, total_iter)``.
+    done (object): Emitted on success with a results payload dict.
+    failed (str): Emitted on error with the exception message.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, dialog, sel_k, elements, data, enabled, parent=None)` |  |
@@ -71,6 +87,17 @@ Background worker that runs the clustering pipeline off the UI thread.
 ### `_EvalWorker` *(extends `QThread`)*
 
 Background worker that runs K-evaluation off the UI thread.
+
+Mirrors :class:`_ClusterWorker` but for the ① Evaluate K step: it prepares
+the data and runs the (potentially slow) multi-K, multi-algorithm scoring
+sweep — plus the per-sample sweep for multi-sample input — without freezing
+the GUI.  All widget updates happen on the main thread in the dialog's
+``_on_eval_done`` handler.
+
+Signals:
+    progressed (int, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with a results payload dict.
+    failed (str): Emitted on error with the exception message.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -81,11 +108,66 @@ Background worker that runs K-evaluation off the UI thread.
 
 Background worker that runs the K-stability bootstrap off the UI thread.
 
+For each of ``n_boot`` resamples drawn with replacement from the prepared
+data matrix, the full evaluation pipeline is rerun and the per-metric
+optimal K is recorded. Aggregating across resamples yields, per metric, the
+most-frequently selected K and the fraction of resamples that agreed — a
+direct, non-parametric measure of how stable each metric's K choice is to
+sampling variation. This is the bootstrap-stability assessment recommended
+for cluster-validity selection by Ikotun, Habyarimana & Ezugwu
+(*Heliyon* 11, 2025, e41953) and follows the classic non-parametric
+bootstrap of Efron & Tibshirani (*An Introduction to the Bootstrap*,
+Chapman & Hall, 1993).
+
+Running this on a :class:`QThread` (rather than a ``processEvents`` loop on
+the GUI thread) keeps the interface fully responsive and lets the user
+cancel cleanly via a thread-safe flag. Only bootstrap-safe metrics are
+evaluated, so expensive O(n^2) indices are skipped automatically.
+
+Signals:
+    progressed (float, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with
+        ``{'stability': {...}, 'results': {...}, 'cancelled': bool,
+        'completed': int, 'n_boot': int}``.
+    failed (str): Emitted on error with the exception message.
+
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, dialog, data, enabled_algos, bootstrap_metrics, n_boot, seed, p` |  |
 | `cancel` | `(self)` | Request cancellation; the loop stops after the current resample. |
 | `run` | `(self)` | Execute the bootstrap loop on the worker thread and emit results. |
+
+### `_StabilityWorker` *(extends `QThread`)*
+
+Background worker computing bootstrap assignment stability.
+
+Implements the cluster-wise stability assessment of Hennig (2007): the
+selected algorithm is refit at the selected K on ``n_boot`` bootstrap
+resamples of the prepared data matrix. For every reference cluster the
+best-matching bootstrap cluster is found in each resample and their
+Jaccard coefficient recorded; the mean over resamples is that cluster's
+stability (>= 0.85 highly stable, < 0.5 "dissolved"). Simultaneously a
+per-particle score is accumulated: the fraction of resamples containing
+the particle in which its bootstrap cluster mapped back to its reference
+cluster — a consensus measure of how trustworthy each individual
+assignment is.
+
+References:
+    C. Hennig, "Cluster-wise assessment of cluster stability,"
+    *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+    doi:10.1016/j.csda.2006.11.025.
+
+Signals:
+    progressed (float, str): Percent complete (0-100) and a status message.
+    done (object): Emitted on success with ``{'algo', 'n_boot',
+        'cluster_jaccard', 'particle_stability', 'cancelled'}``.
+    failed (str): Emitted on error with the exception message.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, dialog, data, algo, sel_k, ref_labels, n_boot, seed, parent=Non` |  |
+| `cancel` | `(self)` | Request cancellation; the loop stops after the current resample. |
+| `run` | `(self)` | Execute the stability bootstrap loop and emit aggregated results. |
 
 ### `ClusteringDisplayDialog` *(extends `QDialog`)*
 
@@ -106,16 +188,11 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_build_eval_tab` | `(self)` |  |
 | `_build_summary_tab` | `(self)` | Build the Summary tab holding the consensus decision matrix. |
 | `_refresh_summary` | `(self)` | Redraw the consensus summary table from the latest evaluation state. |
-| `_build_cluster_tab` | `(self)` | Build the Clusters tab containing both 2-D and 3-D scatter views, |
-| `_switch_cluster_view` | `(self, mode)` | Toggle between 2-D scatter and 3-D scatter within the Clusters tab. |
 | `_ctx_menu` | `(self, pos, tab)` |  |
 | `_make_popout_btn` | `(self, slot)` |  |
 | `_pop_out_figure` | `(self, tab: str)` | Redraw the requested figure into a standalone resizable window. |
 | `_edit_figure` | `(self, tab: str)` | Open the per-figure display settings dialog. |
 | `_redraw_figure` | `(self, tab: str)` |  |
-| `_cl_drag_press` | `(self, event)` |  |
-| `_cl_drag_motion` | `(self, event)` |  |
-| `_cl_drag_release` | `(self, _event)` |  |
 | `_set` | `(self, key, value)` |  |
 | `_build_overview_tab` | `(self)` |  |
 | `_on_overview_view_changed` | `(self, text)` | Handle a change to the Strips/Heatmap toggle in the Overview toolbar. |
@@ -123,21 +200,14 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_clear_overview_elements` | `(self)` | Empty the selected-elements list and redraw. |
 | `_refresh_overview_elem_btn` | `(self)` | Sync the picker button's label with the current selection. |
 | `_build_dendrogram_tab` | `(self)` |  |
-| `_open_3d_sample_picker` | `(self)` | Checkable menu to show/hide samples in the 3D scatter. |
-| `_show_all_3d_samples` | `(self)` | Clear the hidden-sample set and redraw the 3D scatter. |
-| `_on_3d_scroll` | `(self, event)` | Zoom the 3D axes under the cursor in/out on mouse-wheel scroll. |
-| `_set_3d_view` | `(self, elev, azim)` | Snap all 3D axes to a preset view angle. |
-| `_draw_3d` | `(self)` |  |
-| `_on_3d_hover` | `(self, event)` | Show a tooltip with cluster and element information on 3D hover. |
-| `_draw_3d_into` | `(self, target_fig)` |  |
 | `_draw_dendrogram` | `(self)` |  |
 | `_draw_dendrogram_into` | `(self, target_fig)` |  |
 | `_draw_overview` | `(self)` | Render the Overview tab: composition strips (or heatmap) on the |
 | `_draw_overview_into` | `(self, target_fig)` | Draw the Overview content into an arbitrary Figure. |
 | `_restyle_heatmap_axes` | `(self, ax, fig, cfg)` | Re-apply font and theme to an externally-drawn heatmap axes. |
 | `_on_eval_pick` | `(self, event)` | Click a point on an evaluation curve to set K directly. |
-| `_on_cluster_hover` | `(self, event)` | Show a floating tooltip with element values when hovering scatter points. |
 | `_open_settings` | `(self)` |  |
+| `_sync_live_tab` | `(self)` | Push the shared config into the ④ How it works tab. |
 | `_on_node_changed` | `(self)` |  |
 | `_get_elements` | `(self)` |  |
 | `_prepare_data` | `(self, elements)` | Prepare data matrix — identical logic to original. |
@@ -178,10 +248,19 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_do_live_k` | `(self)` | Recompute clustering for the current slider K on the main thread. |
 | `_hier_recut` | `(self, data, k, cfg)` | Cut a cached hierarchical linkage tree at K clusters. |
 | `_build_som_tab` | `(self)` |  |
+| `_build_live_tab` | `(self)` | Add the interactive '② Cluster' tab (animated clustering). |
+| `_on_live_tab_shown` | `(self, idx)` | Refresh the live view's data when its tab is opened. |
 | `_characterise` | `(self, elements, data)` | Generate cluster characterisation with real element-% composition labels. |
 | `_rebuild_display_labels` | `(self)` | Recompute cluster_type_short and cluster_type from stored composition. |
 | `_apply_display_settings` | `(self)` | Rebuild display labels and redraw all figures without re-clustering. |
+| `_run_stability` | `(self)` | Launch the assignment-stability bootstrap on a worker thread. |
+| `_cancel_stability` | `(self)` | Request cooperative cancellation of the stability worker. |
+| `_on_stability_done` | `(self, payload)` | Store stability results, persist them, and show the result window. |
+| `_on_stability_failed` | `(self, message)` | Report a stability-worker failure to the user. |
+| `_on_stability_thread_finished` | `(self)` | Restore the toolbar and progress state after the worker exits. |
+| `_show_stability_dialog` | `(self)` | Open a window with the stability figure (Jaccard bars + histogram). |
 | `_export_results` | `(self)` | Serialise clustering results and characterisation to a JSON file. |
+| `_export_methods` | `(self)` | Preview and export an auto-generated methods paragraph. |
 
 ### `ClusteringPlotNode` *(extends `QObject`)*
 
@@ -205,12 +284,9 @@ Clustering analysis node with matplotlib figures.
 | `_dunn_sym_score` | `(data, labels, max_points=2000, random_state=0)` | Dunn-Symmetric (Sym-Dunn) cluster validity index (higher is better). |
 | `_c_index_score` | `(data, labels, max_points=2000, random_state=0)` | C-index cluster validity index (lower is better, bounded in ``[0, 1]``). |
 | `_vote_optimal_per_metric` | `(eval_results, elbow_fn, enabled_metrics=None)` | Select an optimal K per metric by voting across algorithms. |
+| `_cluster_col` | `(cid, cfg=None)` | Colour for a cluster label, honouring the user's saved overrides. |
 | `_palette_to_plot` | `(pal)` | Map an app ``Palette`` (or None) to the plot/theme keys used here. |
 | `_current_plot_palette` | `()` | Return the active plot/theme dict from the app ThemeManager. |
-| `multiplicative_replacement` | `(matrix, frac=0.65, threshold=None)` | Replace zeros in a non-negative composition matrix without distorting ratios. |
-| `_apply_clr` | `(matrix, zero_replacement='additive')` | Centred-log-ratio transform of a non-negative composition matrix. |
-| `_apply_ilr` | `(matrix, zero_replacement='additive')` | Isometric-log-ratio transform yielding ``p - 1`` orthonormal coordinates. |
-| `_apply_robust_zscore` | `(matrix)` | Robust per-column z-score using a consistent scale estimate. |
 | `_filter_rare_particle_types` | `(matrix, sample_labels, original_indices, min_count)` | Remove particles whose elemental signature occurs fewer than min_count times. |
 | `_som_cluster_cmap` | `(name, n_clusters)` | Build a discrete categorical colormap for the SOM cluster grid. |
 | `_contrast_text_for` | `(cmap_name, norm_value)` | Pick black or white text for legibility over a colormap cell. |
@@ -236,4 +312,6 @@ Clustering analysis node with matplotlib figures.
 | `_draw_evaluation_per_sample` | `(fig, per_sample_eval, cfg, per_sample_optk=None, view_algo='All Algor` | Draw per-sample evaluation curves as a single metric × sample grid. |
 | `_consensus_k` | `(per_metric_k)` | Return the consensus K and its agreement fraction from per-metric picks. |
 | `_draw_consensus_summary` | `(fig, eval_results, per_sample_eval, cfg, elbow_fn, optimal_per_metric` | Draw a metric × scope consensus decision table for choosing K. |
-| `_draw_clustering` | `(fig, clustering_results, data_matrix, characterisation, cfg, input_da` | Draw cluster scatter plots on a matplotlib Figure. |
+| `_draw_stability` | `(fig, stab, cfg)` | Draw bootstrap stability results: cluster Jaccard bars + particle histogram. |
+| `_algo_params_str` | `(cfg, algo)` | Return a human-readable parameter summary for one algorithm. |
+| `build_methods_paragraph` | `(cfg, optimal_k=None, algorithm=None, n_particles=None, n_elements=Non` | Generate a publication-ready methods paragraph from the node settings. |

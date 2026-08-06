@@ -2,6 +2,10 @@
 
 Welcome / Home screen for IsotopeTrack.
 
+Shown on first launch of the primary window (and from Help → Welcome). Gives
+new users an obvious entry point — import data, load a project, open the docs
+or the paper — and returning users quick access to recent projects.
+
 ---
 
 ## Constants

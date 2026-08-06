@@ -16,7 +16,7 @@ import math
 import sys
 import warnings
 import logging
-_itk_log = logging.getLogger("IsotopeTrack.results.results_cluster")
+_itk_log = logging.getLogger("IsotopeTrack.results.cluster.dialog")
 warnings.filterwarnings('ignore')
 
 from sklearn.cluster import (
@@ -44,6 +44,18 @@ from sklearn.metrics import (
     silhouette_score, calinski_harabasz_score, davies_bouldin_score,
 )
 
+try:
+    import os as _os
+    _os.environ.setdefault('NUMBA_THREADING_LAYER', 'workqueue')
+    from umap import UMAP as _UMAP_CLS
+    _UMAP_OK = True
+except ImportError:
+    _itk_log.debug("Handled exception in <module>")
+    _UMAP_CLS = None
+    _UMAP_OK = False
+
+from utils.numba_guard import numba_serial
+
 from scipy.cluster.hierarchy import (
     dendrogram as scipy_dendrogram,
     linkage as scipy_linkage,
@@ -64,6 +76,9 @@ from results.utils_sort import (
     sort_elements_by_mass,
 )
 from results.results_heatmap import draw_combinations_heatmap
+from results.compositional import (
+    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+)
 
 
 class _SafeFigureCanvas(FigureCanvas):
@@ -619,10 +634,31 @@ def _vote_optimal_per_metric(eval_results, elbow_fn, enabled_metrics=None):
 
 DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
 
+
+DEFAULT_K_RANGE = list(range(2, 16))
+
+def _cluster_col(cid, cfg=None):
+    """Colour for a cluster label, honouring the user's saved overrides.
+
+    Keyed by the label itself rather than its position among the labels
+    present, so filtering noise out of an enumeration cannot shift the colours
+    of everything after it.
+
+    Args:
+        cid (int): Cluster label; negative means noise.
+        cfg (dict | None): Node config carrying any colour overrides.
+
+    Returns:
+        str: A ``#RRGGBB`` colour.
+    """
+    return cluster_color(cid, cfg)
+
+
+
 PROGRESS_RESOLUTION = 1000
 
 SCALING_OPTIONS = ['CLR', 'ILR', 'Robust Z-score', 'None']
-DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE']
+DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
 
 DATA_TYPE_OPTIONS = [
     'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
@@ -646,19 +682,19 @@ DATA_KEY_MAP = {
     'Particle Mole %': 'particle_moles_fmol',
 }
 
-CLUSTER_COLORS = [
-    '#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED',
-    '#0891B2', '#DB2777', '#65A30D', '#EA580C', '#4F46E5',
-    '#0D9488', '#C026D3', '#CA8A04', '#E11D48', '#2DD4BF',
-    '#6366F1', '#F59E0B', '#10B981', '#EF4444', '#8B5CF6',
-]
+try:
+    from results.cluster.palette import CLUSTER_COLORS, cluster_color
+    from results.cluster.prep import EMBED_DIMS, reduction_components
+except ImportError:
+    from .palette import CLUSTER_COLORS, cluster_color
+    from .prep import EMBED_DIMS, reduction_components
 
 try:
     from tools.theme import theme as _app_theme
 except Exception: 
     _itk_log.exception("Handled exception in <module>")
     try:
-        from ..tools.theme import theme as _app_theme
+        from tools.theme import theme as _app_theme
     except Exception:
         _itk_log.exception("Handled exception in <module>")
         _app_theme = None
@@ -737,196 +773,6 @@ ALGO_LINE_STYLES = {
     'OPTICS':            dict(color='#EA580C', ls='--', marker='*'),
     'Gaussian Mixture':  dict(color='#9333EA', ls='-',  marker='8'),
 }
-
-
-def multiplicative_replacement(matrix, frac=0.65, threshold=None):
-    """Replace zeros in a non-negative composition matrix without distorting ratios.
-
-    Log-ratio transforms are undefined at zero, and substituting a fixed tiny
-    constant such as ``1e-10`` is statistically poor for sparse, zero-inflated
-    data: every zero maps to an almost identical, very large negative log value,
-    so the transformed coordinates end up encoding presence/absence at enormous
-    magnitude and overwhelm genuine compositional differences. This is acute for
-    single-particle ICP-ToF-MS matrices, where most particles carry signal in
-    only one or a few element channels.
-
-    Multiplicative (simple) replacement substitutes a small positive ``delta``
-    for each zero and rescales the non-zero parts of the same row so the row
-    total is preserved, leaving the ratios among the observed parts unchanged —
-    the coherence property required for compositional data. ``delta`` is a
-    fraction of a per-column detection floor (by default the smallest strictly
-    positive value in each column), tying the imputed value to the instrument's
-    effective detection limit rather than to an arbitrary constant.
-
-    References:
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-
-    Args:
-        matrix (np.ndarray): Non-negative matrix ``(n_samples, n_parts)``; each
-            row is one composition.
-        frac (float): Fraction of the per-column detection floor used as the
-            imputed value; ``0.65`` follows Martín-Fernández et al. (2003).
-        threshold (np.ndarray or float or None): Explicit per-column (or scalar)
-            detection floor; when ``None`` the smallest strictly positive entry
-            of each column is used, with ``1.0`` for all-zero columns.
-
-    Returns:
-        np.ndarray: A float64 copy with zeros replaced and row totals preserved;
-            all-zero rows are filled with the per-column floor ``delta`` so
-            log-ratios stay finite.
-    """
-    X = np.array(matrix, dtype=np.float64, copy=True)
-    if X.size == 0:
-        return X
-    n_parts = X.shape[1]
-    if threshold is None:
-        floor = np.full(n_parts, np.nan)
-        for j in range(n_parts):
-            col = X[:, j]
-            pos = col[col > 0]
-            floor[j] = pos.min() if pos.size else 1.0
-    else:
-        floor = np.asarray(threshold, dtype=np.float64)
-        if floor.ndim == 0:
-            floor = np.full(n_parts, float(floor))
-    floor = np.where(np.isfinite(floor) & (floor > 0), floor, 1.0)
-    delta = np.clip(float(frac), 1e-9, 1.0 - 1e-9) * floor
-
-    totals = X.sum(axis=1)
-    out = X.copy()
-    for i in range(X.shape[0]):
-        row = X[i]
-        zero = row <= 0
-        if not zero.any():
-            continue
-        if totals[i] <= 0:
-            out[i] = delta
-            continue
-        removed = delta[zero].sum()
-        scale = 1.0 - removed / totals[i]
-        if scale <= 0:
-            out[i, zero] = delta[zero]
-            continue
-        out[i, ~zero] = row[~zero] * scale
-        out[i, zero] = delta[zero]
-    return out
-
-
-def _apply_clr(matrix, zero_replacement='additive'):
-    """Centred-log-ratio transform of a non-negative composition matrix.
-
-    The CLR maps a composition to log values centred on the per-row geometric
-    mean, giving coordinates suitable for Euclidean-distance clustering of
-    compositional data. Because the logarithm is undefined at zero, zeros must
-    be handled first; the strategy is selectable.
-
-    References:
-        J. Aitchison, *The Statistical Analysis of Compositional Data*, Chapman &
-        Hall, 1986.
-        J. A. Martín-Fernández, C. Barceló-Vidal and V. Pawlowsky-Glahn,
-        "Dealing with zeros and missing values in compositional data sets using
-        nonparametric imputation," *Math. Geol.* 35(3), 2003, 253-278,
-        doi:10.1023/A:1023866030544.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
-        zero_replacement (str): ``'additive'`` adds a fixed ``1e-10`` floor
-            (legacy behaviour, retained as the default for reproducibility);
-            ``'multiplicative'`` uses ratio-preserving, detection-limit-aware
-            replacement via :func:`multiplicative_replacement`, which is the
-            statistically preferred treatment for the sparse single-particle case.
-
-    Returns:
-        np.ndarray: CLR-transformed matrix.
-    """
-    if zero_replacement == 'multiplicative':
-        X = multiplicative_replacement(matrix)
-    else:
-        eps = 1e-10
-        X = np.where(matrix <= 0, eps, matrix.astype(np.float64))
-    log_X = np.log(X)
-    return log_X - log_X.mean(axis=1, keepdims=True)
-
-
-def _apply_ilr(matrix, zero_replacement='additive'):
-    """Isometric-log-ratio transform yielding ``p - 1`` orthonormal coordinates.
-
-    The ILR expresses a composition in an orthonormal basis of the Aitchison
-    simplex, removing the singular covariance the CLR leaves behind while
-    preserving Aitchison distances. It is built on the CLR and inherits its zero
-    handling.
-
-    References:
-        J. J. Egozcue, V. Pawlowsky-Glahn, G. Mateu-Figueras and C.
-        Barceló-Vidal, "Isometric logratio transformations for compositional data
-        analysis," *Math. Geol.* 35(3), 2003, 279-300,
-        doi:10.1023/A:1023818214614.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``, values >= 0.
-        zero_replacement (str): Passed through to :func:`_apply_clr`.
-
-    Returns:
-        np.ndarray: ILR-transformed matrix with ``p - 1`` coordinates.
-    """
-    clr = _apply_clr(matrix, zero_replacement=zero_replacement)
-    p = clr.shape[1]
-    if p < 2:
-        return clr
-    V = np.zeros((p, p - 1), dtype=np.float64)
-    for j in range(p - 1):
-        k = j + 1
-        scale = np.sqrt(k / (k + 1.0))
-        V[:k, j] = scale / k
-        V[k, j] = -scale
-    return clr @ V
-
-
-def _apply_robust_zscore(matrix):
-    """Robust per-column z-score using a consistent scale estimate.
-
-    Each column is centred on its median and divided by a robust estimate of its
-    standard deviation. The estimate is ``1.4826 * MAD``, where ``1.4826`` is the
-    consistency constant that makes the scaled MAD an unbiased estimator of the
-    standard deviation for Gaussian data.
-
-    The previous implementation divided by the bare MAD and, whenever the MAD was
-    below ``1e-10``, clamped it to ``1e-10``. For single-particle ICP-ToF-MS data
-    that clamp is a trap: any element detected in fewer than half the particles
-    has a median and a MAD of exactly zero, so its column was divided by
-    ``1e-10`` and inflated to magnitudes around ``1e10`` that then dominated every
-    Euclidean distance. Because sparse columns are the rule rather than the
-    exception here, most "Robust Z-score" results were dominated by that
-    artefact. This version instead falls back to the column standard deviation
-    when the MAD vanishes, and to a unit scale only when the column is genuinely
-    constant (in which case the centred column is identically zero and carries no
-    weight), so no column can explode.
-
-    References:
-        P. J. Rousseeuw and C. Croux, "Alternatives to the median absolute
-        deviation," *J. Am. Stat. Assoc.* 88(424), 1993, 1273-1283,
-        doi:10.1080/01621459.1993.10476408.
-
-    Args:
-        matrix (np.ndarray): Data matrix ``(n_samples, n_features)``.
-
-    Returns:
-        np.ndarray: Robust z-score normalised matrix with no column inflated by a
-            near-zero scale.
-    """
-    X = matrix.astype(np.float64)
-    med = np.median(X, axis=0)
-    mad = np.median(np.abs(X - med), axis=0)
-    scale = 1.4826 * mad
-    std = np.std(X, axis=0)
-    scale = np.where(scale > 1e-10, scale, std)
-    scale = np.where(scale > 1e-10, scale, 1.0)
-    return (X - med) / scale
 
 
 def _filter_rare_particle_types(matrix, sample_labels, original_indices, min_count):
@@ -1295,7 +1141,7 @@ def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
             sizes.append(total)
     else:
         sizes = [int(np.sum(data_labels == c)) for c in unique_c]
-    colors = [CLUSTER_COLORS[int(c) % len(CLUSTER_COLORS)] for c in unique_c]
+    colors = [_cluster_col(c, cfg) for c in unique_c]
     bars = ax_s.bar([_cluster_label_short(c) for c in unique_c], sizes,
                     color=colors, edgecolor='white', linewidth=0.6, alpha=0.9)
     _smax = max(sizes) if sizes else 0
@@ -1392,10 +1238,11 @@ class ClusteringSettingsDialog(QDialog):
         self.dim_red.setCurrentText(self._cfg.get('dim_reduction', 'None'))
         fl.addRow("Dim. Reduction:", self.dim_red)
 
-        self.n_comp = QSpinBox()
-        self.n_comp.setRange(2, 100)
-        self.n_comp.setValue(self._cfg.get('n_components', 2))
-        fl.addRow("Components:", self.n_comp)
+        _dr_note = QLabel("Clustering always uses every element; PCA/t-SNE/UMAP "
+                          "set how the figures are projected.")
+        _dr_note.setWordWrap(True)
+        _dr_note.setStyleSheet("color:#64748B;font-size:10px;")
+        fl.addRow("", _dr_note)
 
         self.filter_zeros = QCheckBox("Filter zero-only particles")
         self.filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
@@ -1710,7 +1557,6 @@ class ClusteringSettingsDialog(QDialog):
         out['y_axis_unit'] = self.y_axis_unit.currentData()
         out['scaling'] = self.scaling.currentText()
         out['dim_reduction'] = self.dim_red.currentText()
-        out['n_components'] = self.n_comp.value()
         out['filter_zeros'] = self.filter_zeros.isChecked()
         out['min_particle_type_count'] = self.min_type_count.value()
         out['min_clusters'] = self.min_k.value()
@@ -2555,7 +2401,10 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
         ax.set_yticks([])
         return
 
-    n = len(active)
+    gmm_res = (eval_results.get('Gaussian Mixture', {})
+               if 'Gaussian Mixture' in algos else {})
+    has_bic = bool(gmm_res.get('gmm_bic'))
+    n = len(active) + (1 if has_bic else 0)
     cols = min(2, n)
     rows = math.ceil(n / cols)
 
@@ -2611,6 +2460,37 @@ def _draw_evaluation(fig, eval_results, cfg, optimal_k=None,
             leg.get_frame().set_linewidth(0.5)
 
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
+
+    if has_bic:
+        ax = axes[len(active)]
+        k_vals = gmm_res.get('k_values', [])
+        bic = gmm_res.get('gmm_bic', [])
+        aic = gmm_res.get('gmm_aic', [])
+        if k_vals and len(bic) == len(k_vals):
+            ax.plot(k_vals, bic, color='#9333EA', marker='o',
+                    markersize=cfg.get('eval_marker_size', 5),
+                    linewidth=cfg.get('eval_line_width', 1.8),
+                    label='BIC', alpha=0.85)
+            if len(aic) == len(k_vals):
+                ax.plot(k_vals, aic, color='#F59E0B', marker='s',
+                        linestyle='--',
+                        markersize=cfg.get('eval_marker_size', 5) - 1,
+                        linewidth=cfg.get('eval_line_width', 1.8) - 0.2,
+                        label='AIC', alpha=0.85)
+            best_k = k_vals[int(np.argmin(bic))]
+            ax.axvline(best_k, color='#DC2626', linestyle='--',
+                       linewidth=1.5, alpha=0.7,
+                       label=f'min BIC K={best_k}')
+            _style_ax(ax, cfg, xlabel='Number of Clusters (K)',
+                      ylabel='Information criterion',
+                      title=f'BIC / AIC (GMM)  →  K={best_k}')
+            leg = ax.legend(prop=_font_scale(cfg, 'legend')[0],
+                            loc='best', framealpha=0.9,
+                            edgecolor='#CBD5E1')
+            if leg:
+                leg.get_frame().set_linewidth(0.5)
+            ax.xaxis.set_major_locator(
+                mticker.MaxNLocator(integer=True))
 
     total = rows * cols
     for j in range(n, total):
@@ -2726,10 +2606,6 @@ def _draw_evaluation_per_sample(fig, per_sample_eval, cfg,
         fig.tight_layout(pad=1.2)
 
 
-SAMPLE_MARKERS = ['o', 's', '^', 'D', 'v', 'P', 'X', '*', 'h', '<', '>', 'p']
-SAMPLE_PALETTE = ['#2563EB', '#DC2626', '#16A34A', '#D97706', '#7C3AED',
-                  '#0891B2', '#DB2777', '#65A30D', '#EA580C', '#4F46E5',
-                  '#0D9488', '#C026D3']
 
 
 def _consensus_k(per_metric_k):
@@ -2912,178 +2788,292 @@ def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
     fig.tight_layout(pad=1.0)
 
 
-def _draw_clustering(fig, clustering_results, data_matrix, characterisation, cfg,
-                     input_data=None):
-    """Draw cluster scatter plots on a matplotlib Figure.
 
-    Visual encoding:
-        * Marker SHAPE encodes the source sample (multi-sample input only).
-          Single-sample input uses circles everywhere.
-        * Marker FILL color encodes either the cluster or the sample,
-          depending on ``cfg['cluster_color_by']``:
-              'Cluster' → fill = cluster color, shape = sample shape
-              'Sample'  → fill = sample color, shape = sample shape
-        * Noise (label -1, density-based algos only) is always rendered as
-          a small grey '×'.
+
+
+def _draw_stability(fig, stab, cfg):
+    """Draw bootstrap stability results: cluster Jaccard bars + particle histogram.
+
+    Left panel: one horizontal bar per reference cluster showing its mean
+    bootstrap Jaccard coefficient, colour-coded with the thresholds of Hennig
+    (2007): >= 0.85 highly stable, 0.6-0.85 usable, < 0.6 unreliable
+    (< 0.5 "dissolved"). Right panel: histogram of per-particle stability —
+    the fraction of resamples in which each particle was reassigned to its
+    original cluster.
+
+    References:
+        C. Hennig, "Cluster-wise assessment of cluster stability,"
+        *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+        doi:10.1016/j.csda.2006.11.025.
 
     Args:
-        fig: Target matplotlib Figure (will be cleared).
-        clustering_results: ``{algo_name: {'labels': np.array, 'n_clusters', 'n_noise'}}``.
-        data_matrix: 2D-or-higher embedding for the scatter (uses first two cols).
-        characterisation: ``{algo_name: {cluster_id: {...characterisation dict...}}}``.
-        cfg: Display configuration dict.
+        fig (Figure): Target matplotlib figure; cleared on entry.
+        stab (dict): Payload with ``cluster_jaccard`` (``{cid: mean_j}``),
+            ``particle_stability`` (np.ndarray), ``algo`` and ``n_boot``.
+        cfg (dict): Node configuration for fonts and theming.
     """
     fig.clear()
+    theme = _plot_theme(cfg)
+    fig.patch.set_facecolor(theme['face'])
 
-    if not clustering_results or data_matrix is None:
+    cj = stab.get('cluster_jaccard') or {}
+    ps = np.asarray(stab.get('particle_stability', []))
+    if not cj or ps.size == 0:
         ax = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'No clustering data\nRun Step 2 first',
-                ha='center', va='center',
-                fontproperties=_font_scale(cfg, 'label')[0],
-                color=_muted_color(cfg),
-                transform=ax.transAxes)
-        ax.set_xticks([])
-        ax.set_yticks([])
+        _empty_message(ax, cfg, "No stability results.")
         return
 
-    n = len(clustering_results)
-    cols = min(3, n)
-    rows = math.ceil(n / cols)
+    algo = stab.get('algo', '')
+    n_boot = stab.get('n_boot', 0)
+    lbl_fp, lbl_col = _font_scale(cfg, 'label')
+    tick_fp, _ = _font_scale(cfg, 'tick')
 
-    sample_arr = cfg.get('_sample_arr', None)
-    unique_samples = (list(np.unique(sample_arr))
-                      if sample_arr is not None else [])
-    multi = len(unique_samples) > 1
-    color_by = cfg.get('cluster_color_by', 'Cluster')
-    sample_to_marker = {s: SAMPLE_MARKERS[i % len(SAMPLE_MARKERS)]
-                        for i, s in enumerate(unique_samples)}
-    sample_to_color  = {s: SAMPLE_PALETTE[i % len(SAMPLE_PALETTE)]
-                        for i, s in enumerate(unique_samples)}
+    ax1 = fig.add_subplot(121)
+    cids = sorted(cj)
+    vals = [cj[c] for c in cids]
 
-    pt_size   = cfg.get('scatter_point_size', 18)
-    alpha     = cfg.get('scatter_alpha', 0.65)
-    centroids = cfg.get('scatter_show_centroids', True)
+    def _bar_color(j):
+        """Return the traffic-light colour for one Jaccard value."""
+        if j >= 0.85:
+            return '#16A34A'
+        if j >= 0.6:
+            return '#F59E0B'
+        return '#DC2626'
 
-    for idx, (algo_name, result) in enumerate(clustering_results.items()):
-        ax = fig.add_subplot(rows, cols, idx + 1)
-        ax._algo_name = algo_name
-        labels = result.get('labels')
-        if labels is None:
-            ax.text(0.5, 0.5, 'No labels', ha='center', va='center',
-                    fontproperties=_font_scale(cfg, 'label')[0],
-                    color=_muted_color(cfg), transform=ax.transAxes)
-            continue
+    ypos = np.arange(len(cids))
+    ax1.barh(ypos, vals, color=[_bar_color(v) for v in vals],
+             edgecolor=theme['border'], height=0.6)
+    for y, v in zip(ypos, vals):
+        ax1.text(min(v + 0.02, 0.98), y, f'{v:.2f}', va='center',
+                 fontproperties=tick_fp, color=lbl_col)
+    ax1.axvline(0.85, color='#16A34A', linestyle='--', linewidth=1.2,
+                alpha=0.7, label='stable ≥ 0.85')
+    ax1.axvline(0.5, color='#DC2626', linestyle='--', linewidth=1.2,
+                alpha=0.7, label='dissolved < 0.5')
+    ax1.set_yticks(ypos)
+    ax1.set_yticklabels([_cluster_label_short(c) for c in cids],
+                        fontproperties=tick_fp, color=lbl_col)
+    ax1.set_xlim(0, 1.05)
+    ax1.invert_yaxis()
+    _style_ax(ax1, cfg, xlabel='Mean bootstrap Jaccard',
+              title=f'Cluster stability — {algo} (B={n_boot})')
+    leg = ax1.legend(prop=_font_scale(cfg, 'legend')[0], loc='lower right',
+                     framealpha=0.9, edgecolor='#CBD5E1')
+    if leg:
+        leg.get_frame().set_linewidth(0.5)
 
-        if data_matrix.shape[1] >= 2:
-            x, y = data_matrix[:, 0], data_matrix[:, 1]
-        else:
-            x = data_matrix[:, 0] if data_matrix.ndim > 1 else data_matrix
-            y = np.zeros_like(x)
+    ax2 = fig.add_subplot(122)
+    ax2.hist(ps, bins=20, range=(0, 1), color='#2563EB',
+             edgecolor=theme['border'], alpha=0.85)
+    ax2.axvline(float(np.mean(ps)), color='#DC2626', linestyle='--',
+                linewidth=1.5, label=f'mean = {np.mean(ps):.2f}')
+    _style_ax(ax2, cfg, xlabel='Per-particle stability',
+              ylabel='Particles',
+              title='Assignment stability across resamples')
+    leg2 = ax2.legend(prop=_font_scale(cfg, 'legend')[0], loc='upper left',
+                      framealpha=0.9, edgecolor='#CBD5E1')
+    if leg2:
+        leg2.get_frame().set_linewidth(0.5)
 
-        unique_labels = np.unique(labels)
-        for j, lab in enumerate(unique_labels):
-            mask = labels == lab
+    fig.tight_layout(pad=1.5)
 
-            if lab == -1:
-                ax.scatter(x[mask], y[mask], s=12, marker='x',
-                           color='#9CA3AF', alpha=0.5, linewidths=0.8,
-                           label='_nolegend_', zorder=2)
-                continue
 
-            cluster_color = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
+def _algo_params_str(cfg, algo):
+    """Return a human-readable parameter summary for one algorithm.
 
-            if multi and sample_arr is not None and len(sample_arr) == len(x):
-                for sname in unique_samples:
-                    smask = mask & (sample_arr == sname)
-                    if not smask.any():
-                        continue
-                    marker = sample_to_marker[sname]
-                    fill = (sample_to_color[sname]
-                            if color_by == 'Sample' else cluster_color)
-                    ax.scatter(x[smask], y[smask], s=pt_size, marker=marker,
-                               color=fill, alpha=alpha,
-                               edgecolors='white', linewidths=0.3,
-                               label='_nolegend_', zorder=3)
-            else:
-                ax.scatter(x[mask], y[mask], s=pt_size, marker='o',
-                           color=cluster_color, alpha=alpha,
-                           edgecolors='white', linewidths=0.3,
-                           label='_nolegend_', zorder=3)
+    Args:
+        cfg (dict): Node configuration dictionary.
+        algo (str): Algorithm display name (e.g. ``'K-Means'``).
 
-            if centroids:
-                cx, cy = x[mask].mean(), y[mask].mean()
-                ax.scatter(cx, cy, s=90, marker='*', color=cluster_color,
-                           edgecolors='black', linewidths=0.8,
-                           label='_nolegend_', zorder=5)
+    Returns:
+        str: Comma-separated ``name = value`` pairs for the parameters the
+            selected algorithm actually uses, or an empty string when the
+            algorithm has no exposed parameters.
+    """
+    g = cfg.get
+    parts = {
+        'K-Means': [
+            ('n_init', g('kmeans_n_init', 10)),
+            ('max_iter', g('kmeans_max_iter', 300)),
+        ],
+        'Mini-Batch K-Means': [
+            ('n_init', g('mbkm_n_init', 3)),
+            ('batch_size', g('mbkm_batch_size', 1024)),
+            ('max_iter', g('mbkm_max_iter', 100)),
+        ],
+        'Hierarchical': [
+            ('linkage', g('hier_linkage', 'ward')),
+            ('metric', g('hier_metric', 'euclidean')),
+        ],
+        'DBSCAN': [
+            ('eps', g('dbscan_eps', 0.5)),
+            ('min_samples', g('dbscan_min_samples', 5)),
+            ('metric', g('dbscan_metric', 'euclidean')),
+        ],
+        'HDBSCAN': [
+            ('min_cluster_size', g('hdbscan_min_cluster_size', 5)),
+            ('min_samples', g('hdbscan_min_samples', 5)),
+            ('metric', g('hdbscan_metric', 'euclidean')),
+        ],
+        'OPTICS': [
+            ('min_samples', g('optics_min_samples', 5)),
+            ('metric', g('optics_metric', 'euclidean')),
+            ('cluster_method', g('optics_cluster_method', 'xi')),
+        ],
+        'Mean Shift': [
+            ('bandwidth', 'estimated' if g('meanshift_auto_bw', True)
+             else g('meanshift_bandwidth', 1.0)),
+            ('min_bin_freq', g('meanshift_min_bin_freq', 1)),
+        ],
+        'Spectral': [
+            ('affinity', g('spectral_affinity', 'rbf')),
+            ('n_neighbors', g('spectral_n_neighbors', 10)),
+        ],
+        'GMM': [
+            ('covariance_type', g('gmm_covariance_type', 'full')),
+        ],
+        'Birch': [
+            ('threshold', g('birch_threshold', 0.5)),
+            ('branching_factor', g('birch_branching_factor', 50)),
+        ],
+        'SOM': [
+            ('grid', f"{g('som_rows', 10)} x {g('som_cols', 10)}"),
+            ('sigma', g('som_sigma', 1.0)),
+            ('learning_rate', g('som_lr', 0.5)),
+            ('n_iter', g('som_n_iter', 2000)),
+            ('neuron_clustering', g('som_final_algo', 'Hierarchical (Ward)')),
+        ],
+    }.get(algo, [])
+    return ', '.join(f'{k} = {v}' for k, v in parts)
 
-        from matplotlib.lines import Line2D
-        legend_handles = []
 
-        n_clusters = result.get('n_clusters', 0)
-        n_noise = result.get('n_noise', 0)
+def build_methods_paragraph(cfg, optimal_k=None, algorithm=None,
+                            n_particles=None, n_elements=None):
+    """Generate a publication-ready methods paragraph from the node settings.
 
-        if color_by == 'Cluster' or not multi:
-            for j, lab in enumerate(unique_labels):
-                if lab == -1:
-                    continue
-                cluster_color = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
-                ctype = ''
-                cd = None
-                if (algo_name in characterisation
-                        and lab in characterisation[algo_name]):
-                    cd = characterisation[algo_name][lab]
-                    ctype = cd.get(
-                        'cluster_type_short',
-                        cd.get('cluster_type', ''))
-                base = _cluster_label_short(lab)
-                if ctype:
-                    base = f'{base}: {ctype}'
-                if cd is not None and per_ml_active(cfg, input_data):
-                    base = f'{base} ({_cluster_size_str(cd, cfg, input_data)})'
-                legend_handles.append(Line2D(
-                    [0], [0], marker='o', linestyle='',
-                    markerfacecolor=cluster_color, markeredgecolor='white',
-                    markeredgewidth=0.4, markersize=7,
-                    label=base))
+    Describes the full pipeline — data type, particle filtering, compositional
+    scaling, dimensionality reduction, clustering algorithm with its parameters
+    and the K-selection procedure — in plain prose with a reference list, so the
+    exact analysis can be pasted into a manuscript's methods section.
 
-        if multi:
-            for sname in unique_samples:
-                marker = sample_to_marker[sname]
-                if color_by == 'Sample':
-                    facecolor = sample_to_color[sname]
-                else:
-                    facecolor = '#475569'
-                legend_handles.append(Line2D(
-                    [0], [0], marker=marker, linestyle='',
-                    markerfacecolor=facecolor, markeredgecolor='white',
-                    markeredgewidth=0.4, markersize=7, label=str(sname)))
+    Args:
+        cfg (dict): Node configuration dictionary.
+        optimal_k (int or None): Selected number of clusters, when available.
+        algorithm (str or None): Algorithm actually used; falls back to the
+            configured ``selected_algorithm``.
+        n_particles (int or None): Number of particles in the analysed matrix.
+        n_elements (int or None): Number of element channels in the matrix.
 
-        if n_noise > 0:
-            legend_handles.append(Line2D(
-                [0], [0], marker='x', linestyle='', color='#9CA3AF',
-                markersize=6, label='Noise'))
+    Returns:
+        str: Methods paragraph followed by a ``References:`` list.
+    """
+    g = cfg.get
+    algo = algorithm or g('selected_algorithm', 'K-Means')
+    refs = []
 
-        title = f'{algo_name}  (K={n_clusters}'
-        if n_noise > 0:
-            title += f', noise={n_noise}'
-        title += ')'
+    size = ''
+    if n_particles is not None and n_elements is not None:
+        size = f' ({n_particles} particles x {n_elements} element channels)'
+    lines = [
+        f"Single-particle multi-element data{size} were clustered on the "
+        f"'{g('data_type_display', 'Counts')}' data type."
+    ]
+    if g('filter_zeros', True):
+        lines.append("Particles with no signal in any selected element "
+                     "channel were removed.")
+    min_count = g('min_particle_type_count', 0)
+    if min_count and min_count > 1:
+        lines.append(f"Particle types (unique element combinations) occurring "
+                     f"fewer than {min_count} times were removed.")
 
-        _style_ax(ax, cfg, xlabel='Component 1', ylabel='Component 2', title=title)
+    scaling = g('scaling', 'None')
+    if scaling == 'CLR':
+        lines.append("Compositions were transformed with the centred "
+                     "log-ratio (CLR; Aitchison, 1986), flooring zeros at "
+                     "1e-10 before taking logarithms.")
+        refs.append("Aitchison, J. (1986). The Statistical Analysis of "
+                    "Compositional Data. Chapman & Hall.")
+    elif scaling == 'ILR':
+        lines.append("Compositions were transformed with the isometric "
+                     "log-ratio (ILR; Egozcue et al., 2003), flooring zeros "
+                     "at 1e-10 before taking logarithms.")
+        refs.append("Egozcue, J. J., Pawlowsky-Glahn, V., Mateu-Figueras, G. "
+                    "& Barcelo-Vidal, C. (2003). Isometric logratio "
+                    "transformations for compositional data analysis. "
+                    "Mathematical Geology, 35(3), 279-300.")
+    elif scaling == 'Robust Z-score':
+        lines.append("Each element channel was scaled with a robust z-score "
+                     "(median centring, 1.4826 x MAD; Rousseeuw & Croux, "
+                     "1993).")
+        refs.append("Rousseeuw, P. J. & Croux, C. (1993). Alternatives to "
+                    "the median absolute deviation. Journal of the American "
+                    "Statistical Association, 88(424), 1273-1283.")
+    else:
+        lines.append("No feature scaling was applied.")
 
-        if legend_handles and len(legend_handles) <= 14:
-            _fp_leg = _font_scale(cfg, 'legend')[0]
-            leg = ax.legend(handles=legend_handles,
-                            prop=_fp_leg,
-                            loc='best', framealpha=0.9, edgecolor='#CBD5E1',
-                            markerscale=0.9, handletextpad=0.3)
-            if leg:
-                leg.get_frame().set_linewidth(0.5)
+    dr = g('dim_reduction', 'None')
+    nc = EMBED_DIMS
+    if dr == 'PCA':
+        lines.append("The scaled matrix was rotated onto its full set of "
+                     "principal components (PCA). Retaining every component "
+                     "makes the transform an orthonormal rotation, so "
+                     "inter-particle distances — and therefore the clustering "
+                     "— are identical to those of the scaled element matrix, "
+                     "while the figures can be drawn against the leading "
+                     "components.")
+    elif dr == 't-SNE':
+        lines.append(f"The scaled matrix was embedded into {nc} "
+                     f"dimensions with t-SNE (van der Maaten & Hinton, 2008; "
+                     f"random_state = 42).")
+        refs.append("van der Maaten, L. & Hinton, G. (2008). Visualizing "
+                    "data using t-SNE. Journal of Machine Learning Research, "
+                    "9, 2579-2605.")
+    elif dr == 'UMAP':
+        lines.append(f"The scaled matrix was embedded into {nc} dimensions "
+                     f"with UMAP (McInnes et al., 2018; random_state = 42).")
+        refs.append("McInnes, L., Healy, J. & Melville, J. (2018). UMAP: "
+                    "Uniform Manifold Approximation and Projection for "
+                    "dimension reduction. arXiv:1802.03426.")
 
-    total = rows * cols
-    for j in range(n, total):
-        fig.add_subplot(rows, cols, j + 1).set_visible(False)
+    params = _algo_params_str(cfg, algo)
+    k_txt = f" with k = {optimal_k}" if optimal_k else ""
+    if params:
+        lines.append(f"Particles were clustered with {algo}{k_txt} "
+                     f"({params}).")
+    else:
+        lines.append(f"Particles were clustered with {algo}{k_txt}.")
 
-    fig.tight_layout(pad=1.2)
+    if algo not in DENSITY_BASED_ALGOS:
+        metrics = g('enabled_metrics') or []
+        metric_txt = (', '.join(metrics) if metrics
+                      else 'the enabled internal validity indices')
+        lines.append(f"The number of clusters was evaluated over "
+                     f"k = {g('min_clusters', 2)}-{g('max_clusters', 10)} "
+                     f"using {metric_txt}, and the optimal k was chosen by "
+                     f"majority vote across indices.")
+        bs_n = g('bootstrap_n', 0)
+        if bs_n:
+            lines.append(f"Stability of the selected k was assessed with "
+                         f"{bs_n} bootstrap resamples "
+                         f"(seed = {g('bootstrap_seed', 42)}).")
+
+    if algo == 'SOM':
+        lines.append("The self-organising map was trained with the "
+                     "application's built-in implementation and its neurons "
+                     "were subsequently grouped as configured.")
+        refs.append("Kohonen, T. (1990). The self-organizing map. "
+                    "Proceedings of the IEEE, 78(9), 1464-1480.")
+    else:
+        lines.append("Clustering algorithms were run with scikit-learn "
+                     "(Pedregosa et al., 2011).")
+        refs.append("Pedregosa, F. et al. (2011). Scikit-learn: Machine "
+                    "learning in Python. Journal of Machine Learning "
+                    "Research, 12, 2825-2830.")
+
+    text = ' '.join(lines)
+    if refs:
+        text += '\n\nReferences:\n' + '\n'.join(f'- {r}' for r in refs)
+    return text
 
 
 class _ClusterWorker(QThread):
@@ -3148,6 +3138,16 @@ class _ClusterWorker(QThread):
                         'n_clusters': len(np.unique(labels[labels >= 0])),
                         'n_noise': int(np.sum(labels == -1)),
                     }
+                    if (algo == 'Gaussian Mixture'
+                            and getattr(dlg, '_last_gmm', None) is not None):
+                        proba = dlg._last_gmm.predict_proba(data)
+                        thr = float(dlg.node.config.get(
+                            'gmm_ambiguous_threshold', 0.7))
+                        max_p = proba.max(axis=1)
+                        final_results[algo]['proba'] = proba
+                        final_results[algo]['max_proba'] = max_p
+                        final_results[algo]['ambiguous'] = int(
+                            (max_p < thr).sum())
 
             dlg.final_results = final_results
             self.progressed.emit(75, "Characterising clusters…")
@@ -3331,6 +3331,128 @@ class _BootstrapWorker(QThread):
             self.failed.emit(str(exc))
 
 
+
+class _StabilityWorker(QThread):
+    """Background worker computing bootstrap assignment stability.
+
+    Implements the cluster-wise stability assessment of Hennig (2007): the
+    selected algorithm is refit at the selected K on ``n_boot`` bootstrap
+    resamples of the prepared data matrix. For every reference cluster the
+    best-matching bootstrap cluster is found in each resample and their
+    Jaccard coefficient recorded; the mean over resamples is that cluster's
+    stability (>= 0.85 highly stable, < 0.5 "dissolved"). Simultaneously a
+    per-particle score is accumulated: the fraction of resamples containing
+    the particle in which its bootstrap cluster mapped back to its reference
+    cluster — a consensus measure of how trustworthy each individual
+    assignment is.
+
+    References:
+        C. Hennig, "Cluster-wise assessment of cluster stability,"
+        *Comput. Stat. Data Anal.* 52(1), 2007, 258-271,
+        doi:10.1016/j.csda.2006.11.025.
+
+    Signals:
+        progressed (float, str): Percent complete (0-100) and a status message.
+        done (object): Emitted on success with ``{'algo', 'n_boot',
+            'cluster_jaccard', 'particle_stability', 'cancelled'}``.
+        failed (str): Emitted on error with the exception message.
+    """
+
+    progressed = Signal(float, str)
+    done = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, dialog, data, algo, sel_k, ref_labels,
+                 n_boot, seed, parent=None):
+        super().__init__(parent)
+        self._dlg = dialog
+        self._data = data
+        self._algo = algo
+        self._sel_k = sel_k
+        self._ref = np.asarray(ref_labels)
+        self._n_boot = n_boot
+        self._seed = seed
+        self._cancel = False
+
+    def cancel(self):
+        """Request cancellation; the loop stops after the current resample."""
+        self._cancel = True
+
+    def run(self):
+        """Execute the stability bootstrap loop and emit aggregated results."""
+        try:
+            dlg = self._dlg
+            data = self._data
+            ref = self._ref
+            n = len(data)
+            rng = np.random.default_rng(self._seed)
+            cids = sorted(int(c) for c in np.unique(ref) if c >= 0)
+            jaccard = {c: [] for c in cids}
+            hits = np.zeros(n, dtype=np.float64)
+            seen = np.zeros(n, dtype=np.float64)
+            completed = 0
+
+            for b in range(self._n_boot):
+                if self._cancel:
+                    break
+                self.progressed.emit(
+                    100.0 * b / self._n_boot,
+                    f"Stability resample {b + 1}/{self._n_boot}…")
+                idx = rng.integers(0, n, n)
+                u = np.unique(idx)
+                if len(u) < 10:
+                    continue
+                lb = dlg._run_algo(self._algo, self._sel_k, data[u])
+                if lb is None:
+                    continue
+                lb = np.asarray(lb)
+                ref_u = ref[u]
+                bcids = [int(c) for c in np.unique(lb) if c >= 0]
+                if not bcids:
+                    continue
+
+                mapping = {}
+                for c in bcids:
+                    mc = lb == c
+                    overlaps = [(int(np.sum(mc & (ref_u == r))), r)
+                                for r in cids]
+                    mapping[c] = max(overlaps)[1]
+
+                for r in cids:
+                    mr = ref_u == r
+                    if not mr.any():
+                        continue
+                    best = 0.0
+                    for c in bcids:
+                        mc = lb == c
+                        union = int(np.sum(mr | mc))
+                        if union:
+                            best = max(best,
+                                       int(np.sum(mr & mc)) / union)
+                    jaccard[r].append(best)
+
+                mapped = np.array([mapping.get(int(v), -9) for v in lb])
+                valid = lb >= 0
+                seen[u] += valid
+                hits[u] += valid & (mapped == ref_u)
+                completed += 1
+
+            particle = hits / np.maximum(seen, 1.0)
+            payload = {
+                'algo': self._algo,
+                'n_boot': completed,
+                'cluster_jaccard': {
+                    c: float(np.mean(v)) for c, v in jaccard.items() if v},
+                'particle_stability': particle,
+                'particle_n_sampled': seen,
+                'cancelled': self._cancel,
+            }
+            self.done.emit(payload)
+        except Exception as exc:
+            _itk_log.exception("Handled exception in run")
+            self.failed.emit(str(exc))
+
+
 class ClusteringDisplayDialog(QDialog):
     """
     Main clustering dialog with toolbar, tabs, and right-click menus.
@@ -3355,6 +3477,7 @@ class ClusteringDisplayDialog(QDialog):
         self.selected_metric = None
         self.bootstrap_results = {}
         self.bootstrap_stability = {}
+        self.cluster_stability = {}
         self._bootstrap_cancel = False
         self.per_sample_eval = {}
         self.per_sample_optk = {}
@@ -3373,9 +3496,10 @@ class ClusteringDisplayDialog(QDialog):
         self._live_k_timer.timeout.connect(self._do_live_k)
         self._linkage_cache = None
         self._linkage_cache_key = None
-        self._hover_ann = {}
         self._som_obj = None
         self._som_neuron_labels = None
+        self.som_tab_idx = -1
+        self.dendro_tab_idx = -1
 
         self._pal = _current_plot_palette()
         self._dark = self._pal['dark']
@@ -3391,7 +3515,7 @@ class ClusteringDisplayDialog(QDialog):
                 _itk_log.exception("Handled exception in __init__")
 
         try:
-            from results.results_cluster_tools import attach_to_dialog
+            from results.cluster.tools import attach_to_dialog
             attach_to_dialog(self)
         except Exception:
             _itk_log.exception("Handled exception in __init__")
@@ -3414,17 +3538,15 @@ class ClusteringDisplayDialog(QDialog):
         try:
             if self.eval_results:
                 self._refresh_eval_plot()
-            if self.final_results and self._data_matrix_cache is not None:
-                _draw_clustering(self.cluster_fig, self.final_results,
-                                 self._data_matrix_cache,
-                                 self.characterisation, self.node.config,
-                                 input_data=self.node.input_data)
-                self.cluster_canvas.draw()
-                if self._data_matrix_cache.shape[1] >= 3:
-                    self._draw_3d()
+            if self.final_results:
                 self._draw_overview()
         except Exception:
             _itk_log.exception("Handled exception in _on_app_theme_changed")
+        try:
+            if getattr(self, '_live_tab', None) is not None:
+                self._live_tab.apply_theme()
+        except Exception:
+            _itk_log.exception("Handled exception theming live tab")
 
     def _apply_theme(self):
         """Apply the active palette to the whole dialog as one stylesheet.
@@ -3541,12 +3663,12 @@ class ClusteringDisplayDialog(QDialog):
                 f"padding: 2px 8px; background: transparent;")
 
         for fig in (getattr(self, n, None) for n in (
-                'eval_fig', 'summary_fig', 'cluster_fig', '_3d_fig',
+                'eval_fig', 'summary_fig',
                 'overview_fig', 'dendro_fig', 'som_fig')):
             if fig is not None:
                 fig.patch.set_facecolor(p['plot_bg'])
         for canvas in (getattr(self, n, None) for n in (
-                'eval_canvas', 'summary_canvas', 'cluster_canvas', '_3d_canvas',
+                'eval_canvas', 'summary_canvas',
                 'overview_canvas', 'dendro_canvas', 'som_canvas')):
             if canvas is not None:
                 try:
@@ -3601,15 +3723,7 @@ class ClusteringDisplayDialog(QDialog):
         if not self.final_results:
             return
         try:
-            data = self._data_matrix_cache
-            if data is not None:
-                _draw_clustering(self.cluster_fig, self.final_results,
-                                 data, self.characterisation,
-                                 self.node.config,
-                                 input_data=self.node.input_data)
-                self.cluster_canvas.draw()
-                if data.shape[1] >= 3:
-                    self._draw_3d()
+            self._draw_overview()
         except Exception:
             _itk_log.exception("Handled exception in _on_color_by_changed")
 
@@ -3636,6 +3750,15 @@ class ClusteringDisplayDialog(QDialog):
             "that picked the same K — high = stable choice.")
         tl.addWidget(self.bs_btn)
 
+        self.stab_btn = self._make_btn("↻ Stability", '#2563EB',
+                                       self._run_stability)
+        self.stab_btn.setEnabled(False)
+        self.stab_btn.setToolTip(
+            "Refit the selected algorithm on B bootstrap resamples and "
+            "score how reproducible each cluster and each particle "
+            "assignment is (cluster-wise Jaccard, Hennig 2007).")
+        tl.addWidget(self.stab_btn)
+
         self.optimal_label = QLabel("Optimal K: —")
         tl.addWidget(self.optimal_label)
 
@@ -3646,15 +3769,24 @@ class ClusteringDisplayDialog(QDialog):
         tl.addWidget(self.metric_picks_widget)
 
         tl.addWidget(QLabel("K:"))
+        start_k = int((getattr(self.node, 'config', {}) or {}).get('live_k', 4))
+        start_k = max(DEFAULT_K_RANGE[0], min(DEFAULT_K_RANGE[-1], start_k))
         self.k_combo = QComboBox()
         self.k_combo.setFixedWidth(60)
-        self.k_combo.setEnabled(False)
+        self.k_combo.blockSignals(True)
+        for k in DEFAULT_K_RANGE:
+            self.k_combo.addItem(str(k))
+        self.k_combo.setCurrentText(str(start_k))
+        self.k_combo.blockSignals(False)
         self.k_combo.currentTextChanged.connect(self._on_k_combo_changed)
         tl.addWidget(self.k_combo)
 
         self.k_slider = QSlider(Qt.Horizontal)
         self.k_slider.setFixedWidth(120)
-        self.k_slider.setEnabled(False)
+        self.k_slider.blockSignals(True)
+        self.k_slider.setRange(DEFAULT_K_RANGE[0], DEFAULT_K_RANGE[-1])
+        self.k_slider.setValue(start_k)
+        self.k_slider.blockSignals(False)
         self.k_slider.setToolTip(
             "Drag to change K live (Hierarchical / K-Means only)")
         self.k_slider.valueChanged.connect(self._on_k_slider_changed)
@@ -3679,7 +3811,6 @@ class ClusteringDisplayDialog(QDialog):
         tl.addWidget(self.color_by_combo)
 
         self.cluster_btn = self._make_btn("② Cluster", '#2563EB', self._run_clustering)
-        self.cluster_btn.setEnabled(False)
         tl.addWidget(self.cluster_btn)
 
         tl.addStretch()
@@ -3687,6 +3818,13 @@ class ClusteringDisplayDialog(QDialog):
         self.export_btn = self._make_btn("Export", '#2563EB', self._export_results)
         self.export_btn.setEnabled(False)
         tl.addWidget(self.export_btn)
+
+        self.methods_btn = self._make_btn("Methods", '#2563EB', self._export_methods)
+        self.methods_btn.setEnabled(False)
+        self.methods_btn.setToolTip(
+            "Generate a publication-ready methods paragraph and settings "
+            "JSON describing this analysis.")
+        tl.addWidget(self.methods_btn)
 
         self.progress = QProgressBar()
         self.progress.setFixedWidth(200)
@@ -3702,13 +3840,11 @@ class ClusteringDisplayDialog(QDialog):
         self.tabs = QTabWidget()
 
         self._build_eval_tab()
-        self._build_summary_tab()
-        self._build_cluster_tab()
         self._build_overview_tab()
-        self._build_dendrogram_tab()
-        self._build_som_tab()
+        self._build_live_tab()
 
         layout.addWidget(self.tabs)
+        self.tabs.currentChanged.connect(self._on_live_tab_shown)
 
         self.status = QLabel("Ready — connect data and run evaluation")
         self.status.setObjectName("statusbar")
@@ -3775,8 +3911,7 @@ class ClusteringDisplayDialog(QDialog):
         self.eval_canvas.mpl_connect('pick_event', self._on_eval_pick)
         vl.addWidget(self.eval_canvas, stretch=1)
 
-        self.tabs.addTab(tab, "① Evaluation")
-
+        self.eval_tab_idx = self.tabs.addTab(tab, "① Evaluation")
 
     def _build_summary_tab(self):
         """Build the Summary tab holding the consensus decision matrix.
@@ -3825,145 +3960,7 @@ class ClusteringDisplayDialog(QDialog):
         self.summary_canvas.draw()
 
 
-    def _build_cluster_tab(self):
-        """Build the Clusters tab containing both 2-D and 3-D scatter views,
-        toggled via a 2D / 3D button pair in the toolbar.
-        """
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.setContentsMargins(4, 4, 4, 4)
 
-        hl = QHBoxLayout()
-
-        _p = self._pal
-        _tog = (
-            "QPushButton{{padding:3px 12px;border-radius:3px;font-size:11px;"
-            "font-weight:bold;border:1px solid {border};}}"
-            "QPushButton:checked{{background:{accent};color:white;"
-            "border-color:{accent};}}"
-            "QPushButton:!checked{{background:{surf};color:{muted};}}"
-        ).format(border=_p['border_str'], accent=_p['accent'],
-                 surf=_p['surface_alt'], muted=_p['text_muted'])
-        self._cluster_view_2d = QPushButton("2D")
-        self._cluster_view_2d.setCheckable(True)
-        self._cluster_view_2d.setChecked(True)
-        self._cluster_view_2d.setStyleSheet(_tog)
-        self._cluster_view_2d.clicked.connect(lambda: self._switch_cluster_view('2d'))
-        hl.addWidget(self._cluster_view_2d)
-
-        self._cluster_view_3d = QPushButton("3D")
-        self._cluster_view_3d.setCheckable(True)
-        self._cluster_view_3d.setChecked(False)
-        self._cluster_view_3d.setStyleSheet(_tog)
-        self._cluster_view_3d.clicked.connect(lambda: self._switch_cluster_view('3d'))
-        hl.addWidget(self._cluster_view_3d)
-
-        hl.addSpacing(12)
-
-        self._3d_controls_widget = QWidget()
-        _3d_hl = QHBoxLayout(self._3d_controls_widget)
-        _3d_hl.setContentsMargins(0, 0, 0, 0)
-        _3d_hl.setSpacing(6)
-
-        _3d_hl.addWidget(QLabel("Pt size:"))
-        self.sc3_pt = QSpinBox()
-        self.sc3_pt.setRange(4, 120)
-        self.sc3_pt.setValue(22)
-        self.sc3_pt.setFixedWidth(52)
-        self.sc3_pt.valueChanged.connect(self._draw_3d)
-        _3d_hl.addWidget(self.sc3_pt)
-
-        _3d_hl.addWidget(QLabel("Opacity:"))
-        self.sc3_alpha = QDoubleSpinBox()
-        self.sc3_alpha.setRange(0.05, 1.0)
-        self.sc3_alpha.setSingleStep(0.05)
-        self.sc3_alpha.setDecimals(2)
-        self.sc3_alpha.setValue(0.70)
-        self.sc3_alpha.setFixedWidth(56)
-        self.sc3_alpha.valueChanged.connect(self._draw_3d)
-        _3d_hl.addWidget(self.sc3_alpha)
-
-        self.sc3_centroids = QCheckBox("Centroids")
-        self.sc3_centroids.setChecked(True)
-        self.sc3_centroids.toggled.connect(self._draw_3d)
-        _3d_hl.addWidget(self.sc3_centroids)
-
-        self.sc3_samples_btn = QPushButton("Samples")
-        self.sc3_samples_btn.setToolTip("Show / hide individual samples")
-        self.sc3_samples_btn.clicked.connect(self._open_3d_sample_picker)
-        self.sc3_samples_btn.setVisible(False)
-        _3d_hl.addWidget(self.sc3_samples_btn)
-
-        _3d_hl.addSpacing(8)
-        for _lbl, _elev, _azim in [("XY", 90, -90), ("XZ", 0, -90), ("YZ", 0, 0)]:
-            _vbtn = QPushButton(_lbl)
-            _vbtn.setFixedSize(32, 22)
-            _vbtn.setToolTip(f"View from {_lbl} plane")
-            _vbtn.setStyleSheet(
-                "QPushButton{background:#E2E8F0;border:1px solid #CBD5E1;"
-                "border-radius:3px;font-size:10px;font-weight:bold;color:#334155;}"
-                "QPushButton:hover{background:#CBD5E1;}")
-            _vbtn.clicked.connect(
-                lambda _, e=_elev, a=_azim: self._set_3d_view(e, a))
-            _3d_hl.addWidget(_vbtn)
-
-        self._3d_info = QLabel("ℹ Set Dim. Reduction = PCA or t-SNE, Components = 3")
-        self._3d_info.setStyleSheet("color:#6B7280;font-size:10px;")
-        _3d_hl.addWidget(self._3d_info)
-
-        self._3d_controls_widget.setVisible(False)
-        hl.addWidget(self._3d_controls_widget)
-
-        hl.addStretch()
-        po = self._make_popout_btn(
-            lambda: self._pop_out_figure(
-                '3d' if self._cluster_stack.currentIndex() == 1 else 'cluster'))
-        hl.addWidget(po)
-        vl.addLayout(hl)
-
-        self._cluster_stack = QStackedWidget()
-
-        self.cluster_fig = Figure(figsize=(14, 9), dpi=120, tight_layout=True)
-        self.cluster_canvas = _SafeFigureCanvas(self.cluster_fig)
-        self.cluster_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.cluster_canvas.customContextMenuRequested.connect(
-            lambda pos: self._ctx_menu(pos, 'cluster'))
-        self.cluster_canvas.mpl_connect('motion_notify_event', self._on_cluster_hover)
-        self._cl_drag_ax = None
-        self._cl_drag_start = None
-        self._cl_drag_pos0 = None
-        self.cluster_canvas.mpl_connect('button_press_event', self._cl_drag_press)
-        self.cluster_canvas.mpl_connect('motion_notify_event', self._cl_drag_motion)
-        self.cluster_canvas.mpl_connect('button_release_event', self._cl_drag_release)
-        self._cluster_stack.addWidget(self.cluster_canvas)
-
-        self._3d_fig = Figure(figsize=(13, 9), dpi=110)
-        self._3d_canvas = _SafeFigureCanvas(self._3d_fig)
-        self._3d_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._3d_canvas.customContextMenuRequested.connect(
-            lambda pos: self._ctx_menu(pos, '3d'))
-        self._3d_hover_ann = {}
-        self._3d_point_cache = {}
-        self._3d_canvas.mpl_connect('motion_notify_event', self._on_3d_hover)
-        self._3d_canvas.mpl_connect('scroll_event', self._on_3d_scroll)
-        self._cluster_stack.addWidget(self._3d_canvas)
-
-        vl.addWidget(self._cluster_stack, stretch=1)
-        self.tabs.addTab(tab, "② Clusters")
-
-    def _switch_cluster_view(self, mode):
-        """Toggle between 2-D scatter and 3-D scatter within the Clusters tab.
-
-        Args:
-            mode (str): ``'2d'`` or ``'3d'``.
-        """
-        is_3d = (mode == '3d')
-        self._cluster_view_2d.setChecked(not is_3d)
-        self._cluster_view_3d.setChecked(is_3d)
-        self._cluster_stack.setCurrentIndex(1 if is_3d else 0)
-        self._3d_controls_widget.setVisible(is_3d)
-        if is_3d:
-            self._draw_3d()
 
 
 
@@ -3977,15 +3974,14 @@ class ClusteringDisplayDialog(QDialog):
         cfg_action = menu.addAction("⚙  Configure…")
         cfg_action.triggered.connect(self._open_settings)
 
-        fig_map = {'eval': self.eval_fig, 'summary': self.summary_fig,
-                   'cluster': self.cluster_fig,
+        fig_map = {'eval': self.eval_fig,
+                   'summary': getattr(self, 'summary_fig', None),
                    'overview': self.overview_fig,
-                   'dendro': self.dendro_fig, '3d': self._3d_fig,
-                   'som': self.som_fig}
+                   'dendro': getattr(self, 'dendro_fig', None),
+                   'som': getattr(self, 'som_fig', None)}
         names   = {'eval': 'evaluation.png', 'summary': 'consensus_summary.png',
-                   'cluster': 'clusters.png',
                    'overview': 'overview.png',
-                   'dendro': 'dendrogram.png', '3d': '3d_scatter.png',
+                   'dendro': 'dendrogram.png',
                    'som': 'som_grid.png'}
         dl = menu.addAction("Export Figure…")
         dl.triggered.connect(
@@ -3993,11 +3989,9 @@ class ClusteringDisplayDialog(QDialog):
                                                self, names.get(tab, 'figure.png')))
 
         canvas_map = {'eval': self.eval_canvas,
-                      'summary': self.summary_canvas,
-                      'cluster': self.cluster_canvas,
+                      'summary': getattr(self, 'summary_canvas', None),
                       'overview': self.overview_canvas,
-                      'dendro': self.dendro_canvas,
-                      '3d': self._3d_canvas,
+                      'dendro': getattr(self, 'dendro_canvas', None),
                       'som': getattr(self, 'som_canvas', None)}
         menu.addSeparator()
         act_copy_fig = menu.addAction("Copy figure")
@@ -4023,9 +4017,8 @@ class ClusteringDisplayDialog(QDialog):
         """Redraw the requested figure into a standalone resizable window."""
         titles = {'eval': 'Evaluation Metrics',
                   'summary': 'Consensus Summary',
-                  'cluster': 'Cluster Scatter',
                   'overview': 'Overview Heatmap',
-                  'dendro': 'Dendrogram', '3d': '3D Scatter'}
+                  'dendro': 'Dendrogram'}
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Clustering — {titles.get(tab, tab)}")
         dlg.setMinimumSize(900, 620)
@@ -4083,20 +4076,10 @@ class ClusteringDisplayDialog(QDialog):
                 optimal_per_metric=self.optimal_per_metric,
                 bootstrap_stability=self.bootstrap_stability,
                 selected_metric=self.selected_metric)
-        elif tab == 'cluster':
-            if (self.final_results
-                    and self._data_matrix_cache is not None):
-                _draw_clustering(new_fig, self.final_results,
-                                 self._data_matrix_cache,
-                                 self.characterisation,
-                                 self.node.config,
-                                 input_data=self.node.input_data)
         elif tab == 'overview':
             self._draw_overview_into(new_fig)
         elif tab == 'dendro':
             self._draw_dendrogram_into(new_fig)
-        elif tab == '3d':
-            self._draw_3d_into(new_fig)
         elif tab == 'som':
             if self._som_obj is not None and self._som_neuron_labels is not None:
                 som_labels = self.final_results.get('SOM', {}).get('labels')
@@ -4137,19 +4120,6 @@ class ClusteringDisplayDialog(QDialog):
             form.addRow("Line Width:", lw)
             form.addRow("Marker Size:", ms)
             widgets = {'eval_line_width': lw, 'eval_marker_size': ms}
-
-        elif tab in ('cluster', '3d'):
-            ps = QSpinBox(); ps.setRange(4, 80)
-            ps.setValue(cfg.get('scatter_point_size', 18))
-            al = QDoubleSpinBox(); al.setRange(0.1, 1.0); al.setSingleStep(0.05)
-            al.setValue(cfg.get('scatter_alpha', 0.65))
-            cc = QCheckBox("Show Centroids")
-            cc.setChecked(cfg.get('scatter_show_centroids', True))
-            form.addRow("Point Size:", ps)
-            form.addRow("Opacity:", al)
-            form.addRow("", cc)
-            widgets = {'scatter_point_size': ps, 'scatter_alpha': al,
-                       'scatter_show_centroids': cc}
 
         elif tab == 'overview':
             view_cb = QComboBox()
@@ -4239,21 +4209,10 @@ class ClusteringDisplayDialog(QDialog):
     def _redraw_figure(self, tab: str):
         if tab == 'eval':
             self._refresh_eval_plot()
-        elif tab == 'cluster':
-            if (self.final_results
-                    and self._data_matrix_cache is not None):
-                _draw_clustering(self.cluster_fig, self.final_results,
-                                 self._data_matrix_cache,
-                                 self.characterisation,
-                                 self.node.config,
-                                 input_data=self.node.input_data)
-                self.cluster_canvas.draw()
         elif tab == 'overview':
             self._draw_overview()
         elif tab == 'dendro':
             self._draw_dendrogram()
-        elif tab == '3d':
-            self._draw_3d()
         elif tab == 'som':
             if (self._som_obj is not None
                     and self._som_neuron_labels is not None):
@@ -4267,29 +4226,8 @@ class ClusteringDisplayDialog(QDialog):
                     self.som_canvas.draw()
 
 
-    def _cl_drag_press(self, event):
-        if event.button != 1 or event.inaxes is None:
-            return
-        self._cl_drag_ax    = event.inaxes
-        self._cl_drag_start = (event.x, event.y)
-        self._cl_drag_pos0  = event.inaxes.get_position()
 
-    def _cl_drag_motion(self, event):
-        if self._cl_drag_ax is None or event.x is None:
-            return
-        w_px, h_px = (self.cluster_fig.get_size_inches()
-                      * self.cluster_fig.dpi)
-        dx = (event.x - self._cl_drag_start[0]) / w_px
-        dy = (event.y - self._cl_drag_start[1]) / h_px
-        p  = self._cl_drag_pos0
-        self._cl_drag_ax.set_position(
-            [p.x0 + dx, p.y0 + dy, p.width, p.height])
-        self.cluster_canvas.draw_idle()
 
-    def _cl_drag_release(self, _event):
-        self._cl_drag_ax    = None
-        self._cl_drag_start = None
-        self._cl_drag_pos0  = None
 
     def _set(self, key, value):
         self.node.config[key] = value
@@ -4341,7 +4279,7 @@ class ClusteringDisplayDialog(QDialog):
             lambda pos: self._ctx_menu(pos, 'overview'))
         vl.addWidget(self.overview_canvas, stretch=1)
 
-        self.tabs.addTab(tab, "③ Overview")
+        self.tabs.addTab(tab, "② Overview")
 
     def _on_overview_view_changed(self, text):
         """Handle a change to the Strips/Heatmap toggle in the Overview toolbar.
@@ -4447,364 +4385,12 @@ class ClusteringDisplayDialog(QDialog):
         self.dendro_tab_idx = self.tabs.addTab(tab, "④ Dendrogram")
 
 
-    def _open_3d_sample_picker(self):
-        """Checkable menu to show/hide samples in the 3D scatter."""
-        samples = list(self.node.config.get('_sample_names', []) or [])
-        if not samples:
-            return
-        hidden = set(self.node.config.get('plot3d_hidden_samples', []))
-        menu = QMenu(self.sc3_samples_btn)
-        show_all = menu.addAction("Show all")
-        show_all.triggered.connect(self._show_all_3d_samples)
-        menu.addSeparator()
-        for s in samples:
-            act = menu.addAction(str(s))
-            act.setCheckable(True)
-            act.setChecked(s not in hidden)
 
-        def _toggle(action):
-            name = action.text()
-            if name == "Show all":
-                return
-            hid = set(self.node.config.get('plot3d_hidden_samples', []))
-            if action.isChecked():
-                hid.discard(name)
-            else:
-                hid.add(name)
-            self.node.config['plot3d_hidden_samples'] = list(hid)
-            self._draw_3d()
 
-        menu.triggered.connect(_toggle)
-        menu.exec(QCursor.pos())
 
-    def _show_all_3d_samples(self):
-        """Clear the hidden-sample set and redraw the 3D scatter."""
-        self.node.config['plot3d_hidden_samples'] = []
-        self._draw_3d()
 
-    def _on_3d_scroll(self, event):
-        """Zoom the 3D axes under the cursor in/out on mouse-wheel scroll.
 
-        Scaling all three axis limits about their midpoints emulates a
-        camera dolly; scroll up zooms in, scroll down zooms out.
-        """
-        ax = getattr(event, 'inaxes', None)
-        if ax is None or not hasattr(ax, 'get_zlim3d'):
-            return
-        scale = 0.85 if event.button == 'up' else 1.0 / 0.85
-        for get_lim, set_lim in (
-            (ax.get_xlim3d, ax.set_xlim3d),
-            (ax.get_ylim3d, ax.set_ylim3d),
-            (ax.get_zlim3d, ax.set_zlim3d),
-        ):
-            lo, hi = get_lim()
-            mid = 0.5 * (lo + hi)
-            half = 0.5 * (hi - lo) * scale
-            set_lim(mid - half, mid + half)
-        self._3d_canvas.draw_idle()
 
-    def _set_3d_view(self, elev, azim):
-        """Snap all 3D axes to a preset view angle."""
-        for ax in self._3d_fig.get_axes():
-            ax.view_init(elev=elev, azim=azim)
-        self._3d_canvas.draw_idle()
-
-    def _draw_3d(self):
-        self._draw_3d_into(self._3d_fig)
-        self._3d_canvas.draw()
-
-    def _on_3d_hover(self, event):
-        """Show a tooltip with cluster and element information on 3D hover.
-
-    Hit-testing is performed by projecting the cached (x, y, z) points
-    through the axes' current 3D projection to 2D display coordinates
-    and picking the nearest point within a pixel threshold.
-
-    Args:
-        event (matplotlib.backend_bases.MouseEvent): Mouse motion event.
-    """
-        ax = getattr(event, 'inaxes', None)
-        cache = self._3d_point_cache.get(ax) if ax is not None else None
-
-        if cache is None or event.x is None or event.y is None:
-            changed = False
-            for a, ann in self._3d_hover_ann.items():
-                if ann.get_visible():
-                    ann.set_visible(False)
-                    changed = True
-            if changed:
-                self._3d_canvas.draw_idle()
-            return
-
-        xs, ys, zs, labels_arr, sample_arr = cache
-        if xs is None or len(xs) == 0:
-            return
-
-        try:
-            from mpl_toolkits.mplot3d import proj3d
-            xp, yp, _ = proj3d.proj_transform(xs, ys, zs, ax.get_proj())
-            disp = ax.transData.transform(np.column_stack([xp, yp]))
-            dx = disp[:, 0] - event.x
-            dy = disp[:, 1] - event.y
-            dist = np.hypot(dx, dy)
-        except Exception:
-            _itk_log.exception("Handled exception in _on_3d_hover")
-            return
-
-        nearest = int(np.argmin(dist))
-        THRESHOLD_PX = 16
-        if dist[nearest] > THRESHOLD_PX:
-            ann = self._3d_hover_ann.get(ax)
-            if ann is not None and ann.get_visible():
-                ann.set_visible(False)
-                self._3d_canvas.draw_idle()
-            return
-
-        cid = int(labels_arr[nearest])
-        lines = ['Noise' if cid < 0 else f'Cluster {cid + 1}']
-        if sample_arr is not None:
-            lines[0] += f'  ·  {sample_arr[nearest]}'
-
-        algo_name = getattr(ax, '_algo_name', None)
-        if algo_name and algo_name in self.characterisation:
-            cd = self.characterisation[algo_name].get(cid)
-            if cd:
-                comp = cd.get('composition', [])[:3]
-                if comp:
-                    lines.append('  '.join(f'{e} {p:.0f}%' for e, p in comp))
-
-        tip = '\n'.join(lines)
-        ann = self._3d_hover_ann.get(ax)
-        if ann is None:
-            ann = ax.annotate(
-                tip, xy=(event.x, event.y), xycoords='figure pixels',
-                xytext=(14, 14), textcoords='offset pixels',
-                fontsize=8,
-                bbox=dict(boxstyle='round,pad=0.4', fc='#FFFBEB',
-                          ec='#D97706', alpha=0.96, lw=0.9),
-                zorder=30,
-            )
-            self._3d_hover_ann[ax] = ann
-        else:
-            ann.set_text(tip)
-            ann.xy = (event.x, event.y)
-        ann.set_visible(True)
-        self._3d_canvas.draw_idle()
-
-    def _draw_3d_into(self, target_fig):
-        target_fig.clear()
-
-        data    = self._data_matrix_cache
-        results = self.final_results
-        active_char = self.characterisation
-        cfg     = self.node.config
-
-        dr = cfg.get('dim_reduction', 'None')
-
-        if data is None or data.shape[1] < 3 or not results:
-            ax = target_fig.add_subplot(111)
-            msg = ("No 3D data available.\n\n"
-                   "In ⚙ Configure → Preprocessing:\n"
-                   "  • Dim. Reduction = PCA  or  t-SNE\n"
-                   "  • Components = 3\n\n"
-                   "Then re-run ① Evaluate K → ② Cluster.")
-            ax.text(0.5, 0.5, msg, ha='center', va='center',
-                    fontproperties=_font_scale(cfg, 'label')[0],
-                    color=_muted_color(cfg), linespacing=1.6,
-                    transform=ax.transAxes,
-                    bbox=dict(boxstyle='round,pad=0.6',
-                              fc=_plot_theme(cfg)['face'],
-                              ec=_plot_theme(cfg)['border'], lw=1))
-            ax.set_xticks([]); ax.set_yticks([])
-            ax.set_facecolor(_plot_theme(cfg)['face'])
-            for sp in ax.spines.values():
-                sp.set_visible(False)
-            target_fig.tight_layout()
-            return
-
-        if dr == 'PCA':
-            ax_labels = ('PC 1', 'PC 2', 'PC 3')
-        elif dr == 't-SNE':
-            ax_labels = ('t-SNE 1', 't-SNE 2', 't-SNE 3')
-        else:
-            ax_labels = ('Feature 1', 'Feature 2', 'Feature 3')
-
-        x, y, z = data[:, 0], data[:, 1], data[:, 2]
-
-        pt_size    = self.sc3_pt.value()
-        alpha      = self.sc3_alpha.value()
-        show_cent  = self.sc3_centroids.isChecked()
-        sample_arr = cfg.get('_sample_arr', None)
-        unique_samples = (list(np.unique(sample_arr))
-                          if sample_arr is not None else [])
-        multi = len(unique_samples) > 1
-        color_by = cfg.get('cluster_color_by', 'Cluster')
-        sample_to_marker = {s: SAMPLE_MARKERS[i % len(SAMPLE_MARKERS)]
-                            for i, s in enumerate(unique_samples)}
-        sample_to_color = {s: SAMPLE_PALETTE[i % len(SAMPLE_PALETTE)]
-                           for i, s in enumerate(unique_samples)}
-
-        if hasattr(self, 'sc3_samples_btn'):
-            self.sc3_samples_btn.setVisible(multi)
-
-        hidden = set(cfg.get('plot3d_hidden_samples', []))
-        if multi and sample_arr is not None and hidden:
-            visible_mask = np.array([s not in hidden for s in sample_arr])
-        else:
-            visible_mask = np.ones(len(x), dtype=bool)
-
-        fp = make_font_properties(cfg)
-        fc = get_font_config(cfg)
-        fp_title, _col3d = _font_scale(cfg, 'title')
-        fp_lbl3d, _ = _font_scale(cfg, 'label')
-        fp_tick3d, _ = _font_scale(cfg, 'tick')
-        fp_leg3d, _ = _font_scale(cfg, 'legend')
-
-        self._3d_point_cache = {}
-
-        n_algos = len(results)
-        cols    = min(2, n_algos)
-        rows    = math.ceil(n_algos / cols)
-
-        for idx, (algo_name, result) in enumerate(results.items()):
-            ax = target_fig.add_subplot(rows, cols, idx + 1,
-                                        projection='3d')
-            ax.set_facecolor(_plot_theme(cfg)['face'])
-            ax._algo_name = algo_name
-       
-            try:
-                ax.set_box_aspect(None, zoom=1)
-            except Exception:
-                _itk_log.exception("Handled exception in _draw_3d_into")
-            labels_arr  = result.get('labels')
-            if labels_arr is None:
-                continue
-
-            unique_labs = np.unique(labels_arr)
-
-            vis = visible_mask
-            self._3d_point_cache[ax] = (
-                x[vis], y[vis], z[vis],
-                labels_arr[vis],
-                (sample_arr[vis] if sample_arr is not None else None),
-            )
-
-            for j, lab in enumerate(unique_labs):
-                mask = (labels_arr == lab) & visible_mask
-                if lab == -1:
-                    if mask.any():
-                        ax.scatter(x[mask], y[mask], z[mask],
-                                   s=10, marker='x', color='#9CA3AF',
-                                   alpha=0.4, linewidths=0.8,
-                                   label='_nolegend_', depthshade=True)
-                    continue
-
-                cluster_color = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
-
-                if multi and sample_arr is not None and len(sample_arr) == len(x):
-                    for sname in unique_samples:
-                        smask = mask & (sample_arr == sname)
-                        if not smask.any():
-                            continue
-                        marker = sample_to_marker[sname]
-                        fill = (sample_to_color[sname]
-                                if color_by == 'Sample' else cluster_color)
-                        ax.scatter(x[smask], y[smask], z[smask],
-                                   s=pt_size, marker=marker, color=fill,
-                                   alpha=alpha, edgecolors='white',
-                                   linewidths=0.3, label='_nolegend_',
-                                   depthshade=True)
-                else:
-                    ax.scatter(x[mask], y[mask], z[mask],
-                               s=pt_size, marker='o', color=cluster_color,
-                               alpha=alpha, edgecolors='white',
-                               linewidths=0.3, label='_nolegend_',
-                               depthshade=True)
-
-                if show_cent:
-                    cx, cy, cz = (x[mask].mean(),
-                                  y[mask].mean(),
-                                  z[mask].mean())
-                    ax.scatter(cx, cy, cz, s=120, marker='*',
-                               color=cluster_color, edgecolors='black',
-                               linewidths=0.9, zorder=6,
-                               depthshade=False)
-
-            from matplotlib.lines import Line2D
-            legend_handles = []
-            if color_by == 'Cluster' or not multi:
-                for j, lab in enumerate(unique_labs):
-                    if lab == -1:
-                        continue
-                    cc = CLUSTER_COLORS[j % len(CLUSTER_COLORS)]
-                    ctype = ''
-                    cd = None
-                    if (algo_name in active_char
-                            and lab in active_char[algo_name]):
-                        cd = active_char[algo_name][lab]
-                        ctype = cd.get(
-                            'cluster_type_short',
-                            cd.get('cluster_type', ''))
-                    base = _cluster_label_short(lab)
-                    if ctype:
-                        base = f'{base}: {ctype}'
-                    if cd is not None and per_ml_active(self.node.config,
-                                                        self.node.input_data):
-                        base = f'{base} ({_cluster_size_str(cd, self.node.config, self.node.input_data)})'
-                    legend_handles.append(Line2D(
-                        [0], [0], marker='o', linestyle='',
-                        markerfacecolor=cc, markeredgecolor='white',
-                        markeredgewidth=0.4, markersize=7,
-                        label=base))
-            if multi:
-                for sname in unique_samples:
-                    marker = sample_to_marker[sname]
-                    facecolor = (sample_to_color[sname]
-                                 if color_by == 'Sample' else '#475569')
-                    legend_handles.append(Line2D(
-                        [0], [0], marker=marker, linestyle='',
-                        markerfacecolor=facecolor, markeredgecolor='white',
-                        markeredgewidth=0.4, markersize=7, label=str(sname)))
-
-            n_cl    = result.get('n_clusters', 0)
-            n_noise = result.get('n_noise', 0)
-            title   = f'{algo_name}  (K={n_cl}'
-            if n_noise:
-                title += f', noise={n_noise}'
-            title += ')'
-
-            ax.set_title(title, fontproperties=fp_title, color=fc['color'], pad=8)
-            ax.set_xlabel(ax_labels[0], fontproperties=fp_lbl3d,
-                          color=fc['color'], labelpad=6)
-            ax.set_ylabel(ax_labels[1], fontproperties=fp_lbl3d,
-                          color=fc['color'], labelpad=6)
-            ax.set_zlabel(ax_labels[2], fontproperties=fp_lbl3d,
-                          color=fc['color'], labelpad=6)
-            ax.tick_params(labelsize=fp_tick3d.get_size_in_points(),
-                           colors=fc['color'])
-            ax.xaxis.pane.fill = False
-            ax.yaxis.pane.fill = False
-            ax.zaxis.pane.fill = False
-            ax.xaxis.pane.set_edgecolor('#E2E8F0')
-            ax.yaxis.pane.set_edgecolor('#E2E8F0')
-            ax.zaxis.pane.set_edgecolor('#E2E8F0')
-            ax.grid(True, alpha=0.2, linewidth=0.4)
-
-            if legend_handles and len(legend_handles) <= 14:
-                leg = ax.legend(handles=legend_handles,
-                                prop=fp_leg3d,
-                                loc='upper left', framealpha=0.85,
-                                edgecolor='#CBD5E1', markerscale=0.8)
-                if leg:
-                    leg.get_frame().set_linewidth(0.5)
-
-        self._3d_info.setText(
-            f"3D  [{dr}]  —  drag to rotate · scroll to zoom · Shift+drag to pan")
-        self._3d_info.setStyleSheet("color:#2563EB;font-size:10px;font-weight:bold;")
-
-        target_fig.tight_layout(pad=1.2)
-        target_fig.subplots_adjust(left=0.03, right=0.97, top=0.95,
-                                   bottom=0.04, wspace=0.04, hspace=0.18)
 
     def _draw_dendrogram(self):
         self._draw_dendrogram_into(self.dendro_fig)
@@ -5114,96 +4700,6 @@ class ClusteringDisplayDialog(QDialog):
                 f"K set to {k} from evaluation curve — click ② Cluster to apply")
 
 
-    def _on_cluster_hover(self, event):
-        """Show a floating tooltip with element values when hovering scatter points."""
-        if not self.final_results or self._data_matrix_cache is None:
-            return
-
-        data = self._data_matrix_cache
-        elements = self._elements_cache
-
-        if event.inaxes is None:
-            changed = False
-            for ann in self._hover_ann.values():
-                if ann.get_visible():
-                    ann.set_visible(False)
-                    changed = True
-            if changed:
-                self.cluster_canvas.draw_idle()
-            return
-
-        ax = event.inaxes
-        algo_name = getattr(ax, '_algo_name', None)
-        if algo_name is None or algo_name not in self.final_results:
-            return
-
-        labels = self.final_results[algo_name]['labels']
-        x_ev, y_ev = event.xdata, event.ydata
-        if x_ev is None or y_ev is None:
-            return
-
-        pts_x = data[:, 0]
-        pts_y = data[:, 1] if data.shape[1] > 1 else np.zeros(len(data))
-
-        try:
-            xy_disp = ax.transData.transform(
-                np.column_stack([pts_x, pts_y]))
-            ev_disp = ax.transData.transform([[x_ev, y_ev]])[0]
-            dists = np.sqrt(((xy_disp - ev_disp) ** 2).sum(axis=1))
-        except Exception:
-            _itk_log.exception("Handled exception in _on_cluster_hover")
-            return
-
-        nearest = int(np.argmin(dists))
-        THRESHOLD_PX = 18
-
-        for other_ax, ann in self._hover_ann.items():
-            if other_ax is not ax and ann.get_visible():
-                ann.set_visible(False)
-
-        if dists[nearest] > THRESHOLD_PX:
-            if ax in self._hover_ann:
-                self._hover_ann[ax].set_visible(False)
-            self.cluster_canvas.draw_idle()
-            return
-
-        cid = int(labels[nearest])
-        _cl = 'Noise' if cid < 0 else f'Cluster {cid + 1}'
-        lines = [f'Particle #{nearest}  |  {_cl}']
-        if self._raw_matrix is not None and nearest < len(self._raw_matrix):
-            raw = self._raw_matrix[nearest]
-            total_raw = sum(raw) or 1.0
-            _max_iso = int(self.node.config.get('display_max_isotopes', 4))
-            _min_pct = self.node.config.get('display_min_pct', 1.0)
-            el_vals = [
-                (elements[i], raw[i])
-                for i in range(min(len(elements), len(raw)))
-                if raw[i] > 0 and (raw[i] / total_raw * 100) >= _min_pct
-            ]
-            el_vals.sort(key=lambda t: t[1], reverse=True)
-            for el, v in el_vals[:_max_iso]:
-                lines.append(f'  {el}: {v:.2f}')
-        tip_text = '\n'.join(lines)
-
-        if ax not in self._hover_ann:
-            ann = ax.annotate(
-                tip_text,
-                xy=(pts_x[nearest], pts_y[nearest]),
-                xytext=(12, 12), textcoords='offset points',
-                fontsize=7.5,
-                bbox=dict(boxstyle='round,pad=0.4', fc='#FFFBEB',
-                          ec='#D97706', alpha=0.96, lw=0.9),
-                arrowprops=dict(arrowstyle='->', color='#D97706', lw=0.9),
-                zorder=20,
-            )
-            self._hover_ann[ax] = ann
-        else:
-            ann = self._hover_ann[ax]
-            ann.set_text(tip_text)
-            ann.xy = (pts_x[nearest], pts_y[nearest])
-
-        ann.set_visible(True)
-        self.cluster_canvas.draw_idle()
 
 
     def _open_settings(self):
@@ -5211,16 +4707,51 @@ class ClusteringDisplayDialog(QDialog):
                                        input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
-            self._apply_display_settings()
             self._data_matrix_cache = None
+            self._apply_display_settings()
             self._linkage_cache = None
             self._linkage_cache_key = None
             self._update_live_k_availability()
+            # One shared parameter set: broadcast so every section (④ How it
+            # works, Everything-at-once, node listeners) picks up the change.
+            try:
+                self.node.configuration_changed.emit()
+            except Exception:
+                _itk_log.exception("Handled exception broadcasting settings")
             self.status.setText("Settings updated — re-run ① Evaluate K if preprocessing changed")
+
+    def _sync_live_tab(self):
+        """Push the shared config into the ④ How it works tab.
+
+        Marks it for rebuild and refreshes immediately when it is the visible
+        tab; otherwise it updates on next show. Keeps its parameter panel equal
+        to the shared configuration at all times.
+        """
+        lt = getattr(self, '_live_tab', None)
+        if lt is None:
+            return
+        try:
+            lt.mark_dirty()
+            if self.tabs.currentIndex() == getattr(self, 'live_tab_idx', -1):
+                lt.refresh_data()
+        except Exception:
+            _itk_log.exception("Handled exception syncing live tab")
 
     def _on_node_changed(self):
         self._data_matrix_cache = None
         self._update_color_by_visibility()
+        self._sync_live_tab()
+        # Flag the interactive Cluster tab as needing a rebuild when data/config
+        # changes (isotope selection, Settings edits). It refreshes on next show,
+        # or immediately if it is the current tab — never on a plain tab switch.
+        try:
+            lt = getattr(self, '_live_tab', None)
+            if lt is not None:
+                lt.mark_dirty()
+                if self.tabs.currentIndex() == getattr(self, 'live_tab_idx', -1):
+                    lt.refresh_data()
+        except Exception:
+            _itk_log.exception("Handled exception refreshing live tab on change")
 
 
     def _get_elements(self):
@@ -5304,13 +4835,19 @@ class ClusteringDisplayDialog(QDialog):
             matrix = _apply_robust_zscore(matrix)
 
         dr = cfg.get('dim_reduction', 'None')
+        nc = reduction_components(dr, matrix.shape[1])
         if dr == 'PCA':
-            nc = min(cfg.get('n_components', 2), matrix.shape[1])
+            nc = min(nc, matrix.shape[0])
             matrix = PCA(n_components=nc).fit_transform(matrix)
         elif dr == 't-SNE':
-            nc = min(cfg.get('n_components', 2), 3)
             matrix = TSNE(n_components=nc, random_state=42).fit_transform(matrix)
+        elif dr == 'UMAP' and _UMAP_OK:
+            nn = min(15, max(2, matrix.shape[0] - 1))
+            with numba_serial("UMAP (cluster reduction)"):
+                matrix = _UMAP_CLS(n_components=nc, n_neighbors=nn,
+                                   random_state=42).fit_transform(matrix)
 
+        cfg['_matrix_mode'] = dr if dr != 'UMAP' or _UMAP_OK else 'None'
         return matrix
 
 
@@ -5358,11 +4895,14 @@ class ClusteringDisplayDialog(QDialog):
                 ).fit_predict(data)
 
             elif name == 'Gaussian Mixture':
-                return GaussianMixture(
+                gm = GaussianMixture(
                     n_components=k,
                     covariance_type=cfg.get('gmm_covariance_type', 'full'),
                     random_state=42,
-                ).fit_predict(data)
+                )
+                labels = gm.fit_predict(data)
+                self._last_gmm = gm
+                return labels
 
             elif name == 'DBSCAN':
                 return DBSCAN(
@@ -5390,11 +4930,12 @@ class ClusteringDisplayDialog(QDialog):
             elif name == 'HDBSCAN':
                 if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                     return None
-                return _HDBSCAN_CLS(
-                    min_cluster_size=cfg.get('hdbscan_min_cluster_size', 5),
-                    min_samples=cfg.get('hdbscan_min_samples', 5),
-                    metric=cfg.get('hdbscan_metric', 'euclidean'),
-                ).fit_predict(data)
+                with numba_serial("HDBSCAN (cluster)"):
+                    return _HDBSCAN_CLS(
+                        min_cluster_size=cfg.get('hdbscan_min_cluster_size', 5),
+                        min_samples=cfg.get('hdbscan_min_samples', 5),
+                        metric=cfg.get('hdbscan_metric', 'euclidean'),
+                    ).fit_predict(data)
 
             elif name == 'SOM':
                 return self._run_som(k, data, cfg)
@@ -5592,6 +5133,10 @@ class ClusteringDisplayDialog(QDialog):
                             continue
                         key = METRIC_REGISTRY[metric]['key']
                         pending[key] = CVI_FUNCS[key](data, labels)
+                    if (algo == 'Gaussian Mixture'
+                            and getattr(self, '_last_gmm', None) is not None):
+                        pending['gmm_bic'] = float(self._last_gmm.bic(data))
+                        pending['gmm_aic'] = float(self._last_gmm.aic(data))
                 except Exception:
                     _itk_log.exception("Handled exception in _evaluate_data")
                     step += 1
@@ -5600,7 +5145,7 @@ class ClusteringDisplayDialog(QDialog):
                     continue
                 res['k_values'].append(k)
                 for mk, sv in pending.items():
-                    res[mk].append(sv)
+                    res.setdefault(mk, []).append(sv)
                 step += 1
                 if progress_cb is not None:
                     progress_cb(step / total_steps)
@@ -5936,7 +5481,7 @@ class ClusteringDisplayDialog(QDialog):
         self.bs_btn.clicked.connect(self._run_bootstrap)
         self.progress.setVisible(False)
         self.eval_btn.setEnabled(True)
-        self.cluster_btn.setEnabled(bool(self.eval_results))
+        self.cluster_btn.setEnabled(True)
         self._bootstrap_worker = None
 
     def _cancel_bootstrap(self):
@@ -6166,7 +5711,7 @@ class ClusteringDisplayDialog(QDialog):
         self._set_progress(0.0)
         self.cluster_btn.setEnabled(False)
 
-        if 'SOM' in enabled:
+        if 'SOM' in enabled and self.som_tab_idx >= 0:
             self.tabs.setCurrentIndex(self.som_tab_idx)
 
         worker = _ClusterWorker(self, sel_k, elements,
@@ -6258,6 +5803,7 @@ class ClusteringDisplayDialog(QDialog):
                 'selected_metric': self.selected_metric,
                 'bootstrap_results': self.bootstrap_results,
                 'bootstrap_stability': self.bootstrap_stability,
+                'cluster_stability': self.cluster_stability,
                 'per_sample_eval': self.per_sample_eval,
                 'per_sample_optk': self.per_sample_optk,
                 'data_matrix': self._data_matrix_cache,
@@ -6292,6 +5838,7 @@ class ClusteringDisplayDialog(QDialog):
             self.selected_metric = st.get('selected_metric')
             self.bootstrap_results = st.get('bootstrap_results', {})
             self.bootstrap_stability = st.get('bootstrap_stability', {})
+            self.cluster_stability = st.get('cluster_stability', {})
             self.per_sample_eval = st.get('per_sample_eval', {})
             self.per_sample_optk = st.get('per_sample_optk', {})
             self._data_matrix_cache = st.get('data_matrix')
@@ -6306,11 +5853,6 @@ class ClusteringDisplayDialog(QDialog):
             data = self._data_matrix_cache
             if data is None:
                 return
-
-            _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, self.node.config,
-                             input_data=self.node.input_data)
-            self.cluster_canvas.draw()
 
             if self.eval_results:
                 try:
@@ -6329,16 +5871,16 @@ class ClusteringDisplayDialog(QDialog):
             self._draw_overview()
 
             self.export_btn.setEnabled(True)
+            self.methods_btn.setEnabled(True)
+            self.stab_btn.setEnabled(True)
             sel_k = st.get('sel_k')
             self.status.setText(
                 f"Restored clustering results — K={sel_k}" if sel_k
                 else "Restored clustering results")
 
-            if data.shape[1] >= 3:
-                self._draw_3d()
-
             if ('SOM' in self.final_results and self._som_obj is not None
-                    and self._som_neuron_labels is not None):
+                    and self._som_neuron_labels is not None
+                    and hasattr(self, 'som_fig')):
                 som_labels = self.final_results['SOM'].get('labels')
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
@@ -6364,17 +5906,17 @@ class ClusteringDisplayDialog(QDialog):
             sel_k = payload['sel_k']
             self._data_matrix_cache = data
 
+            _lt = getattr(self, '_live_tab', None)
+            if _lt is not None:
+                _lt.arm()
+
             self.node.config['_sample_arr'] = self._particle_samples
             self.node.config['_sample_names'] = (
                 list(np.unique(self._particle_samples))
                 if self._particle_samples is not None else [])
+            self.node.config['_elements_filtered'] = list(
+                self._elements_filtered or elements_eff or [])
 
-            _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, self.node.config,
-                             input_data=self.node.input_data)
-            self.cluster_canvas.draw()
-
-            self._hover_ann = {}
             self._elements_cache = elements_eff
 
             prev_sel = list(self.node.config.get(
@@ -6394,14 +5936,23 @@ class ClusteringDisplayDialog(QDialog):
             self._draw_overview()
 
             self.export_btn.setEnabled(True)
+            self.methods_btn.setEnabled(True)
+            self.stab_btn.setEnabled(True)
             self._set_progress(100.0)
-            self.status.setText(f"Clustering complete — K={sel_k}")
+            gmm_fr = self.final_results.get('Gaussian Mixture', {})
+            if 'ambiguous' in gmm_fr:
+                thr = float(self.node.config.get(
+                    'gmm_ambiguous_threshold', 0.7))
+                self.status.setText(
+                    f"Clustering complete — K={sel_k} — GMM: "
+                    f"{gmm_fr['ambiguous']} ambiguous particles "
+                    f"(max membership < {thr:.0%})")
+            else:
+                self.status.setText(f"Clustering complete — K={sel_k}")
             self._persist_results_to_node(sel_k)
 
-            if data.shape[1] >= 3:
-                self._draw_3d()
-
-            if 'SOM' in self.final_results and self._som_obj is not None:
+            if ('SOM' in self.final_results and self._som_obj is not None
+                    and hasattr(self, 'som_fig')):
                 som_labels = self.final_results['SOM'].get('labels')
                 if som_labels is not None:
                     _draw_som_grid(self.som_fig, self._som_obj,
@@ -6413,7 +5964,8 @@ class ClusteringDisplayDialog(QDialog):
                     self.tabs.setCurrentIndex(self.som_tab_idx)
                     return
             if (self.node.config.get('selected_algorithm') == 'Hierarchical'
-                    and self.node.config.get('hier_show_dendrogram', False)):
+                    and self.node.config.get('hier_show_dendrogram', False)
+                    and hasattr(self, 'dendro_fig')):
                 self._draw_dendrogram()
                 self.tabs.setCurrentIndex(self.dendro_tab_idx)
 
@@ -6509,6 +6061,10 @@ class ClusteringDisplayDialog(QDialog):
             self.k_slider.blockSignals(True)
             self.k_slider.setValue(k)
             self.k_slider.blockSignals(False)
+        # Shared parameter set: the chosen K is also the K the "How it works"
+        # tab uses, so store it and sync that tab.
+        self.node.config['live_k'] = k
+        self._sync_live_tab()
 
     def _on_k_slider_changed(self, k):
         """Sync the combo to the slider and, if live mode is on, schedule a recut.
@@ -6523,6 +6079,8 @@ class ClusteringDisplayDialog(QDialog):
             if idx >= 0:
                 self.k_combo.setCurrentIndex(idx)
             self.k_combo.blockSignals(False)
+        self.node.config['live_k'] = k
+        self._sync_live_tab()
         if (self.live_k_check.isChecked()
                 and self._live_k_supported()
                 and self._data_matrix_cache is not None):
@@ -6568,13 +6126,7 @@ class ClusteringDisplayDialog(QDialog):
             self._characterise(elements_eff, data)
             self._rebuild_display_labels()
 
-            _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, cfg,
-                             input_data=self.node.input_data)
-            self.cluster_canvas.draw()
-            self._hover_ann = {}
-            if data.shape[1] >= 3:
-                self._draw_3d()
+
 
             self.ov_algo.blockSignals(True)
             self.ov_algo.clear()
@@ -6635,6 +6187,47 @@ class ClusteringDisplayDialog(QDialog):
             lambda pos: self._ctx_menu(pos, 'som'))
         vl.addWidget(self.som_canvas, stretch=1)
         self.som_tab_idx = self.tabs.addTab(tab, "⑤ SOM Grid")
+
+    def _build_live_tab(self):
+        """Add the interactive '② Cluster' tab (animated clustering).
+
+        This replaces the old matplotlib Clusters tab in the tab bar. It uses a
+        QWebEngineView so the algorithms can be *watched* building their answer,
+        with PCA/t-SNE/UMAP projections and 2-D/3-D views, on the same data the
+        other tabs use. The authoritative scikit-learn run (toolbar "② Cluster"
+        button) still feeds the strips, heatmap, dendrogram and export.
+
+        Kept optional and fully guarded: if QtWebEngine (or the module) is
+        unavailable the dialog is completely unaffected and simply has no live
+        tab.
+        """
+        self._live_tab = None
+        self.live_tab_idx = -1
+        try:
+            from results.cluster.live import ClusterLiveTab, WEBENGINE_OK
+        except Exception:
+            try:
+                from .live import ClusterLiveTab, WEBENGINE_OK
+            except Exception:
+                _itk_log.exception("Handled exception importing results.cluster.live")
+                return
+        if not WEBENGINE_OK:
+            return
+        try:
+            self._live_tab = ClusterLiveTab(self)
+            self.live_tab_idx = self.tabs.addTab(self._live_tab, "③ Clusters")
+        except Exception:
+            _itk_log.exception("Handled exception building live tab")
+            self._live_tab = None
+
+    def _on_live_tab_shown(self, idx):
+        """Refresh the live view's data when its tab is opened."""
+        if (getattr(self, '_live_tab', None) is not None
+                and idx == getattr(self, 'live_tab_idx', -1)):
+            try:
+                self._live_tab.refresh_data()
+            except Exception:
+                _itk_log.exception("Handled exception refreshing live tab")
 
     def _characterise(self, elements, data):
         """Generate cluster characterisation with real element-% composition labels.
@@ -6769,6 +6362,7 @@ class ClusteringDisplayDialog(QDialog):
                 cd['cluster_type'] = ctype_full
                 cd['cluster_type_short'] = ctype_short
 
+
     def _apply_display_settings(self):
         """Rebuild display labels and redraw all figures without re-clustering.
 
@@ -6779,20 +6373,11 @@ class ClusteringDisplayDialog(QDialog):
             return
         self._rebuild_display_labels()
         cfg = self.node.config
-        data = self._data_matrix_cache
-        if data is not None and self.final_results:
-            _draw_clustering(self.cluster_fig, self.final_results, data,
-                             self.characterisation, cfg,
-                             input_data=self.node.input_data)
-            self.cluster_canvas.draw()
-            self._hover_ann = {}
-            if data.shape[1] >= 3:
-                self._draw_3d()
         self._draw_overview()
         if self.eval_results:
             self._refresh_eval_plot()
         if (getattr(self, '_som_obj', None) is not None
-                and self.final_results):
+                and self.final_results and hasattr(self, 'som_fig')):
             som_labels = self.final_results.get('SOM', {}).get('labels')
             if som_labels is not None:
                 _draw_som_grid(self.som_fig, self._som_obj,
@@ -6801,6 +6386,145 @@ class ClusteringDisplayDialog(QDialog):
                                sample_labels=self._particle_samples,
                                input_data=self.node.input_data)
                 self.som_canvas.draw()
+
+    def _run_stability(self):
+        """Launch the assignment-stability bootstrap on a worker thread.
+
+        Requires a completed ② Cluster run. The selected algorithm is refit
+        at the same K on ``bootstrap_n`` resamples; per-cluster Jaccard and
+        per-particle stability scores are shown in a result window when done.
+        """
+        if getattr(self, '_stability_worker', None) is not None \
+                and self._stability_worker.isRunning():
+            return
+        algo = (self.optimal_algo
+                if self.optimal_algo in self.final_results
+                else next(iter(self.final_results), None))
+        if not algo or self._data_matrix_cache is None:
+            QMessageBox.information(
+                self, "Stability",
+                "Run ② Cluster first — stability refits the final model.")
+            return
+        if algo == 'SOM':
+            QMessageBox.information(
+                self, "Stability",
+                "Stability bootstrap is not supported for SOM.")
+            return
+        labels = self.final_results[algo].get('labels')
+        if labels is None or len(labels) != len(self._data_matrix_cache):
+            QMessageBox.information(
+                self, "Stability", "No labels available — re-run ② Cluster.")
+            return
+        cfg = self.node.config
+        n_boot = int(cfg.get('bootstrap_n', 50))
+        seed = int(cfg.get('bootstrap_seed', 42))
+        sel_k = int(self.final_results[algo].get('n_clusters')
+                    or cfg.get('min_clusters', 2))
+
+        self.stab_btn.setText("✕ Stop")
+        self.stab_btn.setStyleSheet(self._btn_style('#DC2626'))
+        try:
+            self.stab_btn.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            _itk_log.exception("Handled exception in _run_stability")
+        self.stab_btn.clicked.connect(self._cancel_stability)
+
+        self.progress.setVisible(True)
+        self._set_progress(0.0)
+        self.eval_btn.setEnabled(False)
+        self.cluster_btn.setEnabled(False)
+        self.status.setText(
+            f"Bootstrapping assignment stability (n={n_boot})…")
+
+        worker = _StabilityWorker(self, self._data_matrix_cache, algo,
+                                  sel_k, labels, n_boot, seed)
+        worker.progressed.connect(self._on_cluster_progress)
+        worker.done.connect(self._on_stability_done)
+        worker.failed.connect(self._on_stability_failed)
+        worker.finished.connect(self._on_stability_thread_finished)
+        self._stability_worker = worker
+        worker.start()
+
+    def _cancel_stability(self):
+        """Request cooperative cancellation of the stability worker."""
+        if getattr(self, '_stability_worker', None) is not None:
+            self._stability_worker.cancel()
+            self.status.setText("Stopping stability bootstrap…")
+
+    def _on_stability_done(self, payload):
+        """Store stability results, persist them, and show the result window.
+
+        Args:
+            payload (dict): Bundle from :class:`_StabilityWorker` with
+                ``cluster_jaccard``, ``particle_stability``, ``algo``,
+                ``n_boot`` and a ``cancelled`` flag.
+        """
+        self.cluster_stability = payload
+        self._persist_results_to_node()
+        ps = np.asarray(payload.get('particle_stability', []))
+        cj = payload.get('cluster_jaccard', {})
+        if ps.size and cj:
+            n_stable = sum(1 for v in cj.values() if v >= 0.85)
+            prefix = ("Stability stopped early"
+                      if payload.get('cancelled') else "Stability done")
+            self.status.setText(
+                f"{prefix} (B={payload.get('n_boot', 0)}) — "
+                f"{n_stable}/{len(cj)} clusters ≥ 0.85 Jaccard · "
+                f"mean particle stability {ps.mean():.0%}")
+            self._show_stability_dialog()
+        else:
+            self.status.setText("Stability done — no results to display.")
+
+    def _on_stability_failed(self, message):
+        """Report a stability-worker failure to the user.
+
+        Args:
+            message (str): Exception message from the worker.
+        """
+        QMessageBox.critical(self, "Error", f"Stability failed:\n{message}")
+        self.status.setText("Stability failed")
+
+    def _on_stability_thread_finished(self):
+        """Restore the toolbar and progress state after the worker exits."""
+        try:
+            self.stab_btn.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            _itk_log.exception(
+                "Handled exception in _on_stability_thread_finished")
+        self.stab_btn.setText("↻ Stability")
+        self.stab_btn.setStyleSheet(self._btn_style('#2563EB'))
+        self.stab_btn.clicked.connect(self._run_stability)
+        self.progress.setVisible(False)
+        self.eval_btn.setEnabled(True)
+        self.cluster_btn.setEnabled(True)
+        self._stability_worker = None
+
+    def _show_stability_dialog(self):
+        """Open a window with the stability figure (Jaccard bars + histogram)."""
+        if not self.cluster_stability:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Clustering — Assignment Stability")
+        dlg.setMinimumSize(900, 560)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(6, 6, 6, 6)
+        fig = Figure(figsize=(12, 7), dpi=110, tight_layout=True)
+        canvas = _SafeFigureCanvas(fig)
+        vl.addWidget(canvas, stretch=1)
+        btn_hl = QHBoxLayout()
+        dl_btn = QPushButton("💾  Save Figure…")
+        dl_btn.setStyleSheet(
+            "QPushButton { background:#2563EB; color:white; padding:5px 12px; "
+            "border-radius:4px; font-size:11px; }")
+        dl_btn.clicked.connect(
+            lambda: download_matplotlib_figure(fig, dlg, 'stability.png'))
+        btn_hl.addStretch()
+        btn_hl.addWidget(dl_btn)
+        vl.addLayout(btn_hl)
+        _draw_stability(fig, self.cluster_stability, self.node.config)
+        canvas.draw()
+        dlg.show()
 
     def _export_results(self):
         """Serialise clustering results and characterisation to a JSON file.
@@ -6824,6 +6548,33 @@ class ClusteringDisplayDialog(QDialog):
                 'evaluation_results': self.eval_results,
                 'cluster_characterisation': {},
             }
+            gmm_fr = self.final_results.get('Gaussian Mixture', {})
+            if gmm_fr.get('proba') is not None:
+                mp = np.asarray(gmm_fr['max_proba'])
+                export['gmm_soft_membership'] = {
+                    'ambiguous_threshold': self.node.config.get(
+                        'gmm_ambiguous_threshold', 0.7),
+                    'ambiguous_count': gmm_fr.get('ambiguous'),
+                    'mean_max_probability': float(mp.mean()),
+                    'max_probability_per_particle': [
+                        round(float(v), 4) for v in mp],
+                    'membership_probabilities': np.round(
+                        np.asarray(gmm_fr['proba']), 4).tolist(),
+                }
+            if self.cluster_stability:
+                cs = self.cluster_stability
+                ps = np.asarray(cs.get('particle_stability', []))
+                export['assignment_stability'] = {
+                    'algorithm': cs.get('algo'),
+                    'n_bootstrap': cs.get('n_boot'),
+                    'cluster_jaccard': {
+                        str(c): round(float(v), 4)
+                        for c, v in (cs.get('cluster_jaccard') or {}).items()},
+                    'mean_particle_stability': (
+                        float(ps.mean()) if ps.size else None),
+                    'particle_stability': [
+                        round(float(v), 4) for v in ps],
+                }
             for algo, clusters in self.characterisation.items():
                 export['cluster_characterisation'][algo] = {}
                 for cid, cd in clusters.items():
@@ -6843,6 +6594,78 @@ class ClusteringDisplayDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Export failed: {e}")
 
 
+    def _export_methods(self):
+        """Preview and export an auto-generated methods paragraph.
+
+        Builds a publication-ready description of the current preprocessing,
+        algorithm and K-selection settings via
+        :func:`build_methods_paragraph`, previews it in a dialog, and offers
+        to copy it to the clipboard or save it as a text file together with a
+        sibling settings JSON for exact reproducibility.
+        """
+        from PySide6.QtWidgets import QFileDialog, QPlainTextEdit, QApplication
+        import json
+        import os
+
+        data = self._data_matrix_cache
+        elements = getattr(self, '_elements_filtered', None) or []
+        text = build_methods_paragraph(
+            self.node.config,
+            optimal_k=self.optimal_k,
+            algorithm=self.optimal_algo
+            or self.node.config.get('selected_algorithm'),
+            n_particles=data.shape[0] if data is not None else None,
+            n_elements=len(elements) or None,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Methods Export")
+        dlg.resize(680, 480)
+        lay = QVBoxLayout(dlg)
+        edit = QPlainTextEdit(text)
+        edit.setReadOnly(True)
+        lay.addWidget(edit)
+
+        row = QHBoxLayout()
+        copy_btn = QPushButton("Copy")
+        save_btn = QPushButton("Save…")
+        close_btn = QPushButton("Close")
+        row.addStretch()
+        row.addWidget(copy_btn)
+        row.addWidget(save_btn)
+        row.addWidget(close_btn)
+        lay.addLayout(row)
+
+        def _copy():
+            """Copy the methods text to the system clipboard."""
+            QApplication.clipboard().setText(edit.toPlainText())
+            self.status.setText("Methods paragraph copied to clipboard")
+
+        def _save():
+            """Save the methods text and a sibling settings JSON."""
+            path, _ = QFileDialog.getSaveFileName(
+                dlg, "Save Methods", "clustering_methods.txt",
+                "Text (*.txt);;All Files (*)")
+            if not path:
+                return
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(edit.toPlainText())
+                json_path = os.path.splitext(path)[0] + '_settings.json'
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.node.config, f, indent=2, default=str)
+                QMessageBox.information(
+                    dlg, "Success",
+                    f"Saved:\n{path}\n{json_path}")
+            except Exception as e:
+                QMessageBox.critical(dlg, "Error", f"Save failed: {e}")
+
+        copy_btn.clicked.connect(_copy)
+        save_btn.clicked.connect(_save)
+        close_btn.clicked.connect(dlg.accept)
+        dlg.exec()
+
+
 class ClusteringPlotNode(QObject):
     """Clustering analysis node with matplotlib figures."""
 
@@ -6853,7 +6676,6 @@ class ClusteringPlotNode(QObject):
         'data_type_display': 'Counts',
         'scaling': 'CLR',
         'dim_reduction': 'None',
-        'n_components': 2,
         'filter_zeros': True,
         'min_particle_type_count': 5,
         'cluster_color_by': 'Cluster',
@@ -6917,7 +6739,6 @@ class ClusteringPlotNode(QObject):
         'overview_panel_metric':       'Detections',
         'overview_show_sample_strip':  True,
         'overview_label_mode':         'Symbol',
-        'plot3d_hidden_samples':       [],
     }
 
     def __init__(self, parent_window=None):

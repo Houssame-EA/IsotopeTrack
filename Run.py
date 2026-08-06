@@ -1,5 +1,6 @@
 import sys
 import os
+os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
 from tools.cli_utils import get_argument_parser
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.Run")
@@ -11,7 +12,18 @@ if __name__ == '__main__':
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QCoreApplication
+
+QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+
+from tools.render_settings import cluster_gpu_enabled
+
+if not cluster_gpu_enabled():
+    _chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
+    if "--disable-gpu" not in _chromium_flags:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+            _chromium_flags + " --disable-gpu").strip()
+
 from tools.splash_screen import SplashCoordinator
 from utils.pyqtgraph_patches import apply_pyqtgraph_patches
 from utils.file_dialog_memory import install_file_dialog_memory
@@ -107,6 +119,12 @@ if __name__ == "__main__":
         except Exception:
             _itk_log.exception("Handled exception in <module>")
     app.main_windows.clear()
+
+    try:
+        from joblib.externals.loky import get_reusable_executor
+        get_reusable_executor().shutdown(wait=True)
+    except Exception:
+        _itk_log.debug("No loky executor to shut down")
 
     logging.shutdown()
     if sys.stdout is not None:

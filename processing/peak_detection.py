@@ -14,11 +14,11 @@ _itk_log = logging.getLogger("IsotopeTrack.processing.peak_detection")
 from tools.logging_utils import log_context
 from processing import detection_registry
 
-os.environ['NUMBA_THREADING_LAYER'] = 'safe'
+os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
 
 try:
     from numba import jit, config
-    config.THREADING_LAYER = 'safe'
+    config.THREADING_LAYER = 'workqueue'
     NUMBA_AVAILABLE = True
 except ImportError:
     _itk_log.debug("Handled exception in <module>")
@@ -1570,7 +1570,8 @@ class PeakDetection:
                 for isotope in isotopes:
                     element_key = f"{element}-{isotope:.4f}"
                     if element_key in sample_params and sample_params[element_key].get('include', True):
-                        isotope_key = main_window.find_closest_isotope(isotope)
+                        isotope_key = main_window.find_closest_isotope(
+                            isotope, local_data)
                         if isotope_key is not None and isotope_key in local_data:
                             signals_for_batch[element_key] = local_data[isotope_key]
                             params_for_batch[element_key] = sample_params[element_key]
@@ -1835,16 +1836,36 @@ class PeakDetection:
             valid_elements = []
             excluded_elements = []
 
+            no_parameters = []
+            no_signal = []
             for element, isotope, element_key, change_type in changed_elements:
-                if element_key in sample_params:
-                    if sample_params[element_key].get('include', True):
-                        isotope_key = main_window.find_closest_isotope(isotope)
-                        if isotope_key is not None and isotope_key in local_data:
-                            signals_for_batch[element_key] = local_data[isotope_key]
-                            params_for_batch[element_key] = sample_params[element_key]
-                            valid_elements.append((element, isotope, element_key, isotope_key, change_type))
-                    else:
-                        excluded_elements.append((element, isotope, element_key))
+                if element_key not in sample_params:
+                    no_parameters.append(element_key)
+                    continue
+                if not sample_params[element_key].get('include', True):
+                    excluded_elements.append((element, isotope, element_key))
+                    continue
+                isotope_key = main_window.find_closest_isotope(
+                    isotope, local_data)
+                if isotope_key is None or isotope_key not in local_data:
+                    no_signal.append(element_key)
+                    continue
+                signals_for_batch[element_key] = local_data[isotope_key]
+                params_for_batch[element_key] = sample_params[element_key]
+                valid_elements.append(
+                    (element, isotope, element_key, isotope_key, change_type))
+
+            if no_signal:
+                _itk_log.warning(
+                    "%s: %d element(s) skipped, this sample has no channel for "
+                    "them: %s. It holds %d channel(s): %s",
+                    sample_name, len(no_signal), no_signal[:6],
+                    len(local_data), sorted(local_data.keys())[:8])
+            if no_parameters:
+                _itk_log.warning(
+                    "%s: %d element(s) skipped, no detection parameters were "
+                    "initialised for them: %s",
+                    sample_name, len(no_parameters), no_parameters[:6])
 
             detected_peaks_updates = {}
             results_data_updates = []
@@ -1957,7 +1978,8 @@ class PeakDetection:
             for (element, isotope), particles in main_window.sample_detected_peaks[sample_name].items():
                 if particles:
                     element_key = f"{element}-{isotope:.4f}"
-                    isotope_key = main_window.find_closest_isotope(isotope)
+                    isotope_key = main_window.find_closest_isotope(
+                        isotope, main_window.data_by_sample[sample_name])
                     if isotope_key and isotope_key in main_window.data_by_sample[sample_name]:
                         signal = main_window.data_by_sample[sample_name][isotope_key]
                         all_particles.append({
@@ -2247,7 +2269,9 @@ class PeakDetection:
                                     main_window.update_results_table(
                                         detected_peaks[last_element],
                                         main_window.data_by_sample[sample_name][
-                                            main_window.find_closest_isotope(last_element[1])],
+                                            main_window.find_closest_isotope(
+                                                last_element[1],
+                                                main_window.data_by_sample[sample_name])],
                                         last_element[0],
                                         last_element[1],
                                     )

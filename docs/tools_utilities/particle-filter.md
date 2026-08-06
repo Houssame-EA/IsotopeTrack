@@ -2,6 +2,23 @@
 
 Particle Filter node for the Workflow Canvas.
 
+A composable filter that sits between sample selector nodes (Single Sample,
+Multi-Sample, or Batch) and any figure node. Several sample nodes can be
+connected to the filter at once: every incoming sample — including each
+summed group inside a Multi-Sample stream — appears in a sample list on the
+left side of the configuration dialog. Each sample carries its own filter
+settings: click a sample, tune its criteria in the right pane, then move to
+the next one.
+
+Per sample, up to three independent criteria axes are available (AND logic
+between active axes): element composition (AND / OR / EXACT match),
+detected-element count, and per-element signal thresholds.
+
+The output is regrouped so figures can read it: one chosen sample is
+re-emitted as single-sample data, several chosen samples are regrouped into
+multi-sample data with their ``source_sample`` tags, so every downstream
+figure node consumes the result transparently.
+
 ---
 
 ## Constants
@@ -15,6 +32,14 @@ Particle Filter node for the Workflow Canvas.
 ### `ParticleFilterDialog` *(extends `QDialog`)*
 
 Two-pane configurator for the Particle Filter node.
+
+Left pane: every incoming sample with a check (include / exclude) and a
+short tag showing its filter. Right pane: the filter settings of the
+sample currently clicked — element composition (chips + AND/OR/EXACT),
+element count, and per-element thresholds. Each sample keeps its own
+settings; "Apply to all samples" copies the current one everywhere.
+The live preview runs on the upstream snapshot fetched once at dialog
+open and is debounced (~250 ms) after the last user change.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -48,6 +73,14 @@ Two-pane configurator for the Particle Filter node.
 ### `ParticleFilterNode` *(extends `QObject`)*
 
 Composable particle filter node with per-sample settings.
+
+Any number of sample selector nodes can feed this node. Every incoming
+sample — including summed groups inside a Multi-Sample stream — appears
+in the configuration dialog, where each one carries its own filter
+settings. The output is regrouped so figures can read it: one chosen
+sample is emitted as single-sample data, several chosen samples are
+regrouped into multi-sample data. Filtering always operates on copies;
+upstream data is never mutated.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

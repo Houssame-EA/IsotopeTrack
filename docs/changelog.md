@@ -3,6 +3,25 @@
 All notable changes to IsotopeTrack are documented here.
 
 ---
+
+## v1.10.9 — 2026-08-05
+
+- Fixing the cluster crash the user can only disable the GPU if the app crashes only for Windows
+- Adding color change element in the cluster analysis 
+- Multiple sample cluster available in the cluster tab
+- Resolve some bugs 
+
+## v1.10.8 — 2026-07-29
+
+- Improve csv loading files
+- Improving the docstring information 
+- Updating cluster analysis more information how the cluster work
+- Removing the components from the cluster parameters 
+- Heatmap adding SD to mass and mole fraction data 
+- Improving Insight in the results Canvas 
+
+
+
 ## v1.10.7 — 2026-07-17
 
 

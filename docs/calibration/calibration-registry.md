@@ -2,6 +2,23 @@
 
 Single source of truth for IsotopeTrack's calibration methods.
 
+There are two families:
+
+* **Transport-rate methods.** Each has a *display label* — shown in the UI and
+  stored in saved projects (e.g. ``"Liquid weight"``) — and a *signal name* —
+  the string the calibration window emits to
+  ``MainWindow.handle_calibration_result`` (e.g. ``"Weight Method"``). These two
+  naming schemes were previously duplicated, by hand, across ~13 modules.
+* **Ionic calibration.** A single method, :data:`IONIC`.
+
+Centralising the names, their mapping, and their order here means adding a
+transport-rate method is a single :func:`register_transport` call (plus wiring
+the method's widget in ``calibration_methods/TE.py``), instead of editing string
+literals in many files.
+
+The module imports nothing heavy (no PySide6), so the name data is unit-testable
+without a display server — see ``tests/test_calibration_registry.py``.
+
 ---
 
 ## Constants
@@ -16,6 +33,12 @@ Single source of truth for IsotopeTrack's calibration methods.
 ### `TransportMethod`
 
 One transport-rate calibration method.
+
+Args:
+    label: Display name, also the value stored in saved projects
+        (e.g. ``"Liquid weight"``).
+    signal_name: Name emitted to ``handle_calibration_result``
+        (e.g. ``"Weight Method"``).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

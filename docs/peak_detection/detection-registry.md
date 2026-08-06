@@ -2,6 +2,22 @@
 
 Registry of single-particle detection threshold methods.
 
+This module is the single source of truth for the detection methods
+IsotopeTrack offers. Each method declares its stable id, the label shown in the
+UI, whether the user can pick it, and the numeric hooks the detection engine
+uses to turn a background level (lambda) into a threshold.
+
+Adding a new detection method is done *here* — define a :class:`DetectionMethod`
+and :func:`register` it — without editing the ``if/elif`` dispatch that used to
+live in ``processing/peak_detection.py``.
+
+The numeric hooks mirror, expression for expression, the original branches they
+replaced, so detection results are unchanged. ``tests/test_detection_registry.py``
+checks that equivalence against a reference transcription of the old logic.
+
+Only numpy is imported, so this module is safe to import (and unit-test) without
+PySide6, numba, or scipy.
+
 ---
 
 ## Constants

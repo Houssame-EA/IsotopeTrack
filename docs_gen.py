@@ -58,8 +58,12 @@ SECTIONS = [
       ROOT / "results/shared_plot_utils.py", ROOT / "results/shared_annotation.py",
       ROOT / "results/utils_sort.py"]),
     ("Results", "results",
-     "All plot/analysis result modules (bar charts, clustering, isotope ratios, AI, …).",
+     "All plot/analysis result modules (bar charts, isotope ratios, AI, …).",
      [p for p in _glob("results/results_*.py")]),
+    ("Clustering", "cluster",
+     "The clustering feature in one package: the dialog, the pipeline sweep, "
+     "the animated teaching view and its NumPy stepper engine.",
+     _glob("results/cluster/*.py", exclude=("__init__.py",))),
     ("Widgets & UI", "widgets_ui",
      "Reusable dialogs, tables, and UI widgets.",
      [p for p in _glob("widget/*.py")
@@ -70,12 +74,15 @@ SECTIONS = [
         ROOT / "tools/signal_selector_dialog.py"]),
     ("Tools & Utilities", "tools_utilities",
      "Support utilities: logging, materials database, filters, updates.",
-     [p for p in _glob("tools/*.py")
+     [p for p in _glob("tools/**/*.py")
       if p.name not in ("cli_utils.py", "progressive_main_window.py",
                         "splash_screen.py", "theme.py", "unit.py",
                         "help_dialogs.py", "tutorial.py", "element_picker.py",
                         "parameters_table.py", "Info_table.py", "info_file.py",
-                        "signal_selector_dialog.py")]),
+                        "signal_selector_dialog.py", "mass_fraction_service.py")]),
+    ("Services", "services",
+     "Data managers and validators at the service of the user.",
+     _glob("tools/**/*service.py")),
     ("Utils (Non-Visual)", "utils",
      "Pure-logic helpers with no Qt UI: versioning, isobaric-interference math, "
      "export units, and dilution/concentration calculations.",
@@ -113,7 +120,7 @@ def fmt_sig(fn):
 def parse_module(path):
     src = path.read_text(encoding="utf-8", errors="replace")
     tree = ast.parse(src)
-    mod_doc = first_line(ast.get_docstring(tree))
+    mod_doc = ast.get_docstring(tree)
 
     constants, classes, functions = [], [], []
     for node in tree.body:
@@ -141,7 +148,7 @@ def parse_module(path):
             methods = [(n.name, fmt_sig(n), first_line(ast.get_docstring(n)))
                        for n in node.body
                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            classes.append((node.name, bases, first_line(ast.get_docstring(node)),
+            classes.append((node.name, bases, ast.get_docstring(node),
                             methods))
     return mod_doc, constants, classes, functions
 
@@ -204,7 +211,7 @@ def main():
             (outdir / f"{slug(f.name)}.md").write_text(page, encoding="utf-8")
             n_m = sum(len(c[3]) for c in classes)
             idx.append(f"### [`{f.name}`]({slug(f.name)}.md)")
-            idx.append(mod_doc or "")
+            idx.append(first_line(mod_doc) or "")
             idx.append("")
             idx.append(f"**{len(classes)}** classes &nbsp;·&nbsp; "
                        f"**{len(funcs)}** functions &nbsp;·&nbsp; "

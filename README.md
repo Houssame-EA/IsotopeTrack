@@ -5,7 +5,7 @@
 **A fast, free, and open-source desktop application for single-particle ICP-ToF-MS data analysis**
 
 [![Docs](https://img.shields.io/badge/docs-readthedocs-blue.svg)](https://isotopetrack.readthedocs.io/en/latest/)
-[![Version](https://img.shields.io/badge/version-1.10.7-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
+[![Version](https://img.shields.io/badge/version-1.10.9-blue.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)](https://github.com/Houssame-EA/IsotopeTrack/releases)
@@ -103,9 +103,9 @@ The welcome screen is the fastest way to begin: import data, load a saved `.itpr
 
 <img src="images/data_source.png" width="500">
 
-For delimited files, the **File Import Configuration** dialog auto-detects isotope columns from their names (e.g. `107Ag`); you control the time column, dwell time, and column mappings before importing:
+For delimited files, the **File Import Configuration** dialog shows each file as it sits on disk — metadata lines included — and finds the separator, the encoding and the row holding the column names for you. You map the isotopes yourself, with **Detect isotopes** as a shortcut, then set the time column and dwell. **Apply to files…** carries a setup across the batch, and **Previous setup…** recalls one of your last five imports:
 
-<img src="images/csv_file.png" width="750">
+<img src="images/csv.png" width="750">
 
 Every user action, warning and error of the session is recorded in the **Application Log** (View → Show Application Log) — invaluable when reporting an issue:
 
@@ -339,10 +339,10 @@ Thanks to everyone who has contributed to building IsotopeTrack:
 
 | Contributor | Name |
 |---|---|
-| [![1nvertedProtagonist](https://github.com/1nvertedProtagonist.png?size=40)](https://github.com/1nvertedProtagonist) | [1nvertedProtagonist](https://github.com/1nvertedProtagonist) — Bogdan-Vladimir Damian |
-| [![TNTY100](https://github.com/TNTY100.png?size=40)](https://github.com/TNTY100) | [TNTY100](https://github.com/TNTY100) — Yohan Thibault |
-| [![github-actions[bot]](https://github.com/apps/github-actions.png?size=40)](https://github.com/apps/github-actions) | [github-actions[bot]](https://github.com/apps/github-actions) — automation/CI bot |
-| [![Houssame-EA](https://github.com/Houssame-EA.png?size=40)](https://github.com/Houssame-EA) | [Houssame-EA](https://github.com/Houssame-EA) — Houssame-Eddine Ahabchane |
+| <a href="https://github.com/1nvertedProtagonist"><img src="https://github.com/1nvertedProtagonist.png?size=80" width="40" height="40" alt="1nvertedProtagonist"></a> | [1nvertedProtagonist](https://github.com/1nvertedProtagonist) — Bogdan-Vladimir Damian |
+| <a href="https://github.com/TNTY100"><img src="https://github.com/TNTY100.png?size=80" width="40" height="40" alt="TNTY100"></a> | [TNTY100](https://github.com/TNTY100) — Yohan Thibault |
+| <a href="https://github.com/apps/github-actions"><img src="https://avatars.githubusercontent.com/in/15368?s=80&v=4" width="40" height="40" alt="github-actions[bot]"></a> | [github-actions[bot]](https://github.com/apps/github-actions) — automation/CI bot |
+| <a href="https://github.com/Houssame-EA"><img src="https://github.com/Houssame-EA.png?size=80" width="40" height="40" alt="Houssame-EA"></a> | [Houssame-EA](https://github.com/Houssame-EA) — Houssame-Eddine Ahabchane |
 
 ---
 

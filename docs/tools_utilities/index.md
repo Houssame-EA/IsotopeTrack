@@ -44,6 +44,11 @@ Particle Filter node for the Workflow Canvas.
 
 **2** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **38** methods
 
+### [`periodic_table_info.py`](periodic-table-info.md)
+This file contains a readonly service (info) for periodic table data.
+
+**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **5** methods
+
 ### [`toast.py`](toast.md)
 Non-blocking toast notifications for IsotopeTrack.
 
