@@ -798,6 +798,7 @@ class ClusterLiveBridge(QObject):
         self._page = None
         self._pending = []
         self._proj_worker = None
+        self._retired_projs = set()
         self._sk_worker = None
         self._sk_again = False
         self._sk_again_settle = False
@@ -868,8 +869,9 @@ class ClusterLiveBridge(QObject):
         except Exception:
             _log.exception("live async rebuild setup failed")
             return
-        if self._proj_worker is not None and self._proj_worker.isRunning():
-            self._proj_worker.wait(50)
+        old = self._proj_worker
+        if old is not None and old.isRunning():
+            self._retire_proj_worker(old)
         self._push_js("window.__clusterLive && "
                       "window.__clusterLive.projecting && "
                       "window.__clusterLive.projecting('%s', %d);"
@@ -878,6 +880,40 @@ class ClusterLiveBridge(QObject):
         w.done.connect(self._on_projected)
         self._proj_worker = w
         w.start()
+
+    def _retire_proj_worker(self, worker):
+        """Park a superseded projection worker until its thread has stopped.
+
+        Reassigning ``_proj_worker`` used to drop the last Python reference to
+        a thread that was still running, which deletes the underlying QThread
+        mid-run and makes Qt abort the process. Holding the worker here keeps
+        it alive; its ``done`` signal is disconnected first so the superseded
+        projection is ignored when it eventually finishes.
+
+        Args:
+            worker (_ProjWorker): The worker being replaced.
+        """
+        try:
+            worker.done.disconnect()
+        except Exception:
+            _log.exception("disconnecting a superseded projection failed")
+        self._retired_projs.add(worker)
+        worker.finished.connect(self._on_retired_proj_finished)
+
+    def _on_retired_proj_finished(self):
+        """Release a retired worker once its thread has fully stopped.
+
+        Runs on the bridge's thread, so ``wait`` returns at once and the
+        reference can be dropped safely.
+        """
+        worker = self.sender()
+        if worker is None:
+            return
+        try:
+            worker.wait()
+        except Exception:
+            _log.exception("waiting on a retired projection worker failed")
+        self._retired_projs.discard(worker)
 
     def _on_projected(self, view):
         """Store the finished view and push the new state to the page."""

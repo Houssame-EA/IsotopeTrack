@@ -106,47 +106,40 @@ function shapeFor(name){
  * @param {number} y Centre y in screen pixels.
  * @param {number} r Nominal radius in screen pixels.
  */
-function traceMarker(c, shape, x, y, r){
-  const poly=(pts)=>{ c.moveTo(x+pts[0][0]*r, y+pts[0][1]*r);
-    for(let i=1;i<pts.length;i++) c.lineTo(x+pts[i][0]*r, y+pts[i][1]*r);
-    c.closePath(); };
+const MARKER_PTS=(()=>{
   const ring=(n, rot, rad)=>{ const p=[];
     for(let i=0;i<n;i++){ const a=rot+i*2*Math.PI/n;
-      p.push([Math.cos(a)*rad, Math.sin(a)*rad]); }
-    return p; };
-  switch(shape){
-    case 'square':        poly(ring(4, Math.PI/4, 1.20)); break;
-    case 'triangle':      poly(ring(3, -Math.PI/2, 1.35)); break;
-    case 'down-triangle': poly(ring(3, Math.PI/2, 1.35)); break;
-    case 'diamond':       poly(ring(4, -Math.PI/2, 1.38)); break;
-    case 'hexagon':       poly(ring(6, -Math.PI/2, 1.15)); break;
-    case 'plus': {
-      const a=0.40, b=1.25;
-      poly([[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],
-            [a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]]);
-      break;
-    }
-    case 'cross': {
-      const a=0.40, b=1.25, k=Math.SQRT1_2;
-      const pts=[[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],
-                 [a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
-      poly(pts.map(([px,py])=>[(px-py)*k, (px+py)*k]));
-      break;
-    }
-    case 'star': {
-      const p=[];
-      for(let i=0;i<10;i++){ const a=-Math.PI/2 + i*Math.PI/5;
-        const rad=(i%2 ? 0.62 : 1.55);
-        p.push([Math.cos(a)*rad, Math.sin(a)*rad]); }
-      poly(p);
-      break;
-    }
-    case 'bowtie':
-      poly([[-1.25,-1.05],[1.25,1.05],[1.25,-1.05],[-1.25,1.05]]);
-      break;
-    default:
-      c.moveTo(x+r, y); c.arc(x, y, r, 0, 6.283);
-  }
+      p.push(Math.cos(a)*rad, Math.sin(a)*rad); }
+    return Float64Array.from(p); };
+  const a=0.40, b=1.25, k=Math.SQRT1_2;
+  const plus=[[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],
+              [a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+  const flat=(pairs)=>Float64Array.from([].concat(...pairs));
+  const star=[];
+  for(let i=0;i<10;i++){ const ang=-Math.PI/2 + i*Math.PI/5;
+    const rad=(i%2 ? 0.62 : 1.55);
+    star.push([Math.cos(ang)*rad, Math.sin(ang)*rad]); }
+  return {
+    'square':        ring(4, Math.PI/4, 1.20),
+    'triangle':      ring(3, -Math.PI/2, 1.35),
+    'down-triangle': ring(3, Math.PI/2, 1.35),
+    'diamond':       ring(4, -Math.PI/2, 1.38),
+    'hexagon':       ring(6, -Math.PI/2, 1.15),
+    'plus':          flat(plus),
+    'cross':         flat(plus.map(([px,py])=>[(px-py)*k, (px+py)*k])),
+    'star':          flat(star),
+    'bowtie':        flat([[-1.25,-1.05],[1.25,1.05],[1.25,-1.05],[-1.25,1.05]]),
+  };
+})();
+
+const PATH_CHUNK=1500;
+
+function traceMarker(c, shape, x, y, r){
+  const p=MARKER_PTS[shape];
+  if(p===undefined){ c.moveTo(x+r, y); c.arc(x, y, r, 0, 6.283); return; }
+  c.moveTo(x+p[0]*r, y+p[1]*r);
+  for(let i=2;i<p.length;i+=2) c.lineTo(x+p[i]*r, y+p[i+1]*r);
+  c.closePath();
 }
 
 /**
@@ -472,6 +465,7 @@ window.applyTheme = applyTheme;
 
 /** Store the dataset state, fit the view and update the header line. */
 function onState(state){
+  markDirty();
   S.data = state;
   S.dims = state.dims || 2;
   if(state.projection) S.proj = state.projection;
@@ -781,6 +775,7 @@ function setFocus(c){
   S.focus = (c==null || S.focus===c) ? null : c;
   zoomToCluster(S.focus);
   refreshLegend();
+  markDirty();
 }
 
 /** Project a data point to screen coordinates (2-D pan/zoom or 3-D rotate). */
@@ -822,15 +817,24 @@ function onFrame(fr){
   S.frames.push(fr);
   if(fr.metrics && typeof fr.metrics.inertia==='number') S.inertiaHist.push(fr.metrics.inertia);
   if(!S._animate) S.t=S.frames.length-1;
+  markDirty();
 }
 
-let _lastW=0, _lastH=0;
-/** Animation loop: advance the playhead, refit on resize and redraw. */
+let _lastW=0, _lastH=0, _dirty=true, _lastDraw=0;
+/** Request a repaint on the next animation frame. */
+function markDirty(){ _dirty=true; }
+/** Animation loop: advance the playhead, refit on resize and redraw.
+ *
+ *  The canvas is only repainted when something changed, when a frame or
+ *  tween is playing, or every 500 ms as a backstop so a missed markDirty()
+ *  cannot leave a stale picture on screen. Repainting unconditionally kept
+ *  a core busy redrawing an identical scatter sixty times a second. */
 function tick(now){
   if(canvas.clientWidth!==_lastW || canvas.clientHeight!==_lastH){
     _lastW=canvas.clientWidth; _lastH=canvas.clientHeight;
     if(_lastW>0 && _lastH>0){ resize();
       if(S.data && !S.data.empty){ fitView(); if(S.focus!=null) zoomToCluster(S.focus, true); } }
+    markDirty();
   }
   stepTween(now);
   if(!S.lastTick) S.lastTick=now;
@@ -841,7 +845,9 @@ function tick(now){
       else { S.t=end; S.playing=false; syncPlayBtn(); } }
   }
   if(S.settlePending && !S.playing) settleOnCompare();
-  draw();
+  if(_dirty || S.playing || S.tween || S.drag3d || (now-_lastDraw)>500){
+    draw(); _dirty=false; _lastDraw=now;
+  }
   requestAnimationFrame(tick);
 }
 /** Return the buffered frame nearest index i, clamped to range. */
@@ -1369,13 +1375,22 @@ function drawPoints(pos,labels){
       if(!g){ g={col, dim, shape:sh, idxs:[]}; groups.set(key,g); }
       g.idxs.push(i); }
     const order=[...groups.values()].sort((a,b)=>(a.dim?0:1)-(b.dim?0:1));
+    const ox=S.view.ox, oy=S.view.oy, sc=S.view.scale;
+    const blocky=(r<=2.5), d=r*2;
     for(const g of order){
       ctx.fillStyle=g.col;
       ctx.globalAlpha=((g.col===THEME.noise)?0.45:0.88)*(g.dim?DIM_ALPHA:1);
-      ctx.beginPath();
-      for(const i of g.idxs){ const s=screen(pos[i]);
-        traceMarker(ctx, g.shape, s[0], s[1], r); }
-      ctx.fill();
+      if(blocky && g.shape==='circle'){
+        for(const i of g.idxs){ const p=pos[i];
+          ctx.fillRect(ox+p[0]*sc-r, oy-p[1]*sc-r, d, d); }
+      } else {
+        let k=0;
+        ctx.beginPath();
+        for(const i of g.idxs){ const p=pos[i];
+          traceMarker(ctx, g.shape, ox+p[0]*sc, oy-p[1]*sc, r);
+          if(++k>=PATH_CHUNK){ ctx.fill(); ctx.beginPath(); k=0; } }
+        if(k) ctx.fill();
+      }
     }
     ctx.globalAlpha=1;
   }
@@ -2587,9 +2602,13 @@ function bindControls(){
     S.v3.zoom=Math.max(0.3,Math.min(FOCUS_MAX_ZOOM,(S.v3.zoom||1)*(e.deltaY<0?1.1:0.9)));
     S.v3.scale=(S.v3.baseScale||1)*S.v3.zoom; },{passive:false});
 
-  canvas.addEventListener('mousemove',onHover);
-  canvas.addEventListener('mouseleave',()=>{ S.hoverIdx=-1; $('tip').style.display='none'; });
-  window.addEventListener('resize',()=>{ resize(); if(S.data && !S.data.empty) fitView(); });
+  canvas.addEventListener('mousemove',(e)=>{ onHover(e); markDirty(); });
+  canvas.addEventListener('mouseleave',()=>{ S.hoverIdx=-1; $('tip').style.display='none';
+    markDirty(); });
+  window.addEventListener('resize',()=>{ resize();
+    if(S.data && !S.data.empty) fitView(); markDirty(); });
+  ['click','change','input','keyup','mouseup','wheel'].forEach((t)=>
+    window.addEventListener(t, markDirty, true));
 }
 /** Pin a floating box to explicit left/top so it can be dragged and resized. */
 function unpinBox(box){
