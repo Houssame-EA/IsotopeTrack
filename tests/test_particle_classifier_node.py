@@ -1,0 +1,506 @@
+# -*- coding: utf-8 -*-
+"""Tests for the Particle Classifier node's Stage 2 connectivity rules
+(tools/particle_classifier_node.py + the validate_classifier_link hook in
+widget/canvas_widgets.py). A bug here would let the canvas silently wire up
+a connection design §2 says must be hard-blocked, so the allow/deny boundary
+is worth pinning down; the rest of the node (placeholder paint, registry
+wiring) is exercised via one smoke instantiation, not exhaustively.
+"""
+import pytest
+
+from tools import particle_classifier_node as pcn
+
+
+# --------------------------------------------------------------------------- #
+# is_allowed_upstream / is_allowed_downstream — pure logic, no Qt
+# --------------------------------------------------------------------------- #
+class TestUpstreamRule:
+    @pytest.mark.parametrize("node_type", [
+        "particle_filter", "sample_selector", "multiple_sample_selector"])
+    def test_allowed_upstream_types(self, node_type):
+        assert pcn.is_allowed_upstream(node_type) is True
+
+    @pytest.mark.parametrize("node_type", [
+        "histogram_plot", "batch_sample_selector", "particle_classifier", None])
+    def test_disallowed_upstream_types(self, node_type):
+        assert pcn.is_allowed_upstream(node_type) is False
+
+
+class TestDownstreamRule:
+    def test_viz_node_allowed(self):
+        assert pcn.is_allowed_downstream(
+            "histogram_plot", pcn_viz_types()) is True
+
+    @pytest.mark.parametrize("node_type", [
+        "clustering_plot", "ai_assistant", "dashboard"])
+    def test_excluded_viz_nodes_blocked(self, node_type):
+        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
+
+    def test_non_viz_node_blocked(self):
+        assert pcn.is_allowed_downstream(
+            "particle_filter", pcn_viz_types()) is False
+
+    @pytest.mark.parametrize("node_type", [
+        "single_multiple_element_plot", "correlation_matrix",
+        "network_diagram", "molar_ratio_plot", "isotopic_ratio_plot",
+        "triangle_plot"])
+    def test_wip_excluded_viz_nodes_blocked(self, node_type):
+        """These are within-particle-relationship charts made empty/
+        meaningless by classifier bucket-collapsing (see
+        classifier-ratio-nodes-meaningless memory note) -- temporarily
+        disabled, distinct from AI Assistant's permanent exclusion."""
+        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
+        assert node_type in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
+
+    def test_wip_set_excludes_ai_assistant(self):
+        """AI Data Assistant is excluded for an unrelated, non-WIP reason --
+        it must stay out of the WIP set so it gets its own refusal message."""
+        assert "ai_assistant" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
+        assert "ai_assistant" in pcn.EXCLUDED_DOWNSTREAM_TYPES
+
+
+def pcn_viz_types():
+    return {"histogram_plot", "clustering_plot", "ai_assistant", "dashboard",
+            "single_multiple_element_plot", "correlation_matrix",
+            "network_diagram", "molar_ratio_plot", "isotopic_ratio_plot",
+            "triangle_plot"}
+
+
+# --------------------------------------------------------------------------- #
+# validate_classifier_link — exercised through the real canvas (Qt required)
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def qapp():
+    from PySide6.QtWidgets import QApplication
+    import sys
+    return QApplication.instance() or QApplication(sys.argv)
+
+
+@pytest.fixture
+def cw(qapp, monkeypatch):
+    import widget.canvas_widgets as cw
+    monkeypatch.setattr(cw.QMessageBox, "warning", lambda *a, **kw: None)
+    return cw
+
+
+class TestAddLinkEnforcement:
+    def test_allowed_upstream_link_is_created(self, cw):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        from tools.particle_filter import ParticleFilterNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        pf, clf = ParticleFilterNode(), ParticleClassifierNode()
+        scene.add_node(pf, cw.QPointF(0, 0))
+        scene.add_node(clf, cw.QPointF(200, 0))
+        assert scene.add_link(pf, "output", clf, "input") is not None
+
+    def test_disallowed_upstream_link_is_blocked(self, cw):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        hist, clf = cw.HistogramPlotNode(), ParticleClassifierNode()
+        scene.add_node(hist, cw.QPointF(0, 0))
+        scene.add_node(clf, cw.QPointF(200, 0))
+        assert scene.add_link(hist, "output", clf, "input") is None
+
+    def test_excluded_downstream_link_is_blocked(self, cw):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf, dash = ParticleClassifierNode(), cw.DashboardNode()
+        scene.add_node(clf, cw.QPointF(0, 0))
+        scene.add_node(dash, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", dash, "input") is None
+
+    def test_allowed_viz_downstream_link_is_created(self, cw):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf, hist = ParticleClassifierNode(), cw.HistogramPlotNode()
+        scene.add_node(clf, cw.QPointF(0, 0))
+        scene.add_node(hist, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", hist, "input") is not None
+
+    def test_unrelated_link_pair_is_unaffected(self, cw):
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        ss, pf = cw.SampleSelectorNode(), cw.ParticleFilterNode()
+        scene.add_node(ss, cw.QPointF(0, 0))
+        scene.add_node(pf, cw.QPointF(200, 0))
+        assert scene.add_link(ss, "output", pf, "input") is not None
+
+
+# --------------------------------------------------------------------------- #
+# WIP_EXCLUDED_DOWNSTREAM_TYPES -- temporarily disabled chart types (see
+# WIP_EXCLUDED_DOWNSTREAM_TYPES docstring / classifier-ratio-nodes-meaningless
+# memory note): classifier collapses each particle's composition to one
+# bucket-label key, which breaks any chart needing two within-particle
+# components (ratio/correlation/network) or that does its own grouping.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def cw_capture(qapp, monkeypatch):
+    """Like `cw`, but captures the warning dialog's message text instead of
+    swallowing it, so tests can assert on the refusal wording."""
+    import widget.canvas_widgets as cw_mod
+    msgs = []
+    monkeypatch.setattr(
+        cw_mod.QMessageBox, "warning",
+        staticmethod(lambda *a, **kw: msgs.append(a[-1] if a else '')))
+    return cw_mod, msgs
+
+
+_WIP_NODE_CTORS = [
+    ("clustering_plot", "ClusteringPlotNode"),
+    ("dashboard", "DashboardNode"),
+    ("single_multiple_element_plot", "SingleMultipleElementPlotNode"),
+    ("correlation_matrix", "CorrelationMatrixNode"),
+    ("network_diagram", "NetworkDiagramNode"),
+    ("molar_ratio_plot", "MolarRatioPlotNode"),
+    ("isotopic_ratio_plot", "IsotopicRatioPlotNode"),
+    ("triangle_plot", "TrianglePlotNode"),
+]
+
+
+class TestWipExcludedDownstream:
+    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
+    def test_direct_link_blocked_with_wip_message(
+            self, cw_capture, node_type, ctor_name):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        cw_mod, msgs = cw_capture
+        scene = cw_mod.EnhancedCanvasScene(parent_window=None)
+        clf = ParticleClassifierNode()
+        viz = getattr(cw_mod, ctor_name)()
+        scene.add_node(clf, cw_mod.QPointF(0, 0))
+        scene.add_node(viz, cw_mod.QPointF(200, 0))
+        result = scene.add_link(clf, "output", viz, "input")
+        assert result is None
+        assert msgs and "work in progress" in msgs[0]
+        assert viz.title in msgs[0]
+
+    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
+    def test_blocked_through_temp_node(self, cw_capture, node_type, ctor_name):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        cw_mod, msgs = cw_capture
+        scene = cw_mod.EnhancedCanvasScene(parent_window=None)
+        clf = ParticleClassifierNode()
+        temp = cw_mod.TempPassThroughNode()
+        viz = getattr(cw_mod, ctor_name)()
+        scene.add_node(clf, cw_mod.QPointF(0, 0))
+        scene.add_node(temp, cw_mod.QPointF(200, 0))
+        scene.add_node(viz, cw_mod.QPointF(400, 0))
+        assert scene.add_link(clf, "output", temp, "input") is not None
+        result = scene.add_link(temp, "output", viz, "input")
+        assert result is None
+        assert msgs and "Temp Node" in msgs[0] and "work in progress" in msgs[0]
+
+    def test_ai_assistant_keeps_its_own_non_wip_message(self, cw_capture):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        cw_mod, msgs = cw_capture
+        scene = cw_mod.EnhancedCanvasScene(parent_window=None)
+        clf, ai = ParticleClassifierNode(), cw_mod.AIAssistantNode()
+        scene.add_node(clf, cw_mod.QPointF(0, 0))
+        scene.add_node(ai, cw_mod.QPointF(200, 0))
+        assert scene.add_link(clf, "output", ai, "input") is None
+        assert msgs and "work in progress" not in msgs[0]
+        assert "AI Data Assistant" in msgs[0]
+
+    def test_non_wip_viz_still_allowed(self, cw):
+        from tools.particle_classifier_node import ParticleClassifierNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf, corr = ParticleClassifierNode(), cw.CorrelationPlotNode()
+        scene.add_node(clf, cw.QPointF(0, 0))
+        scene.add_node(corr, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", corr, "input") is not None
+
+
+# --------------------------------------------------------------------------- #
+# Node registration + placeholder item — one smoke instantiation
+# --------------------------------------------------------------------------- #
+class TestRegistration:
+    def test_registered_in_node_factories_and_item_map(self, cw):
+        assert cw._NODE_FACTORIES["particle_classifier"] is \
+            pcn.ParticleClassifierNode
+        assert "particle_classifier" in cw._NODE_ITEM_MAP
+
+    def test_placeholder_item_constructs_and_paints(self, cw):
+        from PySide6.QtWidgets import QGraphicsScene
+        from PySide6.QtGui import QPixmap, QPainter
+        wf = pcn.ParticleClassifierNode()
+        item = cw.ParticleClassifierNodeItem(wf)
+        scene = QGraphicsScene()
+        scene.addItem(item)
+        pix = QPixmap(50, 50)
+        pix.fill()
+        painter = QPainter(pix)
+        scene.render(painter)
+        painter.end()
+        assert wf._has_input is True
+        assert wf._has_output is True
+
+
+# --------------------------------------------------------------------------- #
+# Node duplication carries the full classifier configuration
+# --------------------------------------------------------------------------- #
+class TestDuplicateNodeCopiesConfig:
+    def test_duplicate_carries_definitions_and_state(self, cw):
+        """Ctrl+C / right-click Duplicate must copy the classifier's full
+        state, not produce a blank node -- duplicate_node() has its own
+        hardcoded attribute list separate from save/load's, and every piece
+        of classifier state must be present in it."""
+        from tools.particle_classifier_node import (
+            ParticleClassifierNode, new_definition_id)
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf = ParticleClassifierNode()
+        clf.definitions = [{
+            'id': new_definition_id(), 'target_sample': 'SampleA',
+            'expression_text': '60Ni', 'match_mode': 'partial',
+            'group_name': 'Nickel', 'color': None}]
+        clf.groups = {'Nickel': '#10B981'}
+        clf.overlap_mode = 'priority'
+        clf.unmatched_mode = 'discard'
+        clf.unclassified_color = '#123456'
+        clf.group_pooling_policies = {'Mix': 'keep'}
+        clf.confound_dismissals = [{'id_a': 'x', 'id_b': 'y',
+                                    'expr_a': '60Ni', 'expr_b': '60Ni+107Ag'}]
+        scene.add_node(clf, cw.QPointF(0, 0))
+
+        item = scene.duplicate_node(scene.node_items[clf])
+        assert item is not None
+        dup = item.workflow_node
+        assert dup is not clf
+        assert dup.definitions == clf.definitions
+        assert dup.definitions is not clf.definitions  # deep-copied
+        assert dup.groups == clf.groups
+        assert dup.overlap_mode == 'priority'
+        assert dup.unmatched_mode == 'discard'
+        assert dup.unclassified_color == '#123456'
+        assert dup.group_pooling_policies == {'Mix': 'keep'}
+        assert dup.confound_dismissals == clf.confound_dismissals
+
+
+# --------------------------------------------------------------------------- #
+# Duplicate + reconnect to a DIFFERENT upstream: stale definitions must not
+# masquerade as active configuration (mirrors ParticleFilterNode's
+# _incoming_names / is_active() pattern from the vlad-filter-upgrade branch).
+# --------------------------------------------------------------------------- #
+class TestStaleDefinitionsAfterRewire:
+    def _node_with_defs(self):
+        from tools.particle_classifier_node import (
+            ParticleClassifierNode, new_definition_id)
+        node = ParticleClassifierNode()
+        node.definitions = [{
+            'id': new_definition_id(), 'target_sample': 'Hello',
+            'expression_text': '60Ni', 'match_mode': 'partial',
+            'group_name': 'IronOre', 'color': None}]
+        return node
+
+    def test_active_definitions_empty_before_any_data(self):
+        node = self._node_with_defs()
+        assert node._active_definitions() == []
+        assert node.summary_text() == "No definitions"
+
+    def test_active_definitions_counts_when_sample_connected(self):
+        node = self._node_with_defs()
+        node.process_data({
+            'type': 'sample_data', 'sample_name': 'Hello', 'data': {},
+            'particle_data': [], 'selected_isotopes': [],
+            'total_particles': 0, 'concentration_meta': {},
+            'parent_window': None})
+        assert len(node._active_definitions()) == 1
+        assert node.summary_text() == "1 definition"
+
+    def test_stale_after_rewire_to_different_sample_not_deleted(self):
+        """Reconnecting to a totally different sample must NOT count the
+        old definitions as active, but must NOT delete them either."""
+        node = self._node_with_defs()
+        node.process_data({
+            'type': 'sample_data', 'sample_name': 'NewSample', 'data': {},
+            'particle_data': [], 'selected_isotopes': [],
+            'total_particles': 0, 'concentration_meta': {},
+            'parent_window': None})
+        assert node._active_definitions() == []          # inert now
+        assert node.summary_text() == "No definitions"    # badge reflects that
+        assert len(node.definitions) == 1                 # but NOT deleted
+        assert node.definitions[0]['target_sample'] == 'Hello'
+
+    def test_confound_checker_ignores_disconnected_sample(self, cw):
+        """The actual reported bug: a duplicated-and-rewired node's
+        confound warning must never reference a sample that isn't
+        connected to THIS dialog session."""
+        from tools.particle_classifier_dialog import ParticleClassifierDialog
+        node = self._node_with_defs()
+        node.definitions.append({
+            'id': 'second-def', 'target_sample': 'Hello',
+            'expression_text': '60Ni+107Ag', 'match_mode': 'partial',
+            'group_name': 'Recycling', 'color': None})
+        # Dialog opened against a snapshot for a DIFFERENT sample entirely
+        # -- 'Hello' is not among the currently connected sources.
+        snapshot = {
+            'type': 'sample_data', 'sample_name': 'NewSample', 'data': {},
+            'particle_data': [{'elements': {'56Fe': 1.0}}],
+            'selected_isotopes': [{'label': '56Fe'}], 'total_particles': 1,
+            'concentration_meta': {'NewSample': {}}, 'parent_window': None,
+        }
+        dlg = ParticleClassifierDialog(None, [snapshot], node.definitions,
+                                       node.groups, node.overlap_mode,
+                                       node.unmatched_mode,
+                                       node.unclassified_color,
+                                       node.selected_sources,
+                                       node.group_pooling_policies,
+                                       node.confound_dismissals)
+        assert dlg._collect_active_confound_pairs() == []
+
+    def test_real_canvas_duplicate_and_relink_end_to_end(self, cw):
+        """Same scenario driven through the REAL canvas mechanics --
+        scene.add_link/duplicate_node, not direct process_data() calls --
+        so a real add_link's _trigger_data_flow is what refreshes
+        _incoming_names, exactly like an actual user duplicating a
+        configured node and connecting it to a different source."""
+        from PySide6.QtCore import QObject, Signal, QPointF
+        from tools.particle_classifier_node import (
+            ParticleClassifierNode, new_definition_id)
+
+        class _StubSource(QObject):
+            position_changed = Signal(object)
+            configuration_changed = Signal()
+
+            def __init__(self, output):
+                super().__init__()
+                self.title = "Stub Source"
+                self.node_type = "sample_selector"
+                self.position = QPointF(0, 0)
+                self._has_input, self._has_output = False, True
+                self.input_channels, self.output_channels = [], ["output"]
+                self._output = output
+                self.selected_sample = None
+                self.sum_replicates = False
+                self.replicate_samples = []
+                self.selected_isotopes = []
+
+            def set_position(self, pos):
+                self.position = pos
+
+            def get_output_data(self):
+                return self._output
+
+        def multi(names, combos):
+            particles = [{'elements': {iso: 1.0 for iso in c},
+                         'source_sample': n}
+                        for n in names for c in combos]
+            return {'type': 'multiple_sample_data', 'sample_names': names,
+                    'particle_data': particles, 'data': {}, 'data_types': {},
+                    'selected_isotopes': [], 'total_particles': len(particles),
+                    'concentration_meta': {n: {} for n in names},
+                    'parent_window': None}
+
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        old_source = _StubSource(multi(['Hello', 'Sir'], [['60Ni']]))
+        parent = ParticleClassifierNode()
+        scene.add_node(old_source, QPointF(0, 0))
+        scene.add_node(parent, QPointF(200, 0))
+        assert scene.add_link(old_source, "output", parent, "input") is not None
+        parent.definitions = [{
+            'id': new_definition_id(), 'target_sample': 'Hello',
+            'expression_text': '60Ni', 'match_mode': 'partial',
+            'group_name': 'IronOre', 'color': None}]
+        assert set(parent._incoming_names) == {'Hello', 'Sir'}
+        assert len(parent._active_definitions()) == 1
+
+        dup_item = scene.duplicate_node(scene.node_items[parent])
+        dup = dup_item.workflow_node
+        assert not any(lk.sink_node is dup for lk in scene.workflow_links)
+        assert dup._active_definitions() == []
+
+        new_source = _StubSource(multi(['NewSample'], [['56Fe']]))
+        scene.add_node(new_source, QPointF(0, 300))
+        assert scene.add_link(new_source, "output", dup, "input") is not None
+        # process_data fired for real via _trigger_data_flow.
+        assert dup._incoming_names == ['NewSample']
+        assert dup._active_definitions() == []
+        assert len(dup.definitions) == 1  # stale IronOre def preserved
+
+
+# --------------------------------------------------------------------------- #
+# One-time onboarding modal (Stage 5, design §10). QSettings is mocked with
+# an in-memory stand-in for every test here -- the real one is backed by the
+# actual OS registry/user settings store, and a test that touched it for
+# real could permanently set "don't show again" on the developer's own
+# machine, suppressing the real onboarding modal outside of tests too.
+# --------------------------------------------------------------------------- #
+class _FakeSettings:
+    _store = {}
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def value(self, key, default=None, type=None):
+        return self._store.get(key, default)
+
+    def setValue(self, key, value):
+        self._store[key] = value
+
+
+class _FakeOnboardingBox:
+    """Stand-in for QMessageBox inside maybe_show_classifier_onboarding --
+    mirrors the no_modal-style fakes used in test_particle_classifier_dialog.py,
+    just enough surface for that one function's call sequence."""
+    exec_calls = 0
+    last_checkbox = None
+
+    def __init__(self, *a, **kw):
+        self._checkbox = None
+
+    def setIcon(self, *a): pass
+    def setWindowTitle(self, *a): pass
+    def setText(self, *a): pass
+
+    def setCheckBox(self, cb):
+        self._checkbox = cb
+        _FakeOnboardingBox.last_checkbox = cb
+
+    def addButton(self, *a, **kw): pass
+
+    def exec(self):
+        _FakeOnboardingBox.exec_calls += 1
+
+
+class TestOnboarding:
+    @pytest.fixture(autouse=True)
+    def _mock_settings_and_modal(self, qapp, monkeypatch):
+        _FakeSettings._store = {}
+        _FakeOnboardingBox.exec_calls = 0
+        _FakeOnboardingBox.last_checkbox = None
+        _FakeOnboardingBox.Icon = type('Icon', (), {'Information': 1})
+        _FakeOnboardingBox.ButtonRole = type('ButtonRole', (), {'AcceptRole': 1})
+        monkeypatch.setattr(pcn, "QSettings", _FakeSettings)
+        monkeypatch.setattr(pcn, "QMessageBox", _FakeOnboardingBox)
+
+    def test_shows_the_first_time(self):
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 1
+
+    def test_does_not_show_again_once_flag_is_set(self):
+        _FakeSettings._store[pcn._HIDE_ONBOARDING_SETTING] = True
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 0
+
+    def test_leaving_dont_show_again_unchecked_does_not_persist(self):
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeSettings._store.get(pcn._HIDE_ONBOARDING_SETTING) in (None, False)
+
+    def test_checked_box_persists_flag_across_calls(self):
+        """End-to-end: first call shows the modal and the user checks the
+        box (simulated by checking it before exec() returns, since exec()
+        is what would normally block for that real user interaction);
+        flag must then be persisted, and a second call must not show it
+        again."""
+        orig_exec = _FakeOnboardingBox.exec
+
+        def _exec_checks_the_box(self):
+            self._checkbox.setChecked(True)
+            _FakeOnboardingBox.exec_calls += 1
+
+        _FakeOnboardingBox.exec = _exec_checks_the_box
+        try:
+            pcn.maybe_show_classifier_onboarding(None)
+        finally:
+            _FakeOnboardingBox.exec = orig_exec
+        assert _FakeSettings._store.get(pcn._HIDE_ONBOARDING_SETTING) is True
+
+        pcn.maybe_show_classifier_onboarding(None)
+        assert _FakeOnboardingBox.exec_calls == 1  # second call suppressed

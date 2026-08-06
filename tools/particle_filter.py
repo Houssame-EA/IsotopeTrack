@@ -8,9 +8,10 @@ left side of the configuration dialog. Each sample carries its own filter
 settings: click a sample, tune its criteria in the right pane, then move to
 the next one.
 
-Per sample, up to three independent criteria axes are available (AND logic
-between active axes): element composition (AND / OR / EXACT match),
-detected-element count, and per-element signal thresholds.
+Per sample, up to four independent criteria axes are available (AND logic
+between active axes): isotopic composition (AND / OR / EXACT / NOT(AND) /
+NOT(OR) / NOT(EXACT) match), detected-isotope count, per-isotope signal
+thresholds, and particle data (mass / counts range filters).
 
 The output is regrouped so figures can read it: one chosen sample is
 re-emitted as single-sample data, several chosen samples are regrouped into
@@ -19,12 +20,13 @@ figure node consumes the result transparently.
 """
 
 import math
+import re
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton,
     QComboBox, QSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout,
     QDialogButtonBox, QApplication, QGraphicsItem, QListWidget,
-    QListWidgetItem, QSplitter, QScrollArea, QFrame, QLineEdit,
+    QListWidgetItem, QSplitter, QScrollArea, QFrame, QLineEdit, QCheckBox,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPointF, QRectF
 from PySide6.QtGui import QPen, QColor
@@ -36,6 +38,10 @@ _itk_log = logging.getLogger("IsotopeTrack.tools.particle_filter")
 
 _FILTERABLE_TYPES = ('sample_data', 'single_sample_data',
                      'multiple_sample_data')
+
+# Process-wide cache of the static periodic-table element metadata used by
+# the filter dialog's isotope chips (see ParticleFilterDialog._load_elem_data).
+_ELEM_DATA_CACHE = None
 
 
 def _ual():
@@ -52,6 +58,20 @@ def _ual():
         return None
 
 
+def _num_text(v):
+    """Format a numeric filter value for a QLineEdit without trailing zeros.
+
+    Args:
+        v (float): Value to format.
+
+    Returns:
+        str: Compact numeric text, e.g. "2.5" not "2.500000".
+    """
+    if v == int(v):
+        return str(int(v))
+    return f"{v:g}"
+
+
 def _empty_conc_meta():
     """Build an empty concentration metadata entry.
 
@@ -61,27 +81,93 @@ def _empty_conc_meta():
     return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
 
 
+def _default_particle_data_field():
+    """Build one (mass or counts) sub-filter's default (inactive) state.
+
+    Returns:
+        dict: Disabled sub-filter with an empty "at least" expression.
+    """
+    return {'enabled': False, 'expr': 'at_least', 'min': None, 'max': None}
+
+
 def default_filter_config():
     """Build the default (inactive) per-sample filter configuration.
 
     Returns:
-        dict: Configuration with all three filter axes disabled.
+        dict: Configuration with all four filter axes disabled.
     """
     return {
         'composition': {'enabled': False, 'isotopes': [], 'mode': 'AND'},
         'count':       {'enabled': False, 'op': 'min', 'value': 2},
         'threshold':   {'enabled': False, 'unit': 'elements', 'values': {}},
+        'particle_data': {
+            'enabled': False,
+            'mass': _default_particle_data_field(),
+            'counts': _default_particle_data_field(),
+        },
     }
+
+
+_NOT_MODES = {'NOT(AND)': 'AND', 'NOT(OR)': 'OR', 'NOT(EXACT)': 'EXACT'}
+
+
+def _particle_data_field_valid(field):
+    """Check whether one Particle Data sub-filter (mass/counts) is valid.
+
+    Args:
+        field (dict): {'enabled', 'expr', 'min', 'max'}.
+
+    Returns:
+        bool: True when disabled, or enabled with well-formed bounds.
+    """
+    if not field or not field.get('enabled'):
+        return True
+    expr = field.get('expr', 'at_least')
+    mn, mx = field.get('min'), field.get('max')
+    if expr == 'at_least':
+        return isinstance(mn, (int, float)) and mn >= 0
+    if expr == 'at_most':
+        return isinstance(mx, (int, float)) and mx >= 0
+    if expr == 'between':
+        return (isinstance(mn, (int, float)) and isinstance(mx, (int, float))
+                and mn >= 0 and mx >= 0 and mn < mx)
+    return False
+
+
+def particle_data_valid(pd_cfg):
+    """Check whether an enabled Particle Data box's sub-filters are valid.
+
+    A blocking policy is used (matching this dialog's existing convention
+    of ignoring an axis entirely rather than half-applying it): if the box
+    is enabled but any enabled sub-filter is invalid, the whole box must be
+    treated as inactive by the caller until fixed.
+
+    Args:
+        pd_cfg (dict): The 'particle_data' config dict.
+
+    Returns:
+        bool: True when the box is off, or on with every enabled sub-filter
+            valid.
+    """
+    if not pd_cfg or not pd_cfg.get('enabled'):
+        return True
+    return (_particle_data_field_valid(pd_cfg.get('mass') or {})
+            and _particle_data_field_valid(pd_cfg.get('counts') or {}))
 
 
 def active_axes(config):
     """List the filter axes that are enabled and meaningfully configured.
 
+    A Particle Data box with invalid input is deliberately excluded here —
+    per this dialog's blocking convention, an invalid sub-filter makes the
+    whole box inactive until corrected (see :func:`particle_data_valid`).
+
     Args:
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        list: Subset of ['composition', 'count', 'threshold'].
+        list: Subset of ['composition', 'count', 'threshold',
+            'particle_data'].
     """
     if not config:
         return []
@@ -93,9 +179,14 @@ def active_axes(config):
     if cnt.get('enabled'):
         axes.append('count')
     thr = config.get('threshold') or {}
-    if thr.get('enabled') and any(
+    if comp.get('enabled') and thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         axes.append('threshold')
+    pd = config.get('particle_data') or {}
+    if pd.get('enabled') and particle_data_valid(pd) and (
+            (pd.get('mass') or {}).get('enabled')
+            or (pd.get('counts') or {}).get('enabled')):
+        axes.append('particle_data')
     return axes
 
 
@@ -106,7 +197,7 @@ def summarize_config(config):
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        str: e.g. "Fe·Cr·Co | AND + ≥2 elem", or "No filter" when inactive.
+        str: e.g. "Fe·Cr·Co | AND + ≥2 iso", or "No filter" when inactive.
     """
     if not config:
         return "No filter"
@@ -123,22 +214,38 @@ def summarize_config(config):
     cnt = config.get('count') or {}
     if cnt.get('enabled'):
         sym = {'exact': '=', 'min': '≥', 'max': '≤'}.get(cnt.get('op'), '=')
-        parts.append(f"{sym}{cnt.get('value', 1)} elem")
+        parts.append(f"{sym}{cnt.get('value', 1)} iso")
     thr = config.get('threshold') or {}
-    if thr.get('enabled') and any(
+    if comp.get('enabled') and thr.get('enabled') and any(
             v and v > 0 for v in (thr.get('values') or {}).values()):
         parts.append("thr")
+    pd = config.get('particle_data') or {}
+    if pd.get('enabled') and particle_data_valid(pd):
+        bits = []
+        for key, unit in (('mass', 'fg'), ('counts', 'cts')):
+            f = pd.get(key) or {}
+            if not f.get('enabled'):
+                continue
+            expr = f.get('expr', 'at_least')
+            if expr == 'at_least':
+                bits.append(f"{key[0].upper()}≥{f.get('min')}{unit}")
+            elif expr == 'at_most':
+                bits.append(f"{key[0].upper()}≤{f.get('max')}{unit}")
+            else:
+                bits.append(f"{key[0].upper()}∈[{f.get('min')},{f.get('max')}]{unit}")
+        if bits:
+            parts.append(' & '.join(bits))
     return ' + '.join(parts) if parts else "No filter"
 
 
 def referenced_labels(config):
-    """Collect the element labels referenced by enabled filter axes.
+    """Collect the isotope labels referenced by enabled filter axes.
 
     Args:
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        set: Referenced element label strings.
+        set: Referenced isotope label strings.
     """
     refs = set()
     if not config:
@@ -163,30 +270,30 @@ def stale_from_available(avail, config):
     the configuration so the user's setup survives upstream changes.
 
     Args:
-        avail (set): Available element labels in the sample's data.
+        avail (set): Available isotope labels in the sample's data.
         config (dict): A per-sample filter configuration dict.
 
     Returns:
-        set: Stale element label strings.
+        set: Stale isotope label strings.
     """
     return {lbl for lbl in referenced_labels(config) if lbl not in avail}
 
 
 def detected_labels(particle, thr_unit, thr_values):
-    """Build the set of element labels detected in a particle.
+    """Build the set of isotope labels detected in a particle.
 
-    Detection means signal > 0 in ``elements``; if a per-element threshold
+    Detection means signal > 0 in ``elements``; if a per-isotope threshold
     is configured, the value in the threshold unit dict must also reach it,
     so near-zero detections don't count as "present".
 
     Args:
         particle (dict): One particle dict.
-        thr_unit (str): 'elements' or 'element_mass_fg'.
+        thr_unit (str): 'elements' or 'element_mass_fg' (data schema keys).
         thr_values (dict): Mapping label -> minimum value, already pruned of
             stale and zero entries; empty when the threshold axis is off.
 
     Returns:
-        set: Detected element labels.
+        set: Detected isotope labels.
     """
     els = particle.get('elements') or {}
     detected = set()
@@ -214,33 +321,152 @@ def detected_labels(particle, thr_unit, thr_values):
     return detected
 
 
+def _composition_passes(comp_labels, mode, detected):
+    """Evaluate the isotopic composition axis for one particle.
+
+    Each NOT(...) variant is computed by negating the corresponding base
+    (AND / OR / EXACT) boolean, never by re-deriving it from negated
+    per-isotope flags — that avoids accidentally flipping a quantifier.
+
+    Args:
+        comp_labels (set): Effective (non-stale) composition labels.
+        mode (str): 'AND', 'OR', 'EXACT', 'NOT(AND)', 'NOT(OR)' or
+            'NOT(EXACT)'.
+        detected (set): Isotope labels detected in the particle.
+
+    Returns:
+        bool: True if the particle satisfies this axis.
+    """
+    base_mode = _NOT_MODES.get(mode, mode)
+    if base_mode == 'AND':
+        result = comp_labels <= detected
+    elif base_mode == 'OR':
+        result = bool(comp_labels & detected)
+    elif base_mode == 'EXACT':
+        result = detected == comp_labels
+    else:
+        result = True
+    if mode in _NOT_MODES:
+        result = not result
+    return result
+
+
+def _particle_scalar_mass_fg(particle):
+    """Read a particle's whole-particle mass total (fg), if computed.
+
+    ``particle['particle_mass_fg']`` is a dict keyed by element/isotope
+    label (individual elements' contributions), not a usable whole-particle
+    value — the real per-particle total lives in
+    ``particle['totals']['total_particle_mass_fg']`` (summed across
+    elements in ``mainwindow.py``'s mass-conversion pass; mass is additive,
+    so this sum is physically valid). Returns None when not yet computed
+    (e.g. before that conversion pass has run).
+
+    Args:
+        particle (dict): One particle dict.
+
+    Returns:
+        float or None.
+    """
+    return (particle.get('totals') or {}).get('total_particle_mass_fg')
+
+
+def _particle_scalar_counts(particle):
+    """Read a particle's whole-particle raw signal count (machine
+    response, dimensionless — same unit/source as the "Counts (elements)"
+    Per-isotope signal threshold option, NOT a count of isotopes/elements).
+
+    There is no top-level ``particle['total_counts']`` on the particle
+    dicts that actually reach this filter — peak detection computes a
+    ``total_counts`` value per isotope internally
+    (``processing/peak_detection.py:1309/1361``), but only its per-isotope
+    breakdown survives into the final particle dict, as
+    ``particle['elements']`` (``processing/peak_detection.py:2129-2141``).
+    That's the exact same dict ``detected_labels()`` already sums/reads
+    for the (working) Per-isotope signal threshold feature. Summing it
+    here is the whole-particle total in the same unit — physically valid
+    since raw counts are additive across isotopes.
+
+    Args:
+        particle (dict): One particle dict.
+
+    Returns:
+        float: Sum of raw per-isotope counts; 0.0 if ``elements`` is empty
+            or absent.
+    """
+    els = particle.get('elements') or {}
+    total = 0.0
+    for v in els.values():
+        try:
+            if v is not None and v > 0:
+                total += v
+        except TypeError:
+            continue
+    return total
+
+
+_PD_SCALAR_GETTERS = {
+    'mass': _particle_scalar_mass_fg,
+    'counts': _particle_scalar_counts,
+}
+
+
+def _particle_data_field_passes(particle, key, field):
+    """Evaluate one Particle Data sub-filter (mass or counts).
+
+    Bounds are inclusive on both ends (a particle exactly at "min" or
+    "max" passes), consistent for both "at least"/"at most" and "between".
+
+    Args:
+        particle (dict): One particle dict.
+        key (str): 'mass' or 'counts'.
+        field (dict): {'enabled', 'expr', 'min', 'max'}.
+
+    Returns:
+        bool: True if the sub-filter is inactive, or the particle's value
+            satisfies it.
+    """
+    if not field or not field.get('enabled'):
+        return True
+    try:
+        val = float(_PD_SCALAR_GETTERS[key](particle))
+    except (TypeError, ValueError):
+        return False
+    if val != val:  # NaN
+        return False
+    expr = field.get('expr', 'at_least')
+    if expr == 'at_least':
+        return val >= field.get('min')
+    if expr == 'at_most':
+        return val <= field.get('max')
+    if expr == 'between':
+        return field.get('min') <= val <= field.get('max')
+    return True
+
+
 def particle_passes(particle, comp_labels, mode, count_cfg,
-                    thr_unit, thr_values):
+                    thr_unit, thr_values, particle_data=None):
     """Evaluate every active filter axis against one particle (AND logic).
 
     Args:
         particle (dict): One particle dict.
         comp_labels (set): Effective (non-stale) composition labels, empty
             when the composition axis is inactive.
-        mode (str): 'AND', 'OR' or 'EXACT'.
+        mode (str): 'AND', 'OR', 'EXACT', 'NOT(AND)', 'NOT(OR)' or
+            'NOT(EXACT)'.
         count_cfg (dict): {'op': 'exact'|'min'|'max', 'value': int} or None.
         thr_unit (str): Threshold unit key.
-        thr_values (dict): Effective per-element thresholds.
+        thr_values (dict): Effective per-isotope thresholds.
+        particle_data (dict): Effective {'mass': field, 'counts': field}
+            sub-filters, or None when the Particle Data axis is inactive.
 
     Returns:
         bool: True if the particle passes every active filter.
     """
     detected = detected_labels(particle, thr_unit, thr_values)
     if comp_labels:
-        if mode == 'AND':
-            if not comp_labels <= detected:
-                return False
-        elif mode == 'OR':
-            if not (comp_labels & detected):
-                return False
-        elif mode == 'EXACT':
-            if detected != comp_labels:
-                return False
+        if not _composition_passes(comp_labels, mode, detected):
+            return False
     if count_cfg:
         n = len(detected)
         op = count_cfg.get('op', 'min')
@@ -251,6 +477,11 @@ def particle_passes(particle, comp_labels, mode, count_cfg,
             return False
         if op == 'max' and n > val:
             return False
+    if particle_data:
+        for key in ('mass', 'counts'):
+            if not _particle_data_field_passes(
+                    particle, key, particle_data.get(key)):
+                return False
     return True
 
 
@@ -262,11 +493,11 @@ def effective_criteria(config, stale):
 
     Args:
         config (dict): A per-sample filter configuration dict.
-        stale (set): Stale element labels to ignore.
+        stale (set): Stale isotope labels to ignore.
 
     Returns:
-        tuple: (comp_labels, mode, count_cfg, thr_unit, thr_values) ready
-            for :func:`particle_passes`.
+        tuple: (comp_labels, mode, count_cfg, thr_unit, thr_values,
+            particle_data) ready for :func:`particle_passes`.
     """
     comp = config.get('composition') or {}
     comp_labels = set()
@@ -280,11 +511,107 @@ def effective_criteria(config, stale):
                  if cnt.get('enabled') else None)
     thr = config.get('threshold') or {}
     thr_unit, thr_values = 'elements', {}
-    if thr.get('enabled'):
+    if comp.get('enabled') and thr.get('enabled'):
         thr_unit = thr.get('unit', 'elements')
         thr_values = {lbl: v for lbl, v in (thr.get('values') or {}).items()
                       if v and v > 0 and lbl not in stale}
-    return comp_labels, mode, count_cfg, thr_unit, thr_values
+    pd = config.get('particle_data') or {}
+    particle_data = None
+    if pd.get('enabled') and particle_data_valid(pd):
+        particle_data = {
+            'mass': pd.get('mass') or _default_particle_data_field(),
+            'counts': pd.get('counts') or _default_particle_data_field(),
+        }
+    return comp_labels, mode, count_cfg, thr_unit, thr_values, particle_data
+
+
+def _expand_upstream_entries(u):
+    """Flatten ONE upstream dict into source entries, with no cross-stream
+    dedup — every named sample inside it becomes its own entry, even if
+    another upstream dict (or another name in this same one) repeats the
+    name. This is the shared expansion step behind both
+    :func:`normalize_sources` (which dedups on top of this) and duplicate-
+    sample detection (which needs to see the un-deduped list to notice a
+    collision before it gets silently collapsed).
+
+    Args:
+        u (dict): One upstream data dict.
+
+    Returns:
+        list: Source entries with keys 'name', 'origin', 'particles',
+            'total', 'sample_data', 'conc', 'isotopes' and 'parent_window'.
+    """
+    if not u or u.get('type') not in _FILTERABLE_TYPES:
+        return []
+    out = []
+    if u.get('type') == 'multiple_sample_data':
+        by_name, order = {}, []
+        for p in u.get('particle_data') or []:
+            s = p.get('source_sample', '')
+            if s not in by_name:
+                by_name[s] = []
+                order.append(s)
+            by_name[s].append(p)
+        names = list(u.get('sample_names') or order)
+        for name in names:
+            if not name:
+                continue
+            particles = by_name.get(name, [])
+            out.append({
+                'name': name,
+                'origin': 'multi',
+                'particles': particles,
+                'total': len(particles),
+                'sample_data': (u.get('data') or {}).get(name),
+                'conc': (u.get('concentration_meta') or {}).get(name),
+                'isotopes': u.get('selected_isotopes') or [],
+                'parent_window': u.get('parent_window'),
+            })
+    else:
+        name = u.get('sample_name') or 'Sample'
+        particles = u.get('particle_data') or []
+        out.append({
+            'name': name,
+            'origin': 'single',
+            'particles': particles,
+            # Not u.get('total_particles', ...): that field is the
+            # sample node's pre-isotope-selection raw count, which
+            # doesn't match what actually enters the filter once the
+            # sample node's isotope selection has narrowed 'particles'.
+            'total': len(particles),
+            'sample_data': u.get('data'),
+            'conc': (u.get('concentration_meta') or {}).get(name),
+            'isotopes': u.get('selected_isotopes') or [],
+            'parent_window': u.get('parent_window'),
+        })
+    return out
+
+
+def _disambiguate_name(name, seen):
+    """Return a unique sample name, appending ``" (N)"`` on collision.
+
+    When ``name`` is already taken (present in ``seen``), the smallest free
+    ``"name (2)"``, ``"name (3)"``, … is returned instead of dropping the
+    entry. This is deliberately naive: a name that already ends in a literal
+    ``" (2)"`` simply gets another suffix appended (``"S1 (2) (2)"``) rather
+    than trying to parse and increment the existing number — same lightweight
+    rule the classifier relies on so two identically-named input samples both
+    stay visible and independently configurable instead of one silently
+    winning (see :func:`normalize_sources`).
+
+    Args:
+        name (str): The desired sample name.
+        seen (set): Names already assigned in this pass.
+
+    Returns:
+        str: ``name`` if free, else the first free ``"name (N)"``.
+    """
+    if name not in seen:
+        return name
+    k = 2
+    while f"{name} ({k})" in seen:
+        k += 1
+    return f"{name} ({k})"
 
 
 def normalize_sources(upstreams):
@@ -293,7 +620,14 @@ def normalize_sources(upstreams):
     Every incoming sample — whether it arrives from a Single Sample node or
     as one of the samples / summed groups inside a Multi-Sample stream —
     becomes one entry, so the dialog can show a single easy-to-read list.
-    Duplicate sample names are listed once (first occurrence wins).
+    Same-named samples are NOT dropped: the second and later occurrences are
+    disambiguated with a ``" (N)"`` suffix (see :func:`_disambiguate_name`)
+    so every distinct input sample stays visible and independently
+    addressable — the user may deliberately wire two instances of the same
+    sample in to configure them differently. The particle payloads keep their
+    original ``source_sample`` tag; each consumer retags to the (possibly
+    renamed) entry name itself when it needs the grouping to follow the new
+    name.
 
     Args:
         upstreams (list): Upstream data dicts from every input link.
@@ -304,59 +638,166 @@ def normalize_sources(upstreams):
     """
     sources, seen = [], set()
     for u in upstreams or []:
-        if not u or u.get('type') not in _FILTERABLE_TYPES:
-            continue
-        if u.get('type') == 'multiple_sample_data':
-            by_name, order = {}, []
-            for p in u.get('particle_data') or []:
-                s = p.get('source_sample', '')
-                if s not in by_name:
-                    by_name[s] = []
-                    order.append(s)
-                by_name[s].append(p)
-            names = list(u.get('sample_names') or order)
-            for name in names:
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                particles = by_name.get(name, [])
-                sources.append({
-                    'name': name,
-                    'origin': 'multi',
-                    'particles': particles,
-                    'total': len(particles),
-                    'sample_data': (u.get('data') or {}).get(name),
-                    'conc': (u.get('concentration_meta') or {}).get(name),
-                    'isotopes': u.get('selected_isotopes') or [],
-                    'parent_window': u.get('parent_window'),
-                })
-        else:
-            name = u.get('sample_name') or 'Sample'
-            if name in seen:
+        for entry in _expand_upstream_entries(u):
+            if not entry['name']:
                 continue
+            name = _disambiguate_name(entry['name'], seen)
             seen.add(name)
-            particles = u.get('particle_data') or []
-            sources.append({
-                'name': name,
-                'origin': 'single',
-                'particles': particles,
-                'total': u.get('total_particles', len(particles)),
-                'sample_data': u.get('data'),
-                'conc': (u.get('concentration_meta') or {}).get(name),
-                'isotopes': u.get('selected_isotopes') or [],
-                'parent_window': u.get('parent_window'),
-            })
+            if name != entry['name']:
+                entry = dict(entry, name=name)
+            sources.append(entry)
     return sources
 
 
+def _duplicate_signature(entry_a, entry_b):
+    """Stable, content-based key identifying a suspected-duplicate pair.
+
+    Based on names and particle counts (not node/link identity, which isn't
+    stable across a project save/load) so a remembered resolution
+    (:attr:`ParticleFilterNode._duplicate_resolutions`) still applies after
+    reconnecting or reopening the project, as long as the same two sample
+    "shapes" recur.
+
+    Args:
+        entry_a (dict): A source entry (see :func:`_expand_upstream_entries`).
+        entry_b (dict): Another source entry being compared against it.
+
+    Returns:
+        str: Order-independent signature string.
+    """
+    pair = sorted([(entry_a['name'], entry_a['total']),
+                   (entry_b['name'], entry_b['total'])])
+    return f"{pair[0][0]}|{pair[0][1]}|{pair[1][0]}|{pair[1][1]}"
+
+
+def _apply_duplicate_resolutions(entries, resolutions):
+    """Apply previously-decided duplicate-sample resolutions to a raw
+    (un-deduped) entry list, before the final same-name dedup in
+    :func:`resolve_and_normalize_sources`.
+
+    Args:
+        entries (list): Un-deduped source entries from
+            :func:`_expand_upstream_entries`.
+        resolutions (dict): Signature -> resolution dict, as recorded by
+            ``ParticleFilterNode._warn_duplicate_source``. Each resolution
+            has an 'action' of 'keep_separate', 'combine', or 'ignore'.
+
+    Returns:
+        list: Transformed entries (still possibly containing same-name
+            pairs the dedup step downstream will then collapse normally).
+    """
+    if not resolutions or not entries:
+        return entries
+    by_sig = {}
+    for i, e in enumerate(entries):
+        for j, o in enumerate(entries):
+            if i >= j:
+                continue
+            if e['name'] != o['name'] and e['total'] != o['total']:
+                continue
+            sig = _duplicate_signature(e, o)
+            res = resolutions.get(sig)
+            if res:
+                by_sig.setdefault(sig, []).append((i, j, res))
+
+    drop = set()
+    renames = {}
+    combine_groups = []
+    for sig, pairs in by_sig.items():
+        i, j, res = pairs[0]
+        action = res.get('action')
+        if action == 'keep_separate':
+            # Only the entry matching what was originally flagged as "new"
+            # gets renamed — identified by matching name+total against the
+            # stored original signature half tagged 'target'.
+            target_name, target_total = res.get('target', (None, None))
+            for idx in (i, j):
+                e = entries[idx]
+                if e['name'] == target_name and e['total'] == target_total:
+                    renames[idx] = res.get('rename_to') or e['name']
+        elif action == 'combine':
+            combine_groups.append((i, j, res.get('combined_name') or 'Combined'))
+        elif action == 'ignore':
+            target_name, target_total = res.get('target', (None, None))
+            for idx in (i, j):
+                e = entries[idx]
+                if e['name'] == target_name and e['total'] == target_total:
+                    drop.add(idx)
+                    # Drop only ONE of the pair. When the two duplicates are
+                    # identical in both name AND count, the target matches
+                    # both entries — without this break we'd drop the pair
+                    # entirely and emit nothing, instead of ignoring one.
+                    break
+
+    out = []
+    combined_idx = {}
+    for i, j, cname in combine_groups:
+        combined_idx[i] = cname
+        combined_idx[j] = cname
+    used_combine = set()
+    for idx, e in enumerate(entries):
+        if idx in drop:
+            continue
+        if idx in combined_idx:
+            if idx in used_combine:
+                continue
+            cname = combined_idx[idx]
+            group_indices = [k for k, v in combined_idx.items() if v == cname]
+            used_combine.update(group_indices)
+            members = [entries[k] for k in group_indices]
+            merged_particles = []
+            for m in members:
+                merged_particles.extend(m['particles'])
+            base = members[0]
+            out.append(dict(base, name=cname, particles=merged_particles,
+                            total=len(merged_particles)))
+            continue
+        if idx in renames:
+            out.append(dict(e, name=renames[idx]))
+        else:
+            out.append(e)
+    return out
+
+
+def resolve_and_normalize_sources(upstreams, resolutions=None):
+    """Like :func:`normalize_sources`, but first applies any remembered
+    duplicate-sample resolutions so a decision the user already made
+    (rename, combine, or ignore) is honored on every subsequent recompute
+    instead of only at the moment it was detected.
+
+    Args:
+        upstreams (list): Upstream data dicts from every input link.
+        resolutions (dict): ``ParticleFilterNode._duplicate_resolutions``,
+            or None (behaves exactly like :func:`normalize_sources`).
+
+    Returns:
+        list: Source entries, same shape as :func:`normalize_sources`.
+    """
+    raw = []
+    for u in upstreams or []:
+        raw.extend(_expand_upstream_entries(u))
+    raw = _apply_duplicate_resolutions(raw, resolutions or {})
+    out, seen = [], set()
+    for e in raw:
+        if not e['name']:
+            continue
+        name = _disambiguate_name(e['name'], seen)
+        seen.add(name)
+        if name != e['name']:
+            e = dict(e, name=name)
+        out.append(e)
+    return out
+
+
+
 def source_labels(source):
-    """Collect the element labels available in one source entry.
+    """Collect the isotope labels available in one source entry.
 
     Args:
         source (dict): Source entry from :func:`normalize_sources`.
 
     Returns:
-        set: Available element label strings.
+        set: Available isotope label strings.
     """
     labels = set()
     for iso in source.get('isotopes') or []:
@@ -481,15 +922,198 @@ def merge_single_sources(sources, name):
     }
 
 
+_FILT_SUFFIX_RE = re.compile(r'^(?P<base>.*?)\s*\(filt x(?P<n>\d+)\)\s*$')
+
+
+def _bump_filt_suffix(name):
+    """Append or increment a ``"(filt xN)"`` provenance suffix on a sample name.
+
+    Every pass through a Particle Filter stamps its output samples with this
+    suffix so a downstream node (and the user) can tell a filtered sample from
+    an unfiltered one, and see how many filter hops it has been through. The
+    count reflects filter hops only — it is bumped unconditionally, even by a
+    filter with no active criteria (an inert pass-through still counts as a
+    hop), so the number is stable regardless of the filter's configuration.
+
+    A name that already carries the suffix has its number incremented
+    (``"S1 (filt x1)"`` → ``"S1 (filt x2)"``); a fresh name gains
+    ``"(filt x1)"``. A merged/grouped output (e.g. ``"Combined"`` or a custom
+    group name) is a fresh name and therefore starts back at ``x1`` — the
+    prior per-member hop counts are genuinely ambiguous once merged, so this
+    just records "filtered by this node" rather than fabricating a combined
+    count.
+
+    Args:
+        name (str): The sample name to stamp.
+
+    Returns:
+        str: The name with its filter-provenance suffix added/incremented.
+    """
+    m = _FILT_SUFFIX_RE.match(name or '')
+    if m:
+        return f"{m.group('base')} (filt x{int(m.group('n')) + 1})"
+    return f"{name} (filt x1)"
+
+
+def _retag_copy(p, name):
+    """Shallow-copy a particle and regroup the copy under ``name``.
+
+    Unlike :func:`retag_particles` (which mutates in place, for particles the
+    caller already owns), this never touches the input dict — used when the
+    particles are still shared references to upstream data that must not be
+    mutated. The previous ``source_sample`` is preserved in ``original_sample``.
+
+    Args:
+        p (dict): One particle dict (possibly an upstream reference).
+        name (str): The new sample name.
+
+    Returns:
+        dict: A retagged shallow copy.
+    """
+    c = p.copy()
+    if c.get('source_sample') != name:
+        if c.get('source_sample'):
+            c.setdefault('original_sample', c['source_sample'])
+        c['source_sample'] = name
+    return c
+
+
+def _apply_filt_provenance(out):
+    """Stamp a filter output dict's sample names with ``"(filt xN)"``.
+
+    Renames every sample-facing name in ``out`` (``sample_name`` /
+    ``sample_names`` plus the matching ``data`` / ``concentration_meta`` keys
+    and each particle's ``source_sample``) via :func:`_bump_filt_suffix`.
+    Particles are copied, never mutated, so this is safe on the fast-path
+    returns where ``particle_data`` may still reference upstream particles.
+    Non-sample dict types (which a filter can't meaningfully stamp) pass
+    through unchanged.
+
+    Args:
+        out (dict): A filter output data dict.
+
+    Returns:
+        dict: A new dict with stamped names, or ``out`` unchanged when it is
+            not a sample/multiple-sample payload.
+    """
+    if not isinstance(out, dict):
+        return out
+    t = out.get('type')
+    if t == 'sample_data':
+        old = out.get('sample_name') or 'Sample'
+        new = _bump_filt_suffix(old)
+        out = dict(out)
+        out['sample_name'] = new
+        cm = out.get('concentration_meta')
+        if isinstance(cm, dict) and old in cm:
+            cm = dict(cm)
+            cm[new] = cm.pop(old)
+            out['concentration_meta'] = cm
+        pd = out.get('particle_data')
+        if isinstance(pd, list):
+            out['particle_data'] = [_retag_copy(p, new) for p in pd]
+        return out
+    if t == 'multiple_sample_data':
+        names = list(out.get('sample_names') or [])
+        rename = {n: _bump_filt_suffix(n) for n in names}
+        out = dict(out)
+        out['sample_names'] = [rename[n] for n in names]
+        data = out.get('data')
+        if isinstance(data, dict):
+            out['data'] = {rename.get(k, k): v for k, v in data.items()}
+        cm = out.get('concentration_meta')
+        if isinstance(cm, dict):
+            out['concentration_meta'] = {
+                rename.get(k, k): v for k, v in cm.items()}
+        pd = out.get('particle_data')
+        if isinstance(pd, list):
+            out['particle_data'] = [
+                _retag_copy(p, rename.get(p.get('source_sample'),
+                                          p.get('source_sample')))
+                for p in pd]
+        return out
+    return out
+
+
+def build_multi_sample_dict(sources, parent_window=None):
+    """Assemble a ``multiple_sample_data`` dict from normalized source entries.
+
+    Used to combine several input links into one multi-sample stream while
+    keeping every sample DISTINCT (the classifier's multi-input path): each
+    entry in ``sources`` becomes its own sample, so two links carrying the
+    same-named sample stay separate under their disambiguated names (see
+    :func:`normalize_sources`) rather than collapsing into one pooled bucket.
+    Per-sample ``data`` and ``concentration_meta`` are preserved. Particles
+    are only copied when their ``source_sample`` tag needs to change to match a
+    disambiguated name; otherwise the upstream references are reused, so a
+    caller that mutates the result's particles must copy first (the classifier
+    relabel step already copies every particle).
+
+    Args:
+        sources (list): Source entries from :func:`normalize_sources`.
+        parent_window: Fallback parent window for the assembled dict.
+
+    Returns:
+        dict | None: A ``multiple_sample_data`` dict, or None if empty.
+    """
+    if not sources:
+        return None
+    combined = []
+    for s in sources:
+        name = s['name']
+        for p in s.get('particles') or []:
+            if p.get('source_sample') == name:
+                combined.append(p)
+            else:
+                combined.append(_retag_copy(p, name))
+    adt, csd = {}, {}
+    for s in sources:
+        sd = s.get('sample_data')
+        if not sd:
+            continue
+        csd[s['name']] = sd
+        for dt, dv in sd.items():
+            if isinstance(dv, dict):
+                adt.setdefault(dt, {})
+                for el, val in dv.items():
+                    adt[dt].setdefault(el, []).append(val)
+    isotopes, seen = [], set()
+    for s in sources:
+        for iso in s.get('isotopes') or []:
+            lbl = iso.get('label') if isinstance(iso, dict) else str(iso)
+            if lbl and lbl not in seen:
+                seen.add(lbl)
+                isotopes.append(iso)
+    pw = next((s.get('parent_window') for s in sources
+               if s.get('parent_window')), parent_window)
+    names = [s['name'] for s in sources]
+    return {
+        'type': 'multiple_sample_data',
+        'sample_names': names,
+        'original_sample_names': list(names),
+        'sample_config': None,
+        'data_types': adt,
+        'data': csd,
+        'particle_data': combined,
+        'selected_isotopes': isotopes,
+        'total_particles': sum(s.get('total', 0) for s in sources),
+        'filtered_particles': len(combined),
+        'sum_replicates': False,
+        'concentration_meta': {
+            s['name']: s.get('conc') or _empty_conc_meta() for s in sources},
+        'parent_window': pw,
+    }
+
+
 def prune_config_to_labels(config, labels):
     """Copy a filter configuration keeping only criteria for given labels.
 
     Used by "Apply to all samples" so a copied filter never starts out
-    stale on samples that lack some elements.
+    stale on samples that lack some isotopes.
 
     Args:
         config (dict): A per-sample filter configuration dict.
-        labels (set): Element labels available in the target sample.
+        labels (set): Isotope labels available in the target sample.
 
     Returns:
         dict: Deep copy of the configuration restricted to ``labels``.
@@ -510,9 +1134,10 @@ class ParticleFilterDialog(QDialog):
 
     Left pane: every incoming sample with a check (include / exclude) and a
     short tag showing its filter. Right pane: the filter settings of the
-    sample currently clicked — element composition (chips + AND/OR/EXACT),
-    element count, and per-element thresholds. Each sample keeps its own
-    settings; "Apply to all samples" copies the current one everywhere.
+    sample currently clicked — isotopic composition (chips + AND/OR/EXACT/
+    NOT variants), isotopic count, per-isotope thresholds, and particle
+    data (mass / counts). Each sample keeps its own settings; "Apply to
+    selected samples" copies the current one to every checked sample.
     The live preview runs on the upstream snapshot fetched once at dialog
     open and is debounced (~250 ms) after the last user change.
     """
@@ -520,7 +1145,10 @@ class ParticleFilterDialog(QDialog):
     _PREVIEW_DEBOUNCE_MS = 250
 
     def __init__(self, parent, upstreams, sample_filters=None,
-                 selected_sources=None, merged_name="Combined"):
+                 selected_sources=None, merged_name="Combined",
+                 owner_node=None, suppress_stale_warning=False,
+                 merge_singles=True, sample_groups=None,
+                 duplicate_resolutions=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -532,15 +1160,26 @@ class ParticleFilterDialog(QDialog):
 
         import copy as _copy
         self.parent_window = parent
+        self._owner_node = owner_node
+        self._suppress_stale_warning = bool(suppress_stale_warning)
         if isinstance(upstreams, dict):
             upstreams = [upstreams]
         self._upstreams = [u for u in (upstreams or []) if u]
-        self._sources = normalize_sources(self._upstreams)
+        # Resolution-aware, not plain normalize_sources: a duplicate the
+        # user chose to "keep as two separate samples" must show up here as
+        # two distinctly-named, independently-configurable rows, or the
+        # whole point of that choice (setting different filters on each)
+        # would be unreachable from this dialog.
+        self._duplicate_resolutions = duplicate_resolutions or {}
+        self._sources = resolve_and_normalize_sources(
+            self._upstreams, self._duplicate_resolutions)
         self._src_by_name = {s['name']: s for s in self._sources}
         self._filters = _copy.deepcopy(sample_filters) if sample_filters else {}
+        self._groups = _copy.deepcopy(sample_groups) if sample_groups else {}
         self._selected_sources = (list(selected_sources)
                                   if selected_sources is not None else None)
         self._merged_name = merged_name or "Combined"
+        self._merge_singles_init = bool(merge_singles)
         self._n_singles = sum(1 for s in self._sources
                               if s.get('origin') == 'single')
 
@@ -564,24 +1203,33 @@ class ParticleFilterDialog(QDialog):
             self._list.setCurrentRow(0)
         else:
             self._load_pane(None)
+        self._update_select_all_label()
         self._update_preview()
 
     @staticmethod
     def _load_elem_data():
         """Load the periodic-table element metadata used by the chips.
 
+        Cached process-wide: this is static reference data, but fetching it
+        meant building and destroying a whole CompactPeriodicTableWidget —
+        ~0.5s of pure overhead on EVERY dialog open (the dominant cost of
+        double-clicking a filter). Built once, reused thereafter.
+
         Returns:
             list: Element dicts, or an empty list when unavailable.
         """
+        global _ELEM_DATA_CACHE
+        if _ELEM_DATA_CACHE is not None:
+            return _ELEM_DATA_CACHE
         try:
             from results.results_periodic import CompactPeriodicTableWidget
             _tmp = CompactPeriodicTableWidget()
-            elem_data = _tmp.get_elements()
+            _ELEM_DATA_CACHE = _tmp.get_elements()
             _tmp.deleteLater()
-            return elem_data
         except Exception:
             _itk_log.exception("Handled exception in _load_elem_data")
-            return []
+            _ELEM_DATA_CACHE = []
+        return _ELEM_DATA_CACHE
 
     @staticmethod
     def _style():
@@ -690,18 +1338,26 @@ class ParticleFilterDialog(QDialog):
             self._list.addItem(ph)
         lv.addWidget(self._list, 1)
 
+        self._merge_chk = None
         self._merge_edit = None
         if self._n_singles >= 2:
+            self._merge_chk = QCheckBox("Merge single samples into one")
+            self._merge_chk.setChecked(self._merge_singles_init)
+            self._merge_chk.toggled.connect(self._on_merge_toggle)
+            lv.addWidget(self._merge_chk)
             merge_lbl = QLabel(
                 "Single-sample inputs exit as ONE sample, named:")
             merge_lbl.setWordWrap(True)
             merge_lbl.setStyleSheet(
                 f"color:{p.text_muted}; font-size:11px; font-weight:400;")
+            merge_lbl.setEnabled(self._merge_singles_init)
             lv.addWidget(merge_lbl)
             self._merge_edit = QLineEdit(self._merged_name)
             self._merge_edit.setPlaceholderText("Combined")
+            self._merge_edit.setEnabled(self._merge_singles_init)
             self._merge_edit.textChanged.connect(self._schedule_preview)
             lv.addWidget(self._merge_edit)
+            self._merge_lbl = merge_lbl
         splitter.addWidget(left)
 
         right = QWidget()
@@ -714,7 +1370,11 @@ class ParticleFilterDialog(QDialog):
         self._pane_title.setStyleSheet(
             f"font-size:14px; font-weight:700; color:{p.text_primary};")
         head.addWidget(self._pane_title, 1)
-        self._btn_all = QPushButton("Apply to all samples")
+        self._btn_select_all = QPushButton("Select all samples")
+        self._btn_select_all.setFixedHeight(28)
+        self._btn_select_all.clicked.connect(self._toggle_select_all)
+        head.addWidget(self._btn_select_all)
+        self._btn_all = QPushButton("Apply to selected samples")
         self._btn_all.setFixedHeight(28)
         self._btn_all.clicked.connect(self._apply_to_all)
         head.addWidget(self._btn_all)
@@ -727,6 +1387,15 @@ class ParticleFilterDialog(QDialog):
         pv = QVBoxLayout(self._pane)
         pv.setContentsMargins(0, 0, 6, 0)
         pv.setSpacing(8)
+        group_row = QHBoxLayout()
+        self._group_lbl = QLabel("Group for single samples only (optional):")
+        group_row.addWidget(self._group_lbl)
+        self._group_edit = QLineEdit()
+        self._group_edit.setPlaceholderText(
+            "e.g. Group A — samples sharing a name merge together")
+        self._group_edit.textChanged.connect(self._schedule_preview)
+        group_row.addWidget(self._group_edit, 1)
+        pv.addLayout(group_row)
         self._build_pane(pv)
         pv.addStretch()
         self._pane_scroll.setWidget(self._pane)
@@ -745,19 +1414,19 @@ class ParticleFilterDialog(QDialog):
         root.addWidget(self._preview)
 
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
+        bb.accepted.connect(self._try_accept)
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
     def _build_pane(self, pv):
-        """Build the three filter-axis sections of the right pane.
+        """Build the four filter-axis sections of the right pane.
 
         Args:
             pv (QVBoxLayout): Layout of the right pane.
         """
         p = _app_theme.palette
 
-        self.grp_comp = QGroupBox("Element Composition")
+        self.grp_comp = QGroupBox("Isotopic Composition")
         self.grp_comp.setCheckable(True)
         cv = QVBoxLayout(self.grp_comp)
         cv.setSpacing(8)
@@ -768,11 +1437,18 @@ class ParticleFilterDialog(QDialog):
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Match mode:"))
         self.cmb_mode = QComboBox()
-        self.cmb_mode.addItem("AND — contains all selected elements", "AND")
+        self.cmb_mode.addItem("AND: contains at least all selected isotopes", "AND")
         self.cmb_mode.addItem(
-            "OR — contains at least one selected element", "OR")
+            "OR: contains at least one selected isotope", "OR")
         self.cmb_mode.addItem(
-            "EXACT — only the selected elements, no others", "EXACT")
+            "EXACT: only the selected isotopes, no others", "EXACT")
+        self.cmb_mode.addItem(
+            "NOT(AND) : missing at least one selected isotope", "NOT(AND)")
+        self.cmb_mode.addItem(
+            "NOT(OR): contains none of the selected isotopes", "NOT(OR)")
+        self.cmb_mode.addItem(
+            "NOT(EXACT):any set other than exactly the selected isotopes",
+            "NOT(EXACT)")
         self.cmb_mode.currentIndexChanged.connect(self._schedule_preview)
         mode_row.addWidget(self.cmb_mode, 1)
         cv.addLayout(mode_row)
@@ -789,10 +1465,49 @@ class ParticleFilterDialog(QDialog):
         stale_row.addWidget(self._stale_lbl, 1)
         stale_row.addWidget(self._btn_rm_stale, 0, Qt.AlignTop)
         cv.addLayout(stale_row)
-        self.grp_comp.toggled.connect(self._schedule_preview)
+
+        # Per-isotope signal threshold lives INSIDE Isotopic Composition,
+        # not as a sibling box — it only modulates which isotopes count as
+        # "present" for composition/count matching, so it's meaningless
+        # without composition enabled (previously it was a fully
+        # independent box, which let a user configure it while composition
+        # was off; it looked "enabled" but had zero effect on filtering
+        # until composition was also turned on — a confusing silent
+        # no-op). Nesting it here plus disabling it when grp_comp is
+        # unchecked (see below) makes the dependency structural instead of
+        # just documented.
+        self.grp_thr = QGroupBox("Per-isotope signal threshold")
+        self.grp_thr.setCheckable(True)
+        tv = QVBoxLayout(self.grp_thr)
+        tv.setSpacing(8)
+        unit_row = QHBoxLayout()
+        unit_row.addWidget(QLabel("Threshold unit:"))
+        self.cmb_unit = QComboBox()
+        self.cmb_unit.addItem("Counts  (elements)", "elements")
+        self.cmb_unit.addItem("Mass, fg  (element_mass_fg)", "element_mass_fg")
+        self.cmb_unit.currentIndexChanged.connect(self._on_unit_changed)
+        unit_row.addWidget(self.cmb_unit, 1)
+        tv.addLayout(unit_row)
+        thr_hint = QLabel(
+            "Minimum value for an isotope to count as \"present\" — so "
+            "near-zero detections are ignored. Leave at 0 for no threshold.")
+        thr_hint.setWordWrap(True)
+        thr_hint.setStyleSheet(
+            f"color:{p.text_muted}; font-size:11px; font-weight:400;")
+        tv.addWidget(thr_hint)
+        self._thr_container = QWidget()
+        self._thr_form = QFormLayout(self._thr_container)
+        self._thr_form.setContentsMargins(0, 0, 0, 0)
+        self._thr_form.setSpacing(6)
+        tv.addWidget(self._thr_container)
+        self.grp_thr.toggled.connect(self._schedule_preview)
+        cv.addWidget(self.grp_thr)
+
+        self.grp_comp.toggled.connect(self.grp_thr.setEnabled)
+        self.grp_thr.setEnabled(self.grp_comp.isChecked())
         pv.addWidget(self.grp_comp)
 
-        self.grp_count = QGroupBox("Element Count")
+        self.grp_count = QGroupBox("Isotopic Count")
         self.grp_count.setCheckable(True)
         cr = QHBoxLayout(self.grp_count)
         cr.addWidget(QLabel("Keep particles with"))
@@ -806,37 +1521,147 @@ class ParticleFilterDialog(QDialog):
         self.spin_count.setRange(1, 99)
         self.spin_count.valueChanged.connect(self._schedule_preview)
         cr.addWidget(self.spin_count)
-        cr.addWidget(QLabel("detected element(s)"))
+        cr.addWidget(QLabel("Detected Isotope(s)"))
         cr.addStretch()
         self.grp_count.toggled.connect(self._schedule_preview)
         pv.addWidget(self.grp_count)
 
-        self.grp_thr = QGroupBox("Per-Element Signal Threshold")
-        self.grp_thr.setCheckable(True)
-        tv = QVBoxLayout(self.grp_thr)
-        tv.setSpacing(8)
-        unit_row = QHBoxLayout()
-        unit_row.addWidget(QLabel("Threshold unit:"))
-        self.cmb_unit = QComboBox()
-        self.cmb_unit.addItem("Counts  (elements)", "elements")
-        self.cmb_unit.addItem("Mass, fg  (element_mass_fg)", "element_mass_fg")
-        self.cmb_unit.currentIndexChanged.connect(self._on_unit_changed)
-        unit_row.addWidget(self.cmb_unit, 1)
-        tv.addLayout(unit_row)
-        thr_hint = QLabel(
-            "Minimum value for an element to count as \"present\" — so "
-            "near-zero detections are ignored. Leave at 0 for no threshold.")
-        thr_hint.setWordWrap(True)
-        thr_hint.setStyleSheet(
-            f"color:{p.text_muted}; font-size:11px; font-weight:400;")
-        tv.addWidget(thr_hint)
-        self._thr_container = QWidget()
-        self._thr_form = QFormLayout(self._thr_container)
-        self._thr_form.setContentsMargins(0, 0, 0, 0)
-        self._thr_form.setSpacing(6)
-        tv.addWidget(self._thr_container)
-        self.grp_thr.toggled.connect(self._schedule_preview)
-        pv.addWidget(self.grp_thr)
+        self.grp_pd = QGroupBox("Particle Data")
+        self.grp_pd.setCheckable(True)
+        pdv = QVBoxLayout(self.grp_pd)
+        pdv.setSpacing(8)
+        self._pd_fields = {}
+        for key, title, unit in (('mass', 'Mass', 'fg'),
+                                 ('counts', 'Counts', 'cts')):
+            self._pd_fields[key] = self._build_particle_data_field(
+                pdv, key, title, unit)
+        self.grp_pd.toggled.connect(self._schedule_preview)
+        pv.addWidget(self.grp_pd)
+
+    def _build_particle_data_field(self, parent_layout, key, title, unit):
+        """Build one Particle Data sub-filter row (Mass, Counts).
+
+        Args:
+            parent_layout (QVBoxLayout): The Particle Data box's layout.
+            key (str): 'mass' or 'counts'.
+            title (str): Checkbox label, e.g. "Mass".
+            unit (str): Fixed unit label shown next to the inputs.
+
+        Returns:
+            dict: Widget handles for this field, used by
+                :meth:`_pane_config` / :meth:`_load_pane`.
+        """
+        p = _app_theme.palette
+        box = QGroupBox(title)
+        box.setCheckable(True)
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+
+        expr_row = QHBoxLayout()
+        expr_row.addWidget(QLabel("Expression:"))
+        cmb_expr = QComboBox()
+        cmb_expr.addItem("at least", "at_least")
+        cmb_expr.addItem("at most", "at_most")
+        cmb_expr.addItem("between", "between")
+        expr_row.addWidget(cmb_expr, 1)
+        v.addLayout(expr_row)
+
+        inputs_row = QHBoxLayout()
+        lbl_min = QLabel("Minimum:")
+        edit_min = QLineEdit()
+        edit_min.setPlaceholderText(f"value in {unit}")
+        lbl_max = QLabel("Maximum:")
+        edit_max = QLineEdit()
+        edit_max.setPlaceholderText(f"value in {unit}")
+        unit_lbl = QLabel(unit)
+        unit_lbl.setStyleSheet(f"color:{p.text_muted};")
+        inputs_row.addWidget(lbl_min)
+        inputs_row.addWidget(edit_min)
+        inputs_row.addWidget(lbl_max)
+        inputs_row.addWidget(edit_max)
+        inputs_row.addWidget(unit_lbl)
+        v.addLayout(inputs_row)
+
+        err_lbl = QLabel()
+        err_lbl.setWordWrap(True)
+        err_lbl.setStyleSheet(
+            "color:#DC2626; font-size:11px; font-weight:600;")
+        err_lbl.setVisible(False)
+        v.addWidget(err_lbl)
+
+        parent_layout.addWidget(box)
+
+        fields = {'box': box, 'cmb_expr': cmb_expr, 'lbl_min': lbl_min,
+                  'edit_min': edit_min, 'lbl_max': lbl_max,
+                  'edit_max': edit_max, 'err_lbl': err_lbl}
+
+        def sync_visibility():
+            expr = cmb_expr.currentData() or 'at_least'
+            lbl_min.setVisible(expr in ('at_least', 'between'))
+            edit_min.setVisible(expr in ('at_least', 'between'))
+            lbl_max.setVisible(expr in ('at_most', 'between'))
+            edit_max.setVisible(expr in ('at_most', 'between'))
+            self._validate_particle_data_field(key, fields)
+            self._schedule_preview()
+
+        cmb_expr.currentIndexChanged.connect(sync_visibility)
+        edit_min.textChanged.connect(
+            lambda: (self._validate_particle_data_field(key, fields),
+                     self._schedule_preview()))
+        edit_max.textChanged.connect(
+            lambda: (self._validate_particle_data_field(key, fields),
+                     self._schedule_preview()))
+        box.toggled.connect(sync_visibility)
+        sync_visibility()
+        return fields
+
+    def _validate_particle_data_field(self, key, fields=None):
+        """Validate one Particle Data sub-filter's inputs and show/hide its
+        inline error message.
+
+        Args:
+            key (str): 'mass' or 'counts'.
+            fields (dict): Widget handles for this field; looked up from
+                ``self._pd_fields`` when omitted (that dict isn't
+                populated yet during the field's own initial construction,
+                so the builder passes its local ``fields`` directly).
+
+        Returns:
+            bool: True when the field is off, or on and valid.
+        """
+        f = fields if fields is not None else self._pd_fields[key]
+        err_lbl = f['err_lbl']
+        if not f['box'].isChecked():
+            err_lbl.setVisible(False)
+            return True
+        expr = f['cmb_expr'].currentData() or 'at_least'
+
+        def parse(edit):
+            txt = edit.text().strip()
+            if not txt:
+                return None, "required"
+            try:
+                v = float(txt)
+            except ValueError:
+                return None, "must be numeric"
+            if v < 0:
+                return None, "must be >= 0"
+            return v, None
+
+        msg = None
+        if expr == 'at_least':
+            _v, msg = parse(f['edit_min'])
+        elif expr == 'at_most':
+            _v, msg = parse(f['edit_max'])
+        else:
+            mn, msg_mn = parse(f['edit_min'])
+            mx, msg_mx = parse(f['edit_max'])
+            msg = msg_mn or msg_mx
+            if not msg and mn >= mx:
+                msg = "minimum must be strictly less than maximum"
+        err_lbl.setText(f"⚠ {msg}" if msg else "")
+        err_lbl.setVisible(bool(msg))
+        return msg is None
 
     @staticmethod
     def _section_label(text):
@@ -864,6 +1689,9 @@ class ParticleFilterDialog(QDialog):
         if name == self._current and not self._loading:
             cfg = self._pane_config()
         text = f"{name}   ({s['total'] if s else 0})"
+        gname = self._groups.get(name)
+        if gname:
+            text += f"\n      \U0001F517 Group: {gname}"
         if active_axes(cfg):
             text += f"\n      ⚙ {summarize_config(cfg)}"
         item.setText(text)
@@ -885,6 +1713,7 @@ class ParticleFilterDialog(QDialog):
     def _on_item_checked(self, item):
         """React to an include/exclude checkbox toggle."""
         if not self._loading:
+            self._update_select_all_label()
             self._schedule_preview()
 
     def _save_pane(self, name):
@@ -895,6 +1724,12 @@ class ParticleFilterDialog(QDialog):
         """
         if name and not self._loading:
             self._filters[name] = self._pane_config()
+            if self._src_by_name.get(name, {}).get('origin') == 'single':
+                gname = self._group_edit.text().strip()
+                if gname:
+                    self._groups[name] = gname
+                else:
+                    self._groups.pop(name, None)
 
     def _load_pane(self, name):
         """Load one sample's filter configuration into the right pane.
@@ -909,6 +1744,23 @@ class ParticleFilterDialog(QDialog):
         enabled = src is not None
         self._pane.setEnabled(enabled)
         self._btn_all.setEnabled(enabled and len(self._sources) > 1)
+        is_single = enabled and src.get('origin') == 'single'
+        self._group_edit.setEnabled(is_single)
+        self._group_lbl.setEnabled(is_single)
+        self._group_edit.setText(self._groups.get(name, '') if is_single else '')
+        if enabled and not is_single:
+            why = ("Not available — this sample is already a group summed "
+                   "upstream by a Multi-Sample node; group summing here "
+                   "only applies to individual Single Sample inputs.")
+            self._group_edit.setPlaceholderText(why)
+            self._group_edit.setToolTip(why)
+            self._group_lbl.setToolTip(why)
+        else:
+            default_hint = ("e.g. Group A — samples sharing a name merge "
+                            "together")
+            self._group_edit.setPlaceholderText(default_hint)
+            self._group_edit.setToolTip("")
+            self._group_lbl.setToolTip("")
         self._pane_title.setText(
             f"Filter — {name}" if name else "Filter — no sample")
 
@@ -957,7 +1809,49 @@ class ParticleFilterDialog(QDialog):
             cfg['threshold'].get('unit', 'elements'))))
         self._rebuild_thr_rows()
         self._refresh_stale_area()
+
+        pd = cfg.get('particle_data') or {}
+        self.grp_pd.setChecked(pd.get('enabled', False))
+        for key in ('mass', 'counts'):
+            f = self._pd_fields[key]
+            field_cfg = pd.get(key) or _default_particle_data_field()
+            f['box'].setChecked(field_cfg.get('enabled', False))
+            f['cmb_expr'].setCurrentIndex(max(0, f['cmb_expr'].findData(
+                field_cfg.get('expr', 'at_least'))))
+            mn, mx = field_cfg.get('min'), field_cfg.get('max')
+            f['edit_min'].setText('' if mn is None else _num_text(mn))
+            f['edit_max'].setText('' if mx is None else _num_text(mx))
+            self._validate_particle_data_field(key)
         self._loading = False
+
+    def _read_particle_data_field(self, key):
+        """Read one Particle Data sub-filter's widgets into a config dict.
+
+        Args:
+            key (str): 'mass' or 'counts'.
+
+        Returns:
+            dict: {'enabled', 'expr', 'min', 'max'}; 'min'/'max' are None
+                when blank or unparsable — validity is checked separately
+                by :func:`particle_data_valid`, this just reads raw state.
+        """
+        f = self._pd_fields[key]
+
+        def parse(edit):
+            txt = edit.text().strip()
+            if not txt:
+                return None
+            try:
+                return float(txt)
+            except ValueError:
+                return None
+
+        return {
+            'enabled': f['box'].isChecked(),
+            'expr': f['cmb_expr'].currentData() or 'at_least',
+            'min': parse(f['edit_min']),
+            'max': parse(f['edit_max']),
+        }
 
     def _pane_config(self):
         """Read the right pane into a filter configuration dict.
@@ -989,23 +1883,110 @@ class ParticleFilterDialog(QDialog):
                 'unit': self.cmb_unit.currentData() or 'elements',
                 'values': values,
             },
+            'particle_data': {
+                'enabled': self.grp_pd.isChecked(),
+                'mass': self._read_particle_data_field('mass'),
+                'counts': self._read_particle_data_field('counts'),
+            },
         }
 
     def _apply_to_all(self):
-        """Copy the current sample's filter to every other sample, pruned to
-        each sample's available elements so nothing starts out stale."""
+        """Copy the current sample's filter — and, for single-sample rows,
+        its Group name — to every checked ("selected for output") sample,
+        pruned to each sample's available isotopes so nothing starts out
+        stale.
+
+        "Selected" here means checked in the left list — include/exclude
+        and which-sample-is-being-edited are two independent controls (see
+        the "Check = include in output · Click = edit its filter" hint), so
+        this only touches samples the user has actually opted into the
+        output, not every connected sample regardless of inclusion.
+        """
         if not self._current:
             return
         cfg = self._pane_config()
         self._filters[self._current] = cfg
+        src_cur = self._src_by_name.get(self._current)
+        gname = (self._group_edit.text().strip()
+                 if src_cur and src_cur.get('origin') == 'single' else '')
+        if src_cur and src_cur.get('origin') == 'single':
+            if gname:
+                self._groups[self._current] = gname
+            else:
+                self._groups.pop(self._current, None)
+        checked = set(self._checked_names())
         for s in self._sources:
-            if s['name'] == self._current:
+            if s['name'] == self._current or s['name'] not in checked:
                 continue
             self._filters[s['name']] = prune_config_to_labels(
                 cfg, source_labels(s))
+            if s.get('origin') == 'single':
+                if gname:
+                    self._groups[s['name']] = gname
+                else:
+                    self._groups.pop(s['name'], None)
         for i in range(self._list.count()):
             self._refresh_row(self._list.item(i))
         self._schedule_preview()
+
+    def _toggle_select_all(self):
+        """Check every sample row, or uncheck every row if all are already
+        checked — a single button doubling as Select all / Deselect all."""
+        n = self._list.count()
+        if n == 0:
+            return
+        all_checked = all(
+            self._list.item(i).checkState() == Qt.Checked
+            for i in range(n) if self._list.item(i).data(Qt.UserRole))
+        new_state = Qt.Unchecked if all_checked else Qt.Checked
+        for i in range(n):
+            item = self._list.item(i)
+            if item.data(Qt.UserRole):
+                item.setCheckState(new_state)
+        self._update_select_all_label()
+        self._schedule_preview()
+
+    def _update_select_all_label(self):
+        """Relabel the Select-all button to reflect the current check state."""
+        if not hasattr(self, '_btn_select_all'):
+            return
+        n = self._list.count()
+        rows = [self._list.item(i) for i in range(n)]
+        rows = [it for it in rows if it.data(Qt.UserRole)]
+        all_checked = bool(rows) and all(
+            it.checkState() == Qt.Checked for it in rows)
+        self._btn_select_all.setText(
+            "Deselect all samples" if all_checked else "Select all samples")
+
+    def _on_merge_toggle(self, checked):
+        """React to the "Merge single samples into one" checkbox."""
+        if self._merge_edit is not None:
+            self._merge_edit.setEnabled(checked)
+        if getattr(self, '_merge_lbl', None) is not None:
+            self._merge_lbl.setEnabled(checked)
+        self._schedule_preview()
+
+    def get_merge_singles(self):
+        """Report whether single-sample inputs should merge into one.
+
+        Returns:
+            bool: The checkbox state, or True when fewer than two
+                single-sample inputs are connected (no checkbox exists).
+        """
+        if self._merge_chk is not None:
+            return self._merge_chk.isChecked()
+        return True
+
+    def get_sample_groups(self):
+        """Read the per-sample custom group names set for single-sample
+        inputs (empty names are dropped — they mean "no custom group").
+
+        Returns:
+            dict: Sample name -> group name, single-sample entries only.
+        """
+        if self._current:
+            self._save_pane(self._current)
+        return {k: v for k, v in self._groups.items() if v}
 
     def _on_chips_changed(self):
         """React to a chip toggle: refresh threshold rows and the preview."""
@@ -1050,7 +2031,7 @@ class ParticleFilterDialog(QDialog):
             self._thr_values[lbl] = spin.value()
 
     def _rebuild_thr_rows(self):
-        """Rebuild the threshold form: one spinbox per element selected in
+        """Rebuild the threshold form: one spinbox per isotope selected in
         the composition section, plus greyed rows for stale entries."""
         while self._thr_form.count():
             item = self._thr_form.takeAt(0)
@@ -1062,8 +2043,8 @@ class ParticleFilterDialog(QDialog):
 
         labels = [iso['label'] for iso in self._selected_isotopes()]
         if not labels and not self._stale_thr:
-            ph = QLabel("Select elements in the composition section above "
-                        "to set per-element thresholds.")
+            ph = QLabel("Select isotopes in the composition section above "
+                        "to set per-isotope thresholds.")
             ph.setWordWrap(True)
             ph.setStyleSheet(
                 f"color:{p.text_muted}; font-style:italic;"
@@ -1141,28 +2122,64 @@ class ParticleFilterDialog(QDialog):
                 "No samples checked — the filter output is empty.")
             return
         total = sum(len(s['particles']) for s in chosen)
-        kept_total, stale_all = 0, set()
-        single_kept, single_total, parts = 0, 0, []
-        chosen_singles = [s for s in chosen if s.get('origin') == 'single']
-        merging = len(chosen_singles) >= 2
+        kept_total, stale_all, kept_by_name = 0, set(), {}
         for s in chosen:
             kept, stale = apply_sample_filter(s, self._filters.get(s['name']))
             kept_total += len(kept)
             stale_all |= stale
-            if merging and s.get('origin') == 'single':
-                single_kept += len(kept)
-                single_total += len(s['particles'])
-            else:
-                parts.append(f"{s['name']}: {len(kept)}/{len(s['particles'])}")
+            kept_by_name[s['name']] = (len(kept), len(s['particles']))
+
+        chosen_singles = [s for s in chosen if s.get('origin') == 'single']
+        merge_dominant = self.get_merge_singles()
+        grouped, ungrouped, group_order = {}, [], []
+        if merge_dominant:
+            # Merge-all dominates: every single sample folds into one
+            # bucket for the preview too, regardless of any custom group
+            # name — matches the actual output logic (_get_output_data_impl).
+            ungrouped = list(chosen_singles)
+        else:
+            for s in chosen_singles:
+                gname = (self._groups.get(s['name']) or '').strip()
+                if gname:
+                    if gname not in grouped:
+                        grouped[gname] = []
+                        group_order.append(gname)
+                    grouped[gname].append(s)
+                else:
+                    ungrouped.append(s)
+        merging = len(ungrouped) >= 2 and merge_dominant
+
+        parts = []
+        for gname in group_order:
+            gk = sum(kept_by_name[s['name']][0] for s in grouped[gname])
+            gt = sum(kept_by_name[s['name']][1] for s in grouped[gname])
+            parts.append(f"{gname}: {gk}/{gt}")
         if merging:
-            parts.insert(0, f"{self.get_merged_name()}: "
-                            f"{single_kept}/{single_total}")
+            uk = sum(kept_by_name[s['name']][0] for s in ungrouped)
+            ut = sum(kept_by_name[s['name']][1] for s in ungrouped)
+            parts.append(f"{self.get_merged_name()}: {uk}/{ut}")
+        else:
+            for s in ungrouped:
+                k, t = kept_by_name[s['name']]
+                parts.append(f"{s['name']}: {k}/{t}")
+        for s in chosen:
+            if s.get('origin') != 'single':
+                k, t = kept_by_name[s['name']]
+                parts.append(f"{s['name']}: {k}/{t}")
+
         lines = [f"{kept_total} / {total} particles pass"]
-        if len(parts) > 1 or merging:
+        if parts:
             lines.append(" · ".join(parts))
+        if group_order:
+            n_grouped = sum(len(m) for m in grouped.values())
+            lines.append(
+                f"{n_grouped} sample" + ("s" if n_grouped != 1 else "")
+                + f" grouped into {len(group_order)} named group"
+                + ("s" if len(group_order) != 1 else "") + ": "
+                + ", ".join(group_order))
         if merging:
-            lines.append(f"{len(chosen_singles)} single-sample inputs exit "
-                         f"as one sample \"{self.get_merged_name()}\"")
+            lines.append(f"{len(ungrouped)} remaining single-sample inputs "
+                         f"exit as one sample \"{self.get_merged_name()}\"")
         if stale_all:
             lines.append("⚠ Ignored stale criteria: "
                          + ", ".join(sorted(stale_all)))
@@ -1177,6 +2194,95 @@ class ParticleFilterDialog(QDialog):
         if self._merge_edit is not None:
             return self._merge_edit.text().strip() or "Combined"
         return self._merged_name or "Combined"
+
+    def _try_accept(self):
+        """Block accept while the current sample's Particle Data box is
+        checked but has invalid input, so a broken filter is never applied
+        silently; otherwise remind the user that OK can change whatever
+        this filter feeds downstream, then close the dialog normally.
+
+        The reminder used to only fire when a diff against the dialog's
+        opening snapshot said something had actually changed, gated on
+        finding a currently-open downstream plot window via a
+        scene-graph walk. In practice that stayed silent even on runs
+        where the user visibly watched a downstream chart's values change
+        after clicking OK — replaced (per explicit user decision) with an
+        unconditional reminder on every OK, since "did it really change"
+        and "is a window really open somewhere downstream" are exactly the
+        two things that kept failing to detect correctly live. A per-node
+        "don't show this again" opt-out (persisted on
+        ``ParticleFilterNode.suppress_stale_warning`` and read back in
+        :meth:`ParticleFilterNode.configure`) keeps this from turning into
+        nag-ware for someone who has already acknowledged it.
+        """
+        if self.grp_pd.isChecked():
+            bad = [title for key, title in (('mass', 'Mass'),
+                                            ('counts', 'Counts'))
+                   if not self._validate_particle_data_field(key)]
+            if bad:
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self, "Invalid Particle Data filter",
+                    "Fix the highlighted Particle Data field(s) before "
+                    "continuing: " + ", ".join(bad))
+                return
+        if self._current:
+            self._save_pane(self._current)
+        if (self._merge_chk is not None and self._merge_chk.isChecked()
+                and any((v or '').strip() for v in self._groups.values())):
+            from PySide6.QtWidgets import QMessageBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Merge-all overrides custom groups")
+            box.setText(
+                "\"Merge single samples into one\" is checked, and at least "
+                "one sample also has a custom Group name set. Merge-all is "
+                "the coarser control and wins: every single-sample input "
+                "will exit as one sample named "
+                f"\"{self.get_merged_name()}\", and the custom group "
+                "name(s) will be ignored for this filter.\n\nUncheck "
+                "\"Merge single samples into one\" if you want the custom "
+                "groups to take effect instead.")
+            proceed = box.addButton("Merge anyway", QMessageBox.AcceptRole)
+            box.addButton("Go back", QMessageBox.RejectRole)
+            box.setDefaultButton(proceed)
+            box.exec()
+            if box.clickedButton() is not proceed:
+                return
+        if not self._suppress_stale_warning:
+            from PySide6.QtWidgets import QMessageBox, QCheckBox
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Downstream plots may change")
+            box.setText(
+                "This filter feeds sample selectors, other filters, and "
+                "plot/results nodes downstream — single-sample, "
+                "multi-sample, and batch alike. Applying now will pass "
+                "through with today's settings, so any open plot window "
+                "fed by this filter will update to match.\n\nIf you want "
+                "to keep a plot's current view, save it first, then come "
+                "back and apply this filter.")
+            dont_show = QCheckBox("Don't show this again for this filter")
+            box.setCheckBox(dont_show)
+            proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
+            box.addButton("Go back", QMessageBox.RejectRole)
+            box.setDefaultButton(proceed)
+            box.exec()
+            self._suppress_stale_warning_now = dont_show.isChecked()
+            if box.clickedButton() is not proceed:
+                return
+        self.accept()
+
+    def stale_warning_suppressed(self):
+        """Read whether "Don't show this again" was checked on last accept.
+
+        Returns:
+            bool: True if the reminder should be skipped for this node from
+                now on — either it was already suppressed coming in, or the
+                user just checked the box while accepting.
+        """
+        return self._suppress_stale_warning or getattr(
+            self, '_suppress_stale_warning_now', False)
 
     def get_selected_sources(self):
         """Read the include/exclude check states.
@@ -1232,13 +2338,34 @@ class ParticleFilterNode(QObject):
         self._has_output = True
         self.input_channels = ["input"]
         self.output_channels = ["output"]
+        # Unlike most node types, this one already walks every incoming
+        # link itself (see _pull_upstream_all) rather than reading a single
+        # overwritable input_data slot, so more than one upstream is safe —
+        # opt in to the Manage Connections / scene.add_link multi-input rule.
+        self.supports_multi_input = True
         self.input_data = None
         self.scene_ref = None
         self.sample_filters = {}
         self.selected_sources = None
         self.merged_name = "Combined"
+        self.merge_singles = True
+        self.sample_groups = {}
+        # Signature -> resolution dict (see _duplicate_signature /
+        # _warn_duplicate_source), remembering how a suspected duplicate
+        # sample (same name or same particle count feeding this filter via
+        # two different paths, e.g. a Multi-Sample stream AND a Single
+        # Sample node both carrying "S1") was resolved, so reconnecting or
+        # reopening the project doesn't ask again for the same pair.
+        self.duplicate_resolutions = {}
         self._stale = []
         self._incoming_names = []
+        # Per-node opt-out for the "applying this will change open plots"
+        # reminder shown on every OK (see ParticleFilterDialog._try_accept).
+        # Persists on the node itself (like sample_filters) so a user who
+        # dismisses it once for THIS filter node isn't nagged again by it,
+        # while a different Particle Filter node on the same canvas still
+        # warns until it's separately opted out.
+        self.suppress_stale_warning = False
 
     def set_position(self, pos):
         """Update the node position and notify the canvas item."""
@@ -1251,6 +2378,253 @@ class ParticleFilterNode(QObject):
         self.input_data = input_data
         self._recompute_stale(normalize_sources([input_data]))
         self.configuration_changed.emit()
+
+    def _stored_sample_names(self):
+        """Sample names this node currently carries settings for.
+
+        The union of every name-keyed piece of state — active per-sample
+        filters, the output selection, and custom groups. Used to compare
+        stored settings against what's actually connected now.
+        """
+        names = {n for n, c in self.sample_filters.items() if active_axes(c)}
+        names |= set(self.sample_groups)
+        if self.selected_sources:
+            names |= set(self.selected_sources)
+        return names
+
+    def reconcile_incoming(self, parent_window=None, new_link=None):
+        """Reconcile stored per-sample settings against the samples actually
+        feeding this node right now — call after the input changes (e.g. a
+        duplicated filter is wired to a different source). GUI thread only,
+        since a partial mismatch shows a dialog.
+
+        - No stored settings, or nothing connected: do nothing.
+        - Total mismatch (no stored sample name is present in the incoming
+          data): wipe the name-keyed settings to a blank slate, so a
+          duplicated-then-rewired filter never carries the previous
+          source's sample/isotope names into its warnings or output.
+        - Partial mismatch (some stored names present, some gone): keep the
+          settings but inform the user which matched and which didn't,
+          offering to clear the settings for the samples that are gone.
+
+        Args:
+            parent_window: Dialog parent.
+            new_link (WorkflowLink): The link that was *just* added, if this
+                call was triggered by a fresh connection (scene.add_link) —
+                None for any other trigger. Only when present do we also
+                check whether that new source looks like a duplicate of an
+                already-connected one (see _check_duplicate_source);
+                reusing this same trigger point per the established
+                decision that this check should fire on new connections
+                only, not on every recompute.
+        """
+        if new_link is not None:
+            self._check_duplicate_source(new_link, parent_window)
+        sources = resolve_and_normalize_sources(
+            self._pull_upstream_all(), self.duplicate_resolutions)
+        incoming = {s['name'] for s in sources}
+        stored = self._stored_sample_names()
+        if not stored or not incoming:
+            return
+        matched = stored & incoming
+        missing = stored - incoming
+        if not matched:
+            self.sample_filters = {}
+            self.selected_sources = None
+            self.sample_groups = {}
+            self._recompute_stale(sources)
+            self.configuration_changed.emit()
+            return
+        if missing:
+            self._warn_partial_mismatch(
+                parent_window, sorted(matched), sorted(missing),
+                sorted(incoming - stored))
+
+    def _check_duplicate_source(self, new_link, parent_window=None):
+        """Detect whether the source that was just wired in looks like a
+        duplicate of one already feeding this filter — same sample name, or
+        same particle count (a cheap heuristic, not a deep content
+        comparison, per explicit design: this needs to stay fast even on
+        large particle sets). If a matching pair is found and hasn't
+        already been resolved once before (see duplicate_resolutions),
+        prompt the user to decide how to handle it.
+
+        Args:
+            new_link (WorkflowLink): The just-added link feeding this node.
+            parent_window: Dialog parent.
+        """
+        scene = self.scene_ref
+        if scene is None:
+            return
+        try:
+            new_entries = _expand_upstream_entries(new_link.get_data())
+        except Exception:
+            _itk_log.exception(
+                "Handled exception in _check_duplicate_source")
+            return
+        if not new_entries:
+            return
+        other_entries = []
+        for lk in getattr(scene, 'workflow_links', []):
+            if lk.sink_node is not self or lk is new_link:
+                continue
+            try:
+                other_entries.extend(_expand_upstream_entries(lk.get_data()))
+            except Exception:
+                _itk_log.exception(
+                    "Handled exception in _check_duplicate_source")
+        for ne in new_entries:
+            for oe in other_entries:
+                same_name = ne['name'] == oe['name']
+                same_count = ne['total'] == oe['total'] and ne['total'] > 0
+                if not (same_name or same_count):
+                    continue
+                sig = _duplicate_signature(ne, oe)
+                if sig in self.duplicate_resolutions:
+                    continue
+                self._warn_duplicate_source(
+                    parent_window, new_link, ne, oe, sig)
+                return
+
+    def _warn_duplicate_source(self, parent_window, new_link, new_entry,
+                               existing_entry, sig):
+        """Ask the user how to handle a suspected duplicate sample.
+
+        Args:
+            parent_window: Dialog parent.
+            new_link (WorkflowLink): The just-added link that triggered
+                this — used directly by the "disconnect" choice.
+            new_entry (dict): The just-connected source entry that triggered
+                this (see _expand_upstream_entries).
+            existing_entry (dict): The already-connected entry it collides
+                with (same name, or same particle count).
+            sig (str): This pair's signature — the key the chosen
+                resolution is remembered under.
+        """
+        from PySide6.QtWidgets import QMessageBox, QInputDialog
+        reason = ("the same sample name" if new_entry['name'] == existing_entry['name']
+                  else "the same particle count")
+        box = QMessageBox(parent_window)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Possible duplicate sample")
+        box.setText(
+            f"\"{new_entry['name']}\" ({new_entry['total']:,} particles) — "
+            f"just connected — looks like it might be the same sample as "
+            f"\"{existing_entry['name']}\" ({existing_entry['total']:,} "
+            f"particles), already connected to this filter. They share "
+            f"{reason}.\n\nThis is a quick name/count check, not a deep "
+            f"comparison — it may be a false positive if these really are "
+            f"two different samples. How should this filter treat them?")
+        keep_btn = box.addButton("Keep as two separate samples…",
+                                 QMessageBox.ActionRole)
+        combine_btn = box.addButton("Combine into one sample…",
+                                    QMessageBox.ActionRole)
+        disconnect_btn = box.addButton("Disconnect the new connection",
+                                       QMessageBox.DestructiveRole)
+        ignore_btn = box.addButton("Ignore one of them",
+                                   QMessageBox.AcceptRole)
+        # Default to the non-destructive choice: keeping both. Dropping a
+        # sample must be an explicit, deliberate click (see the dismissal
+        # branch below), never what happens when the user just hits Enter or
+        # closes the dialog — that would contradict the filter's
+        # append-not-drop default (normalize_sources) and silently discard
+        # data.
+        box.setDefaultButton(keep_btn)
+        box.exec()
+        clicked = box.clickedButton()
+
+        if clicked is keep_btn:
+            name, ok = QInputDialog.getText(
+                parent_window, "Name the new sample",
+                f"\"{new_entry['name']}\" will be kept as a separate entry. "
+                f"What should it be called?",
+                text=f"{new_entry['name']} (2)")
+            if not ok or not name.strip():
+                return
+            self.duplicate_resolutions[sig] = {
+                'action': 'keep_separate',
+                'target': (new_entry['name'], new_entry['total']),
+                'rename_to': name.strip(),
+            }
+        elif clicked is combine_btn:
+            name, ok = QInputDialog.getText(
+                parent_window, "Name the combined sample",
+                f"\"{new_entry['name']}\" and \"{existing_entry['name']}\" "
+                f"will be combined into one sample. What should it be "
+                f"called?",
+                text=new_entry['name'])
+            if not ok or not name.strip():
+                return
+            self.duplicate_resolutions[sig] = {
+                'action': 'combine',
+                'combined_name': name.strip(),
+            }
+        elif clicked is disconnect_btn:
+            scene = self.scene_ref
+            if scene is not None:
+                li = scene.link_items.get(new_link)
+                if li:
+                    scene.delete_link(li)
+            return
+        elif clicked is ignore_btn:
+            # Explicit, deliberate choice to drop one of the duplicates.
+            self.duplicate_resolutions[sig] = {
+                'action': 'ignore',
+                'target': (new_entry['name'], new_entry['total']),
+            }
+        # else: dialog dismissed (Esc / window close) with no explicit
+        # choice — keep BOTH samples. Store no resolution and fall through to
+        # the recompute below, so the append-not-drop default disambiguates
+        # them ("S1" / "S1 (2)") rather than silently discarding one.
+        self._recompute_stale(resolve_and_normalize_sources(
+            self._pull_upstream_all(), self.duplicate_resolutions))
+        self.configuration_changed.emit()
+
+    def _warn_partial_mismatch(self, parent_window, matched, missing, added):
+        """Tell the user the newly connected source only partly matches the
+        saved settings, and offer to drop the settings for samples that are
+        no longer connected.
+
+        Args:
+            parent_window: Dialog parent.
+            matched (list): Stored names still present (settings still apply).
+            missing (list): Stored names no longer connected (settings idle).
+            added (list): Incoming names with no saved filter yet.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(parent_window)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Sample mismatch")
+        box.setText(
+            "The samples feeding this filter don't fully match its saved "
+            "settings. Your settings are kept — here's how they line up:")
+        lines = []
+        lines.append("✓ Still apply ({}): {}".format(
+            len(matched), ", ".join(matched)))
+        lines.append("⚠ Saved but not connected now ({}): {}".format(
+            len(missing), ", ".join(missing)))
+        if added:
+            lines.append("＋ New, no filter yet ({}): {}".format(
+                len(added), ", ".join(added)))
+        lines.append(
+            "\nThe \"not connected\" settings sit idle until those samples "
+            "come back. You can keep them, or clear just those.")
+        box.setInformativeText("\n".join(lines))
+        keep = box.addButton("Keep settings", QMessageBox.AcceptRole)
+        clear = box.addButton("Clear settings for missing samples",
+                              QMessageBox.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        if box.clickedButton() is clear:
+            for n in missing:
+                self.sample_filters.pop(n, None)
+                self.sample_groups.pop(n, None)
+            if self.selected_sources is not None:
+                self.selected_sources = [s for s in self.selected_sources
+                                         if s not in missing]
+            self._recompute_stale(resolve_and_normalize_sources(
+                self._pull_upstream_all(), self.duplicate_resolutions))
+            self.configuration_changed.emit()
 
     def _pull_upstream_all(self):
         """Fetch the upstream dict from every input link.
@@ -1278,13 +2652,31 @@ class ParticleFilterNode(QObject):
         """Gather every upstream stream, filter each chosen sample with its
         own settings, and regroup the result for downstream figures.
 
+        Wrapped in a broad try/except: this runs inside a background
+        ``_CalculationWorker`` thread (``widget/canvas_widgets.py``), whose
+        caller only logs failures at ``_itk_log.error`` level and otherwise
+        drops them silently — a downstream plot window would keep showing
+        whatever data it last received with no visible sign the recompute
+        never happened. Logging with ``exception`` here (full traceback,
+        at module import time this logger is already configured) makes a
+        future occurrence diagnosable instead of invisible.
+
         Returns:
             dict: Single-sample data when one sample is chosen, multi-sample
                 data when several are (regrouped with ``source_sample``
                 tags); the unmodified upstream dict in the single-link
-                no-filter case; None when upstream is unconfigured or no
-                sample is selected.
+                no-filter case; None when upstream is unconfigured, no
+                sample is selected, or recomputation raised.
         """
+        try:
+            return self._get_output_data_impl()
+        except Exception:
+            _itk_log.exception(
+                "ParticleFilterNode.get_output_data failed — downstream "
+                "nodes will keep their previous data instead of updating")
+            return None
+
+    def _get_output_data_impl(self):
         upstreams = self._pull_upstream_all()
         if not upstreams:
             return None
@@ -1292,14 +2684,21 @@ class ParticleFilterNode(QObject):
                       if u.get('type') in _FILTERABLE_TYPES]
         if not filterable:
             return upstreams[0]
-        sources = normalize_sources(filterable)
-        self._incoming_names = [s['name'] for s in sources]
+        sources = resolve_and_normalize_sources(
+            filterable, self.duplicate_resolutions)
         self._recompute_stale(sources)
         if self.selected_sources is None:
             chosen = sources
         else:
             chosen = [s for s in sources
                       if s['name'] in self.selected_sources]
+            if not chosen and sources:
+                # self.selected_sources names none of the current sources —
+                # e.g. this node was duplicated (or its upstream swapped)
+                # and the stored selection refers to samples that no longer
+                # feed it. Treat it like an unset selection rather than
+                # silently emitting nothing.
+                chosen = sources
         if not chosen:
             return None
         any_active = any(active_axes(self.sample_filters.get(s['name']))
@@ -1307,7 +2706,8 @@ class ParticleFilterNode(QObject):
         if len(filterable) == 1 and len(chosen) == len(sources):
             data = filterable[0]
             if not any_active:
-                return data
+                # Inert pass-through still counts as a filter hop.
+                return _apply_filt_provenance(data)
             combined = []
             for s in sources:
                 kept, _stale = apply_sample_filter(
@@ -1316,7 +2716,7 @@ class ParticleFilterNode(QObject):
             out = dict(data)
             out['particle_data'] = combined
             out['filtered_particles'] = len(combined)
-            return out
+            return _apply_filt_provenance(out)
         filtered = []
         for s in chosen:
             kept, _stale = apply_sample_filter(
@@ -1326,17 +2726,57 @@ class ParticleFilterNode(QObject):
                    if s.get('origin') == 'single']
         others = [(s, k) for s, k in filtered
                   if s.get('origin') != 'single']
+
+        # "Merge single samples into one" dominates over per-sample custom
+        # groups when both are set — it's the coarser, all-or-nothing
+        # control, so it wins rather than being silently overridden by a
+        # finer-grained group name (see ParticleFilterDialog._try_accept,
+        # which warns the user about this precedence before it takes
+        # effect). Only when merge_singles is off do custom group names
+        # actually take effect; singles left ungrouped then stay separate.
         final = []
-        if len(singles) >= 2:
-            name = (self.merged_name or '').strip() or 'Combined'
-            merged_kept = []
-            for _s, kept in singles:
-                merged_kept.extend(retag_particles(kept, name))
-            final.append((merge_single_sources(
-                [s for s, _k in singles], name), merged_kept))
+        if self.merge_singles:
+            if len(singles) >= 2:
+                name = (self.merged_name or '').strip() or 'Combined'
+                merged_kept = []
+                for _s, kept in singles:
+                    merged_kept.extend(retag_particles(kept, name))
+                final.append((merge_single_sources(
+                    [s for s, _k in singles], name), merged_kept))
+            else:
+                final.extend(singles)
         else:
-            final.extend(singles)
+            grouped, ungrouped, group_order = {}, [], []
+            for s, kept in singles:
+                gname = (self.sample_groups.get(s['name']) or '').strip()
+                if gname:
+                    if gname not in grouped:
+                        grouped[gname] = []
+                        group_order.append(gname)
+                    grouped[gname].append((s, kept))
+                else:
+                    ungrouped.append((s, kept))
+            for gname in group_order:
+                members = grouped[gname]
+                merged_kept = []
+                for _s, kept in members:
+                    merged_kept.extend(retag_particles(kept, gname))
+                final.append((merge_single_sources(
+                    [s for s, _k in members], gname), merged_kept))
+            final.extend(ungrouped)
         final.extend(others)
+        # Stamp each output sample with the filter-provenance suffix
+        # (base → base (filt x1); an already-filtered base (filt x1) →
+        # base (filt x2); a merged/grouped name restarts at x1). Done here,
+        # on the output names only, so the per-sample INPUT keys used above
+        # (sample_filters / sample_groups / selected_sources) are untouched.
+        # retag_particles mutates the already-owned filtered copies in place,
+        # so this adds no extra allocation.
+        stamped = []
+        for s, kept in final:
+            nm = _bump_filt_suffix(s['name'])
+            stamped.append((dict(s, name=nm), retag_particles(kept, nm)))
+        final = stamped
         if len(final) == 1:
             return self._build_single_output(final[0][0], final[0][1])
         sources_f = [s for s, _k in final]
@@ -1423,11 +2863,17 @@ class ParticleFilterNode(QObject):
         }
 
     def _recompute_stale(self, sources):
-        """Refresh the cached stale-label list against the incoming samples.
+        """Refresh cached knowledge of the incoming samples: which isotope
+        labels a filter references but the sample no longer has, and which
+        sample names are actually connected right now (so ``is_active()``
+        and ``summary_text()`` can tell a real setting apart from a
+        ``sample_filters``/``selected_sources`` entry left over from a
+        duplicate or a rewired upstream — see those methods).
 
         Args:
             sources (list): Source entries from :func:`normalize_sources`.
         """
+        self._incoming_names = [s['name'] for s in sources or []]
         stale = set()
         for s in sources or []:
             cfg = self.sample_filters.get(s['name'])
@@ -1439,36 +2885,51 @@ class ParticleFilterNode(QObject):
         """List labels referenced by filters but missing in their samples.
 
         Returns:
-            list: Stale element label strings.
+            list: Stale isotope label strings.
         """
         return list(self._stale)
 
     def is_active(self):
         """Report whether the node is doing anything beyond passthrough.
 
+        Only counts ``sample_filters``/``selected_sources`` entries that
+        name a currently-connected sample (``self._incoming_names``) —
+        entries left over from a duplicate or a rewired upstream refer to
+        samples that aren't actually feeding this node anymore, so they
+        shouldn't make an unconfigured filter look active.
+
         Returns:
-            bool: True when any sample has an active filter or a sample
-                subset is selected.
+            bool: True when any currently-connected sample has an active
+                filter, or the sample selection currently narrows anything.
         """
-        return any(active_axes(c) for c in self.sample_filters.values()) or (
-            self.selected_sources is not None)
+        current = set(self._incoming_names)
+        filters_active = any(active_axes(c) for n, c in self.sample_filters.items()
+                              if n in current)
+        sources_active = bool(self.selected_sources) and any(
+            n in current for n in self.selected_sources)
+        return filters_active or sources_active
 
     def summary_text(self):
         """Build the live summary shown under the node icon.
 
         Returns:
             str: e.g. "2 samples + 1 filtered", a single sample's criteria
-                when only one filter is set, "No filter" when inactive,
+                when only one filter is set, "No filter" when inactive
+                (including when every stored setting is left over from a
+                duplicate/rewire and matches nothing currently connected),
                 "⚠ stale" when stale criteria are detected.
         """
         if self._stale:
             return "⚠ stale"
+        current = set(self._incoming_names)
         parts = []
         if self.selected_sources is not None:
-            n = len(self.selected_sources)
-            parts.append(f"{n} sample" + ("s" if n != 1 else ""))
+            matched = [n for n in self.selected_sources if n in current]
+            if matched:
+                n = len(matched)
+                parts.append(f"{n} sample" + ("s" if n != 1 else ""))
         filtered = {n: c for n, c in self.sample_filters.items()
-                    if active_axes(c)}
+                    if active_axes(c) and n in current}
         if len(filtered) == 1:
             parts.append(summarize_config(next(iter(filtered.values()))))
         elif len(filtered) > 1:
@@ -1482,14 +2943,21 @@ class ParticleFilterNode(QObject):
             bool: True when the dialog was accepted.
         """
         snapshots = self._pull_upstream_all()
-        dlg = ParticleFilterDialog(parent_window, snapshots,
-                                   self.sample_filters, self.selected_sources,
-                                   self.merged_name)
+        dlg = ParticleFilterDialog(
+            parent_window, snapshots, self.sample_filters,
+            self.selected_sources, self.merged_name, owner_node=self,
+            suppress_stale_warning=self.suppress_stale_warning,
+            merge_singles=self.merge_singles, sample_groups=self.sample_groups,
+            duplicate_resolutions=self.duplicate_resolutions)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()
-            self._recompute_stale(normalize_sources(snapshots))
+            self.merge_singles = dlg.get_merge_singles()
+            self.sample_groups = dlg.get_sample_groups()
+            self.suppress_stale_warning = dlg.stale_warning_suppressed()
+            self._recompute_stale(resolve_and_normalize_sources(
+                snapshots, self.duplicate_resolutions))
             self.configuration_changed.emit()
             ual = _ual()
             if ual:

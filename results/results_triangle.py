@@ -169,6 +169,58 @@ def _viewport_tick_labels(viewport: dict, component_key: str,
     return [f'{int(round((base + tick * remaining) * 100))}%' for tick in ticks]
 
 
+def _particle_coverage_fraction(d: dict, selected_total: float) -> float | None:
+    """Return the selected three elements' share of this particle's full total.
+
+    ``d`` is the particle's per-element value dict for the currently selected
+    ternary data key (e.g. ``elements``, ``element_mass_fg``), covering every
+    element actually measured for this particle — not just the three chosen
+    ternary axes. Values are summed the same way the three selected axes
+    already are: NaN and negative entries are treated as zero contribution
+    (measurement noise/absence, not real negative amounts) rather than
+    aborting the whole-particle total, and a missing/zero entry for any
+    non-selected element simply contributes nothing, which is the correct
+    behavior with no special-casing needed.
+
+    Args:
+        d (dict): Per-element values for one particle at the active data key.
+        selected_total (float): Already-validated sum of the three selected
+            ternary axis values for this particle (always a subset of the
+            full sum below, since those three entries are also members of
+            ``d``).
+
+    Returns:
+        float | None: ``selected_total / full_total``, guaranteed in
+            ``(0.0, 1.0]`` when defined, or ``None`` if no valid total could
+            be computed (only possible if ``d`` is empty/degenerate).
+    """
+    full_total = 0.0
+    for value in d.values():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(numeric) or numeric <= 0:
+            continue
+        full_total += numeric
+    if full_total <= 0:
+        return None
+    return selected_total / full_total
+
+
+def _short_ternary_data_type_label(data_type_display: str) -> str:
+    """Strip the trailing "(%)" from a ternary data-type display name.
+
+    Args:
+        data_type_display (str): Config ``data_type_display`` value, e.g.
+            ``"Element Mass (%)"``.
+
+    Returns:
+        str: Compact label for embedding in a sentence, e.g. ``"Element Mass"``.
+    """
+    return (data_type_display or 'Counts').replace(' (%)', '').strip()
+
+
 def setup_ternary_axes(ax, element_labels, config, viewport=None):
     """
     Configure mpltern axes with labels, grid, and font settings.
@@ -1774,6 +1826,8 @@ class TriangleDisplayDialog(QDialog):
         self._add_toggle(toggle_menu, "Show Average Point", 'show_average_point')
         self._add_toggle(toggle_menu, "Show Stats Text", 'show_average_text')
         self._add_toggle(toggle_menu, "Show 2s Ellipse", 'show_confidence_ellipse')
+        self._add_toggle(toggle_menu, "Show Mean Composition Coverage",
+                          'show_composition_coverage')
         # Element filter mode is a 3-way dropdown — not a simple boolean toggle.
         # It is exposed in Configure Plot Quantities instead.
 
@@ -2204,22 +2258,45 @@ class TriangleDisplayDialog(QDialog):
         if 'element_filter_mode' not in cfg:
             mode = 'partial' if cfg.get('average_only_with_all_elements', True) else 'any_one'
 
-        def _n_avg(points):
-            """Count points that pass the element filter for avg/stats."""
+        def _avg_eligible(points):
+            """Points that pass the element filter for avg/stats."""
             if mode == 'any_one':
-                return sum(1 for p in points
-                           if p['a'] > 0 or p['b'] > 0 or p['c'] > 0)
+                return [p for p in points
+                        if p['a'] > 0 or p['b'] > 0 or p['c'] > 0]
             # partial and exact both require all three non-zero at render time
-            return sum(1 for p in points
-                       if p['a'] > 0 and p['b'] > 0 and p['c'] > 0)
+            return [p for p in points
+                    if p['a'] > 0 and p['b'] > 0 and p['c'] > 0]
+
+        def _n_avg(points):
+            return len(_avg_eligible(points))
+
+        def _coverage_text(points):
+            """Mean±SD of the selected three axes' share of each particle's
+            full measured total, pooled across whichever points already feed
+            the average marker. Returns '' when disabled or no valid data."""
+            if not cfg.get('show_composition_coverage', True):
+                return ''
+            fracs = [p['coverage_fraction'] for p in _avg_eligible(points)
+                      if p.get('coverage_fraction') is not None]
+            if not fracs:
+                return ''
+            arr = np.array(fracs, dtype=float)
+            label = _short_ternary_data_type_label(
+                cfg.get('data_type_display', 'Counts (%)'))
+            return (f"selected 3 = {arr.mean() * 100:.1f}"
+                    f"±{arr.std() * 100:.1f}% of {label}")
 
         if self._is_multi():
             total = sum(len(sd) for sd in plot_data.values())
             n_samples = len(plot_data)
             parts = [f"{n_samples} samples", f"{total:,} particles plotted"]
-            n_avg = sum(_n_avg(sd) for sd in plot_data.values())
+            all_points = [p for sd in plot_data.values() for p in sd]
+            n_avg = _n_avg(all_points)
             if n_avg < total:
                 parts.append(f"{n_avg:,} used for averages")
+            cov_text = _coverage_text(all_points)
+            if cov_text:
+                parts.append(cov_text)
             self.stats_label.setText("  ·  ".join(parts))
         else:
             total = len(plot_data)
@@ -2227,6 +2304,9 @@ class TriangleDisplayDialog(QDialog):
             n_avg = _n_avg(plot_data)
             if n_avg < total:
                 parts.append(f"{n_avg:,} used for averages")
+            cov_text = _coverage_text(plot_data)
+            if cov_text:
+                parts.append(cov_text)
             if not _is_full_triangle_viewport(self._triangle_viewport):
                 parts.append(self._triangle_viewport_summary())
             self.stats_label.setText("  ·  ".join(parts))
@@ -3051,6 +3131,7 @@ class TrianglePlotNode(QObject):
         'average_point_color': '#FF0000',
         'average_point_size': 100,
         'show_average_text': True,
+        'show_composition_coverage': True,
         'element_filter_mode': 'partial',
         'show_confidence_ellipse': False,
         'display_mode': 'Individual Subplots',
@@ -3231,6 +3312,7 @@ class TrianglePlotNode(QObject):
                 'b': vb / total,
                 'c': vc / total,
                 'total': total,
+                'coverage_fraction': _particle_coverage_fraction(d, total),
             }
 
             # ── Color value ─────────────────────────────────────────────────

@@ -19,7 +19,12 @@ except ImportError:
 def _safe_positive(v):
     try:
         v = float(v)
-        return v > 0 and not np.isnan(v)
+        # v == v is False only for NaN -- equivalent to `not np.isnan(v)`
+        # but avoids np.isnan's per-call overhead on a plain Python scalar,
+        # which dominates runtime when this runs millions of times over a
+        # large particle population (np.isnan on a scalar is ~15x slower
+        # than this comparison).
+        return v > 0 and v == v
     except Exception:
         _itk_log.exception("Handled exception in _safe_positive")
         return False
@@ -46,60 +51,83 @@ def _build_dashboard_data(data_context):
 
     top_elements = sorted(elem_counts.items(), key=lambda x: -x[1])
 
-    elem_stats = {}
-    for el, count in top_elements[:30]:
-        diams, masses, moles, mass_pcts, counts_vals = [], [], [], [], []
-        for p in particles:
-            cv = p.get('elements', {}).get(el)
-            if cv and _safe_positive(cv):
-                counts_vals.append(round(float(cv), 2))
-            d = p.get('element_diameter_nm', {}).get(el)
-            if d and _safe_positive(d):
-                diams.append(round(float(d), 2))
-            m = p.get('element_mass_fg', {}).get(el)
-            if m and _safe_positive(m):
-                masses.append(round(float(m), 3))
-            mo = p.get('element_moles_fmol', {}).get(el)
-            if mo and _safe_positive(mo):
-                moles.append(round(float(mo), 6))
-            mp = p.get('mass_percentages', {}).get(el)
-            if mp and _safe_positive(mp):
-                mass_pcts.append(round(float(mp), 1))
-
-        def _stats(arr):
-            if not arr:
-                return {'mean': 0, 'std': 0, 'min': 0, 'max': 0,
-                        'q1': 0, 'median': 0, 'q3': 0}
-            a = np.array(arr)
-            return {
-                'mean': round(float(np.mean(a)), 4),
-                'std': round(float(np.std(a)), 4),
-                'min': round(float(np.min(a)), 4),
-                'max': round(float(np.max(a)), 4),
-                'q1': round(float(np.percentile(a, 25)), 4),
-                'median': round(float(np.median(a)), 4),
-                'q3': round(float(np.percentile(a, 75)), 4),
-            }
-
-        elem_stats[el] = {
-            'count': count,
-            'diameters': diams[:3000],
-            'masses': masses[:3000],
-            'moles': moles[:3000],
-            'mass_pct': mass_pcts[:3000],
-            'counts': counts_vals[:3000],
-            'diam_stats': _stats(diams),
-            'mass_stats': _stats(masses),
-            'moles_stats': _stats(moles),
-            'counts_stats': _stats(counts_vals),
+    def _stats(arr):
+        if not arr:
+            return {'mean': 0, 'std': 0, 'min': 0, 'max': 0,
+                    'q1': 0, 'median': 0, 'q3': 0}
+        a = np.array(arr)
+        return {
+            'mean': round(float(np.mean(a)), 4),
+            'std': round(float(np.std(a)), 4),
+            'min': round(float(np.min(a)), 4),
+            'max': round(float(np.max(a)), 4),
+            'q1': round(float(np.percentile(a, 25)), 4),
+            'median': round(float(np.median(a)), 4),
+            'q3': round(float(np.percentile(a, 75)), 4),
         }
 
+    # Single pass over particles collecting every top-30 element's raw
+    # values together, instead of rescanning the full particle list once
+    # per element (was O(30*N) full list scans + repeated top-level
+    # p.get('elements', {})-style lookups per element; now O(N)).
+    elem_stats = {}
+    top30_names = [el for el, _ in top_elements[:30]]
+    if top30_names:
+        raw = {el: ([], [], [], [], []) for el in top30_names}  # diams, masses, moles, mass_pcts, counts
+        for p in particles:
+            elements = p.get('elements', {})
+            diam_map = p.get('element_diameter_nm', {})
+            mass_map = p.get('element_mass_fg', {})
+            mole_map = p.get('element_moles_fmol', {})
+            pct_map = p.get('mass_percentages', {})
+            for el in top30_names:
+                diams, masses, moles, mass_pcts, counts_vals = raw[el]
+                cv = elements.get(el)
+                if cv and _safe_positive(cv):
+                    counts_vals.append(round(float(cv), 2))
+                d = diam_map.get(el)
+                if d and _safe_positive(d):
+                    diams.append(round(float(d), 2))
+                m = mass_map.get(el)
+                if m and _safe_positive(m):
+                    masses.append(round(float(m), 3))
+                mo = mole_map.get(el)
+                if mo and _safe_positive(mo):
+                    moles.append(round(float(mo), 6))
+                mp = pct_map.get(el)
+                if mp and _safe_positive(mp):
+                    mass_pcts.append(round(float(mp), 1))
+
+        for el, count in top_elements[:30]:
+            diams, masses, moles, mass_pcts, counts_vals = raw[el]
+            elem_stats[el] = {
+                'count': count,
+                'diameters': diams[:3000],
+                'masses': masses[:3000],
+                'moles': moles[:3000],
+                'mass_pct': mass_pcts[:3000],
+                'counts': counts_vals[:3000],
+                'diam_stats': _stats(diams),
+                'mass_stats': _stats(masses),
+                'moles_stats': _stats(moles),
+                'counts_stats': _stats(counts_vals),
+            }
+
     combos = {}
+    # sorted(el for el in a particle's elements) is a pure function of the
+    # SET of present element names, and real particle populations reuse the
+    # same handful of combinations across many particles — memoize instead
+    # of re-sorting per particle.
+    combo_key_cache = {}
     for p in particles:
-        det = sorted(el for el, v in p.get('elements', {}).items() if _safe_positive(v))
-        if det:
-            key = ' + '.join(det)
-            combos[key] = combos.get(key, 0) + 1
+        present = frozenset(el for el, v in p.get('elements', {}).items() if _safe_positive(v))
+        if not present:
+            continue
+        key = combo_key_cache.get(present)
+        if key is None:
+            key = ' + '.join(sorted(present))
+            combo_key_cache[present] = key
+        combos[key] = combos.get(key, 0) + 1
     top_combos = sorted(combos.items(), key=lambda x: -x[1])[:20]
 
     single_count = sum(
@@ -110,7 +138,10 @@ def _build_dashboard_data(data_context):
    
     corr_elements = [el for el, _ in top_elements[:15]]
     corr_data = []
-    for p in particles:
+    # Only the first 5000 rows are ever kept (truncated below) — build rows
+    # for just those particles instead of computing a full row for every
+    # particle in the dataset and discarding the rest.
+    for p in particles[:5000]:
         row = {}
         for el in corr_elements:
             v = p.get('elements', {}).get(el, 0)
@@ -124,8 +155,6 @@ def _build_dashboard_data(data_context):
             m = p.get('element_mass_fg', {}).get(el, 0)
             row[f'{el}_mass'] = round(float(m), 3) if _safe_positive(m) else 0
         corr_data.append(row)
-
-    corr_data = corr_data[:5000]
 
     top10 = [el for el, _ in top_elements[:10]]
     cooccurrence = {a: {b: 0 for b in top10} for a in top10}
