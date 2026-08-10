@@ -4,6 +4,19 @@ All notable changes to IsotopeTrack are documented here.
 
 ---
 
+## v1.10.10 — 2026-08-10
+
+
+- fixing a bug with the csv file export (need more test for some windows) 
+- rm the Qtweb engine from the app 
+- rm the dashboard form the results canvas
+- changing the cluster analysis form webengine to PyQtgraph 
+- rm the live cluster analysis 
+- fixing some bugs in the clusters (does not effect the results just the visuals)
+- using the same algorithm in the sensitivity now in the TE Mass calibration
+- rm dead code from the TE does not effect the results 
+
+
 ## v1.10.9 — 2026-08-05
 
 - Fixing the cluster crash the user can only disable the GPU if the app crashes only for Windows
