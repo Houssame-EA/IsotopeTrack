@@ -142,7 +142,6 @@ nav:
     - "results_composition_wheel.py": results/results-composition-wheel.md
     - "results_concentration.py": results/results-concentration.md
     - "results_correlation.py": results/results-correlation.md
-    - "results_dashboard.py": results/results-dashboard.md
     - "results_heatmap.py": results/results-heatmap.md
     - "results_isotope.py": results/results-isotope.md
     - "results_matrix.py": results/results-matrix.md
@@ -195,7 +194,6 @@ nav:
     - "formula_utils.py": tools_utilities/formula-utils.md
     - "particle_filter.py": tools_utilities/particle-filter.md
     - "periodic_table_info.py": tools_utilities/periodic-table-info.md
-    - "render_settings.py": tools_utilities/render-settings.md
     - "toast.py": tools_utilities/toast.md
     - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md

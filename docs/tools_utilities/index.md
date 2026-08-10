@@ -84,9 +84,6 @@ This file contains a readonly service (info) for periodic table data.
 
 **2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **6** methods
 
-### [`render_settings.py`](render-settings.md)
-Persisted rendering preferences shared by the launcher and the UI.
-
 **0** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **0** methods
 
 ### [`toast.py`](toast.md)

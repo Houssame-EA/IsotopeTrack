@@ -6,6 +6,8 @@ without constructing the GUI.
 """
 from dataclasses import dataclass
 from PySide6.QtCore import QSettings
+
+from utils.numeric_format import as_scalar
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.utils.unit")
 
@@ -77,6 +79,12 @@ class ExportUnits:
     # ---- Formatters -------------------------------------------------- #
     def _format(self, value: float, decimals: int) -> str:
         """Render a number in the user's chosen format.
+
+        The value is unwrapped with :func:`utils.numeric_format.as_scalar`
+        first. Passing a numpy array straight to ``float()`` only works by way
+        of a NumPy deprecation that is scheduled to become an error, and a
+        multi-element array raises today.
+
         Args:
             value (float): Value to set or process.
             decimals (int): The decimals.
@@ -84,7 +92,7 @@ class ExportUnits:
         if value is None:
             return "0"
         try:
-            v = float(value)
+            v = float(as_scalar(value))
         except (TypeError, ValueError):
             _itk_log.exception("Handled exception in _format")
             return "0"
@@ -106,12 +114,18 @@ class ExportUnits:
         return self._format(diameter_nm * factor, self.diameter_decimals)
 
     def fmt_mass_or_zero(self, mass_fg: float) -> str:
+        """Format a mass, rendering anything non-positive as a plain "0"."""
+        mass_fg = as_scalar(mass_fg)
         return self.fmt_mass(mass_fg) if mass_fg and mass_fg > 0 else "0"
 
     def fmt_moles_or_zero(self, moles_fmol: float) -> str:
+        """Format an amount, rendering anything non-positive as a plain "0"."""
+        moles_fmol = as_scalar(moles_fmol)
         return self.fmt_moles(moles_fmol) if moles_fmol and moles_fmol > 0 else "0"
 
     def fmt_diameter_or_zero(self, diameter_nm: float) -> str:
+        """Format a diameter, rendering non-positive values and NaN as "0"."""
+        diameter_nm = as_scalar(diameter_nm)
         if not diameter_nm or diameter_nm <= 0:
             return "0"
         try:

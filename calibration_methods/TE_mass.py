@@ -7,24 +7,27 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, Q
                                QMessageBox, QFileDialog, QTableWidget, QTableWidgetItem, QHeaderView,
                                QCheckBox, QDoubleSpinBox, QGroupBox, QDialog,
                                QMenu, QListView, QAbstractItemView, QTreeView, QSpinBox,
-                               QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter,QProgressDialog)
+                               QApplication, QScrollArea, QListWidget, QMainWindow, QFrame, QProgressBar, QSplitter, QStackedWidget, QProgressDialog)
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, Signal
 import loading.vitesse_loading
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.numeric_table import NumericTableWidgetItem
-from widget.custom_plot_widget import EnhancedPlotWidget
+from widget.custom_plot_widget import EnhancedPlotWidget, CalibrationPlotWidget
 from processing.peak_detection import PeakDetection
 
 
 from calibration_methods.te_common import (
-    PLOT_STYLES, HISTOGRAM_COLORS,
+    HISTOGRAM_COLORS,
+    DETECTION_METHODS, DEFAULT_DETECTION_PARAMS,
     NumericDelegate,
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
+    plot_raw_signal,
     highlight_particle, snr_to_color, particle_mass_from_diameter,
     base_stylesheet,
     show_data_source_dialog,
+    run_all_fits_on_subset, compute_outlier_indices,
 )
 from tools.theme import theme
 import logging
@@ -146,6 +149,9 @@ class MassMethodWidget(QMainWindow):
         self._ionic_cal_exclusions_sample  = {}
         self._current_ionic_cal_folder      = None
         self._current_ionic_cal_isotope_key = None
+
+        self.ionic_calibration_result = None
+        self.ionic_excluded_folders = set()
 
         self.default_button_style = ""
         self.modified_button_style = ""
@@ -339,8 +345,8 @@ class MassMethodWidget(QMainWindow):
 
         global_row = QHBoxLayout()
         global_method_combo = NoWheelComboBox()
-        global_method_combo.addItems(["Manual", "Compound Poisson LogNormal"])
-        global_method_combo.setCurrentText("Compound Poisson LogNormal")
+        global_method_combo.addItems(DETECTION_METHODS)
+        global_method_combo.setCurrentText(DEFAULT_DETECTION_PARAMS["method"])
         apply_global_button = QPushButton("Apply to All Samples")
         apply_global_button.clicked.connect(
             lambda: self.apply_global_detection_params(global_method_combo.currentText())
@@ -619,13 +625,26 @@ class MassMethodWidget(QMainWindow):
         vis_controls.addWidget(self.view_toggle_button)
         layout.addLayout(vis_controls)
 
+        self.ionic_exclusion_status_label = QLabel("")
+        self.ionic_exclusion_status_label.setObjectName("hintLabel")
+        layout.addWidget(self.ionic_exclusion_status_label)
+
         self.calibration_raw_plot = EnhancedPlotWidget()
         self.calibration_raw_plot.setBackground(theme.palette.plot_bg)
         self.calibration_raw_plot.setLabel('left', 'Counts')
         self.calibration_raw_plot.setLabel('bottom', 'Time (s)')
         self.calibration_raw_plot.showGrid(x=True, y=True, alpha=0.3)
         self.calibration_raw_plot.setMinimumHeight(250)
-        layout.addWidget(self.calibration_raw_plot)
+
+        self.calibration_widget = CalibrationPlotWidget()
+        self.calibration_widget.setMinimumHeight(250)
+        self.calibration_widget.point_exclusion_toggled.connect(
+            self.on_calibration_point_exclusion_toggled)
+
+        self._calibration_plot_stack = QStackedWidget()
+        self._calibration_plot_stack.addWidget(self.calibration_raw_plot)
+        self._calibration_plot_stack.addWidget(self.calibration_widget)
+        layout.addWidget(self._calibration_plot_stack)
 
         try:
             self.calibration_raw_plot.exclusionRegionsChanged.connect(
@@ -1112,20 +1131,8 @@ class MassMethodWidget(QMainWindow):
             
         signal = self.folder_data[folder_path]['isotope_signal']
         time_array = self.folder_data[folder_path]['time_array']
-        
-        self.plot_widget.plot(
-            x=time_array, 
-            y=signal, 
-            pen=PLOT_STYLES['raw_signal'], 
-            name='Raw Signal'
-        )
-        
-        self.plot_widget.setBackground(theme.palette.plot_bg)
-        self.plot_widget.showGrid(x=True, y=True, alpha=PLOT_STYLES['grid_alpha'])
-        self.plot_widget.setLabel('left', 'Counts')
-        self.plot_widget.setLabel('bottom', 'Time (s)')
-        self.plot_widget.setTitle(f"Raw Signal Preview - {sample_name}")
-        self.plot_widget.enableAutoRange()
+
+        plot_raw_signal(self.plot_widget, sample_name, signal, time_array)
 
     def detect_particles_all_samples(self):
         """
@@ -1169,9 +1176,12 @@ class MassMethodWidget(QMainWindow):
                 
                 signal = self.folder_data[folder_path]['isotope_signal']
                 time_array = self.folder_data[folder_path]['time_array']
-                
+
+                threshold_signal = self.peak_detector.optimize_data_types(
+                    np.asarray(signal))
+
                 _, lambda_bkgd, threshold, mean_signal, threshold_data = self.peak_detector.detect_peaks_with_poisson(
-                    signal,
+                    threshold_signal,
                     alpha=params['alpha'],
                     method=params['method'],
                     manual_threshold=params['manual_threshold'],
@@ -1252,120 +1262,116 @@ class MassMethodWidget(QMainWindow):
 
     def show_calibration_plot_in_raw_area(self):
         """
-        Show the calibration plot in the raw data plot area.
-        
-        Displays calibration curve with data points, regression line, and statistics
-        using calculated ionic calibration results.
+        Show the ionic calibration curve in the visualization area.
+
+        Renders the stored calibration record with the shared
+        :class:`CalibrationPlotWidget` — error bars, fit line, equation box,
+        orange outlier rings and grey crosses for excluded points — exactly as
+        the Ionic Calibration window does. Clicking a point toggles its
+        exclusion.
         """
-        if not hasattr(self, 'ionic_calibration_slope') or not hasattr(self, 'ionic_calibration_intercept'):
+        record = self.ionic_calibration_result
+        if not record:
             QMessageBox.warning(self, "No Calibration", "Please calculate calibration first.")
             self.current_calibration_view = "raw"
             self.view_toggle_button.setText("📈 Show Calibration")
             return
-            
-        self.calibration_raw_plot.clear()
-        
-        concentrations = []
-        signals = []
-        
-        if 'selected_isotope' in self.selected_element:
-            element_mass = self.selected_element['selected_isotope']
+
+        method = self.calibration_method_combo.currentText()
+        method_data = record.get(self.IONIC_METHOD_KEYS.get(method, 'zero'), {})
+
+        folders = record.get('folders', [])
+        excluded_indices = {
+            i for i, f in enumerate(folders)
+            if f in self.ionic_excluded_folders
+        }
+        included_mask = [i not in excluded_indices for i in range(len(folders))]
+        outlier_indices = compute_outlier_indices(
+            record.get('y', []), method_data.get('y_fit', []), included_mask)
+
+        self.calibration_widget.update_plot(
+            x_data=record.get('x', []),
+            y_data=record.get('y', []),
+            y_std=record.get('y_std', []),
+            method=self.IONIC_METHOD_KEYS.get(method, 'zero'),
+            y_fit=method_data.get('y_fit', []),
+            key="Ionic calibration",
+            excluded_indices=excluded_indices,
+            folder_names=record.get('sample_names', []),
+            fit_stats={
+                'slope': method_data.get('slope', 0.0),
+                'intercept': method_data.get('intercept', 0.0),
+                'r_squared': method_data.get('r_squared', 0.0),
+            },
+            outlier_indices=outlier_indices,
+            unit_label='ppb',
+        )
+        self.calibration_widget.setLabel('bottom', "Concentration [ppb]")
+        self.calibration_widget.setLabel('left', "Signal [cps]")
+        self.calibration_widget.setTitle(f"Ionic Calibration Results ({method})")
+
+        total = len(folders)
+        n_excluded = len(excluded_indices)
+        self.ionic_exclusion_status_label.setText(
+            f"{total} points  (click a point to exclude it)" if n_excluded == 0
+            else f"{n_excluded}/{total} excluded  (click to toggle)"
+        )
+        self._calibration_plot_stack.setCurrentWidget(self.calibration_widget)
+
+    def on_calibration_point_exclusion_toggled(self, index):
+        """
+        Toggle exclusion of the clicked calibration point, refit and redraw.
+
+        Args:
+            index (int): Index of the clicked point in the stored record.
+        """
+        record = self.ionic_calibration_result
+        if not record:
+            return
+        folders = record.get('folders', [])
+        if index < 0 or index >= len(folders):
+            return
+
+        folder_path = folders[index]
+        if folder_path in self.ionic_excluded_folders:
+            self.ionic_excluded_folders.discard(folder_path)
         else:
-            element_mass = self.selected_element['isotopes'][0]
-        
-        for i in range(self.concentration_table.rowCount()):
-            concentration_item = self.concentration_table.item(i, 1)
-            if concentration_item:
-                try:
-                    conc = float(concentration_item.text())
-                    if conc == -1:
-                        continue
-                        
-                    folder_path = self.calibration_folder_paths[i]
-                    if folder_path in self.calibration_data_cache and self.calibration_data_cache[folder_path].get('status') == 'Loaded':
-                        cached_data = self.calibration_data_cache[folder_path]
-                        
-                        masses = cached_data['masses']
-                        folder_signals = cached_data['signals']
-                        is_tofwerk = cached_data.get('is_tofwerk', False)
-                        
-                        mass_index = np.argmin(np.abs(masses - element_mass))
-                        element_symbol = self.selected_element.get('symbol', '')
-                        isotope_key = f"{element_symbol}-{element_mass}"
-
-                        if is_tofwerk:
-                            dwell_time = cached_data['dwell_time']
-                            if hasattr(folder_signals.dtype, 'names') and folder_signals.dtype.names:
-                                isotope_signal = folder_signals[folder_signals.dtype.names[mass_index]]
-                            else:
-                                isotope_signal = folder_signals[:, mass_index]
-                        else:
-                            run_info = cached_data['run_info']
-                            acqtime = run_info["SegmentInfo"][0]["AcquisitionPeriodNs"] * 1e-9
-                            accumulations = run_info["NumAccumulations1"] * run_info["NumAccumulations2"]
-                            dwell_time = acqtime * accumulations
-                            isotope_signal = folder_signals[:, mass_index]
-
-                        time_values = np.arange(len(isotope_signal)) * dwell_time
-                        time_mask = np.ones(len(time_values), dtype=bool)
-                        for lo, hi in self._ionic_cal_exclusions_element.get(
-                                (folder_path, isotope_key), []):
-                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
-                        for lo, hi in self._ionic_cal_exclusions_sample.get(folder_path, []):
-                            time_mask &= ~((time_values >= lo) & (time_values <= hi))
-                        if not time_mask.any():
-                            continue
-
-                        unit_combo = self.concentration_table.cellWidget(i, 2)
-                        unit = unit_combo.currentText() if unit_combo else "ppb"
-                        conc_ppb = self.convert_concentration_to_ppb(conc, unit)
-                        
-                        avg_count_per_second = np.mean(isotope_signal[time_mask]) / dwell_time
-                        
-                        concentrations.append(conc_ppb)
-                        signals.append(avg_count_per_second)
-                        
-                except (ValueError, KeyError, AttributeError):
-                    _itk_log.exception("Handled exception in show_calibration_plot_in_raw_area")
-                    continue
-        
-        if concentrations and signals:
-            concentrations = np.array(concentrations)
-            signals = np.array(signals)
-            
-            scatter = pg.ScatterPlotItem(
-                concentrations, signals, 
-                size=10, 
-                brush=pg.mkBrush(30, 30, 255, 200),
-                pen=pg.mkPen(30, 30, 255),
-                symbol='o'
+            remaining = sum(
+                1 for f in folders
+                if f not in self.ionic_excluded_folders and f != folder_path
             )
-            self.calibration_raw_plot.addItem(scatter)
+            if remaining < 2:
+                self.ionic_exclusion_status_label.setText(
+                    "Cannot exclude: a fit needs at least 2 included points.")
+                return
+            self.ionic_excluded_folders.add(folder_path)
 
-            x_range = np.linspace(0, max(concentrations) * 1.1, 100)
-            y_fit = self.ionic_calibration_slope * x_range + self.ionic_calibration_intercept
-            line = self.calibration_raw_plot.plot(x_range, y_fit, pen=pg.mkPen('r', width=2))
+        results = self.perform_ionic_calibration(
+            np.asarray(record.get('x', []), dtype=float),
+            np.asarray(record.get('y', []), dtype=float),
+            self.calibration_method_combo.currentText(),
+            y_std=np.asarray(record.get('y_std', []), dtype=float),
+            folders=folders,
+            sample_names=record.get('sample_names', []),
+        )
+        if results is None:
+            self.ionic_excluded_folders.discard(folder_path)
+            self.ionic_exclusion_status_label.setText(
+                "Refit failed; exclusion not applied.")
+            return
 
-            stats_text = (f"Slope: {self.ionic_calibration_slope:.2e} cps/ppb\n"
-                        f"Intercept: {self.ionic_calibration_intercept:.2e} cps\n"
-                        f"R² = {self.ionic_calibration_r_squared:.4f}")
-            
-            text_item = pg.TextItem(stats_text, anchor=(0, 1), color='k')
-            text_item.setPos(max(concentrations) * 0.6, max(signals) * 0.9)
-            self.calibration_raw_plot.addItem(text_item)
-
-            self.calibration_raw_plot.setLabel('left', 'Signal (cps)')
-            self.calibration_raw_plot.setLabel('bottom', 'Concentration (ppb)')
-            self.calibration_raw_plot.setTitle("Ionic Calibration Results")
-        else:
-            self.calibration_raw_plot.setTitle("No calibration data available")
+        self.ionic_calibration_slope = results['slope']
+        self.ionic_calibration_intercept = results['intercept']
+        self.ionic_calibration_r_squared = results['r_squared']
+        self.show_calibration_plot_in_raw_area()
 
     def refresh_current_raw_data_view(self):
         """
         Refresh the current raw data view for the last selected sample.
-        
+
         Redisplays raw data for the currently selected row in the concentration table.
         """
+        self._calibration_plot_stack.setCurrentWidget(self.calibration_raw_plot)
         current_row = self.concentration_table.currentRow()
         if current_row >= 0:
             self.on_concentration_table_clicked(current_row, 0)
@@ -2027,7 +2033,7 @@ class MassMethodWidget(QMainWindow):
                 try:
                     run_info_path = Path(path) / "run.info"
                     if run_info_path.exists():
-                        with open(run_info_path, "r") as fp:
+                        with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                             run_info = json.load(fp)
                         sample_name = run_info.get("SampleName", Path(path).name)
                     else:
@@ -2665,11 +2671,16 @@ class MassMethodWidget(QMainWindow):
         """
         if row < 0 or row >= len(self.calibration_folder_paths):
             return
-            
+
         folder_path = self.calibration_folder_paths[row]
         sample_item = self.concentration_table.item(row, 0)
         sample_name = sample_item.text() if sample_item else Path(folder_path).name
-        
+
+        if self.current_calibration_view == "calibration":
+            self.current_calibration_view = "raw"
+            if getattr(self, 'view_toggle_button', None) is not None:
+                self.view_toggle_button.setText("📈 Show Calibration")
+        self._calibration_plot_stack.setCurrentWidget(self.calibration_raw_plot)
         self.show_calibration_sample_raw_data(folder_path, sample_name)
 
     def show_calibration_sample_raw_data(self, folder_path, sample_name):
@@ -2829,7 +2840,7 @@ class MassMethodWidget(QMainWindow):
             try:
                 run_info_path = Path(folder_path) / "run.info"
                 if run_info_path.exists():
-                    with open(run_info_path, "r") as fp:
+                    with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                         run_info = json.load(fp)
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
                 else:
@@ -2905,6 +2916,8 @@ class MassMethodWidget(QMainWindow):
         try:
             concentrations = []
             signals = []
+            signal_stds = []
+            calibration_folders = []
             valid_samples = []
 
             if 'selected_isotope' in self.selected_element:
@@ -2932,8 +2945,7 @@ class MassMethodWidget(QMainWindow):
                         continue
                     
                     conc_ppb = self.convert_concentration_to_ppb(conc, unit)
-                    concentrations.append(conc_ppb)
-                    
+
                     if folder_path not in self.calibration_data_cache:
                         progress.close()
                         QMessageBox.warning(self, "Error", f"Data not cached for row {i+1}. Please reload calibration folders.")
@@ -2981,11 +2993,14 @@ class MassMethodWidget(QMainWindow):
                     if not time_mask.any():
                         continue
 
-                    avg_count_per_second = np.mean(isotope_signal[time_mask]) / dwell_time
-                    
-                    signals.append(avg_count_per_second)
+                    cps_for_stats = isotope_signal[time_mask] / dwell_time
+
+                    concentrations.append(conc_ppb)
+                    signals.append(float(np.mean(cps_for_stats)))
+                    signal_stds.append(float(np.std(cps_for_stats)))
+                    calibration_folders.append(folder_path)
                     valid_samples.append(sample_name)
-                    
+
                 except ValueError as e:
                     progress.close()
                     QMessageBox.warning(self, "Error", f"Invalid concentration for row {i+1}: {str(e)}")
@@ -3008,14 +3023,30 @@ class MassMethodWidget(QMainWindow):
 
             concentrations = np.array(concentrations)
             signals = np.array(signals)
-            
+            signal_stds = np.array(signal_stds)
+
+            self.ionic_excluded_folders = {
+                f for f in self.ionic_excluded_folders
+                if f in calibration_folders
+            }
+
             method = self.calibration_method_combo.currentText()
-            results = self.perform_ionic_calibration(concentrations, signals, method)
-            
+            results = self.perform_ionic_calibration(
+                concentrations, signals, method,
+                y_std=signal_stds,
+                folders=calibration_folders,
+                sample_names=valid_samples,
+            )
+            if results is None:
+                progress.close()
+                QMessageBox.warning(self, "Insufficient Data",
+                                    "Need at least 2 included calibration points.")
+                return
+
             self.ionic_calibration_slope = results['slope']
             self.ionic_calibration_intercept = results['intercept']
             self.ionic_calibration_r_squared = results['r_squared']
-            
+
             progress.setValue(90)
             progress.setLabelText("Updating plots...")
             QApplication.processEvents()
@@ -3056,58 +3087,66 @@ class MassMethodWidget(QMainWindow):
         }
         return value * conversion_factors.get(unit, 1.0)
 
-    def perform_ionic_calibration(self, x, y, method):
+    IONIC_METHOD_KEYS = {
+        'Force through zero': 'zero',
+        'Simple linear': 'simple',
+        'Weighted': 'weighted',
+    }
+
+    def perform_ionic_calibration(self, x, y, method, y_std=None, folders=None,
+                                  sample_names=None):
         """
-        Perform calibration using specified method.
-        
+        Perform the ionic calibration with the shared regression helpers.
+
+        Runs the same three fits as the Ionic Calibration window
+        (``te_common.run_all_fits_on_subset``: force-through-zero, OLS and
+        weighted least squares, plus LOD / LOQ / BEC) on the points that are
+        not excluded, stores the full record in ``self.ionic_calibration_result``
+        and returns the fit selected by *method*.
+
         Args:
-            x: Concentration array
-            y: Signal array
-            method: Calibration method name
-            
+            x (np.ndarray): Concentration values in ppb.
+            y (np.ndarray): Mean signal values in cps.
+            method (str): 'Force through zero', 'Simple linear' or 'Weighted'.
+            y_std (np.ndarray | None): Signal standard deviations; zeros when
+                not supplied (the weighted fit then falls back to OLS).
+            folders (list | None): Folder path per point, used as the identity
+                for point exclusion.
+            sample_names (list | None): Display names per point, used in the
+                plot tooltips.
+
         Returns:
-            Dictionary containing slope, intercept, r_squared, and method
+            dict | None: 'slope', 'intercept', 'r_squared', 'y_fit', 'lod',
+            'loq', 'bec' and 'method', or None when fewer than 2 points remain.
         """
-        if method == "Force through zero":
-            slope = np.sum(x * y) / np.sum(x * x)
-            y_fit = slope * x
-            ss_res = np.sum((y - y_fit)**2)
-            ss_tot = np.sum(y**2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-            intercept = 0
-            
-        elif method == "Simple linear":
-            from scipy import stats
-            slope, intercept, r_value, _, _ = stats.linregress(x, y)
-            r_squared = r_value**2
-            
-        elif method == "Weighted":
-            weights = 1 / (y + 1)
-            weights = weights / np.sum(weights)
-            
-            W = np.diag(weights)
-            X = np.vstack([x, np.ones(len(x))]).T
-            try:
-                coeffs = np.linalg.inv(X.T @ W @ X) @ X.T @ W @ y
-                slope, intercept = coeffs[0], coeffs[1]
-                
-                y_fit = slope * x + intercept
-                ss_res = np.sum(weights * (y - y_fit)**2)
-                ss_tot = np.sum(weights * (y - np.mean(y))**2)
-                r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-            except (ArithmeticError, ValueError):
-                _itk_log.exception("Handled exception in perform_ionic_calibration")
-                from scipy import stats
-                slope, intercept, r_value, _, _ = stats.linregress(x, y)
-                r_squared = r_value**2
-        
-        return {
-            'slope': slope,
-            'intercept': intercept,
-            'r_squared': r_squared,
-            'method': method
-        }
-            
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if y_std is None or len(y_std) != len(y):
+            y_std = np.zeros_like(y)
+        else:
+            y_std = np.asarray(y_std, dtype=float)
+        if folders is None or len(folders) != len(y):
+            folders = [f"Point {i + 1}" for i in range(len(y))]
+        if sample_names is None or len(sample_names) != len(y):
+            sample_names = [Path(str(f)).name for f in folders]
+
+        included_mask = np.array(
+            [f not in self.ionic_excluded_folders for f in folders])
+
+        record = run_all_fits_on_subset(x, y, y_std, included_mask, 'N/A')
+        if record is None:
+            return None
+
+        record['folders'] = list(folders)
+        record['sample_names'] = list(sample_names)
+        record['excluded_folders'] = sorted(self.ionic_excluded_folders)
+        self.ionic_calibration_result = record
+
+        selected = dict(record[self.IONIC_METHOD_KEYS.get(method, 'zero')])
+        selected['method'] = method
+        return selected
+
+
     def calculate_transport_rate(self):
         """
         Calculate transport rate based on particle and ionic calibrations.

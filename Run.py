@@ -1,3 +1,13 @@
+"""IsotopeTrack application entry point.
+
+Creates the :class:`QApplication`, hands control to the splash coordinator
+which builds the main window, and runs the Qt event loop.
+
+Import order matters here. The environment variables below are read by Numba
+and joblib the first time those packages are imported, so they are set before
+anything pulls the scientific stack in — setting them later has no effect.
+"""
+
 import sys
 import os
 import multiprocessing
@@ -5,7 +15,7 @@ import multiprocessing
 multiprocessing.freeze_support()
 
 os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
-os.environ.setdefault('JOBLIB_MULTIPROCESSING', '0')
+os.environ.setdefault('JOBLIB_MULTIPROCESSING', '1')
 from tools.cli_utils import get_argument_parser
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.Run")
@@ -21,16 +31,9 @@ from PySide6.QtCore import Qt, QEvent, QCoreApplication
 
 QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
 
-from tools.render_settings import cluster_gpu_enabled
-
-if not cluster_gpu_enabled():
-    _chromium_flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
-    if "--disable-gpu" not in _chromium_flags:
-        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-            _chromium_flags + " --disable-gpu").strip()
-
 from tools.splash_screen import SplashCoordinator
 from utils.pyqtgraph_patches import apply_pyqtgraph_patches
+from utils.dialog_chrome import install_dialog_chrome
 from utils.file_dialog_memory import install_file_dialog_memory
 from mainwindow import MainWindow
 
@@ -110,6 +113,8 @@ if __name__ == "__main__":
     app.setAttribute(Qt.AA_DontShowIconsInMenus, False)
     app.setQuitOnLastWindowClosed(True)
     app.main_windows = []
+
+    install_dialog_chrome(app)
 
     app.setWindowIcon(QIcon(resource_path("images/isotrack_icon.ico")))
 

@@ -87,5 +87,7 @@ Root: HKLM; Subkey: "Software\{#AppPublisher}\{#AppName}"; ValueType: string; Va
 ; as the project file. Keys are removed on uninstall.
 Root: HKLM; Subkey: "Software\Classes\.itproj"; ValueType: string; ValueName: ""; ValueData: "IsotopeTrack.Project"; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project"; ValueType: string; ValueName: ""; ValueData: "IsotopeTrack Project"; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+; Document icon: point at the dedicated .itproj icon file, NOT at the exe.
+; "{app}\{#AppExeName},0" would show the main application logo instead.
+Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\isotrack_project.ico,0"
 Root: HKLM; Subkey: "Software\Classes\IsotopeTrack.Project\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""

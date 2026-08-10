@@ -1,3 +1,23 @@
+"""Clustering analysis dialog — algorithms, validity indices and result figures.
+
+Defines :class:`ClusteringDisplayDialog`, the workflow-node dialog that runs the
+clustering pipeline (scaling, dimensionality reduction, one of the algorithms in
+:data:`ALGORITHMS`, then internal validity scoring), and
+:class:`ClusteringPlotNode`, the canvas node that owns its configuration and
+opens the dialog.
+
+Matplotlib backend
+------------------
+The canvas is imported from ``backend_qtagg``, never ``backend_qt5agg``.
+Importing the latter sets matplotlib's global ``_QT_FORCE_QT5_BINDING`` flag,
+which tells matplotlib to bind PyQt5 or PySide2 rather than the PySide6 this
+application runs on. Whether that matters depends on which module imports a Qt
+backend first, so the failure is load-order dependent and intermittent — and
+two Qt bindings live in one process is a native crash, not a catchable
+exception. Every other plotting module in this package uses ``backend_qtagg``;
+keep this one consistent with them.
+"""
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton,
@@ -7,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QCursor
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -77,24 +97,37 @@ from results.utils_sort import (
 )
 from results.results_heatmap import draw_combinations_heatmap
 from results.compositional import (
-    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+    _apply_clr, _apply_ilr, _apply_robust_zscore,
 )
 
 
 class _SafeFigureCanvas(FigureCanvas):
-    """FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.
+    """FigureCanvas subclass that tolerates being shown before it has a window.
 
-    In certain PySide6 + matplotlib combinations, FigureCanvas.showEvent calls
-    self.window().installEventFilter(self) but window() returns a QWidgetItem
-    (a layout item) rather than a real QWidget, causing an AttributeError that
-    crashes the dialog on first show.
+    ``FigureCanvasQT.showEvent`` does ``self.window().windowHandle()`` and then
+    installs an event filter on the result to track device-pixel-ratio changes.
+    When the canvas is shown while its top-level widget does not yet have a
+    native window — which happens for canvases built inside a tab page or a
+    not-yet-mapped dialog — ``windowHandle()`` returns ``None`` and the
+    attribute access raises ``AttributeError``.
+
+    Swallowing it keeps the dialog alive, but the event filter is then never
+    installed, so the canvas will not follow a move to a screen with a
+    different pixel ratio. Rather than lose that permanently, remember that
+    the setup was skipped and retry on the next show, by which point the
+    native window normally exists.
     """
 
     def showEvent(self, event):
         try:
             super().showEvent(event)
+            self._itk_pixel_ratio_pending = False
         except AttributeError:
-            _itk_log.debug("Suppressed benign matplotlib/PySide6 showEvent AttributeError")
+            self._itk_pixel_ratio_pending = True
+            _itk_log.debug(
+                "matplotlib showEvent: window().windowHandle() was None "
+                "(canvas shown before its top-level window was native); "
+                "pixel-ratio tracking deferred to the next show")
 
     def resizeEvent(self, event):
         try:
@@ -3497,6 +3530,7 @@ class ClusteringDisplayDialog(QDialog):
         self._linkage_cache = None
         self._linkage_cache_key = None
         self._som_obj = None
+        self._fit_estimators = {}
         self._som_neuron_labels = None
         self.som_tab_idx = -1
         self.dendro_tab_idx = -1
@@ -4851,48 +4885,81 @@ class ClusteringDisplayDialog(QDialog):
         return matrix
 
 
+    def _keep_fit(self, name, est, data):
+        """Fit ``est``, remembering it so other tabs need not refit.
+
+        Args:
+            name (str): Algorithm name, used as the cache key.
+            est: An unfitted scikit-learn clusterer.
+            data (np.ndarray): The prepared matrix.
+
+        Returns:
+            np.ndarray: Integer labels.
+        """
+        labels = est.fit_predict(data)
+        try:
+            self._fit_estimators[name] = est
+        except Exception:
+            _itk_log.exception("Handled exception keeping the fitted estimator")
+        return labels
+
     def _run_algo(self, name, k, data):
+        """Fit one algorithm on the prepared matrix and return its labels.
+
+        The fitted estimator is kept on ``self._fit_estimators`` so the ③
+        Clusters tab can describe this fit — its reachability ordering, mixing
+        weights or merge heights — without fitting a second time.
+
+        Args:
+            name (str): Algorithm name.
+            k (int): Cluster count.
+            data (np.ndarray): The prepared matrix.
+
+        Returns:
+            np.ndarray or None: Integer labels, or None when unavailable.
+        """
         cfg = self.node.config
         try:
             if name == 'K-Means':
-                return KMeans(
+                return self._keep_fit(name, KMeans(
                     n_clusters=k,
                     random_state=42,
                     n_init=cfg.get('kmeans_n_init', 10),
                     max_iter=cfg.get('kmeans_max_iter', 300),
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'Hierarchical':
                 linkage = cfg.get('hier_linkage', 'ward')
                 metric  = cfg.get('hier_metric', 'euclidean') if linkage != 'ward' else 'euclidean'
-                return AgglomerativeClustering(
+                return self._keep_fit(name, AgglomerativeClustering(
                     n_clusters=k,
                     linkage=linkage,
                     metric=metric,
-                ).fit_predict(data)
+                    compute_distances=True,
+                ), data)
 
             elif name == 'Spectral':
                 affinity = cfg.get('spectral_affinity', 'rbf')
                 kw = dict(n_clusters=k, random_state=42, affinity=affinity)
                 if affinity == 'nearest_neighbors':
                     kw['n_neighbors'] = cfg.get('spectral_n_neighbors', 10)
-                return SpectralClustering(**kw).fit_predict(data)
+                return self._keep_fit(name, SpectralClustering(**kw), data)
 
             elif name == 'MiniBatch K-Means':
-                return MiniBatchKMeans(
+                return self._keep_fit(name, MiniBatchKMeans(
                     n_clusters=k,
                     random_state=42,
                     n_init=cfg.get('mbkm_n_init', 3),
                     batch_size=cfg.get('mbkm_batch_size', 1024),
                     max_iter=cfg.get('mbkm_max_iter', 100),
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'Birch':
-                return Birch(
+                return self._keep_fit(name, Birch(
                     n_clusters=k,
                     threshold=cfg.get('birch_threshold', 0.5),
                     branching_factor=cfg.get('birch_branching_factor', 50),
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'Gaussian Mixture':
                 gm = GaussianMixture(
@@ -4900,42 +4967,42 @@ class ClusteringDisplayDialog(QDialog):
                     covariance_type=cfg.get('gmm_covariance_type', 'full'),
                     random_state=42,
                 )
-                labels = gm.fit_predict(data)
+                labels = self._keep_fit(name, gm, data)
                 self._last_gmm = gm
                 return labels
 
             elif name == 'DBSCAN':
-                return DBSCAN(
+                return self._keep_fit(name, DBSCAN(
                     eps=cfg.get('dbscan_eps', 0.5),
                     min_samples=cfg.get('dbscan_min_samples', 5),
                     metric=cfg.get('dbscan_metric', 'euclidean'),
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'Mean Shift':
                 bw_kw = {}
                 if not cfg.get('meanshift_auto_bw', True):
                     bw_kw['bandwidth'] = cfg.get('meanshift_bandwidth', 1.0)
-                return MeanShift(
+                return self._keep_fit(name, MeanShift(
                     min_bin_freq=cfg.get('meanshift_min_bin_freq', 1),
                     **bw_kw,
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'OPTICS':
-                return OPTICS(
+                return self._keep_fit(name, OPTICS(
                     min_samples=cfg.get('optics_min_samples', 5),
                     metric=cfg.get('optics_metric', 'euclidean'),
                     cluster_method=cfg.get('optics_cluster_method', 'xi'),
-                ).fit_predict(data)
+                ), data)
 
             elif name == 'HDBSCAN':
                 if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                     return None
                 with numba_serial("HDBSCAN (cluster)"):
-                    return _HDBSCAN_CLS(
+                    return self._keep_fit(name, _HDBSCAN_CLS(
                         min_cluster_size=cfg.get('hdbscan_min_cluster_size', 5),
                         min_samples=cfg.get('hdbscan_min_samples', 5),
                         metric=cfg.get('hdbscan_metric', 'euclidean'),
-                    ).fit_predict(data)
+                    ), data)
 
             elif name == 'SOM':
                 return self._run_som(k, data, cfg)
@@ -5757,11 +5824,18 @@ class ClusteringDisplayDialog(QDialog):
         the user can watch the map self-organise.  Cluster labels aren't final
         yet, so neurons are coloured by a quick provisional grouping.
 
+        Returns immediately when the ⑤ SOM Grid tab was never built, which is
+        currently always: nothing calls :meth:`_build_som_tab`, so ``som_fig``
+        does not exist. The worker emits one snapshot per training step, so
+        without this guard every step raised and was logged.
+
         Args:
             weights (np.ndarray): Snapshot copy of neuron weights.
             t (int): Current training iteration.
             total (int): Total training iterations.
         """
+        if getattr(self, 'som_fig', None) is None:
+            return
         try:
             cfg = self.node.config
             rows = cfg.get('som_rows', 10)
@@ -5916,6 +5990,7 @@ class ClusteringDisplayDialog(QDialog):
                 if self._particle_samples is not None else [])
             self.node.config['_elements_filtered'] = list(
                 self._elements_filtered or elements_eff or [])
+            self._stamp_fit(data, sel_k)
 
             self._elements_cache = elements_eff
 
@@ -5972,6 +6047,48 @@ class ClusteringDisplayDialog(QDialog):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Rendering failed:\n{e}")
             self.status.setText("Clustering failed")
+
+    def _stamp_fit(self, data, sel_k):
+        """Record what this clustering run fitted, so other tabs can reuse it.
+
+        The ③ Clusters tab shows the same clustering as ② Cluster. Without a
+        stamp it has no way to tell that the result already on hand answers its
+        own question, so it refits from scratch every time it is opened. The
+        stamp carries a fingerprint per algorithm plus the identity of the
+        particle set, and the tab adopts these labels only when both match
+        exactly.
+
+        Never raises: a missing stamp only costs the other tab a refit.
+
+        Args:
+            data (np.ndarray): The prepared matrix that was clustered.
+            sel_k (int): The cluster count that was used.
+        """
+        try:
+            from results.cluster.live import fit_fingerprint, index_signature
+        except Exception:
+            try:
+                from .live import fit_fingerprint, index_signature
+            except Exception:
+                _itk_log.exception("Handled exception importing the fit stamp")
+                return
+        try:
+            cfg = self.node.config
+            dr = cfg.get('dim_reduction', 'None')
+            arr = np.asarray(data)
+            cfg['_fit_stamp'] = {
+                'index_sig': index_signature(self._particle_indices),
+                'k': int(sel_k),
+                'fit_dims': int(arr.shape[1]) if arr.ndim == 2 else None,
+                'fit_space': ('scaled features' if dr in (None, 'None')
+                              else f'{dr} space'),
+                'fingerprints': {
+                    algo: fit_fingerprint(cfg, algo, sel_k)
+                    for algo in (self.final_results or {})
+                },
+            }
+        except Exception:
+            _itk_log.exception("Handled exception stamping the fit")
 
     def _on_cluster_failed(self, message):
         """Report a worker-thread failure to the user.
@@ -6191,28 +6308,25 @@ class ClusteringDisplayDialog(QDialog):
     def _build_live_tab(self):
         """Add the interactive '② Cluster' tab (animated clustering).
 
-        This replaces the old matplotlib Clusters tab in the tab bar. It uses a
-        QWebEngineView so the algorithms can be *watched* building their answer,
-        with PCA/t-SNE/UMAP projections and 2-D/3-D views, on the same data the
-        other tabs use. The authoritative scikit-learn run (toolbar "② Cluster"
-        button) still feeds the strips, heatmap, dendrogram and export.
+        The algorithms can be *watched* building their answer, with
+        PCA/t-SNE/UMAP projections and 2-D/3-D views, on the same data the
+        other tabs use. The authoritative scikit-learn run (toolbar
+        "② Cluster" button) still feeds the strips, heatmap, dendrogram and
+        export.
 
-        Kept optional and fully guarded: if QtWebEngine (or the module) is
-        unavailable the dialog is completely unaffected and simply has no live
-        tab.
+        Fully guarded: if the module fails to import the dialog is completely
+        unaffected and simply has no live tab.
         """
         self._live_tab = None
         self.live_tab_idx = -1
         try:
-            from results.cluster.live import ClusterLiveTab, WEBENGINE_OK
+            from results.cluster.live import ClusterLiveTab
         except Exception:
             try:
-                from .live import ClusterLiveTab, WEBENGINE_OK
+                from .live import ClusterLiveTab
             except Exception:
                 _itk_log.exception("Handled exception importing results.cluster.live")
                 return
-        if not WEBENGINE_OK:
-            return
         try:
             self._live_tab = ClusterLiveTab(self)
             self.live_tab_idx = self.tabs.addTab(self._live_tab, "③ Clusters")
@@ -6527,19 +6641,63 @@ class ClusteringDisplayDialog(QDialog):
         dlg.show()
 
     def _export_results(self):
-        """Serialise clustering results and characterisation to a JSON file.
+        """Export the clustering results to a workbook or a JSON file.
 
-        Opens a save-file dialog, then writes configuration, optimal K,
-        evaluation results, and per-cluster characterisation.
+        Excel is the default because the results are table-shaped — the
+        characterisation is what goes into a paper, and a workbook opens
+        without tooling. JSON stays available for an exact round-trip, since a
+        workbook flattens the nesting and rounds for display.
         """
         from PySide6.QtWidgets import QFileDialog
-        import json
 
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Export Results", "clustering_analysis.json",
-            "JSON (*.json);;All Files (*)")
+        path, selected = QFileDialog.getSaveFileName(
+            self, "Export Results", "clustering_analysis.xlsx",
+            "Excel workbook (*.xlsx);;JSON (*.json);;All Files (*)")
         if not path:
             return
+        wants_json = path.lower().endswith('.json') or 'JSON' in (selected or '')
+        if not wants_json:
+            if not path.lower().endswith('.xlsx'):
+                path += '.xlsx'
+            self._export_results_xlsx(path)
+            return
+        if not path.lower().endswith('.json'):
+            path += '.json'
+        self._export_results_json(path)
+
+    def _export_results_xlsx(self, path):
+        """Write the results as a multi-sheet Excel workbook.
+
+        Args:
+            path (str): Destination ``.xlsx`` path.
+        """
+        try:
+            try:
+                from results.cluster.export_workbook import export_workbook
+            except ImportError:
+                from .export_workbook import export_workbook
+            sheets = export_workbook(self, path)
+            QMessageBox.information(
+                self, "Success",
+                "Exported to: %s\n\nSheets: %s" % (path, ', '.join(sheets)))
+        except ImportError:
+            _itk_log.exception("openpyxl unavailable for the workbook export")
+            QMessageBox.critical(
+                self, "Error",
+                "Excel export needs the openpyxl package.\n"
+                "Choose JSON in the file dialog instead.")
+        except Exception as e:
+            _itk_log.exception("workbook export failed")
+            QMessageBox.critical(self, "Error", f"Export failed: {e}")
+
+    def _export_results_json(self, path):
+        """Write the results as a single nested JSON document.
+
+        Args:
+            path (str): Destination ``.json`` path.
+        """
+        import json
+
         try:
             export = {
                 'configuration': self.node.config,

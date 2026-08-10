@@ -252,7 +252,7 @@ Icon={self.icon_path}
 Terminal=false
 """
             
-            with open(desktop_file, 'w') as f:
+            with open(desktop_file, 'w', encoding='utf-8') as f:
                 f.write(desktop_content)
             
             desktop_file.chmod(0o755)
@@ -927,7 +927,7 @@ Terminal=false
                 HistogramPlotNode, ElementBarChartPlotNode, CorrelationPlotNode,
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
-                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
+                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode,
                 ParticleFilterNode,TempPassThroughNode, ParticleClassifierNode,
                 StickyNoteItem,
             )
@@ -984,7 +984,6 @@ Terminal=false
             "correlation_matrix": CorrelationMatrixNode,
             "concentration_comparison": ConcentrationComparisonNode,    
             "network_diagram": NetworkDiagramNode,
-            "dashboard": DashboardNode,
             
         }
         

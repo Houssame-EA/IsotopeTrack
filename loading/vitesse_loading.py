@@ -484,11 +484,11 @@ def read_nu_directory(
     if not is_nu_directory(path):
         raise ValueError("read_nu_directory: missing 'run.info' or 'integrated.index'")
 
-    with path.joinpath("run.info").open("r") as fp:
+    with path.joinpath("run.info").open("r", encoding="utf-8", errors="replace") as fp:
         run_info = json.load(fp)
-    with path.joinpath("autob.index").open("r") as fp:
+    with path.joinpath("autob.index").open("r", encoding="utf-8", errors="replace") as fp:
         autob_index = json.load(fp)
-    with path.joinpath("integrated.index").open("r") as fp:
+    with path.joinpath("integrated.index").open("r", encoding="utf-8", errors="replace") as fp:
         integ_index = json.load(fp)
 
     if max_integ_files is not None:

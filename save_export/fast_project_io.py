@@ -450,7 +450,15 @@ def load_project_v2(filepath, mw: MainWindow, progress_callback=None):
         meta_compressed = zf.read('metadata.dat')
         
         if compression_lib == 'lz4':
-            import lz4.frame as lz4f
+            try:
+                import lz4.frame as lz4f
+            except ImportError:
+                raise RuntimeError(
+                    "This project was saved with lz4 compression, but the lz4 "
+                    "package is not available in this installation, so it cannot "
+                    "be opened. Install it with 'pip install lz4' (or reinstall "
+                    "IsotopeTrack) and try again."
+                ) from None
             meta_pkl = lz4f.decompress(meta_compressed)
         else:
             buf = io.BytesIO(meta_compressed)

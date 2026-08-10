@@ -13,7 +13,7 @@ Connectivity (design §2):
     Upstream:   Particle Filter, Single Sample, Multiple Sample only.
     Downstream: any Visualization-category node except AI Data Assistant
                 (permanently excluded) and the work-in-progress set in
-                WIP_EXCLUDED_DOWNSTREAM_TYPES (Clustering, Dashboard,
+                WIP_EXCLUDED_DOWNSTREAM_TYPES (Clustering,
                 Single/Multiple, Correlation Matrix, Network, Molar Ratio,
                 Isotopic Ratio, Ternary Plot) -- temporarily disabled until
                 each is verified meaningful on classifier-bucketed data.
@@ -60,12 +60,12 @@ ALLOWED_UPSTREAM_TYPES = frozenset({
 #: key, which breaks any node that needs TWO within-particle components
 #: (molar/isotopic ratio, correlation matrix, network) or that does its own
 #: grouping that would conflict with classifier buckets (clustering,
-#: dashboard, single/multiple, ternary). See the classifier-ratio-nodes-
+#: single/multiple, ternary). See the classifier-ratio-nodes-
 #: meaningless memory note and .claude/july22.md #7-#10. Re-enable each once
 #: its own follow-up work lands -- this is a work-in-progress restriction,
 #: not a permanent design boundary (contrast with "ai_assistant" below).
 WIP_EXCLUDED_DOWNSTREAM_TYPES = frozenset({
-    "clustering_plot", "dashboard", "single_multiple_element_plot",
+    "clustering_plot", "single_multiple_element_plot",
     "correlation_matrix", "network_diagram", "molar_ratio_plot",
     "isotopic_ratio_plot", "triangle_plot",
 })

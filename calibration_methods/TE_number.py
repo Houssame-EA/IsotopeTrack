@@ -18,9 +18,10 @@ from loading.data_thread import DataProcessThread
 
 
 from calibration_methods.te_common import (
-    PLOT_STYLES,
+    DETECTION_METHODS, DEFAULT_DETECTION_PARAMS,
     export_table_to_csv, populate_detection_row,
     read_detection_row, apply_global_method, plot_detection_results,
+    plot_raw_signal,
     highlight_particle, snr_to_color, number_method_transport_rate,
     base_stylesheet,
     show_data_source_dialog,
@@ -358,8 +359,8 @@ class NumberMethodWidget(QMainWindow):
 
         global_row = QHBoxLayout()
         global_method_combo = NoWheelComboBox()
-        global_method_combo.addItems(["Manual", "Compound Poisson LogNormal"])
-        global_method_combo.setCurrentText("Compound Poisson LogNormal")
+        global_method_combo.addItems(DETECTION_METHODS)
+        global_method_combo.setCurrentText(DEFAULT_DETECTION_PARAMS["method"])
         apply_global_button = QPushButton("Apply to All Samples")
         apply_global_button.clicked.connect(
             lambda: self.apply_global_detection_params(global_method_combo.currentText())
@@ -799,7 +800,7 @@ class NumberMethodWidget(QMainWindow):
                     if not run_info_path.exists():
                         raise FileNotFoundError(f"run.info not found in {folder_path}")
                     
-                    with open(run_info_path, "r") as fp:
+                    with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                         run_info = json.load(fp)
                     
                     sample_name = run_info.get("SampleName", Path(folder_path).name)
@@ -1550,20 +1551,8 @@ class NumberMethodWidget(QMainWindow):
             
         signal = self.folder_data[folder_path]['isotope_signal']
         time_array = self.folder_data[folder_path]['time_array']
-        
-        self.plot_widget.plot(
-            x=time_array, 
-            y=signal, 
-            pen=PLOT_STYLES['raw_signal'], 
-            name='Raw Signal'
-        )
-        
-        self.plot_widget.setBackground(theme.palette.plot_bg)
-        self.plot_widget.showGrid(x=True, y=True, alpha=PLOT_STYLES['grid_alpha'])
-        self.plot_widget.setLabel('left', 'Counts')
-        self.plot_widget.setLabel('bottom', 'Time (s)')
-        self.plot_widget.setTitle(f"Raw Signal Preview - {sample_name}")
-        self.plot_widget.enableAutoRange()
+
+        plot_raw_signal(self.plot_widget, sample_name, signal, time_array)
 
     def update_detection_parameters_table(self):
         """Update detection parameters table with all samples.
@@ -1719,9 +1708,12 @@ class NumberMethodWidget(QMainWindow):
                 
                 signal = self.folder_data[folder_path]['isotope_signal']
                 time_array = self.folder_data[folder_path]['time_array']
-                
+
+                threshold_signal = self.peak_detector.optimize_data_types(
+                    np.asarray(signal))
+
                 _, lambda_bkgd, threshold, mean_signal, threshold_data = self.peak_detector.detect_peaks_with_poisson(
-                    signal,
+                    threshold_signal,
                     alpha=params['alpha'],
                     method=params['method'],
                     manual_threshold=params['manual_threshold'],

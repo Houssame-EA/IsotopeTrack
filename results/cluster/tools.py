@@ -81,7 +81,7 @@ except ImportError:
         _HDBSCAN_OK = False
 
 from results.compositional import (
-    multiplicative_replacement, _apply_clr, _apply_ilr, _apply_robust_zscore,
+    _apply_clr, _apply_ilr, _apply_robust_zscore,
 )
 
 try:
@@ -587,7 +587,7 @@ class Preprocessor:
         return m
 
 
-def run_algorithm(name, params, data, som_runner=None):
+def run_algorithm(name, params, data, som_runner=None, capture=None):
     """Fit one algorithm with explicit ``params`` and return integer labels.
 
     Estimator construction is implemented here rather than delegated to the host
@@ -611,63 +611,83 @@ def run_algorithm(name, params, data, som_runner=None):
         np.ndarray or None: Integer labels (``-1`` = noise) or ``None`` on
             failure / unsupported configuration.
     """
+    def _go(est):
+        """Fit ``est``, handing the fitted estimator back through ``capture``.
+
+        The detail view beside the Cluster Lab scatter reads quantities the
+        estimator keeps — the reachability ordering, the mixing weights, the
+        merge heights — so it can describe the fit that produced the labels
+        rather than approximating it from the labels alone.
+
+        Args:
+            est: An unfitted scikit-learn clusterer.
+
+        Returns:
+            np.ndarray: Integer labels.
+        """
+        labels = est.fit_predict(data)
+        if capture is not None:
+            capture['estimator'] = est
+        return labels
+
     try:
         k = int(params.get('k', 2))
         if name == 'K-Means':
-            return KMeans(n_clusters=k, random_state=42,
+            return _go(KMeans(n_clusters=k, random_state=42,
                           n_init=int(params.get('n_init', 10)),
-                          max_iter=int(params.get('max_iter', 300))).fit_predict(data)
+                          max_iter=int(params.get('max_iter', 300))))
         if name == 'MiniBatch K-Means':
-            return MiniBatchKMeans(n_clusters=k, random_state=42,
+            return _go(MiniBatchKMeans(n_clusters=k, random_state=42,
                                    n_init=int(params.get('n_init', 3)),
                                    batch_size=int(params.get('batch_size', 1024)),
                                    max_iter=int(params.get('max_iter', 100))
-                                   ).fit_predict(data)
+                                   ))
         if name == 'Hierarchical':
             linkage = params.get('linkage', 'ward')
             metric = 'euclidean' if linkage == 'ward' else params.get('metric', 'euclidean')
-            return AgglomerativeClustering(n_clusters=k, linkage=linkage,
-                                           metric=metric).fit_predict(data)
+            return _go(AgglomerativeClustering(n_clusters=k, linkage=linkage,
+                                               metric=metric,
+                                               compute_distances=True))
         if name == 'Spectral':
             aff = params.get('affinity', 'rbf')
             kw = dict(n_clusters=k, random_state=42, affinity=aff,
                       assign_labels='kmeans')
             if aff == 'nearest_neighbors':
                 kw['n_neighbors'] = int(params.get('n_neighbors', 10))
-            return SpectralClustering(**kw).fit_predict(data)
+            return _go(SpectralClustering(**kw))
         if name == 'Birch':
-            return Birch(n_clusters=k,
+            return _go(Birch(n_clusters=k,
                          threshold=float(params.get('threshold', 0.5)),
                          branching_factor=int(params.get('branching_factor', 50))
-                         ).fit_predict(data)
+                         ))
         if name == 'Gaussian Mixture':
-            return GaussianMixture(
+            return _go(GaussianMixture(
                 n_components=k, random_state=42,
                 covariance_type=params.get('covariance_type', 'full')
-            ).fit_predict(data)
+            ))
         if name == 'DBSCAN':
-            return DBSCAN(eps=float(params.get('eps', 0.5)),
+            return _go(DBSCAN(eps=float(params.get('eps', 0.5)),
                           min_samples=int(params.get('min_samples', 5)),
-                          metric=params.get('metric', 'euclidean')).fit_predict(data)
+                          metric=params.get('metric', 'euclidean')))
         if name == 'HDBSCAN':
             if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                 return None
             with numba_serial("HDBSCAN (sweep)"):
-                return _HDBSCAN_CLS(min_cluster_size=int(params.get('min_cluster_size', 5)),
-                                    min_samples=int(params.get('min_samples', 5)),
-                                    metric=params.get('metric', 'euclidean')
-                                    ).fit_predict(data)
+                return _go(_HDBSCAN_CLS(
+                    min_cluster_size=int(params.get('min_cluster_size', 5)),
+                    min_samples=int(params.get('min_samples', 5)),
+                    metric=params.get('metric', 'euclidean')))
         if name == 'OPTICS':
-            return OPTICS(min_samples=int(params.get('min_samples', 5)),
+            return _go(OPTICS(min_samples=int(params.get('min_samples', 5)),
                           metric=params.get('metric', 'euclidean'),
                           cluster_method=params.get('cluster_method', 'xi')
-                          ).fit_predict(data)
+                          ))
         if name == 'Mean Shift':
             bw = float(params.get('bandwidth', 0.0))
             kw = {'min_bin_freq': int(params.get('min_bin_freq', 1))}
             if bw > 0:
                 kw['bandwidth'] = bw
-            return MeanShift(**kw).fit_predict(data)
+            return _go(MeanShift(**kw))
         if name == 'SOM' and som_runner is not None:
             som_keys = ALGO_PARAM_SPECS['SOM'].get('som_param_keys', ())
             som_params = {key: params[key] for key in som_keys if key in params}
@@ -1103,102 +1123,6 @@ def analyze_metric_trust(results, internal_metrics,
     return out
 
 
-def analyze_metric_trust_stratified(results, internal_metrics,
-                                    reference=PRIMARY_EXTERNAL_METRIC,
-                                    min_per_stratum=3):
-    """Validate each internal index against ground truth within fixed preprocessing.
-
-    :func:`analyze_metric_trust` correlates every internal index with the
-    external reference across the *entire* grid, but internal cluster-validity
-    indices are computed on whatever representation each pipeline produced — raw
-    counts, CLR coordinates, a PCA basis, a t-SNE embedding — and those values
-    are neither on a common scale nor measuring the same geometry. A high pooled
-    correlation can therefore reflect "this index is large on the representation
-    that happens to win" rather than "this index reliably ranks partitions." That
-    is a statement about representations, not about the metric's trustworthiness.
-
-    This function removes that confound by stratifying on the full preprocessing
-    triple ``(data_type, scaling, dim_reduction)`` and computing, within each
-    stratum, the Spearman correlation between the internal index and the external
-    reference. It reports, per metric, the sample-size-weighted mean correlation
-    across strata together with its spread, so an index that is consistently
-    aligned with the truth *given a fixed representation* is distinguishable from
-    one that only appears aligned because of representation effects. This is the
-    stratified, like-for-like comparison advocated for relative cluster-validity
-    studies by Vendramin, Campello & Hruschka and echoed in the comparative
-    protocols of Arbelaitz et al.
-
-    References:
-        L. Vendramin, R. J. G. B. Campello and E. R. Hruschka, "Relative
-        clustering validity criteria: a comparative overview," *Stat. Anal. Data
-        Min.* 3(4), 2010, 209-235, doi:10.1002/sam.10080.
-        O. Arbelaitz et al., "An extensive comparative study of cluster validity
-        indices," *Pattern Recognit.* 46(1), 2013, 243-256,
-        doi:10.1016/j.patcog.2012.07.021.
-
-    Args:
-        results (list[dict]): Result rows from :func:`run_sweep`.
-        internal_metrics (list[str]): Internal index names present in results.
-        reference (str): External metric to validate against.
-        min_per_stratum (int): Minimum finite pairs a stratum must contribute for
-            its correlation to count; smaller strata are skipped as unreliable.
-
-    Returns:
-        list[dict]: One entry per internal metric with keys ``'metric'``,
-            ``'weighted_spearman'`` (sample-weighted mean over strata),
-            ``'mean_spearman'`` (unweighted mean), ``'std_spearman'`` (spread
-            across strata), ``'n_strata'`` (strata that qualified) and
-            ``'per_stratum'`` (list of ``{'stratum', 'spearman', 'n'}``). Sorted
-            most-trustworthy first by weighted correlation, ``nan`` last.
-    """
-    strata = {}
-    for r in results:
-        key = (r.get('data_type'), r.get('scaling'), r.get('dim_reduction'))
-        strata.setdefault(key, []).append(r)
-
-    out = []
-    for m in internal_metrics:
-        spec = METRIC_REGISTRY.get(m, {})
-        sign = -1.0 if spec.get('direction', 'max') == 'min' else 1.0
-        per_stratum = []
-        rhos, weights = [], []
-        for key, rows in strata.items():
-            ref_vals = [r.get(reference, float('nan')) for r in rows]
-            int_vals = [r.get(m, float('nan')) for r in rows]
-            n_ok = int(np.sum(np.isfinite(ref_vals) & np.isfinite(int_vals)))
-            if n_ok < max(3, int(min_per_stratum)):
-                continue
-            rho = _spearman(int_vals, ref_vals)
-            if rho != rho:
-                continue
-            rho *= sign
-            per_stratum.append({
-                'stratum': '/'.join(str(p) for p in key),
-                'spearman': rho, 'n': n_ok,
-            })
-            rhos.append(rho)
-            weights.append(n_ok)
-        if rhos:
-            rhos_a = np.asarray(rhos, float)
-            w_a = np.asarray(weights, float)
-            weighted = float(np.sum(rhos_a * w_a) / np.sum(w_a))
-            mean = float(np.mean(rhos_a))
-            std = float(np.std(rhos_a)) if len(rhos_a) > 1 else 0.0
-        else:
-            weighted = mean = std = float('nan')
-        out.append({
-            'metric': m,
-            'weighted_spearman': weighted,
-            'mean_spearman': mean,
-            'std_spearman': std,
-            'n_strata': len(rhos),
-            'per_stratum': per_stratum,
-        })
-    out.sort(key=lambda d: (d['weighted_spearman'] != d['weighted_spearman'],
-                            -(d['weighted_spearman']
-                              if d['weighted_spearman'] == d['weighted_spearman']
-                              else 0.0)))
-    return out
 
 
 def summarize_sweep_failures(failures, total=None):
@@ -2330,7 +2254,7 @@ if _QT_OK:
                                    self.rank_combo.currentText())
             metric_cols = ([m for m in EXTERNAL_METRICS if m in results[0]] +
                            [m for m in METRIC_REGISTRY if m in results[0]])
-            with open(path, 'w', newline='') as f:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
                 w.writerow(['rank', 'algorithm', 'data_type', 'scaling',
                             'dim_reduction', 'params', 'n_clusters', 'n_noise',

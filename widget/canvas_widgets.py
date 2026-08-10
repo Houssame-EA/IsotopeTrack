@@ -53,7 +53,6 @@ from results.results_concentration import (
 )
 from results.results_network import (
     NetworkDisplayDialog, NetworkDiagramNode)
-from results.results_dashboard import DashboardDisplayDialog, DashboardNode
 from results.results_periodic import IsotopeChipSelector
 from tools.particle_filter import (
     ParticleFilterNode, build_particle_filter_node_item)
@@ -3770,10 +3769,6 @@ NetworkDiagramNodeItem = _make_viz_icon_node(
     ("#14B8A6", "#0F766E"), "fa6s.diagram-project", "Network",
     NetworkDisplayDialog, multi_figure=True)
 
-DashboardNodeItem = _make_viz_icon_node(
-    ("#3B82F6", "#1D4ED8"), "fa6s.gauge-high", "Dashboard",
-    DashboardDisplayDialog, multi_figure=True)
-
 
 class AIAssistantNodeItem(NodeItem):
     """AI sparkle icon."""
@@ -3969,7 +3964,6 @@ class NodePalette(QWidget):
             ("Corr. Matrix",      "correlation_matrix",            'fa6s.table-cells',        DS.PINK),
             ("Concentration",     "concentration_comparison",      'fa6s.arrows-left-right',  DS.PURPLE),
             ("Network",           "network_diagram",               'fa6s.diagram-project',    DS.TEAL),
-            ("Dashboard",           "dashboard",                    'fa6s.gauge-high',        DS.ACCENT),
         ]:
             b = DraggableNodeButton(txt, ntype, icon, color)
             vg.addWidget(b)
@@ -5095,7 +5089,6 @@ _NODE_FACTORIES = {
     "correlation_matrix":           CorrelationMatrixNode,
     "concentration_comparison":     ConcentrationComparisonNode,
     "network_diagram":              NetworkDiagramNode,
-    "dashboard":                    DashboardNode,
 }
 
 _NODE_ITEM_MAP = {
@@ -5120,7 +5113,6 @@ _NODE_ITEM_MAP = {
     "correlation_matrix":           CorrelationMatrixNodeItem,
     "concentration_comparison":     ConcentrationComparisonNodeItem,
     "network_diagram":              NetworkDiagramNodeItem,
-    "dashboard":                    DashboardNodeItem,
 }
 
 #: Every Visualization-category node type (mirrors the palette's
@@ -5134,7 +5126,6 @@ _VIZ_NODE_TYPES = frozenset({
     "heatmap_plot", "molar_ratio_plot", "isotopic_ratio_plot",
     "triangle_plot", "single_multiple_element_plot", "clustering_plot",
     "correlation_matrix", "concentration_comparison", "network_diagram",
-    "dashboard",
 })
 
 
@@ -5145,7 +5136,7 @@ def validate_classifier_link(src_node, snk_node):
     Multiple Sample; downstream limited to Visualization-category nodes,
     excluding AI Data Assistant (permanently, unrelated reason) and the
     work-in-progress set in ``WIP_EXCLUDED_DOWNSTREAM_TYPES`` (Clustering,
-    Dashboard, Single/Multiple, Correlation Matrix, Network, Molar Ratio,
+    Single/Multiple, Correlation Matrix, Network, Molar Ratio,
     Isotopic Ratio, Ternary Plot). Only fires when one endpoint of the link
     actually is a Particle Classifier node — every other link pair in the
     app is unaffected.

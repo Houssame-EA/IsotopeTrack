@@ -18,6 +18,7 @@ from tools.theme import theme, dialog_qss
 from utils.unit import ExportUnits, load_units
 from tools.unit import show_advanced_dialog
 from utils.app_version import __version__ as APP_VERSION
+from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
@@ -32,7 +33,10 @@ def is_pure_element(mass_fraction):
     Returns:
         bool: True if pure element, False otherwise
     """
-    return math.isclose(mass_fraction, 1.0, abs_tol=1e-6)
+    try:
+        return math.isclose(float(_as_scalar(mass_fraction)), 1.0, abs_tol=1e-6)
+    except (TypeError, ValueError):
+        return False
 
 
 class _ExportWorker(QThread):
@@ -112,7 +116,7 @@ class _ExportWorker(QThread):
                 self.progressed.emit(0, "Writing summary file…")
                 summary_path = f"{self._dir}/{time.strftime('%H-%M-%S')}summary_results.csv"
                 try:
-                    with open(summary_path, 'w') as summary_file:
+                    with open(summary_path, 'w', encoding='utf-8', newline='') as summary_file:
                         export_summary_file_with_mass_fractions(
                             self._mw, summary_file, self._samples,
                             self._all_elements, self._element_labels,
@@ -573,7 +577,7 @@ def export_saturation_filter_info(main_window, summary_file, selected_samples):
             n_events = sum(len(plist) for plist in store.values())
             excl_s = getattr(main_window, 'saturation_excluded_time_s', {}).get(sample_name, 0.0)
             summary_file.write(
-                f"{sample_name},{n_events},{excl_s * 1000.0:.2f},Yes\n")
+                f"{sample_name},{n_events},{_fmt(excl_s * 1000.0, '.2f')},Yes\n")
     summary_file.write("\n")
 
 
@@ -599,14 +603,14 @@ def export_mass_fraction_info(main_window: MainWindow, file_handle, selected_sam
             compound_density = mf_service.element_densities.get(element, '')
             molecular_weight = mf_service.element_molecular_weights.get(element, '')
 
-            element_density = (f"{periodic_table.get_density_by_element(element):.3f}"
+            element_density = (_fmt(periodic_table.get_density_by_element(element), ".3f", "")
                                if periodic_table.element_exists(element)
                                else "")
 
             notes = "Applied to all samples" if not is_pure_element(mass_fraction) else "Pure element"
-            mw_display = f"{molecular_weight:.6f}" if molecular_weight else element_density
+            mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else element_density
             file_handle.write(
-                f"Global,{element},{mass_fraction:.6f},{mw_display},{compound_density},{element_density},{notes}\n")
+                f"Global,{element},{_fmt(mass_fraction, '.6f')},{mw_display},{compound_density},{element_density},{notes}\n")
 
     for sample_name in selected_samples:
         if sample_name not in mf_service.sample_mass_fractions:
@@ -618,14 +622,14 @@ def export_mass_fraction_info(main_window: MainWindow, file_handle, selected_sam
         for element, mass_fraction in sample_fractions.items():
             compound_density = sample_densities.get(element, '')
             molecular_weight = sample_molecular_weights.get(element, '')
-            element_density = (f"{periodic_table.get_density_by_element(element):.3f}"
+            element_density = (_fmt(periodic_table.get_density_by_element(element), ".3f", "")
                                if periodic_table.element_exists(element)
                                else "")
 
             notes = f"Sample-specific override" if not is_pure_element(mass_fraction) else "Pure element"
-            mw_display = f"{molecular_weight:.6f}" if molecular_weight else element_density
+            mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else element_density
             file_handle.write(
-                f"{sample_name},{element},{mass_fraction:.6f},{mw_display},{compound_density},{element_density},{notes}\n")
+                f"{sample_name},{element},{_fmt(mass_fraction, '.6f')},{mw_display},{compound_density},{element_density},{notes}\n")
 
     if not mf_service.element_mass_fractions and not mf_service.sample_mass_fractions:
         file_handle.write(
@@ -670,7 +674,7 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
     summary_file.write("Sample,Dilution Factor\n")
     for sample_name in selected_samples:
         dilution = sample_dilutions.get(sample_name, 1.0)
-        summary_file.write(f"{sample_name},{dilution:.3f}x\n")
+        summary_file.write(f"{sample_name},{_fmt(dilution, '.3f')}x\n")
     summary_file.write("\n")
 
     summary_file.write("Total Particles\n")
@@ -729,14 +733,14 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                 corrected_particles_per_ml = particles_per_ml * dilution_factor
 
                 total_particles_row.append(str(particle_count))
-                particles_per_ml_row.append(f"{particles_per_ml:.2f}")
-                corrected_particles_per_ml_row.append(f"{corrected_particles_per_ml:.2f}")
+                particles_per_ml_row.append(_fmt(particles_per_ml, ".2f"))
+                corrected_particles_per_ml_row.append(_fmt(corrected_particles_per_ml, ".2f"))
 
                 mass_fraction = mf_service.get_mass_fraction(element_key, sample_name)
-                mass_fraction_row.append(f"{mass_fraction:.6f}")
+                mass_fraction_row.append(_fmt(mass_fraction, ".6f"))
 
                 molecular_weight = mf_service.get_molecular_weight(element_key, sample_name)
-                molecular_weight_row.append(f"{molecular_weight:.6f}" if molecular_weight else f"{atomic_mass:.6f}")
+                molecular_weight_row.append(_fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f"))
 
                 is_pure = is_pure_element(mass_fraction)
 
@@ -868,8 +872,8 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                 background = threshold_data.get(element_key, {}).get('background', 0)
                 background_ppt = main_window.element_limits.get(sample_name, {}).get(element_key, {}).get(
                     'background_ppt', 0)
-                background_counts_row.append(f"{background:.2f}")
-                background_ppt_row.append(f"{background_ppt:.5f}")
+                background_counts_row.append(_fmt(background, ".2f"))
+                background_ppt_row.append(_fmt(background_ppt, ".5f"))
 
                 if element_key in main_window.sample_parameters.get(sample_name, {}):
                     params = main_window.sample_parameters[sample_name][element_key]
@@ -1012,7 +1016,7 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
     sigma_mode = getattr(main_window, '_sigma_mode', 'global')
     global_sigma = getattr(main_window, '_global_sigma', 0.55)
     summary_file.write(f"Sigma Mode: {sigma_mode}\n")
-    summary_file.write(f"Global Sigma: {global_sigma:.3f}\n\n")
+    summary_file.write(f"Global Sigma: {_fmt(global_sigma, '.3f')}\n\n")
     summary_file.write(
         "Sample,Element,Include,Method,Sigma,Manual Threshold,Min Points,Alpha (Error Rate),Integration Method,Iterative,Window Size Enabled,Window Size,Split Method,Valley Ratio\n")
     for row in detection_params_data:
@@ -1041,10 +1045,10 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
 
     if units is None:
         units = ExportUnits()
-    with open(file_path, 'w') as f:
+    with open(file_path, 'w', encoding='utf-8', newline='') as f:
         f.write(f"Sample: {sample_name}\n")
         f.write(f"Data Type: {data_type.capitalize()} Type\n")
-        f.write(f"Dilution Factor Applied: {dilution_factor:.3f}x\n")
+        f.write(f"Dilution Factor Applied: {_fmt(dilution_factor, '.3f')}x\n")
 
         if sample_name in main_window.sample_analysis_dates:
             date_info = main_window.sample_analysis_dates[sample_name]
@@ -1060,10 +1064,10 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
         f.write("-" * 50 + "\n\n")
 
         f.write("Calibration Information:\n")
-        f.write(f"Transport Rate: {main_window.average_transport_rate:.4f} µL/s\n")
+        f.write(f"Transport Rate: {_fmt(main_window.average_transport_rate, '.4f')} µL/s\n")
 
         dwell_time_ms = main_window.sample_dwell_times.get(sample_name, 0.0)
-        f.write(f"Dwell Time: {dwell_time_ms:.4f} ms\n\n")
+        f.write(f"Dwell Time: {_fmt(dwell_time_ms, '.4f')} ms\n\n")
 
         f.write("Mass Fraction Configuration:\n")
         f.write(f"Data Type: {data_type.capitalize()} Type\n")
@@ -1078,14 +1082,14 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             molecular_weight = mf_service.get_molecular_weight(element_key, sample_name)
             is_pure = is_pure_element(mass_fraction)
 
-            element_density = (f"{periodic_table.get_density_by_element(element):.3f}"
+            element_density = (_fmt(periodic_table.get_density_by_element(element), ".3f", "")
                                if periodic_table.element_exists(element)
                                else "")
 
             use_particle_calc = (data_type == "particle" and not is_pure)
             if use_particle_calc:
                 compound_density = mf_service.get_element_density(element_key, sample_name)
-                density_used = f"{compound_density:.3f}" if compound_density else element_density
+                density_used = _fmt(compound_density, ".3f") if compound_density else element_density
             else:
                 density_used = element_density
 
@@ -1097,11 +1101,11 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
                 elif element in mf_service.element_mass_fractions:
                     notes = "Global compound setting"
 
-            mw_display = f"{molecular_weight:.6f}" if molecular_weight else f"{atomic_mass:.6f}"
+            mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f")
 
             row_data = [
                 display_label,
-                f"{mass_fraction:.6f}",
+                _fmt(mass_fraction, ".6f"),
                 mw_display,
                 element_density,
                 density_used,
@@ -1149,22 +1153,22 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             if use_particle_calc:
                 compound_density = mf_service.get_element_density(element_key, sample_name)
                 working_density = compound_density if compound_density else element_density
-                density_label = f"{compound_density:.3f}" if compound_density else f"{element_density:.3f}" if element_density else "N/A"
+                density_label = _fmt(compound_density, ".3f") if compound_density else _fmt(element_density, ".3f") if element_density else "N/A"
             else:
                 working_density = element_density
-                density_label = f"{element_density:.3f}" if element_density else "N/A"
+                density_label = _fmt(element_density, ".3f") if element_density else "N/A"
 
             row_data = [
                 display_label,
-                f"{method_data.get('slope', 'N/A'):.2e}" if method_data else "N/A",
-                f"{method_data.get('r_squared', 'N/A'):.6f}" if method_data else "N/A",
-                f"{method_data.get('bec', 'N/A'):.2f}" if method_data else "N/A",
-                f"{method_data.get('lod', 'N/A'):.2f}" if method_data else "N/A",
-                f"{method_data.get('loq', 'N/A'):.2f}" if method_data else "N/A",
-                f"{thresholds.get('LOD_counts', 'N/A'):.2f}" if 'LOD_counts' in thresholds else "N/A",
-                f"{thresholds.get('LOD_MDL', 'N/A'):.2f}" if 'LOD_MDL' in thresholds else "N/A",
-                f"{limits.get('background_ppt', 'N/A'):.5f}" if 'background_ppt' in limits else "N/A",
-                f"{limits.get('background_sd_ppt', 'N/A'):.5f}" if 'background_sd_ppt' in limits else "N/A"
+                _fmt(method_data.get("slope"), ".2e") if method_data else "N/A",
+                _fmt(method_data.get("r_squared"), ".6f") if method_data else "N/A",
+                _fmt(method_data.get("bec"), ".2f") if method_data else "N/A",
+                _fmt(method_data.get("lod"), ".2f") if method_data else "N/A",
+                _fmt(method_data.get("loq"), ".2f") if method_data else "N/A",
+                _fmt(thresholds.get("LOD_counts"), ".2f"),
+                _fmt(thresholds.get("LOD_MDL"), ".2f"),
+                _fmt(limits.get("background_ppt"), ".5f"),
+                _fmt(limits.get("background_sd_ppt"), ".5f")
             ]
 
             element_mdl = limits.get('MDL', 0)
@@ -1185,14 +1189,14 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
                 if mql > 0:
                     sql = main_window.mass_to_diameter(mql, working_density)
 
-            mw_display = f"{molecular_weight:.6f}" if molecular_weight else f"{atomic_mass:.6f}"
+            mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f")
 
             row_data.extend([
                 units.fmt_mass(mdl) if mdl > 0 else "N/A",
                 units.fmt_mass(mql) if mql > 0 else "N/A",
                 units.fmt_diameter(sdl) if sdl > 0 and not np.isnan(sdl) else "N/A",
                 units.fmt_diameter(sql) if sql > 0 and not np.isnan(sql) else "N/A",
-                f"{mass_fraction:.6f}",
+                _fmt(mass_fraction, ".6f"),
                 mw_display,
                 density_label
             ])
@@ -1205,7 +1209,7 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
         sigma_mode = getattr(main_window, '_sigma_mode', 'global')
         global_sigma = getattr(main_window, '_global_sigma', 0.55)
         f.write(f"Sigma Mode: {sigma_mode}\n")
-        f.write(f"Global Sigma: {global_sigma:.3f}\n")
+        f.write(f"Global Sigma: {_fmt(global_sigma, '.3f')}\n")
         det_headers = [
             "Element", "Include", "Method", "Sigma", "Manual Threshold",
             "Min Points", "Alpha (Error Rate)", "Integration Method",
@@ -1253,15 +1257,15 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             corrected_particles_per_ml = particles_per_ml * dilution_factor
             mass_fraction = mf_service.get_mass_fraction(element_key, sample_name)
             molecular_weight = mf_service.get_molecular_weight(element_key, sample_name)
-            mw_display = f"{molecular_weight:.6f}" if molecular_weight else f"{atomic_mass:.6f}"
+            mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f")
 
             row_data = [
                 display_label,
                 str(particle_count),
-                f"{particles_per_ml:.2f}",
-                f"{corrected_particles_per_ml:.2f}",
-                f"{dilution_factor:.3f}x",
-                f"{mass_fraction:.6f}",
+                _fmt(particles_per_ml, ".2f"),
+                _fmt(corrected_particles_per_ml, ".2f"),
+                _fmt(dilution_factor, ".3f") + "x",
+                _fmt(mass_fraction, ".6f"),
                 mw_display
             ]
             f.write(",".join(row_data) + "\n")
@@ -1354,8 +1358,8 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
                     "0",
                     units.fmt_mass(mass),
                     units.fmt_moles(moles),
-                    f"{mass_percent:.2f}",
-                    f"{mole_percent:.2f}"
+                    _fmt(mass_percent, ".2f"),
+                    _fmt(mole_percent, ".2f")
                 ])
 
             total_row.extend([
@@ -1383,7 +1387,7 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             f.write(",".join(headers) + "\n")
 
             for i, particle in enumerate(main_window.sample_particle_data[sample_name], 1):
-                row_data = [str(i), f"{particle['start_time']:.6f}", f"{particle['end_time']:.6f}"]
+                row_data = [str(i), _fmt(particle["start_time"], ".6f"), _fmt(particle["end_time"], ".6f")]
 
                 total_mass = 0
                 total_moles = 0
@@ -1447,7 +1451,7 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
                                 total_moles += moles
 
                     row_data.extend([
-                        f"{counts:.4f}",
+                        _fmt(counts, ".4f"),
                         units.fmt_mass_or_zero(mass_fg),
                         units.fmt_moles_or_zero(moles),
                         units.fmt_diameter_or_zero(diameter_nm),
