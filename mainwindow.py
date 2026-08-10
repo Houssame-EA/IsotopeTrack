@@ -2,6 +2,7 @@ from __future__ import annotations
 import sys
 import gc
 from pathlib import Path
+
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
                                QTableWidget, QDialog, QMessageBox, QCheckBox, QDoubleSpinBox, QTableWidgetItem,
@@ -5414,7 +5415,7 @@ class MainWindow(QMainWindow):
                     break
 
                 particles = self.sample_particle_data[sample_name]
-                self._calculate_mass_data_optimized(particles, element_cache)
+                self._calculate_mass_data_optimized(particles, element_cache, sample_name)
 
             progress.close()
         else:
@@ -5427,7 +5428,7 @@ class MainWindow(QMainWindow):
             else:
                 progress = None
 
-            self._calculate_mass_data_optimized(particles, element_cache, progress)
+            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample, progress)
 
             if progress:
                 progress.close()
@@ -6536,7 +6537,7 @@ class MainWindow(QMainWindow):
                     and self.sample_particle_data[self.current_sample]):
                 element_cache = self._build_element_conversion_cache()
                 particles = self.sample_particle_data[self.current_sample]
-                self._calculate_mass_data_optimized(particles, element_cache)
+                self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
 
     def update_calibration_display(self):
         """Update calibration information display panel."""
@@ -6792,7 +6793,7 @@ class MainWindow(QMainWindow):
                 and self.sample_particle_data[self.current_sample]):
             element_cache = self._build_element_conversion_cache()
             particles = self.sample_particle_data[self.current_sample]
-            self._calculate_mass_data_optimized(particles, element_cache)
+            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
 
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
 
@@ -6901,16 +6902,12 @@ class MainWindow(QMainWindow):
     def update_calculations(self):
         """Update calculations after transport rate changes."""
 
-    def _calculate_mass_data_optimized(self, particles, element_cache, progress=None, process_all_samples=False):
-        """Calculate comprehensive mass, mole, and diameter data for particles."""
-        if process_all_samples:
-            all_particles = []
-            for sample_name, sample_particles in self.sample_particle_data.items():
-                if sample_particles:
-                    for particle in sample_particles:
-                        particle['_source_sample'] = sample_name
-                        all_particles.append(particle)
-            particles = all_particles
+    def _calculate_mass_data_optimized(self,
+                                       particles,
+                                       element_cache,
+                                       sample_name: str,
+                                       progress=None):
+        """Calculate comprehensive mass, mole, and diameter data for particles of a sample."""
 
         for i, particle in enumerate(particles):
             if progress and i % 100 == 0:
@@ -6919,7 +6916,7 @@ class MainWindow(QMainWindow):
                     return
                 QApplication.processEvents()
 
-            sample_name = particle.get('_source_sample', self.current_sample)
+            sample_name = particle.get('_source_sample', sample_name)
 
             if 'element_mass_fg' not in particle:
                 particle['element_mass_fg'] = {}
