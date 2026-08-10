@@ -444,10 +444,8 @@ ALGORITHMS = {
             _p("threshold", "Radius threshold", "float", 0.15, 0.02, 2.0, 0.01),
             _p("k", "Final clusters (k)", "int", 4, 2, 100, 1),
             _p("branching_factor", "Branching factor", "int", 50, 10, 200, 5,
-               applies=False,
-               help="This view keeps one flat list of CF leaves so the "
-                    "absorption step stays visible; ② Cluster builds the real "
-                    "multi-level tree this bounds."),
+               help="Largest number of sub-clusters a node of the CF-tree may "
+                    "hold before it splits."),
         ],
     },
     "Spectral": {

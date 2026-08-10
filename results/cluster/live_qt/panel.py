@@ -365,7 +365,7 @@ class AlgoParams(QWidget):
             if f is None:
                 continue
             off = p.get('applies') is False
-            why = 'not used by this illustration' if off else ''
+            why = 'not used by this algorithm' if off else ''
             only_if = p.get('only_if')
             if not off and only_if:
                 other = S.params.get(only_if.get('key'))

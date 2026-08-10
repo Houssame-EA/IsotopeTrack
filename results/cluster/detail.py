@@ -139,6 +139,15 @@ def _wcss(X, labels, ids):
 #: a sample of this size reproduces it.
 KDIST_BRUTE_MAX = 2000
 
+#: How far above the median a SOM grid edge may stretch before it is dropped.
+#:
+#: The map is trained in the fit space but drawn in the display projection, so
+#: two neurons that are neighbours on the grid can own particles at opposite
+#: ends of the plot. Drawing those edges spans the whole figure and buries the
+#: map under crossing lines. The grid is kept where it is legible and the long
+#: jumps are simply not drawn.
+EDGE_LENGTH_LIMIT = 4.0
+
 
 def _k_distance(X, min_samples):
     """Sorted distance to the k-th nearest neighbour of every point.
@@ -779,10 +788,14 @@ def som_overlay(som, X, xy):
     """Place the trained map's neurons in the scatter's display coordinates.
 
     The map is trained in the fit space, which is not the space the scatter
-    draws in, so a neuron cannot simply be plotted. Each neuron is instead put
-    at the mean display position of the particles it won, which is where that
-    neuron's territory actually lies on screen. Neurons that won nothing are
-    dropped, and grid edges are kept only between neurons that both survived.
+    draws in, so a neuron cannot simply be plotted. Each neuron is put at the
+    mean display position of the particles it won.
+
+    Every neuron is drawn, including the ones that won nothing — an empty
+    neuron is still part of the map, and dropping it tore holes in the grid and
+    made a large map look far smaller than it is. Empty neurons take the average
+    position of their placed grid neighbours, repeated until the grid is filled,
+    so they sit where the map's own topology puts them.
 
     Args:
         som: The trained map, needing ``predict``, ``rows`` and ``cols``.
@@ -790,7 +803,8 @@ def som_overlay(som, X, xy):
         xy (np.ndarray): Display coordinates, row-aligned with ``X``.
 
     Returns:
-        dict | None: ``{'nodes': [[x, y], ...], 'edges': [[i, j], ...]}``.
+        dict | None: ``{'nodes': [[x, y], ...], 'edges': [[i, j], ...]}`` with
+        one node per neuron, in row-major order.
     """
     if som is None or not hasattr(som, "predict"):
         return None
@@ -804,27 +818,53 @@ def som_overlay(som, X, xy):
             return None
         rows = int(getattr(som, "rows", 0) or 0)
         cols = int(getattr(som, "cols", 0) or 0)
-        if rows <= 0 or cols <= 0:
+        if rows <= 0 or cols <= 0 or rows * cols < 2:
             return None
-        nodes, slot = [], {}
+        dims = int(xy.shape[1]) if xy.ndim == 2 else 2
+
+        pos = np.full((rows, cols, dims), np.nan)
+        won = np.zeros((rows, cols), bool)
         for n in range(rows * cols):
             pts = xy[bmu == n]
             if pts.size:
-                slot[n] = len(nodes)
-                nodes.append([float(pts[:, 0].mean()), float(pts[:, 1].mean())])
-        if len(nodes) < 2:
+                pos[n // cols, n % cols] = pts.mean(axis=0)
+                won[n // cols, n % cols] = True
+        if not won.any():
             return None
-        edges = []
+
+        for _ in range(rows + cols):
+            holes = np.argwhere(~np.isfinite(pos[:, :, 0]))
+            if not len(holes):
+                break
+            filled = pos.copy()
+            for i, j in holes:
+                near = [pos[a, b] for a, b in
+                        ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1))
+                        if 0 <= a < rows and 0 <= b < cols
+                        and np.isfinite(pos[a, b, 0])]
+                if near:
+                    filled[i, j] = np.mean(near, axis=0)
+            pos = filled
+        flat = pos.reshape(-1, dims)
+        centre = np.nanmean(flat[np.isfinite(flat[:, 0])], axis=0)
+        pos[~np.isfinite(pos[:, :, 0])] = centre
+
+        pairs = []
         for i in range(rows):
             for j in range(cols):
-                a = i * cols + j
-                if a not in slot:
-                    continue
-                for b in ((i + 1) * cols + j if i + 1 < rows else None,
-                          i * cols + j + 1 if j + 1 < cols else None):
-                    if b is not None and b in slot:
-                        edges.append([slot[a], slot[b]])
-        return {"nodes": nodes, "edges": edges}
+                if i + 1 < rows and won[i, j] and won[i + 1, j]:
+                    pairs.append(((i, j), (i + 1, j)))
+                if j + 1 < cols and won[i, j] and won[i, j + 1]:
+                    pairs.append(((i, j), (i, j + 1)))
+        lengths = np.array([float(np.sqrt(((pos[a] - pos[b]) ** 2).sum()))
+                            for a, b in pairs]) if pairs else np.zeros(0)
+        limit = (np.median(lengths) * EDGE_LENGTH_LIMIT
+                 if lengths.size else np.inf)
+        edges = [[a[0] * cols + a[1], b[0] * cols + b[1]]
+                 for (a, b), d in zip(pairs, lengths) if d <= limit]
+
+        return {"nodes": [[float(v) for v in p] for p in pos.reshape(-1, dims)],
+                "edges": edges}
     except Exception:
         _log.exception("Handled exception placing the SOM neurons")
         return None

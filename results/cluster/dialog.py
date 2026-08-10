@@ -29,11 +29,9 @@ from PySide6.QtCore import Qt, Signal, QObject, QThread, QTimer
 from PySide6.QtGui import QCursor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 import math
-import sys
 import warnings
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.cluster.dialog")
@@ -77,7 +75,6 @@ except ImportError:
 from utils.numba_guard import numba_serial
 
 from scipy.cluster.hierarchy import (
-    dendrogram as scipy_dendrogram,
     linkage as scipy_linkage,
     fcluster as scipy_fcluster,
 )
@@ -670,21 +667,6 @@ DENSITY_BASED_ALGOS = {'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}
 
 DEFAULT_K_RANGE = list(range(2, 16))
 
-def _cluster_col(cid, cfg=None):
-    """Colour for a cluster label, honouring the user's saved overrides.
-
-    Keyed by the label itself rather than its position among the labels
-    present, so filtering noise out of an enumeration cannot shift the colours
-    of everything after it.
-
-    Args:
-        cid (int): Cluster label; negative means noise.
-        cfg (dict | None): Node config carrying any colour overrides.
-
-    Returns:
-        str: A ``#RRGGBB`` colour.
-    """
-    return cluster_color(cid, cfg)
 
 
 
@@ -716,10 +698,8 @@ DATA_KEY_MAP = {
 }
 
 try:
-    from results.cluster.palette import CLUSTER_COLORS, cluster_color
     from results.cluster.prep import EMBED_DIMS, reduction_components
 except ImportError:
-    from .palette import CLUSTER_COLORS, cluster_color
     from .prep import EMBED_DIMS, reduction_components
 
 try:
@@ -892,8 +872,6 @@ class _SOM:
     def get_weights(self):
         return self.weights.copy()
 
-    def get_grid_labels(self, neuron_cluster_labels):
-        return neuron_cluster_labels.reshape(self.rows, self.cols)
 
     def get_u_matrix(self):
         """Compute the U-matrix: mean Euclidean distance from each neuron to
@@ -922,67 +900,9 @@ class _SOM:
                 u[r, c] = float(np.mean(dists)) if dists else 0.0
         return u
 
-    def get_hit_count(self, X):
-        """Count how many input samples have each neuron as their BMU
-        (best matching unit).
-
-        Args:
-            X (np.ndarray): Input data, shape (n_samples, n_features).
-
-        Returns:
-            np.ndarray: 2-D array of shape (rows, cols) with one integer per
-            neuron — the number of samples mapped to it. Zero means a "dead"
-            neuron that no input claimed.
-        """
-        bmu = self.predict(X)
-        counts = np.zeros(self.rows * self.cols, dtype=int)
-        for b in bmu:
-            counts[b] += 1
-        return counts.reshape(self.rows, self.cols)
-
-    def get_quantization_error(self, X):
-        """Mean Euclidean distance from each input to its BMU.
-
-        Standard SOM diagnostic — lower = the map represents the data better.
-        Doesn't tell you whether the map is well-organised (use topographic
-        error for that), only how well it covers feature space.
-
-        Args:
-            X (np.ndarray): Input data, shape (n_samples, n_features).
-
-        Returns:
-            float: Mean distance over all samples.
-        """
-        X = np.asarray(X, dtype=np.float32)
-        bmu = self.predict(X)
-        return float(np.mean(np.linalg.norm(X - self.weights[bmu], axis=1)))
 
 
-def _som_cluster_cmap(name, n_clusters):
-    """Build a discrete categorical colormap for the SOM cluster grid.
 
-    Uses the in-house ``CLUSTER_COLORS`` palette when ``name`` is
-    ``'CLUSTER_COLORS'``; otherwise resolves ``name`` as a matplotlib named
-    colormap and discretises it to ``n_clusters`` colours.
-
-    Args:
-        name (str): Colormap name or ``'CLUSTER_COLORS'`` for the app palette.
-        n_clusters (int): Number of discrete colour steps required.
-
-    Returns:
-        matplotlib.colors.Colormap: Discrete colormap with ``n_clusters``
-            entries.
-    """
-    from matplotlib.colors import ListedColormap
-    n = max(int(n_clusters), 2)
-    if name == 'CLUSTER_COLORS':
-        return ListedColormap(
-            [CLUSTER_COLORS[i % len(CLUSTER_COLORS)] for i in range(n)])
-    try:
-        return plt.get_cmap(name, n)
-    except Exception:
-        _itk_log.exception("Handled exception in _som_cluster_cmap")
-        return plt.get_cmap('tab20', n)
 
 
 def _contrast_text_for(cmap_name, norm_value):
@@ -1010,201 +930,6 @@ def _contrast_text_for(cmap_name, norm_value):
         return '#FFFFFF'
 
 
-def _draw_som_grid(fig, som_obj, neuron_cluster_labels, data_labels, cfg,
-                   sample_labels=None, input_data=None):
-    """Draw the SOM diagnostic panels: cluster grid, U-matrix, hit-count,
-    and cluster size bar chart.
-
-    Layout depends on which optional panels are enabled in the config:
-        * Both U-matrix + hit-count on → 2×2 grid.
-        * Only one extra on → 1×3 row.
-        * Neither extra on → 1×2 (cluster grid + size bars), same as the
-          original layout.
-
-    Colormaps come from config: ``som_cluster_cmap`` (categorical, for the
-    cluster grid) and ``som_sequential_cmap`` (perceptually uniform, for
-    U-matrix and hit-count).
-
-    Args:
-        fig (Figure): Matplotlib figure.
-        som_obj (_SOM): Trained SOM (with ``_fit_X`` cached on it).
-        neuron_cluster_labels (np.ndarray): Cluster label per neuron.
-        data_labels (np.ndarray): Cluster label per data point.
-        cfg (dict): Configuration dictionary.
-    """
-    fig.clear()
-    if som_obj is None:
-        ax = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'Run ② Cluster with SOM first',
-                ha='center', va='center',
-                fontproperties=_font_scale(cfg, 'label')[0],
-                color=_muted_color(cfg),
-                transform=ax.transAxes)
-        ax.set_xticks([]); ax.set_yticks([])
-        return
-
-    fc = get_font_config(cfg)
-    fp_title, col = _font_scale(cfg, 'title')
-    fp_lbl, _ = _font_scale(cfg, 'label')
-    fp_tick, _ = _font_scale(cfg, 'tick')
-    fp_annot, _ = _font_scale(cfg, 'annot')
-    fp_cell, _ = _font_scale(cfg, 'cell')
-    fp = make_font_properties(cfg)
-
-    rows, cols = som_obj.rows, som_obj.cols
-    grid = som_obj.get_grid_labels(neuron_cluster_labels)
-    n_clusters = len(np.unique(neuron_cluster_labels[neuron_cluster_labels >= 0]))
-
-    show_u    = cfg.get('som_show_u_matrix', True)
-    show_hits = cfg.get('som_show_hit_count', True)
-    cluster_cmap_name = cfg.get('som_cluster_cmap', 'CLUSTER_COLORS')
-    seq_cmap_name     = cfg.get('som_sequential_cmap', 'viridis')
-
-    n_extras = (1 if show_u else 0) + (1 if show_hits else 0)
-    if n_extras == 2:
-        rows_layout, cols_layout = 2, 2
-        positions = {'cluster': 1, 'u': 2, 'hit': 3, 'sizes': 4}
-    elif n_extras == 1:
-        rows_layout, cols_layout = 1, 3
-        positions = {
-            'cluster': 1,
-            'u':       2 if show_u else None,
-            'hit':     2 if show_hits else None,
-            'sizes':   3,
-        }
-    else:
-        rows_layout, cols_layout = 1, 2
-        positions = {'cluster': 1, 'u': None, 'hit': None, 'sizes': 2}
-
-    ax1 = fig.add_subplot(rows_layout, cols_layout, positions['cluster'])
-    cmap = _som_cluster_cmap(cluster_cmap_name, max(n_clusters, 2))
-    im = ax1.imshow(grid, cmap=cmap, vmin=-0.5, vmax=max(n_clusters - 0.5, 0.5),
-                    interpolation='nearest', aspect='auto')
-    ax1.set_title(f'Cluster Map  ({rows}×{cols})',
-                  fontproperties=fp_title, color=col, pad=8)
-    ax1.set_xlabel('Column', fontproperties=fp_lbl, color=col)
-    ax1.set_ylabel('Row', fontproperties=fp_lbl, color=col)
-    ax1.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-    for r in range(rows):
-        for c in range(cols):
-            lbl = grid[r, c]
-            txt = ax1.text(c, r, str(lbl) if lbl >= 0 else '•',
-                           ha='center', va='center', fontproperties=fp_cell,
-                           color='white' if lbl >= 0 else '#9CA3AF')
-            txt.set_fontweight('bold')
-    cb = fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04)
-    cb.set_label('Cluster', fontproperties=fp_annot, color=col)
-    cb.ax.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-    if n_clusters > 0:
-        cb.set_ticks(range(n_clusters))
-
-    if show_u and positions['u'] is not None:
-        ax2 = fig.add_subplot(rows_layout, cols_layout, positions['u'])
-        u = som_obj.get_u_matrix()
-        im_u = ax2.imshow(u, cmap=seq_cmap_name,
-                          interpolation='nearest', aspect='auto')
-        ax2.set_title('U-matrix (boundary intensity)',
-                      fontproperties=fp_title, color=col, pad=8)
-        ax2.set_xlabel('Column', fontproperties=fp_lbl, color=col)
-        ax2.set_ylabel('Row', fontproperties=fp_lbl, color=col)
-        ax2.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-        cb_u = fig.colorbar(im_u, ax=ax2, fraction=0.046, pad=0.04)
-        cb_u.set_label('Mean neighbour distance', fontproperties=fp_annot, color=col)
-        cb_u.ax.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-
-    if show_hits and positions['hit'] is not None:
-        ax3 = fig.add_subplot(rows_layout, cols_layout, positions['hit'])
-        X = getattr(som_obj, '_fit_X', None)
-        if X is not None:
-            hits = som_obj.get_hit_count(X)
-            im_h = ax3.imshow(hits, cmap=seq_cmap_name,
-                              interpolation='nearest', aspect='auto')
-            ax3.set_title('Hit count (BMU activations)',
-                          fontproperties=fp_title, color=col, pad=8)
-            ax3.set_xlabel('Column', fontproperties=fp_lbl, color=col)
-            ax3.set_ylabel('Row', fontproperties=fp_lbl, color=col)
-            ax3.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-
-            hmax = hits.max() or 1
-            for r in range(rows):
-                for c in range(cols):
-                    if hits[r, c] > 0:
-                        ax3.text(c, r, str(int(hits[r, c])),
-                                 ha='center', va='center', fontproperties=fp_cell,
-                                 color=_contrast_text_for(
-                                     seq_cmap_name, hits[r, c] / hmax))
-            cb_h = fig.colorbar(im_h, ax=ax3, fraction=0.046, pad=0.04)
-            cb_h.set_label('Particles per neuron', fontproperties=fp_annot, color=col)
-            cb_h.ax.tick_params(labelsize=fp_tick.get_size_in_points(), colors=col)
-            dead = int((hits == 0).sum())
-            if dead:
-                ax3.text(0.02, 0.98, f"{dead} dead",
-                         transform=ax3.transAxes,
-                         ha='left', va='top', fontproperties=fp_annot,
-                         color='#DC2626',
-                         bbox=dict(fc='#FEF2F2', ec='#DC2626', pad=2))
-        else:
-            ax3.text(0.5, 0.5, 'Input not cached', ha='center', va='center',
-                     fontproperties=fp_annot, color=_muted_color(cfg),
-                     transform=ax3.transAxes)
-            ax3.set_xticks([]); ax3.set_yticks([])
-
-    ax_s = fig.add_subplot(rows_layout, cols_layout, positions['sizes'])
-    unique_c = np.unique(data_labels[data_labels >= 0])
-    per_ml = per_ml_active(cfg, input_data)
-    meta = (input_data or {}).get('concentration_meta', {}) if per_ml else {}
-    single_key = None
-    if per_ml and isinstance(meta, dict) and len(meta) == 1:
-        single_key = next(iter(meta))
-    if per_ml:
-        labels_ok = (sample_labels is not None
-                     and len(np.asarray(sample_labels)) == len(data_labels))
-        sample_labels = np.asarray(sample_labels) if labels_ok else None
-        sizes = []
-        for c in unique_c:
-            mask = data_labels == c
-            total = 0.0
-            if single_key is not None:
-                total = int(np.sum(mask)) * per_ml_factor(input_data, single_key)
-            elif sample_labels is not None:
-                members = sample_labels[mask]
-                for sn in np.unique(members):
-                    f = per_ml_factor(input_data, str(sn))
-                    total += int(np.sum(members == sn)) * f
-            sizes.append(total)
-    else:
-        sizes = [int(np.sum(data_labels == c)) for c in unique_c]
-    colors = [_cluster_col(c, cfg) for c in unique_c]
-    bars = ax_s.bar([_cluster_label_short(c) for c in unique_c], sizes,
-                    color=colors, edgecolor='white', linewidth=0.6, alpha=0.9)
-    _smax = max(sizes) if sizes else 0
-    for bar, sz in zip(bars, sizes):
-        ax_s.text(bar.get_x() + bar.get_width() / 2,
-                  bar.get_height() + (_smax * 0.01 if _smax else 0),
-                  (format_per_ml(sz, Renderer.MATHTEXT, cfg) if per_ml else f'n={sz}'), ha='center', va='bottom',
-                  fontproperties=fp_annot, color=col)
-    _style_ax(ax_s, cfg, xlabel='Cluster',
-              ylabel='Particles/mL' if per_ml else 'Particle count',
-              title='SOM Cluster Sizes')
-    ax_s.set_ylim(0, _smax * 1.3 if _smax else 1)
-    noise = int(np.sum(data_labels == -1))
-    if noise > 0:
-        ax_s.text(0.98, 0.98, f'Noise: {noise}', transform=ax_s.transAxes,
-                  ha='right', va='top', fontproperties=fp_annot, color='#DC2626',
-                  bbox=dict(fc='#FEF2F2', ec='#DC2626', pad=3))
-
-    X = getattr(som_obj, '_fit_X', None)
-    if X is not None:
-        try:
-            qe = som_obj.get_quantization_error(X)
-            qe_fp = _font_scale(cfg, 'annot')[0]
-            qe_fp.set_style('italic')
-            fig.text(0.99, 0.005, f"Quantization error: {qe:.4f}",
-                     ha='right', va='bottom', fontproperties=qe_fp, color=col)
-        except Exception:
-            _itk_log.exception("Handled exception in _draw_som_grid")
-
-    fig.tight_layout(pad=1.4)
 
 
 class ClusteringSettingsDialog(QDialog):
@@ -1326,11 +1051,8 @@ class ClusteringSettingsDialog(QDialog):
             'chebyshev', 'canberra', 'braycurtis', 'correlation',
         ])
         self.hier_metric.setCurrentText(self._cfg.get('hier_metric', 'euclidean'))
-        self.hier_show_dendro = QCheckBox("Show dendrogram after clustering")
-        self.hier_show_dendro.setChecked(self._cfg.get('hier_show_dendrogram', False))
         f1.addRow("Linkage:", self.hier_linkage)
         f1.addRow("Distance metric:", self.hier_metric)
-        f1.addRow(self.hier_show_dendro)
         def _sync_hier_metric(txt):
             """Disable the metric picker when Ward linkage is selected.
 
@@ -1410,34 +1132,12 @@ class ClusteringSettingsDialog(QDialog):
         ])
         self.som_final_algo.setCurrentText(
             self._cfg.get('som_final_algo', 'Hierarchical (Ward)'))
-        self.som_cluster_cmap = QComboBox()
-        self.som_cluster_cmap.addItems([
-            'CLUSTER_COLORS', 'tab20', 'tab10', 'Set1', 'Set2', 'Set3',
-            'Paired', 'Pastel1', 'Accent',
-        ])
-        self.som_cluster_cmap.setCurrentText(
-            self._cfg.get('som_cluster_cmap', 'CLUSTER_COLORS'))
-        self.som_seq_cmap = QComboBox()
-        self.som_seq_cmap.addItems([
-            'viridis', 'cividis', 'plasma', 'magma', 'inferno',
-            'turbo', 'Blues', 'Greys',
-        ])
-        self.som_seq_cmap.setCurrentText(
-            self._cfg.get('som_sequential_cmap', 'viridis'))
-        self.som_show_u = QCheckBox("Show U-matrix")
-        self.som_show_u.setChecked(self._cfg.get('som_show_u_matrix', True))
-        self.som_show_hits = QCheckBox("Show hit-count map")
-        self.som_show_hits.setChecked(self._cfg.get('som_show_hit_count', True))
         f9.addRow("Grid rows:", self.som_rows)
         f9.addRow("Grid cols:", self.som_cols)
         f9.addRow("Sigma (σ):", self.som_sigma)
         f9.addRow("Learning rate:", self.som_lr)
         f9.addRow("Iterations:", self.som_n_iter)
         f9.addRow("Final clustering:", self.som_final_algo)
-        f9.addRow("Cluster colormap:", self.som_cluster_cmap)
-        f9.addRow("Sequential colormap:", self.som_seq_cmap)
-        f9.addRow(self.som_show_u)
-        f9.addRow(self.som_show_hits)
         self._algo_pages['SOM'] = self.algo_stack.addWidget(p9)
 
         p4 = QWidget(); f4 = QFormLayout(p4); f4.setContentsMargins(4, 4, 4, 4)
@@ -1608,7 +1308,6 @@ class ClusteringSettingsDialog(QDialog):
 
         out['hier_linkage']          = self.hier_linkage.currentText()
         out['hier_metric']           = self.hier_metric.currentText()
-        out['hier_show_dendrogram']  = self.hier_show_dendro.isChecked()
 
         out['dbscan_eps']         = self.dbscan_eps.value()
         out['dbscan_min_samples'] = self.dbscan_min_samp.value()
@@ -1635,10 +1334,6 @@ class ClusteringSettingsDialog(QDialog):
         out['som_lr']         = self.som_lr.value()
         out['som_n_iter']     = self.som_n_iter.value()
         out['som_final_algo']      = self.som_final_algo.currentText()
-        out['som_cluster_cmap']    = self.som_cluster_cmap.currentText()
-        out['som_sequential_cmap'] = self.som_seq_cmap.currentText()
-        out['som_show_u_matrix']   = self.som_show_u.isChecked()
-        out['som_show_hit_count']  = self.som_show_hits.isChecked()
 
         out['birch_threshold']        = self.birch_threshold.value()
         out['birch_branching_factor'] = self.birch_branching.value()
@@ -2641,184 +2336,8 @@ def _draw_evaluation_per_sample(fig, per_sample_eval, cfg,
 
 
 
-def _consensus_k(per_metric_k):
-    """Return the consensus K and its agreement fraction from per-metric picks.
-
-    Implements the simple majority-vote consensus that the cluster-validity
-    literature recommends when several indices disagree: the value chosen by
-    the largest number of indices is taken as the consensus, with ties broken
-    towards the smaller K (the more parsimonious partition). This mirrors the
-    "use several indices and let agreement decide" conclusion of Ikotun,
-    Habyarimana & Ezugwu (*Heliyon* 11, 2025, e41953) and the majority-rule
-    aggregation popularised by the NbClust package (Charrad et al., *J. Stat.
-    Softw.* 61(6), 2014, 1-36).
-
-    Args:
-        per_metric_k (dict): ``{metric: k}`` picks for one data scope.
-
-    Returns:
-        tuple: ``(consensus_k, agreement_fraction)``; ``(None, 0.0)`` when no
-            metric produced a pick.
-    """
-    if not per_metric_k:
-        return None, 0.0
-    counter = {}
-    for k in per_metric_k.values():
-        counter[k] = counter.get(k, 0) + 1
-    best = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-    frac = counter[best] / len(per_metric_k)
-    return int(best), float(frac)
 
 
-def _draw_consensus_summary(fig, eval_results, per_sample_eval, cfg,
-                            elbow_fn, optimal_per_metric=None,
-                            bootstrap_stability=None, selected_metric=None):
-    """Draw a metric × scope consensus decision table for choosing K.
-
-    This is the multi-sample-aware summary view. Rows are the enabled cluster
-    validity indices; columns are the pooled dataset and each individual
-    sample. Every cell shows the K that the metric selected for that scope,
-    shaded by how well it agrees with the column's consensus K so disagreements
-    are visible at a glance. A bottom "Consensus" row gives the majority-vote K
-    per scope with its agreement fraction, and (when a bootstrap has been run)
-    the pooled column annotates each metric's stability percentage.
-
-    Presenting the decision this way — a compact agreement matrix rather than
-    only score curves — directly addresses the core difficulty highlighted by
-    Ikotun, Habyarimana & Ezugwu (*Heliyon* 11, 2025, e41953): different
-    indices give different answers, so the practitioner needs to see agreement,
-    stability, and per-sample reproducibility together. The majority-vote
-    consensus follows the aggregation used by NbClust (Charrad et al.,
-    *J. Stat. Softw.* 61(6), 2014, 1-36) and the stability column follows the
-    non-parametric bootstrap assessment of Efron & Tibshirani (*An Introduction
-    to the Bootstrap*, Chapman & Hall, 1993).
-
-    Args:
-        fig (Figure): Target figure (cleared and redrawn).
-        eval_results (dict): Pooled ``{algo: eval_dict}`` results.
-        per_sample_eval (dict): ``{sample_name: {algo: eval_dict}}`` or empty.
-        cfg (dict): Configuration (fonts, enabled metrics).
-        elbow_fn (Callable): ``(k_values, scores) -> int`` knee selector for
-            elbow-rule metrics, passed through to :func:`_vote_optimal_per_metric`.
-        optimal_per_metric (dict|None): Precomputed pooled ``{metric: k}``; when
-            omitted it is recomputed from ``eval_results``.
-        bootstrap_stability (dict|None): ``{metric: {'distribution', 'n', ...}}``
-            from a completed bootstrap, used for the stability column.
-        selected_metric (str|None): Metric to highlight as the active choice.
-    """
-    fig.clear()
-    bootstrap_stability = bootstrap_stability or {}
-
-    enabled = cfg.get('enabled_metrics', list(DEFAULT_METRICS))
-    metrics = [m for m in enabled if m in METRIC_REGISTRY]
-    if not metrics or not eval_results:
-        ax = fig.add_subplot(111)
-        ax.text(0.5, 0.5, 'Run ① Evaluate K to populate the summary',
-                ha='center', va='center',
-                fontproperties=_font_scale(cfg, 'label')[0],
-                color=_muted_color(cfg),
-                transform=ax.transAxes)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        return
-
-    pooled_picks = optimal_per_metric
-    if pooled_picks is None:
-        pooled_picks, _ = _vote_optimal_per_metric(eval_results, elbow_fn, metrics)
-
-    columns = ['Pooled']
-    col_picks = [pooled_picks]
-    for sname, ev in per_sample_eval.items():
-        picks, _ = _vote_optimal_per_metric(ev, elbow_fn, metrics)
-        columns.append(sname)
-        col_picks.append(picks)
-
-    consensus = [_consensus_k(p) for p in col_picks]
-
-    fc = get_font_config(cfg)
-    base = fc['size']
-    tcol = _text_color(cfg)
-    _th = _plot_theme(cfg)
-    _empty_face = _th['face']
-    _empty_edge = _th['border']
-    n_rows = len(metrics) + 1
-    n_cols = len(columns)
-
-    ax = fig.add_subplot(111)
-    ax.set_xlim(0, n_cols + 1.4)
-    ax.set_ylim(0, n_rows + 1)
-    ax.invert_yaxis()
-    ax.axis('off')
-
-    header_y = 0.5
-    for ci, col in enumerate(columns):
-        ax.text(ci + 1.5, header_y, col, ha='center', va='center',
-                fontsize=base, fontweight='bold',
-                fontfamily=fc['family'], color=tcol)
-    if bootstrap_stability:
-        ax.text(n_cols + 1.0, header_y, 'Stability', ha='center', va='center',
-                fontsize=base, fontweight='bold',
-                fontfamily=fc['family'], color=tcol)
-
-    for ri, metric in enumerate(metrics):
-        row_y = ri + 1.5
-        is_sel = (metric == selected_metric)
-        ax.text(0.95, row_y, metric, ha='right', va='center',
-                fontsize=base, fontfamily=fc['family'],
-                fontweight='bold' if is_sel else 'normal',
-                color=METRIC_COLORS.get(metric, tcol))
-        for ci, picks in enumerate(col_picks):
-            k = picks.get(metric)
-            cons_k = consensus[ci][0]
-            if k is None:
-                txt, face = '—', _empty_face
-            else:
-                if cons_k is not None and k == cons_k:
-                    face = '#16A34A'
-                elif cons_k is not None and abs(k - cons_k) <= 1:
-                    face = '#D97706'
-                else:
-                    face = '#DC2626'
-                txt = f'K={k}'
-            rect = plt.Rectangle((ci + 1.05, row_y - 0.42), 0.9, 0.84,
-                                 facecolor=face, alpha=0.22 if txt != '—' else 0.5,
-                                 edgecolor=face if txt != '—' else _empty_edge,
-                                 linewidth=1.4)
-            ax.add_patch(rect)
-            ax.text(ci + 1.5, row_y, txt, ha='center', va='center',
-                    fontsize=base, fontfamily=fc['family'],
-                    color=tcol)
-        if bootstrap_stability:
-            stab = bootstrap_stability.get(metric)
-            k_pool = col_picks[0].get(metric)
-            if stab and k_pool is not None and stab.get('n', 0) > 0:
-                frac = stab['distribution'].get(k_pool, 0) / stab['n']
-                ax.text(n_cols + 1.0, row_y, f'{frac:.0%}',
-                        ha='center', va='center', fontsize=base,
-                        fontfamily=fc['family'], color=tcol)
-            else:
-                ax.text(n_cols + 1.0, row_y, '–', ha='center', va='center',
-                        fontsize=base, fontfamily=fc['family'],
-                        color='#94A3B8')
-
-    cons_y = n_rows + 0.4
-    ax.text(0.95, cons_y, 'Consensus', ha='right', va='center',
-            fontsize=base, fontweight='bold', fontfamily=fc['family'],
-            color=tcol)
-    for ci, (ck, frac) in enumerate(consensus):
-        if ck is None:
-            txt = '—'
-        else:
-            txt = f'K={ck}  ({frac:.0%})'
-        rect = plt.Rectangle((ci + 1.05, cons_y - 0.42), 0.9, 0.84,
-                             facecolor='#2563EB', alpha=0.16,
-                             edgecolor='#2563EB', linewidth=1.6)
-        ax.add_patch(rect)
-        ax.text(ci + 1.5, cons_y, txt, ha='center', va='center',
-                fontsize=base, fontweight='bold', fontfamily=fc['family'],
-                color=tcol)
-
-    fig.tight_layout(pad=1.0)
 
 
 
@@ -3120,14 +2639,11 @@ class _ClusterWorker(QThread):
 
     Signals:
         progressed (int, str): Percent complete (0-100) and a status message.
-        som_snapshot (object, int, int): Live SOM convergence frame —
-            ``(weights_copy, current_iter, total_iter)``.
         done (object): Emitted on success with a results payload dict.
         failed (str): Emitted on error with the exception message.
     """
 
     progressed = Signal(float, str)
-    som_snapshot = Signal(object, int, int)
     done = Signal(object)
     failed = Signal(str)
 
@@ -3161,7 +2677,6 @@ class _ClusterWorker(QThread):
                 if algo == 'SOM':
                     labels = dlg._run_som(
                         self._sel_k, data, dlg.node.config,
-                        progress_cb=lambda t, tot, w: self.som_snapshot.emit(w, t, tot),
                     )
                 else:
                     labels = dlg._run_algo(algo, self._sel_k, data)
@@ -3532,8 +3047,6 @@ class ClusteringDisplayDialog(QDialog):
         self._som_obj = None
         self._fit_estimators = {}
         self._som_neuron_labels = None
-        self.som_tab_idx = -1
-        self.dendro_tab_idx = -1
 
         self._pal = _current_plot_palette()
         self._dark = self._pal['dark']
@@ -3697,13 +3210,11 @@ class ClusteringDisplayDialog(QDialog):
                 f"padding: 2px 8px; background: transparent;")
 
         for fig in (getattr(self, n, None) for n in (
-                'eval_fig', 'summary_fig',
-                'overview_fig', 'dendro_fig', 'som_fig')):
+                'eval_fig', 'overview_fig')):
             if fig is not None:
                 fig.patch.set_facecolor(p['plot_bg'])
         for canvas in (getattr(self, n, None) for n in (
-                'eval_canvas', 'summary_canvas',
-                'overview_canvas', 'dendro_canvas', 'som_canvas')):
+                'eval_canvas', 'overview_canvas')):
             if canvas is not None:
                 try:
                     canvas.draw_idle()
@@ -3947,51 +3458,7 @@ class ClusteringDisplayDialog(QDialog):
 
         self.eval_tab_idx = self.tabs.addTab(tab, "① Evaluation")
 
-    def _build_summary_tab(self):
-        """Build the Summary tab holding the consensus decision matrix.
 
-        The summary renders :func:`_draw_consensus_summary` onto its own figure
-        so it pops out, themes, and exports exactly like the other tabs. It is
-        the primary multi-sample-aware view for deciding K: a metric × scope
-        agreement table with a consensus row and (after a bootstrap) a
-        stability column.
-        """
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.setContentsMargins(4, 4, 4, 4)
-
-        hl = QHBoxLayout()
-        hl.addWidget(QLabel("Consensus across metrics & samples"))
-        hl.addStretch()
-        po = self._make_popout_btn(lambda: self._pop_out_figure('summary'))
-        hl.addWidget(po)
-        vl.addLayout(hl)
-
-        self.summary_fig = Figure(figsize=(12, 8), dpi=120, tight_layout=True)
-        self.summary_canvas = _SafeFigureCanvas(self.summary_fig)
-        self.summary_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.summary_canvas.customContextMenuRequested.connect(
-            lambda pos: self._ctx_menu(pos, 'summary'))
-        vl.addWidget(self.summary_canvas, stretch=1)
-
-        self.tabs.addTab(tab, "② Summary")
-
-    def _refresh_summary(self):
-        """Redraw the consensus summary table from the latest evaluation state.
-
-        Safe to call before any evaluation has run; the drawing function shows
-        a placeholder until ``eval_results`` is populated.
-        """
-        if not hasattr(self, 'summary_fig'):
-            return
-        _draw_consensus_summary(
-            self.summary_fig, self.eval_results,
-            self.per_sample_eval if self._is_multi() else {},
-            self.node.config, self._elbow_k,
-            optimal_per_metric=self.optimal_per_metric,
-            bootstrap_stability=self.bootstrap_stability,
-            selected_metric=self.selected_metric)
-        self.summary_canvas.draw()
 
 
 
@@ -4008,25 +3475,15 @@ class ClusteringDisplayDialog(QDialog):
         cfg_action = menu.addAction("⚙  Configure…")
         cfg_action.triggered.connect(self._open_settings)
 
-        fig_map = {'eval': self.eval_fig,
-                   'summary': getattr(self, 'summary_fig', None),
-                   'overview': self.overview_fig,
-                   'dendro': getattr(self, 'dendro_fig', None),
-                   'som': getattr(self, 'som_fig', None)}
-        names   = {'eval': 'evaluation.png', 'summary': 'consensus_summary.png',
-                   'overview': 'overview.png',
-                   'dendro': 'dendrogram.png',
-                   'som': 'som_grid.png'}
+        fig_map = {'eval': self.eval_fig, 'overview': self.overview_fig}
+        names   = {'eval': 'evaluation.png', 'overview': 'overview.png'}
         dl = menu.addAction("Export Figure…")
         dl.triggered.connect(
             lambda: download_matplotlib_figure(fig_map.get(tab, self.eval_fig),
                                                self, names.get(tab, 'figure.png')))
 
         canvas_map = {'eval': self.eval_canvas,
-                      'summary': getattr(self, 'summary_canvas', None),
-                      'overview': self.overview_canvas,
-                      'dendro': getattr(self, 'dendro_canvas', None),
-                      'som': getattr(self, 'som_canvas', None)}
+                      'overview': self.overview_canvas}
         menu.addSeparator()
         act_copy_fig = menu.addAction("Copy figure")
         act_copy_fig.triggered.connect(
@@ -4050,9 +3507,7 @@ class ClusteringDisplayDialog(QDialog):
     def _pop_out_figure(self, tab: str):
         """Redraw the requested figure into a standalone resizable window."""
         titles = {'eval': 'Evaluation Metrics',
-                  'summary': 'Consensus Summary',
-                  'overview': 'Overview Heatmap',
-                  'dendro': 'Dendrogram'}
+                  'overview': 'Overview Heatmap'}
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Clustering — {titles.get(tab, tab)}")
         dlg.setMinimumSize(900, 620)
@@ -4102,26 +3557,8 @@ class ClusteringDisplayDialog(QDialog):
                                  self.optimal_k, view,
                                  optimal_per_metric=self.optimal_per_metric,
                                  selected_metric=self.selected_metric)
-        elif tab == 'summary':
-            _draw_consensus_summary(
-                new_fig, self.eval_results,
-                self.per_sample_eval if self._is_multi() else {},
-                self.node.config, self._elbow_k,
-                optimal_per_metric=self.optimal_per_metric,
-                bootstrap_stability=self.bootstrap_stability,
-                selected_metric=self.selected_metric)
         elif tab == 'overview':
             self._draw_overview_into(new_fig)
-        elif tab == 'dendro':
-            self._draw_dendrogram_into(new_fig)
-        elif tab == 'som':
-            if self._som_obj is not None and self._som_neuron_labels is not None:
-                som_labels = self.final_results.get('SOM', {}).get('labels')
-                if som_labels is not None:
-                    _draw_som_grid(new_fig, self._som_obj, self._som_neuron_labels,
-                                   som_labels, self.node.config,
-                                   sample_labels=self._particle_samples,
-                                   input_data=self.node.input_data)
 
         new_canvas.draw()
         dlg.show()
@@ -4240,33 +3677,11 @@ class ClusteringDisplayDialog(QDialog):
             cfg.update(font_grp.collect())
             self._apply_display_settings()
 
-    def _redraw_figure(self, tab: str):
-        if tab == 'eval':
-            self._refresh_eval_plot()
-        elif tab == 'overview':
-            self._draw_overview()
-        elif tab == 'dendro':
-            self._draw_dendrogram()
-        elif tab == 'som':
-            if (self._som_obj is not None
-                    and self._som_neuron_labels is not None):
-                som_labels = self.final_results.get('SOM', {}).get('labels')
-                if som_labels is not None:
-                    _draw_som_grid(self.som_fig, self._som_obj,
-                                   self._som_neuron_labels, som_labels,
-                                   self.node.config,
-                                   sample_labels=self._particle_samples,
-                                   input_data=self.node.input_data)
-                    self.som_canvas.draw()
 
 
 
 
 
-    def _set(self, key, value):
-        self.node.config[key] = value
-        self._data_matrix_cache = None
-        self.status.setText(f"Changed {key} → re-run evaluation for updated results")
 
 
     def _build_overview_tab(self):
@@ -4375,48 +3790,6 @@ class ClusteringDisplayDialog(QDialog):
         else:
             self.ov_elem_btn.setText(f"{len(sel)} elements")
 
-    def _build_dendrogram_tab(self):
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.setContentsMargins(4, 4, 4, 4)
-
-        hl = QHBoxLayout()
-        hl.addWidget(QLabel("Truncate (last p leaves):"))
-        self.dendro_p = QSpinBox()
-        self.dendro_p.setRange(0, 10000)
-        self.dendro_p.setValue(0)
-        self.dendro_p.setToolTip("0 = full dendrogram (no truncation)")
-        self.dendro_p.setFixedWidth(60)
-        hl.addWidget(self.dendro_p)
-        hl.addWidget(QLabel("  Color threshold (0 = auto):"))
-        self.dendro_thresh = QDoubleSpinBox()
-        self.dendro_thresh.setRange(0.0, 90000.0)
-        self.dendro_thresh.setSingleStep(0.5)
-        self.dendro_thresh.setDecimals(2)
-        self.dendro_thresh.setValue(0.0)
-        self.dendro_thresh.setFixedWidth(70)
-        hl.addWidget(self.dendro_thresh)
-        redraw_btn = QPushButton("↺ Redraw")
-        redraw_btn.setFixedWidth(70)
-        redraw_btn.setStyleSheet(
-            "QPushButton{background:#475569;color:white;border-radius:3px;"
-            "font-size:11px;padding:3px 8px;}"
-            "QPushButton:hover{background:#334155;}")
-        redraw_btn.clicked.connect(self._draw_dendrogram)
-        hl.addWidget(redraw_btn)
-        hl.addStretch()
-        po = self._make_popout_btn(lambda: self._pop_out_figure('dendro'))
-        hl.addWidget(po)
-        vl.addLayout(hl)
-
-        self.dendro_fig = Figure(figsize=(14, 7), dpi=110, tight_layout=True)
-        self.dendro_canvas = _SafeFigureCanvas(self.dendro_fig)
-        self.dendro_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.dendro_canvas.customContextMenuRequested.connect(
-            lambda pos: self._ctx_menu(pos, 'dendro'))
-        vl.addWidget(self.dendro_canvas, stretch=1)
-
-        self.dendro_tab_idx = self.tabs.addTab(tab, "④ Dendrogram")
 
 
 
@@ -4426,144 +3799,7 @@ class ClusteringDisplayDialog(QDialog):
 
 
 
-    def _draw_dendrogram(self):
-        self._draw_dendrogram_into(self.dendro_fig)
-        self.dendro_canvas.draw()
 
-    def _draw_dendrogram_into(self, target_fig):
-        target_fig.clear()
-        ax = target_fig.add_subplot(111)
-
-        data = self._data_matrix_cache
-        if data is None or data.shape[0] < 2:
-            ax.text(0.5, 0.5, 'Run ② Cluster first with Hierarchical algorithm',
-                    ha='center', va='center',
-                    fontproperties=_font_scale(self.node.config, 'label')[0],
-                    color=_muted_color(self.node.config),
-                    transform=ax.transAxes)
-            ax.set_xticks([]); ax.set_yticks([])
-            return
-
-        cfg            = self.node.config
-        linkage_method = cfg.get('hier_linkage', 'ward')
-        metric         = (cfg.get('hier_metric', 'euclidean')
-                          if linkage_method != 'ward' else 'euclidean')
-        n              = data.shape[0]
-
-        try:
-            Z = scipy_linkage(
-                np.ascontiguousarray(data, dtype=np.float64),
-                method=linkage_method,
-                metric=metric,
-            )
-        except Exception as e:
-            _itk_log.exception("Handled exception in _draw_dendrogram_into")
-            ax.text(0.5, 0.5, f'Linkage failed:\n{e}',
-                    ha='center', va='center',
-                    fontproperties=_font_scale(self.node.config, 'tick')[0],
-                    color='#DC2626',
-                    transform=ax.transAxes)
-            ax.set_xticks([]); ax.set_yticks([])
-            return
-
-        algo_name = cfg.get('selected_algorithm', 'Hierarchical')
-        labels_arr = None
-        if algo_name in self.final_results:
-            labels_arr = self.final_results[algo_name].get('labels')
-
-        sample_arr = self._particle_samples
-
-        leaf_labels = []
-        for i in range(n):
-            parts = [str(i)]
-            if labels_arr is not None and i < len(labels_arr):
-                parts.append(_cluster_label_short(int(labels_arr[i])))
-            if sample_arr is not None and i < len(sample_arr):
-                parts.append(str(sample_arr[i]))
-            leaf_labels.append('\n'.join(parts))
-
-        AUTO_TRUNC_THRESHOLD = 200
-        p_user = self.dendro_p.value()
-
-        if n > AUTO_TRUNC_THRESHOLD and p_user == 0:
-            p_eff        = min(50, n)
-            trunc_auto   = True
-        else:
-            p_eff      = p_user if p_user > 0 else 0
-            trunc_auto = False
-
-        use_trunc = (p_eff > 0)
-
-        thresh = self.dendro_thresh.value()
-
-        dkw = dict(
-            Z=Z,
-            ax=ax,
-            leaf_rotation=90,
-            leaf_font_size=6,
-            above_threshold_color='#94A3B8',
-        )
-        if thresh > 0:
-            dkw['color_threshold'] = thresh
-
-        if use_trunc:
-            dkw['truncate_mode'] = 'lastp'
-            dkw['p']             = p_eff
-        else:
-            dkw['labels'] = leaf_labels
-
-        old_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(old_limit, n * 12 + 3000))
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                scipy_dendrogram(**dkw)
-        except RecursionError:
-            _itk_log.exception("Handled exception in _draw_dendrogram_into")
-            sys.setrecursionlimit(old_limit)
-            target_fig.clear()
-            ax = target_fig.add_subplot(111)
-            dkw2 = {k: v for k, v in dkw.items()
-                    if k not in ('labels', 'truncate_mode', 'p')}
-            dkw2['truncate_mode'] = 'lastp'
-            dkw2['p']             = min(30, n)
-            with warnings.catch_warnings():
-                warnings.simplefilter('ignore')
-                scipy_dendrogram(**dkw2)
-        finally:
-            sys.setrecursionlimit(old_limit)
-
-        fp_title, _dcol = _font_scale(cfg, 'title')
-        fp_lbl, _ = _font_scale(cfg, 'label')
-        fp_tick, _ = _font_scale(cfg, 'tick')
-
-        trunc_note = ''
-        if use_trunc:
-            if trunc_auto:
-                trunc_note = f'  [auto-truncated → last {p_eff} leaves, n={n}]'
-            else:
-                trunc_note = f'  [truncated → last {p_eff} leaves]'
-
-        title = (f"Dendrogram — Hierarchical  "
-                 f"[linkage={linkage_method}, metric={metric}]{trunc_note}")
-        ax.set_title(title, fontproperties=fp_title, color=_dcol, pad=10)
-        ax.set_xlabel(
-            'Particle index  |  Cluster  |  Sample' if not use_trunc
-            else 'Cluster node (count = leaf size)',
-            fontproperties=fp_lbl, color=_dcol)
-        ax.set_ylabel('Distance', fontproperties=fp_lbl, color=_dcol)
-        _dth = _plot_theme(cfg)
-        ax.set_facecolor(_dth['face'])
-        ax.grid(axis='y', alpha=0.25, linewidth=0.5, color=_dth['grid'])
-        for spine in ax.spines.values():
-            spine.set_color(_dth['border'])
-            spine.set_linewidth(0.8)
-        ax.tick_params(labelsize=fp_tick.get_size_in_points(), colors=_dcol)
-        for lab in (*ax.get_xticklabels(), *ax.get_yticklabels()):
-            lab.set_fontproperties(fp_tick)
-            lab.set_color(_dcol)
-
-        target_fig.tight_layout(pad=1.5)
 
     def _draw_overview(self):
         """Render the Overview tab: composition strips (or heatmap) on the
@@ -5385,7 +4621,6 @@ class ClusteringDisplayDialog(QDialog):
             self._update_live_k_availability()
 
             self._refresh_eval_plot()
-            self._refresh_summary()
             self._update_optimal_label()
             self._update_metric_picks_ui()
 
@@ -5509,8 +4744,6 @@ class ClusteringDisplayDialog(QDialog):
         self.bootstrap_results = payload.get('results', {})
         self.bootstrap_stability = payload.get('stability', {})
         self._update_metric_picks_ui()
-        if hasattr(self, '_refresh_summary'):
-            self._refresh_summary()
 
         completed = payload.get('completed', 0)
         n_boot = payload.get('n_boot', 0)
@@ -5778,13 +5011,9 @@ class ClusteringDisplayDialog(QDialog):
         self._set_progress(0.0)
         self.cluster_btn.setEnabled(False)
 
-        if 'SOM' in enabled and self.som_tab_idx >= 0:
-            self.tabs.setCurrentIndex(self.som_tab_idx)
-
         worker = _ClusterWorker(self, sel_k, elements,
                                 self._data_matrix_cache, enabled)
         worker.progressed.connect(self._on_cluster_progress)
-        worker.som_snapshot.connect(self._on_som_snapshot)
         worker.done.connect(self._on_cluster_done)
         worker.failed.connect(self._on_cluster_failed)
         worker.finished.connect(self._on_cluster_thread_finished)
@@ -5817,45 +5046,6 @@ class ClusteringDisplayDialog(QDialog):
         self._set_progress(pct)
         self.status.setText(message)
 
-    def _on_som_snapshot(self, weights, t, total):
-        """Render a live SOM convergence frame during training.
-
-        Builds a lightweight transient SOM view from the in-progress weights so
-        the user can watch the map self-organise.  Cluster labels aren't final
-        yet, so neurons are coloured by a quick provisional grouping.
-
-        Returns immediately when the ⑤ SOM Grid tab was never built, which is
-        currently always: nothing calls :meth:`_build_som_tab`, so ``som_fig``
-        does not exist. The worker emits one snapshot per training step, so
-        without this guard every step raised and was logged.
-
-        Args:
-            weights (np.ndarray): Snapshot copy of neuron weights.
-            t (int): Current training iteration.
-            total (int): Total training iterations.
-        """
-        if getattr(self, 'som_fig', None) is None:
-            return
-        try:
-            cfg = self.node.config
-            rows = cfg.get('som_rows', 10)
-            cols = cfg.get('som_cols', 10)
-            self.som_fig.clear()
-            ax = self.som_fig.add_subplot(111)
-            u = np.linalg.norm(
-                weights.reshape(rows, cols, -1), axis=2)
-            im = ax.imshow(u, cmap=cfg.get('som_sequential_cmap', 'viridis'),
-                           interpolation='nearest', aspect='auto')
-            fp_title, col = _font_scale(cfg, 'title')
-            fp_lbl, _ = _font_scale(cfg, 'label')
-            ax.set_title(f'SOM training… iteration {t}/{total}',
-                         fontproperties=fp_title, color=col, pad=8)
-            ax.set_xlabel('Column', fontproperties=fp_lbl, color=col)
-            ax.set_ylabel('Row', fontproperties=fp_lbl, color=col)
-            self.som_fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            self.som_canvas.draw()
-        except Exception:
-            _itk_log.exception("Handled exception in _on_som_snapshot")
 
     def _persist_results_to_node(self, sel_k=None):
         """Store the full clustering state on the workflow node so it is
@@ -5952,17 +5142,6 @@ class ClusteringDisplayDialog(QDialog):
                 f"Restored clustering results — K={sel_k}" if sel_k
                 else "Restored clustering results")
 
-            if ('SOM' in self.final_results and self._som_obj is not None
-                    and self._som_neuron_labels is not None
-                    and hasattr(self, 'som_fig')):
-                som_labels = self.final_results['SOM'].get('labels')
-                if som_labels is not None:
-                    _draw_som_grid(self.som_fig, self._som_obj,
-                                   self._som_neuron_labels, som_labels,
-                                   self.node.config,
-                                   sample_labels=self._particle_samples,
-                                   input_data=self.node.input_data)
-                    self.som_canvas.draw()
         except Exception:
             _itk_log.exception("Handled exception in _restore_saved_results")
             self.status.setText("Could not restore saved clustering results")
@@ -6026,23 +5205,6 @@ class ClusteringDisplayDialog(QDialog):
                 self.status.setText(f"Clustering complete — K={sel_k}")
             self._persist_results_to_node(sel_k)
 
-            if ('SOM' in self.final_results and self._som_obj is not None
-                    and hasattr(self, 'som_fig')):
-                som_labels = self.final_results['SOM'].get('labels')
-                if som_labels is not None:
-                    _draw_som_grid(self.som_fig, self._som_obj,
-                                   self._som_neuron_labels, som_labels,
-                                   self.node.config,
-                                   sample_labels=self._particle_samples,
-                                   input_data=self.node.input_data)
-                    self.som_canvas.draw()
-                    self.tabs.setCurrentIndex(self.som_tab_idx)
-                    return
-            if (self.node.config.get('selected_algorithm') == 'Hierarchical'
-                    and self.node.config.get('hier_show_dendrogram', False)
-                    and hasattr(self, 'dendro_fig')):
-                self._draw_dendrogram()
-                self.tabs.setCurrentIndex(self.dendro_tab_idx)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Rendering failed:\n{e}")
@@ -6287,23 +5449,6 @@ class ClusteringDisplayDialog(QDialog):
         return labels - 1
 
 
-    def _build_som_tab(self):
-        tab = QWidget()
-        vl = QVBoxLayout(tab)
-        vl.setContentsMargins(4, 4, 4, 4)
-        hl = QHBoxLayout()
-        hl.addWidget(QLabel("SOM Grid Map — active only when SOM algorithm is selected"))
-        hl.addStretch()
-        po = self._make_popout_btn(lambda: self._pop_out_figure('som'))
-        hl.addWidget(po)
-        vl.addLayout(hl)
-        self.som_fig = Figure(figsize=(12, 6), dpi=110, tight_layout=True)
-        self.som_canvas = _SafeFigureCanvas(self.som_fig)
-        self.som_canvas.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.som_canvas.customContextMenuRequested.connect(
-            lambda pos: self._ctx_menu(pos, 'som'))
-        vl.addWidget(self.som_canvas, stretch=1)
-        self.som_tab_idx = self.tabs.addTab(tab, "⑤ SOM Grid")
 
     def _build_live_tab(self):
         """Add the interactive '② Cluster' tab (animated clustering).
@@ -6490,16 +5635,6 @@ class ClusteringDisplayDialog(QDialog):
         self._draw_overview()
         if self.eval_results:
             self._refresh_eval_plot()
-        if (getattr(self, '_som_obj', None) is not None
-                and self.final_results and hasattr(self, 'som_fig')):
-            som_labels = self.final_results.get('SOM', {}).get('labels')
-            if som_labels is not None:
-                _draw_som_grid(self.som_fig, self._som_obj,
-                               self._som_neuron_labels, som_labels,
-                               cfg,
-                               sample_labels=self._particle_samples,
-                               input_data=self.node.input_data)
-                self.som_canvas.draw()
 
     def _run_stability(self):
         """Launch the assignment-stability bootstrap on a worker thread.
@@ -6845,7 +5980,6 @@ class ClusteringPlotNode(QObject):
         'kmeans_max_iter': 300,
         'hier_linkage': 'ward',
         'hier_metric': 'euclidean',
-        'hier_show_dendrogram': False,
         'dbscan_eps': 0.5,
         'dbscan_min_samples': 5,
         'dbscan_metric': 'euclidean',
@@ -6872,11 +6006,7 @@ class ClusteringPlotNode(QObject):
         'som_lr': 0.5,
         'som_n_iter': 2000,
         'som_final_algo': 'Hierarchical (Ward)',
-        'som_cluster_cmap': 'CLUSTER_COLORS',
         'y_axis_unit': 'count',
-        'som_sequential_cmap': 'viridis',
-        'som_show_u_matrix': True,
-        'som_show_hit_count': True,
         'min_clusters': 2,
         'max_clusters': 20,
         'auto_select_k': True,

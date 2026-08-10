@@ -168,6 +168,11 @@ def install_dialog_chrome(app):
         def eventFilter(self, obj, event):
             """Adorn eligible dialogs on polish and save their size on hide.
 
+            The filter is installed on the application, so it sees events for
+            every object Qt polishes — including layout items such as
+            ``QWidgetItem``, which are not widgets and have no ``property``.
+            Anything that is not a widget is ignored before it is touched.
+
             Args:
                 obj (QObject): The object the event was sent to.
                 event (QEvent): The event.
@@ -175,6 +180,10 @@ def install_dialog_chrome(app):
             Returns:
                 bool: Always False — the event is observed, never consumed.
             """
+            from PySide6.QtWidgets import QWidget
+
+            if not isinstance(obj, QWidget):
+                return False
             try:
                 kind = event.type()
                 if kind == QEvent.Type.Polish:
