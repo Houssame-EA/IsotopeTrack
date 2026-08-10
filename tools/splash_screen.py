@@ -171,7 +171,7 @@ class SplashScreen(QWidget):
     def __init__(self,
                  logo_path: Optional[str] = None,
                  app_name: str = "IsotopeTrack",
-                 version: str = "Version 1.10.9:Beta"):
+                 version: str = "Version 1.10.10:Beta"):
         super().__init__()
         self.app_name = app_name
         self.version = version

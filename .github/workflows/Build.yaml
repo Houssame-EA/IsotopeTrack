@@ -43,19 +43,11 @@ jobs:
         run: |
           set -e
           APP=dist/IsotopeTrack.app
-          FRAMEWORK="$APP/Contents/Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework"
-          HELPER="$FRAMEWORK/Versions/A/Helpers/QtWebEngineProcess.app"
 
-          if [ ! -d "$HELPER" ]; then
-            echo "::error::QtWebEngineProcess.app not found at $HELPER"
+          if [ ! -d "$APP" ]; then
+            echo "::error::$APP not found — the PyInstaller build did not produce a bundle"
             exit 1
           fi
-
-          codesign --force --options runtime \
-            --entitlements "$HELPER/Contents/Resources/QtWebEngineProcess.entitlements" \
-            --sign - "$HELPER"
-
-          codesign --force --options runtime --sign - "$FRAMEWORK/Versions/A"
 
           codesign --force --options runtime \
             --entitlements packaging/entitlements.plist \
@@ -63,8 +55,6 @@ jobs:
 
           echo "Entitlements now embedded in the app:"
           codesign -d --entitlements - "$APP" || true
-          echo "Entitlements on the QtWebEngine helper:"
-          codesign -d --entitlements - "$HELPER" || true
           codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Build DMG
