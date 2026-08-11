@@ -24,7 +24,7 @@ import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget
+from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_trace_pen
 from calibration_methods.TE import TransportRateCalibrationWindow
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
@@ -4426,7 +4426,8 @@ class MainWindow(QMainWindow):
                                 self.time_array,
                                 signal,
                                 pen='b',
-                                name=f'Raw Signal {display_label}'
+                                name=f'Raw Signal {display_label}',
+                                antialias=False
                             )
 
                             if current_x_range and current_y_range:
@@ -5496,15 +5497,15 @@ class MainWindow(QMainWindow):
                 pen=pen,
                 name=name,
                 skipFiniteCheck=True,
+                antialias=False,
             )
             if name in _saved_traces:
                 s = _saved_traces[name]
-                _p = pg.mkPen(
+                _p = make_trace_pen(
                     QColor(s['color']),
-                    width=s.get('width', 1),
-                    style=_STYLE_MAP.get(s.get('style', 'Solid'), Qt.SolidLine),
+                    s.get('width', 1),
+                    _STYLE_MAP.get(s.get('style', 'Solid'), Qt.SolidLine),
                 )
-                _p.setCosmetic(True)
                 curve.setPen(_p)
             self.plot_widget.addItem(curve)
 
@@ -5984,7 +5985,8 @@ class MainWindow(QMainWindow):
                             self.time_array[start_index:end_index + 1],
                             signal[start_index:end_index + 1],
                             pen=pg.mkPen('r', width=1),
-                            name='Highlighted Peak'
+                            name='Highlighted Peak',
+                            antialias=False
                         )
 
                         particle_duration = end_time - start_time
@@ -6117,7 +6119,7 @@ class MainWindow(QMainWindow):
                                 view_section,
                                 pen=pg.mkPen(primary_color, width=1),
                                 name=f"{display_label} ({counts:.0f} counts)",
-                                antialias=True
+                                antialias=False
                             )
 
                             if (element, isotope) in self.detected_peaks:
@@ -6261,7 +6263,8 @@ class MainWindow(QMainWindow):
                                             [view_start, view_end],
                                             [threshold, threshold],
                                             pen=pg.mkPen(primary_color, width=1, style=Qt.DotLine),
-                                            alpha=0.6
+                                            alpha=0.6,
+                                            antialias=False
                                         )
                             except Exception as e:
                                 _itk_log.exception("Handled exception in highlight_multi_element_particle")

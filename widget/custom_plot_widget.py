@@ -350,6 +350,28 @@ SCATTER_SYMBOLS = {
 SCATTER_SYMBOLS_REVERSE = {v: k for k, v in SCATTER_SYMBOLS.items()}
 
 
+# ── Trace pen helper ──────────────────────────────────────────────────────────
+
+def make_trace_pen(color, width, style=Qt.SolidLine):
+    """Build a pen for a plot trace.
+
+    The pen is always cosmetic so that ``width`` is measured in screen pixels
+    rather than in data units, which is what every width control in the UI
+    means by line width.
+
+    Args:
+        color: A QColor, or any value accepted by ``pyqtgraph.mkPen``.
+        width: Pen width in pixels.
+        style: A ``Qt.PenStyle`` value.
+
+    Returns:
+        QPen: The configured pen.
+    """
+    pen = pg.mkPen(color, width=width, style=style)
+    pen.setCosmetic(True)
+    return pen
+
+
 # ── System font helper ────────────────────────────────────────────────────────
 
 def get_system_font_families():
@@ -462,8 +484,7 @@ class TraceEditorDialog(QDialog):
 
     def _apply(self):
         style = LINE_STYLE_MAP.get(self.style_combo.currentText(), Qt.SolidLine)
-        new_pen = pg.mkPen(self.current_color, width=self.width_spin.value(), style=style)
-        new_pen.setCosmetic(True)
+        new_pen = make_trace_pen(self.current_color, self.width_spin.value(), style)
         self.curve_item.setPen(new_pen)
 
         new_name = self.name_edit.text().strip()
@@ -1246,8 +1267,7 @@ class PlotSettingsDialog(QDialog):
         ab.setStyleSheet(_inline_apply_btn_qss('primary'))
         def apply_c(*_args, itm=item, name_e=ne, col_b=cb, w_s=ws, st_c=sc):
             sty = LINE_STYLE_MAP.get(st_c.currentText(), Qt.SolidLine)
-            p = pg.mkPen(col_b._color, width=w_s.value(), style=sty)
-            p.setCosmetic(True)
+            p = make_trace_pen(col_b._color, w_s.value(), sty)
             itm.setPen(p)
             try:
                 itm.update()
