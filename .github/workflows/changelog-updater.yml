@@ -1,0 +1,40 @@
+name: Changelog Updater
+on:
+  release:
+    types: [published]
+    
+permissions:
+  contents: write
+
+jobs:
+  update_changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.1.0
+        with:
+          fetch-depth: 0
+          ref: main
+      
+      - name: Changelog Updater
+        # You may pin to the exact commit or the version.
+        uses: stefanzweifel/changelog-updater-action@v1.12.0
+        with:
+          release-notes: ${{ github.event.release.body }}
+          # Semantic version number of the latest release. The value will be used as a heading text.
+          latest-version: ${{ github.event.release.tag_name }}
+          # Defaults to `CHANGELOG.md`. Path to CHANGELOG.md file.
+          path-to-changelog: docs/changelog.md
+          
+      - name: Commit CHANGELOG
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Update CHANGELOG
+      - name: Merge main -> dev
+        uses: devmasx/merge-branch@master
+        with:
+          type: now
+          from_branch: main
+          target_branch: dev
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+            
