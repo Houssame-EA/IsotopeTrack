@@ -5,7 +5,7 @@ Application startup: CLI parsing, splash screen, progressive loading.
 ---
 
 ### [`Run.py`](run.md)
-Import order matters here. The environment variables below are read by Numba
+IsotopeTrack application entry point.
 
 **1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **4** methods
 
