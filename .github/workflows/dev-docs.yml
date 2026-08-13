@@ -30,12 +30,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install MkDocs + plugins
-        run: |
-          pip install \
-            mkdocs-material \
-            mike
-
       - name: Regenerate module reference pages
         run: python docs_gen.py
 
