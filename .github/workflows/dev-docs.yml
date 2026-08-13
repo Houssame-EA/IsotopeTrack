@@ -33,7 +33,8 @@ jobs:
       - name: Install MkDocs + plugins
         run: |
           pip install \
-            docs/requirements-rtd.txt
+            mkdocs-material \
+            mike
 
       - name: Regenerate module reference pages
         run: python docs_gen.py
