@@ -82,4 +82,4 @@ Single vs Multiple Element Analysis Node – Pie charts & heatmaps.
 ### [`results_triangle.py`](results-triangle.md)
 Ternary Plot Node — full-figure view with right-click context menu.
 
-**6** classes &nbsp;·&nbsp; **10** functions &nbsp;·&nbsp; **84** methods
+**6** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **84** methods

@@ -77,7 +77,7 @@ ground-truth labels stay aligned across all data types.
 | `parse_components` | `(text)` | Parse a component string into ``[(name, [elements]), ...]``. |
 | `build_ground_truth` | `(raw_matrix, elements, components, other_flags=None)` | Assign each particle to a named component or to ``"other"``. |
 | `_row_for_particle` | `(p, data_type, elements)` | Build one matrix row for a particle in the requested representation. |
-| `run_algorithm` | `(name, params, data, som_runner=None)` | Fit one algorithm with explicit ``params`` and return integer labels. |
+| `run_algorithm` | `(name, params, data, som_runner=None, capture=None)` | Fit one algorithm with explicit ``params`` and return integer labels. |
 | `make_host_som_runner` | `(host_dialog)` | Build a SOM runner that does not disturb the host's SOM tab state. |
 | `build_param_grid` | `(name, selections)` | Expand per-parameter value lists into concrete parameter dicts. |
 | `count_combinations` | `(pre_combos, algo_selections)` | Return the total number of fits a sweep would perform. |
@@ -87,6 +87,5 @@ ground-truth labels stay aligned across all data types.
 | `_spearman` | `(a, b)` | Return the tie-corrected Spearman rank correlation of two sequences. |
 | `borda_count_rank` | `(results, metrics, registry=None)` | Rank results by Borda count across *metrics* (internal or external). |
 | `analyze_metric_trust` | `(results, internal_metrics, reference=PRIMARY_EXTERNAL_METRIC)` | Report how well each internal index tracks the ground-truth reference. |
-| `analyze_metric_trust_stratified` | `(results, internal_metrics, reference=PRIMARY_EXTERNAL_METRIC, min_per` | Validate each internal index against ground truth within fixed preprocessing. |
 | `summarize_sweep_failures` | `(failures, total=None)` | Summarise where a sweep produced no usable partition, per algorithm. |
 | `per_cluster_silhouette` | `(data, labels)` | Return the mean silhouette width of each individual cluster. |

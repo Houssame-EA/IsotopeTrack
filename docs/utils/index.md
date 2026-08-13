@@ -14,6 +14,11 @@ utils/app_version.py — single source of truth for the running app's version.
 
 **0** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **0** methods
 
+### [`dialog_chrome.py`](dialog-chrome.md)
+Maximise buttons and remembered sizes for every dialog in the application.
+
+**0** classes &nbsp;·&nbsp; **7** functions &nbsp;·&nbsp; **0** methods
+
 ### [`dilution.py`](dilution.md)
 Dilution and particle-concentration calculations (non-visual).
 
@@ -33,6 +38,11 @@ Isobaric correction engine for spICP-ToF-MS.
 Process-wide serialisation of Numba parallel regions.
 
 **0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
+
+### [`numeric_format.py`](numeric-format.md)
+Defensive numeric formatting for text output (CSV exports, tables, logs).
+
+**0** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **0** methods
 
 ### [`pyqtgraph_patches.py`](pyqtgraph-patches.md)
 Runtime compatibility patches for third-party libraries.

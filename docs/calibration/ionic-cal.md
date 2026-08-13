@@ -80,12 +80,6 @@
 | `update_results_table_with_method` | `(self, isotope_key, data, unit)` | Update results table with original isotope labels. |
 | `get_isotope_label` | `(self, element, mass)` | Get the isotope label directly from the isotope data. |
 | `element_selected` | `(self, element)` | Placeholder for element selection signal handler. |
-| `_fit_zero` | `(self, x, y)` | Force-through-zero (FTZ) linear regression. |
-| `_fit_simple` | `(self, x, y)` | Ordinary least squares (OLS) linear regression. |
-| `_fit_weighted` | `(self, x, y, y_std)` | Weighted least squares (WLS) linear regression. |
-| `_compute_figures_of_merit` | `(self, slope, intercept, sigma_blank)` | Compute analytical figures of merit from regression results. |
-| `_run_all_fits_on_subset` | `(self, x, y, y_std, included_mask, density)` | Run the three calibration fits on the subset of points selected by |
-| `_compute_outlier_indices` | `(self, y, y_fit, included_mask, z_threshold=1.5)` | Flag included points whose standardized residual exceeds ``z_threshold``. |
 | `refit_isotope` | `(self, isotope_key)` | Re-run the three fits for a single isotope using the current |
 | `on_calibration_point_exclusion_toggled` | `(self, index)` | Toggle exclusion of the clicked point for the current isotope, |
 | `reset_current_isotope_exclusions` | `(self)` | Clear all exclusions for the currently-displayed isotope and refit. |

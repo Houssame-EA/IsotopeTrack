@@ -242,6 +242,7 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `evaluate_equation` | `(equation: str, element_data: dict) → float` | Safely evaluate a mathematical equation with element name substitution. |
 | `evaluate_equation_array` | `(equation: str, df: pd.DataFrame) → np.ndarray` | Evaluate an equation row-by-row over a DataFrame. |
 | `get_sample_color` | `(sample_name: str, index: int, config: dict) → str` | Return hex color for a sample, falling back to default palette. |
+| `seed_suggested_element_colors` | `(config: dict, input_data: dict \| None) → None` | Seed default bar/legend colors from an upstream node's suggestions. |
 | `get_display_name` | `(original_name: str, config: dict) → str` | Return custom display name or original. |
 | `make_viridis_colormap` | `()` | Create a viridis-like PyQtGraph ColorMap. |
 | `conc_meta_available` | `(input_data) → bool` | Report whether any sample in the input carries a usable transport rate. |

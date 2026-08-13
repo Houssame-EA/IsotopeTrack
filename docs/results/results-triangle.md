@@ -173,6 +173,8 @@ Ternary plot node with right-click driven configuration.
 | `_point_in_triangle_viewport` | `(a: float, b: float, c: float, viewport: dict, tol: float=1e-09) → boo` | Return whether a ternary point lies inside the viewport. |
 | `_remap_point_to_triangle_viewport` | `(a: float, b: float, c: float, viewport: dict) → tuple[float, float, f` | Map original ternary fractions into local viewport fractions. |
 | `_viewport_tick_labels` | `(viewport: dict, component_key: str, ticks: list[float]) → list[str]` | Return original-composition percentage labels for local ternary ticks. |
+| `_particle_coverage_fraction` | `(d: dict, selected_total: float) → float \| None` | Return the selected three elements' share of this particle's full total. |
+| `_short_ternary_data_type_label` | `(data_type_display: str) → str` | Strip the trailing "(%)" from a ternary data-type display name. |
 | `setup_ternary_axes` | `(ax, element_labels, config, viewport=None)` | Configure mpltern axes with labels, grid, and font settings. |
 | `confidence_ellipse_params` | `(data_x, data_y, n_std=2.0)` | Compute 2D confidence ellipse parameters from data. |
 | `_hbox_widget` | `(hbox: QHBoxLayout) → QWidget` |  |

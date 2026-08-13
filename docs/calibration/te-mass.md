@@ -74,7 +74,8 @@ Themed collapsible panel. Click header to expand/collapse.
 | `plot_raw_signal_preview` | `(self, folder_path, sample_name)` | Plot raw signal preview for a sample. |
 | `detect_particles_all_samples` | `(self)` | Detect particles for all samples using PeakDetection class. |
 | `toggle_calibration_view` | `(self)` | Toggle between raw data view and calibration view. |
-| `show_calibration_plot_in_raw_area` | `(self)` | Show the calibration plot in the raw data plot area. |
+| `show_calibration_plot_in_raw_area` | `(self)` | Show the ionic calibration curve in the visualization area. |
+| `on_calibration_point_exclusion_toggled` | `(self, index)` | Toggle exclusion of the clicked calibration point, refit and redraw. |
 | `refresh_current_raw_data_view` | `(self)` | Refresh the current raw data view for the last selected sample. |
 | `get_sample_detection_parameters` | `(self, row)` | Get detection parameters for a specific sample row. |
 | `update_results_table` | `(self)` | Update results table with all detection results. |
@@ -115,7 +116,7 @@ Themed collapsible panel. Click header to expand/collapse.
 | `validate_calibration_folders` | `(self, folders)` | Validate that calibration folders have compatible mass ranges. |
 | `calculate_calibration` | `(self)` | Calculate ionic calibration with multiple regression methods using cached data. |
 | `convert_concentration_to_ppb` | `(self, value, unit)` | Convert concentration to ppb. |
-| `perform_ionic_calibration` | `(self, x, y, method)` | Perform calibration using specified method. |
+| `perform_ionic_calibration` | `(self, x, y, method, y_std=None, folders=None, sample_names=None)` | Perform the ionic calibration with the shared regression helpers. |
 | `calculate_transport_rate` | `(self)` | Calculate transport rate based on particle and ionic calibrations. |
 | `plot_multiple_diameter_distributions` | `(self, all_diameters)` | Plot histogram of particle diameters for multiple files with statistics. |
 | `export_to_csv` | `(self)` | Export detection results to CSV file. |
