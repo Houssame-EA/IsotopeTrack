@@ -1,4 +1,6 @@
-"""IsotopeTrack application entry point.
+"""
+
+IsotopeTrack application entry point.
 
 Creates the :class:`QApplication`, hands control to the splash coordinator
 which builds the main window, and runs the Qt event loop.
