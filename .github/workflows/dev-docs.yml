@@ -43,23 +43,9 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       - name: Infos about what files were modified
-        run: |
-          CHANGED_FILES=$(git status --short)
-          echo "Here is a list of the changed files:"
-          echo $CHANGED_FILES
-          
-          if [[ "$CHANGED_FILES" =~ 'docs/' ]]; then
-            echo -e '\nThere are modified docs. They will be staged.'
-          else
-            echo -e '\nThere are no modified docs.'
-          fi
-          
-          if [[ "$CHANGED_FILES" =~ 'mkdocs.yml' ]]; then
-            echo -e '\n`mkdocs.yml` was modified. It will be staged.'
-          else
-            echo -e '\n`mkdocs.yml` was not modified.'
-          fi
+        run: git status --short
 
       - name: Git Commit
         uses: stefanzweifel/git-auto-commit-action@v7.2.0
