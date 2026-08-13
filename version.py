@@ -1,6 +1,4 @@
 """
-I hope this will be seen in the stuff and stuff
-
 version.py — Update IsotopeTrack version across ALL files.
 
 Usage:
