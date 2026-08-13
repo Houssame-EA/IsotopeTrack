@@ -1,5 +1,10 @@
 """
 
+IsotopeTrack application entry point.
+
+Creates the :class:`QApplication`, hands control to the splash coordinator
+which builds the main window, and runs the Qt event loop.
+
 Import order matters here. The environment variables below are read by Numba
 and joblib the first time those packages are imported, so they are set before
 anything pulls the scientific stack in — setting them later has no effect.
