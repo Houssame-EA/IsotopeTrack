@@ -2,10 +2,10 @@ name: Build IsotopeTrack
 
 on:
   push:
-    branches: [main, dev, 'ci/**']
-    tags: ['v*']
+    branches: [ main, dev, 'ci/**' ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [main, dev]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 jobs:
@@ -75,46 +75,46 @@ jobs:
   # =========================================================
   # Windows
   # =========================================================
-  #build-windows:
-  #  name: Windows
-  #  runs-on: windows-latest
-  #  steps:
-  #    - uses: actions/checkout@v4
-#
-  #    - uses: actions/setup-python@v5
-  #      with:
-  #        python-version: '3.11'
-#
-  #    - name: Install Python dependencies
-  #      run: |
-  #        python -m pip install --upgrade pip
-  #        pip install -r requirements.txt -r requirements-dev.txt
-#
-  #    - name: Build .exe with PyInstaller
-  #      run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_W.spec
-#
-  #    - name: List dist contents (debug)
-  #      shell: cmd
-  #      run: dir dist\IsotopeTrack
-#
-  #    - name: Install Inno Setup
-  #      run: choco install innosetup --yes
-  #      shell: powershell
-#
-  #    - name: Build Windows installer with Inno Setup
-  #      shell: cmd
-  #      run: |
-  #        "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" packaging\IsotopeTrack_Setup.iss
-#
-  #    - name: Find installer output
-  #      shell: cmd
-  #      run: dir /s *.exe
-#
-  #    - uses: actions/upload-artifact@v4
-  #      with:
-  #        name: IsotopeTrack_Windows
-  #        path: Output/IsotopeTrack_Setup_*.exe
-  #        if-no-files-found: error
+  build-windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Build .exe with PyInstaller
+        run: pyinstaller --noconfirm --clean packaging/IsotopeTrack_W.spec
+
+      - name: List dist contents (debug)
+        shell: cmd
+        run: dir dist\IsotopeTrack
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes
+        shell: powershell
+
+      - name: Build Windows installer with Inno Setup
+        shell: cmd
+        run: |
+          "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" packaging\IsotopeTrack_Setup.iss
+
+      - name: Find installer output
+        shell: cmd
+        run: dir /s *.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IsotopeTrack_Windows
+          path: Output/IsotopeTrack_Setup_*.exe
+          if-no-files-found: error
 
   # =========================================================
   # Release — only runs when you push a tag like v1.0.4
@@ -140,9 +140,9 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
+            artifacts/IsotopeTrack_Windows/*.exe
             artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
           draft: true
-           # artifacts/IsotopeTrack_Windows/*.exe
       - name: Create Draft GitHub Release
         uses: release-drafter/release-drafter@v7
         with:
