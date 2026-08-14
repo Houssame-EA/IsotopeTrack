@@ -141,7 +141,7 @@ jobs:
         with:
           files: |
             artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
-          draft: ture
+          draft: true
            # artifacts/IsotopeTrack_Windows/*.exe
       - name: Create Draft GitHub Release
         uses: release-drafter/release-drafter@v7
