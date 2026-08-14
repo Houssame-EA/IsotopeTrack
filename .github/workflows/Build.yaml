@@ -125,6 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -134,10 +135,14 @@ jobs:
         run: find artifacts -type f
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
             artifacts/IsotopeTrack_Windows/*.exe
-          generate_release_notes: true
-          draft: false
+          draft: ture
+
+      - name: Create Draft GitHub Release
+        uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
