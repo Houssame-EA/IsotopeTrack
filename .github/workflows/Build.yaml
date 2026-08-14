@@ -2,10 +2,10 @@ name: Build IsotopeTrack
 
 on:
   push:
-    branches: [main, dev, 'ci/**']
-    tags: ['v*']
+    branches: [ main, dev, 'ci/**' ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [main, dev]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 jobs:
@@ -120,11 +120,14 @@ jobs:
   # Release — only runs when you push a tag like v1.0.4
   # =========================================================
   release:
-    needs: [build-macos-arm, build-windows]
+    needs:
+      - build-macos-arm
+      - build-windows
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -134,10 +137,13 @@ jobs:
         run: find artifacts -type f
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
-            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
             artifacts/IsotopeTrack_Windows/*.exe
-          generate_release_notes: true
-          draft: false
+            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
+          draft: true
+      - name: Create Draft GitHub Release
+        uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
