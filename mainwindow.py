@@ -78,8 +78,7 @@ _itk_log = logging.getLogger("IsotopeTrack.mainwindow")
 def element_chip_qss(p) -> str:
     """Stylesheet for a single element chip in the quick-selector.
 
-    p is a theme Palette. The :checked state marks the element
-    currently shown in the plot.
+    p is a theme Palette.
     """
     return (
         f"QPushButton{{"
