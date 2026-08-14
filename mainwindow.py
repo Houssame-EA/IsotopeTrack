@@ -20,6 +20,7 @@ from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QWidget
 import tools.dilution_utils
 import utils.dilution
+import utils.signal_stats
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
@@ -5260,7 +5261,8 @@ class MainWindow(QMainWindow):
         threshold_counts = 0.00000
 
         if isotope_key and isotope_key in self.data:
-            overall_mean_signal = float(np.mean(self.data[isotope_key]))
+            overall_mean_signal = utils.signal_stats.mean_signal(
+                self, self.current_sample, element_key, self.data[isotope_key])
 
         if (self.current_sample in self.element_thresholds and
                 element_key in self.element_thresholds[self.current_sample]):
@@ -5731,9 +5733,11 @@ class MainWindow(QMainWindow):
                     continue
                 sig = np.asarray(self.data[closest], dtype=float)
                 ek = f"{element}-{isotope:.4f}"
+                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                    self, self.current_sample, ek, sig)
                 masses.append(float(isotope))
-                mean_cts.append(float(np.mean(sig)))
-                std_cts.append(float(np.std(sig)))
+                mean_cts.append(mean_sig)
+                std_cts.append(std_sig)
                 labels.append(self.get_formatted_label(ek))
                 element_keys.append(ek)
 
@@ -5902,9 +5906,11 @@ class MainWindow(QMainWindow):
                     continue
                 sig = np.asarray(self.data[closest], dtype=float)
                 ek = f"{element}-{isotope:.4f}"
+                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                    self, self.current_sample, ek, sig)
                 masses.append(float(isotope))
-                mean_cts.append(float(np.mean(sig)))
-                std_cts.append(float(np.std(sig)))
+                mean_cts.append(mean_sig)
+                std_cts.append(std_sig)
                 labels.append(self.get_formatted_label(ek))
 
         if not masses:

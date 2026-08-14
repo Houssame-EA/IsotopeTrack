@@ -587,6 +587,71 @@ class Preprocessor:
         return m
 
 
+def effective_metric(name, params):
+    """Return the distance metric a configuration will really be fitted with.
+
+    The metric a user picks is not always the metric that runs: Ward linkage is
+    defined only for the Euclidean case, so scikit-learn ignores any other
+    choice there. Reporting the effective metric keeps the pre-fit guards below
+    honest about what is actually about to be computed.
+
+    Args:
+        name (str): Algorithm key from :data:`ALGO_PARAM_SPECS`.
+        params (dict): Concrete parameter values for one fit.
+
+    Returns:
+        str: Lower-case metric name, or ``''`` when the algorithm takes none.
+    """
+    metric = str(params.get('metric', '') or '').lower()
+    if name == 'Hierarchical' and params.get('linkage', 'ward') == 'ward':
+        return 'euclidean'
+    return metric
+
+
+def zero_row_count(data):
+    """Count rows that are zero in every column.
+
+    Args:
+        data (np.ndarray): A preprocessed data matrix.
+
+    Returns:
+        int: Number of all-zero rows.
+    """
+    arr = np.atleast_2d(np.asarray(data, dtype=float))
+    if arr.size == 0:
+        return 0
+    return int(np.sum(~np.any(arr != 0, axis=1)))
+
+
+def cosine_undefined(name, params, data):
+    """Return True when a cosine fit on ``data`` has no defined answer.
+
+    Cosine distance is the angle between two vectors, and the zero vector has
+    no direction, so the distance to it is undefined; scikit-learn refuses the
+    fit outright rather than guessing. All-zero rows are ordinary in this
+    pipeline rather than a sign of bad data — a particle with no calibrated
+    mass in a mass-based data type, a percentage row whose total is zero, a
+    perfectly balanced composition under CLR, or a particle sitting exactly on
+    the median under a robust z-score all produce one.
+
+    Detecting the situation up front lets the sweep record a precise reason and
+    move on, instead of paying for a fit that will raise and filling the log
+    with identical tracebacks — one per cluster count, per linkage, per
+    preprocessing combination.
+
+    Args:
+        name (str): Algorithm key from :data:`ALGO_PARAM_SPECS`.
+        params (dict): Concrete parameter values for one fit.
+        data (np.ndarray): The preprocessed matrix about to be clustered.
+
+    Returns:
+        bool: True when the configuration must be skipped.
+    """
+    if effective_metric(name, params) != 'cosine':
+        return False
+    return zero_row_count(data) > 0
+
+
 def run_algorithm(name, params, data, som_runner=None, capture=None):
     """Fit one algorithm with explicit ``params`` and return integer labels.
 
@@ -629,6 +694,10 @@ def run_algorithm(name, params, data, som_runner=None, capture=None):
         if capture is not None:
             capture['estimator'] = est
         return labels
+
+    if cosine_undefined(name, params, data):
+        _itk_log.debug("Skipped %s: cosine metric with all-zero rows", name)
+        return None
 
     try:
         k = int(params.get('k', 2))
@@ -897,6 +966,13 @@ def run_sweep(particle_data, elements, components, *,
                 if cancel_event is not None and cancel_event.is_set():
                     cancelled = True
                     break
+                if cosine_undefined(algo, params, data):
+                    done += 1
+                    attempts[algo] += 1
+                    failures.append({'algorithm': algo, 'data_type': dt,
+                                     'scaling': sc, 'dim_reduction': dr,
+                                     'reason': 'cosine_zero_rows'})
+                    continue
                 t0 = time.perf_counter()
                 labels = run_algorithm(algo, params, data, som_runner=som_runner)
                 elapsed = time.perf_counter() - t0
@@ -1141,8 +1217,8 @@ def summarize_sweep_failures(failures, total=None):
     Args:
         failures (list[dict]): Failure records from :func:`run_sweep`, each with
             keys ``'algorithm'``, ``'data_type'``, ``'scaling'``,
-            ``'dim_reduction'`` and ``'reason'`` (``'error'``, ``'no_labels'`` or
-            ``'out_of_range'``).
+            ``'dim_reduction'`` and ``'reason'`` (``'error'``, ``'no_labels'``,
+            ``'out_of_range'`` or ``'cosine_zero_rows'``).
         total (dict or None): Optional ``{algorithm: attempted_fits}`` mapping so
             the report can express failures as a fraction of attempts.
 
@@ -1177,6 +1253,37 @@ def summarize_sweep_failures(failures, total=None):
                                  if attempted else float('nan')),
         })
     out.sort(key=lambda d: -d['n_failed'])
+    return out
+
+
+def compact_payload(payload):
+    """Return a sweep payload trimmed for long-term storage.
+
+    A sweep keeps one record per configuration that produced no usable
+    partition, and on a large grid those out-of-range and skipped records can
+    outnumber the results themselves. Nothing in the dialog reads them
+    individually — only the per-algorithm rollup is ever shown — so the
+    per-configuration list is replaced by :func:`summarize_sweep_failures`
+    output under ``'failure_summary'`` before the snapshot is written into a
+    project file. Everything the results tab redraws from (the scored results,
+    the ground truth, the fit counts) is kept intact, so a reopened project
+    shows exactly the leaderboard the sweep produced.
+
+    Args:
+        payload (dict or None): A :func:`run_sweep` return value, possibly
+            already compacted by an earlier save.
+
+    Returns:
+        dict or None: A shallow copy with the failure list rolled up, or the
+            input unchanged when it is empty.
+    """
+    if not payload:
+        return payload
+    out = dict(payload)
+    failures = out.pop('failures', None)
+    if failures:
+        out['failure_summary'] = summarize_sweep_failures(
+            failures, out.get('attempts'))
     return out
 
 
@@ -1227,9 +1334,11 @@ try:
         QCheckBox, QGroupBox, QScrollArea, QWidget, QTableWidget,
         QTableWidgetItem, QProgressBar, QLineEdit, QSpinBox, QDoubleSpinBox,
         QComboBox, QTabWidget, QMessageBox, QFileDialog, QAbstractItemView,
+        QTableView, QApplication,
     )
-    from PySide6.QtCore import Qt, Signal, QThread
-    from PySide6.QtGui import QColor
+    from PySide6.QtCore import (Qt, Signal, QThread, QAbstractTableModel,
+                                QModelIndex)
+    from PySide6.QtGui import QColor, QFont
     _QT_OK = True
 except Exception:
     _itk_log.exception("Handled exception in <module>")
@@ -1394,6 +1503,210 @@ if _QT_OK:
             for p, vals in state.get('params', {}).items():
                 if p in self.controls and vals:
                     self.controls[p].set_values(vals)
+
+    class _LeaderboardModel(QAbstractTableModel):
+        """Virtualised model behind the sweep leaderboard.
+
+        A sweep can score tens of thousands of pipelines and every one of
+        them is kept — nothing is truncated for display. A model/view pair is
+        what makes that affordable: Qt pulls only the cells it is about to
+        paint, so filling the leaderboard costs the same whether the sweep
+        produced fifty rows or half a million. The item-based table this
+        replaced had to allocate one widget item per cell up front and then
+        measure every one of them to size its columns, which is why a large
+        grid appeared to hang for minutes after the fits had already finished.
+
+        Columns are described by ``(header, key, kind)`` triples. ``kind``
+        drives both formatting and sort order: ``'int'`` renders whole
+        numbers, ``'float'`` three decimals, ``'score'`` one, and all three
+        sort numerically with non-finite values pinned last in either
+        direction; ``'text'`` renders as-is and sorts case-insensitively.
+
+        Row order is the ranking handed to :meth:`set_content`; each row's
+        1-based position is stamped on it as ``'_rank'`` at that moment, so
+        the winning pipeline keeps its highlight and its rank number even
+        after the user re-sorts the view by another column.
+        """
+
+        def __init__(self, parent=None):
+            """Create an empty model.
+
+            Args:
+                parent (QObject or None): Optional parent.
+            """
+            super().__init__(parent)
+            self._rows = []
+            self._cols = []
+            self._bold = QFont(QApplication.font())
+            self._bold.setBold(True)
+
+        def set_content(self, rows, cols):
+            """Replace the entire table contents in a single reset.
+
+            Args:
+                rows (list[dict]): Result dicts in rank order. Each is stamped
+                    with a 1-based ``'_rank'`` that survives later sorting.
+                cols (list[tuple]): ``(header, key, kind)`` column specs.
+            """
+            self.beginResetModel()
+            self._rows = list(rows)
+            for i, row in enumerate(self._rows):
+                row['_rank'] = i + 1
+            self._cols = list(cols)
+            self.endResetModel()
+
+        def clear(self):
+            """Drop every row and column."""
+            self.set_content([], [])
+
+        def result_at(self, row):
+            """Return the result dict displayed on ``row``.
+
+            Args:
+                row (int): Row index as currently displayed.
+
+            Returns:
+                dict or None: The result, or None when ``row`` is out of range.
+            """
+            if 0 <= row < len(self._rows):
+                return self._rows[row]
+            return None
+
+        def rowCount(self, parent=QModelIndex()):
+            """Return the number of results held.
+
+            Args:
+                parent (QModelIndex): Unused; a flat table has no children.
+
+            Returns:
+                int: Row count, or 0 under any valid parent.
+            """
+            return 0 if parent.isValid() else len(self._rows)
+
+        def columnCount(self, parent=QModelIndex()):
+            """Return the number of configured columns.
+
+            Args:
+                parent (QModelIndex): Unused; a flat table has no children.
+
+            Returns:
+                int: Column count, or 0 under any valid parent.
+            """
+            return 0 if parent.isValid() else len(self._cols)
+
+        def headerData(self, section, orientation, role=Qt.DisplayRole):
+            """Return the header label for a column.
+
+            Args:
+                section (int): Column index.
+                orientation (Qt.Orientation): Only horizontal is labelled.
+                role (int): Qt item role.
+
+            Returns:
+                str or None: The header text, or None for other roles.
+            """
+            if role != Qt.DisplayRole or orientation != Qt.Horizontal:
+                return None
+            if 0 <= section < len(self._cols):
+                return self._cols[section][0]
+            return None
+
+        @staticmethod
+        def _format(value, kind):
+            """Render one raw value for display.
+
+            Args:
+                value: Raw cell value; may be None or NaN.
+                kind (str): Column kind — ``'text'``, ``'int'``, ``'float'``
+                    or ``'score'``.
+
+            Returns:
+                str: Formatted text, or an em dash when the value is missing
+                    or not finite.
+            """
+            if value is None:
+                return '—'
+            if kind == 'text':
+                return str(value)
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                return '—'
+            if num != num or num in (float('inf'), float('-inf')):
+                return '—'
+            if kind == 'int':
+                return str(int(num))
+            return f"{num:.1f}" if kind == 'score' else f"{num:.3f}"
+
+        def data(self, index, role=Qt.DisplayRole):
+            """Return one cell's text, alignment or winner styling.
+
+            Args:
+                index (QModelIndex): Cell to describe.
+                role (int): Qt item role.
+
+            Returns:
+                Any: Role-appropriate value, or None when the role does not
+                    apply to this cell.
+            """
+            if not index.isValid():
+                return None
+            row = self._rows[index.row()]
+            _, key, kind = self._cols[index.column()]
+            if role == Qt.DisplayRole:
+                return self._format(row.get(key), kind)
+            if role == Qt.TextAlignmentRole and kind != 'text':
+                return int(Qt.AlignRight | Qt.AlignVCenter)
+            if row.get('_rank') == 1:
+                if role == Qt.BackgroundRole:
+                    return _BEST_ROW_COLOR
+                if role == Qt.FontRole:
+                    return self._bold
+            return None
+
+        def sort(self, column, order=Qt.AscendingOrder):
+            """Reorder the rows by one column, keeping missing values last.
+
+            Numeric columns fold the direction into the sort key so that NaN
+            and absent values stay at the bottom whichever way the column is
+            sorted — the opposite would push a wall of blank rows to the top
+            of a descending metric sort. The current selection is carried
+            across via persistent indexes, so the detail panel below the table
+            keeps describing the same pipeline the user had selected.
+
+            Args:
+                column (int): Column index to sort by.
+                order (Qt.SortOrder): Ascending or descending.
+            """
+            if not self._rows or not 0 <= column < len(self._cols):
+                return
+            _, key, kind = self._cols[column]
+            numeric = kind != 'text'
+            desc = order == Qt.DescendingOrder
+
+            def _key(row):
+                """Sort key for one row under the active column."""
+                value = row.get(key)
+                if not numeric:
+                    return (0, str('' if value is None else value).lower())
+                try:
+                    num = float(value)
+                except (TypeError, ValueError):
+                    num = float('nan')
+                if num != num:
+                    return (1, 0.0)
+                return (0, -num if desc else num)
+
+            self.layoutAboutToBeChanged.emit()
+            old = self.persistentIndexList()
+            held = [(i, self._rows[i.row()]) for i in old
+                    if 0 <= i.row() < len(self._rows)]
+            self._rows.sort(key=_key, reverse=(desc and not numeric))
+            positions = {id(r): n for n, r in enumerate(self._rows)}
+            self.changePersistentIndexList(
+                [i for i, _ in held],
+                [self.index(positions[id(r)], i.column()) for i, r in held])
+            self.layoutChanged.emit()
 
     class _SweepWorker(QThread):
         """Runs :func:`run_sweep` off the GUI thread."""
@@ -1693,11 +2006,18 @@ if _QT_OK:
             v.addLayout(top)
             self._refresh_rank_combo()
 
-            self.table = QTableWidget()
+            self.table = QTableView()
+            self._model = _LeaderboardModel(self)
+            self.table.setModel(self._model)
             self.table.setSortingEnabled(True)
             self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
             self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-            self.table.itemSelectionChanged.connect(self._on_row_selected)
+            self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            self.table.setAlternatingRowColors(True)
+            self.table.verticalHeader().setVisible(False)
+            self.table.horizontalHeader().setResizeContentsPrecision(64)
+            self.table.selectionModel().selectionChanged.connect(
+                self._on_row_selected)
             v.addWidget(self.table, 3)
 
             v.addWidget(QLabel("<b>Selected pipeline — cluster vs truth "
@@ -1879,18 +2199,17 @@ if _QT_OK:
                     f"Truth groups — {tsummary}")
                 return
             metric = self.rank_combo.currentText()
-            intl = [o for o, cb in self.int_boxes.items() if cb.isChecked()]
-            ext  = [o for o, cb in self.ext_boxes.items() if cb.isChecked()]
+            self._repopulate_table()
+            if not self._ranked:
+                self.best_lbl.setText(
+                    f"No partition could be ranked. Truth groups — {tsummary}")
+                return
+            best = self._ranked[0]
             if metric == 'Borda (Internal)':
-                ranked = borda_count_rank(results, intl, METRIC_REGISTRY)
-                best = ranked[0]
                 score_str = f"Borda ∑ (int) = {best.get('borda_score', 0):.1f}"
             elif metric == 'Borda (External)':
-                ranked = borda_count_rank(results, ext, EXTERNAL_METRICS)
-                best = ranked[0]
                 score_str = f"Borda ∑ (ext) = {best.get('borda_score', 0):.1f}"
             else:
-                best = rank_results(results, metric)[0]
                 score_str = f"{metric} = {best.get(metric, float('nan')):.3f}"
             if payload.get('unknown'):
                 self.best_lbl.setText(
@@ -1914,12 +2233,18 @@ if _QT_OK:
                     f"{payload.get('completed')}/{payload.get('total')} fits)</span>")
             self.apply_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
-            self._repopulate_table()
             self._populate_trust()
 
         def _repopulate_table(self):
-            """Fill the leaderboard, ranked by the chosen metric, best row lit."""
+            """Fill the leaderboard, ranked by the chosen metric, best row lit.
+
+            Every scored pipeline is handed to the model — the sweep's full
+            output stays reachable, sortable and exportable no matter how
+            large the grid was.
+            """
             if not self._last or not self._last.get('results'):
+                self._model.clear()
+                self._ranked = []
                 return
             metric  = self.rank_combo.currentText()
             results = self._last['results']
@@ -1936,35 +2261,22 @@ if _QT_OK:
                 self._ranked = rank_results(results, metric)
                 borda_col = None
 
-            extra_cols = ([borda_col] if borda_col else [])
-            cols = (['#', 'Algorithm', 'Data type', 'Scaling', 'Reduction',
-                     'Params', 'K', 'Noise'] + ext + intl + extra_cols)
+            cols = [('#', '_rank', 'int'),
+                    ('Algorithm', 'algorithm', 'text'),
+                    ('Data type', 'data_type', 'text'),
+                    ('Scaling', 'scaling', 'text'),
+                    ('Reduction', 'dim_reduction', 'text'),
+                    ('Params', 'params_str', 'text'),
+                    ('K', 'n_clusters', 'int'),
+                    ('Noise', 'n_noise', 'int')]
+            cols += [(m, m, 'float') for m in ext + intl]
+            if borda_col:
+                cols.append((borda_col, 'borda_score', 'score'))
             self.table.setSortingEnabled(False)
-            self.table.setColumnCount(len(cols))
-            self.table.setHorizontalHeaderLabels(cols)
-            self.table.setRowCount(len(self._ranked))
-            for r, row in enumerate(self._ranked):
-                vals = [str(r + 1), row['algorithm'], row['data_type'],
-                        row['scaling'], row['dim_reduction'], row['params_str'],
-                        str(row['n_clusters']), str(row['n_noise'])]
-                for m in ext + intl:
-                    v = row.get(m, float('nan'))
-                    vals.append('—' if v != v else f"{v:.3f}")
-                if borda_col:
-                    bs = row.get('borda_score', float('nan'))
-                    vals.append('—' if bs != bs else f"{bs:.1f}")
-                for c, val in enumerate(vals):
-                    item = QTableWidgetItem(val)
-                    if c == 0:
-                        item.setData(Qt.UserRole, r)
-                    if r == 0:
-                        item.setBackground(_BEST_ROW_COLOR)
-                        f = item.font()
-                        f.setBold(True)
-                        item.setFont(f)
-                    self.table.setItem(r, c, item)
-            self.table.resizeColumnsToContents()
+            self._model.set_content(self._ranked, cols)
+            self.table.horizontalHeader().setSortIndicator(0, Qt.AscendingOrder)
             self.table.setSortingEnabled(True)
+            self.table.resizeColumnsToContents()
 
         def _populate_trust(self):
             """Fill the metric-trust table for the enabled internal metrics."""
@@ -1988,17 +2300,19 @@ if _QT_OK:
             self.trust_table.resizeColumnsToContents()
 
         def _selected_result(self):
-            """Return the result dict for the currently selected table row."""
-            r = self.table.currentRow()
-            if r < 0:
+            """Return the result dict for the currently selected table row.
+
+            The model holds the rows in display order, so the view's row index
+            is the lookup key and stays correct after any re-sort.
+
+            Returns:
+                dict or None: The selected result, or None when nothing is
+                    selected.
+            """
+            index = self.table.currentIndex()
+            if not index.isValid():
                 return None
-            item = self.table.item(r, 0)
-            if item is None:
-                return None
-            idx = item.data(Qt.UserRole)
-            if idx is None or idx >= len(self._ranked):
-                return None
-            return self._ranked[idx]
+            return self._model.result_at(index.row())
 
         def _labels_for_row(self, result):
             """Re-fit one pipeline to obtain its data matrix and cluster labels.
@@ -2023,8 +2337,13 @@ if _QT_OK:
                 _itk_log.exception("Handled exception in _labels_for_row")
                 return None, None
 
-        def _on_row_selected(self):
-            """Show the cluster-vs-truth breakdown for the selected pipeline."""
+        def _on_row_selected(self, *_args):
+            """Show the cluster-vs-truth breakdown for the selected pipeline.
+
+            Args:
+                *_args: Selection payloads from the view's ``selectionChanged``
+                    signal; the current index is read from the view instead.
+            """
             result = self._selected_result()
             if result is None or not self._last:
                 return
@@ -2268,7 +2587,16 @@ if _QT_OK:
             QMessageBox.information(self, "Exported", f"Saved to {path}")
 
         def _collect_state(self):
-            """Return a serialisable snapshot of setup and results."""
+            """Return a serialisable snapshot of setup and results.
+
+            The snapshot is stored on the node, which the project file saves
+            and restores, so a sweep survives closing the project rather than
+            only the current session. Results are compacted first — see
+            :func:`compact_payload`.
+
+            Returns:
+                dict: Setup selections plus the compacted sweep payload.
+            """
             return {
                 'components': self.components_edit.text(),
                 'data_types': [o for o, cb in self.data_boxes.items() if cb.isChecked()],
@@ -2283,7 +2611,7 @@ if _QT_OK:
                 'unknown': self._is_unknown(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
-                'last': self._last,
+                'last': compact_payload(self._last),
                 'last_min_type': self._last_min_type,
             }
 
@@ -2352,7 +2680,7 @@ if _QT_OK:
                     self.node._cluster_test_state = None
                 except Exception:
                     _itk_log.exception("Handled exception in _clear_data")
-            self.table.setRowCount(0)
+            self._model.clear()
             self.detail_table.setRowCount(0)
             self.trust_table.setRowCount(0)
             self.best_lbl.setText("Run a sweep to see results.")
