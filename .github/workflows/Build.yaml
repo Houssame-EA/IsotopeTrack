@@ -147,4 +147,4 @@ jobs:
         uses: release-drafter/release-drafter@v7
         with:
           config-name: release-drafter.yml
-          tag: $${{ github.ref_name }}
+          tag: ${{ github.ref_name }}
