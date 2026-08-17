@@ -7937,15 +7937,17 @@ class MainWindow(QMainWindow):
                 self,
                 'Save Project?',
                 'You have unsaved changes. Would you like to save your project before closing?',
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save
             )
-            if reply == QMessageBox.Save:
+            if reply == QMessageBox.StandardButton.Save:
                 saved = self.project_manager.save_project(blocking=True)
                 if not saved:
                     event.ignore()
                     return
-            elif reply == QMessageBox.Cancel:
+            elif reply == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
         export_thread = getattr(self, '_export_thread', None)
