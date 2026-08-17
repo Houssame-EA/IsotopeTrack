@@ -1,6 +1,7 @@
 from __future__ import annotations
 import sys
 import gc
+from functools import cache
 from pathlib import Path
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
@@ -267,8 +268,6 @@ class MainWindow(QMainWindow):
         self.sample_run_info = {}
         self._display_label_to_element = {}
         self.element_parameter_hashes = {}
-        self._formatted_label_cache = {}
-        self._element_data_cache = {}
         self.project_manager = ProjectManager(self)
         self.detection_states = {}
         self.needs_initial_detection = set()
@@ -3976,46 +3975,41 @@ class MainWindow(QMainWindow):
             return None
         return closest
 
-    def get_formatted_label(self, element_key):
+    @cache
+    def get_formatted_label(self, element_key: str) -> str:
         """Get proper isotope label from periodic table data with caching.
+
+        Args:
+            element_key (str): key of the element (e.g., "Au-196.9665").
 
         Returns:
             str: Formatted isotope label (e.g., "197Au")
         """
-        if element_key in self._formatted_label_cache:
-            return self._formatted_label_cache[element_key]
-
         try:
             element, mass = element_key.split('-')
             mass = float(mass)
 
-            if element not in self._element_data_cache:
-                self._element_data_cache[element] = self.periodic_table_info.get_element_by_symbol(element)
-
-            element_data = self._element_data_cache[element]
+            element_data = self.periodic_table_info.get_element_by_symbol(element)
 
             if element_data:
                 isotope = next((iso
                                 for iso in element_data['isotopes']
-                                if isinstance(iso, dict) and abs(iso['mass'] - mass) < 0.001), None)
-                if isotope and 'label' in isotope:
+                                if isinstance(iso, dict)
+                                and abs(iso['mass'] - mass) < 0.001), None)
+                if isotope:
                     formatted_label = isotope['label']
 
-                    self._formatted_label_cache[element_key] = formatted_label
                     return formatted_label
 
             formatted_label = f"{round(mass)}{element}"
-            self._formatted_label_cache[element_key] = formatted_label
             return formatted_label
-
         except Exception as e:
             self.logger.warning(f"Error formatting element label for {element_key}: {str(e)}")
             return element_key
 
     def clear_element_caches(self):
         """Clear element-related caches when data changes."""
-        self._formatted_label_cache.clear()
-        self._element_data_cache.clear()
+        self.get_formatted_label.cache_clear()
 
     def _build_element_lookup_cache(self):
         """Build fast lookup cache for element display labels."""
