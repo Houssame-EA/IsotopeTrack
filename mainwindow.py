@@ -5413,8 +5413,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Data", "No particle data available. Please run particle detection first.")
             return
 
-        element_cache = self._build_element_conversion_cache()
-
         if getattr(self, 'saturation_filter_enabled', False):
             for sample_name in list(self.sample_particle_data.keys()):
                 self.rebuild_particle_data(sample_name)
@@ -5438,7 +5436,7 @@ class MainWindow(QMainWindow):
                     break
 
                 particles = self.sample_particle_data[sample_name]
-                self._calculate_mass_data_optimized(particles, element_cache, sample_name)
+                self._calculate_mass_data_optimized(particles, sample_name)
 
             progress.close()
         else:
@@ -5451,7 +5449,7 @@ class MainWindow(QMainWindow):
             else:
                 progress = None
 
-            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample, progress)
+            self._calculate_mass_data_optimized(particles, self.current_sample, progress)
 
             if progress:
                 progress.close()
@@ -6585,9 +6583,8 @@ class MainWindow(QMainWindow):
             if (self.current_sample
                     and self.current_sample in self.sample_particle_data
                     and self.sample_particle_data[self.current_sample]):
-                element_cache = self._build_element_conversion_cache()
                 particles = self.sample_particle_data[self.current_sample]
-                self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
+                self._calculate_mass_data_optimized(particles, self.current_sample)
 
     def update_calibration_display(self):
         """Update calibration information display panel."""
@@ -6841,9 +6838,8 @@ class MainWindow(QMainWindow):
         if (self.current_sample
                 and self.current_sample in self.sample_particle_data
                 and self.sample_particle_data[self.current_sample]):
-            element_cache = self._build_element_conversion_cache()
             particles = self.sample_particle_data[self.current_sample]
-            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
+            self._calculate_mass_data_optimized(particles, self.current_sample)
 
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
 
@@ -6954,10 +6950,10 @@ class MainWindow(QMainWindow):
 
     def _calculate_mass_data_optimized(self,
                                        particles,
-                                       element_cache,
                                        sample_name: str,
                                        progress=None):
         """Calculate comprehensive mass, mole, and diameter data for particles of a sample."""
+        element_cache = self._build_element_conversion_cache()
 
         for i, particle in enumerate(particles):
             if progress and i % 100 == 0:
