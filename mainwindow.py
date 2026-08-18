@@ -1,8 +1,8 @@
 from __future__ import annotations
 import sys
 import gc
-from functools import cache
 from pathlib import Path
+from utils.deprecated import deprecated
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
@@ -3975,7 +3975,7 @@ class MainWindow(QMainWindow):
             return None
         return closest
 
-    @cache
+    @deprecated("Use 'PeriodicTableInfo.get_formatted_label' instead")
     def get_formatted_label(self, element_key: str) -> str:
         """Get proper isotope label from periodic table data with caching.
 
@@ -3986,30 +3986,14 @@ class MainWindow(QMainWindow):
             str: Formatted isotope label (e.g., "197Au")
         """
         try:
-            element, mass = element_key.split('-')
-            mass = float(mass)
-
-            element_data = self.periodic_table_info.get_element_by_symbol(element)
-
-            if element_data:
-                isotope = next((iso
-                                for iso in element_data['isotopes']
-                                if isinstance(iso, dict)
-                                and abs(iso['mass'] - mass) < 0.001), None)
-                if isotope:
-                    formatted_label = isotope['label']
-
-                    return formatted_label
-
-            formatted_label = f"{round(mass)}{element}"
-            return formatted_label
+            return self.periodic_table_info.get_formatted_label(element_key)
         except Exception as e:
             self.logger.warning(f"Error formatting element label for {element_key}: {str(e)}")
             return element_key
 
     def clear_element_caches(self):
         """Clear element-related caches when data changes."""
-        self.get_formatted_label.cache_clear()
+        self.periodic_table_info.get_formatted_label.cache_clear()
 
     def _build_element_lookup_cache(self):
         """Build fast lookup cache for element display labels."""
