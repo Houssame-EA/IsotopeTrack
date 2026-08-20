@@ -258,3 +258,146 @@ class TestDuplicateResolutionIgnoreDropsOne:
                              "rename_to": "S1 copy"}}
         out = pf._apply_duplicate_resolutions(entries, resolutions)
         assert len(out) == 2
+
+
+# --------------------------------------------------------------------------- #
+# ParticleFilterDialog._apply_to_all: group-overwrite confirmation. Requires
+# Qt (instantiates the real dialog), unlike the pure-function tests above.
+# --------------------------------------------------------------------------- #
+
+def _single_with_isotope_meta(name, n=3, iso="60Ni"):
+    """Like _single, but with full isotope metadata (symbol/mass) so
+    ParticleFilterDialog._load_pane's periodic-table lookup doesn't choke —
+    the pure-function tests above never exercise that path, so _single
+    doesn't need it, but instantiating the real dialog does."""
+    parts = [{"elements": {iso: float(i + 1)}, "source_sample": name}
+             for i in range(n)]
+    return {"type": "sample_data", "sample_name": name, "particle_data": parts,
+            "data": {name: {}},
+            "selected_isotopes": [{"label": iso, "symbol": "Ni", "mass": 60}],
+            "total_particles": n, "concentration_meta": {name: {}},
+            "parent_window": None}
+
+
+@pytest.fixture(scope="module")
+def qapp():
+    from PySide6.QtWidgets import QApplication
+    import sys
+    return QApplication.instance() or QApplication(sys.argv)
+
+
+@pytest.fixture
+def filter_dialog(qapp):
+    """A real ParticleFilterDialog with 3 single samples (S1, S2, S3),
+    merge_singles off so custom groups take effect."""
+    def _make(groups=None):
+        upstreams = [_single_with_isotope_meta(n) for n in ("S1", "S2", "S3")]
+        return pf.ParticleFilterDialog(
+            None, upstreams, merge_singles=False, sample_groups=groups)
+    return _make
+
+
+@pytest.fixture
+def mock_group_overwrite_box(monkeypatch):
+    """Patch QMessageBox.exec/clickedButton to auto-answer the group-
+    overwrite confirmation without a real event loop. `answer['proceed']`
+    controls which button `clickedButton()` reports; `answer['shown']`
+    records whether exec() was actually called."""
+    from PySide6.QtWidgets import QMessageBox
+    answer = {"proceed": True, "shown": False}
+
+    def _exec(self):
+        answer["shown"] = True
+        return 0
+
+    def _clicked(self):
+        target = "Overwrite" if answer["proceed"] else "Cancel"
+        for b in self.buttons():
+            if b.text() == target:
+                return b
+        return None
+
+    monkeypatch.setattr(QMessageBox, "exec", _exec)
+    monkeypatch.setattr(QMessageBox, "clickedButton", _clicked)
+    return answer
+
+
+def _check(dlg, names):
+    from PySide6.QtCore import Qt
+    for i in range(dlg._list.count()):
+        item = dlg._list.item(i)
+        n = item.data(Qt.UserRole)
+        item.setCheckState(Qt.Checked if n in names else Qt.Unchecked)
+
+
+class TestApplyToAllGroupOverwriteWarning:
+    def test_no_conflict_applies_silently(
+            self, filter_dialog, mock_group_overwrite_box):
+        dlg = filter_dialog()
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("X")
+        _check(dlg, ["S1", "S2"])
+        dlg._apply_to_all()
+        assert not mock_group_overwrite_box["shown"]
+        assert dlg._groups.get("S1") == "X"
+        assert dlg._groups.get("S2") == "X"
+
+    def test_reapplying_identical_group_is_a_noop_no_dialog(
+            self, filter_dialog, mock_group_overwrite_box):
+        dlg = filter_dialog(groups={"S1": "X"})
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("X")
+        _check(dlg, ["S1", "S2"])
+        dlg._apply_to_all()
+        assert not mock_group_overwrite_box["shown"]
+
+    def test_conflict_and_cancel_changes_nothing(
+            self, filter_dialog, mock_group_overwrite_box):
+        dlg = filter_dialog(groups={"S1": "OldGroup"})
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("NewGroup")
+        _check(dlg, ["S1", "S2"])
+        mock_group_overwrite_box["proceed"] = False
+        before = dict(dlg._groups)
+        dlg._apply_to_all()
+        assert mock_group_overwrite_box["shown"]
+        assert dlg._groups == before          # nothing changed at all
+        assert dlg._groups.get("S1") == "OldGroup"
+
+    def test_conflict_and_confirm_overwrites(
+            self, filter_dialog, mock_group_overwrite_box):
+        dlg = filter_dialog(groups={"S1": "OldGroup"})
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("NewGroup")
+        _check(dlg, ["S1", "S2"])
+        mock_group_overwrite_box["proceed"] = True
+        dlg._apply_to_all()
+        assert mock_group_overwrite_box["shown"]
+        assert dlg._groups.get("S1") == "NewGroup"
+        assert dlg._groups.get("S2") == "NewGroup"
+
+    def test_clearing_a_group_is_also_a_conflict(
+            self, filter_dialog, mock_group_overwrite_box):
+        """Setting the group field to empty (ungrouping) on a sample that
+        already has a different (non-empty) group must warn too."""
+        dlg = filter_dialog(groups={"S1": "OldGroup"})
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("")
+        _check(dlg, ["S1", "S2"])
+        mock_group_overwrite_box["proceed"] = False
+        dlg._apply_to_all()
+        assert mock_group_overwrite_box["shown"]
+        assert dlg._groups.get("S1") == "OldGroup"   # cancel -> untouched
+
+    def test_current_sample_excluded_from_its_own_conflict_check(
+            self, filter_dialog, mock_group_overwrite_box):
+        """Editing the CURRENT sample's own group field is never itself a
+        'conflict' -- only OTHER checked samples can conflict."""
+        dlg = filter_dialog(groups={"S2": "OldGroup"})
+        dlg._load_pane("S2")
+        dlg._group_edit.setText("NewGroup")
+        _check(dlg, ["S2"])
+        assert dlg._group_overwrite_conflicts({"S2"}, "NewGroup") == []
+        dlg._apply_to_all()
+        assert not mock_group_overwrite_box["shown"]
+        assert dlg._groups.get("S2") == "NewGroup"

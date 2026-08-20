@@ -1901,20 +1901,30 @@ class ParticleFilterDialog(QDialog):
         the "Check = include in output · Click = edit its filter" hint), so
         this only touches samples the user has actually opted into the
         output, not every connected sample regardless of inclusion.
+
+        If applying would overwrite one or more checked samples' EXISTING,
+        DIFFERENT group name, this asks for confirmation first (naming the
+        affected samples) rather than silently clobbering an assignment the
+        user made deliberately elsewhere — see _group_overwrite_conflicts.
+        A no-op re-application (checked samples that already carry the same
+        group name) never triggers this, only an actual change does.
         """
         if not self._current:
             return
         cfg = self._pane_config()
-        self._filters[self._current] = cfg
         src_cur = self._src_by_name.get(self._current)
         gname = (self._group_edit.text().strip()
                  if src_cur and src_cur.get('origin') == 'single' else '')
+        checked = set(self._checked_names())
+        conflicts = self._group_overwrite_conflicts(checked, gname)
+        if conflicts and not self._confirm_group_overwrite(conflicts, gname):
+            return
+        self._filters[self._current] = cfg
         if src_cur and src_cur.get('origin') == 'single':
             if gname:
                 self._groups[self._current] = gname
             else:
                 self._groups.pop(self._current, None)
-        checked = set(self._checked_names())
         for s in self._sources:
             if s['name'] == self._current or s['name'] not in checked:
                 continue
@@ -1928,6 +1938,61 @@ class ParticleFilterDialog(QDialog):
         for i in range(self._list.count()):
             self._refresh_row(self._list.item(i))
         self._schedule_preview()
+
+    def _group_overwrite_conflicts(self, checked, gname):
+        """List checked single-sample names whose EXISTING group name would
+        actually change if _apply_to_all proceeded with ``gname``.
+
+        Excludes ``self._current`` (the user is editing that one directly,
+        so no surprise there) and any sample whose stored group already
+        equals ``gname`` (a re-application that changes nothing).
+
+        Args:
+            checked (set): Names checked in the left list.
+            gname (str): The group name about to be applied (may be '').
+
+        Returns:
+            list: Affected sample names, in source order.
+        """
+        out = []
+        for s in self._sources:
+            name = s['name']
+            if (name == self._current or name not in checked
+                    or s.get('origin') != 'single'):
+                continue
+            existing = (self._groups.get(name) or '').strip()
+            if existing and existing != gname:
+                out.append(name)
+        return out
+
+    def _confirm_group_overwrite(self, conflicts, gname):
+        """Ask before overwriting samples' existing, different group names.
+
+        Args:
+            conflicts (list): Sample names from _group_overwrite_conflicts.
+            gname (str): The group name about to be applied (may be '').
+
+        Returns:
+            bool: True if the user chose to proceed.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Overwrite existing group assignments?")
+        shown = conflicts[:5]
+        names_txt = ", ".join(f'"{n}"' for n in shown)
+        if len(conflicts) > 5:
+            names_txt += f", and {len(conflicts) - 5} more"
+        new_txt = f'"{gname}"' if gname else "no group (ungrouped)"
+        box.setText(
+            f"{len(conflicts)} of the selected samples already belong to a "
+            f"different group: {names_txt}.\n\nApplying now will overwrite "
+            f"their group assignment to {new_txt}.\n\nContinue?")
+        proceed = box.addButton("Overwrite", QMessageBox.AcceptRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(proceed)
+        box.exec()
+        return box.clickedButton() is proceed
 
     def _toggle_select_all(self):
         """Check every sample row, or uncheck every row if all are already
