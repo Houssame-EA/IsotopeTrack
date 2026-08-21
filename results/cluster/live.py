@@ -128,30 +128,66 @@ except ImportError:
     )
 
 ALGO_PARAM_MAP = {
-    'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'kmeans_n_init'},
+    'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'kmeans_n_init',
+                'tol': 'kmeans_tol', 'algorithm': 'kmeans_algorithm'},
     'MiniBatch K-Means': {'batch_size': 'mbkm_batch_size',
-                          'max_iter': 'mbkm_max_iter', 'n_init': 'mbkm_n_init'},
-    'Gaussian Mixture': {'covariance_type': 'gmm_covariance_type'},
+                          'max_iter': 'mbkm_max_iter', 'n_init': 'mbkm_n_init',
+                          'max_no_improvement': 'mbkm_max_no_improvement',
+                          'reassignment_ratio': 'mbkm_reassignment_ratio'},
+    'Gaussian Mixture': {'covariance_type': 'gmm_covariance_type',
+                         'n_init': 'gmm_n_init',
+                         'init_params': 'gmm_init_params',
+                         'tol': 'gmm_tol', 'reg_covar': 'gmm_reg_covar'},
     'Hierarchical': {'linkage': 'hier_linkage', 'metric': 'hier_metric'},
     'DBSCAN': {'eps': 'dbscan_eps', 'min_samples': 'dbscan_min_samples',
-               'metric': 'dbscan_metric'},
+               'metric': 'dbscan_metric', 'algorithm': 'dbscan_algorithm',
+               'leaf_size': 'dbscan_leaf_size'},
     'Mean Shift': {'bandwidth': 'meanshift_bandwidth',
                    'min_bin_freq': 'meanshift_min_bin_freq',
-                   'auto_bw': 'meanshift_auto_bw'},
+                   'auto_bw': 'meanshift_auto_bw',
+                   'max_iter': 'meanshift_max_iter',
+                   'cluster_all': 'meanshift_cluster_all'},
     'OPTICS': {'min_samples': 'optics_min_samples',
                'metric': 'optics_metric',
-               'cluster_method': 'optics_cluster_method'},
+               'cluster_method': 'optics_cluster_method',
+               'xi': 'optics_xi', 'max_eps': 'optics_max_eps',
+               'min_cluster_size': 'optics_min_cluster_size',
+               'predecessor_correction': 'optics_predecessor_correction'},
     'Birch': {'threshold': 'birch_threshold',
               'branching_factor': 'birch_branching_factor'},
     'Spectral': {'n_neighbors': 'spectral_n_neighbors',
-                 'affinity': 'spectral_affinity'},
+                 'affinity': 'spectral_affinity',
+                 'gamma': 'spectral_gamma', 'n_init': 'spectral_n_init',
+                 'assign_labels': 'spectral_assign_labels'},
     'HDBSCAN': {'min_cluster_size': 'hdbscan_min_cluster_size',
                 'min_samples': 'hdbscan_min_samples',
-                'metric': 'hdbscan_metric'},
+                'metric': 'hdbscan_metric',
+                'cluster_selection_method':
+                    'hdbscan_cluster_selection_method',
+                'cluster_selection_epsilon':
+                    'hdbscan_cluster_selection_epsilon',
+                'alpha': 'hdbscan_alpha',
+                'max_cluster_size': 'hdbscan_max_cluster_size',
+                'allow_single_cluster': 'hdbscan_allow_single_cluster'},
     'SOM': {'som_rows': 'som_rows', 'som_cols': 'som_cols',
-            'som_iter': 'som_n_iter', 'som_sigma': 'som_sigma',
-            'som_lr': 'som_lr'},
+            'som_iter': 'som_n_iter', 'som_n_iter': 'som_n_iter',
+            'som_sigma': 'som_sigma', 'som_lr': 'som_lr',
+            'som_final_algo': 'som_final_algo'},
 }
+"""Engine parameter name to ``node.config`` key, per algorithm.
+
+Every parameter the custom sweep can vary appears here, because this map is
+what carries a swept pipeline into the shared configuration when a result is
+applied — a parameter missing from it is silently dropped, and the Settings
+panel then reproduces a different fit from the one that won. It is equally the
+map :func:`fit_fingerprint` walks to decide whether two fits are the same, so
+an omission also lets a stale cached fit stand in for a changed one.
+
+``SOM`` accepts both ``som_iter`` and ``som_n_iter`` for the iteration count:
+the animated engine names it the first way, the sweep grid the second, and
+both must land on the same config key.
+"""
+
 
 PROJECTION_TO_DIMRED = {'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP',
                         'None': 'None'}

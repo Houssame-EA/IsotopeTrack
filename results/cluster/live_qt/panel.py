@@ -466,12 +466,24 @@ class ControlPanel(QWidget):
         self.biplot_field.set_hint(
             'Each arrow points the way particles rich in that element lie, and '
             'its length is how much that element drives the components on '
-            'screen.')
+            'screen. The sliders set how many are drawn and how far the '
+            'longest one reaches.')
+        self.biplot_n_label = QLabel('Arrows shown')
+        self.biplot_n_label.setObjectName('fieldLabel')
+        self.biplot_field.add(self.biplot_n_label)
         self.biplot_n = QSlider(Qt.Horizontal)
         self.biplot_n.setRange(1, 30)
         self.biplot_n.setValue(8)
         self.biplot_n.valueChanged.connect(self._on_biplot_n)
         self.biplot_field.add(self.biplot_n)
+        self.biplot_len_label = QLabel('Arrow length')
+        self.biplot_len_label.setObjectName('fieldLabel')
+        self.biplot_field.add(self.biplot_len_label)
+        self.biplot_len = QSlider(Qt.Horizontal)
+        self.biplot_len.setRange(10, 120)
+        self.biplot_len.setValue(42)
+        self.biplot_len.valueChanged.connect(self._on_biplot_len)
+        self.biplot_field.add(self.biplot_len)
         lay.addWidget(self.biplot_field)
 
         self.overlay = QComboBox()
@@ -633,7 +645,22 @@ class ControlPanel(QWidget):
         Args:
             v (int): Number of arrows, longest first.
         """
+        self.biplot_n_label.setText('Arrows shown: %d' % int(v))
         self.S.ui.biplot_n = int(v)
+        self.biplot_changed.emit()
+
+    def _on_biplot_len(self, v):
+        """Set how far the longest element arrow reaches.
+
+        The value is a percentage of the visible cloud's span, applied to the
+        longest arrow; the rest keep their length relative to it, so shortening
+        them to uncover the points never distorts what they say.
+
+        Args:
+            v (int): Percentage of the cloud span, 10 to 120.
+        """
+        self.biplot_len_label.setText('Arrow length: %d%%' % int(v))
+        self.S.ui.biplot_len = max(0.05, int(v) / 100.0)
         self.biplot_changed.emit()
 
     def _set_blurb(self):
@@ -755,6 +782,9 @@ class ControlPanel(QWidget):
         els = d.get('elements')
         if ok and els:
             self.biplot_n.setMaximum(max(2, len(els)))
+        self.biplot_n_label.setText('Arrows shown: %d' % self.biplot_n.value())
+        self.biplot_len_label.setText(
+            'Arrow length: %d%%' % self.biplot_len.value())
 
     def reflect_config(self, state):
         """Push the shared node config into the controls.

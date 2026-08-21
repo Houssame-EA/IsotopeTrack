@@ -398,6 +398,7 @@ class UiState:
     shape_by_sample: bool = True
     biplot_on: bool = True
     biplot_n: int = 8
+    biplot_len: float = 0.42
     overlay_el: str = ''
     overlay_cmap: str = 'viridis'
     max_iso: int = 4
