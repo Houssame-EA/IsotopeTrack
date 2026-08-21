@@ -64,7 +64,6 @@ Args:
 | `_mark_results_changed` | `(self)` | Flag that the stored results are now out of date. |
 | `create_sidebar` | `(self)` | Create sidebar with calibration and sample management tools. |
 | `create_menu_bar` | `(self)` | Create application menu bar with actions. |
-| `_set_cluster_gpu` | `(self, enabled)` | Store the cluster GPU preference and say when it applies. |
 | `open_new_window` | `(self)` |  |
 | `close_all_windows` | `(self)` | Close all open windows and quit application. |
 | `create_status_bar` | `(self)` | Create application status bar with progress indicator. |
@@ -200,7 +199,7 @@ Args:
 | `open_autosave_settings` | `(self)` | Open the Auto Save Settings dialog. |
 | `maybe_prompt_dilution` | `(self)` | Show the one time dilution correction prompt when appropriate. |
 | `update_calculations` | `(self)` | Update calculations after transport rate changes. |
-| `_calculate_mass_data_optimized` | `(self, particles, element_cache, progress=None, process_all_samples=Fa` | Calculate comprehensive mass, mole, and diameter data for particles. |
+| `_calculate_mass_data_optimized` | `(self, particles, element_cache, sample_name: str, progress=None)` | Calculate comprehensive mass, mole, and diameter data for particles of a sample. |
 | `update_progress` | `(self, value)` | Update progress bar value. |
 | `update_sample_progress` | `(self, thread_progress, sample_name, current_sample, total_samples)` | Update progress bar for sample processing. |
 | `update_element_progress` | `(self, thread_progress, sample_name, current_sample, total_samples)` | Update progress bar during element processing. |

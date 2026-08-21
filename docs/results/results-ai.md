@@ -6,15 +6,21 @@
 
 | Name | Value |
 |------|-------|
-| `OLLAMA_BASE` | `'http://localhost:11434'` |
+| `OLLAMA_BASE` | `'http://127.0.0.1:11434'` |
 | `OLLAMA_CHAT` | `f'{OLLAMA_BASE}/api/chat'` |
 | `OLLAMA_TAGS` | `f'{OLLAMA_BASE}/api/tags'` |
-| `MLX_BASE` | `'http://localhost:8080'` |
+| `MLX_BASE` | `'http://127.0.0.1:8080'` |
 | `MLX_CHAT` | `f'{MLX_BASE}/v1/chat/completions'` |
 | `MLX_MODELS` | `f'{MLX_BASE}/v1/models'` |
 | `CODE_EXEC_TIMEOUT` | `30` |
 | `CHARS_PER_TOKEN` | `3.5` |
 | `STREAM_RENDER_INTERVAL` | `80` |
+| `PROBE_TIMEOUT` | `4.0` |
+| `PROBE_ATTEMPTS` | `3` |
+| `PROBE_RETRY_GAP` | `2.0` |
+| `_LOCAL_HOST_ALIASES` | `('localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0')` |
+| `_LAUNCHED_SERVERS` | `[]` |
+| `_RETIRED_THREADS` | `[]` |
 | `_UI_PREFS` | `{'font_size': 14, 'chart_dpi': 100, 'show_timestamps': Fa…` |
 | `_SAFE_BUILTINS` | `{'abs': abs, 'all': all, 'any': any, 'bool': bool, 'dict'…` |
 | `_CODE_RE` | `re.compile('```python\\s*\\n(.*?)```', re.DOTALL)` |
@@ -49,6 +55,7 @@
 | `_inject_attachments` | `(self, messages)` | Inject pending file/image attachments into the last user message. |
 | `_inject_attachments_openai` | `(self, messages)` | OpenAI-style multipart content for MLX vision. |
 | `_run_ollama` | `(self)` |  |
+| `_iter_stream_lines` | `(self)` | Yield response lines, absorbing the teardown that Stop causes. |
 | `_stream_ndjson` | `(self)` |  |
 | `_run_mlx` | `(self)` |  |
 | `_stream_sse` | `(self)` |  |
@@ -57,13 +64,17 @@
 
 ### `ProbeWorker` *(extends `QThread`)*
 
-Briefly probe localhost for a running model server so the assistant can
-self-configure on first open — no need to visit settings. Ollama is checked
-first, then MLX. Emits at most one signal.
+Probe loopback for a running model server so the assistant can
+self-configure on first open — no need to visit settings.
+
+Ollama is checked first, then MLX, and both are retried a few times because
+a server that is still loading its model list refuses connections for the
+first second or two after launch. Emits at most one ``ready`` signal.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, mlx_host=MLX_BASE)` |  |
+| `__init__` | `(self, mlx_host=MLX_BASE, attempts=PROBE_ATTEMPTS)` |  |
+| `stop` | `(self)` | Ask the probe loop to end before its next retry. |
 | `run` | `(self)` |  |
 
 ### `BackendDialog` *(extends `QDialog`)*
@@ -72,9 +83,18 @@ first, then MLX. Emits at most one signal.
 |--------|-----------|-------------|
 | `__init__` | `(self, current_cfg, parent=None)` |  |
 | `_on_backend` | `(self, idx)` |  |
-| `_fetch_ollama_models` | `(self)` |  |
-| `_test_mlx` | `(self)` |  |
-| `_test_custom` | `(self)` |  |
+| `_fetch_ollama_models` | `(self)` | Refresh the model combo from the running Ollama server. |
+| `_test_mlx` | `(self)` | Check the MLX server and report the models it exposes. |
+| `_scan_mlx_models` | `(self)` | Fill the MLX model list from the running server and the local cache. |
+| `_selected_mlx_model` | `(self)` | Return the model id chosen in the MLX list. |
+| `_start_mlx_server` | `(self)` | Launch mlx_lm.server for the selected model and wait for it to answer. |
+| `_stop_mlx_server` | `(self)` | Stop the MLX server and free the memory its weights occupy. |
+| `_poll_mlx_server` | `(self, model, host)` | Check whether the launched MLX server has finished loading. |
+| `_ctx_value` | `(self)` | Return the context window as an integer, falling back to 8192. |
+| `_apply_model_context` | `(self)` | Set the context window to what the selected Ollama model supports. |
+| `_selected_ollama_model` | `(self)` | Return the Ollama model name highlighted in the list. |
+| `_resolve_mlx_model` | `(self)` | Ask the MLX server which model it has loaded. |
+| `_test_custom` | `(self)` | Check the custom OpenAI-compatible endpoint and prefill a model. |
 | `get_config` | `(self)` |  |
 
 ### `AttachmentChip` *(extends `QFrame`)*
@@ -307,6 +327,7 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 | `_reset_composer_height` | `(self)` | Double-click on the handle → back to auto-grow. |
 | `_send` | `(self)` |  |
 | `_on_tok` | `(self, t)` |  |
+| `_on_usage` | `(self, prompt_tokens, completion_tokens)` | Show the token counts reported by the backend for the last reply. |
 | `_on_stats` | `(self, n, el)` |  |
 | `_run_cached` | `(self, code, particles)` | Execute sandbox code, memoising error-free results within the current |
 | `_on_done` | `(self, full)` |  |
@@ -335,9 +356,15 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 | `_add_user` | `(self, t)` |  |
 | `_add_ai` | `(self, t)` |  |
 | `_scrollb` | `(self)` |  |
-| `_start_autodetect` | `(self)` | Probe localhost for a running model server and self-configure, so the |
-| `_on_autodetect` | `(self, backend, model, label)` |  |
+| `_start_autodetect` | `(self)` | Probe loopback for a running model server and self-configure, so the |
+| `_on_autodetect` | `(self, backend, model, label)` | Apply a detected backend unless the user already picked one. |
 | `_on_autodetect_info` | `(self, msg)` |  |
+| `_eject_model` | `(self)` | Free the memory held by the model currently loaded. |
+| `_set_disconnected_status` | `(self)` | Reset the header indicator after a model has been unloaded. |
+| `shutdown` | `(self)` | Release background work and stop servers this app launched. |
+| `closeEvent` | `(self, event)` | Stop background threads and launched servers before closing. |
+| `_set_connected_status` | `(self, label)` | Turn the header indicator green and show the active backend label. |
+| `_ensure_backend_ready` | `(self)` | Detect a local server on demand when nothing is configured yet. |
 
 ### `AIAssistantNode` *(extends `QObject`)*
 
@@ -353,6 +380,28 @@ Sidebar entry: clickable title row with a hover-revealed delete button.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `local_session` | `()` | Return a requests session that ignores environment proxy settings. |
+| `local_get` | `(url, timeout=PROBE_TIMEOUT, headers=None)` | GET a local URL without going through any configured proxy. |
+| `host_variants` | `(base_url)` | Yield the loopback spellings worth trying for a local server URL. |
+| `style_combo_popup` | `(combo)` | Make a combo box drop-down readable inside themed dialogs. |
+| `style_model_list` | `(widget)` | Style an always-visible model list so rows stay readable and clickable. |
+| `fetch_ollama_model_context` | `(model, base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)` | Ask Ollama how large a context window a model actually supports. |
+| `register_launched_server` | `(proc)` | Track a model server this app started so it can be stopped on exit. |
+| `shutdown_launched_servers` | `(timeout=6)` | Stop every model server this app started. |
+| `install_server_shutdown_hooks` | `()` | Register app-exit hooks that stop servers this app started. |
+| `unload_ollama_model` | `(model, base_url=OLLAMA_BASE, timeout=10)` | Ask Ollama to drop a model from memory immediately. |
+| `pids_listening_on` | `(port)` | Return the process ids listening on a TCP port. |
+| `port_of` | `(url, default=8080)` | Extract the TCP port from a base URL. |
+| `terminate_pids` | `(pids, timeout=6)` | Terminate processes by id, escalating to kill when they do not exit. |
+| `park_thread` | `(thread)` | Hold a reference to a thread until Qt reports it finished. |
+| `_unpark_thread` | `(thread)` | Drop a parked thread once it has finished running. |
+| `retire_thread` | `(thread, grace=8000)` | Stop a QThread and keep it alive until it has really finished. |
+| `hf_cache_roots` | `()` | Return the Hugging Face cache directories that exist on this machine. |
+| `discover_cached_mlx_models` | `()` | Find MLX-ready models already downloaded into the local model cache. |
+| `mlx_server_command` | `(model, port)` | Build the command that starts an MLX server for a model. |
+| `discover_local_models` | `(mlx_host=MLX_BASE)` | Collect every model this machine can serve without further setup. |
+| `fetch_ollama_models` | `(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)` | List the models installed in a running Ollama server. |
+| `fetch_openai_models` | `(base_url, timeout=PROBE_TIMEOUT, api_key='')` | List models advertised by an OpenAI-compatible ``/v1/models`` endpoint. |
 | `_fs` | `(delta=0)` | Return current font size + delta, as int. |
 | `_safe_positive` | `(v)` |  |
 | `_extract_element_values` | `(particles, field='elements')` |  |
