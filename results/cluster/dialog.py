@@ -672,6 +672,107 @@ DEFAULT_K_RANGE = list(range(2, 16))
 
 PROGRESS_RESOLUTION = 1000
 
+METRIC_OPTIONS = ['euclidean', 'manhattan', 'cosine', 'chebyshev',
+                  'canberra', 'braycurtis', 'correlation']
+"""Distance metrics offered wherever an algorithm accepts one.
+
+Shared by the Settings panel here and the custom-sweep grid in
+:mod:`results.cluster.tools`, so a metric can never be swept but not selectable
+by hand, or the reverse. Only metrics scikit-learn accepts without a companion
+parameter are listed: ``minkowski`` needs ``p``, ``seuclidean`` needs ``V`` and
+``mahalanobis`` needs ``VI``.
+"""
+
+METRIC_ALIASES = {'l1': 'manhattan', 'l2': 'euclidean'}
+"""Retired metric names mapped to the identical metric that replaced them."""
+
+ON_OFF = ['off', 'on']
+"""Option pair used for boolean estimator flags, resolved by :func:`as_flag`."""
+
+SPECTRAL_AFFINITY_OPTIONS = ['rbf', 'nearest_neighbors']
+"""Affinity kernels offered for spectral clustering.
+
+``cosine`` used to be offered here and never worked: scikit-learn reads any
+other string as a pairwise kernel name, and cosine similarity is signed, so the
+embedding comes back as NaN and the fit raises before producing labels. It is
+dropped rather than left as a control that always fails.
+"""
+
+SOM_FINAL_ALGO_OPTIONS = ['Hierarchical (Ward)', 'Hierarchical (Average)',
+                          'Hierarchical (Complete)', 'K-Means',
+                          'Gaussian Mixture', 'Spectral']
+"""Algorithms available for grouping a trained map's neurons."""
+
+
+def normalize_metric(name, default='euclidean'):
+    """Resolve a stored metric name to one :data:`METRIC_OPTIONS` still offers.
+
+    ``l1`` and ``l2`` were dropped from the pickers as exact duplicates of
+    ``manhattan`` and ``euclidean``; a project saved with either must keep
+    clustering the way it always did rather than silently reverting to the
+    first entry in the list.
+
+    Args:
+        name: Metric name from a saved configuration.
+        default (str): Fallback for an unknown name.
+
+    Returns:
+        str: A metric present in :data:`METRIC_OPTIONS`.
+    """
+    text = str(name or '').strip().lower()
+    text = METRIC_ALIASES.get(text, text)
+    return text if text in METRIC_OPTIONS else default
+
+
+def effective_metric(name, params):
+    """Return the distance metric a configuration will really be fitted with.
+
+    The metric a user picks is not always the metric that runs: Ward linkage is
+    defined only for the Euclidean case, so scikit-learn ignores any other
+    choice there. Reporting the effective metric keeps callers honest about
+    what is actually about to be computed.
+
+    Args:
+        name (str): Algorithm display name.
+        params (dict): Parameter values for one fit, keyed the way the
+            algorithm names them.
+
+    Returns:
+        str: Lower-case metric name, or ``''`` when the algorithm takes none.
+    """
+    metric = str(params.get('metric', '') or '').lower()
+    if name == 'Hierarchical' and params.get('linkage', 'ward') == 'ward':
+        return 'euclidean'
+    return metric
+
+
+def as_flag(value, default):
+    """Resolve a boolean estimator flag from a configuration value.
+
+    The Settings panel stores real booleans while the sweep grid carries the
+    strings in :data:`ON_OFF`, and applying a swept pipeline writes the latter
+    straight into ``node.config``. Both forms therefore reach the estimators
+    and both must mean the same thing.
+
+    Args:
+        value: ``'on'`` / ``'off'``, a boolean, or None.
+        default (bool): Result when ``value`` is None or unrecognised.
+
+    Returns:
+        bool: The resolved flag.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ('on', 'true', '1', 'yes'):
+        return True
+    if text in ('off', 'false', '0', 'no'):
+        return False
+    return default
+
+
 SCALING_OPTIONS = ['CLR', 'ILR', 'Robust Z-score', 'None']
 DIM_REDUCTION_OPTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
 
@@ -1037,8 +1138,16 @@ class ClusteringSettingsDialog(QDialog):
         self.km_n_init.setValue(self._cfg.get('kmeans_n_init', 10))
         self.km_max_iter = QSpinBox(); self.km_max_iter.setRange(50, 2000)
         self.km_max_iter.setValue(self._cfg.get('kmeans_max_iter', 300))
+        self.km_tol = QDoubleSpinBox(); self.km_tol.setRange(0.000001, 0.01)
+        self.km_tol.setDecimals(6); self.km_tol.setSingleStep(0.0001)
+        self.km_tol.setValue(self._cfg.get('kmeans_tol', 0.0001))
+        self.km_algorithm = QComboBox()
+        self.km_algorithm.addItems(['lloyd', 'elkan'])
+        self.km_algorithm.setCurrentText(self._cfg.get('kmeans_algorithm', 'lloyd'))
         f0.addRow("n_init:", self.km_n_init)
         f0.addRow("max_iter:", self.km_max_iter)
+        f0.addRow("tol:", self.km_tol)
+        f0.addRow("algorithm:", self.km_algorithm)
         self._algo_pages['K-Means'] = self.algo_stack.addWidget(p0)
 
         p1 = QWidget(); f1 = QFormLayout(p1); f1.setContentsMargins(4, 4, 4, 4)
@@ -1046,11 +1155,9 @@ class ClusteringSettingsDialog(QDialog):
         self.hier_linkage.addItems(['ward', 'complete', 'average', 'single'])
         self.hier_linkage.setCurrentText(self._cfg.get('hier_linkage', 'ward'))
         self.hier_metric = QComboBox()
-        self.hier_metric.addItems([
-            'euclidean', 'l1', 'l2', 'manhattan', 'cosine',
-            'chebyshev', 'canberra', 'braycurtis', 'correlation',
-        ])
-        self.hier_metric.setCurrentText(self._cfg.get('hier_metric', 'euclidean'))
+        self.hier_metric.addItems(METRIC_OPTIONS)
+        self.hier_metric.setCurrentText(
+            normalize_metric(self._cfg.get('hier_metric', 'euclidean')))
         f1.addRow("Linkage:", self.hier_linkage)
         f1.addRow("Distance metric:", self.hier_metric)
         def _sync_hier_metric(txt):
@@ -1073,11 +1180,20 @@ class ClusteringSettingsDialog(QDialog):
         self.dbscan_min_samp = QSpinBox(); self.dbscan_min_samp.setRange(2, 100)
         self.dbscan_min_samp.setValue(self._cfg.get('dbscan_min_samples', 5))
         self.dbscan_metric = QComboBox()
-        self.dbscan_metric.addItems(['euclidean', 'manhattan', 'cosine', 'l1', 'l2'])
-        self.dbscan_metric.setCurrentText(self._cfg.get('dbscan_metric', 'euclidean'))
+        self.dbscan_metric.addItems(METRIC_OPTIONS)
+        self.dbscan_metric.setCurrentText(
+            normalize_metric(self._cfg.get('dbscan_metric', 'euclidean')))
+        self.dbscan_algorithm = QComboBox()
+        self.dbscan_algorithm.addItems(['auto', 'ball_tree', 'kd_tree', 'brute'])
+        self.dbscan_algorithm.setCurrentText(
+            self._cfg.get('dbscan_algorithm', 'auto'))
+        self.dbscan_leaf_size = QSpinBox(); self.dbscan_leaf_size.setRange(5, 200)
+        self.dbscan_leaf_size.setValue(self._cfg.get('dbscan_leaf_size', 30))
         f2.addRow("eps:", self.dbscan_eps)
         f2.addRow("min_samples:", self.dbscan_min_samp)
         f2.addRow("metric:", self.dbscan_metric)
+        f2.addRow("algorithm:", self.dbscan_algorithm)
+        f2.addRow("leaf_size:", self.dbscan_leaf_size)
         self._algo_pages['DBSCAN'] = self.algo_stack.addWidget(p2)
 
         p8 = QWidget(); f8 = QFormLayout(p8); f8.setContentsMargins(4, 4, 4, 4)
@@ -1086,8 +1202,26 @@ class ClusteringSettingsDialog(QDialog):
         self.hdbscan_min_samp = QSpinBox(); self.hdbscan_min_samp.setRange(1, 100)
         self.hdbscan_min_samp.setValue(self._cfg.get('hdbscan_min_samples', 5))
         self.hdbscan_metric = QComboBox()
-        self.hdbscan_metric.addItems(['euclidean', 'manhattan', 'cosine', 'l2'])
-        self.hdbscan_metric.setCurrentText(self._cfg.get('hdbscan_metric', 'euclidean'))
+        self.hdbscan_metric.addItems(METRIC_OPTIONS)
+        self.hdbscan_metric.setCurrentText(
+            normalize_metric(self._cfg.get('hdbscan_metric', 'euclidean')))
+        self.hdbscan_selection = QComboBox()
+        self.hdbscan_selection.addItems(['eom', 'leaf'])
+        self.hdbscan_selection.setCurrentText(
+            self._cfg.get('hdbscan_cluster_selection_method', 'eom'))
+        self.hdbscan_sel_eps = QDoubleSpinBox()
+        self.hdbscan_sel_eps.setRange(0.0, 10.0)
+        self.hdbscan_sel_eps.setSingleStep(0.05); self.hdbscan_sel_eps.setDecimals(3)
+        self.hdbscan_sel_eps.setValue(
+            self._cfg.get('hdbscan_cluster_selection_epsilon', 0.0))
+        self.hdbscan_alpha = QDoubleSpinBox(); self.hdbscan_alpha.setRange(0.1, 5.0)
+        self.hdbscan_alpha.setSingleStep(0.1); self.hdbscan_alpha.setDecimals(3)
+        self.hdbscan_alpha.setValue(self._cfg.get('hdbscan_alpha', 1.0))
+        self.hdbscan_max_size = QSpinBox(); self.hdbscan_max_size.setRange(0, 100000)
+        self.hdbscan_max_size.setValue(self._cfg.get('hdbscan_max_cluster_size', 0))
+        self.hdbscan_single = QCheckBox("allow_single_cluster")
+        self.hdbscan_single.setChecked(as_flag(
+            self._cfg.get('hdbscan_allow_single_cluster'), False))
         _hdbscan_warn = QLabel("⚠ Requires scikit-learn ≥ 1.3 or: pip install hdbscan")
         _hdbscan_warn.setStyleSheet("color:#D97706; font-size:10px;")
         _hdbscan_warn.setVisible(not _HDBSCAN_OK)
@@ -1095,16 +1229,33 @@ class ClusteringSettingsDialog(QDialog):
         f8.addRow("min_cluster_size:", self.hdbscan_min_cluster)
         f8.addRow("min_samples:", self.hdbscan_min_samp)
         f8.addRow("metric:", self.hdbscan_metric)
+        f8.addRow("cluster_selection_method:", self.hdbscan_selection)
+        f8.addRow("cluster_selection_epsilon:", self.hdbscan_sel_eps)
+        f8.addRow("alpha:", self.hdbscan_alpha)
+        f8.addRow("max_cluster_size (0 = none):", self.hdbscan_max_size)
+        f8.addRow(self.hdbscan_single)
         self._algo_pages['HDBSCAN'] = self.algo_stack.addWidget(p8)
 
         p3 = QWidget(); f3 = QFormLayout(p3); f3.setContentsMargins(4, 4, 4, 4)
         self.spec_n_neighbors = QSpinBox(); self.spec_n_neighbors.setRange(2, 50)
         self.spec_n_neighbors.setValue(self._cfg.get('spectral_n_neighbors', 10))
         self.spec_affinity = QComboBox()
-        self.spec_affinity.addItems(['rbf', 'nearest_neighbors', 'cosine'])
+        self.spec_affinity.addItems(SPECTRAL_AFFINITY_OPTIONS)
         self.spec_affinity.setCurrentText(self._cfg.get('spectral_affinity', 'rbf'))
+        self.spec_gamma = QDoubleSpinBox(); self.spec_gamma.setRange(0.001, 100.0)
+        self.spec_gamma.setSingleStep(0.1); self.spec_gamma.setDecimals(3)
+        self.spec_gamma.setValue(self._cfg.get('spectral_gamma', 1.0))
+        self.spec_n_init = QSpinBox(); self.spec_n_init.setRange(1, 50)
+        self.spec_n_init.setValue(self._cfg.get('spectral_n_init', 10))
+        self.spec_assign_labels = QComboBox()
+        self.spec_assign_labels.addItems(['kmeans', 'discretize', 'cluster_qr'])
+        self.spec_assign_labels.setCurrentText(
+            self._cfg.get('spectral_assign_labels', 'kmeans'))
         f3.addRow("n_neighbors:", self.spec_n_neighbors)
         f3.addRow("affinity:", self.spec_affinity)
+        f3.addRow("gamma (rbf):", self.spec_gamma)
+        f3.addRow("n_init:", self.spec_n_init)
+        f3.addRow("assign_labels:", self.spec_assign_labels)
         self._algo_pages['Spectral'] = self.algo_stack.addWidget(p3)
 
         p9 = QWidget(); f9 = QFormLayout(p9); f9.setContentsMargins(4, 4, 4, 4)
@@ -1122,14 +1273,7 @@ class ClusteringSettingsDialog(QDialog):
         self.som_n_iter.setSingleStep(500)
         self.som_n_iter.setValue(self._cfg.get('som_n_iter', 2000))
         self.som_final_algo = QComboBox()
-        self.som_final_algo.addItems([
-            'Hierarchical (Ward)',
-            'Hierarchical (Average)',
-            'Hierarchical (Complete)',
-            'K-Means',
-            'Gaussian Mixture',
-            'Spectral',
-        ])
+        self.som_final_algo.addItems(SOM_FINAL_ALGO_OPTIONS)
         self.som_final_algo.setCurrentText(
             self._cfg.get('som_final_algo', 'Hierarchical (Ward)'))
         f9.addRow("Grid rows:", self.som_rows)
@@ -1148,9 +1292,18 @@ class ClusteringSettingsDialog(QDialog):
         self.mbkm_batch.setValue(self._cfg.get('mbkm_batch_size', 1024))
         self.mbkm_max_iter = QSpinBox(); self.mbkm_max_iter.setRange(10, 1000)
         self.mbkm_max_iter.setValue(self._cfg.get('mbkm_max_iter', 100))
+        self.mbkm_no_improve = QSpinBox(); self.mbkm_no_improve.setRange(1, 100)
+        self.mbkm_no_improve.setValue(
+            self._cfg.get('mbkm_max_no_improvement', 10))
+        self.mbkm_reassign = QDoubleSpinBox(); self.mbkm_reassign.setRange(0.0, 1.0)
+        self.mbkm_reassign.setSingleStep(0.01); self.mbkm_reassign.setDecimals(3)
+        self.mbkm_reassign.setValue(
+            self._cfg.get('mbkm_reassignment_ratio', 0.01))
         f4.addRow("n_init:", self.mbkm_n_init)
         f4.addRow("batch_size:", self.mbkm_batch)
         f4.addRow("max_iter:", self.mbkm_max_iter)
+        f4.addRow("max_no_improvement:", self.mbkm_no_improve)
+        f4.addRow("reassignment_ratio:", self.mbkm_reassign)
         self._algo_pages['MiniBatch K-Means'] = self.algo_stack.addWidget(p4)
 
         p6 = QWidget(); f6 = QFormLayout(p6); f6.setContentsMargins(4, 4, 4, 4)
@@ -1163,9 +1316,16 @@ class ClusteringSettingsDialog(QDialog):
         self.ms_auto_bw.toggled.connect(lambda c: self.ms_bandwidth.setEnabled(not c))
         self.ms_min_bin_freq = QSpinBox(); self.ms_min_bin_freq.setRange(1, 20)
         self.ms_min_bin_freq.setValue(self._cfg.get('meanshift_min_bin_freq', 1))
+        self.ms_max_iter = QSpinBox(); self.ms_max_iter.setRange(50, 2000)
+        self.ms_max_iter.setValue(self._cfg.get('meanshift_max_iter', 300))
+        self.ms_cluster_all = QCheckBox("cluster_all")
+        self.ms_cluster_all.setChecked(as_flag(
+            self._cfg.get('meanshift_cluster_all'), True))
         f6.addRow(self.ms_auto_bw)
         f6.addRow("bandwidth:", self.ms_bandwidth)
         f6.addRow("min_bin_freq:", self.ms_min_bin_freq)
+        f6.addRow("max_iter:", self.ms_max_iter)
+        f6.addRow(self.ms_cluster_all)
         self._algo_pages['Mean Shift'] = self.algo_stack.addWidget(p6)
 
         p_birch = QWidget(); f_birch = QFormLayout(p_birch)
@@ -1184,15 +1344,34 @@ class ClusteringSettingsDialog(QDialog):
         self.optics_min_samp = QSpinBox(); self.optics_min_samp.setRange(2, 100)
         self.optics_min_samp.setValue(self._cfg.get('optics_min_samples', 5))
         self.optics_metric = QComboBox()
-        self.optics_metric.addItems(['euclidean', 'manhattan', 'cosine', 'l1', 'l2'])
-        self.optics_metric.setCurrentText(self._cfg.get('optics_metric', 'euclidean'))
+        self.optics_metric.addItems(METRIC_OPTIONS)
+        self.optics_metric.setCurrentText(
+            normalize_metric(self._cfg.get('optics_metric', 'euclidean')))
         self.optics_cluster_method = QComboBox()
         self.optics_cluster_method.addItems(['xi', 'dbscan'])
         self.optics_cluster_method.setCurrentText(
             self._cfg.get('optics_cluster_method', 'xi'))
+        self.optics_xi = QDoubleSpinBox(); self.optics_xi.setRange(0.001, 0.999)
+        self.optics_xi.setSingleStep(0.01); self.optics_xi.setDecimals(3)
+        self.optics_xi.setValue(self._cfg.get('optics_xi', 0.05))
+        self.optics_max_eps = QDoubleSpinBox()
+        self.optics_max_eps.setRange(0.0, 1000.0)
+        self.optics_max_eps.setSingleStep(0.5); self.optics_max_eps.setDecimals(3)
+        self.optics_max_eps.setValue(self._cfg.get('optics_max_eps', 0.0))
+        self.optics_min_cluster = QSpinBox()
+        self.optics_min_cluster.setRange(0, 10000)
+        self.optics_min_cluster.setValue(
+            self._cfg.get('optics_min_cluster_size', 0))
+        self.optics_pred_corr = QCheckBox("predecessor_correction")
+        self.optics_pred_corr.setChecked(as_flag(
+            self._cfg.get('optics_predecessor_correction'), True))
         f_optics.addRow("min_samples:", self.optics_min_samp)
         f_optics.addRow("metric:", self.optics_metric)
         f_optics.addRow("cluster_method:", self.optics_cluster_method)
+        f_optics.addRow("xi:", self.optics_xi)
+        f_optics.addRow("max_eps (0 = inf):", self.optics_max_eps)
+        f_optics.addRow("min_cluster_size (0 = auto):", self.optics_min_cluster)
+        f_optics.addRow(self.optics_pred_corr)
         self._algo_pages['OPTICS'] = self.algo_stack.addWidget(p_optics)
 
         p_gmm = QWidget(); f_gmm = QFormLayout(p_gmm)
@@ -1200,7 +1379,25 @@ class ClusteringSettingsDialog(QDialog):
         self.gmm_cov = QComboBox()
         self.gmm_cov.addItems(['full', 'tied', 'diag', 'spherical'])
         self.gmm_cov.setCurrentText(self._cfg.get('gmm_covariance_type', 'full'))
+        self.gmm_n_init = QSpinBox(); self.gmm_n_init.setRange(1, 20)
+        self.gmm_n_init.setValue(self._cfg.get('gmm_n_init', 1))
+        self.gmm_init_params = QComboBox()
+        self.gmm_init_params.addItems(
+            ['kmeans', 'k-means++', 'random', 'random_from_data'])
+        self.gmm_init_params.setCurrentText(
+            self._cfg.get('gmm_init_params', 'kmeans'))
+        self.gmm_tol = QDoubleSpinBox(); self.gmm_tol.setRange(0.000001, 0.1)
+        self.gmm_tol.setDecimals(6); self.gmm_tol.setSingleStep(0.0001)
+        self.gmm_tol.setValue(self._cfg.get('gmm_tol', 0.001))
+        self.gmm_reg_covar = QDoubleSpinBox()
+        self.gmm_reg_covar.setRange(0.000000001, 0.01)
+        self.gmm_reg_covar.setDecimals(9); self.gmm_reg_covar.setSingleStep(0.000001)
+        self.gmm_reg_covar.setValue(self._cfg.get('gmm_reg_covar', 0.000001))
         f_gmm.addRow("covariance_type:", self.gmm_cov)
+        f_gmm.addRow("n_init:", self.gmm_n_init)
+        f_gmm.addRow("init_params:", self.gmm_init_params)
+        f_gmm.addRow("tol:", self.gmm_tol)
+        f_gmm.addRow("reg_covar:", self.gmm_reg_covar)
         self._algo_pages['Gaussian Mixture'] = self.algo_stack.addWidget(p_gmm)
 
         def _switch_page(text):
@@ -1305,6 +1502,8 @@ class ClusteringSettingsDialog(QDialog):
 
         out['kmeans_n_init']    = self.km_n_init.value()
         out['kmeans_max_iter']  = self.km_max_iter.value()
+        out['kmeans_tol']       = self.km_tol.value()
+        out['kmeans_algorithm'] = self.km_algorithm.currentText()
 
         out['hier_linkage']          = self.hier_linkage.currentText()
         out['hier_metric']           = self.hier_metric.currentText()
@@ -1312,21 +1511,35 @@ class ClusteringSettingsDialog(QDialog):
         out['dbscan_eps']         = self.dbscan_eps.value()
         out['dbscan_min_samples'] = self.dbscan_min_samp.value()
         out['dbscan_metric']      = self.dbscan_metric.currentText()
+        out['dbscan_algorithm']   = self.dbscan_algorithm.currentText()
+        out['dbscan_leaf_size']   = self.dbscan_leaf_size.value()
 
         out['spectral_n_neighbors'] = self.spec_n_neighbors.value()
         out['spectral_affinity']    = self.spec_affinity.currentText()
+        out['spectral_gamma']         = self.spec_gamma.value()
+        out['spectral_n_init']        = self.spec_n_init.value()
+        out['spectral_assign_labels'] = self.spec_assign_labels.currentText()
 
         out['mbkm_n_init']      = self.mbkm_n_init.value()
         out['mbkm_batch_size']  = self.mbkm_batch.value()
         out['mbkm_max_iter']    = self.mbkm_max_iter.value()
+        out['mbkm_max_no_improvement'] = self.mbkm_no_improve.value()
+        out['mbkm_reassignment_ratio'] = self.mbkm_reassign.value()
 
         out['meanshift_auto_bw']      = self.ms_auto_bw.isChecked()
         out['meanshift_bandwidth']    = self.ms_bandwidth.value()
         out['meanshift_min_bin_freq'] = self.ms_min_bin_freq.value()
+        out['meanshift_max_iter']     = self.ms_max_iter.value()
+        out['meanshift_cluster_all']  = self.ms_cluster_all.isChecked()
 
         out['hdbscan_min_cluster_size'] = self.hdbscan_min_cluster.value()
         out['hdbscan_min_samples']      = self.hdbscan_min_samp.value()
         out['hdbscan_metric']           = self.hdbscan_metric.currentText()
+        out['hdbscan_cluster_selection_method'] = self.hdbscan_selection.currentText()
+        out['hdbscan_cluster_selection_epsilon'] = self.hdbscan_sel_eps.value()
+        out['hdbscan_alpha']            = self.hdbscan_alpha.value()
+        out['hdbscan_max_cluster_size'] = self.hdbscan_max_size.value()
+        out['hdbscan_allow_single_cluster'] = self.hdbscan_single.isChecked()
 
         out['som_rows']       = self.som_rows.value()
         out['som_cols']       = self.som_cols.value()
@@ -1341,8 +1554,16 @@ class ClusteringSettingsDialog(QDialog):
         out['optics_min_samples']    = self.optics_min_samp.value()
         out['optics_metric']         = self.optics_metric.currentText()
         out['optics_cluster_method'] = self.optics_cluster_method.currentText()
+        out['optics_xi']                     = self.optics_xi.value()
+        out['optics_max_eps']                = self.optics_max_eps.value()
+        out['optics_min_cluster_size']       = self.optics_min_cluster.value()
+        out['optics_predecessor_correction'] = self.optics_pred_corr.isChecked()
 
         out['gmm_covariance_type'] = self.gmm_cov.currentText()
+        out['gmm_n_init']      = self.gmm_n_init.value()
+        out['gmm_init_params'] = self.gmm_init_params.currentText()
+        out['gmm_tol']         = self.gmm_tol.value()
+        out['gmm_reg_covar']   = self.gmm_reg_covar.value()
 
         return out
 
@@ -2447,11 +2668,15 @@ def _algo_params_str(cfg, algo):
         'K-Means': [
             ('n_init', g('kmeans_n_init', 10)),
             ('max_iter', g('kmeans_max_iter', 300)),
+            ('tol', g('kmeans_tol', 0.0001)),
+            ('algorithm', g('kmeans_algorithm', 'lloyd')),
         ],
         'Mini-Batch K-Means': [
             ('n_init', g('mbkm_n_init', 3)),
             ('batch_size', g('mbkm_batch_size', 1024)),
             ('max_iter', g('mbkm_max_iter', 100)),
+            ('max_no_improvement', g('mbkm_max_no_improvement', 10)),
+            ('reassignment_ratio', g('mbkm_reassignment_ratio', 0.01)),
         ],
         'Hierarchical': [
             ('linkage', g('hier_linkage', 'ward')),
@@ -2461,28 +2686,53 @@ def _algo_params_str(cfg, algo):
             ('eps', g('dbscan_eps', 0.5)),
             ('min_samples', g('dbscan_min_samples', 5)),
             ('metric', g('dbscan_metric', 'euclidean')),
+            ('algorithm', g('dbscan_algorithm', 'auto')),
+            ('leaf_size', g('dbscan_leaf_size', 30)),
         ],
         'HDBSCAN': [
             ('min_cluster_size', g('hdbscan_min_cluster_size', 5)),
             ('min_samples', g('hdbscan_min_samples', 5)),
             ('metric', g('hdbscan_metric', 'euclidean')),
+            ('cluster_selection_method',
+             g('hdbscan_cluster_selection_method', 'eom')),
+            ('cluster_selection_epsilon',
+             g('hdbscan_cluster_selection_epsilon', 0.0)),
+            ('alpha', g('hdbscan_alpha', 1.0)),
+            ('max_cluster_size',
+             g('hdbscan_max_cluster_size', 0) or 'none'),
+            ('allow_single_cluster',
+             as_flag(g('hdbscan_allow_single_cluster'), False)),
         ],
         'OPTICS': [
             ('min_samples', g('optics_min_samples', 5)),
             ('metric', g('optics_metric', 'euclidean')),
             ('cluster_method', g('optics_cluster_method', 'xi')),
+            ('xi', g('optics_xi', 0.05)),
+            ('max_eps', g('optics_max_eps', 0.0) or 'inf'),
+            ('min_cluster_size', g('optics_min_cluster_size', 0) or 'auto'),
+            ('predecessor_correction',
+             as_flag(g('optics_predecessor_correction'), True)),
         ],
         'Mean Shift': [
             ('bandwidth', 'estimated' if g('meanshift_auto_bw', True)
              else g('meanshift_bandwidth', 1.0)),
             ('min_bin_freq', g('meanshift_min_bin_freq', 1)),
+            ('max_iter', g('meanshift_max_iter', 300)),
+            ('cluster_all', as_flag(g('meanshift_cluster_all'), True)),
         ],
         'Spectral': [
             ('affinity', g('spectral_affinity', 'rbf')),
             ('n_neighbors', g('spectral_n_neighbors', 10)),
+            ('gamma', g('spectral_gamma', 1.0)),
+            ('n_init', g('spectral_n_init', 10)),
+            ('assign_labels', g('spectral_assign_labels', 'kmeans')),
         ],
         'GMM': [
             ('covariance_type', g('gmm_covariance_type', 'full')),
+            ('n_init', g('gmm_n_init', 1)),
+            ('init_params', g('gmm_init_params', 'kmeans')),
+            ('tol', g('gmm_tol', 0.001)),
+            ('reg_covar', g('gmm_reg_covar', 0.000001)),
         ],
         'Birch': [
             ('threshold', g('birch_threshold', 0.5)),
@@ -4162,11 +4412,14 @@ class ClusteringDisplayDialog(QDialog):
                     random_state=42,
                     n_init=cfg.get('kmeans_n_init', 10),
                     max_iter=cfg.get('kmeans_max_iter', 300),
+                    tol=cfg.get('kmeans_tol', 1e-4),
+                    algorithm=cfg.get('kmeans_algorithm', 'lloyd'),
                 ), data)
 
             elif name == 'Hierarchical':
                 linkage = cfg.get('hier_linkage', 'ward')
-                metric  = cfg.get('hier_metric', 'euclidean') if linkage != 'ward' else 'euclidean'
+                metric  = (normalize_metric(cfg.get('hier_metric', 'euclidean'))
+                           if linkage != 'ward' else 'euclidean')
                 return self._keep_fit(name, AgglomerativeClustering(
                     n_clusters=k,
                     linkage=linkage,
@@ -4176,9 +4429,15 @@ class ClusteringDisplayDialog(QDialog):
 
             elif name == 'Spectral':
                 affinity = cfg.get('spectral_affinity', 'rbf')
-                kw = dict(n_clusters=k, random_state=42, affinity=affinity)
+                if affinity not in SPECTRAL_AFFINITY_OPTIONS:
+                    affinity = 'rbf'
+                kw = dict(n_clusters=k, random_state=42, affinity=affinity,
+                          n_init=cfg.get('spectral_n_init', 10),
+                          assign_labels=cfg.get('spectral_assign_labels', 'kmeans'))
                 if affinity == 'nearest_neighbors':
                     kw['n_neighbors'] = cfg.get('spectral_n_neighbors', 10)
+                elif affinity == 'rbf':
+                    kw['gamma'] = cfg.get('spectral_gamma', 1.0)
                 return self._keep_fit(name, SpectralClustering(**kw), data)
 
             elif name == 'MiniBatch K-Means':
@@ -4188,6 +4447,8 @@ class ClusteringDisplayDialog(QDialog):
                     n_init=cfg.get('mbkm_n_init', 3),
                     batch_size=cfg.get('mbkm_batch_size', 1024),
                     max_iter=cfg.get('mbkm_max_iter', 100),
+                    max_no_improvement=cfg.get('mbkm_max_no_improvement', 10),
+                    reassignment_ratio=cfg.get('mbkm_reassignment_ratio', 0.01),
                 ), data)
 
             elif name == 'Birch':
@@ -4202,6 +4463,10 @@ class ClusteringDisplayDialog(QDialog):
                     n_components=k,
                     covariance_type=cfg.get('gmm_covariance_type', 'full'),
                     random_state=42,
+                    n_init=cfg.get('gmm_n_init', 1),
+                    init_params=cfg.get('gmm_init_params', 'kmeans'),
+                    tol=cfg.get('gmm_tol', 1e-3),
+                    reg_covar=cfg.get('gmm_reg_covar', 1e-6),
                 )
                 labels = self._keep_fit(name, gm, data)
                 self._last_gmm = gm
@@ -4211,7 +4476,9 @@ class ClusteringDisplayDialog(QDialog):
                 return self._keep_fit(name, DBSCAN(
                     eps=cfg.get('dbscan_eps', 0.5),
                     min_samples=cfg.get('dbscan_min_samples', 5),
-                    metric=cfg.get('dbscan_metric', 'euclidean'),
+                    metric=normalize_metric(cfg.get('dbscan_metric', 'euclidean')),
+                    algorithm=cfg.get('dbscan_algorithm', 'auto'),
+                    leaf_size=cfg.get('dbscan_leaf_size', 30),
                 ), data)
 
             elif name == 'Mean Shift':
@@ -4220,24 +4487,46 @@ class ClusteringDisplayDialog(QDialog):
                     bw_kw['bandwidth'] = cfg.get('meanshift_bandwidth', 1.0)
                 return self._keep_fit(name, MeanShift(
                     min_bin_freq=cfg.get('meanshift_min_bin_freq', 1),
+                    max_iter=cfg.get('meanshift_max_iter', 300),
+                    cluster_all=as_flag(cfg.get('meanshift_cluster_all'), True),
                     **bw_kw,
                 ), data)
 
             elif name == 'OPTICS':
-                return self._keep_fit(name, OPTICS(
+                max_eps = float(cfg.get('optics_max_eps', 0.0) or 0.0)
+                min_size = int(cfg.get('optics_min_cluster_size', 0) or 0)
+                kw = dict(
                     min_samples=cfg.get('optics_min_samples', 5),
-                    metric=cfg.get('optics_metric', 'euclidean'),
+                    metric=normalize_metric(cfg.get('optics_metric', 'euclidean')),
                     cluster_method=cfg.get('optics_cluster_method', 'xi'),
-                ), data)
+                    max_eps=max_eps if max_eps > 0 else np.inf,
+                    predecessor_correction=as_flag(
+                        cfg.get('optics_predecessor_correction'), True),
+                )
+                if kw['cluster_method'] == 'xi':
+                    kw['xi'] = cfg.get('optics_xi', 0.05)
+                if min_size > 0:
+                    kw['min_cluster_size'] = min(min_size, len(data))
+                return self._keep_fit(name, OPTICS(**kw), data)
 
             elif name == 'HDBSCAN':
                 if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                     return None
+                max_size = int(cfg.get('hdbscan_max_cluster_size', 0) or 0)
                 with numba_serial("HDBSCAN (cluster)"):
                     return self._keep_fit(name, _HDBSCAN_CLS(
                         min_cluster_size=cfg.get('hdbscan_min_cluster_size', 5),
                         min_samples=cfg.get('hdbscan_min_samples', 5),
-                        metric=cfg.get('hdbscan_metric', 'euclidean'),
+                        metric=normalize_metric(
+                            cfg.get('hdbscan_metric', 'euclidean')),
+                        cluster_selection_method=cfg.get(
+                            'hdbscan_cluster_selection_method', 'eom'),
+                        cluster_selection_epsilon=cfg.get(
+                            'hdbscan_cluster_selection_epsilon', 0.0),
+                        alpha=cfg.get('hdbscan_alpha', 1.0),
+                        max_cluster_size=(max_size if max_size > 0 else None),
+                        allow_single_cluster=as_flag(
+                            cfg.get('hdbscan_allow_single_cluster'), False),
                     ), data)
 
             elif name == 'SOM':
@@ -4291,53 +4580,96 @@ class ClusteringDisplayDialog(QDialog):
 
         n_neurons = len(weights)
         k_eff = min(k, n_neurons)
+        neuron_w = np.asarray(weights, dtype=np.float64)
+
+        def _neuron_gmm():
+            """Fit a Gaussian mixture to the neuron weights, robustly.
+
+            The map is trained on the same matrix the user is clustering, so
+            when that matrix is rank-deficient the neurons inherit the
+            deficiency. Compositional data is the standard case here: a row of
+            percentages sums to a constant, so the cloud lies on a plane inside
+            its own dimensionality and any component's full covariance is
+            singular in the leftover direction. Cholesky then fails on that
+            leading minor and scikit-learn raises, which used to drop the whole
+            SOM into the K-Means fallback below — silently, so a run labelled
+            "Gaussian Mixture" was really K-Means.
+
+            Two defences, in order. Fitting in float64 rather than the map's
+            native float32 is enough on its own for ordinary rank deficiency
+            (measured: k=8..10 on 3-column percentage data fails in float32 and
+            succeeds in float64). Beyond that the fit is retried with a larger
+            covariance floor and then with progressively simpler covariance
+            families, which covers neurons that have genuinely collapsed onto
+            each other. Only if every rung fails does the caller's fallback
+            take over.
+
+            Returns:
+                np.ndarray: One cluster label per neuron.
+
+            Raises:
+                Exception: The last error, when no configuration converges.
+            """
+            last = None
+            for cov_type in ('full', 'diag', 'spherical'):
+                for reg in (1e-6, 1e-4, 1e-2):
+                    try:
+                        return GaussianMixture(
+                            n_components=k_eff, random_state=42,
+                            covariance_type=cov_type, n_init=3,
+                            reg_covar=reg).fit_predict(neuron_w)
+                    except Exception as exc:
+                        last = exc
+            raise last
 
         def _cluster_neurons(algo):
             """Run ``algo`` on the neuron weight vectors, return labels.
 
             Reasonable defaults are used for hyperparams since the user only
             picks the algorithm name in this UI; the neuron count is tiny
-            (≤900 typically) so quality matters more than speed.
+            (≤900 typically) so quality matters more than speed. The weights
+            are clustered in float64: the map itself trains in float32 for
+            speed, but that precision is not enough for the covariance work in
+            :func:`_neuron_gmm`.
             """
             if algo == 'Hierarchical (Ward)':
                 return AgglomerativeClustering(
                     n_clusters=k_eff, linkage='ward', metric='euclidean',
-                ).fit_predict(weights)
+                ).fit_predict(neuron_w)
             if algo == 'Hierarchical (Average)':
                 return AgglomerativeClustering(
                     n_clusters=k_eff, linkage='average', metric='euclidean',
-                ).fit_predict(weights)
+                ).fit_predict(neuron_w)
             if algo == 'Hierarchical (Complete)':
                 return AgglomerativeClustering(
                     n_clusters=k_eff, linkage='complete', metric='euclidean',
-                ).fit_predict(weights)
+                ).fit_predict(neuron_w)
             if algo == 'K-Means':
                 return KMeans(
                     n_clusters=k_eff, random_state=42, n_init=10,
-                ).fit_predict(weights)
+                ).fit_predict(neuron_w)
             if algo == 'Gaussian Mixture':
-                return GaussianMixture(
-                    n_components=k_eff, random_state=42,
-                    covariance_type='full', n_init=3,
-                ).fit_predict(weights)
+                return _neuron_gmm()
             if algo == 'Spectral':
                 nn = min(10, max(2, n_neurons - 1))
                 return SpectralClustering(
                     n_clusters=k_eff, affinity='nearest_neighbors',
                     n_neighbors=nn, random_state=42,
                     assign_labels='kmeans',
-                ).fit_predict(weights)
+                ).fit_predict(neuron_w)
             return AgglomerativeClustering(
                 n_clusters=k_eff, linkage='ward', metric='euclidean',
-            ).fit_predict(weights)
+            ).fit_predict(neuron_w)
 
         try:
             neuron_cluster_labels = _cluster_neurons(final_algo)
         except Exception:
-            _itk_log.exception("Handled exception in _run_som")
+            _itk_log.warning(
+                "SOM neuron clustering with %s failed; falling back to K-Means",
+                final_algo, exc_info=True)
             neuron_cluster_labels = KMeans(
                 n_clusters=k_eff, random_state=42, n_init=5,
-            ).fit_predict(weights)
+            ).fit_predict(neuron_w)
 
         self._som_obj = som
         self._som_neuron_labels = neuron_cluster_labels

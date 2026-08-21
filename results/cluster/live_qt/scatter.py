@@ -543,8 +543,17 @@ class BiplotArrows(pg.GraphicsObject):
 
     PCA is mean-centred, so the data origin *is* the centre of the cloud and
     every arrow starts there. All arrows share one scale factor chosen so the
-    longest reaches a fixed fraction of the visible cloud — lengths stay
+    longest reaches ``S.ui.biplot_len`` of the visible cloud — lengths stay
     comparable while the group always fits on screen at any zoom.
+
+    In three dimensions the origin has to be carried through the same rotation
+    as the points. :func:`~results.cluster.live_qt.viewmath.rotate3` spins the
+    cloud about the centre of its bounding box and puts that centre back, so
+    the drawn positions are offset from the raw coordinates by an amount that
+    changes with every drag. Anchoring the arrows at a literal ``(0, 0)`` left
+    them planted away from the cloud they describe; the origin is therefore
+    rotated the same way the points are, which is a no-op in two dimensions and
+    tracks the spin in three.
     """
 
     def __init__(self, S):
@@ -564,6 +573,23 @@ class BiplotArrows(pg.GraphicsObject):
             QRectF: A rect large enough to cover any view.
         """
         return _UNBOUNDED
+
+    def refresh(self):
+        """Repaint after the arrow controls change.
+
+        A plain :meth:`update` marks the item dirty over its bounding rect, and
+        this item reports a sentinel rect spanning ±1e12 rather than a real
+        one. Scheduling a repaint from a rect that large is not something the
+        scene can act on reliably, so a toggle or a slider move could leave the
+        arrows on screen exactly as they were. Announcing the geometry first
+        and then repainting the view box as well drives the redraw through the
+        same path a rotation takes, which is known to reach the screen.
+        """
+        self.prepareGeometryChange()
+        self.update()
+        vb = self.getViewBox()
+        if vb is not None:
+            vb.update()
 
     def paint(self, painter, *_):
         """Draw one labelled arrow per element, longest first.
@@ -585,7 +611,10 @@ class BiplotArrows(pg.GraphicsObject):
         if vb is None:
             return
 
-        k = (span * 0.42) / vecs[0]['len']
+        k = (span * float(S.ui.biplot_len)) / vecs[0]['len']
+        origin = rotate3(S, [[0.0, 0.0, 0.0]])
+        ox = float(origin[0][0]) if len(origin) else 0.0
+        oy = float(origin[0][1]) if len(origin) else 0.0
         px, py = vb.viewPixelSize()
         head = max(5.0, S.ui.font_size * 0.42)
         els = (S.data or {}).get('elements') or []
@@ -602,9 +631,9 @@ class BiplotArrows(pg.GraphicsObject):
             pale = pale_color(col, 0.52)
 
             painter.setPen(QPen(_qcolor(pale), 1.6 * px))
-            painter.drawLine(QPointF(0, 0), QPointF(ex, ey))
+            painter.drawLine(QPointF(ox, oy), QPointF(ox + ex, oy + ey))
 
-            tipx, tipy = ex, ey
+            tipx, tipy = ox + ex, oy + ey
             bx, by = uxv * head * px, -uyv * head * py
             nx, ny = -uyv * head * 0.42 * px, -uxv * head * 0.42 * py
             poly = QPolygonF([QPointF(tipx, tipy),

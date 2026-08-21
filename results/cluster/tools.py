@@ -16,11 +16,13 @@ It answers two questions: which complete pipeline best reproduces your known
 components, and which scoring metric to trust when no ground truth is available
 (by correlating each internal metric against the external truth across the grid).
 
-Ground truth is decided by each particle's dominant element: if a particle's
-strongest element belongs to a named component the particle is that component,
-otherwise it is the ``"other"`` group (coincidences, outliers, background).
-Nothing is excluded; a pipeline that parks ``"other"`` particles in a noise
-label or its own cluster is rewarded for it.
+Ground truth is decided by each particle's elemental combination: a particle
+belongs to a named component when the set of elements it contains is exactly the
+set that component names, so ``107Ag``, ``197Au`` and ``107Ag+197Au`` are three
+separate truth groups.  Everything else is the ``"other"`` group (unnamed
+combinations, coincidences, outliers, background).  Nothing is excluded; a
+pipeline that parks ``"other"`` particles in a noise label or its own cluster is
+rewarded for it.
 
 The engine (everything above the GUI guard) has no Qt dependency and is fully
 usable and testable on its own.  The GUI is defined only when PySide6 imports.
@@ -87,10 +89,56 @@ from results.compositional import (
 try:
     from results.cluster.dialog import (
         DATA_KEY_MAP, DENSITY_BASED_ALGOS, CVI_FUNCS, METRIC_REGISTRY,
+        METRIC_OPTIONS, ON_OFF, SPECTRAL_AFFINITY_OPTIONS,
+        SOM_FINAL_ALGO_OPTIONS, as_flag, effective_metric,
     )
     _HOST_OK = True
 except Exception:
     _HOST_OK = False
+
+    METRIC_OPTIONS = ['euclidean', 'manhattan', 'cosine', 'chebyshev',
+                      'canberra', 'braycurtis', 'correlation']
+    ON_OFF = ['off', 'on']
+    SPECTRAL_AFFINITY_OPTIONS = ['rbf', 'nearest_neighbors']
+    SOM_FINAL_ALGO_OPTIONS = ['Hierarchical (Ward)', 'Hierarchical (Average)',
+                              'Hierarchical (Complete)', 'K-Means',
+                              'Gaussian Mixture', 'Spectral']
+
+    def as_flag(value, default):
+        """Resolve a boolean estimator flag when the host dialog is absent.
+
+        Args:
+            value: ``'on'`` / ``'off'``, a boolean, or None.
+            default (bool): Result when ``value`` is None or unrecognised.
+
+        Returns:
+            bool: The resolved flag.
+        """
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ('on', 'true', '1', 'yes'):
+            return True
+        if text in ('off', 'false', '0', 'no'):
+            return False
+        return default
+
+    def effective_metric(name, params):
+        """Return the metric a fit really uses when the host dialog is absent.
+
+        Args:
+            name (str): Algorithm key from :data:`ALGO_PARAM_SPECS`.
+            params (dict): Concrete parameter values for one fit.
+
+        Returns:
+            str: Lower-case metric name, or ``''`` when none applies.
+        """
+        metric = str(params.get('metric', '') or '').lower()
+        if name == 'Hierarchical' and params.get('linkage', 'ward') == 'ward':
+            return 'euclidean'
+        return metric
 
     DATA_KEY_MAP = {
         'Counts': 'elements',
@@ -182,25 +230,35 @@ ALGO_PARAM_SPECS = {
     'K-Means': {
         'density': False, 'needs_k': True,
         'params': {
-            'k':        {'kind': 'int_range', 'label': 'Clusters (K)',
-                         'default': list(range(2, 11)), 'min': 2, 'max': 100},
-            'n_init':   {'kind': 'int_range', 'label': 'n_init',
-                         'default': [10], 'min': 1, 'max': 50},
-            'max_iter': {'kind': 'int_range', 'label': 'max_iter',
-                         'default': [300], 'min': 10, 'max': 2000},
+            'k':         {'kind': 'int_range', 'label': 'Clusters (K)',
+                          'default': list(range(2, 11)), 'min': 2, 'max': 100},
+            'n_init':    {'kind': 'int_range', 'label': 'n_init',
+                          'default': [10], 'min': 1, 'max': 50},
+            'max_iter':  {'kind': 'int_range', 'label': 'max_iter',
+                          'default': [300], 'min': 10, 'max': 2000},
+            'tol':       {'kind': 'float_range', 'label': 'tol',
+                          'default': [0.0001], 'min': 0.000001, 'max': 0.01,
+                          'decimals': 6},
+            'algorithm': {'kind': 'choice', 'label': 'algorithm',
+                          'options': ['lloyd', 'elkan'], 'default': ['lloyd']},
         },
     },
     'MiniBatch K-Means': {
         'density': False, 'needs_k': True,
         'params': {
-            'k':          {'kind': 'int_range', 'label': 'Clusters (K)',
-                           'default': list(range(2, 11)), 'min': 2, 'max': 100},
-            'n_init':     {'kind': 'int_range', 'label': 'n_init',
-                           'default': [3], 'min': 1, 'max': 50},
-            'batch_size': {'kind': 'int_range', 'label': 'batch_size',
-                           'default': [1024], 'min': 32, 'max': 8192},
-            'max_iter':   {'kind': 'int_range', 'label': 'max_iter',
-                           'default': [100], 'min': 10, 'max': 2000},
+            'k':                  {'kind': 'int_range', 'label': 'Clusters (K)',
+                                   'default': list(range(2, 11)), 'min': 2, 'max': 100},
+            'n_init':             {'kind': 'int_range', 'label': 'n_init',
+                                   'default': [3], 'min': 1, 'max': 50},
+            'batch_size':         {'kind': 'int_range', 'label': 'batch_size',
+                                   'default': [1024], 'min': 32, 'max': 8192},
+            'max_iter':           {'kind': 'int_range', 'label': 'max_iter',
+                                   'default': [100], 'min': 10, 'max': 2000},
+            'max_no_improvement': {'kind': 'int_range', 'label': 'max_no_improvement',
+                                   'default': [10], 'min': 1, 'max': 100},
+            'reassignment_ratio': {'kind': 'float_range', 'label': 'reassignment_ratio',
+                                   'default': [0.01], 'min': 0.0, 'max': 1.0,
+                                   'decimals': 3},
         },
     },
     'Hierarchical': {
@@ -212,20 +270,27 @@ ALGO_PARAM_SPECS = {
                         'options': ['ward', 'complete', 'average', 'single'],
                         'default': ['ward']},
             'metric':  {'kind': 'choice', 'label': 'metric',
-                        'options': ['euclidean', 'manhattan', 'cosine'],
-                        'default': ['euclidean']},
+                        'options': METRIC_OPTIONS, 'default': ['euclidean']},
         },
     },
     'Spectral': {
         'density': False, 'needs_k': True,
         'params': {
-            'k':           {'kind': 'int_range', 'label': 'Clusters (K)',
-                            'default': list(range(2, 11)), 'min': 2, 'max': 60},
-            'affinity':    {'kind': 'choice', 'label': 'affinity',
-                            'options': ['rbf', 'nearest_neighbors'],
-                            'default': ['rbf']},
-            'n_neighbors': {'kind': 'int_range', 'label': 'n_neighbors',
-                            'default': [10], 'min': 2, 'max': 50},
+            'k':             {'kind': 'int_range', 'label': 'Clusters (K)',
+                              'default': list(range(2, 11)), 'min': 2, 'max': 60},
+            'affinity':      {'kind': 'choice', 'label': 'affinity',
+                              'options': SPECTRAL_AFFINITY_OPTIONS,
+                              'default': ['rbf']},
+            'n_neighbors':   {'kind': 'int_range', 'label': 'n_neighbors',
+                              'default': [10], 'min': 2, 'max': 50},
+            'gamma':         {'kind': 'float_range', 'label': 'gamma (rbf)',
+                              'default': [1.0], 'min': 0.001, 'max': 100.0,
+                              'decimals': 3},
+            'n_init':        {'kind': 'int_range', 'label': 'n_init',
+                              'default': [10], 'min': 1, 'max': 50},
+            'assign_labels': {'kind': 'choice', 'label': 'assign_labels',
+                              'options': ['kmeans', 'discretize', 'cluster_qr'],
+                              'default': ['kmeans']},
         },
     },
     'Birch': {
@@ -247,6 +312,18 @@ ALGO_PARAM_SPECS = {
             'covariance_type': {'kind': 'choice', 'label': 'covariance_type',
                                 'options': ['full', 'tied', 'diag', 'spherical'],
                                 'default': ['full']},
+            'n_init':          {'kind': 'int_range', 'label': 'n_init',
+                                'default': [1], 'min': 1, 'max': 20},
+            'init_params':     {'kind': 'choice', 'label': 'init_params',
+                                'options': ['kmeans', 'k-means++', 'random',
+                                            'random_from_data'],
+                                'default': ['kmeans']},
+            'tol':             {'kind': 'float_range', 'label': 'tol',
+                                'default': [0.001], 'min': 0.000001, 'max': 0.1,
+                                'decimals': 6},
+            'reg_covar':       {'kind': 'float_range', 'label': 'reg_covar',
+                                'default': [0.000001], 'min': 0.000000001,
+                                'max': 0.01, 'decimals': 9},
         },
     },
     'DBSCAN': {
@@ -257,32 +334,62 @@ ALGO_PARAM_SPECS = {
             'min_samples': {'kind': 'int_range', 'label': 'min_samples',
                             'default': [5], 'min': 1, 'max': 100},
             'metric':      {'kind': 'choice', 'label': 'metric',
-                            'options': ['euclidean', 'manhattan', 'cosine'],
-                            'default': ['euclidean']},
+                            'options': METRIC_OPTIONS, 'default': ['euclidean']},
+            'algorithm':   {'kind': 'choice', 'label': 'algorithm',
+                            'options': ['auto', 'ball_tree', 'kd_tree', 'brute'],
+                            'default': ['auto']},
+            'leaf_size':   {'kind': 'int_range', 'label': 'leaf_size',
+                            'default': [30], 'min': 5, 'max': 200},
         },
     },
     'HDBSCAN': {
         'density': True, 'needs_k': False,
         'params': {
-            'min_cluster_size': {'kind': 'int_range', 'label': 'min_cluster_size',
-                                 'default': [5, 10, 25], 'min': 2, 'max': 500},
-            'min_samples':      {'kind': 'int_range', 'label': 'min_samples',
-                                 'default': [5], 'min': 1, 'max': 100},
-            'metric':           {'kind': 'choice', 'label': 'metric',
-                                 'options': ['euclidean', 'manhattan'],
-                                 'default': ['euclidean']},
+            'min_cluster_size':          {'kind': 'int_range', 'label': 'min_cluster_size',
+                                          'default': [5, 10, 25], 'min': 2, 'max': 500},
+            'min_samples':               {'kind': 'int_range', 'label': 'min_samples',
+                                          'default': [5], 'min': 1, 'max': 100},
+            'metric':                    {'kind': 'choice', 'label': 'metric',
+                                          'options': METRIC_OPTIONS,
+                                          'default': ['euclidean']},
+            'cluster_selection_method':  {'kind': 'choice',
+                                          'label': 'cluster_selection_method',
+                                          'options': ['eom', 'leaf'],
+                                          'default': ['eom']},
+            'cluster_selection_epsilon': {'kind': 'float_range',
+                                          'label': 'cluster_selection_epsilon',
+                                          'default': [0.0], 'min': 0.0, 'max': 10.0},
+            'alpha':                     {'kind': 'float_range', 'label': 'alpha',
+                                          'default': [1.0], 'min': 0.1, 'max': 5.0},
+            'max_cluster_size':          {'kind': 'int_range',
+                                          'label': 'max_cluster_size (0 = none)',
+                                          'default': [0], 'min': 0, 'max': 100000},
+            'allow_single_cluster':      {'kind': 'choice',
+                                          'label': 'allow_single_cluster',
+                                          'options': ON_OFF, 'default': ['off']},
         },
     },
     'OPTICS': {
         'density': True, 'needs_k': False,
         'params': {
-            'min_samples':    {'kind': 'int_range', 'label': 'min_samples',
-                               'default': [5, 10], 'min': 2, 'max': 100},
-            'metric':         {'kind': 'choice', 'label': 'metric',
-                               'options': ['euclidean', 'manhattan', 'cosine'],
-                               'default': ['euclidean']},
-            'cluster_method': {'kind': 'choice', 'label': 'cluster_method',
-                               'options': ['xi', 'dbscan'], 'default': ['xi']},
+            'min_samples':             {'kind': 'int_range', 'label': 'min_samples',
+                                        'default': [5, 10], 'min': 2, 'max': 100},
+            'metric':                  {'kind': 'choice', 'label': 'metric',
+                                        'options': METRIC_OPTIONS,
+                                        'default': ['euclidean']},
+            'cluster_method':          {'kind': 'choice', 'label': 'cluster_method',
+                                        'options': ['xi', 'dbscan'], 'default': ['xi']},
+            'xi':                      {'kind': 'float_range', 'label': 'xi',
+                                        'default': [0.05], 'min': 0.001, 'max': 0.999},
+            'max_eps':                 {'kind': 'float_range',
+                                        'label': 'max_eps (0 = inf)',
+                                        'default': [0.0], 'min': 0.0, 'max': 1000.0},
+            'min_cluster_size':        {'kind': 'int_range',
+                                        'label': 'min_cluster_size (0 = auto)',
+                                        'default': [0], 'min': 0, 'max': 10000},
+            'predecessor_correction':  {'kind': 'choice',
+                                        'label': 'predecessor_correction',
+                                        'options': ON_OFF, 'default': ['on']},
         },
     },
     'Mean Shift': {
@@ -292,6 +399,10 @@ ALGO_PARAM_SPECS = {
                              'default': [0.0], 'min': 0.0, 'max': 50.0},
             'min_bin_freq': {'kind': 'int_range', 'label': 'min_bin_freq',
                              'default': [1], 'min': 1, 'max': 100},
+            'max_iter':     {'kind': 'int_range', 'label': 'max_iter',
+                             'default': [300], 'min': 50, 'max': 2000},
+            'cluster_all':  {'kind': 'choice', 'label': 'cluster_all',
+                             'options': ON_OFF, 'default': ['on']},
         },
     },
     'SOM': {
@@ -312,11 +423,7 @@ ALGO_PARAM_SPECS = {
             'som_n_iter':     {'kind': 'int_range', 'label': 'Iterations',
                               'default': [2000], 'min': 100, 'max': 20000},
             'som_final_algo': {'kind': 'choice', 'label': 'Final algorithm',
-                              'options': ['Hierarchical (Ward)',
-                                          'Hierarchical (Average)',
-                                          'Hierarchical (Complete)',
-                                          'K-Means', 'Gaussian Mixture',
-                                          'Spectral'],
+                              'options': SOM_FINAL_ALGO_OPTIONS,
                               'default': ['Hierarchical (Ward)']},
         },
     },
@@ -367,15 +474,129 @@ def parse_components(text):
     return comps
 
 
-def build_ground_truth(raw_matrix, elements, components, other_flags=None):
+def _element_symbol(label):
+    """Bare element symbol from a column or component token.
+
+    ``107Ag`` -> ``Ag``, ``48Ti`` -> ``Ti``, ``Ce`` -> ``Ce``.
+
+    Args:
+        label (str): A column name or a component's element token.
+
+    Returns:
+        str: The element symbol, or the stripped input when none is found.
+    """
+    import re
+    m = re.search(r'[A-Z][a-z]?', str(label))
+    return m.group(0) if m else str(label).strip()
+
+
+def resolve_components(components, elements):
+    """Match parsed components to data columns and report what was dropped.
+
+    A component's element tokens are matched to columns first by exact name
+    (``107Ag`` to a ``107Ag`` column) and otherwise by bare symbol (``Ag`` to
+    whichever silver column comes first), so isotope prefixes are optional.
+
+    Three things cause a component — or part of one — to be discarded, and every
+    one of them is recorded rather than applied silently:
+
+    * an element token that matches no column in the data;
+    * a component whose name was already used by an earlier entry;
+    * a component whose element set is identical to an earlier component's, since
+      exact matching could never separate the two.
+
+    Args:
+        components (list[tuple[str, list[str]]]): Output of :func:`parse_components`.
+        elements (list[str]): Active element column names.
+
+    Returns:
+        dict: ``{'names', 'colsets', 'unknown_elements', 'duplicate_names',
+            'duplicate_sets', 'empty_components', 'issues'}``.  ``names`` and
+        ``colsets`` are the accepted components, aligned; ``issues`` is a list of
+        human-readable strings suitable for showing under the input field.
+    """
+    elem_index = {e: i for i, e in enumerate(elements)}
+    sym_index = {}
+    for i, e in enumerate(elements):
+        sym_index.setdefault(_element_symbol(e), i)
+
+    names, colsets = [], []
+    unknown_elements, duplicate_names = [], []
+    duplicate_sets, empty_components = [], []
+    seen_sets = {}
+
+    for name, elems in components:
+        present, missing = [], []
+        for e in elems:
+            if e in elem_index:
+                present.append(e)
+            elif _element_symbol(e) in sym_index:
+                present.append(elements[sym_index[_element_symbol(e)]])
+            else:
+                missing.append(e)
+        if not present:
+            # The whole entry is unusable; naming it is clearer than listing
+            # its element tokens separately.
+            empty_components.append(name)
+            continue
+        if name in names:
+            duplicate_names.append(name)
+            continue
+        cols = frozenset(elem_index[c] for c in present)
+        if cols in seen_sets:
+            duplicate_sets.append((name, seen_sets[cols]))
+            continue
+        for e in missing:
+            if e not in unknown_elements:
+                unknown_elements.append(e)
+        seen_sets[cols] = name
+        names.append(name)
+        colsets.append(cols)
+
+    def _join(items):
+        """Quote and comma-join a list of tokens for a message."""
+        return ", ".join("'%s'" % i for i in items)
+
+    issues = []
+    if empty_components:
+        issues.append("%s not in your data (ignored)" % _join(empty_components))
+    if unknown_elements:
+        issues.append("element%s %s not in your data (dropped from their group)"
+                      % ('' if len(unknown_elements) == 1 else 's',
+                         _join(unknown_elements)))
+    if duplicate_names:
+        issues.append("%s listed twice (ignored)" % _join(duplicate_names))
+    if duplicate_sets:
+        issues.append("; ".join(
+            "'%s' has the same elements as '%s' (ignored)" % (dup, first)
+            for dup, first in duplicate_sets))
+    return {
+        'names': names,
+        'colsets': colsets,
+        'unknown_elements': unknown_elements,
+        'duplicate_names': duplicate_names,
+        'duplicate_sets': duplicate_sets,
+        'empty_components': empty_components,
+        'issues': issues,
+    }
+
+
+def build_ground_truth(raw_matrix, elements, components, other_flags=None,
+                       presence_threshold=0.0):
     """Assign each particle to a named component or to ``"other"``.
 
-    A particle's truth label is the component owning its single strongest
-    element.  Particles whose dominant element is not part of any named
-    component — and particles with no signal — become ``"other"``.  An optional
-    boolean ``other_flags`` mask forces rows to ``"other"`` regardless of
-    composition; this is where a future coincidence/outlier tag plugs in.
-    Nothing is dropped.
+    A component is an **elemental combination**: the set of elements actually
+    present in a particle must equal the set of elements named by the component.
+    This is what makes single-metal and alloy standards separable — ``107Ag``
+    matches particles carrying silver and nothing else, while ``107Ag+197Au``
+    matches particles carrying both.  An element counts as present when its share
+    of that particle's total signal reaches ``presence_threshold``; the default
+    of 0 accepts any non-zero value.
+
+    Particles matching no component — and particles with no signal — become
+    ``"other"``.  An optional boolean ``other_flags`` mask forces rows to
+    ``"other"`` regardless of composition; this is where a future
+    coincidence/outlier tag plugs in.  Nothing is dropped.
 
     Args:
         raw_matrix (np.ndarray): Pre-scaling matrix ``(n_particles, n_elements)``
@@ -384,58 +605,52 @@ def build_ground_truth(raw_matrix, elements, components, other_flags=None):
         components (list[tuple[str, list[str]]]): Output of :func:`parse_components`.
         other_flags (np.ndarray or None): Optional boolean mask forcing rows to
             ``"other"``.
+        presence_threshold (float): Minimum fraction (0–1) of a particle's total
+            signal an element must carry to count as present.
 
     Returns:
         dict: ``{'labels', 'names', 'name_to_id', 'other_id', 'counts',
                  'unmatched'}``.
     """
-    import re
-
-    def _symbol(label):
-        """Bare element symbol from a column/component token.
-
-        ``107Ag`` -> ``Ag``, ``48Ti`` -> ``Ti``, ``Ce`` -> ``Ce``.  
-        """
-        m = re.search(r'[A-Z][a-z]?', str(label))
-        return m.group(0) if m else str(label).strip()
-
-    elem_index = {e: i for i, e in enumerate(elements)}
-    sym_index = {}
-    for i, e in enumerate(elements):
-        sym_index.setdefault(_symbol(e), i)
-
-    elem_to_comp = {}
-    comp_names = []
-    for name, elems in components:
-        present = []
-        for e in elems:
-            if e in elem_index:
-                present.append(e)
-            elif _symbol(e) in sym_index:
-                present.append(elements[sym_index[_symbol(e)]])
-        if not present:
-            continue
-        comp_names.append(name)
-        for col in present:
-            elem_to_comp.setdefault(col, name)
+    resolved = resolve_components(components, elements)
+    comp_names = resolved['names']
+    comp_colsets = resolved['colsets']
 
     names = comp_names + [OTHER_LABEL_NAME]
     name_to_id = {n: i for i, n in enumerate(names)}
     other_id = name_to_id[OTHER_LABEL_NAME]
 
     n = raw_matrix.shape[0]
-    col_to_id = np.full(max(raw_matrix.shape[1], 1), other_id, dtype=int)
-    for c, e in enumerate(elements):
-        comp = elem_to_comp.get(e)
-        if comp is not None:
-            col_to_id[c] = name_to_id[comp]
 
     if n == 0 or raw_matrix.shape[1] == 0:
         labels = np.full(n, other_id, dtype=int)
     else:
-        dom_col = np.argmax(raw_matrix, axis=1)
-        labels = col_to_id[dom_col]
-        labels[raw_matrix.sum(axis=1) <= 0] = other_id
+        # Which set of column indices does each particle actually contain?
+        m = np.asarray(raw_matrix, dtype=float)
+        m = np.where(np.isfinite(m) & (m > 0), m, 0.0)
+        totals = m.sum(axis=1)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            frac = np.where(totals[:, None] > 0, m / totals[:, None], 0.0)
+        thr = max(float(presence_threshold), 0.0)
+        mask = (m > 0) & (frac >= thr) if thr > 0 else (m > 0)
+        # Guard: never let the threshold empty out a particle that had signal.
+        empty = (~mask.any(axis=1)) & (totals > 0)
+        if empty.any():
+            mask[empty, np.argmax(m[empty], axis=1)] = True
+
+        set_to_id = {}
+        for cid, cols in enumerate(comp_colsets):
+            set_to_id.setdefault(cols, cid)
+
+        # Group identical presence patterns so the dict lookup runs once per
+        # distinct combination rather than once per particle.
+        patterns, inverse = np.unique(mask, axis=0, return_inverse=True)
+        pat_ids = np.array(
+            [set_to_id.get(frozenset(np.flatnonzero(row).tolist()), other_id)
+             for row in patterns], dtype=int)
+        labels = pat_ids[inverse.ravel()]
+        labels[totals <= 0] = other_id
+    labels = np.asarray(labels, dtype=int)
 
     if other_flags is not None:
         labels[np.asarray(other_flags, dtype=bool)] = other_id
@@ -587,27 +802,6 @@ class Preprocessor:
         return m
 
 
-def effective_metric(name, params):
-    """Return the distance metric a configuration will really be fitted with.
-
-    The metric a user picks is not always the metric that runs: Ward linkage is
-    defined only for the Euclidean case, so scikit-learn ignores any other
-    choice there. Reporting the effective metric keeps the pre-fit guards below
-    honest about what is actually about to be computed.
-
-    Args:
-        name (str): Algorithm key from :data:`ALGO_PARAM_SPECS`.
-        params (dict): Concrete parameter values for one fit.
-
-    Returns:
-        str: Lower-case metric name, or ``''`` when the algorithm takes none.
-    """
-    metric = str(params.get('metric', '') or '').lower()
-    if name == 'Hierarchical' and params.get('linkage', 'ward') == 'ward':
-        return 'euclidean'
-    return metric
-
-
 def zero_row_count(data):
     """Count rows that are zero in every column.
 
@@ -623,21 +817,46 @@ def zero_row_count(data):
     return int(np.sum(~np.any(arr != 0, axis=1)))
 
 
-def cosine_undefined(name, params, data):
-    """Return True when a cosine fit on ``data`` has no defined answer.
+def constant_row_count(data):
+    """Count rows whose values are identical across every column.
 
-    Cosine distance is the angle between two vectors, and the zero vector has
-    no direction, so the distance to it is undefined; scikit-learn refuses the
-    fit outright rather than guessing. All-zero rows are ordinary in this
-    pipeline rather than a sign of bad data — a particle with no calibrated
-    mass in a mass-based data type, a percentage row whose total is zero, a
-    perfectly balanced composition under CLR, or a particle sitting exactly on
-    the median under a robust z-score all produce one.
+    Args:
+        data (np.ndarray): A preprocessed data matrix.
 
-    Detecting the situation up front lets the sweep record a precise reason and
-    move on, instead of paying for a fit that will raise and filling the log
-    with identical tracebacks — one per cluster count, per linkage, per
-    preprocessing combination.
+    Returns:
+        int: Number of rows with zero variance, all-zero rows included.
+    """
+    arr = np.atleast_2d(np.asarray(data, dtype=float))
+    if arr.size == 0 or arr.shape[1] < 2:
+        return 0
+    return int(np.sum(np.ptp(arr, axis=1) == 0))
+
+
+def metric_undefined(name, params, data):
+    """Return True when the chosen metric has no defined answer on ``data``.
+
+    Three of the offered metrics are undefined for degenerate rows, and the
+    failure modes differ in how loudly they announce themselves:
+
+    * ``cosine`` measures the angle between two vectors, and the zero vector
+      has no direction. Agglomerative clustering refuses the fit outright;
+      the density algorithms quietly substitute a distance of exactly 1 to
+      every other point, which is worse — a meaningless number that still
+      produces a leaderboard entry.
+    * ``correlation`` divides by each row's standard deviation, so any row
+      that is constant across its columns yields NaN distances. scikit-learn
+      does not raise; it clusters the NaNs.
+    * ``braycurtis`` is a ratio whose denominator is the summed magnitude of
+      both rows, so a pair of all-zero rows gives 0/0.
+
+    All-zero and constant rows are ordinary here rather than a sign of bad
+    data — a particle with no calibrated mass in a mass-based data type, a
+    percentage row whose total is zero, a perfectly balanced composition under
+    CLR, or a particle sitting exactly on the median under a robust z-score
+    all produce one. Detecting this up front lets the sweep record a precise
+    reason and move on, instead of paying for a fit that will raise or, worse,
+    silently return nonsense. The check is structural rather than a full
+    distance-matrix scan, so it costs one pass over the data.
 
     Args:
         name (str): Algorithm key from :data:`ALGO_PARAM_SPECS`.
@@ -647,9 +866,12 @@ def cosine_undefined(name, params, data):
     Returns:
         bool: True when the configuration must be skipped.
     """
-    if effective_metric(name, params) != 'cosine':
-        return False
-    return zero_row_count(data) > 0
+    metric = effective_metric(name, params)
+    if metric in ('cosine', 'braycurtis'):
+        return zero_row_count(data) > 0
+    if metric == 'correlation':
+        return constant_row_count(data) > 0
+    return False
 
 
 def run_algorithm(name, params, data, som_runner=None, capture=None):
@@ -695,34 +917,44 @@ def run_algorithm(name, params, data, som_runner=None, capture=None):
             capture['estimator'] = est
         return labels
 
-    if cosine_undefined(name, params, data):
-        _itk_log.debug("Skipped %s: cosine metric with all-zero rows", name)
+    if metric_undefined(name, params, data):
+        _itk_log.debug("Skipped %s: %s metric is undefined on this matrix",
+                       name, effective_metric(name, params))
         return None
 
     try:
         k = int(params.get('k', 2))
         if name == 'K-Means':
             return _go(KMeans(n_clusters=k, random_state=42,
-                          n_init=int(params.get('n_init', 10)),
-                          max_iter=int(params.get('max_iter', 300))))
+                              n_init=int(params.get('n_init', 10)),
+                              max_iter=int(params.get('max_iter', 300)),
+                              tol=float(params.get('tol', 1e-4)),
+                              algorithm=params.get('algorithm', 'lloyd')
+                              ))
         if name == 'MiniBatch K-Means':
-            return _go(MiniBatchKMeans(n_clusters=k, random_state=42,
-                                   n_init=int(params.get('n_init', 3)),
-                                   batch_size=int(params.get('batch_size', 1024)),
-                                   max_iter=int(params.get('max_iter', 100))
-                                   ))
+            return _go(MiniBatchKMeans(
+                n_clusters=k, random_state=42,
+                n_init=int(params.get('n_init', 3)),
+                batch_size=int(params.get('batch_size', 1024)),
+                max_iter=int(params.get('max_iter', 100)),
+                max_no_improvement=int(params.get('max_no_improvement', 10)),
+                reassignment_ratio=float(params.get('reassignment_ratio', 0.01))
+                ))
         if name == 'Hierarchical':
             linkage = params.get('linkage', 'ward')
-            metric = 'euclidean' if linkage == 'ward' else params.get('metric', 'euclidean')
+            metric = effective_metric(name, params) or 'euclidean'
             return _go(AgglomerativeClustering(n_clusters=k, linkage=linkage,
                                                metric=metric,
                                                compute_distances=True))
         if name == 'Spectral':
             aff = params.get('affinity', 'rbf')
             kw = dict(n_clusters=k, random_state=42, affinity=aff,
-                      assign_labels='kmeans')
+                      n_init=int(params.get('n_init', 10)),
+                      assign_labels=params.get('assign_labels', 'kmeans'))
             if aff == 'nearest_neighbors':
                 kw['n_neighbors'] = int(params.get('n_neighbors', 10))
+            else:
+                kw['gamma'] = float(params.get('gamma', 1.0))
             return _go(SpectralClustering(**kw))
         if name == 'Birch':
             return _go(Birch(n_clusters=k,
@@ -732,28 +964,54 @@ def run_algorithm(name, params, data, som_runner=None, capture=None):
         if name == 'Gaussian Mixture':
             return _go(GaussianMixture(
                 n_components=k, random_state=42,
-                covariance_type=params.get('covariance_type', 'full')
+                covariance_type=params.get('covariance_type', 'full'),
+                n_init=int(params.get('n_init', 1)),
+                init_params=params.get('init_params', 'kmeans'),
+                tol=float(params.get('tol', 1e-3)),
+                reg_covar=float(params.get('reg_covar', 1e-6))
             ))
         if name == 'DBSCAN':
             return _go(DBSCAN(eps=float(params.get('eps', 0.5)),
                           min_samples=int(params.get('min_samples', 5)),
-                          metric=params.get('metric', 'euclidean')))
+                          metric=params.get('metric', 'euclidean'),
+                          algorithm=params.get('algorithm', 'auto'),
+                          leaf_size=int(params.get('leaf_size', 30))))
         if name == 'HDBSCAN':
             if not _HDBSCAN_OK or _HDBSCAN_CLS is None:
                 return None
+            max_size = int(params.get('max_cluster_size', 0))
             with numba_serial("HDBSCAN (sweep)"):
                 return _go(_HDBSCAN_CLS(
                     min_cluster_size=int(params.get('min_cluster_size', 5)),
                     min_samples=int(params.get('min_samples', 5)),
-                    metric=params.get('metric', 'euclidean')))
+                    metric=params.get('metric', 'euclidean'),
+                    cluster_selection_method=params.get(
+                        'cluster_selection_method', 'eom'),
+                    cluster_selection_epsilon=float(
+                        params.get('cluster_selection_epsilon', 0.0)),
+                    alpha=float(params.get('alpha', 1.0)),
+                    max_cluster_size=max_size if max_size > 0 else None,
+                    allow_single_cluster=as_flag(
+                        params.get('allow_single_cluster'), False)))
         if name == 'OPTICS':
-            return _go(OPTICS(min_samples=int(params.get('min_samples', 5)),
-                          metric=params.get('metric', 'euclidean'),
-                          cluster_method=params.get('cluster_method', 'xi')
-                          ))
+            max_eps = float(params.get('max_eps', 0.0))
+            min_size = int(params.get('min_cluster_size', 0))
+            kw = dict(min_samples=int(params.get('min_samples', 5)),
+                      metric=params.get('metric', 'euclidean'),
+                      cluster_method=params.get('cluster_method', 'xi'),
+                      max_eps=max_eps if max_eps > 0 else np.inf,
+                      predecessor_correction=as_flag(
+                          params.get('predecessor_correction'), True))
+            if kw['cluster_method'] == 'xi':
+                kw['xi'] = float(params.get('xi', 0.05))
+            if min_size > 0:
+                kw['min_cluster_size'] = min(min_size, len(data))
+            return _go(OPTICS(**kw))
         if name == 'Mean Shift':
             bw = float(params.get('bandwidth', 0.0))
-            kw = {'min_bin_freq': int(params.get('min_bin_freq', 1))}
+            kw = {'min_bin_freq': int(params.get('min_bin_freq', 1)),
+                  'max_iter': int(params.get('max_iter', 300)),
+                  'cluster_all': as_flag(params.get('cluster_all'), True)}
             if bw > 0:
                 kw['bandwidth'] = bw
             return _go(MeanShift(**kw))
@@ -884,6 +1142,7 @@ def run_sweep(particle_data, elements, components, *,
               data_types, scalings, dim_reductions,
               algo_selections, internal_metrics, external_metrics,
               other_flags=None, filter_zeros=True,
+              truth_presence_threshold=0.0,
               min_type_count=1, min_clusters=2, max_clusters=30,
               som_runner=None, progress_cb=None, cancel_event=None):
     """Run the full pipeline grid and score every result against ground truth.
@@ -899,6 +1158,9 @@ def run_sweep(particle_data, elements, components, *,
         other_flags (np.ndarray or None): Optional coincidence/outlier mask over
             the original particle rows.
         filter_zeros (bool): Drop all-zero rows.
+        truth_presence_threshold (float): Fraction (0–1) of a particle's total
+            signal an element must carry to count as present when matching a
+            particle to its named component. See :func:`build_ground_truth`.
         min_type_count (int): Minimum particles sharing an elemental combination
             for that combination to be kept (1 disables it). Mirrors the host's
             "Min. particles per type" filter.
@@ -929,7 +1191,8 @@ def run_sweep(particle_data, elements, components, *,
         if len(of) == len(pre.keep_mask):
             kept_other = of[pre.keep_mask]
     truth = build_ground_truth(pre.counts_matrix(), elements, components,
-                               other_flags=kept_other)
+                               other_flags=kept_other,
+                               presence_threshold=truth_presence_threshold)
     truth_labels = truth['labels']
 
     pre_combos = [(dt, sc, dr)
@@ -966,12 +1229,12 @@ def run_sweep(particle_data, elements, components, *,
                 if cancel_event is not None and cancel_event.is_set():
                     cancelled = True
                     break
-                if cosine_undefined(algo, params, data):
+                if metric_undefined(algo, params, data):
                     done += 1
                     attempts[algo] += 1
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
-                                     'reason': 'cosine_zero_rows'})
+                                     'reason': 'metric_undefined'})
                     continue
                 t0 = time.perf_counter()
                 labels = run_algorithm(algo, params, data, som_runner=som_runner)
@@ -1218,7 +1481,7 @@ def summarize_sweep_failures(failures, total=None):
         failures (list[dict]): Failure records from :func:`run_sweep`, each with
             keys ``'algorithm'``, ``'data_type'``, ``'scaling'``,
             ``'dim_reduction'`` and ``'reason'`` (``'error'``, ``'no_labels'``,
-            ``'out_of_range'`` or ``'cosine_zero_rows'``).
+            ``'out_of_range'`` or ``'metric_undefined'``).
         total (dict or None): Optional ``{algorithm: attempted_fits}`` mapping so
             the report can express failures as a fraction of attempts.
 
@@ -1355,6 +1618,11 @@ if _QT_OK:
         The sweep tests every value the range produces; the values themselves
         are not displayed, only the bounds and the step (default derived from
         the parameter — 1 for integer cluster counts).
+
+        Float parameters honour an optional ``decimals`` key on their spec,
+        defaulting to 3. Tolerances and regularisation terms live at 1e-6 or
+        below and would round to a flat zero at three decimals, which is not a
+        value any estimator accepts.
         """
 
         def __init__(self, spec, parent=None):
@@ -1366,6 +1634,7 @@ if _QT_OK:
             """
             super().__init__(parent)
             self._is_float = (spec['kind'] == 'float_range')
+            self._decimals = int(spec.get('decimals', 3))
             self._min = spec.get('min', 0)
             self._max = spec.get('max', 10_000)
             lay = QHBoxLayout(self)
@@ -1378,12 +1647,13 @@ if _QT_OK:
                 sb.setMinimum(self._min if self._is_float else int(self._min))
                 sb.setMaximum(self._max if self._is_float else int(self._max))
                 if self._is_float:
-                    sb.setDecimals(3)
-                    sb.setSingleStep(0.1)
+                    sb.setDecimals(self._decimals)
+                    sb.setSingleStep(10.0 ** -min(self._decimals, 3))
                 sb.setFixedWidth(72)
             if self._is_float:
-                self.f_step.setRange(0.001, max(1.0, float(self._max)))
-                self.f_step.setDecimals(3)
+                smallest = 10.0 ** -self._decimals
+                self.f_step.setRange(smallest, max(1.0, float(self._max)))
+                self.f_step.setDecimals(self._decimals)
             else:
                 self.f_step.setRange(1, max(1, int(self._max)))
             self.f_step.setFixedWidth(72)
@@ -1405,17 +1675,19 @@ if _QT_OK:
                 gaps = [b - a for a, b in zip(sorted_defaults, sorted_defaults[1:]) if b > a]
                 if gaps:
                     g = min(gaps)
-                    return round(g, 6) if self._is_float else max(1, int(round(g)))
-            return 0.1 if self._is_float else 1
+                    return (round(g, self._decimals) if self._is_float
+                            else max(1, int(round(g))))
+            return (10.0 ** -min(self._decimals, 1)) if self._is_float else 1
 
         def values(self):
             """Return every value the current range produces."""
             a, b, s = self.f_from.value(), self.f_to.value(), self.f_step.value()
             if s <= 0 or b < a:
-                return [round(a, 6) if self._is_float else int(a)]
+                return [round(a, self._decimals) if self._is_float else int(a)]
             out, x, guard = [], a, 0
             while x <= b + 1e-9 and guard < 100000:
-                out.append(round(x, 6) if self._is_float else int(round(x)))
+                out.append(round(x, self._decimals) if self._is_float
+                           else int(round(x)))
                 x += s
                 guard += 1
             return out
@@ -1769,12 +2041,14 @@ if _QT_OK:
             self._last_min_type = 1
             self._ranked = []
             self._detail_pre = None
+            self._note_elements = None
 
             self.setWindowTitle("Everything everywhere all at once: custom cluster test")
             self.setMinimumSize(1000, 680)
             self.resize(1400, 900)
             self._build_ui()
             self._restore_state()
+            self._refresh_components_note()
 
         def _get_particle_data(self):
             """Return particle records, resolving from the node if needed."""
@@ -1850,9 +2124,40 @@ if _QT_OK:
             gtb.addWidget(QLabel(
                 "Enter the components you prepared, separated by ';'. "
                 "Group alloys/molecules with '+' or fused symbols, e.g. "
-                "<b>107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co</b>"))
+                "<b>107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co</b><br>"
+                "A '+' entry is its own truth group: "
+                "<b>107Ag ; 197Au ; 107Ag+197Au</b> gives pure silver, pure "
+                "gold and the Ag–Au alloy as three separate groups."))
             self.components_edit = QLineEdit("107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co")
+            self.components_edit.textChanged.connect(self._refresh_components_note)
             gtb.addWidget(self.components_edit)
+            self.components_note = QLabel("")
+            self.components_note.setWordWrap(True)
+            self.components_note.setStyleSheet("font-size:11px;")
+            gtb.addWidget(self.components_note)
+
+            matchrow = QHBoxLayout()
+            self.presence_lbl = QLabel("Element counts as present above:")
+            matchrow.addWidget(self.presence_lbl)
+            self.presence_spin = QDoubleSpinBox()
+            self.presence_spin.setRange(0.0, 100.0)
+            self.presence_spin.setDecimals(2)
+            self.presence_spin.setSingleStep(0.5)
+            self.presence_spin.setValue(0.0)
+            self.presence_spin.setSuffix(" %")
+            self.presence_spin.setMaximumWidth(110)
+            self.presence_spin.setToolTip(
+                "0 % (default): any non-zero signal counts as present, so the "
+                "match is purely the elemental combination.\n"
+                "Raise it only if trace bleed-through is turning pure particles "
+                "into apparent alloys — an element must then carry at least this "
+                "share of the particle's total signal to count. A particle that "
+                "has signal but nothing above the threshold keeps its strongest "
+                "element.")
+            matchrow.addWidget(self.presence_spin)
+            matchrow.addStretch()
+            gtb.addLayout(matchrow)
+
             extrow = QHBoxLayout()
             extrow.addWidget(self._axis_box(
                 "External metrics (vs truth)", list(EXTERNAL_METRICS.keys()),
@@ -2064,7 +2369,43 @@ if _QT_OK:
         def _on_mode_changed(self, advanced):
             """Show/hide the ground-truth controls when the mode toggles."""
             self.gt_body.setVisible(bool(advanced))
+            if advanced:
+                self._refresh_components_note()
             self._refresh_rank_combo()
+
+        def _refresh_components_note(self, *_):
+            """Report what the components field parsed to, and what was dropped.
+
+            Runs on every keystroke so the silent drops — an element you did not
+            measure, a name typed twice, two entries with identical elements —
+            are visible before the sweep is launched rather than only as a truth
+            group with zero members afterwards.
+            """
+            note = getattr(self, 'components_note', None)
+            if note is None:
+                return
+            text = self.components_edit.text().strip()
+            if not text:
+                note.setText("<span style='color:#B45309'>No components "
+                             "entered — every particle would be 'other'.</span>")
+                return
+            try:
+                # Cached: the fallback path in _get_elements scans every
+                # particle, which is too costly to repeat on each keystroke.
+                if getattr(self, '_note_elements', None) is None:
+                    self._note_elements = self._get_elements()
+                res = resolve_components(parse_components(text),
+                                         self._note_elements)
+            except Exception:
+                _itk_log.exception("Handled exception in _refresh_components_note")
+                note.setText("")
+                return
+            n = len(res['names'])
+            parts = ["%d truth group%s recognised" % (n, '' if n == 1 else 's')]
+            parts.extend(res['issues'])
+            colour = '#B45309' if (res['issues'] or n == 0) else '#64748B'
+            note.setText("<span style='color:%s'>%s.</span>"
+                         % (colour, "; ".join(parts)))
 
         def _on_kfilter_toggled(self, checked):
             """Enable the cluster-count bounds only when filtering is on."""
@@ -2095,6 +2436,7 @@ if _QT_OK:
                 algo_selections=algo_selections,
                 internal_metrics=[o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 external_metrics=external,
+                truth_presence_threshold=self.presence_spin.value() / 100.0,
                 min_type_count=self.min_type_count.value(),
                 min_clusters=min_c,
                 max_clusters=max_c,
@@ -2599,6 +2941,7 @@ if _QT_OK:
             """
             return {
                 'components': self.components_edit.text(),
+                'presence_pct': self.presence_spin.value(),
                 'data_types': [o for o, cb in self.data_boxes.items() if cb.isChecked()],
                 'scalings': [o for o, cb in self.scale_boxes.items() if cb.isChecked()],
                 'dim_reductions': [o for o, cb in self.dr_boxes.items() if cb.isChecked()],
@@ -2630,6 +2973,8 @@ if _QT_OK:
                 return
             try:
                 self.components_edit.setText(state.get('components', self.components_edit.text()))
+                self.presence_spin.setValue(
+                    float(state.get('presence_pct', self.presence_spin.value())))
                 self._set_axis(self.data_boxes, state.get('data_types'))
                 self._set_axis(self.scale_boxes, state.get('scalings'))
                 self._set_axis(self.dr_boxes, state.get('dim_reductions'))
