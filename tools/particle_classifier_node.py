@@ -12,11 +12,13 @@ unmodified.
 Connectivity (design §2):
     Upstream:   Particle Filter, Single Sample, Multiple Sample only.
     Downstream: any Visualization-category node except AI Data Assistant
-                (permanently excluded) and the work-in-progress set in
-                WIP_EXCLUDED_DOWNSTREAM_TYPES (Clustering,
-                Single/Multiple, Correlation Matrix, Network, Molar Ratio,
-                Isotopic Ratio, Ternary Plot) -- temporarily disabled until
-                each is verified meaningful on classifier-bucketed data.
+                (permanently excluded). WIP_EXCLUDED_DOWNSTREAM_TYPES was
+                emptied 2026-08-24 -- connectivity is unblocked for every
+                Visualization node, even though the classifier->viz
+                plotting-correctness redesign that would make several of
+                them scientifically meaningful is hibernated, not done
+                (see .claude/aug24.md's "Classifier -> viz plotting
+                correctness" section).
 Invalid link attempts must be hard-blocked at the canvas level (the link
 cannot be drawn) with an explicit error dialog — see
 ``validate_classifier_link`` and its wiring into
@@ -55,20 +57,21 @@ ALLOWED_UPSTREAM_TYPES = frozenset({
 })
 
 #: Downstream node types temporarily excluded because classifier -> this
-#: chart is not yet scientifically meaningful (or not yet verified to be):
-#: the classifier collapses each particle's composition to one bucket-label
-#: key, which breaks any node that needs TWO within-particle components
-#: (molar/isotopic ratio, correlation matrix, network) or that does its own
-#: grouping that would conflict with classifier buckets (clustering,
-#: single/multiple, ternary). See the classifier-ratio-nodes-
-#: meaningless memory note and .claude/july22.md #7-#10. Re-enable each once
-#: its own follow-up work lands -- this is a work-in-progress restriction,
-#: not a permanent design boundary (contrast with "ai_assistant" below).
-WIP_EXCLUDED_DOWNSTREAM_TYPES = frozenset({
-    "clustering_plot", "single_multiple_element_plot",
-    "correlation_matrix", "network_diagram", "molar_ratio_plot",
-    "isotopic_ratio_plot", "triangle_plot",
-})
+#: chart is not yet scientifically meaningful. Emptied 2026-08-24 per user
+#: decision: connectivity is unblocked for experimentation even though the
+#: underlying plotting-correctness work (the classifier collapses each
+#: particle's composition to one bucket-label key, which breaks any node
+#: that needs 2+ within-particle composition values at once, or that does
+#: its own grouping/aggregation that conflicts with classifier buckets) is
+#: hibernated, not resolved -- see .claude/aug24.md's "Classifier -> viz
+#: plotting correctness" section for the full investigation (which node
+#: types are actually affected, how, and the proposed fix shape) and
+#: .claude/july22.md #7-#10 for the original issue history. Kept as an
+#: empty frozenset (not deleted) so EXCLUDED_DOWNSTREAM_TYPES and the
+#: canvas refusal-message branch that checks membership in this set both
+#: keep working, and so a real WIP exclusion can be added back here if a
+#: specific node type needs one again.
+WIP_EXCLUDED_DOWNSTREAM_TYPES = frozenset()
 
 #: Downstream node types explicitly excluded even though they are
 #: Visualization-category (design §2, §12). AI Data Assistant is excluded

@@ -31,40 +31,35 @@ class TestDownstreamRule:
         assert pcn.is_allowed_downstream(
             "histogram_plot", pcn_viz_types()) is True
 
-    @pytest.mark.parametrize("node_type", [
-        "clustering_plot", "ai_assistant"])
-    def test_excluded_viz_nodes_blocked(self, node_type):
-        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
-
-    def test_dashboard_is_allowed_downstream(self):
-        """Dashboard was released from the WIP set and must now be accepted.
-
-        It is a Visualization-category node that does not need two
-        within-particle components, so bucket-collapsing does not empty it.
-        """
-        assert pcn.is_allowed_downstream("dashboard", pcn_viz_types()) is True
-        assert "dashboard" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
-        assert "dashboard" not in pcn.EXCLUDED_DOWNSTREAM_TYPES
+    def test_ai_assistant_blocked(self):
+        """AI Data Assistant is excluded permanently, for an unrelated,
+        non-WIP reason (see EXCLUDED_DOWNSTREAM_TYPES docstring)."""
+        assert pcn.is_allowed_downstream("ai_assistant", pcn_viz_types()) is False
 
     def test_non_viz_node_blocked(self):
         assert pcn.is_allowed_downstream(
             "particle_filter", pcn_viz_types()) is False
 
     @pytest.mark.parametrize("node_type", [
-        "single_multiple_element_plot", "correlation_matrix",
-        "network_diagram", "molar_ratio_plot", "isotopic_ratio_plot",
-        "triangle_plot"])
-    def test_wip_excluded_viz_nodes_blocked(self, node_type):
-        """These are within-particle-relationship charts made empty/
-        meaningless by classifier bucket-collapsing (see
-        classifier-ratio-nodes-meaningless memory note) -- temporarily
-        disabled, distinct from AI Assistant's permanent exclusion."""
-        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
-        assert node_type in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
+        "clustering_plot", "single_multiple_element_plot",
+        "correlation_matrix", "network_diagram", "molar_ratio_plot",
+        "isotopic_ratio_plot", "triangle_plot"])
+    def test_formerly_wip_viz_nodes_now_allowed(self, node_type):
+        """WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied 2026-08-24 -- connectivity
+        is unblocked for every Visualization node even though the underlying
+        plotting-correctness redesign that would make several of these
+        scientifically meaningful is hibernated, not done (see
+        .claude/aug24.md's "Classifier -> viz plotting correctness" section
+        and the classifier-ratio-nodes-meaningless memory note)."""
+        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is True
+        assert node_type not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
 
-    def test_wip_set_excludes_ai_assistant(self):
-        """AI Data Assistant is excluded for an unrelated, non-WIP reason --
-        it must stay out of the WIP set so it gets its own refusal message."""
+    def test_wip_set_is_empty(self):
+        """Emptied 2026-08-24 -- kept as a named empty frozenset (not
+        deleted) so EXCLUDED_DOWNSTREAM_TYPES and the canvas refusal-message
+        branch that checks membership in it both keep working, and so a
+        real WIP exclusion can be added back for a specific node type."""
+        assert pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES == frozenset()
         assert "ai_assistant" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
         assert "ai_assistant" in pcn.EXCLUDED_DOWNSTREAM_TYPES
 
@@ -112,12 +107,16 @@ class TestAddLinkEnforcement:
         assert scene.add_link(hist, "output", clf, "input") is None
 
     def test_excluded_downstream_link_is_blocked(self, cw):
+        """AI Data Assistant is the only remaining excluded downstream type
+        -- WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied 2026-08-24, so a
+        formerly-WIP node like ClusteringPlotNode no longer belongs here
+        (see TestFormerlyWipDownstream)."""
         from tools.particle_classifier_node import ParticleClassifierNode
         scene = cw.EnhancedCanvasScene(parent_window=None)
-        clf, viz = ParticleClassifierNode(), cw.ClusteringPlotNode()
+        clf, ai = ParticleClassifierNode(), cw.AIAssistantNode()
         scene.add_node(clf, cw.QPointF(0, 0))
-        scene.add_node(viz, cw.QPointF(200, 0))
-        assert scene.add_link(clf, "output", viz, "input") is None
+        scene.add_node(ai, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", ai, "input") is None
 
     def test_allowed_viz_downstream_link_is_created(self, cw):
         from tools.particle_classifier_node import ParticleClassifierNode
@@ -136,11 +135,14 @@ class TestAddLinkEnforcement:
 
 
 # --------------------------------------------------------------------------- #
-# WIP_EXCLUDED_DOWNSTREAM_TYPES -- temporarily disabled chart types (see
-# WIP_EXCLUDED_DOWNSTREAM_TYPES docstring / classifier-ratio-nodes-meaningless
-# memory note): classifier collapses each particle's composition to one
-# bucket-label key, which breaks any chart needing two within-particle
-# components (ratio/correlation/network) or that does its own grouping.
+# Formerly-WIP downstream types -- WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied
+# 2026-08-24 (connectivity unblocked; the plotting-correctness redesign that
+# would make several of these scientifically meaningful is hibernated, not
+# done -- see .claude/aug24.md's "Classifier -> viz plotting correctness"
+# section and the classifier-ratio-nodes-meaningless memory note). These
+# tests pin down that links to these node types succeed, both direct and
+# through a Temp Node chain, mirroring TestAddLinkEnforcement's positive
+# cases above.
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def cw_capture(qapp, monkeypatch):
@@ -154,7 +156,7 @@ def cw_capture(qapp, monkeypatch):
     return cw_mod, msgs
 
 
-_WIP_NODE_CTORS = [
+_FORMERLY_WIP_NODE_CTORS = [
     ("clustering_plot", "ClusteringPlotNode"),
     ("single_multiple_element_plot", "SingleMultipleElementPlotNode"),
     ("correlation_matrix", "CorrelationMatrixNode"),
@@ -165,9 +167,9 @@ _WIP_NODE_CTORS = [
 ]
 
 
-class TestWipExcludedDownstream:
-    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
-    def test_direct_link_blocked_with_wip_message(
+class TestFormerlyWipDownstream:
+    @pytest.mark.parametrize("node_type,ctor_name", _FORMERLY_WIP_NODE_CTORS)
+    def test_direct_link_now_allowed(
             self, cw_capture, node_type, ctor_name):
         from tools.particle_classifier_node import ParticleClassifierNode
         cw_mod, msgs = cw_capture
@@ -177,12 +179,11 @@ class TestWipExcludedDownstream:
         scene.add_node(clf, cw_mod.QPointF(0, 0))
         scene.add_node(viz, cw_mod.QPointF(200, 0))
         result = scene.add_link(clf, "output", viz, "input")
-        assert result is None
-        assert msgs and "work in progress" in msgs[0]
-        assert viz.title in msgs[0]
+        assert result is not None
+        assert not msgs
 
-    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
-    def test_blocked_through_temp_node(self, cw_capture, node_type, ctor_name):
+    @pytest.mark.parametrize("node_type,ctor_name", _FORMERLY_WIP_NODE_CTORS)
+    def test_allowed_through_temp_node(self, cw_capture, node_type, ctor_name):
         from tools.particle_classifier_node import ParticleClassifierNode
         cw_mod, msgs = cw_capture
         scene = cw_mod.EnhancedCanvasScene(parent_window=None)
@@ -194,8 +195,8 @@ class TestWipExcludedDownstream:
         scene.add_node(viz, cw_mod.QPointF(400, 0))
         assert scene.add_link(clf, "output", temp, "input") is not None
         result = scene.add_link(temp, "output", viz, "input")
-        assert result is None
-        assert msgs and "Temp Node" in msgs[0] and "work in progress" in msgs[0]
+        assert result is not None
+        assert not msgs
 
     def test_ai_assistant_keeps_its_own_non_wip_message(self, cw_capture):
         from tools.particle_classifier_node import ParticleClassifierNode

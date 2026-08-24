@@ -5225,12 +5225,18 @@ def validate_classifier_link(src_node, snk_node):
 
     Design §2: upstream limited to Particle Filter / Single Sample /
     Multiple Sample; downstream limited to Visualization-category nodes,
-    excluding AI Data Assistant (permanently, unrelated reason) and the
-    work-in-progress set in ``WIP_EXCLUDED_DOWNSTREAM_TYPES`` (Clustering,
-    Single/Multiple, Correlation Matrix, Network, Molar Ratio,
-    Isotopic Ratio, Ternary Plot). Only fires when one endpoint of the link
-    actually is a Particle Classifier node — every other link pair in the
-    app is unaffected.
+    excluding only AI Data Assistant (permanently, unrelated reason --
+    feeding classifier-relabeled particles into a general-purpose LLM
+    assistant isn't a supported use case). ``WIP_EXCLUDED_DOWNSTREAM_TYPES``
+    was emptied 2026-08-24 (see ``tools/particle_classifier_node.py`` and
+    ``.claude/aug24.md``'s "Classifier -> viz plotting correctness"
+    section) -- connectivity is unblocked for every Visualization node even
+    though several of them aren't yet scientifically meaningful on
+    classifier output; the ``snk_type in WIP_EXCLUDED_DOWNSTREAM_TYPES``
+    branch below stays in place as dead code for whenever a specific type
+    needs re-excluding. Only fires when one endpoint of the link actually
+    is a Particle Classifier node — every other link pair in the app is
+    unaffected.
 
     Args:
         src_node: The link's source ``WorkflowNode``.
