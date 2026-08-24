@@ -10,6 +10,7 @@ __pycache__/
 env/
 venv/
 .venv/
+.venv*/
 ENV/
 
 # ── Build / packaging ─────────────────────────────────────────────────────────
@@ -52,3 +53,6 @@ test_data/logs/
 _rth_no_pyarrow.py
 example_data/
 site/
+
+# Python wheels — never commit downloaded distributions
+*.whl

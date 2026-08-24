@@ -2,10 +2,10 @@ name: Build IsotopeTrack
 
 on:
   push:
-    branches: [main, dev, 'ci/**']
-    tags: ['v*']
+    branches: [ main, dev, 'ci/**' ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [main, dev]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 jobs:
@@ -20,8 +20,6 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # Pinned to 3.11 to match requirements.txt, the local .conda env,
-          # and the Windows job — the pinned deps only ship 3.11 wheels.
           python-version: '3.11'
 
       - name: Install Python dependencies
@@ -41,25 +39,15 @@ jobs:
       - name: Clean dist for DMG (keep only .app)
         run: rm -rf dist/IsotopeTrack
 
-      # The hardened runtime is applied to the .app automatically on Apple
-      # Silicon, but without entitlements it blocks the executable-memory
-      # allocations numba/llvmlite need to JIT-compile — which crashes the
-      # packaged app even though running from source is fine. Re-sign ad-hoc
-      # with the project entitlements so JIT memory is permitted.
       - name: Re-sign .app with entitlements (allow numba/llvmlite JIT)
         run: |
           set -e
           APP=dist/IsotopeTrack.app
-          HELPER="$APP/Contents/Frameworks/PySide6/Qt/lib/QtWebEngineCore.framework/Versions/A/Helpers/QtWebEngineProcess.app"
 
-          if [ ! -d "$HELPER" ]; then
-            echo "::error::QtWebEngineProcess.app not found at $HELPER"
+          if [ ! -d "$APP" ]; then
+            echo "::error::$APP not found — the PyInstaller build did not produce a bundle"
             exit 1
           fi
-
-          codesign --force --options runtime \
-            --entitlements "$HELPER/Contents/Resources/QtWebEngineProcess.entitlements" \
-            --sign - "$HELPER"
 
           codesign --force --options runtime \
             --entitlements packaging/entitlements.plist \
@@ -67,9 +55,7 @@ jobs:
 
           echo "Entitlements now embedded in the app:"
           codesign -d --entitlements - "$APP" || true
-          echo "Entitlements on the QtWebEngine helper:"
-          codesign -d --entitlements - "$HELPER" || true
-          codesign --verify --verbose=2 "$APP" || true
+          codesign --verify --deep --strict --verbose=2 "$APP"
 
       - name: Build DMG
         run: |
@@ -134,11 +120,14 @@ jobs:
   # Release — only runs when you push a tag like v1.0.4
   # =========================================================
   release:
-    needs: [build-macos-arm, build-windows]
+    needs:
+      - build-macos-arm
+      - build-windows
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -148,10 +137,14 @@ jobs:
         run: find artifacts -type f
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
-            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
             artifacts/IsotopeTrack_Windows/*.exe
-          generate_release_notes: true
-          draft: false
+            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
+          draft: true
+      - name: Create Draft GitHub Release
+        uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
+          tag: ${{ github.ref_name }}

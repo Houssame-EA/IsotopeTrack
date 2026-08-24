@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QDoubleValidator
 from PySide6.QtCore import Qt
 
 from tools.theme import theme, LIGHT
+from processing import detection_registry
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.calibration_methods.te_common")
 
@@ -519,11 +520,14 @@ def show_data_source_dialog(parent=None):
 
 PLOT_STYLES = {
     "raw_signal": pg.mkPen(color=(30, 144, 255), width=1),
-    "background": pg.mkPen(color=(128, 128, 128), style=Qt.DashLine, width=1.5),
-    "threshold": pg.mkPen(color=(220, 20, 60), style=Qt.DashLine, width=1.5),
-    "peaks": {"symbol": "t", "size": 12, "brush": "r", "pen": "r"},
+    "background": pg.mkPen(color=(128, 128, 128), style=Qt.DashLine, width=1),
+    "threshold": pg.mkPen(color=(220, 20, 60), style=Qt.DashLine, width=1),
+    "integrated": {"symbol": "o", "size": 5,
+                   "brush": pg.mkBrush(255, 165, 0, 200)},
+    "peaks": {"symbol": "o", "size": 9,
+              "brush": pg.mkBrush(46, 204, 113, 240)},
     "grid_alpha": 0.2,
-    "highlight": pg.mkPen(color=(255, 0, 0), width=3),
+    "highlight": pg.mkPen(color=(255, 0, 0), width=1),
 }
 
 HISTOGRAM_COLORS = [
@@ -664,7 +668,7 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
         file_path += ".csv"
 
     try:
-        with open(file_path, mode="w", newline="") as fh:
+        with open(file_path, mode="w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             headers = [
                 table.horizontalHeaderItem(c).text()
@@ -695,11 +699,13 @@ def export_table_to_csv(table, parent_widget, dialog_title="Export Detection Res
 # ──────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_DETECTION_PARAMS = {
-    "method": "Compound Poisson LogNormal",
+    "method": "CPLN table",
     "manual_threshold": 10.0,
     "min_continuous": 1,
     "alpha": 0.000001,
 }
+
+DETECTION_METHODS = detection_registry.selectable_labels()
 
 
 def populate_detection_row(table, row, sample_name, element_label,
@@ -730,9 +736,7 @@ def populate_detection_row(table, row, sample_name, element_label,
 
     # Column 2 – detection method
     method_combo = QComboBox()
-    method_combo.addItems([
-         "Manual", "Compound Poisson Monte Carlo", "Compound Poisson LogNormal"
-    ])
+    method_combo.addItems(DETECTION_METHODS)
     method_combo.setCurrentText(cfg["method"])
     table.setCellWidget(row, 2, method_combo)
 
@@ -741,7 +745,7 @@ def populate_detection_row(table, row, sample_name, element_label,
     threshold_spin.setRange(0.0, 1e9)
     threshold_spin.setDecimals(2)
     threshold_spin.setValue(cfg["manual_threshold"])
-    threshold_spin.setEnabled(cfg["method"] == "Manual")
+    threshold_spin.setEnabled(detection_registry.get(cfg["method"]).is_manual)
     table.setCellWidget(row, 3, threshold_spin)
 
     # Column 4 – min continuous points
@@ -760,7 +764,8 @@ def populate_detection_row(table, row, sample_name, element_label,
 
     # Wire enable/disable logic
     method_combo.currentTextChanged.connect(
-        lambda text, r=row: table.cellWidget(r, 3).setEnabled(text == "Manual")
+        lambda text, r=row: table.cellWidget(r, 3).setEnabled(
+            detection_registry.get(text).is_manual)
     )
 
 
@@ -815,68 +820,182 @@ def apply_global_method(table, method_name):
 # Sample-result plotting  (shared by TE_number & TE_mass)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _style_plot_axes(plot_widget, title=None):
+    """Apply the main-window plot appearance to *plot_widget*.
+
+    Mirrors the tail of ``MainWindow.plot_results``: themed background/axes
+    (no grid), 'Counts' / 'Time (s)' labels and free mouse interaction.
+
+    Args:
+        plot_widget (pg.PlotWidget): Target plot widget.
+        title (str | None): Optional plot title.
+    """
+    plot_widget.setLabel("left", "Counts")
+    plot_widget.setLabel("bottom", "Time (s)")
+    if title is not None:
+        plot_widget.setTitle(title)
+    if hasattr(plot_widget, "apply_theme"):
+        plot_widget.apply_theme()
+    else:
+        plot_widget.setBackground(theme.palette.plot_bg)
+    plot_widget.setMouseEnabled(x=True, y=True)
+
+
+def plot_raw_signal(plot_widget, sample_name, signal, time_array):
+    """Plot a raw signal preview using the main-window plot settings.
+
+    Args:
+        plot_widget (pg.PlotWidget): Target plot widget.
+        sample_name (str): Sample display name (used in the title).
+        signal (np.ndarray): Raw signal array.
+        time_array (np.ndarray): Time array (seconds).
+    """
+    plot_widget.clear()
+
+    pen = PLOT_STYLES["raw_signal"]
+    pen.setCosmetic(True)
+    plot_widget.addItem(pg.PlotCurveItem(
+        x=np.asarray(time_array), y=np.asarray(signal),
+        pen=pen, name="Raw Signal", skipFiniteCheck=True,
+    ))
+
+    _add_styled_legend(plot_widget)
+    _style_plot_axes(plot_widget, f"Raw Signal Preview - {sample_name}")
+    plot_widget.enableAutoRange()
+
+
+def _add_styled_legend(plot_widget):
+    """Add a legend styled exactly like the main window's (20 pt labels)."""
+    legend = plot_widget.addLegend(offset=(10, 10))
+    legend.setParentItem(plot_widget.graphicsItem())
+    plot_widget.legend = legend
+    if hasattr(plot_widget, "_style_legend"):
+        plot_widget._style_legend(legend)
+    return legend
+
+
 def plot_detection_results(plot_widget, sample_name, signal,
                            particles, lambda_bkgd, threshold, time_array,
                            peak_detector=None):
-    """Render a comprehensive particle-detection visualisation on *plot_widget*.
+    """Render the particle-detection visualisation on *plot_widget*.
 
-    Draws raw signal, background/threshold lines, and
-    detected peaks colour-coded by SNR.
+    This is a direct transcription of ``MainWindow.plot_results`` so the TE
+    windows show detection exactly the way the main window does: raw signal,
+    background and threshold lines, orange dots on every integrated point and
+    a green dot on each peak maximum.
 
     Args:
         plot_widget (pg.PlotWidget): Target pyqtgraph plot widget.
         sample_name (str): Sample display name (used in the title).
         signal (np.ndarray): Raw signal array.
         particles (list[dict]): List of particle dicts from PeakDetection.
-        lambda_bkgd (float): Background level.
-        threshold (float): Detection threshold.
+        lambda_bkgd (float | np.ndarray): Background level (scalar or per-point).
+        threshold (float | np.ndarray): Detection threshold (scalar or per-point).
         time_array (np.ndarray): Time array (seconds).
-        peak_detector (PeakDetection | None): If provided, its
-            ``get_snr_color`` method is used for scatter colouring.
+        peak_detector (PeakDetection | None): Unused, kept for API compatibility.
     """
     plot_widget.clear()
 
-    traces = [
+    signal = np.asarray(signal)
+    time_array = np.asarray(time_array)
+
+    if isinstance(lambda_bkgd, np.ndarray):
+        background_line = lambda_bkgd
+    else:
+        background_line = np.full_like(time_array, lambda_bkgd, dtype=float)
+    if isinstance(threshold, np.ndarray):
+        threshold_line = threshold
+    else:
+        threshold_line = np.full_like(time_array, threshold, dtype=float)
+
+    plot_data = [
         (time_array, signal, PLOT_STYLES["raw_signal"], "Raw Signal"),
-        (time_array, np.full_like(time_array, lambda_bkgd, dtype=float),
-         PLOT_STYLES["background"], "Background Level"),
-        (time_array, np.full_like(time_array, threshold, dtype=float),
-         PLOT_STYLES["threshold"], "Detection Threshold"),
+        (time_array, background_line, PLOT_STYLES["background"],
+         "Background Level"),
+        (time_array, threshold_line, PLOT_STYLES["threshold"],
+         "Detection Threshold"),
     ]
-    for x, y, pen, name in traces:
-        plot_widget.plot(x=x, y=y, pen=pen, name=name)
+
+    for x, y, pen, name in plot_data:
+        keep = np.diff(y, n=2, append=np.inf, prepend=np.inf) != 0
+        pen.setCosmetic(True)
+        plot_widget.addItem(pg.PlotCurveItem(
+            x=x[keep], y=y[keep], pen=pen, name=name, skipFiniteCheck=True,
+        ))
+
+    _add_styled_legend(plot_widget)
 
     if particles:
-        times, heights, snrs = [], [], []
+        integ_times, integ_heights = [], []
+        peak_times, peak_heights = [], []
+
         for p in particles:
             if p is None:
                 continue
-            peak_idx = np.argmax(signal[p["left_idx"]:p["right_idx"] + 1])
-            times.append(time_array[p["left_idx"] + peak_idx])
-            heights.append(p["max_height"])
-            snrs.append(p["max_height"] / threshold if threshold > 0 else 0)
+            left_idx = int(p["left_idx"])
+            right_idx = int(p["right_idx"])
+            end = min(right_idx + 1, len(signal), len(time_array))
+            start = min(left_idx, end)
+            if start >= end:
+                continue
 
-        if peak_detector and hasattr(peak_detector, "get_snr_color"):
-            brushes = [pg.mkBrush(peak_detector.get_snr_color(s)) for s in snrs]
-        else:
-            brushes = [pg.mkBrush(snr_to_color(s)) for s in snrs]
+            p_method = p.get("integration_method", "Background")
+            if np.isscalar(lambda_bkgd):
+                bkgd_l = lambda_bkgd
+                thresh_l = threshold
+            else:
+                bkgd_l = lambda_bkgd[start:end]
+                thresh_l = (threshold[start:end]
+                            if not np.isscalar(threshold) else threshold)
+            if p_method == "Threshold":
+                integ_level = thresh_l
+            elif p_method == "Midpoint":
+                integ_level = (np.asarray(bkgd_l) + np.asarray(thresh_l)) / 2.0
+            else:
+                integ_level = bkgd_l
 
-        scatter = pg.ScatterPlotItem(
-            x=times, y=heights,
-            symbol=PLOT_STYLES["peaks"]["symbol"],
-            size=PLOT_STYLES["peaks"]["size"],
-            brush=brushes,
-            pen=PLOT_STYLES["peaks"]["pen"],
-            name="Detected Peaks",
-        )
-        plot_widget.addItem(scatter)
+            s_region = signal[start:end]
+            above = s_region > integ_level
+            valid = np.arange(start, end)[above]
+            integ_times.extend(time_array[valid].tolist())
+            integ_heights.extend(signal[valid].tolist())
 
-    plot_widget.setBackground(theme.palette.plot_bg)
-    plot_widget.showGrid(x=True, y=True, alpha=PLOT_STYLES["grid_alpha"])
-    plot_widget.setLabel("left", "Counts")
-    plot_widget.setLabel("bottom", "Time (s)")
-    plot_widget.setTitle(f"Particle Detection Results – {sample_name}")
-    plot_widget.setMouseEnabled(x=True, y=True)
+            peak_global = start + int(np.argmax(s_region))
+            peak_times.append(float(time_array[peak_global]))
+            peak_heights.append(float(signal[peak_global]))
+
+        if integ_times:
+            scatter_integ = pg.ScatterPlotItem(
+                x=np.array(integ_times), y=np.array(integ_heights),
+                symbol=PLOT_STYLES["integrated"]["symbol"],
+                size=PLOT_STYLES["integrated"]["size"],
+                brush=PLOT_STYLES["integrated"]["brush"],
+                pen=pg.mkPen(None),
+                name="Integrated points",
+            )
+            scatter_integ._role = "particle_integration"
+            scatter_integ._legend_representative = True
+            plot_widget.addItem(scatter_integ)
+
+        if peak_times:
+            scatter_peak = pg.ScatterPlotItem(
+                x=np.array(peak_times), y=np.array(peak_heights),
+                symbol=PLOT_STYLES["peaks"]["symbol"],
+                size=PLOT_STYLES["peaks"]["size"],
+                brush=PLOT_STYLES["peaks"]["brush"],
+                pen=pg.mkPen(None),
+                name="Peak Maximum",
+            )
+            scatter_peak._role = "peak_maximum"
+            scatter_peak._legend_representative = True
+            plot_widget.addItem(scatter_peak)
+
+    legend = getattr(plot_widget, "legend", None)
+    if legend is not None:
+        for _sample, label in legend.items:
+            label.setText(label.text, size="20pt")
+
+    _style_plot_axes(plot_widget, f"Particle Detection Results – {sample_name}")
     plot_widget.enableAutoRange()
 
 
@@ -904,7 +1023,7 @@ def highlight_particle(plot_widget, particle, time_array, signal,
     curve = pg.PlotCurveItem(
         x=time_array[sl], y=signal[sl],
         pen=PLOT_STYLES["highlight"],
-        name="Selected Particle",
+        name="Highlighted Peak",
     )
     plot_widget.addItem(curve)
     return curve
@@ -1012,4 +1131,270 @@ def weight_method_transport_rate(w_initial_g, w_final_g, w_waste_g, time_s):
         "sample_consumed_g": sample_consumed,
         "volume_to_plasma_g": volume_to_plasma,
         "status": "Success",
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Ionic-calibration regression  (shared by ionic_CAL & TE_mass)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def fit_zero(x, y):
+    """
+    Force-through-zero (FTZ) linear regression.
+
+    Finds the slope that minimises Σ(y - slope·x)² with intercept = 0.
+
+    Equation
+    --------
+    slope = Σ(x·y) / Σ(x²)               [ordinary least squares, no intercept]
+    R²    = 1 − Σ(y − ŷ)² / Σ(y²)        [denominator uses Σy² not Σ(y−ȳ)²
+                                            because the model passes through 0]
+
+    Args:
+        x (np.ndarray): Concentration values (base unit, e.g. ppb).
+        y (np.ndarray): Mean signal values (cps).
+
+    Returns:
+        dict with keys: slope, intercept (always 0), r_squared, y_fit.
+    """
+    slope = np.sum(x * y) / np.sum(x * x)
+    y_fit = slope * x
+    ss_res = np.sum((y - y_fit) ** 2)
+    ss_tot = np.sum(y ** 2)
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+    return {
+        "slope": slope,
+        "intercept": 0.0,
+        "r_squared": r_squared,
+        "y_fit": y_fit,
+    }
+
+
+def fit_simple(x, y):
+    """
+    Ordinary least squares (OLS) linear regression.
+
+    Finds slope and intercept that minimise Σ(y − slope·x − intercept)².
+
+    Equation
+    --------
+    [slope, intercept] = (XᵀX)⁻¹ Xᵀy   via np.linalg.lstsq
+    R²  = 1 − Σ(y − ŷ)² / Σ(y − ȳ)²
+
+    Args:
+        x (np.ndarray): Concentration values.
+        y (np.ndarray): Mean signal values (cps).
+
+    Returns:
+        dict with keys: slope, intercept, r_squared, y_fit.
+    """
+    A = np.vstack([x, np.ones(len(x))]).T
+    slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
+    y_fit = slope * x + intercept
+    ss_res = np.sum((y - y_fit) ** 2)
+    ss_tot = np.sum((y - np.mean(y)) ** 2)
+    r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+
+    return {
+        "slope": slope,
+        "intercept": intercept,
+        "r_squared": r_squared,
+        "y_fit": y_fit,
+    }
+
+
+def fit_weighted(x, y, y_std):
+    """
+    Weighted least squares (WLS) linear regression.
+
+    Points with lower variance receive higher weight, giving more influence
+    to the most precise measurements.
+
+    Equation
+    --------
+    wᵢ      = 1 / σᵢ²
+    slope   = (Σw · Σwxy − Σwx · Σwy) / (Σw · Σwx² − (Σwx)²)
+    intercept = (Σwx² · Σwy − Σwx · Σwxy) / (Σw · Σwx² − (Σwx)²)
+    R²_w    = 1 − Σwᵢ(yᵢ − ŷᵢ)² / Σwᵢ(yᵢ − ȳ)²
+
+    Falls back to OLS when the denominator is numerically zero (i.e. all
+    points have equal / zero variance).
+
+    Args:
+        x (np.ndarray): Concentration values.
+        y (np.ndarray): Mean signal values (cps).
+        y_std (np.ndarray): Standard deviations of the signal.
+
+    Returns:
+        dict with keys: slope, intercept, r_squared, y_fit.
+    """
+    weights = 1.0 / (y_std ** 2)
+    w_sum   = np.sum(weights)
+    wx_sum  = np.sum(weights * x)
+    wy_sum  = np.sum(weights * y)
+    wxx_sum = np.sum(weights * x * x)
+    wxy_sum = np.sum(weights * x * y)
+
+    denominator = w_sum * wxx_sum - wx_sum * wx_sum
+
+    if abs(denominator) > 1e-17:
+        slope     = (w_sum * wxy_sum - wx_sum * wy_sum) / denominator
+        intercept = (wxx_sum * wy_sum - wx_sum * wxy_sum) / denominator
+        y_fit     = slope * x + intercept
+        ss_res    = np.sum(weights * (y - y_fit) ** 2)
+        ss_tot    = np.sum(weights * (y - np.mean(y)) ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+    else:
+        ols = fit_simple(x, y)
+        slope, intercept, y_fit = ols["slope"], ols["intercept"], ols["y_fit"]
+        r_squared = ols["r_squared"]
+
+    return {
+        "slope": slope,
+        "intercept": intercept,
+        "r_squared": r_squared,
+        "y_fit": y_fit,
+    }
+
+
+def compute_figures_of_merit(slope, intercept, sigma_blank):
+    """
+    Compute analytical figures of merit from regression results.
+
+    Equations (IUPAC / Miller & Miller convention)
+    -----------------------------------------------
+    LOD = 3 · σ_blank / slope      [3-sigma limit of detection]
+    LOQ = 10 · σ_blank / slope     [10-sigma limit of quantification]
+    BEC = intercept / slope         [blank-equivalent concentration]
+            (= LOD for FTZ, where intercept ≡ 0)
+
+    All values are in the *base unit* (ppb by default) and are converted
+    to the display unit separately before being shown in the UI.
+
+    Args:
+        slope (float): Calibration slope (cps / base_unit).
+        intercept (float): Calibration intercept (cps).
+        sigma_blank (float): Standard deviation of signal at lowest
+            concentration standard (used as proxy for blank noise).
+
+    Returns:
+        dict with keys: lod, loq, bec.
+            Values are np.nan when slope == 0.
+    """
+    if slope == 0:
+        return {"lod": np.nan, "loq": np.nan, "bec": np.nan}
+
+    lod = (3.0  * sigma_blank) / slope
+    loq = (10.0 * sigma_blank) / slope
+    bec = intercept / slope
+
+    return {"lod": lod, "loq": loq, "bec": bec}
+
+
+def run_all_fits_on_subset(x, y, y_std, included_mask, density):
+    """
+    Run the three calibration fits on the subset of points selected by
+    ``included_mask`` and return the full result record for one isotope.
+
+    Fits use only the included points, but ``y_fit`` is evaluated at
+    every original x so the residuals subplot can show the distance
+    between every point (included or not) and the fit line.
+
+    Args:
+        x, y, y_std: parallel 1-D numpy arrays (all points).
+        included_mask: bool array same shape as x. True = use in fit.
+        density: element density for the results record.
+
+    Returns:
+        dict or None. ``None`` when fewer than 2 included points remain.
+    """
+    if int(np.sum(included_mask)) < 2:
+        return None
+
+    xi = x[included_mask]
+    yi = y[included_mask]
+    si = y_std[included_mask]
+
+    sigma_blank = float(si[int(np.argmin(xi))])
+
+    f_zero     = fit_zero(xi, yi)
+    f_simple   = fit_simple(xi, yi)
+    f_weighted = fit_weighted(xi, yi, si)
+
+    def eval_line(slope, intercept):
+        return (slope * x + intercept).tolist()
+
+    y_fit_zero     = eval_line(f_zero["slope"],     0.0)
+    y_fit_simple   = eval_line(f_simple["slope"],   f_simple["intercept"])
+    y_fit_weighted = eval_line(f_weighted["slope"], f_weighted["intercept"])
+
+    fom_zero     = compute_figures_of_merit(
+        f_zero["slope"],     0.0,                     sigma_blank)
+    fom_simple   = compute_figures_of_merit(
+        f_simple["slope"],   f_simple["intercept"],   sigma_blank)
+    fom_weighted = compute_figures_of_merit(
+        f_weighted["slope"], f_weighted["intercept"], sigma_blank)
+
+    return {
+        'zero': {
+            'slope':     f_zero["slope"],
+            'intercept': 0.0,
+            'r_squared': f_zero["r_squared"],
+            'y_fit':     y_fit_zero,
+            **fom_zero,
+        },
+        'simple': {
+            'slope':     f_simple["slope"],
+            'intercept': f_simple["intercept"],
+            'r_squared': f_simple["r_squared"],
+            'y_fit':     y_fit_simple,
+            **fom_simple,
+        },
+        'weighted': {
+            'slope':     f_weighted["slope"],
+            'intercept': f_weighted["intercept"],
+            'r_squared': f_weighted["r_squared"],
+            'y_fit':     y_fit_weighted,
+            **fom_weighted,
+        },
+        'x':       x.tolist(),
+        'y':       y.tolist(),
+        'y_std':   y_std.tolist(),
+        'density': density,
+    }
+
+
+def compute_outlier_indices(y, y_fit, included_mask, z_threshold=1.5):
+    """Flag included points whose standardized residual exceeds ``z_threshold``.
+
+    Standardization uses the sample standard deviation of the *included*
+    residuals (ddof=1). With too few points the flag is disabled.
+
+    Args:
+        y (array-like): Measured signal values.
+        y_fit (array-like): Fitted signal values, evaluated at every point.
+        included_mask (array-like): Bool mask, True where the point is in the fit.
+        z_threshold (float): Standardized-residual cut-off.
+
+    Returns:
+        set[int]: indices into the full ``y`` array.
+    """
+    y = np.asarray(y, dtype=float)
+    y_fit = np.asarray(y_fit, dtype=float)
+    if y.shape != y_fit.shape or len(y) == 0:
+        return set()
+
+    included_idx = [i for i, m in enumerate(included_mask) if m]
+    if len(included_idx) < 4:
+        return set()
+
+    residuals = y - y_fit
+    s = float(np.std(residuals[included_idx], ddof=1))
+    if not np.isfinite(s) or s <= 0:
+        return set()
+
+    return {
+        i for i in included_idx
+        if abs(residuals[i] / s) > z_threshold
     }

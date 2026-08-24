@@ -1,4 +1,5 @@
 from PySide6.QtWidgets import (
+    QListView, QListWidget, QListWidgetItem, QMessageBox,
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QFrame, QTextEdit, QProgressBar, QComboBox, QScrollArea, QWidget,
     QDialogButtonBox, QFileDialog, QSizePolicy, QCheckBox, QTableWidget, QTableWidgetItem,
@@ -8,23 +9,623 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QObject, Signal, QPointF, QThread, QTimer, Qt
 from PySide6.QtGui import QPixmap, QFont, QCursor, QColor, QKeySequence
 import requests, io, re, json, time, math, threading, base64, os, uuid, ast, traceback
+import shutil, subprocess, sys, glob
 from collections import Counter, defaultdict
 import numpy as np
 from tools.theme import theme as global_theme
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_AI")
 
-OLLAMA_BASE = "http://localhost:11434"
+OLLAMA_BASE = "http://127.0.0.1:11434"
 OLLAMA_CHAT = f"{OLLAMA_BASE}/api/chat"
 OLLAMA_TAGS = f"{OLLAMA_BASE}/api/tags"
 
-MLX_BASE    = "http://localhost:8080"
+MLX_BASE    = "http://127.0.0.1:8080"
 MLX_CHAT    = f"{MLX_BASE}/v1/chat/completions"
 MLX_MODELS  = f"{MLX_BASE}/v1/models"
 
 CODE_EXEC_TIMEOUT      = 30
 CHARS_PER_TOKEN        = 3.5
 STREAM_RENDER_INTERVAL = 80
+
+PROBE_TIMEOUT   = 4.0
+PROBE_ATTEMPTS  = 3
+PROBE_RETRY_GAP = 2.0
+
+_LOCAL_HOST_ALIASES = ("localhost", "127.0.0.1", "[::1]", "::1", "0.0.0.0")
+
+
+def local_session():
+    """Return a requests session that ignores environment proxy settings.
+
+    Loopback servers such as Ollama and MLX are unreachable when a system or
+    corporate ``HTTP_PROXY`` is exported, because requests would otherwise send
+    the request to the proxy instead of the local port.
+
+    Returns:
+        requests.Session: Session with ``trust_env`` disabled and proxies off.
+    """
+    session = requests.Session()
+    session.trust_env = False
+    session.proxies = {}
+    return session
+
+
+def local_get(url, timeout=PROBE_TIMEOUT, headers=None):
+    """GET a local URL without going through any configured proxy.
+
+    Args:
+        url (str): Absolute URL to request.
+        timeout (float): Per-request timeout in seconds.
+        headers (dict): Optional extra request headers.
+
+    Returns:
+        requests.Response: The response object.
+    """
+    with local_session() as session:
+        return session.get(url, timeout=timeout, headers=headers)
+
+
+def host_variants(base_url):
+    """Yield the loopback spellings worth trying for a local server URL.
+
+    macOS resolves ``localhost`` to ``::1`` first while Ollama and MLX bind to
+    ``127.0.0.1`` only, so a single spelling is not enough to decide the server
+    is down.
+
+    Args:
+        base_url (str): Base URL such as ``http://localhost:8080``.
+
+    Returns:
+        list: Ordered, de-duplicated base URLs to probe.
+    """
+    base = (base_url or '').strip().rstrip('/')
+    if not base:
+        return []
+    variants = [base]
+    for alias in _LOCAL_HOST_ALIASES:
+        if f"//{alias}:" in base or base.endswith(f"//{alias}"):
+            for replacement in ("127.0.0.1", "localhost"):
+                candidate = base.replace(f"//{alias}", f"//{replacement}", 1)
+                if candidate not in variants:
+                    variants.append(candidate)
+            break
+    return variants
+
+
+def style_combo_popup(combo):
+    """Make a combo box drop-down readable inside themed dialogs.
+
+    On macOS the popup is a separate top-level window, so the dialog-scoped
+    theme rules do not always reach it and the list renders as an empty panel
+    with invisible rows. Giving the combo an explicit list view and styling that
+    view directly guarantees visible, clickable items.
+
+    Args:
+        combo (QComboBox): Combo box to fix.
+
+    Returns:
+        QComboBox: The same combo, for chaining.
+    """
+    try:
+        view = QListView()
+        combo.setView(view)
+        combo.setMaxVisibleItems(12)
+        view.setStyleSheet(
+            f"QListView{{background:{Theme.c('surface')};"
+            f"color:{Theme.c('text')};"
+            f"border:1px solid {Theme.c('border')};outline:0;}}"
+            f"QListView::item{{min-height:24px;padding:4px 8px;"
+            f"color:{Theme.c('text')};background:{Theme.c('surface')};}}"
+            f"QListView::item:selected,QListView::item:hover{{"
+            f"background:{Theme.c('accent_surface')};color:{Theme.c('text')};}}")
+    except Exception:
+        _itk_log.exception("Handled exception in style_combo_popup")
+    return combo
+
+
+def style_model_list(widget):
+    """Style an always-visible model list so rows stay readable and clickable.
+
+    A plain list avoids the macOS combo-box popup, which renders as an empty
+    panel inside themed dialogs and makes the entries impossible to pick.
+
+    Args:
+        widget (QListWidget): List to style.
+
+    Returns:
+        QListWidget: The same widget, for chaining.
+    """
+    try:
+        widget.setMinimumHeight(110)
+        widget.setMaximumHeight(190)
+        widget.setAlternatingRowColors(False)
+        widget.setStyleSheet(
+            f"QListWidget{{background:{Theme.c('surface')};"
+            f"color:{Theme.c('text')};"
+            f"border:1px solid {Theme.c('border')};border-radius:6px;outline:0;}}"
+            f"QListWidget::item{{min-height:26px;padding:4px 8px;"
+            f"color:{Theme.c('text')};}}"
+            f"QListWidget::item:hover{{background:{Theme.c('surface_hover')};}}"
+            f"QListWidget::item:selected{{background:{Theme.c('accent')};"
+            f"color:#FFFFFF;}}")
+    except Exception:
+        _itk_log.exception("Handled exception in style_model_list")
+    return widget
+
+
+def fetch_ollama_model_context(model, base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT):
+    """Ask Ollama how large a context window a model actually supports.
+
+    Args:
+        model (str): Installed model name, e.g. ``qwen3.8:latest``.
+        base_url (str): Ollama base URL.
+        timeout (float): Request timeout in seconds.
+
+    Returns:
+        int: Context length in tokens, or 0 when it cannot be determined.
+    """
+    if not model:
+        return 0
+    for base in host_variants(base_url):
+        try:
+            with local_session() as session:
+                r = session.post(f"{base}/api/show", json={"model": model},
+                                 timeout=timeout)
+        except Exception:
+            continue
+        if r.status_code != 200:
+            continue
+        try:
+            info = (r.json() or {}).get('model_info') or {}
+        except ValueError:
+            continue
+        for key, value in info.items():
+            if key.endswith('.context_length'):
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    continue
+    return 0
+
+
+_LAUNCHED_SERVERS = []
+
+
+def register_launched_server(proc):
+    """Track a model server this app started so it can be stopped on exit.
+
+    Args:
+        proc (subprocess.Popen): Running server process.
+    """
+    if proc is not None:
+        _LAUNCHED_SERVERS.append(proc)
+
+
+def shutdown_launched_servers(timeout=6):
+    """Stop every model server this app started.
+
+    Servers the user launched themselves are left untouched, since the app does
+    not own them. A terminate is tried first so the model unloads cleanly, then
+    a kill if the process ignores it.
+
+    Args:
+        timeout (float): Seconds to wait for a clean exit before killing.
+
+    Returns:
+        int: Number of processes that were still running and got stopped.
+    """
+    stopped = 0
+    while _LAUNCHED_SERVERS:
+        proc = _LAUNCHED_SERVERS.pop()
+        try:
+            if proc.poll() is not None:
+                continue
+            proc.terminate()
+            stopped += 1
+            try:
+                proc.wait(timeout=timeout)
+            except Exception:
+                proc.kill()
+        except Exception:
+            _itk_log.exception("Handled exception stopping a launched server")
+    if stopped:
+        _itk_log.info("Stopped %d model server(s) started by the app", stopped)
+    return stopped
+
+
+def install_server_shutdown_hooks():
+    """Register app-exit hooks that stop servers this app started."""
+    try:
+        import atexit
+        atexit.register(shutdown_launched_servers)
+    except Exception:
+        _itk_log.exception("Handled exception registering atexit hook")
+    try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None and not getattr(app, '_itk_ai_shutdown_hooked', False):
+            app.aboutToQuit.connect(shutdown_launched_servers)
+            app._itk_ai_shutdown_hooked = True
+    except Exception:
+        _itk_log.exception("Handled exception connecting aboutToQuit hook")
+
+
+def unload_ollama_model(model, base_url=OLLAMA_BASE, timeout=10):
+    """Ask Ollama to drop a model from memory immediately.
+
+    Ollama keeps a model resident for several minutes after the last request.
+    Sending an empty generate call with ``keep_alive`` set to zero evicts it and
+    frees the RAM straight away.
+
+    Args:
+        model (str): Model name to unload.
+        base_url (str): Ollama base URL.
+        timeout (float): Request timeout in seconds.
+
+    Returns:
+        bool: True when the server accepted the unload.
+    """
+    if not model:
+        return False
+    for base in host_variants(base_url):
+        try:
+            with local_session() as session:
+                r = session.post(f"{base}/api/generate",
+                                 json={"model": model, "keep_alive": 0},
+                                 timeout=timeout)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def pids_listening_on(port):
+    """Return the process ids listening on a TCP port.
+
+    Args:
+        port (int): TCP port number.
+
+    Returns:
+        list: Integer process ids, empty when none are found or lsof is absent.
+    """
+    lsof = shutil.which('lsof')
+    if not lsof:
+        return []
+    try:
+        out = subprocess.run([lsof, '-ti', f'tcp:{int(port)}', '-sTCP:LISTEN'],
+                             capture_output=True, text=True, timeout=6)
+    except Exception:
+        _itk_log.exception("Handled exception in pids_listening_on")
+        return []
+    pids = []
+    for line in (out.stdout or '').split():
+        try:
+            pids.append(int(line))
+        except ValueError:
+            continue
+    return pids
+
+
+def port_of(url, default=8080):
+    """Extract the TCP port from a base URL.
+
+    Args:
+        url (str): URL such as ``http://127.0.0.1:8080``.
+        default (int): Value to return when no port is present.
+
+    Returns:
+        int: Port number.
+    """
+    try:
+        return int((url or '').rstrip('/').rsplit(':', 1)[-1].split('/')[0])
+    except (ValueError, AttributeError):
+        return default
+
+
+def terminate_pids(pids, timeout=6):
+    """Terminate processes by id, escalating to kill when they do not exit.
+
+    Args:
+        pids (list): Process ids to stop.
+        timeout (float): Seconds to wait before escalating.
+
+    Returns:
+        int: Number of processes that were signalled.
+    """
+    import signal
+    stopped = 0
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            stopped += 1
+        except Exception:
+            _itk_log.exception("Handled exception terminating pid %s", pid)
+    deadline = time.monotonic() + timeout
+    for pid in pids:
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.2)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except Exception:
+                _itk_log.exception("Handled exception killing pid %s", pid)
+    return stopped
+
+
+_RETIRED_THREADS = []
+
+
+def park_thread(thread):
+    """Hold a reference to a thread until Qt reports it finished.
+
+    Clearing the last reference to a QThread that is still running aborts the
+    process, and a worker is usually still inside ``run()`` at the moment its
+    completion signal reaches the GUI. Parking is cheap and never blocks.
+
+    Args:
+        thread (QThread): Thread to keep alive until it finishes.
+    """
+    if thread is None:
+        return
+    try:
+        if thread.isFinished():
+            return
+        _RETIRED_THREADS.append(thread)
+        thread.finished.connect(lambda t=thread: _unpark_thread(t))
+    except Exception:
+        _itk_log.exception("Handled exception parking a thread")
+
+
+def _unpark_thread(thread):
+    """Drop a parked thread once it has finished running."""
+    try:
+        _RETIRED_THREADS.remove(thread)
+    except ValueError:
+        pass
+
+
+def retire_thread(thread, grace=8000):
+    """Stop a QThread and keep it alive until it has really finished.
+
+    Letting a still-running QThread be garbage collected aborts the process
+    ("QThread: Destroyed while thread is still running"), so a thread that
+    outlives its grace period is parked in a module-level list rather than
+    dropped, and cleaned up once it reports finished.
+
+    Args:
+        thread (QThread): Thread to stop.
+        grace (int): Milliseconds to wait for a clean exit.
+
+    Returns:
+        bool: True when the thread finished within the grace period.
+    """
+    if thread is None:
+        return True
+    try:
+        if hasattr(thread, 'stop'):
+            thread.stop()
+        thread.requestInterruption()
+    except Exception:
+        _itk_log.exception("Handled exception while asking a thread to stop")
+    try:
+        if thread.wait(grace):
+            return True
+    except Exception:
+        _itk_log.exception("Handled exception waiting for a thread")
+        return False
+    _itk_log.warning("Thread %s did not stop within %d ms — parking it",
+                     type(thread).__name__, grace)
+    _RETIRED_THREADS.append(thread)
+    for parked in list(_RETIRED_THREADS):
+        try:
+            if parked.isFinished():
+                _RETIRED_THREADS.remove(parked)
+        except Exception:
+            _RETIRED_THREADS.remove(parked)
+    return False
+
+
+def hf_cache_roots():
+    """Return the Hugging Face cache directories that exist on this machine.
+
+    Honours ``HF_HUB_CACHE``, ``HUGGINGFACE_HUB_CACHE`` and ``HF_HOME`` before
+    falling back to the default ``~/.cache/huggingface/hub``.
+
+    Returns:
+        list: Existing cache directory paths, de-duplicated.
+    """
+    candidates = []
+    for var in ('HF_HUB_CACHE', 'HUGGINGFACE_HUB_CACHE'):
+        value = os.environ.get(var)
+        if value:
+            candidates.append(value)
+    hf_home = os.environ.get('HF_HOME')
+    if hf_home:
+        candidates.append(os.path.join(hf_home, 'hub'))
+    candidates.append(os.path.expanduser('~/.cache/huggingface/hub'))
+    candidates.append(os.path.expanduser('~/.cache/mlx-lm'))
+
+    roots = []
+    for path in candidates:
+        full = os.path.abspath(os.path.expanduser(path))
+        if full not in roots and os.path.isdir(full):
+            roots.append(full)
+    return roots
+
+
+def discover_cached_mlx_models():
+    """Find MLX-ready models already downloaded into the local model cache.
+
+    A repository counts as usable when one of its snapshots holds a
+    ``config.json`` together with model weights, which is what
+    ``mlx_lm.server --model <repo-id>`` needs to start without downloading.
+
+    Returns:
+        list: Hugging Face repo ids, MLX community models first.
+    """
+    found = set()
+    for root in hf_cache_roots():
+        for entry in glob.glob(os.path.join(root, 'models--*')):
+            if not os.path.isdir(entry):
+                continue
+            repo = os.path.basename(entry)[len('models--'):].replace('--', '/')
+            snapshots = os.path.join(entry, 'snapshots')
+            if not os.path.isdir(snapshots):
+                continue
+            for snap in glob.glob(os.path.join(snapshots, '*')):
+                has_config = os.path.exists(os.path.join(snap, 'config.json'))
+                has_weights = bool(glob.glob(os.path.join(snap, '*.safetensors'))
+                                   or glob.glob(os.path.join(snap, '*.npz')))
+                if has_config and has_weights:
+                    found.add(repo)
+                    break
+    return sorted(found, key=lambda r: (not r.lower().startswith('mlx-community/'),
+                                        r.lower()))
+
+
+def mlx_server_command(model, port):
+    """Build the command that starts an MLX server for a model.
+
+    Prefers the ``mlx_lm.server`` console script and falls back to running the
+    module with the interpreter that is currently executing the application.
+
+    Args:
+        model (str): Hugging Face repo id or local model path.
+        port (int): TCP port to bind.
+
+    Returns:
+        list: Argument vector for ``subprocess.Popen``, or an empty list when
+        mlx_lm is not installed for this interpreter.
+    """
+    script = shutil.which('mlx_lm.server')
+    if script:
+        return [script, '--model', model, '--port', str(port)]
+    try:
+        import importlib.util
+        if importlib.util.find_spec('mlx_lm') is None:
+            return []
+    except Exception:
+        _itk_log.exception("Handled exception in mlx_server_command")
+        return []
+    return [sys.executable, '-m', 'mlx_lm.server', '--model', model,
+            '--port', str(port)]
+
+
+def discover_local_models(mlx_host=MLX_BASE):
+    """Collect every model this machine can serve without further setup.
+
+    Returns:
+        list: Entries of ``{'backend', 'model', 'label', 'ready'}`` where
+        ``ready`` marks models a server is already serving, as opposed to
+        models that are cached on disk but need a server started.
+    """
+    entries = []
+    try:
+        for name in fetch_ollama_models()[0]:
+            entries.append({'backend': 'ollama', 'model': name,
+                            'label': f"Ollama · {name}", 'ready': True})
+    except Exception:
+        _itk_log.exception("Handled exception collecting Ollama models")
+    try:
+        for model_id in fetch_openai_models(mlx_host)[0]:
+            entries.append({'backend': 'mlx', 'model': model_id,
+                            'label': f"MLX (running) · {model_id.split('/')[-1]}",
+                            'ready': True})
+    except Exception:
+        _itk_log.exception("Handled exception collecting MLX server models")
+    served = {e['model'] for e in entries if e['backend'] == 'mlx'}
+    for repo in discover_cached_mlx_models():
+        if repo in served:
+            continue
+        entries.append({'backend': 'mlx', 'model': repo,
+                        'label': f"MLX (cached) · {repo}", 'ready': False})
+    return entries
+
+
+def fetch_ollama_models(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT):
+    """List the models installed in a running Ollama server.
+
+    Args:
+        base_url (str): Ollama base URL.
+        timeout (float): Per-request timeout in seconds.
+
+    Returns:
+        tuple: ``(models, reachable, detail)`` where ``models`` is a sorted list
+        of model names, ``reachable`` says whether any loopback spelling
+        answered, and ``detail`` is a short status string for the UI.
+    """
+    reachable = False
+    detail = ''
+    for base in host_variants(base_url):
+        try:
+            r = local_get(f"{base}/api/tags", timeout=timeout)
+        except Exception:
+            continue
+        reachable = True
+        if r.status_code != 200:
+            detail = f"HTTP {r.status_code}"
+            continue
+        try:
+            payload = r.json()
+        except ValueError:
+            detail = "unreadable response"
+            continue
+        names = []
+        for entry in payload.get('models', []) or []:
+            name = entry.get('name') or entry.get('model') or ''
+            if name:
+                names.append(name)
+        if names:
+            return sorted(set(names)), True, ''
+        detail = "no models installed"
+    return [], reachable, detail
+
+
+def fetch_openai_models(base_url, timeout=PROBE_TIMEOUT, api_key=''):
+    """List models advertised by an OpenAI-compatible ``/v1/models`` endpoint.
+
+    Args:
+        base_url (str): Server base URL, with or without a ``/v1`` suffix.
+        timeout (float): Per-request timeout in seconds.
+        api_key (str): Optional bearer token.
+
+    Returns:
+        tuple: ``(models, reachable, detail)`` mirroring ``fetch_ollama_models``.
+    """
+    reachable = False
+    detail = ''
+    headers = {'Content-Type': 'application/json'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    for base in host_variants(base_url):
+        url = base if base.rstrip('/').endswith('/v1') else f"{base}/v1"
+        try:
+            r = local_get(f"{url}/models", timeout=timeout, headers=headers)
+        except Exception:
+            continue
+        reachable = True
+        if r.status_code in (401, 403):
+            detail = "auth failed"
+            continue
+        if r.status_code != 200:
+            detail = f"HTTP {r.status_code}"
+            continue
+        try:
+            payload = r.json()
+        except ValueError:
+            detail = "unreadable response"
+            continue
+        ids = [m.get('id', '') for m in payload.get('data', []) or [] if m.get('id')]
+        if ids:
+            return ids, True, ''
+        detail = "no models listed"
+    return [], reachable, detail
 
 
 # ── Theme ────────────────────────────────────────────────────────────────────
@@ -946,6 +1547,7 @@ class StreamWorker(QThread):
     stream_done     = Signal(str)
     error_occurred  = Signal(str)
     stats_update    = Signal(int, float)
+    usage_update    = Signal(int, int)
 
     def __init__(self, backend, msgs, sys_prompt, config, attachments=None):
         super().__init__()
@@ -1016,7 +1618,7 @@ class StreamWorker(QThread):
         try:
             base_msgs = [{"role": "system", "content": self.sys}] + self.msgs
             messages  = self._inject_attachments(base_msgs)
-            self._resp = requests.post(OLLAMA_CHAT, json={
+            self._resp = local_session().post(OLLAMA_CHAT, json={
                 "model":   self.cfg.get('model', ''),
                 "messages": messages,
                 "stream":  True,
@@ -1037,9 +1639,25 @@ class StreamWorker(QThread):
             _itk_log.exception("Handled exception in _run_ollama")
             if not self._cancelled.is_set(): self.error_occurred.emit(str(e))
 
+    def _iter_stream_lines(self):
+        """Yield response lines, absorbing the teardown that Stop causes.
+
+        Stop closes the streaming response from the GUI thread while this
+        thread is mid-read, which surfaces from urllib3 as an assortment of
+        errors on a socket that no longer exists. Those are expected once
+        cancellation is set and must not reach the user as a failure.
+        """
+        try:
+            for line in self._resp.iter_lines(decode_unicode=True):
+                yield line
+        except Exception:
+            if not self._cancelled.is_set():
+                raise
+            _itk_log.info("Stream closed while stopping — ignoring teardown error")
+
     def _stream_ndjson(self):
         full = []; tc = 0; t0 = time.monotonic()
-        for line in self._resp.iter_lines(decode_unicode=True):
+        for line in self._iter_stream_lines():
             if self._cancelled.is_set(): break
             if not line: continue
             try: chunk = json.loads(line)
@@ -1049,7 +1667,10 @@ class StreamWorker(QThread):
             content = chunk.get('message', {}).get('content', '')
             if content: full.append(content); tc += 1; self.token_received.emit(content)
             if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
-            if chunk.get('done', False): break
+            if chunk.get('done', False):
+                self.usage_update.emit(int(chunk.get('prompt_eval_count', 0) or 0),
+                                       int(chunk.get('eval_count', 0) or 0))
+                break
         self._finish(full, tc, t0)
 
     # ── MLX (OpenAI-compatible) ──────────────────────────────────────────────
@@ -1059,12 +1680,30 @@ class StreamWorker(QThread):
             host = self.cfg.get('mlx_host', MLX_BASE).rstrip('/')
             base_msgs = [{"role": "system", "content": self.sys}] + self.msgs
             messages  = self._inject_attachments_openai(base_msgs)
-            self._resp = requests.post(f"{host}/v1/chat/completions", json={
+            model = self.cfg.get('model', '')
+            ids, reachable, _ = fetch_openai_models(host, timeout=4)
+            if reachable and ids and model not in ids:
+                _itk_log.info("MLX model %r not served; using %r instead", model, ids[0])
+                model = ids[0]
+            elif not model and ids:
+                model = ids[0]
+            payload = {
                 "messages":    messages,
                 "stream":      True,
+                "stream_options": {"include_usage": True},
                 "temperature": self.cfg.get('temperature', 0.2),
                 "max_tokens":  4096,
-            }, timeout=300, stream=True)
+            }
+            if model:
+                payload['model'] = model
+            self._resp = local_session().post(
+                f"{host}/v1/chat/completions", json=payload, timeout=300, stream=True)
+            if self._resp.status_code == 404:
+                self.error_occurred.emit(
+                    "MLX HTTP 404 — the server did not recognise the model id "
+                    f"'{model or 'none sent'}'. Check the id listed by "
+                    f"{host}/v1/models and restart mlx_lm.server with that model.")
+                return
             if self._resp.status_code != 200:
                 self.error_occurred.emit(f"MLX HTTP {self._resp.status_code}"); return
             self._stream_sse()
@@ -1080,7 +1719,7 @@ class StreamWorker(QThread):
 
     def _stream_sse(self):
         full = []; tc = 0; t0 = time.monotonic()
-        for line in self._resp.iter_lines(decode_unicode=True):
+        for line in self._iter_stream_lines():
             if self._cancelled.is_set(): break
             if not line or not line.startswith('data: '): continue
             ds = line[6:]
@@ -1089,7 +1728,12 @@ class StreamWorker(QThread):
             except Exception:
                 _itk_log.exception("Handled exception in _stream_sse")
                 continue
-            content = ev.get('choices', [{}])[0].get('delta', {}).get('content', '')
+            usage = ev.get('usage') or {}
+            if usage:
+                self.usage_update.emit(int(usage.get('prompt_tokens', 0) or 0),
+                                       int(usage.get('completion_tokens', 0) or 0))
+            choices = ev.get('choices') or [{}]
+            content = choices[0].get('delta', {}).get('content', '') if choices else ''
             if content: full.append(content); tc += 1; self.token_received.emit(content)
             if tc % 10 == 0: self.stats_update.emit(tc, time.monotonic()-t0)
         self._finish(full, tc, t0)
@@ -1111,6 +1755,7 @@ class StreamWorker(QThread):
                 f"{base}/chat/completions",
                 headers=hdrs,
                 json={"model":model,"messages":messages,"stream":True,
+                      "stream_options":{"include_usage":True},
                       "temperature":self.cfg.get('temperature',0.2),"max_tokens":4096},
                 timeout=300, stream=True)
             if self._resp.status_code != 200:
@@ -1142,39 +1787,48 @@ class StreamWorker(QThread):
 # ── Auto-detect probe ─────────────────────────────────────────────────────────
 
 class ProbeWorker(QThread):
-    """Briefly probe localhost for a running model server so the assistant can
-    self-configure on first open — no need to visit settings. Ollama is checked
-    first, then MLX. Emits at most one signal."""
-    ready = Signal(str, str, str)     # backend, model, human-readable label
-    info  = Signal(str)               # non-fatal hint (e.g. server up, no models)
+    """Probe loopback for a running model server so the assistant can
+    self-configure on first open — no need to visit settings.
 
-    def __init__(self, mlx_host=MLX_BASE):
+    Ollama is checked first, then MLX, and both are retried a few times because
+    a server that is still loading its model list refuses connections for the
+    first second or two after launch. Emits at most one ``ready`` signal.
+    """
+    ready = Signal(str, str, str)
+    info  = Signal(str)
+
+    def __init__(self, mlx_host=MLX_BASE, attempts=PROBE_ATTEMPTS):
         super().__init__()
         self._mlx_host = (mlx_host or MLX_BASE).rstrip('/')
+        self._attempts = max(1, int(attempts))
+        self._stop = threading.Event()
+
+    def stop(self):
+        """Ask the probe loop to end before its next retry."""
+        self._stop.set()
 
     def run(self):
         ollama_up_empty = False
-        try:
-            r = requests.get(OLLAMA_TAGS, timeout=1.5)
-            if r.status_code == 200:
-                models = sorted(m.get('name', '')
-                                for m in r.json().get('models', []) if m.get('name'))
-                if models:
-                    self.ready.emit('ollama', models[0], f"Ollama · {models[0]}")
-                    return
-                ollama_up_empty = True
-        except Exception:
-            pass    # server not running — expected, keep probing
-        try:
-            r = requests.get(f"{self._mlx_host}/v1/models", timeout=1.5)
-            if r.status_code == 200:
-                ids = [m.get('id', '') for m in r.json().get('data', []) if m.get('id')]
+        for attempt in range(self._attempts):
+            if self._stop.is_set():
+                return
+            models, reachable, _ = fetch_ollama_models()
+            if models:
+                self.ready.emit('ollama', models[0], f"Ollama · {models[0]}")
+                return
+            ollama_up_empty = ollama_up_empty or reachable
+
+            ids, mlx_reachable, _ = fetch_openai_models(self._mlx_host)
+            if mlx_reachable:
                 model = ids[0] if ids else ''
                 label = (model.split('/')[-1] if model else 'loaded model')
                 self.ready.emit('mlx', model, f"MLX · {label}")
                 return
-        except Exception:
-            pass
+
+            if attempt < self._attempts - 1 and not self._stop.wait(PROBE_RETRY_GAP):
+                continue
+            break
+
         if ollama_up_empty:
             self.info.emit("Ollama is running but has no models — run: ollama pull llama3.1")
 
@@ -1186,10 +1840,14 @@ class BackendDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("AI Backend Settings"); self.setMinimumWidth(520)
         self._cfg = dict(current_cfg)
+        self._ctx = None
+        self._ctx_note = None
+        self._model = None
+        self._mlx_model_combo = None
         lo = QVBoxLayout(self); lo.setSpacing(12)
 
         hl = QHBoxLayout(); hl.addWidget(QLabel("Backend:"))
-        self._backend = QComboBox()
+        self._backend = style_combo_popup(QComboBox())
         self._backend.addItems(["Ollama (local)", "MLX (local)", "Custom API"])
         if current_cfg.get('backend') == 'mlx': self._backend.setCurrentIndex(1)
         elif current_cfg.get('backend') == 'custom': self._backend.setCurrentIndex(2)
@@ -1200,29 +1858,59 @@ class BackendDialog(QDialog):
         self._ollama_frame = QFrame()
         of = QVBoxLayout(self._ollama_frame); of.setContentsMargins(0,0,0,0); of.setSpacing(8)
         mh = QHBoxLayout()
-        mh.addWidget(QLabel("Model:"))
-        self._model = QComboBox(); self._model.setEditable(True); self._model.setMinimumWidth(260)
-        cur = current_cfg.get('model', '')
-        if cur: self._model.addItem(cur); self._model.setCurrentText(cur)
-        mh.addWidget(self._model, stretch=1)
+        mh.addWidget(QLabel("Installed models — click one to select:"))
+        mh.addStretch()
         rb = QPushButton("↻"); rb.setFixedWidth(32); rb.setToolTip("Refresh model list")
         rb.clicked.connect(self._fetch_ollama_models); mh.addWidget(rb)
         of.addLayout(mh)
+        self._model = style_model_list(QListWidget())
+        self._model.itemDoubleClicked.connect(lambda _: self.accept())
+        self._model.currentItemChanged.connect(lambda *_: self._apply_model_context())
+        of.addWidget(self._model)
+        cur = current_cfg.get('model', '')
+        if cur:
+            item = QListWidgetItem(cur)
+            item.setData(Qt.UserRole, cur)
+            self._model.addItem(item)
+            self._model.setCurrentRow(0)
         self._ollama_status = QLabel(""); of.addWidget(self._ollama_status)
         lo.addWidget(self._ollama_frame)
 
         # ── MLX frame ────────────────────────────────────────────────────────
         self._mlx_frame = QFrame()
         mf = QVBoxLayout(self._mlx_frame); mf.setContentsMargins(0,0,0,0); mf.setSpacing(8)
-        info = QLabel("Start the server before connecting:\n"
-                       "  mlx_lm.server --model <model-path> --port 8080")
+        info = QLabel("Models already downloaded on this machine are listed below. "
+                      "Pick one and press Start server if it is not running yet.")
         info.setWordWrap(True); mf.addWidget(info)
+        mmh = QHBoxLayout()
+        mmh.addWidget(QLabel("Local models — click one to select:"))
+        mmh.addStretch()
+        mrb = QPushButton("↻"); mrb.setFixedWidth(32)
+        mrb.setToolTip("Rescan the local model cache")
+        mrb.clicked.connect(self._scan_mlx_models); mmh.addWidget(mrb)
+        mf.addLayout(mmh)
+        self._mlx_model_combo = style_model_list(QListWidget())
+        mf.addWidget(self._mlx_model_combo)
         ph = QHBoxLayout(); ph.addWidget(QLabel("Host:"))
         self._mlx_host = QLineEdit()
-        self._mlx_host.setText(current_cfg.get('mlx_host', 'http://localhost:8080'))
+        self._mlx_host.setText(current_cfg.get('mlx_host', MLX_BASE))
         ph.addWidget(self._mlx_host, stretch=1); mf.addLayout(ph)
-        mtb = QPushButton("Test connection"); mtb.clicked.connect(self._test_mlx); mf.addWidget(mtb)
-        self._mlx_status = QLabel(""); mf.addWidget(self._mlx_status)
+        bh = QHBoxLayout()
+        self._mlx_start_btn = QPushButton("Start server")
+        self._mlx_start_btn.clicked.connect(self._start_mlx_server)
+        bh.addWidget(self._mlx_start_btn)
+        mtb = QPushButton("Test connection"); mtb.clicked.connect(self._test_mlx)
+        bh.addWidget(mtb)
+        self._mlx_stop_btn = QPushButton("Stop server")
+        self._mlx_stop_btn.setToolTip("Unload the model and free its memory")
+        self._mlx_stop_btn.clicked.connect(self._stop_mlx_server)
+        bh.addWidget(self._mlx_stop_btn)
+        mf.addLayout(bh)
+        self._mlx_status = QLabel(""); self._mlx_status.setWordWrap(True)
+        mf.addWidget(self._mlx_status)
+        self._mlx_model = current_cfg.get('model', '') if current_cfg.get('backend') == 'mlx' else ''
+        self._mlx_proc = None
+        self._mlx_wait_timer = None
         lo.addWidget(self._mlx_frame)
 
         # ── Custom API frame ──────────────────────────────────────────────────
@@ -1250,14 +1938,21 @@ class BackendDialog(QDialog):
         lo.addWidget(self._custom_frame)
 
         cl = QHBoxLayout(); cl.addWidget(QLabel("Context window (tokens):"))
-        self._ctx = QComboBox()
-        self._ctx.addItems(['4096','8192','16384','32768','65536'])
+        self._ctx = style_combo_popup(QComboBox())
+        self._ctx.setEditable(True)
+        self._ctx.addItems(['4096','8192','16384','32768','65536','131072'])
         self._ctx.setCurrentText(str(current_cfg.get('num_ctx', 8192)))
-        cl.addWidget(self._ctx); cl.addStretch(); lo.addLayout(cl)
+        self._ctx.setToolTip(
+            "Detected from the selected model when the server reports it. "
+            "Larger windows use more memory.")
+        cl.addWidget(self._ctx)
+        self._ctx_note = QLabel("")
+        cl.addWidget(self._ctx_note)
+        cl.addStretch(); lo.addLayout(cl)
 
         el = QHBoxLayout()
         el.addWidget(QLabel("Exploration depth (turns):"))
-        self._explore_turns = QComboBox()
+        self._explore_turns = style_combo_popup(QComboBox())
         self._explore_turns.addItems(['5','10','15','20','30'])
         self._explore_turns.setToolTip(
             "How many query→result cycles the model runs when you click Explore.\n"
@@ -1271,57 +1966,254 @@ class BackendDialog(QDialog):
 
         self._on_backend(self._backend.currentIndex())
         QTimer.singleShot(80, self._fetch_ollama_models)
+        QTimer.singleShot(120, self._scan_mlx_models)
+        QTimer.singleShot(160, self._apply_model_context)
 
     def _on_backend(self, idx):
         self._ollama_frame.setVisible(idx == 0)
         self._mlx_frame.setVisible(idx == 1)
         self._custom_frame.setVisible(idx == 2)
+        if idx == 0:
+            QTimer.singleShot(0, self._fetch_ollama_models)
+        elif idx == 1:
+            QTimer.singleShot(0, self._scan_mlx_models)
 
     def _fetch_ollama_models(self):
+        """Refresh the model combo from the running Ollama server."""
         if self._backend.currentIndex() != 0: return
         self._ollama_status.setText("Fetching installed models…")
+        QApplication.processEvents()
         try:
-            r = requests.get(OLLAMA_TAGS, timeout=5)
-            if r.status_code == 200:
-                models = sorted(m.get('name', '') for m in r.json().get('models', []))
-                if models:
-                    cur = self._model.currentText()
-                    self._model.clear(); self._model.addItems(models)
-                    if cur in models: self._model.setCurrentText(cur)
-                    else: self._model.setCurrentIndex(0)
-                    self._ollama_status.setText(f"✓ {len(models)} model(s) installed")
-                else:
-                    self._ollama_status.setText("⚠ No models found — run: ollama pull <model>")
+            models, reachable, detail = fetch_ollama_models(timeout=6)
+            if models:
+                cur = self._selected_ollama_model()
+                self._model.clear()
+                for name in models:
+                    item = QListWidgetItem(name)
+                    item.setData(Qt.UserRole, name)
+                    self._model.addItem(item)
+                self._model.setCurrentRow(models.index(cur) if cur in models else 0)
+                self._ollama_status.setText(f"✓ {len(models)} model(s) installed — "
+                                            f"selected: {self._selected_ollama_model()}")
+            elif reachable:
+                self._ollama_status.setText(
+                    f"⚠ Ollama reachable but {detail or 'no models found'} — run: ollama pull <model>")
             else:
-                self._ollama_status.setText(f"✗ Ollama returned HTTP {r.status_code}")
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            _itk_log.info("Ollama not reachable at %s — server not running.", OLLAMA_TAGS)
-            self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
+                _itk_log.info("Ollama not reachable at %s — server not running.", OLLAMA_TAGS)
+                self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
         except Exception:
             _itk_log.exception("Unexpected error fetching Ollama models")
             self._ollama_status.setText("✗ Cannot reach Ollama — run: ollama serve")
 
     def _test_mlx(self):
-        host = self._mlx_host.text().strip().rstrip('/')
+        """Check the MLX server and report the models it exposes."""
+        host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
         self._mlx_status.setText("Testing…")
+        QApplication.processEvents()
         try:
-            r = requests.get(f"{host}/v1/models", timeout=5)
-            if r.status_code == 200:
-                models = [m.get('id','') for m in r.json().get('data', [])]
-                self._mlx_status.setText(f"✓ Connected  —  {', '.join(models[:3]) or 'no models listed'}")
+            models, reachable, detail = fetch_openai_models(host, timeout=6)
+            if models:
+                self._mlx_model = models[0]
+                self._mlx_status.setText(f"✓ Connected  —  {', '.join(models[:3])}")
+            elif reachable:
+                self._mlx_status.setText(f"✓ Connected  —  {detail or 'no models listed'}")
             else:
-                self._mlx_status.setText(f"✗ HTTP {r.status_code}")
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            _itk_log.info("MLX not reachable at %s — server not running.", host)
-            self._mlx_status.setText("✗ Cannot reach MLX — start: mlx_lm.server --port 8080")
+                _itk_log.info("MLX not reachable at %s — server not running.", host)
+                self._mlx_status.setText("✗ Cannot reach MLX — start: mlx_lm.server --port 8080")
         except Exception as e:
             _itk_log.exception("Unexpected error testing MLX")
             self._mlx_status.setText(f"✗ {e}")
 
+    def _scan_mlx_models(self):
+        """Fill the MLX model list from the running server and the local cache."""
+        if self._mlx_model_combo is None:
+            return
+        host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
+        current = self._selected_mlx_model() or self._mlx_model
+        entries = [e for e in discover_local_models(host) if e['backend'] == 'mlx']
+        self._mlx_model_combo.clear()
+        for entry in entries:
+            item = QListWidgetItem(entry['label'])
+            item.setData(Qt.UserRole, entry['model'])
+            self._mlx_model_combo.addItem(item)
+        if entries:
+            ids = [e['model'] for e in entries]
+            self._mlx_model_combo.setCurrentRow(
+                ids.index(current) if current in ids else 0)
+        running = [e for e in entries if e['ready']]
+        if running:
+            self._mlx_model = running[0]['model']
+            self._mlx_status.setText(f"✓ Server running — {running[0]['model']}")
+        elif entries:
+            self._mlx_status.setText(
+                f"Found {len(entries)} cached model(s) — press Start server to load one")
+        else:
+            self._mlx_status.setText(
+                "No local models found — download one, e.g. "
+                "huggingface-cli download mlx-community/<model>")
+
+    def _selected_mlx_model(self):
+        """Return the model id chosen in the MLX list.
+
+        Rows show friendly labels such as ``MLX (running) · Qwen3-4bit`` while
+        the real repo id lives in the item data, so the label is never sent to
+        the server as an id.
+
+        Returns:
+            str: Repo id or local path.
+        """
+        if self._mlx_model_combo is None:
+            return ''
+        item = self._mlx_model_combo.currentItem()
+        if item is None:
+            return ''
+        return str(item.data(Qt.UserRole) or '')
+
+    def _start_mlx_server(self):
+        """Launch mlx_lm.server for the selected model and wait for it to answer."""
+        model = self._selected_mlx_model()
+        if not model:
+            self._mlx_status.setText("✗ Pick a model first")
+            return
+        host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
+        if fetch_openai_models(host, timeout=2)[1]:
+            self._mlx_status.setText("✓ A server is already running on this host")
+            self._scan_mlx_models()
+            return
+        try:
+            port = int(host.rsplit(':', 1)[-1].split('/')[0])
+        except ValueError:
+            port = 8080
+        cmd = mlx_server_command(model, port)
+        if not cmd:
+            self._mlx_status.setText(
+                "✗ mlx_lm is not installed for this Python — run: pip install mlx-lm")
+            return
+        try:
+            self._mlx_proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            register_launched_server(self._mlx_proc)
+            install_server_shutdown_hooks()
+        except Exception as e:
+            _itk_log.exception("Failed to launch mlx_lm.server")
+            self._mlx_status.setText(f"✗ Could not start server: {e}")
+            return
+        self._mlx_start_btn.setEnabled(False)
+        self._mlx_status.setText(f"Starting server for {model} — loading weights…")
+        self._mlx_wait_deadline = time.monotonic() + 180
+        self._mlx_wait_timer = QTimer(self)
+        self._mlx_wait_timer.timeout.connect(lambda: self._poll_mlx_server(model, host))
+        self._mlx_wait_timer.start(2000)
+
+    def _stop_mlx_server(self):
+        """Stop the MLX server and free the memory its weights occupy."""
+        if shutdown_launched_servers():
+            self._mlx_status.setText("✓ Server stopped — model unloaded")
+            QTimer.singleShot(600, self._scan_mlx_models)
+            return
+        host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
+        pids = pids_listening_on(port_of(host))
+        if not pids:
+            self._mlx_status.setText("No server is running on " + host)
+            return
+        answer = QMessageBox.question(
+            self, "Stop server",
+            f"A server this app did not start is running on {host} "
+            f"(pid {', '.join(str(p) for p in pids)}).\n\nStop it?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        terminate_pids(pids)
+        self._mlx_status.setText("✓ Server stopped — memory freed")
+        QTimer.singleShot(600, self._scan_mlx_models)
+
+    def _poll_mlx_server(self, model, host):
+        """Check whether the launched MLX server has finished loading."""
+        ids, reachable, _ = fetch_openai_models(host, timeout=2)
+        if reachable:
+            self._mlx_wait_timer.stop()
+            self._mlx_start_btn.setEnabled(True)
+            self._mlx_model = ids[0] if ids else model
+            self._mlx_status.setText(f"✓ Server ready — {self._mlx_model}")
+            self._scan_mlx_models()
+            return
+        if time.monotonic() > self._mlx_wait_deadline:
+            self._mlx_wait_timer.stop()
+            self._mlx_start_btn.setEnabled(True)
+            self._mlx_status.setText(
+                "✗ Server did not answer in time — large models can take several "
+                "minutes to load, press Test connection again later")
+
+    def _ctx_value(self):
+        """Return the context window as an integer, falling back to 8192.
+
+        Returns:
+            int: Token budget for the model context.
+        """
+        try:
+            return max(512, int(str(self._ctx.currentText()).strip()))
+        except (TypeError, ValueError):
+            return 8192
+
+    def _apply_model_context(self):
+        """Set the context window to what the selected Ollama model supports.
+
+        Runs on selection changes, including the one emitted while the dialog is
+        still being built, so it returns early until the widgets it needs exist.
+        """
+        if self._ctx is None or self._ctx_note is None:
+            return
+        if self._backend.currentIndex() != 0:
+            return
+        model = self._selected_ollama_model()
+        if not model:
+            return
+        length = fetch_ollama_model_context(model, timeout=3)
+        if not length:
+            self._ctx_note.setText("")
+            return
+        if self._ctx.findText(str(length)) < 0:
+            self._ctx.addItem(str(length))
+        self._ctx.setCurrentText(str(length))
+        self._ctx_note.setText(f"detected for {model}")
+
+    def _selected_ollama_model(self):
+        """Return the Ollama model name highlighted in the list.
+
+        Returns:
+            str: Model name, or an empty string when nothing is selected.
+        """
+        if self._model is None:
+            return ''
+        item = self._model.currentItem()
+        if item is None:
+            return ''
+        return str(item.data(Qt.UserRole) or item.text())
+
+    def _resolve_mlx_model(self):
+        """Ask the MLX server which model it has loaded.
+
+        mlx_lm.server answers /v1/chat/completions with HTTP 404 when the
+        request carries no model id, so the id has to be resolved before the
+        first chat request.
+
+        Returns:
+            str: Model id, or an empty string when the server cannot be reached.
+        """
+        host = self._mlx_host.text().strip().rstrip('/') or MLX_BASE
+        try:
+            models, _, _ = fetch_openai_models(host, timeout=4)
+        except Exception:
+            _itk_log.exception("Handled exception in _resolve_mlx_model")
+            return ''
+        return models[0] if models else ''
+
     def _test_custom(self):
+        """Check the custom OpenAI-compatible endpoint and prefill a model."""
         base = self._custom_url.text().strip().rstrip('/')
         key  = self._custom_key.text().strip()
         self._custom_status.setText("Testing…")
+        QApplication.processEvents()
         try:
             hdrs = {'Content-Type':'application/json'}
             if key: hdrs['Authorization'] = f'Bearer {key}'
@@ -1350,7 +2242,7 @@ class BackendDialog(QDialog):
         idx = self._backend.currentIndex()
         base = {
             'temperature': 0.2,
-            'num_ctx': int(self._ctx.currentText()),
+            'num_ctx': self._ctx_value(),
             'explore_max_turns': int(self._explore_turns.currentText()),
             'mlx_host': self._mlx_host.text().strip(),
             'custom_base_url': self._custom_url.text().strip() if idx == 2 else '',
@@ -1358,9 +2250,11 @@ class BackendDialog(QDialog):
             'custom_model':    self._custom_model.text().strip() if idx == 2 else '',
         }
         if idx == 0:
-            base.update({'backend':'ollama','model':self._model.currentText()})
+            base.update({'backend':'ollama','model':self._selected_ollama_model()})
         elif idx == 1:
-            base.update({'backend':'mlx','model':''})
+            chosen = self._selected_mlx_model()
+            base.update({'backend':'mlx',
+                         'model': chosen or self._mlx_model or self._resolve_mlx_model()})
         else:
             base.update({'backend':'custom','model':self._custom_model.text().strip()})
         return base
@@ -2966,6 +3860,7 @@ class AIChatDialog(QDialog):
         self.setMinimumSize(900, 650); self.resize(1240, 750)
         self._build_ui()
         self._start_autodetect()
+        install_server_shutdown_hooks()
 
     @property
     def _cur(self):
@@ -3032,6 +3927,7 @@ class AIChatDialog(QDialog):
         hdr = QFrame(); hl = QHBoxLayout(hdr); hl.setContentsMargins(20,10,20,10); hl.setSpacing(8)
         self._title = QLabel("AI Data Assistant"); hl.addWidget(self._title); hl.addStretch()
         self._speed = QLabel(""); self._speed.setVisible(False); hl.addWidget(self._speed)
+        self._usage = QLabel(""); self._usage.setVisible(False); hl.addWidget(self._usage)
         # Customize button
         self._cust_btn = QPushButton("Customize")
         self._cust_btn.setToolTip("Font size, chart quality, timestamps")
@@ -3040,6 +3936,12 @@ class AIChatDialog(QDialog):
         self._clear_btn = QPushButton("Clear")
         self._clear_btn.setToolTip("Clear chat history (Ctrl+K)")
         self._clear_btn.clicked.connect(self._clear_chat); hl.addWidget(self._clear_btn)
+        self._eject_btn = QPushButton("Eject model")
+        self._eject_btn.setToolTip(
+            "Unload the model from memory without closing the app.\n"
+            "Ollama models are evicted immediately; an MLX server is stopped.")
+        self._eject_btn.clicked.connect(self._eject_model)
+        hl.addWidget(self._eject_btn)
         # Settings button
         tb = QPushButton("Settings"); tb.clicked.connect(self._open_settings)
         hl.addWidget(tb); self._sbtn = tb
@@ -3393,10 +4295,9 @@ class AIChatDialog(QDialog):
     def _send(self):
         text = self._input.text().strip()
         if not text and not self._pending_files: return
-        b = self._cfg.get('backend', '')
-        if not b or (b == 'ollama' and not self._cfg.get('model')) or \
-           (b == 'custom' and not self._cfg.get('custom_base_url')):
+        if not self._ensure_backend_ready():
             self._open_settings(); return
+        b = self._cfg.get('backend', '')
 
         self._user_stopped = False
         self._maybe_set_conv_title(text)
@@ -3428,9 +4329,12 @@ class AIChatDialog(QDialog):
         max_t = max(512, self._cfg.get('num_ctx', 8192) - 2000)
         trimmed = _trim_history(list(self._history), max_t)
 
+        park_thread(self._worker)
+
         self._worker = StreamWorker(b, trimmed, sys_prompt, self._cfg, attachments)
         self._worker.token_received.connect(self._on_tok)
         self._worker.stats_update.connect(self._on_stats)
+        self._worker.usage_update.connect(self._on_usage)
         self._worker.stream_done.connect(self._on_done)
         self._worker.error_occurred.connect(self._on_err)
         self._worker.start()
@@ -3438,6 +4342,27 @@ class AIChatDialog(QDialog):
     def _on_tok(self, t):
         if self._user_stopped: return
         if self._sb: self._sb.append(t); self._scrollb()
+
+    def _on_usage(self, prompt_tokens, completion_tokens):
+        """Show the token counts reported by the backend for the last reply.
+
+        Args:
+            prompt_tokens (int): Tokens the server consumed for the prompt.
+            completion_tokens (int): Tokens the server generated.
+        """
+        if not (prompt_tokens or completion_tokens):
+            return
+        self._session_tokens = getattr(self, '_session_tokens', 0) + \
+            prompt_tokens + completion_tokens
+        limit = int(self._cfg.get('num_ctx', 8192) or 8192)
+        share = f" · {prompt_tokens * 100 // limit}% of {limit:,} ctx" if limit else ""
+        self._usage.setVisible(True)
+        self._usage.setText(
+            f"{prompt_tokens:,} in · {completion_tokens:,} out{share} · "
+            f"session {self._session_tokens:,}")
+        self._usage.setToolTip(
+            "Tokens reported by the model server for the last message, and the "
+            "running total for this session.")
 
     def _on_stats(self, n, el):
         if self._user_stopped: return
@@ -3581,9 +4506,11 @@ class AIChatDialog(QDialog):
             sys_prompt = _build_system_prompt(self.current_data, b)
             max_t = max(512, self._cfg.get('num_ctx', 8192) - 2000)
             msgs = _trim_history(msgs, max_t)
+            park_thread(self._worker)
             self._worker = StreamWorker(b, msgs, sys_prompt, self._cfg, [])
             self._worker.token_received.connect(self._on_tok)
             self._worker.stats_update.connect(self._on_stats)
+            self._worker.usage_update.connect(self._on_usage)
             self._worker.stream_done.connect(self._on_interpret_done)
             self._worker.error_occurred.connect(self._on_err)
             self._worker.start()
@@ -3626,9 +4553,11 @@ class AIChatDialog(QDialog):
         sys_prompt = _build_system_prompt(self.current_data, b)
         max_t = max(512, self._cfg.get('num_ctx', 8192) - 2000)
         trimmed = _trim_history(list(self._history), max_t)
+        park_thread(self._worker)
         self._worker = StreamWorker(b, trimmed, sys_prompt, self._cfg, [])
         self._worker.token_received.connect(self._on_tok)
         self._worker.stats_update.connect(self._on_stats)
+        self._worker.usage_update.connect(self._on_usage)
         self._worker.stream_done.connect(self._on_done)
         self._worker.error_occurred.connect(self._on_err)
         self._worker.start()
@@ -3681,6 +4610,7 @@ class AIChatDialog(QDialog):
             self._worker.error_occurred.disconnect()
         except Exception:
             _itk_log.exception("Handled exception in _do_stop")
+        park_thread(self._worker)
         self._worker = None
         if getattr(self, '_exp_mode', False):
             if getattr(self, '_exp_session', None):
@@ -3701,10 +4631,9 @@ class AIChatDialog(QDialog):
         if not particles:
             self._add_ai("⚠ No particles loaded — nothing to explore.")
             return
-        b = self._cfg.get('backend', '')
-        if not b or (b == 'ollama' and not self._cfg.get('model')) or \
-           (b == 'custom' and not self._cfg.get('custom_base_url')):
+        if not self._ensure_backend_ready():
             self._open_settings(); return
+        b = self._cfg.get('backend', '')
         if self._worker:
             return   
 
@@ -3762,6 +4691,7 @@ class AIChatDialog(QDialog):
         max_t   = max(512, self._cfg.get('num_ctx', 8192) - 2000)
         trimmed = _trim_history(list(self._exp_messages), max_t)
         self._exp_buf = []
+        park_thread(self._worker)
         self._worker = StreamWorker(b, trimmed, self._exp_sys, self._cfg, [])
         self._worker.token_received.connect(self._on_exp_tok)
         self._worker.stream_done.connect(self._on_exp_turn_done)
@@ -3814,6 +4744,7 @@ class AIChatDialog(QDialog):
         self._exp_messages.append({"role": "assistant", "content": full})
         self._exp_messages.append({"role": "user", "content": feedback})
 
+        park_thread(self._worker)
         self._worker = None
         QTimer.singleShot(50, self._run_exploration_turn)
 
@@ -3860,6 +4791,7 @@ class AIChatDialog(QDialog):
         max_t   = max(512, self._cfg.get('num_ctx', 8192) - 2000)
         trimmed = _trim_history(list(self._exp_messages), max_t)
         self._exp_buf = []
+        park_thread(self._worker)
         self._worker = StreamWorker(b, trimmed, self._exp_sys, self._cfg, [])
         self._worker.token_received.connect(self._on_exp_tok)
         self._worker.stream_done.connect(self._on_exp_summary_done)
@@ -4020,6 +4952,7 @@ class AIChatDialog(QDialog):
         self._hdr.setStyleSheet(f"QFrame{{background:{bg2};border-bottom:1px solid {bd};}}")
         self._title.setStyleSheet(f"font-size:{fs3}px;font-weight:700;color:{fg};")
         self._speed.setStyleSheet(f"color:{Theme.c('speed_text')};font-size:11px;font-family:monospace;")
+        self._usage.setStyleSheet(f"color:{Theme.c('text_secondary')};font-size:11px;font-family:monospace;")
         _hdr_btn = (f"QPushButton{{background:{sf};border:1px solid {bd};border-radius:6px;"
                     f"padding:5px 12px;font-size:{fs2}px;color:{fg};}}"
                     f"QPushButton:hover{{background:{Theme.c('surface_hover')};}}")
@@ -4079,8 +5012,10 @@ class AIChatDialog(QDialog):
     # ── Auto-detect a running model server ─────────────────────────────────────
 
     def _start_autodetect(self):
-        """Probe localhost for a running model server and self-configure, so the
+        """Probe loopback for a running model server and self-configure, so the
         user can start chatting without opening settings."""
+        if self._probe is not None and self._probe.isRunning():
+            return
         try:
             self._probe = ProbeWorker(self._cfg.get('mlx_host', MLX_BASE))
             self._probe.ready.connect(self._on_autodetect)
@@ -4090,19 +5025,148 @@ class AIChatDialog(QDialog):
             _itk_log.exception("Handled exception in _start_autodetect")
 
     def _on_autodetect(self, backend, model, label):
-        # Don't override a model the user already selected this session.
+        """Apply a detected backend unless the user already picked one."""
         if self._autoconfigured or self._cfg.get('model'):
             return
         self._autoconfigured = True
         self._cfg['backend'] = backend
         self._cfg['model'] = model
         _itk_log.info("Auto-detected model server: %s", label)
+        self._set_connected_status(label)
         self._add_ai(f"✓ Connected to {label} — ask a question about your data, "
                      "or click Explore.")
+        self._update_sug(self.current_data)
 
     def _on_autodetect_info(self, msg):
         if not self._autoconfigured:
             self._add_ai(f"ℹ {msg}")
+
+    def _eject_model(self):
+        """Free the memory held by the model currently loaded.
+
+        Ollama is asked to evict the model. For MLX the server itself holds the
+        weights, so a server this app started is stopped outright, and one the
+        user started is only stopped after they confirm.
+        """
+        backend = self._cfg.get('backend', '')
+        model = self._cfg.get('model', '')
+        if backend == 'ollama':
+            if unload_ollama_model(model):
+                self._add_ai(f"✓ Ejected `{model}` — Ollama released its memory.")
+            else:
+                self._add_ai("⚠ Could not eject the model — is Ollama still running?")
+            return
+
+        if backend != 'mlx':
+            self._add_ai("ℹ Nothing to eject — a remote API holds no local memory.")
+            return
+
+        if shutdown_launched_servers():
+            self._add_ai("✓ Ejected — the MLX server this app started was stopped.")
+            self._set_disconnected_status()
+            return
+
+        host = self._cfg.get('mlx_host', MLX_BASE)
+        pids = pids_listening_on(port_of(host))
+        if not pids:
+            self._add_ai("ℹ No MLX server found on " + host)
+            return
+        answer = QMessageBox.question(
+            self, "Eject model",
+            f"An MLX server this app did not start is running on {host} "
+            f"(pid {', '.join(str(p) for p in pids)}).\n\n"
+            "Stop it and free its memory?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        terminate_pids(pids)
+        self._add_ai("✓ Ejected — the MLX server was stopped and its memory freed.")
+        self._set_disconnected_status()
+
+    def _set_disconnected_status(self):
+        """Reset the header indicator after a model has been unloaded."""
+        try:
+            self._dot.setStyleSheet(f"color:{Theme.c('error_dot')};font-size:10px;")
+            self._status.setText("Not connected")
+            self._autoconfigured = False
+            self._cfg['model'] = ''
+        except Exception:
+            _itk_log.exception("Handled exception in _set_disconnected_status")
+
+    def shutdown(self):
+        """Release background work and stop servers this app launched.
+
+        Called when the assistant window closes and when the application quits,
+        so a probe thread, a running generation or a loaded model does not keep
+        holding memory after the user is done.
+        """
+        for name in ('_probe', '_worker'):
+            thread = getattr(self, name, None)
+            if thread is None:
+                continue
+            setattr(self, name, None)
+            retire_thread(thread)
+        shutdown_launched_servers()
+
+    def closeEvent(self, event):
+        """Stop background threads and launched servers before closing."""
+        try:
+            self.shutdown()
+        except Exception:
+            _itk_log.exception("Handled exception in closeEvent")
+        super().closeEvent(event)
+
+    def _set_connected_status(self, label):
+        """Turn the header indicator green and show the active backend label.
+
+        Args:
+            label (str): Human-readable backend description, e.g. ``Ollama · x``.
+        """
+        try:
+            self._dot.setStyleSheet(f"color:{Theme.c('success_dot')};font-size:10px;")
+            self._status.setText(label)
+        except Exception:
+            _itk_log.exception("Handled exception in _set_connected_status")
+
+    def _ensure_backend_ready(self):
+        """Detect a local server on demand when nothing is configured yet.
+
+        Called before sending so a server the user started after opening the
+        assistant is picked up instead of bouncing them into settings.
+
+        Returns:
+            bool: True when a usable backend is configured.
+        """
+        backend = self._cfg.get('backend', '')
+        if backend == 'mlx':
+            return True
+        if backend == 'custom' and self._cfg.get('custom_base_url'):
+            return True
+        if backend == 'ollama' and self._cfg.get('model'):
+            return True
+
+        models, _, _ = fetch_ollama_models(timeout=3)
+        if models:
+            self._cfg['backend'] = 'ollama'
+            self._cfg['model'] = models[0]
+            self._autoconfigured = True
+            self._set_connected_status(f"Ollama: {models[0]}")
+            self._add_ai(f"✓ Connected to Ollama · `{models[0]}`")
+            self._update_sug(self.current_data)
+            return True
+
+        host = self._cfg.get('mlx_host', MLX_BASE)
+        ids, reachable, _ = fetch_openai_models(host, timeout=3)
+        if reachable:
+            self._cfg['backend'] = 'mlx'
+            self._cfg['model'] = ids[0] if ids else ''
+            self._autoconfigured = True
+            label = ids[0].split('/')[-1] if ids else 'loaded model'
+            self._set_connected_status(f"MLX: {label}")
+            self._add_ai(f"✓ Connected to MLX · `{label}`")
+            self._update_sug(self.current_data)
+            return True
+        return False
 
 
 # ── Node ──────────────────────────────────────────────────────────────────────

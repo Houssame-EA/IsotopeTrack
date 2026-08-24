@@ -17,7 +17,7 @@ Ionic calibration and transport-efficiency methods.
 ### [`TE_mass.py`](te-mass.md)
 
 
-**5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **83** methods
+**5** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **84** methods
 
 ### [`TE_number.py`](te-number.md)
 
@@ -32,9 +32,9 @@ Single source of truth for IsotopeTrack's calibration methods.
 ### [`ionic_CAL.py`](ionic-cal.md)
 
 
-**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **99** methods
+**1** classes &nbsp;·&nbsp; **3** functions &nbsp;·&nbsp; **93** methods
 
 ### [`te_common.py`](te-common.md)
 
 
-**1** classes &nbsp;·&nbsp; **15** functions &nbsp;·&nbsp; **1** methods
+**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **1** methods

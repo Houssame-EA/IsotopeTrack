@@ -27,7 +27,7 @@ Autosave and crash recovery for IsotopeTrack.
 ### [`project_manager.py`](project-manager.md)
 
 
-**2** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **27** methods
+**3** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **28** methods
 
 ### [`unit.py`](unit.md)
 Advanced Export Options dialog (visual).

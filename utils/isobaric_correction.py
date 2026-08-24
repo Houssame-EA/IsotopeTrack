@@ -626,7 +626,7 @@ def load_overrides(path: str = _OVERRIDES_PATH) -> Dict[str, dict]:
     'monitor_nominal': int}. Empty dict if no file yet.
     """
     try:
-        with open(path, "r") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
@@ -641,7 +641,7 @@ def save_overrides(overrides: Dict[str, dict], path: str = _OVERRIDES_PATH) -> N
     """Persist user overrides to disk (atomic-ish write)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(overrides, fh, indent=1)
     os.replace(tmp, path)
 
@@ -690,7 +690,7 @@ def load_table_corrections(path: str = _TABLE_PATH) -> List[dict]:
     if _TABLE_CACHE is not None:
         return _TABLE_CACHE
     try:
-        with open(path, "r") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             _TABLE_CACHE = json.load(fh)
     except FileNotFoundError:
         _itk_log.error("Interference correction table not found: %s — "

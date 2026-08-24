@@ -19,6 +19,8 @@ import loading.tofwerk_loading
 
 from calibration_methods.te_common import (
     NumericDelegate, return_button_style,
+    fit_zero, compute_figures_of_merit, run_all_fits_on_subset,
+    compute_outlier_indices,
 )
 
 
@@ -1683,7 +1685,7 @@ class IonicCalibrationWindow(QMainWindow):
             file_path += '.csv'
             
         try:
-            with open(file_path, 'w') as f:
+            with open(file_path, 'w', encoding='utf-8') as f:
                 unit = self.unit_combo.currentText()
                 headers = [
                     "Isotope", "Method", f"Slope (cps/{unit})", "Intercept (cps)", 
@@ -1754,7 +1756,7 @@ class IonicCalibrationWindow(QMainWindow):
             file_path += '.csv'
             
         try:
-            with open(file_path, 'w') as f:
+            with open(file_path, 'w', encoding='utf-8') as f:
                 unit = self.unit_combo.currentText()
                 headers = [
                     "Isotope", "Override Enabled", f"Manual Slope (cps/{unit})", "Density (g/cm³)"
@@ -2230,7 +2232,7 @@ class IonicCalibrationWindow(QMainWindow):
             try:
                 run_info_path = Path(folder) / "run.info"
                 if os.path.exists(run_info_path):
-                    with open(run_info_path, "r") as fp:
+                    with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                         run_info = json.load(fp)
                     sample_name = run_info.get("SampleName", Path(folder).name)
                 else:
@@ -2413,7 +2415,7 @@ class IonicCalibrationWindow(QMainWindow):
         for i, folder in enumerate(self.folder_paths):
             try:
                 run_info_path = Path(folder) / "run.info"
-                with open(run_info_path, "r") as fp:
+                with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
                     run_info = json.load(fp)
                 sample_name = run_info.get("SampleName", Path(folder).name)
             except (OSError, ValueError, KeyError):
@@ -2971,7 +2973,7 @@ class IonicCalibrationWindow(QMainWindow):
                     else:
                         sigma_blank = 0.0
 
-                    fom = self._compute_figures_of_merit(
+                    fom = compute_figures_of_merit(
                         seed_slope, 0.0, sigma_blank)
 
                     manual_record = {
@@ -3046,7 +3048,7 @@ class IonicCalibrationWindow(QMainWindow):
             included_mask = [
                 f not in excluded_folders for f in folders_for_isotope
             ] if folders_for_isotope else [True] * len(data.get('y', []))
-            outlier_indices = self._compute_outlier_indices(
+            outlier_indices = compute_outlier_indices(
                 data.get('y', []),
                 method_data.get('y_fit', []),
                 included_mask,
@@ -3261,272 +3263,6 @@ class IonicCalibrationWindow(QMainWindow):
             element: Selected element data
         """
 
-    def _fit_zero(self, x, y):
-        """
-        Force-through-zero (FTZ) linear regression.
-    
-        Finds the slope that minimises Σ(y - slope·x)² with intercept = 0.
-    
-        Equation
-        --------
-        slope = Σ(x·y) / Σ(x²)               [ordinary least squares, no intercept]
-        R²    = 1 − Σ(y − ŷ)² / Σ(y²)        [denominator uses Σy² not Σ(y−ȳ)²
-                                                because the model passes through 0]
-    
-        Args:
-            x (np.ndarray): Concentration values (base unit, e.g. ppb).
-            y (np.ndarray): Mean signal values (cps).
-    
-        Returns:
-            dict with keys: slope, intercept (always 0), r_squared, y_fit.
-        """
-        import numpy as np
-    
-        slope = np.sum(x * y) / np.sum(x * x)
-        y_fit = slope * x
-        ss_res = np.sum((y - y_fit) ** 2)
-        ss_tot = np.sum(y ** 2)
-        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
-    
-        return {
-            "slope": slope,
-            "intercept": 0.0,
-            "r_squared": r_squared,
-            "y_fit": y_fit,
-        }
-    
-    
-    def _fit_simple(self, x, y):
-        """
-        Ordinary least squares (OLS) linear regression.
-    
-        Finds slope and intercept that minimise Σ(y − slope·x − intercept)².
-    
-        Equation
-        --------
-        [slope, intercept] = (XᵀX)⁻¹ Xᵀy   via np.linalg.lstsq
-        R²  = 1 − Σ(y − ŷ)² / Σ(y − ȳ)²
-    
-        Args:
-            x (np.ndarray): Concentration values.
-            y (np.ndarray): Mean signal values (cps).
-    
-        Returns:
-            dict with keys: slope, intercept, r_squared, y_fit.
-        """
-        import numpy as np
-    
-        A = np.vstack([x, np.ones(len(x))]).T
-        slope, intercept = np.linalg.lstsq(A, y, rcond=None)[0]
-        y_fit = slope * x + intercept
-        ss_res = np.sum((y - y_fit) ** 2)
-        ss_tot = np.sum((y - np.mean(y)) ** 2)
-        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
-    
-        return {
-            "slope": slope,
-            "intercept": intercept,
-            "r_squared": r_squared,
-            "y_fit": y_fit,
-        }
-    
-    
-    def _fit_weighted(self, x, y, y_std):
-        """
-        Weighted least squares (WLS) linear regression.
-    
-        Points with lower variance receive higher weight, giving more influence
-        to the most precise measurements.
-    
-        Equation
-        --------
-        wᵢ      = 1 / σᵢ²
-        slope   = (Σw · Σwxy − Σwx · Σwy) / (Σw · Σwx² − (Σwx)²)
-        intercept = (Σwx² · Σwy − Σwx · Σwxy) / (Σw · Σwx² − (Σwx)²)
-        R²_w    = 1 − Σwᵢ(yᵢ − ŷᵢ)² / Σwᵢ(yᵢ − ȳ)²
-    
-        Falls back to OLS when the denominator is numerically zero (i.e. all
-        points have equal / zero variance).
-    
-        Args:
-            x (np.ndarray): Concentration values.
-            y (np.ndarray): Mean signal values (cps).
-            y_std (np.ndarray): Standard deviations of the signal.
-    
-        Returns:
-            dict with keys: slope, intercept, r_squared, y_fit.
-        """
-        import numpy as np
-    
-        weights = 1.0 / (y_std ** 2)
-        w_sum   = np.sum(weights)
-        wx_sum  = np.sum(weights * x)
-        wy_sum  = np.sum(weights * y)
-        wxx_sum = np.sum(weights * x * x)
-        wxy_sum = np.sum(weights * x * y)
-    
-        denominator = w_sum * wxx_sum - wx_sum * wx_sum
-    
-        if abs(denominator) > 1e-17:
-            slope     = (w_sum * wxy_sum - wx_sum * wy_sum) / denominator
-            intercept = (wxx_sum * wy_sum - wx_sum * wxy_sum) / denominator
-            y_fit     = slope * x + intercept
-            ss_res    = np.sum(weights * (y - y_fit) ** 2)
-            ss_tot    = np.sum(weights * (y - np.mean(y)) ** 2)
-            r_squared = 1.0 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
-        else:
-            ols = self._fit_simple(x, y)
-            slope, intercept, y_fit = ols["slope"], ols["intercept"], ols["y_fit"]
-            r_squared = ols["r_squared"]
-    
-        return {
-            "slope": slope,
-            "intercept": intercept,
-            "r_squared": r_squared,
-            "y_fit": y_fit,
-        }
-    
-    
-    def _compute_figures_of_merit(self, slope, intercept, sigma_blank):
-        """
-        Compute analytical figures of merit from regression results.
-    
-        Equations (IUPAC / Miller & Miller convention)
-        -----------------------------------------------
-        LOD = 3 · σ_blank / slope      [3-sigma limit of detection]
-        LOQ = 10 · σ_blank / slope     [10-sigma limit of quantification]
-        BEC = intercept / slope         [blank-equivalent concentration]
-                (= LOD for FTZ, where intercept ≡ 0)
-    
-        All values are in the *base unit* (ppb by default) and are converted
-        to the display unit separately before being shown in the UI.
-    
-        Args:
-            slope (float): Calibration slope (cps / base_unit).
-            intercept (float): Calibration intercept (cps).
-            sigma_blank (float): Standard deviation of signal at lowest
-                concentration standard (used as proxy for blank noise).
-    
-        Returns:
-            dict with keys: lod, loq, bec.
-                Values are np.nan when slope == 0.
-        """
-        import numpy as np
-    
-        if slope == 0:
-            return {"lod": np.nan, "loq": np.nan, "bec": np.nan}
-    
-        lod = (3.0  * sigma_blank) / slope
-        loq = (10.0 * sigma_blank) / slope
-        bec = intercept / slope
-    
-        return {"lod": lod, "loq": loq, "bec": bec}
-    
-
-    def _run_all_fits_on_subset(self, x, y, y_std, included_mask, density):
-        """
-        Run the three calibration fits on the subset of points selected by
-        ``included_mask`` and return the full result record for one isotope.
-
-        Fits use only the included points, but ``y_fit`` is evaluated at
-        every original x so the residuals subplot can show the distance
-        between every point (included or not) and the fit line.
-
-        Args:
-            x, y, y_std: parallel 1-D numpy arrays (all points).
-            included_mask: bool array same shape as x. True = use in fit.
-            density: element density for the results record.
-
-        Returns:
-            dict or None. ``None`` when fewer than 2 included points remain.
-        """
-        import numpy as np
-
-        if int(np.sum(included_mask)) < 2:
-            return None
-
-        xi = x[included_mask]
-        yi = y[included_mask]
-        si = y_std[included_mask]
-
-        sigma_blank = float(si[int(np.argmin(xi))])
-
-        fit_zero     = self._fit_zero(xi, yi)
-        fit_simple   = self._fit_simple(xi, yi)
-        fit_weighted = self._fit_weighted(xi, yi, si)
-        
-        def eval_line(slope, intercept):
-            return (slope * x + intercept).tolist()
-
-        y_fit_zero     = eval_line(fit_zero["slope"],     0.0)
-        y_fit_simple   = eval_line(fit_simple["slope"],   fit_simple["intercept"])
-        y_fit_weighted = eval_line(fit_weighted["slope"], fit_weighted["intercept"])
-
-        fom_zero     = self._compute_figures_of_merit(
-            fit_zero["slope"],     0.0,                    sigma_blank)
-        fom_simple   = self._compute_figures_of_merit(
-            fit_simple["slope"],   fit_simple["intercept"],   sigma_blank)
-        fom_weighted = self._compute_figures_of_merit(
-            fit_weighted["slope"], fit_weighted["intercept"], sigma_blank)
-
-        return {
-            'zero': {
-                'slope':     fit_zero["slope"],
-                'intercept': 0.0,
-                'r_squared': fit_zero["r_squared"],
-                'y_fit':     y_fit_zero,
-                **fom_zero,
-            },
-            'simple': {
-                'slope':     fit_simple["slope"],
-                'intercept': fit_simple["intercept"],
-                'r_squared': fit_simple["r_squared"],
-                'y_fit':     y_fit_simple,
-                **fom_simple,
-            },
-            'weighted': {
-                'slope':     fit_weighted["slope"],
-                'intercept': fit_weighted["intercept"],
-                'r_squared': fit_weighted["r_squared"],
-                'y_fit':     y_fit_weighted,
-                **fom_weighted,
-            },
-            'x':       x.tolist(),
-            'y':       y.tolist(),
-            'y_std':   y_std.tolist(),
-            'density': density,
-        }
-
-    def _compute_outlier_indices(self, y, y_fit, included_mask,
-                                 z_threshold=1.5):
-        """Flag included points whose standardized residual exceeds ``z_threshold``.
-
-        Standardization uses the sample standard deviation of the *included*
-        residuals (ddof=1). With too few points the flag is disabled.
-
-        Returns:
-            set[int]: indices into the full ``y`` array.
-        """
-        import numpy as np
-        y = np.asarray(y, dtype=float)
-        y_fit = np.asarray(y_fit, dtype=float)
-        if y.shape != y_fit.shape or len(y) == 0:
-            return set()
-
-        included_idx = [i for i, m in enumerate(included_mask) if m]
-        if len(included_idx) < 4:
-            return set()
-
-        residuals = y - y_fit
-        s = float(np.std(residuals[included_idx], ddof=1))
-        if not np.isfinite(s) or s <= 0:
-            return set()
-
-        return {
-            i for i in included_idx
-            if abs(residuals[i] / s) > z_threshold
-        }
-
     def refit_isotope(self, isotope_key):
         """Re-run the three fits for a single isotope using the current
         exclusion set. Called after every exclusion toggle.
@@ -3553,7 +3289,7 @@ class IonicCalibrationWindow(QMainWindow):
 
         density = data.get('density', 'N/A')
 
-        new_result = self._run_all_fits_on_subset(
+        new_result = run_all_fits_on_subset(
             x, y, y_std, included_mask, density)
         if new_result is None:
             return False
@@ -3765,7 +3501,7 @@ class IonicCalibrationWindow(QMainWindow):
         else:
             sigma_blank = 0.0
 
-        fom = self._compute_figures_of_merit(slope, 0.0, sigma_blank)
+        fom = compute_figures_of_merit(slope, 0.0, sigma_blank)
 
         element = isotope_key.split('-')[0]
         element_data = next(
@@ -3832,12 +3568,12 @@ class IonicCalibrationWindow(QMainWindow):
     
         For each isotope, assembles (x, y, y_std) arrays from the loaded
         folders, then delegates regression and figure-of-merit calculations
-        to the private helpers:
+        to the shared helpers in ``calibration_methods.te_common``:
     
-            _fit_zero()                 → Force-through-zero
-            _fit_simple()               → OLS linear
-            _fit_weighted()             → WLS linear
-            _compute_figures_of_merit() → LOD, LOQ, BEC
+            fit_zero()                 → Force-through-zero
+            fit_simple()               → OLS linear
+            fit_weighted()             → WLS linear
+            compute_figures_of_merit() → LOD, LOQ, BEC
     
         Args:
             concentrations (dict): {folder: {isotope_key: concentration_ppb}}
@@ -3945,14 +3681,14 @@ class IonicCalibrationWindow(QMainWindow):
                         x1 = np.array(x_list)
                         y1 = np.array(y_list)
                         s1 = np.array(y_std_list)
-                        fit_zero = self._fit_zero(x1, y1)
-                        fom = self._compute_figures_of_merit(
-                            fit_zero["slope"], 0.0, float(s1[0])
+                        f_zero = fit_zero(x1, y1)
+                        fom = compute_figures_of_merit(
+                            f_zero["slope"], 0.0, float(s1[0])
                         )
-                        y_fit = (fit_zero["slope"] * x1).tolist()
-   
+                        y_fit = (f_zero["slope"] * x1).tolist()
+
                         shared = {
-                            'slope':     fit_zero["slope"],
+                            'slope':     f_zero["slope"],
                             'intercept': 0.0,
                             'r_squared': 1.0,
                             'y_fit':     y_fit,
@@ -3981,7 +3717,7 @@ class IonicCalibrationWindow(QMainWindow):
                     included_mask = np.array(
                         [f not in excluded_folders for f in folders_list])
 
-                    isotope_result = self._run_all_fits_on_subset(
+                    isotope_result = run_all_fits_on_subset(
                         x, y, y_std, included_mask, density)
                     if isotope_result is None:
         

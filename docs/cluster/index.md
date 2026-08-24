@@ -4,20 +4,30 @@ The clustering feature in one package: the dialog, the pipeline sweep, the anima
 
 ---
 
+### [`detail.py`](detail.md)
+Detail views and worked examples, built from a finished clustering fit.
+
+**0** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **0** methods
+
 ### [`dialog.py`](dialog.md)
+Clustering analysis dialog — algorithms, validity indices and result figures.
 
+**9** classes &nbsp;·&nbsp; **36** functions &nbsp;·&nbsp; **105** methods
 
-**9** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **113** methods
+### [`export_workbook.py`](export-workbook.md)
+Excel export for the Clustering Analysis results.
+
+**0** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **0** methods
 
 ### [`live.py`](live.md)
-Interactive *live* clustering tab for the Clustering Analysis dialog.
+Interactive clustering tab for the Clustering Analysis dialog.
 
-**5** classes &nbsp;·&nbsp; **15** functions &nbsp;·&nbsp; **50** methods
+**3** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **46** methods
 
 ### [`live_engine.py`](live-engine.md)
-Pure-NumPy clustering engine with per-iteration *steppers* for Cluster Lab.
+Preprocessing, metrics and the parameter schema behind the Cluster Lab tab.
 
-**0** classes &nbsp;·&nbsp; **44** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **18** functions &nbsp;·&nbsp; **0** methods
 
 ### [`palette.py`](palette.md)
 Cluster colours shared by every clustering view.
@@ -32,4 +42,4 @@ Shared preprocessing rules for every clustering entry point.
 ### [`tools.py`](tools.md)
 Custom Cluster Test — exhaustive pipeline search against known components.
 
-**1** classes &nbsp;·&nbsp; **19** functions &nbsp;·&nbsp; **6** methods
+**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **6** methods

@@ -7,9 +7,9 @@
 | Name | Value |
 |------|-------|
 | `LINE_STYLE_MAP` | `{'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.Do…` |
-| `LINE_STYLE_REVERSE` | `{v: k for (k, v) in LINE_STYLE_MAP.items()}` |
+| `LINE_STYLE_REVERSE` | `{v: k for k, v in LINE_STYLE_MAP.items()}` |
 | `SCATTER_SYMBOLS` | `{'Circle': 'o', 'Square': 's', 'Triangle Up': 't', 'Trian…` |
-| `SCATTER_SYMBOLS_REVERSE` | `{v: k for (k, v) in SCATTER_SYMBOLS.items()}` |
+| `SCATTER_SYMBOLS_REVERSE` | `{v: k for k, v in SCATTER_SYMBOLS.items()}` |
 
 ## Classes
 
@@ -253,4 +253,5 @@ Gives the same double-click-to-edit experience as EnhancedPlotWidget:
 | `_scatter_row_qss` | `()` | Per-scatter row background on the Traces tab (formerly cream `#fff8f0` |
 | `_inline_apply_btn_qss` | `(variant='primary')` | Small 'Apply' button rendered inside each trace/scatter row. |
 | `_install_theme_subscription` | `(dialog)` | Attach the editor_dialog_qss to a dialog AND keep it updated when the |
+| `make_trace_pen` | `(color, width, style=Qt.SolidLine)` | Build a pen for a plot trace. |
 | `get_system_font_families` | `()` | Get available system font families from Qt font database, |

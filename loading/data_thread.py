@@ -205,7 +205,7 @@ class DataProcessThread(QThread):
         if not run_info_path.exists():
             raise FileNotFoundError(f"run.info not found in {self.folder_path}")
 
-        with open(run_info_path, "r") as fp:
+        with open(run_info_path, "r", encoding="utf-8", errors="replace") as fp:
             run_info = json.load(fp)
         analysis_datetime = run_info.get("AnalysisDateTime", "Unknown")
         self.progress.emit(10)

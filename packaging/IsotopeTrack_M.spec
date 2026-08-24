@@ -3,9 +3,30 @@ import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
-sklearn_hidden = collect_submodules('sklearn')
-scipy_hidden   = collect_submodules('scipy')
-numba_hidden   = collect_submodules('numba')
+def _runtime_submodules(package):
+    """Collect a package's submodules, minus the parts that only exist for CI.
+
+    ``collect_submodules`` returns every module in the package, which for
+    scipy, scikit-learn and numba means their full test suites come along:
+    roughly 23 MB, 11 MB and a further large tree respectively, none of which
+    can ever execute in a packaged application. Dropping any module whose
+    dotted path contains a test component removes that weight without touching
+    anything the app can reach at runtime.
+
+    Args:
+        package (str): Top-level package name to collect.
+
+    Returns:
+        list[str]: Module names suitable for ``hiddenimports``.
+    """
+    drop = {'tests', 'test', 'testing', 'conftest', '_pytesttester'}
+    return [m for m in collect_submodules(package)
+            if not (drop & set(m.split('.')))]
+
+
+sklearn_hidden = _runtime_submodules('sklearn')
+scipy_hidden   = _runtime_submodules('scipy')
+numba_hidden   = _runtime_submodules('numba')
 
 pandas_meta = []
 for _pkg in ('pytz', 'tzdata', 'pandas', 'numpy', 'python-dateutil', 'six'):
@@ -63,6 +84,10 @@ if os.path.exists('data/interference_corrections.json'):
 if os.path.exists('images/isotrack_icon.ico'):
     data_files.append((os.path.abspath('images/isotrack_icon.ico'), '.'))
 
+# Document icon for .itproj files (referenced by CFBundleTypeIconFile below).
+if os.path.exists('images/isotrack_project.icns'):
+    data_files.append((os.path.abspath('images/isotrack_project.icns'), '.'))
+
 if os.path.exists('data/materials_trimmed.csv.gz'):
     data_files.append((os.path.abspath('data/materials_trimmed.csv.gz'), '.'))
 
@@ -71,15 +96,6 @@ if os.path.exists('processing/cpln_quantiles.npz'):
     print("Including cpln_quantiles.npz")
 else:
     print("WARNING: processing/cpln_quantiles.npz not found — peak detection LUT will be missing!")
-
-# Web assets for the interactive Cluster tab.
-for _ui_dir in ('results/cluster/live_ui',):
-    if os.path.exists(_ui_dir):
-        for _ui in os.listdir(_ui_dir):
-            _uip = os.path.join(_ui_dir, _ui)
-            if os.path.isfile(_uip):
-                data_files.append((os.path.abspath(_uip), _ui_dir))
-        print(f"Including web UI assets: {_ui_dir}")
 
 print(f"Total data files to include: {len(data_files)}")
 
@@ -96,9 +112,6 @@ a = Analysis(
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
-        'PySide6.QtWebEngineWidgets',
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebChannel',
         'PySide6.QtOpenGL',
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
@@ -120,7 +133,6 @@ a = Analysis(
         'qtawesome',
         'qtawesome.iconic_font',
         'qtawesome.animation',
-        'qtawesome.icon_browser',
 
         'numpy',
         'numpy.lib',
@@ -161,6 +173,11 @@ a = Analysis(
         'lz4.block',
 
         'openpyxl',
+        'openpyxl.chart',
+        'openpyxl.chart.data_source',
+        'openpyxl.chart.series_factory',
+        'openpyxl.styles',
+        'openpyxl.utils',
         'pypdf',
 
         *scipy_hidden,
@@ -244,14 +261,12 @@ a = Analysis(
         'datetime',
         'time',
         'math',
-        'statistics',
         'hashlib',
         'pickle',
         'gzip',
         'warnings',
         'gc',
         're',
-        'argparse',
         'dataclasses',
 
         'mainwindow',
@@ -289,11 +304,11 @@ a = Analysis(
         'results.cluster.tools',
         'results.cluster.live',
         'results.cluster.live_engine',
+        'results.cluster.export_workbook',
         'results.cluster.palette',
         'results.results_composition_wheel',
         'results.results_concentration',
         'results.results_correlation',
-        'results.results_dashboard',
         'results.results_heatmap',
         'results.results_isotope',
         'results.results_matrix',
@@ -319,7 +334,6 @@ a = Analysis(
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
-        'tools.render_settings',
         'tools.particle_filter',
         'tools.element_picker',
         'tools.update_checker',
@@ -328,6 +342,8 @@ a = Analysis(
         'tools.info_file',
         'tools.logging_utils',
         'tools.mass_fraction_calculator',
+        'tools.mass_fraction_calculator_widgets',
+        'tools.mass_fraction_table_model',
         'tools.progressive_main_window',
         'tools.signal_selector_dialog',
         'tools.splash_screen',
@@ -337,6 +353,13 @@ a = Analysis(
         'tools.home_panel',
         'tools.toast',
         'tools.welcome',
+        'tools.periodic_table_utils.periodic_table_info',
+        'tools.mass_fraction_utils',
+        'tools.mass_fraction_utils.compound',
+        'tools.mass_fraction_utils.compound_database',
+        'tools.mass_fraction_utils.formula_editor',
+        'tools.mass_fraction_utils.formula_utils',
+        'tools.mass_fraction_utils.mass_fraction_service',
 
         'utils',
         'utils.app_version',
@@ -360,6 +383,13 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[_rth],
     excludes=[
+        'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineQuick',
+        'PySide6.QtWebChannel',
+        'PySide6.QtQuick',
+        'PySide6.QtQml',
+        'PySide6.QtPositioning',
         'tkinter',
         'turtle',
         'PyQt5',
@@ -373,6 +403,13 @@ a = Analysis(
         'plotly',
         'pyarrow',
         'xlsxwriter',
+        'IPython',
+        'ipywidgets',
+        'jupyter',
+        'notebook',
+        'pytest',
+        'sphinx',
+        'docutils',
     ],
     noarchive=False,
     optimize=0,
@@ -415,8 +452,8 @@ app = BUNDLE(
     bundle_identifier='com.isotrack.app',
     info_plist={
         'NSHighResolutionCapable': 'True',
-        'CFBundleShortVersionString': '1.10.9',
-        'CFBundleVersion': '1.10.9',
+        'CFBundleShortVersionString': '1.10.10',
+        'CFBundleVersion': '1.10.10',
         'CFBundleDisplayName': 'IsotopeTrack',
         'CFBundleName': 'IsotopeTrack',
         'NSRequiresAquaSystemAppearance': 'False',
@@ -435,7 +472,10 @@ app = BUNDLE(
                 'LSHandlerRank': 'Owner',
                 'LSItemContentTypes': ['com.isotrack.itproj'],
                 'CFBundleTypeExtensions': ['itproj'],
-                'CFBundleTypeIconFile': 'icon-windowed.icns',
+                # Dedicated document icon. 'icon-windowed.icns' is the app icon
+                # PyInstaller generates, so using it here made .itproj files show
+                # the main application logo instead of a project-file icon.
+                'CFBundleTypeIconFile': 'isotrack_project.icns',
             },
         ],
         'UTExportedTypeDeclarations': [
@@ -443,6 +483,7 @@ app = BUNDLE(
                 'UTTypeIdentifier': 'com.isotrack.itproj',
                 'UTTypeDescription': 'IsotopeTrack Project',
                 'UTTypeConformsTo': ['public.data'],
+                'UTTypeIconFile': 'isotrack_project.icns',
                 'UTTypeTagSpecification': {
                     'public.filename-extension': ['itproj'],
                 },
@@ -450,3 +491,17 @@ app = BUNDLE(
         ],
     },
 )
+
+# ── Post-build: guarantee the document icon is a real file in Contents/Resources ─
+# PyInstaller stores datas under Contents/Frameworks and symlinks them into
+# Resources; LaunchServices does not reliably follow those symlinks when
+# resolving CFBundleTypeIconFile, so copy the icns in directly.
+import shutil as _shutil
+_bundle = os.path.join(DISTPATH, 'IsotopeTrack.app', 'Contents', 'Resources')
+_src = os.path.join(ROOT, 'images', 'isotrack_project.icns')
+if os.path.isdir(_bundle) and os.path.exists(_src):
+    _dst = os.path.join(_bundle, 'isotrack_project.icns')
+    if os.path.islink(_dst):
+        os.unlink(_dst)
+    _shutil.copy2(_src, _dst)
+    print("Copied isotrack_project.icns into Contents/Resources")

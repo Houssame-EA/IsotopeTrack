@@ -120,8 +120,15 @@ def _get_log_dir() -> Path:
             xdg = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
             log_dir = Path(xdg) / "IsotopeTrack" / "logs"
     else:
-        log_dir = Path("logs")
-    log_dir.mkdir(parents=True, exist_ok=True)
+        # Anchor to the project root (parent of tools/) so the location does not
+        # depend on the current working directory.
+        log_dir = Path(__file__).resolve().parent.parent / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Last-resort fallback if the project directory is not writable.
+        log_dir = Path.home() / ".isotopetrack" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
 

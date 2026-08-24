@@ -1779,7 +1779,7 @@ class SingleIonDistributionManager(QObject):
                 self.per_mass_distributions.values(),
                 key=lambda d: d['mass']
             )
-            with open(path, 'w', newline='') as f:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow([
                     'mass', 'mean_signal', 'std_signal', 'sigma',

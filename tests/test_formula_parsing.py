@@ -6,38 +6,34 @@ element counts and canonicalise them. They feed the mass-fraction lookup, so a
 parsing error would propagate into reported particle masses. The functions are
 pure; the module imports Qt/pandas only for the dialog and CSV database.
 """
-from tools.mass_fraction_calculator import (
-    _parse_formula_to_counts,
-    _safe_int,
-    _element_order_in_formula,
-    _reduce_counts,
-    _signature_from_counts,
-    _join_formula_from_counts,
-    canonicalize_preserve_user_order,
-)
+from tools.mass_fraction_utils import reduced_counts_from_formula, signature_from_formula, \
+    elements_with_count_from_formula
+from tools.mass_fraction_utils.formula_utils import parse_formula_to_counts, _safe_int, \
+    _element_order_in_formula, reduce_counts, signature_from_counts, _join_formula_from_counts, \
+    canonicalize_preserve_user_order
 
 
 class TestParseFormulaToCounts:
     def test_simple(self):
-        assert _parse_formula_to_counts("H2O") == {"H": 2, "O": 1}
-        assert _parse_formula_to_counts("Fe2O3") == {"Fe": 2, "O": 3}
+        assert parse_formula_to_counts("H2O") == {"H": 2, "O": 1}
+        assert parse_formula_to_counts("Fe2O3") == {"Fe": 2, "O": 3}
 
     def test_implicit_one(self):
-        assert _parse_formula_to_counts("NaCl") == {"Na": 1, "Cl": 1}
+        assert parse_formula_to_counts("NaCl") == {"Na": 1, "Cl": 1}
 
     def test_parenthesised_group(self):
-        assert _parse_formula_to_counts("Ca(OH)2") == {"Ca": 1, "O": 2, "H": 2}
+        assert parse_formula_to_counts("Ca(OH)2") == {"Ca": 1, "O": 2, "H": 2}
 
     def test_nested_groups(self):
-        assert _parse_formula_to_counts("Al2(SO4)3") == {"Al": 2, "S": 3, "O": 12}
+        assert parse_formula_to_counts("Al2(SO4)3") == {"Al": 2, "S": 3, "O": 12}
 
     def test_repeated_element_accumulates(self):
         # CH3CH2OH -> C2 H6 O1
-        assert _parse_formula_to_counts("CH3CH2OH") == {"C": 2, "H": 6, "O": 1}
+        assert parse_formula_to_counts("CH3CH2OH") == {"C": 2, "H": 6, "O": 1}
 
     def test_empty_and_invalid(self):
-        assert _parse_formula_to_counts("") == {}
-        assert _parse_formula_to_counts(None) == {}
+        assert parse_formula_to_counts("") == {}
+        assert parse_formula_to_counts(None) == {}
 
 
 class TestSafeInt:
@@ -71,24 +67,24 @@ class TestElementOrder:
 
 class TestReduceCounts:
     def test_divides_by_gcd(self):
-        assert _reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
-        assert _reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
+        assert reduce_counts({"H": 2, "O": 2}) == {"H": 1, "O": 1}
+        assert reduce_counts({"C": 6, "H": 12, "O": 6}) == {"C": 1, "H": 2, "O": 1}
 
     def test_already_reduced_unchanged(self):
-        assert _reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
+        assert reduce_counts({"Fe": 2, "O": 3}) == {"Fe": 2, "O": 3}
 
     def test_empty(self):
-        assert _reduce_counts({}) == {}
+        assert reduce_counts({}) == {}
 
 
 class TestSignature:
     def test_order_independent(self):
-        a = _signature_from_counts({"O": 2, "H": 2})
-        b = _signature_from_counts({"H": 2, "O": 2})
+        a = signature_from_counts({"O": 2, "H": 2})
+        b = signature_from_counts({"H": 2, "O": 2})
         assert a == b == "H2|O2"
 
     def test_empty(self):
-        assert _signature_from_counts({}) == ""
+        assert signature_from_counts({}) == ""
 
 
 class TestJoinFormula:
@@ -108,3 +104,31 @@ class TestCanonicalize:
 
     def test_irreducible_roundtrips(self):
         assert canonicalize_preserve_user_order("Fe2O3") == "Fe2O3"
+
+
+class TestReducedCountsFromFormula:
+    def test_reduced_counts_from_formula_reduction(self):
+        counts = reduced_counts_from_formula("H2O2")
+        assert counts["H"] == 1
+        assert counts["O"] == 1
+
+    def test_reduced_counts_from_formula_no_reduction(self):
+        counts = reduced_counts_from_formula("H2O")
+        assert counts["H"] == 2
+        assert counts["O"] == 1
+
+
+class TestSignatureFromFormula:
+    def test_signature_from_formula_with_reduction_mixed(self):
+        assert signature_from_formula("H2O4") == signature_from_formula("O4H2")
+
+    def test_signature_from_formula_different_but_similar(self):
+        assert signature_from_formula("H2O4") != signature_from_formula("H2O2")
+
+class TestElementsWithCountFromFormula:
+    def test_elements_with_count_from_formula(self):
+        elements = elements_with_count_from_formula("CoO1H2Ni2")
+        assert "Co" in elements
+        assert "O" in elements
+        assert "H2" in elements
+        assert "Ni2" in elements

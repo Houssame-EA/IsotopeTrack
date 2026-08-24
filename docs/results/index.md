@@ -7,7 +7,7 @@ All plot/analysis result modules (bar charts, isotope ratios, AI, …).
 ### [`results_AI.py`](results-ai.md)
 
 
-**21** classes &nbsp;·&nbsp; **32** functions &nbsp;·&nbsp; **163** methods
+**21** classes &nbsp;·&nbsp; **54** functions &nbsp;·&nbsp; **181** methods
 
 ### [`results_bar_charts.py`](results-bar-charts.md)
 
@@ -34,11 +34,6 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 
 **6** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **76** methods
 
-### [`results_dashboard.py`](results-dashboard.md)
-
-
-**2** classes &nbsp;·&nbsp; **2** functions &nbsp;·&nbsp; **7** methods
-
 ### [`results_heatmap.py`](results-heatmap.md)
 
 
@@ -52,7 +47,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_matrix.py`](results-matrix.md)
 Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
 
-**3** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **30** methods
+**3** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **31** methods
 
 ### [`results_molar_ratio.py`](results-molar-ratio.md)
 
@@ -87,4 +82,4 @@ Single vs Multiple Element Analysis Node – Pie charts & heatmaps.
 ### [`results_triangle.py`](results-triangle.md)
 Ternary Plot Node — full-figure view with right-click context menu.
 
-**6** classes &nbsp;·&nbsp; **10** functions &nbsp;·&nbsp; **84** methods
+**6** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **84** methods

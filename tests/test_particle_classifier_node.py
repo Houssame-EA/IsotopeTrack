@@ -32,9 +32,19 @@ class TestDownstreamRule:
             "histogram_plot", pcn_viz_types()) is True
 
     @pytest.mark.parametrize("node_type", [
-        "clustering_plot", "ai_assistant", "dashboard"])
+        "clustering_plot", "ai_assistant"])
     def test_excluded_viz_nodes_blocked(self, node_type):
         assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
+
+    def test_dashboard_is_allowed_downstream(self):
+        """Dashboard was released from the WIP set and must now be accepted.
+
+        It is a Visualization-category node that does not need two
+        within-particle components, so bucket-collapsing does not empty it.
+        """
+        assert pcn.is_allowed_downstream("dashboard", pcn_viz_types()) is True
+        assert "dashboard" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
+        assert "dashboard" not in pcn.EXCLUDED_DOWNSTREAM_TYPES
 
     def test_non_viz_node_blocked(self):
         assert pcn.is_allowed_downstream(
@@ -104,10 +114,10 @@ class TestAddLinkEnforcement:
     def test_excluded_downstream_link_is_blocked(self, cw):
         from tools.particle_classifier_node import ParticleClassifierNode
         scene = cw.EnhancedCanvasScene(parent_window=None)
-        clf, dash = ParticleClassifierNode(), cw.DashboardNode()
+        clf, viz = ParticleClassifierNode(), cw.ClusteringPlotNode()
         scene.add_node(clf, cw.QPointF(0, 0))
-        scene.add_node(dash, cw.QPointF(200, 0))
-        assert scene.add_link(clf, "output", dash, "input") is None
+        scene.add_node(viz, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", viz, "input") is None
 
     def test_allowed_viz_downstream_link_is_created(self, cw):
         from tools.particle_classifier_node import ParticleClassifierNode
@@ -146,7 +156,6 @@ def cw_capture(qapp, monkeypatch):
 
 _WIP_NODE_CTORS = [
     ("clustering_plot", "ClusteringPlotNode"),
-    ("dashboard", "DashboardNode"),
     ("single_multiple_element_plot", "SingleMultipleElementPlotNode"),
     ("correlation_matrix", "CorrelationMatrixNode"),
     ("network_diagram", "NetworkDiagramNode"),

@@ -4,6 +4,10 @@
 
 ## Classes
 
+### `ProjectLoadCancelled` *(extends `Exception`)*
+
+Raised when the target window is closed while a project is loading.
+
 ### `SaveProjectThread` *(extends `QThread`)*
 
 Run the heavy project-save work off the UI thread.
@@ -26,6 +30,7 @@ Manages project state serialization/deserialization including canvas workflows.
 | `_set_icon_windows` | `(self, file_path)` | Set custom icon for Windows by registering file type. |
 | `_set_icon_linux` | `(self, file_path)` | Set custom icon for Linux. |
 | `save_project` | `(self, on_complete=None, blocking=False, save_as=False)` | Save the current project state to a compressed file. |
+| `_ui_progress` | `(self, pct=None, msg=None, visible=None)` | Drive the window's progress widgets, skipping destroyed ones. |
 | `_on_save_progress` | `(self, pct, msg)` | Update the progress bar and status label during a threaded save. |
 | `_finalize_save_success` | `(self, filepath)` | Apply the post-save UI updates after a successful write. |
 | `_on_save_succeeded` | `(self, filepath)` | Handle the worker thread's success signal on the UI thread. |
@@ -45,3 +50,9 @@ Manages project state serialization/deserialization including canvas workflows.
 | `_update_ui_after_load` | `(self)` | Update UI components after loading project. |
 | `_check_version_compatibility` | `(self, file_version)` | Check if the file version is compatible with current version. |
 | `get_project_info` | `(self, file_path)` | Get basic information about a project file without fully loading it. |
+
+## Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `_alive` | `(obj)` | Return True when ``obj``'s underlying C++ object still exists. |

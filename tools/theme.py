@@ -102,6 +102,8 @@ class Palette:
     warning_bg: str
     warning_border: str
     danger: str
+    danger_bg: str
+    danger_border: str
     disabled: str
 
     plot_bg: str
@@ -142,6 +144,8 @@ LIGHT = Palette(
     warning_bg="#fff3cd",
     warning_border="#ffeaa7",
     danger="#e74c3c",
+    danger_bg="#ebaaa3",
+    danger_border="#d92815",
     disabled="#BDBDBD",
     plot_bg="#ffffff",
     plot_fg="#2c3e50",
@@ -179,6 +183,8 @@ DARK = Palette(
     warning_bg="#3a3a1f",
     warning_border="#5a5a2f",
     danger="#f48771",
+    danger_bg="#5e0d04",
+    danger_border="#f48771",
     disabled="#4a4a4a",
     plot_bg="#1e1e1e",
     plot_fg="#d4d4d4",

@@ -1394,7 +1394,7 @@ class LazyPreviewModel(QAbstractTableModel):
                 self._frame = chunk.reset_index(drop=True)
             else:
                 self._frame = pd.concat(
-                    [self._frame, chunk], ignore_index=True, copy=False)
+                    [self._frame, chunk], ignore_index=True)
 
     def _strikeout_font(self) -> QFont:
         """Return the cached strikeout font used for removed cells."""

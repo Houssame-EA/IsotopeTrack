@@ -76,3 +76,11 @@ class PeriodicTableInfo:
             Optional[dict]: A `dict` with the element properties
         """
         return self.elements.get(element, None)
+
+    def get_all_elements_as_set(self) -> set[str]:
+        """
+        Gets all symboles of the periodic table.
+        Returns:
+            a set of all elements in the periodic table.
+        """
+        return set(self.elements.keys())

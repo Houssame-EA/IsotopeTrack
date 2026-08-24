@@ -95,7 +95,7 @@ class ProjectManager:
             main_window (object): Reference to the MainWindow instance
         """
         self.main_window: MainWindow = main_window
-        self.project_version = '1.10.9'
+        self.project_version = '1.10.10'
         
         if getattr(sys, 'frozen', False):
             base_path = sys._MEIPASS
@@ -245,14 +245,14 @@ class ProjectManager:
             desktop_file = Path(file_path).with_suffix('.desktop')
             
             desktop_content = f"""[Desktop Entry]
-Version=1.10.9
+Version=1.10.10
 Type=Application
 Name=IsotopeTrack Project
 Icon={self.icon_path}
 Terminal=false
 """
             
-            with open(desktop_file, 'w') as f:
+            with open(desktop_file, 'w', encoding='utf-8') as f:
                 f.write(desktop_content)
             
             desktop_file.chmod(0o755)
@@ -667,7 +667,7 @@ Terminal=false
             
             'version': self.project_version,
             'save_timestamp': datetime.datetime.now().isoformat(),
-            'application_version': '1.10.9',
+            'application_version': '1.10.10',
         }
     
     def _restore_project_data(self, project_data):
@@ -862,7 +862,9 @@ Terminal=false
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
             'unclassified_color', 'group_pooling_policies',
             '_has_unresolved_issues', 'confound_dismissals',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Custom Cluster Test sweep snapshot (results/cluster/tools.py)
+            '_cluster_test_state'
         ]
 
         for attr in config_attributes:
@@ -870,7 +872,8 @@ Terminal=false
                 value = getattr(node, attr)
                 if isinstance(value, set):
                     value = list(value)
-                if attr == 'saved_cluster_state' and value:
+                if attr in ('saved_cluster_state',
+                            '_cluster_test_state') and value:
                     try:
                         import pickle
                         pickle.dumps(value)
@@ -928,7 +931,7 @@ Terminal=false
                 HistogramPlotNode, ElementBarChartPlotNode, CorrelationPlotNode,
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
-                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode, DashboardNode,
+                CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode,
                 ParticleFilterNode,TempPassThroughNode, ParticleClassifierNode,
                 StickyNoteItem,
             )
@@ -985,7 +988,6 @@ Terminal=false
             "correlation_matrix": CorrelationMatrixNode,
             "concentration_comparison": ConcentrationComparisonNode,    
             "network_diagram": NetworkDiagramNode,
-            "dashboard": DashboardNode,
             
         }
         
@@ -1078,7 +1080,9 @@ Terminal=false
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
             'unclassified_color', 'group_pooling_policies',
             '_has_unresolved_issues', 'confound_dismissals',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Custom Cluster Test sweep snapshot (results/cluster/tools.py)
+            '_cluster_test_state'
         ]
 
         for attr in config_attributes:

@@ -28,6 +28,7 @@ Resume-focused landing panel that overlays the empty plot area.
 | `refresh` | `(self)` | Re-read recovery sessions + recent projects and rebuild the panel. |
 | `_do_recover` | `(self)` |  |
 | `_open_recent` | `(self, item)` |  |
+| `_load_recent` | `(self, path)` | Load a recent project once the click handler has returned. |
 | `_restyle` | `(self)` |  |
 | `paintEvent` | `(self, event)` |  |
 | `eventFilter` | `(self, obj, event)` |  |
@@ -37,4 +38,5 @@ Resume-focused landing panel that overlays the empty plot area.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `_alive` | `(obj)` | Return True when ``obj``'s underlying C++ object still exists. |
 | `_recovery_sessions` | `()` | Return [(Path, datetime)] for recoverable crashed sessions, newest first. |

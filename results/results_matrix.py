@@ -78,9 +78,12 @@ def _normalize_highlighted_elements(raw):
     return {k: DEFAULT_HIGHLIGHT_COLOR for k in (raw or [])}
 
 
+CELL_LABEL_MODES = ['r value', 'Particle count', 'Both']
+
 DEFAULT_CONFIG = {
     'data_type_display':  'Counts',
     'min_particles':      5,
+    'cell_label':         'r value',
     'r_threshold':        0.0,
     'show_values':        True,
     'show_diagonal':      True,
@@ -111,11 +114,26 @@ def _is_multi(input_data):
     return input_data and input_data.get('type') == 'multiple_sample_data'
 
 
-def _compute_correlation_matrix(particles, elements, data_key):
-    """Build NxN Pearson-r matrix from particle data."""
+def _compute_correlation_matrix(particles, elements, data_key, min_particles=5):
+    """Build NxN Pearson-r matrix from particle data.
+
+    Args:
+        particles (list): Particle records to correlate.
+        elements (list): Ordered isotope/element labels forming the matrix axes.
+        data_key (str): Per-particle dictionary key holding the values.
+        min_particles (int): Minimum number of particles that must carry a
+            positive value for both members of a pair before that pair is
+            correlated. Pairs with fewer co-occurrences stay NaN.
+
+    Returns:
+        tuple: ``(r_matrix, p_matrix, count_matrix)`` as NxN arrays, where
+        ``count_matrix`` holds the number of particles in which both elements of
+        the pair were detected. Returns ``(None, None, None)`` when fewer than
+        two elements are supplied.
+    """
     n = len(elements)
     if n < 2:
-        return None, None
+        return None, None, None
     vectors = {el: [] for el in elements}
     for p in particles:
         d = p.get(data_key, {})
@@ -129,21 +147,30 @@ def _compute_correlation_matrix(particles, elements, data_key):
         for el in elements:
             vectors[el].append(vals[el])
 
+    try:
+        min_pairs = int(min_particles)
+    except (TypeError, ValueError):
+        min_pairs = 5
+    min_pairs = max(2, min_pairs)
+
     mat = np.full((n, n), np.nan)
     p_mat = np.full((n, n), np.nan)
+    columns = {el: np.asarray(vectors[el], dtype=float) for el in elements}
+    present = np.vstack([np.nan_to_num(columns[el], nan=0.0) > 0 for el in elements])
+    counts = (present.astype(np.int64) @ present.astype(np.int64).T)
     for i in range(n):
         for j in range(n):
-            vi = np.array(vectors[elements[i]], dtype=float)
-            vj = np.array(vectors[elements[j]], dtype=float)
+            vi = columns[elements[i]]
+            vj = columns[elements[j]]
             mask = (vi > 0) & (vj > 0)
-            if mask.sum() >= 5:
+            if counts[i, j] >= min_pairs:
                 try:
                     r, p = pearsonr(vi[mask], vj[mask])
                     mat[i, j] = r
                     p_mat[i, j] = p
                 except Exception:
                     _itk_log.exception("Handled exception in _compute_correlation_matrix")
-    return mat, p_mat
+    return mat, p_mat, counts
 
 
 def _matrix_stats(mat):
@@ -154,6 +181,31 @@ def _matrix_stats(mat):
         return "No valid correlations"
     arr = np.array(off_diag)
     return f"mean|r|={np.mean(np.abs(arr)):.3f}  ·  {np.mean(np.abs(arr) > 0.7)*100:.0f}% pairs >0.7"
+
+
+def _pair_count_stats(counts, min_particles):
+    """Summarise how the Min Particles cut-off lands on the current data.
+
+    Args:
+        counts (numpy.ndarray): NxN co-detection counts per element pair.
+        min_particles (int): Active Min Particles threshold.
+
+    Returns:
+        str: Short status string, empty when counts are unavailable.
+    """
+    if counts is None or not isinstance(counts, np.ndarray) or counts.size == 0:
+        return ""
+    n = counts.shape[0]
+    if n < 2:
+        return ""
+    iu = np.triu_indices(n, k=1)
+    pairs = counts[iu]
+    if pairs.size == 0:
+        return ""
+    kept = int(np.sum(pairs >= max(2, int(min_particles))))
+    total = int(pairs.size)
+    return (f"min particles {int(min_particles)} keeps {kept}/{total} pairs "
+            f"(pair overlap median {int(np.median(pairs))}, max {int(pairs.max())})")
 
 
 # ── Settings Dialog ────────────────────────────────────────────────────
@@ -176,6 +228,7 @@ class MatrixSettingsDialog(QDialog):
         self.dtype_combo = None
         self.min_part = None
         self.thresh_spin = None
+        self.cell_label_combo = None
         self.show_vals = None
         self.show_diag = None
         self.cmap_combo = None
@@ -200,13 +253,25 @@ class MatrixSettingsDialog(QDialog):
             self.dtype_combo.setCurrentText(self._cfg.get('data_type_display', 'Counts'))
             f1.addRow("Data Type:", self.dtype_combo)
             self.min_part = QDoubleSpinBox()
-            self.min_part.setRange(2, 1000); self.min_part.setDecimals(0)
+            self.min_part.setRange(2, 10000000); self.min_part.setDecimals(0)
             self.min_part.setValue(self._cfg.get('min_particles', 5))
+            self.min_part.setToolTip(
+                "A pair is only correlated when both elements are detected together\n"
+                "in at least this many particles. Pairs below the cut-off stay blank.\n"
+                "The plot header reports how many pairs survive.")
             f1.addRow("Min Particles:", self.min_part)
             self.thresh_spin = QDoubleSpinBox()
             self.thresh_spin.setRange(0.0, 0.99); self.thresh_spin.setDecimals(2)
             self.thresh_spin.setValue(self._cfg.get('r_threshold', 0.0))
             f1.addRow("|r| Threshold:", self.thresh_spin)
+            self.cell_label_combo = QComboBox()
+            self.cell_label_combo.addItems(CELL_LABEL_MODES)
+            self.cell_label_combo.setCurrentText(self._cfg.get('cell_label', 'r value'))
+            self.cell_label_combo.setToolTip(
+                "What each cell prints when Show r Values is on.\n"
+                "Particle count shows how many particles carry both elements,\n"
+                "which is the number Min Particles is compared against.")
+            f1.addRow("Cell Label:", self.cell_label_combo)
             lay.addWidget(g1)
 
         if self._scope in ('all', 'format'):
@@ -270,6 +335,7 @@ class MatrixSettingsDialog(QDialog):
             'data_type_display': self.dtype_combo.currentText() if self.dtype_combo else self._cfg.get('data_type_display', 'Counts'),
             'min_particles':     int(self.min_part.value()) if self.min_part else int(self._cfg.get('min_particles', 5)),
             'r_threshold':       self.thresh_spin.value() if self.thresh_spin else self._cfg.get('r_threshold', 0.0),
+            'cell_label':        self.cell_label_combo.currentText() if self.cell_label_combo else self._cfg.get('cell_label', 'r value'),
             'show_values':       self.show_vals.isChecked() if self.show_vals else self._cfg.get('show_values', True),
             'show_diagonal':     self.show_diag.isChecked() if self.show_diag else self._cfg.get('show_diagonal', True),
             'colormap':          self.cmap_combo.currentText() if self.cmap_combo else self._cfg.get('colormap', 'RdBu_r'),
@@ -521,10 +587,14 @@ class CorrelationMatrixDisplayDialog(QDialog):
         mat = data['matrix']
         elems = data['elements']
         n = data.get('n_particles', 0)
+        pair_info = _pair_count_stats(data.get('pair_counts'),
+                                      data.get('min_particles', 5))
         self._header.setText(
-            f"Correlation Matrix · {len(elems)} elements · {n} particles · {_matrix_stats(mat)}")
+            f"Correlation Matrix · {len(elems)} elements · {n} particles · "
+            f"{_matrix_stats(mat)}" + (f" · {pair_info}" if pair_info else ""))
         ax = self.figure.add_subplot(111)
-        self._draw_matrix_ax(ax, mat, elems, cfg, title="")
+        self._draw_matrix_ax(ax, mat, elems, cfg, title="",
+                             counts=data.get('pair_counts'))
         apply_font_to_matplotlib(ax, cfg)
 
     def _draw_multi(self, data, cfg):
@@ -532,13 +602,18 @@ class CorrelationMatrixDisplayDialog(QDialog):
         n = len(names)
         cols = min(n, 3)
         rows = math.ceil(n / cols)
-        self._header.setText(f"Correlation Matrices · {n} groups")
+        first = data[names[0]]
+        pair_info = _pair_count_stats(first.get('pair_counts'),
+                                      first.get('min_particles', 5))
+        self._header.setText(f"Correlation Matrices · {n} groups"
+                             + (f" · {pair_info}" if pair_info else ""))
         for idx, sn in enumerate(names):
             info = data[sn]
             ax = self.figure.add_subplot(rows, cols, idx + 1)
             dn = get_display_name(sn, cfg)
             self._draw_matrix_ax(ax, info['matrix'], info['elements'], cfg,
-                                 title=f"{dn}  (n={info.get('n_particles',0)})")
+                                 title=f"{dn}  (n={info.get('n_particles',0)})",
+                                 counts=info.get('pair_counts'))
             apply_font_to_matplotlib(ax, cfg)
 
     def _draw_difference(self, data, cfg):
@@ -563,8 +638,18 @@ class CorrelationMatrixDisplayDialog(QDialog):
                              title=f"Difference: {names[0]} − {names[1]}")
         apply_font_to_matplotlib(ax, cfg)
 
-    def _draw_matrix_ax(self, ax, mat, elems, cfg, title=""):
-        """Draw one correlation matrix onto ax using imshow."""
+    def _draw_matrix_ax(self, ax, mat, elems, cfg, title="", counts=None):
+        """Draw one correlation matrix onto ax using imshow.
+
+        Args:
+            ax: Matplotlib axes to draw on.
+            mat (numpy.ndarray): NxN Pearson-r matrix.
+            elems (list): Element labels for both axes.
+            cfg (dict): Plot configuration.
+            title (str): Optional axes title.
+            counts (numpy.ndarray): Optional NxN co-detection counts, used when
+                the cell label mode asks for the per-pair particle count.
+        """
         n = len(elems)
         threshold = cfg.get('r_threshold', 0.0)
         show_diag = cfg.get('show_diagonal', True)
@@ -610,14 +695,23 @@ class CorrelationMatrixDisplayDialog(QDialog):
                          color=fc['color'], pad=10)
 
         if show_vals:
+            cell_label = cfg.get('cell_label', 'r value')
+            has_counts = isinstance(counts, np.ndarray) and counts.shape == plot_mat.shape
             for i in range(n):
                 for j in range(n):
-                    v = mat[i, j]
-                    if not np.isnan(v):
-                        tc = 'white' if abs(v) > 0.6 else 'black'
-                        ax.text(j, i, f"{v:.2f}", ha='center', va='center',
-                                fontsize=max(6, fc['size'] - 2), color=tc,
-                                fontweight='bold' if fc['bold'] else 'normal')
+                    v = plot_mat[i, j]
+                    if np.isnan(v):
+                        continue
+                    if cell_label == 'Particle count' and has_counts:
+                        label = f"{int(counts[i, j])}"
+                    elif cell_label == 'Both' and has_counts:
+                        label = f"{v:.2f}\n{int(counts[i, j])}"
+                    else:
+                        label = f"{v:.2f}"
+                    tc = 'white' if abs(v) > 0.6 else 'black'
+                    ax.text(j, i, label, ha='center', va='center',
+                            fontsize=max(6, fc['size'] - 2), color=tc,
+                            fontweight='bold' if fc['bold'] else 'normal')
 
         cbar = self.figure.colorbar(im, ax=ax, shrink=0.8, pad=0.02)
         apply_font_to_colorbar_standalone(cbar, cfg, "Pearson r")
@@ -682,6 +776,18 @@ class CorrelationMatrixNode(QObject):
             all_elems.update(p.get('elements', {}).keys())
         return sort_elements_by_mass(list(all_elems))
 
+    def _min_particles(self):
+        """Return the configured Min Particles value, clamped to a usable minimum.
+
+        Returns:
+            int: Minimum co-occurring particle count required per element pair.
+        """
+        try:
+            value = int(self.config.get('min_particles', 5))
+        except (TypeError, ValueError):
+            value = 5
+        return max(2, value)
+
     def _extract_single(self, data_key):
         particles = self.input_data.get('particle_data', [])
         if not particles:
@@ -689,11 +795,14 @@ class CorrelationMatrixNode(QObject):
         elements = self._get_elements()
         if len(elements) < 2:
             return None
-        mat, p_mat = _compute_correlation_matrix(particles, elements, data_key)
+        min_particles = self._min_particles()
+        mat, p_mat, counts = _compute_correlation_matrix(
+            particles, elements, data_key, min_particles)
         if mat is None:
             return None
-        return {'elements': elements, 'matrix': mat,
-                'p_matrix': p_mat, 'n_particles': len(particles)}
+        return {'elements': elements, 'matrix': mat, 'p_matrix': p_mat,
+                'pair_counts': counts, 'min_particles': min_particles,
+                'n_particles': len(particles)}
 
     def _extract_multi(self, data_key):
         particles = self.input_data.get('particle_data', [])
@@ -704,14 +813,18 @@ class CorrelationMatrixNode(QObject):
         if len(elements) < 2:
             return None
         result = {}
+        min_particles = self._min_particles()
         for sn in names:
             sp = [p for p in particles if p.get('source_sample') == sn]
-            if len(sp) < self.config.get('min_particles', 5):
+            if len(sp) < min_particles:
                 continue
-            mat, p_mat = _compute_correlation_matrix(sp, elements, data_key)
+            mat, p_mat, counts = _compute_correlation_matrix(
+                sp, elements, data_key, min_particles)
             if mat is not None:
                 result[sn] = {'elements': elements, 'matrix': mat,
-                              'p_matrix': p_mat, 'n_particles': len(sp)}
+                              'p_matrix': p_mat, 'pair_counts': counts,
+                              'min_particles': min_particles,
+                              'n_particles': len(sp)}
         return result if result else None
 
 

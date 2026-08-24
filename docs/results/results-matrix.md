@@ -19,7 +19,8 @@ Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 | `MATRIX_DISPLAY_MODES` | `['Side by Side', 'Individual Subplots', 'Difference Matrix']` |
 | `DEGREE_SIGN` | `'°'` |
 | `DEFAULT_HIGHLIGHT_COLOR` | `'#000000'` |
-| `DEFAULT_CONFIG` | `{'data_type_display': 'Counts', 'min_particles': 5, 'r_th…` |
+| `CELL_LABEL_MODES` | `['r value', 'Particle count', 'Both']` |
+| `DEFAULT_CONFIG` | `{'data_type_display': 'Counts', 'min_particles': 5, 'cell…` |
 
 ## Classes
 
@@ -55,7 +56,7 @@ Matplotlib-based correlation matrix dialog with drag support.
 | `_draw_single` | `(self, data, cfg)` |  |
 | `_draw_multi` | `(self, data, cfg)` |  |
 | `_draw_difference` | `(self, data, cfg)` |  |
-| `_draw_matrix_ax` | `(self, ax, mat, elems, cfg, title='')` | Draw one correlation matrix onto ax using imshow. |
+| `_draw_matrix_ax` | `(self, ax, mat, elems, cfg, title='', counts=None)` | Draw one correlation matrix onto ax using imshow. |
 
 ### `CorrelationMatrixNode` *(extends `QObject`)*
 
@@ -67,6 +68,7 @@ Matplotlib-based correlation matrix dialog with drag support.
 | `process_data` | `(self, input_data)` |  |
 | `extract_matrix_data` | `(self)` |  |
 | `_get_elements` | `(self)` |  |
+| `_min_particles` | `(self)` | Return the configured Min Particles value, clamped to a usable minimum. |
 | `_extract_single` | `(self, data_key)` |  |
 | `_extract_multi` | `(self, data_key)` |  |
 
@@ -76,5 +78,6 @@ Matplotlib-based correlation matrix dialog with drag support.
 |----------|-----------|-------------|
 | `_normalize_highlighted_elements` | `(raw)` | Return ``{element: hex_color}`` from the highlighted_elements config value. |
 | `_is_multi` | `(input_data)` |  |
-| `_compute_correlation_matrix` | `(particles, elements, data_key)` | Build NxN Pearson-r matrix from particle data. |
+| `_compute_correlation_matrix` | `(particles, elements, data_key, min_particles=5)` | Build NxN Pearson-r matrix from particle data. |
 | `_matrix_stats` | `(mat)` |  |
+| `_pair_count_stats` | `(counts, min_particles)` | Summarise how the Min Particles cut-off lands on the current data. |

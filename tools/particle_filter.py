@@ -2531,11 +2531,14 @@ class ParticleFilterDialog(QDialog):
         after clicking OK — replaced (per explicit user decision) with an
         unconditional reminder on every OK, since "did it really change"
         and "is a window really open somewhere downstream" are exactly the
-        two things that kept failing to detect correctly live. A per-node
-        "don't show this again" opt-out (persisted on
-        ``ParticleFilterNode.suppress_stale_warning`` and read back in
-        :meth:`ParticleFilterNode.configure`) keeps this from turning into
-        nag-ware for someone who has already acknowledged it.
+        two things that kept failing to detect correctly live. A "don't
+        show this again" opt-out keeps this from turning into nag-ware for
+        someone who has already acknowledged it: it is application-wide and
+        permanent, stored in :mod:`tools.render_settings` and shared with
+        the sample-selector nodes' copy of the same reminder
+        (``widget.canvas_widgets._warn_before_apply_changes``), so ticking
+        it here silences every node on the canvas and stays silenced after
+        a restart.
         """
         if self.grp_pd.isChecked():
             bad = [title for key, title in (('mass', 'Mass'),
@@ -2571,9 +2574,9 @@ class ParticleFilterDialog(QDialog):
             box.exec()
             if box.clickedButton() is not proceed:
                 return
-        if not self._resolve_pending_dilution_conflicts():
-            return
-        if not self._suppress_stale_warning:
+        from tools.render_settings import (stale_warning_suppressed,
+                                           set_stale_warning_suppressed)
+        if not (self._suppress_stale_warning or stale_warning_suppressed()):
             from PySide6.QtWidgets import QMessageBox, QCheckBox
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Warning)
@@ -2586,19 +2589,26 @@ class ParticleFilterDialog(QDialog):
                 "fed by this filter will update to match.\n\nIf you want "
                 "to keep a plot's current view, save it first, then come "
                 "back and apply this filter.")
-            dont_show = QCheckBox("Don't show this again for this filter")
+            dont_show = QCheckBox("Don't show this again (any node)")
             box.setCheckBox(dont_show)
             proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
             box.addButton("Go back", QMessageBox.RejectRole)
             box.setDefaultButton(proceed)
             box.exec()
             self._suppress_stale_warning_now = dont_show.isChecked()
+            if dont_show.isChecked():
+                set_stale_warning_suppressed(True)
             if box.clickedButton() is not proceed:
                 return
         self.accept()
 
     def stale_warning_suppressed(self):
         """Read whether "Don't show this again" was checked on last accept.
+
+        Reports this dialog's own view only. The authoritative, shared
+        opt-out now lives in :mod:`tools.render_settings` and is written at
+        the same moment the box is ticked; this stays so the owning node
+        keeps its local copy in step and older callers keep working.
 
         Returns:
             bool: True if the reminder should be skipped for this node from
@@ -2689,12 +2699,10 @@ class ParticleFilterNode(QObject):
         self.dilution_resolutions = {}
         self._stale = []
         self._incoming_names = []
-        # Per-node opt-out for the "applying this will change open plots"
-        # reminder shown on every OK (see ParticleFilterDialog._try_accept).
-        # Persists on the node itself (like sample_filters) so a user who
-        # dismisses it once for THIS filter node isn't nagged again by it,
-        # while a different Particle Filter node on the same canvas still
-        # warns until it's separately opted out.
+        # Legacy per-node opt-out for the "applying this will change open
+        # plots" reminder (see ParticleFilterDialog._try_accept). The live
+        # opt-out is application-wide (tools/render_settings.py); this is
+        # still honoured if set, and kept so saved state stays valid.
         self.suppress_stale_warning = False
 
     def set_position(self, pos):

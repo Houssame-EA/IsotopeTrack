@@ -142,7 +142,6 @@ nav:
     - "results_composition_wheel.py": results/results-composition-wheel.md
     - "results_concentration.py": results/results-concentration.md
     - "results_correlation.py": results/results-correlation.md
-    - "results_dashboard.py": results/results-dashboard.md
     - "results_heatmap.py": results/results-heatmap.md
     - "results_isotope.py": results/results-isotope.md
     - "results_matrix.py": results/results-matrix.md
@@ -155,7 +154,9 @@ nav:
     - "results_triangle.py": results/results-triangle.md
 - Clustering:
     - Overview: cluster/index.md
+    - "detail.py": cluster/detail.md
     - "dialog.py": cluster/dialog.md
+    - "export_workbook.py": cluster/export-workbook.md
     - "live.py": cluster/live.md
     - "live_engine.py": cluster/live-engine.md
     - "palette.py": cluster/palette.md
@@ -186,8 +187,20 @@ nav:
     - "interactive_guide.py": tools_utilities/interactive-guide.md
     - "logging_utils.py": tools_utilities/logging-utils.md
     - "mass_fraction_calculator.py": tools_utilities/mass-fraction-calculator.md
+    - "mass_fraction_calculator_widgets.py": tools_utilities/mass-fraction-calculator-widgets.md
+    - "mass_fraction_table_model.py": tools_utilities/mass-fraction-table-model.md
+    - "__init__.py": tools_utilities/--init--.md
+    - "compound.py": tools_utilities/compound.md
+    - "compound_database.py": tools_utilities/compound-database.md
+    - "formula_editor.py": tools_utilities/formula-editor.md
+    - "formula_utils.py": tools_utilities/formula-utils.md
+    - "particle_classifier_dialog.py": tools_utilities/particle-classifier-dialog.md
+    - "particle_classifier_expr.py": tools_utilities/particle-classifier-expr.md
+    - "particle_classifier_node.py": tools_utilities/particle-classifier-node.md
+    - "particle_classifier_relabel.py": tools_utilities/particle-classifier-relabel.md
     - "particle_filter.py": tools_utilities/particle-filter.md
     - "periodic_table_info.py": tools_utilities/periodic-table-info.md
+    - "render_settings.py": tools_utilities/render-settings.md
     - "toast.py": tools_utilities/toast.md
     - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md
@@ -199,9 +212,12 @@ nav:
     - Overview: utils/index.md
     - "__init__.py": utils/--init--.md
     - "app_version.py": utils/app-version.md
+    - "dialog_chrome.py": utils/dialog-chrome.md
     - "dilution.py": utils/dilution.md
     - "file_dialog_memory.py": utils/file-dialog-memory.md
     - "isobaric_correction.py": utils/isobaric-correction.md
     - "numba_guard.py": utils/numba-guard.md
+    - "numeric_format.py": utils/numeric-format.md
     - "pyqtgraph_patches.py": utils/pyqtgraph-patches.md
+    - "signal_stats.py": utils/signal-stats.md
     - "unit.py": utils/unit.md

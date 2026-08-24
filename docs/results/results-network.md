@@ -17,6 +17,9 @@ Rendered with Matplotlib (MplDraggableCanvas) for full drag/export support.
 | `NET_DATA_TYPES` | `['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…` |
 | `NET_DATA_KEY_MAP` | `{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…` |
 | `DEFAULT_CONFIG` | `{'data_type_display': 'Counts', 'r_threshold': 0.3, 'min_…` |
+| `NODE_SIZE_MAX_SCALE_MIN` | `1.5` |
+| `NODE_SIZE_MAX_SCALE_MAX` | `5.0` |
+| `NODE_SIZE_MAX_SCALE_DEFAULT` | `3.0` |
 
 ## Classes
 
@@ -92,7 +95,7 @@ Network-local font settings group with a safe font color picker.
 | `_compute_node_amounts` | `(particles, elements, data_key, aggregation='Sum')` | Aggregate per-element amounts for one sample and one selected data type. |
 | `_normalize_node_size_aggregation` | `(value)` | Normalize node-size aggregation config values to supported options. |
 | `_node_size_note_text` | `(cfg)` | Build the figure-level node-size explanation text when scaling is enabled. |
-| `_node_size_max_scale` | `()` | Return the current maximum node-radius scale for proportional sizing. |
+| `_node_size_max_scale` | `(cfg)` | Return the user-configured maximum node-radius scale for proportional sizing. |
 | `_node_size_visual_legend_enabled` | `(cfg)` | Return whether the figure should render the RHS node-size visual legend. |
 | `_node_size_amount_unit` | `(data_type)` | Return a compact unit label for node-size amount text. |
 | `_format_node_size_amount` | `(value, unit)` | Format a quantitative node-size amount label compactly for the RHS legend. |
@@ -102,5 +105,5 @@ Network-local font settings group with a safe font color picker.
 | `_node_size_visual_legend_labels` | `(scales)` | Build compact labels for RHS node-size legend example circles. |
 | `_legend_base_amount_text` | `(network_payloads, data_type)` | Build the quantitative base-amount line for the RHS node-size legend. |
 | `_top_annotation_layout` | `(has_legend, has_node_size_note)` | Return coordinated figure annotation positions and layout bounds. |
-| `_compute_node_radii` | `(elements, node_amounts, base_radius, enabled)` | Compute per-element node radii from aggregated isotope amounts. |
+| `_compute_node_radii` | `(elements, node_amounts, base_radius, enabled, max_scale)` | Compute per-element node radii from aggregated isotope amounts. |
 | `_pick_color_hex` | `(current_color, parent=None, title='Select Color', fallback='#FFFFFF')` | Open a safe color dialog and return a validated hex color string. |

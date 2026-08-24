@@ -1589,7 +1589,7 @@ class PeriodicTableWidget(QDialog):
         
         if file_name:
             try:
-                with open(file_name, 'w') as f:
+                with open(file_name, 'w', encoding='utf-8') as f:
                     f.write("# Isotope Selection File\n")
                     f.write("# Format: Element:Mass\n")
                     f.write("# Lines starting with # are comments\n\n")
@@ -1624,7 +1624,7 @@ class PeriodicTableWidget(QDialog):
                 loaded_selections = []
                 invalid_lines = []
                 
-                with open(file_name, 'r') as f:
+                with open(file_name, 'r', encoding='utf-8') as f:
                     for line_num, line in enumerate(f, 1):
                         line = line.strip()
                         

@@ -3,9 +3,30 @@ import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
-sklearn_hidden = collect_submodules('sklearn')
-scipy_hidden   = collect_submodules('scipy')
-numba_hidden   = collect_submodules('numba')
+def _runtime_submodules(package):
+    """Collect a package's submodules, minus the parts that only exist for CI.
+
+    ``collect_submodules`` returns every module in the package, which for
+    scipy, scikit-learn and numba means their full test suites come along:
+    roughly 23 MB, 11 MB and a further large tree respectively, none of which
+    can ever execute in a packaged application. Dropping any module whose
+    dotted path contains a test component removes that weight without touching
+    anything the app can reach at runtime.
+
+    Args:
+        package (str): Top-level package name to collect.
+
+    Returns:
+        list[str]: Module names suitable for ``hiddenimports``.
+    """
+    drop = {'tests', 'test', 'testing', 'conftest', '_pytesttester'}
+    return [m for m in collect_submodules(package)
+            if not (drop & set(m.split('.')))]
+
+
+sklearn_hidden = _runtime_submodules('sklearn')
+scipy_hidden   = _runtime_submodules('scipy')
+numba_hidden   = _runtime_submodules('numba')
 
 pandas_meta = []
 for _pkg in ('pytz', 'tzdata', 'pandas', 'numpy', 'python-dateutil', 'six'):
@@ -39,6 +60,17 @@ with open(_rth, 'w') as _f:
         "    sys.modules['pyarrow'] = m\n"
     )
 
+# Fail the build early if lz4 is missing from the build environment.
+# hiddenimports cannot bundle a package that isn't installed — PyInstaller only
+# warns, and the resulting exe raises "No module named 'lz4'" when opening a project.
+try:
+    import lz4.frame  # noqa: F401
+except ImportError:
+    raise SystemExit(
+        "BUILD ABORTED: lz4 is not installed in the build environment.\n"
+        "Run: pip install \"lz4>=4.4.4\"  (4.3.3 has no wheel for Python 3.13)"
+    )
+
 data_files = []
 
 if os.path.exists('images'):
@@ -63,6 +95,11 @@ if os.path.exists('data/interference_corrections.json'):
 if os.path.exists('images/isotrack_icon.ico'):
     data_files.append((os.path.abspath('images/isotrack_icon.ico'), '.'))
 
+# Document icon for .itproj files (referenced by the Inno Setup DefaultIcon key).
+# Must sit at the root of the install dir so the registry path {app}\isotrack_project.ico resolves.
+if os.path.exists('images/isotrack_project.ico'):
+    data_files.append((os.path.abspath('images/isotrack_project.ico'), '.'))
+
 if os.path.exists('data/materials_trimmed.csv.gz'):
     data_files.append((os.path.abspath('data/materials_trimmed.csv.gz'), '.'))
 
@@ -71,15 +108,6 @@ if os.path.exists('processing/cpln_quantiles.npz'):
     print("Including cpln_quantiles.npz")
 else:
     print("WARNING: processing/cpln_quantiles.npz not found — peak detection LUT will be missing!")
-
-# Web assets for the interactive Cluster tab.
-for _ui_dir in ('results/cluster/live_ui',):
-    if os.path.exists(_ui_dir):
-        for _ui in os.listdir(_ui_dir):
-            _uip = os.path.join(_ui_dir, _ui)
-            if os.path.isfile(_uip):
-                data_files.append((os.path.abspath(_uip), _ui_dir))
-        print(f"Including web UI assets: {_ui_dir}")
 
 print(f"Total data files to include: {len(data_files)}")
 
@@ -96,9 +124,6 @@ a = Analysis(
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
-        'PySide6.QtWebEngineWidgets',
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebChannel',
         'PySide6.QtOpenGL',
         'PySide6.QtOpenGLWidgets',
         'PySide6.QtPrintSupport',
@@ -120,7 +145,6 @@ a = Analysis(
         'qtawesome',
         'qtawesome.iconic_font',
         'qtawesome.animation',
-        'qtawesome.icon_browser',
 
         'numpy',
         'numpy.lib',
@@ -166,6 +190,11 @@ a = Analysis(
         'lz4.block',
 
         'openpyxl',
+        'openpyxl.chart',
+        'openpyxl.chart.data_source',
+        'openpyxl.chart.series_factory',
+        'openpyxl.styles',
+        'openpyxl.utils',
         'pypdf',
 
         'pandas',
@@ -243,14 +272,12 @@ a = Analysis(
         'datetime',
         'time',
         'math',
-        'statistics',
         'hashlib',
         'pickle',
         'gzip',
         'warnings',
         'gc',
         're',
-        'argparse',
         'dataclasses',
 
         'mainwindow',
@@ -288,11 +315,11 @@ a = Analysis(
         'results.cluster.tools',
         'results.cluster.live',
         'results.cluster.live_engine',
+        'results.cluster.export_workbook',
         'results.cluster.palette',
         'results.results_composition_wheel',
         'results.results_concentration',
         'results.results_correlation',
-        'results.results_dashboard',
         'results.results_heatmap',
         'results.results_isotope',
         'results.results_matrix',
@@ -318,7 +345,6 @@ a = Analysis(
         'tools.dilution_utils',
         'tools.parameters_table',
         'tools.theme',
-        'tools.render_settings',
         'tools.particle_filter',
         'tools.element_picker',
         'tools.update_checker',
@@ -327,6 +353,8 @@ a = Analysis(
         'tools.info_file',
         'tools.logging_utils',
         'tools.mass_fraction_calculator',
+        'tools.mass_fraction_calculator_widgets',
+        'tools.mass_fraction_table_model',
         'tools.progressive_main_window',
         'tools.signal_selector_dialog',
         'tools.splash_screen',
@@ -336,6 +364,13 @@ a = Analysis(
         'tools.home_panel',
         'tools.toast',
         'tools.welcome',
+        'tools.periodic_table_utils.periodic_table_info',
+        'tools.mass_fraction_utils',
+        'tools.mass_fraction_utils.compound',
+        'tools.mass_fraction_utils.compound_database',
+        'tools.mass_fraction_utils.formula_editor',
+        'tools.mass_fraction_utils.formula_utils',
+        'tools.mass_fraction_utils.mass_fraction_service',
 
         'utils',
         'utils.app_version',
@@ -359,6 +394,13 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[_rth],
     excludes=[
+        'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineQuick',
+        'PySide6.QtWebChannel',
+        'PySide6.QtQuick',
+        'PySide6.QtQml',
+        'PySide6.QtPositioning',
         'tkinter',
         'turtle',
         'PyQt5',
@@ -372,16 +414,33 @@ a = Analysis(
         'plotly',
         'pyarrow',
         'xlsxwriter',
+        'IPython',
+        'ipywidgets',
+        'jupyter',
+        'notebook',
+        'pytest',
+        'sphinx',
+        'docutils',
     ],
     noarchive=False,
     optimize=0,
 )
 
 pyz = PYZ(a.pure)
+
+_runtime_options = [('X utf8', None, 'OPTION')]
+"""Interpreter flags injected into the frozen build.
+
+``X utf8`` is the equivalent of ``python -X utf8``. Without it the embedded
+interpreter's default text encoding is the Windows ANSI code page (cp936/GBK
+on Simplified Chinese systems), and any file written containing 'µ' or '³' —
+every unit label in the exports — raises UnicodeEncodeError.
+"""
+
 exe = EXE(
     pyz,
     a.scripts,
-    [],
+    _runtime_options,
     exclude_binaries=True,
     name='IsotopeTrack',
     debug=False,

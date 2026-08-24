@@ -48,9 +48,10 @@ config swapped in; everything else delegates to the real node.
 |--------|-----------|-------------|
 | `__init__` | `(self, node, dialog_class, parent_window, config=None)` |  |
 | `__setattr__` | `(self, name, value)` | Keep config/dialog/thumbnail on the view; forward any other attribute |
+| `_with_view_config` | `(self, func)` | Wrap a node method so it runs against this view's config. |
 | `extract_plot_data` | `(self, *args, **kwargs)` | Run the node's extraction with this view's config swapped in. |
 | `new_figure` | `(self)` | Spawn another independent figure for the same node. |
-| `__getattr__` | `(self, name)` |  |
+| `__getattr__` | `(self, name)` | Delegate to the node, applying this view's config to extractions. |
 
 ### `MplDraggableCanvas` *(extends `_FigureCanvasBase`)*
 
@@ -242,6 +243,7 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `evaluate_equation` | `(equation: str, element_data: dict) → float` | Safely evaluate a mathematical equation with element name substitution. |
 | `evaluate_equation_array` | `(equation: str, df: pd.DataFrame) → np.ndarray` | Evaluate an equation row-by-row over a DataFrame. |
 | `get_sample_color` | `(sample_name: str, index: int, config: dict) → str` | Return hex color for a sample, falling back to default palette. |
+| `seed_suggested_element_colors` | `(config: dict, input_data: dict \| None) → None` | Seed default bar/legend colors from an upstream node's suggestions. |
 | `get_display_name` | `(original_name: str, config: dict) → str` | Return custom display name or original. |
 | `make_viridis_colormap` | `()` | Create a viridis-like PyQtGraph ColorMap. |
 | `conc_meta_available` | `(input_data) → bool` | Report whether any sample in the input carries a usable transport rate. |
