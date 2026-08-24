@@ -1966,7 +1966,8 @@ class HistogramSettingsDialog(QDialog):
 
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None, lock_data_type=False,
-                 data_type_lock_message="", te_available=False):
+                 data_type_lock_message="", te_available=False,
+                 input_data=None):
         """
         Preserved behavior:
             Parent histogram can still fully change data type. The lock is used
@@ -1983,6 +1984,8 @@ class HistogramSettingsDialog(QDialog):
         self._lock_data_type = bool(lock_data_type)
         self._data_type_lock_message = data_type_lock_message or ""
         self._te_available = bool(te_available)
+        self._input_data = input_data
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -1994,6 +1997,12 @@ class HistogramSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        from results.shared_plot_utils import ClassifierViewGroup
+        from results import classifier_view as cv
+        self._classifier_group = ClassifierViewGroup(
+            self._cfg, self._input_data, cv.ARITY_PER_KEY)
+        layout.addWidget(self._classifier_group.build())
 
         if self._multi:
             g = QGroupBox("Multiple Sample Display")
@@ -2335,6 +2344,8 @@ class HistogramSettingsDialog(QDialog):
             quantity/format controls normally.
         """
         out = dict(self._cfg)
+        if self._classifier_group is not None:
+            out.update(self._classifier_group.collect())
         if self._lock_data_type:
             out['data_type_display'] = self._cfg.get('data_type_display', 'Counts')
         else:
@@ -3198,7 +3209,8 @@ class HistogramDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
             available_elements=self._get_available_elements(),
-            te_available=_meta_te_available(self.node.input_data))
+            te_available=_meta_te_available(self.node.input_data),
+            input_data=self.node.input_data)
         if title_override:
             dlg.setWindowTitle(title_override)
         dlg.preview_requested.connect(lambda cfg: (
@@ -4262,7 +4274,8 @@ class HistogramPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 
@@ -4361,7 +4374,7 @@ class BarChartSettingsDialog(QDialog):
     preview_requested = Signal(dict)
 
     def __init__(self, config, is_multi, sample_names, parent=None, scope='all',
-                 te_available=False, available_elements=None):
+                 te_available=False, available_elements=None, input_data=None):
         """
         Initialize bar-chart settings dialog with optional scope filtering.
 
@@ -4392,6 +4405,8 @@ class BarChartSettingsDialog(QDialog):
         self._scope = scope
         self._te_available = bool(te_available)
         self._available_elements = list(available_elements or [])
+        self._input_data = input_data
+        self._classifier_group = None
 
         self.display_mode = None
         self.show_values = None
@@ -4437,6 +4452,13 @@ class BarChartSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            layout.addWidget(self._classifier_group.build())
 
         if self._multi and self._scope in ('all', 'quantities'):
             g = QGroupBox("Multiple Sample Display")
@@ -4839,6 +4861,8 @@ class BarChartSettingsDialog(QDialog):
             Prevents scope-related missing-widget errors and preserves untouched keys.
         """
         out = dict(self._cfg)
+        if self._classifier_group is not None:
+            out.update(self._classifier_group.collect())
         if self.show_values is not None:
             out['show_values'] = self.show_values.isChecked()
         if self.sort_bars is not None:
@@ -5661,7 +5685,8 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
             te_available=_meta_te_available(self.node.input_data),
-            available_elements=self._get_available_bar_elements())
+            available_elements=self._get_available_bar_elements(),
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -5700,7 +5725,8 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self, scope='quantities',
             te_available=_meta_te_available(self.node.input_data),
-            available_elements=self._get_available_bar_elements())
+            available_elements=self._get_available_bar_elements(),
+            input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (
             self.node.config.update(cfg), self._refresh(),
             warn_if_values_swallowed(
@@ -6759,7 +6785,8 @@ class ElementBarChartPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 

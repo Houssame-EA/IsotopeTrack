@@ -70,6 +70,67 @@ _MFC_DEPENDENT_KEYS = (
 
 GroupPoolingPolicy = Literal["keep", "drop_mfc"]
 
+#: Every composition dict the relabel pass rewrites or drops. Their
+#: pre-relabel originals are carried through under ``RAW_KEY`` so downstream
+#: nodes that need real isotopes (rather than the collapsed bucket label)
+#: can still get at them -- see the "dual-carry" note below.
+_RELABELED_KEYS = _ADDITIVE_KEYS + _PERCENTAGE_KEYS + _MFC_DEPENDENT_KEYS
+
+#: Per-particle key holding ``{composition_key: original_dict}`` -- the
+#: untouched, real-isotope-keyed composition dicts as they arrived from
+#: upstream.
+#:
+#: **Dual-carry**: the destructive collapse in :func:`_relabel_composition`
+#: is preserved exactly as-is (so every downstream node that reads one
+#: composition key at a time keeps behaving identically), and the originals
+#: ride along beside it. This costs essentially nothing:
+#: :func:`_relabel_composition` *builds new dicts* and never mutates the
+#: source, so these are shared references, not copies.
+#:
+#: The leading underscore is deliberate and load-bearing:
+#: ``save_export/fast_project_io.py`` silently drops ``_``-prefixed particle
+#: keys on save, while routing any *other* unrecognized key into a
+#: per-particle ``extras`` dict -- which would defeat the columnar save
+#: format. The underscore is what keeps dual-carry off disk.
+RAW_KEY = '_classifier_raw'
+
+#: Per-particle key holding the assigned bucket label (str), or None for a
+#: particle that passed through unclassified under ``unmatched_mode ==
+#: "passthrough"`` and therefore still carries its real composition.
+BUCKET_KEY = '_classifier_bucket'
+
+#: Per-particle key holding this particle's index within its source sample's
+#: input list. Needed because the codebase has no per-particle identity of
+#: any kind, and ``double_count`` overlap mode emits ONE input particle as
+#: SEVERAL output particles (one per matching definition). Any statistic
+#: computed over real isotopes downstream (Pearson r, network edge weights,
+#: clustering) would silently double-weight such a particle without a key to
+#: dedupe on. Unique only *within* a sample, so the real identity is the
+#: pair ``(source_sample, _classifier_src_index)`` -- see
+#: ``results.classifier_view.particle_identity``.
+SRC_INDEX_KEY = '_classifier_src_index'
+
+
+def _raw_composition_snapshot(particle):
+    """Capture references to a particle's pre-relabel composition dicts.
+
+    Args:
+        particle (dict): The source particle, read-only here.
+
+    Returns:
+        dict: ``{composition_key: original_dict}`` for every relabeled key
+            actually present on the particle. Values are the *same* dict
+            objects, not copies -- safe because nothing in this module
+            mutates a source particle's composition dicts (they are rebuilt,
+            see :func:`_relabel_composition`).
+    """
+    snap = {}
+    for key in _RELABELED_KEYS:
+        src = particle.get(key)
+        if isinstance(src, dict):
+            snap[key] = src
+    return snap
+
 
 def group_pooling_status(definitions):
     """Classify every group by how many definitions feed into it.
@@ -150,6 +211,77 @@ def suggested_label_colors(definitions, groups, unmatched_mode, unclassified_col
         out[label] = color
     if unmatched_mode == 'unclassified':
         out['Unclassified'] = unclassified_color
+    return out
+
+
+def build_bucket_registry(definitions, groups, unmatched_mode,
+                          unclassified_color):
+    """Describe every bucket label this configuration can emit.
+
+    Downstream nodes need more than the friendly bucket name to be
+    scientifically useful: "orange = Smelter" tells a scientist nothing
+    about what actually qualifies as a Smelter particle -- the isotope
+    expression does (``.claude/july22.md`` #8). This is the lookup that
+    makes the literal expression recoverable at render time.
+
+    Deliberately **list-shaped** on ``definitions``: a group backed by 2+
+    definitions (see :func:`multi_definition_groups`) has that many
+    expressions and match-modes, and flattening them to a single string
+    would silently drop all but one.
+
+    Args:
+        definitions (list): The node's definitions (any/all samples).
+        groups (dict): ``{group_name: color}`` registry, global across
+            samples.
+        unmatched_mode ("unclassified" | "discard" | "passthrough"): §6.
+        unclassified_color (str): Color for the Unclassified bucket.
+
+    Returns:
+        dict: ``{label: {'color': hex, 'is_group': bool, 'definitions':
+            [{'id', 'expression_text', 'match_mode', 'target_sample'}, ...]}}``.
+            Definitions with a blank expression are skipped. Labels are not
+            guaranteed unique across definitions (two ungrouped definitions
+            can share expression text, and a group name can collide with
+            another definition's expression text) -- colliding definitions
+            accumulate into one entry's ``definitions`` list rather than
+            overwriting each other, and a warning is logged.
+    """
+    out = {}
+    for d in definitions:
+        if not (d.get('expression_text') or '').strip():
+            continue
+        label, color = _bucket_label_and_color(d, groups)
+        entry = out.get(label)
+        if entry is None:
+            entry = out[label] = {
+                'color': color,
+                'is_group': bool(d.get('group_name')),
+                'definitions': [],
+            }
+        elif entry['color'] != color:
+            _itk_log.warning(
+                "Bucket label %r is produced by definitions with differing "
+                "colors (%r vs %r); keeping the first.",
+                label, entry['color'], color)
+        entry['definitions'].append({
+            'id': d.get('id'),
+            'expression_text': d.get('expression_text'),
+            'match_mode': d.get('match_mode', 'partial'),
+            'target_sample': d.get('target_sample'),
+        })
+    for label, entry in out.items():
+        if not entry['is_group'] and len(entry['definitions']) > 1:
+            _itk_log.warning(
+                "Bucket label %r is produced by %d separate ungrouped "
+                "definitions (identical expression text); downstream nodes "
+                "will treat them as one bucket.",
+                label, len(entry['definitions']))
+    if unmatched_mode == 'unclassified':
+        out.setdefault('Unclassified', {
+            'color': unclassified_color,
+            'is_group': False,
+            'definitions': [],
+        })
     return out
 
 
@@ -371,19 +503,31 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
     multi_groups = set(multi_definition_groups(definitions))
     parsed = _parse_definitions(definitions)
     out = []
-    for p in particles:
+    for src_index, p in enumerate(particles):
+        raw = _raw_composition_snapshot(p)
         matches = classify_particle(p, definitions, overlap_mode, parsed=parsed)
         if not matches:
             if unmatched_mode == 'discard':
                 continue
             elif unmatched_mode == 'passthrough':
-                out.append(p.copy())
+                copy = p.copy()
+                # Passthrough particles keep their real composition, so RAW_KEY
+                # is redundant for them -- set it anyway so every particle in
+                # the stream answers the same way and readers never need a
+                # special case (see results.classifier_view.composition).
+                copy[RAW_KEY] = raw
+                copy[BUCKET_KEY] = None
+                copy[SRC_INDEX_KEY] = src_index
+                out.append(copy)
                 continue
             else:  # 'unclassified'
                 copy = p.copy()
                 copy.update(_relabel_composition(
                     p, 'Unclassified', set((p.get('elements') or {}).keys()),
                     keep_mfc_keys=True))
+                copy[RAW_KEY] = raw
+                copy[BUCKET_KEY] = 'Unclassified'
+                copy[SRC_INDEX_KEY] = src_index
                 out.append(copy)
                 continue
         for d in matches:
@@ -413,5 +557,11 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
                 # never relabeled) unless explicitly removed here.
                 for key in _MFC_DEPENDENT_KEYS:
                     copy.pop(key, None)
+            copy[RAW_KEY] = raw
+            copy[BUCKET_KEY] = label
+            # Every copy emitted for this source particle shares one index --
+            # which is exactly the dedupe key downstream statistics need under
+            # double_count (see SRC_INDEX_KEY).
+            copy[SRC_INDEX_KEY] = src_index
             out.append(copy)
     return out

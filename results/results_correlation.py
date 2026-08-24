@@ -51,10 +51,13 @@ class CorrelationSettingsDialog(QDialog):
 
     def __init__(self, config: dict, available_elements: list,
                  is_multi: bool, sample_names: list,
-                 scope: str = "all", parent=None, plot_data=None):
+                 scope: str = "all", parent=None, plot_data=None,
+                 input_data=None):
         super().__init__(parent)
         self._scope = scope if scope in {"format", "quantities", "all"} else "all"
         self._plot_data = plot_data
+        self._input_data = input_data
+        self._classifier_group = None
         if self._scope == "format":
             self.setWindowTitle("Correlation plot format settings")
         elif self._scope == "quantities":
@@ -184,6 +187,14 @@ class CorrelationSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        from results.shared_plot_utils import ClassifierViewGroup
+        from results import classifier_view as cv
+        self._classifier_group = ClassifierViewGroup(
+            self._config, self._input_data, cv.ARITY_MULTI_KEY)
+        g = self._classifier_group.build()
+        layout.addWidget(g)
+        self._quantity_groups.append(g)
 
         if self._is_multi:
             g = QGroupBox("Multiple Sample Display")
@@ -602,6 +613,8 @@ class CorrelationSettingsDialog(QDialog):
         """
         cfg = dict(self._config)
         if self._scope in {"quantities", "all"}:
+            if self._classifier_group is not None:
+                cfg.update(self._classifier_group.collect())
             cfg['mode'] = self.mode_combo.currentText()
             cfg['x_element'] = self.x_elem.currentText()
             cfg['y_element'] = self.y_elem.currentText()
@@ -1161,7 +1174,8 @@ class CorrelationPlotDisplayDialog(QDialog):
         _snap = dict(self.node.config)
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
-            self._is_multi(), self._sample_names(), scope="format", parent=self)
+            self._is_multi(), self._sample_names(), scope="format", parent=self,
+            input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -1181,7 +1195,7 @@ class CorrelationPlotDisplayDialog(QDialog):
         dlg = CorrelationSettingsDialog(
             self.node.config, self._available_elements(),
             self._is_multi(), self._sample_names(), scope="quantities", parent=self,
-            plot_data=_plot_data)
+            plot_data=_plot_data, input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -1854,7 +1868,8 @@ class CorrelationPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):

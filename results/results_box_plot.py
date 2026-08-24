@@ -439,6 +439,7 @@ class BoxPlotSettingsDialog(QDialog):
         self.show_x_grid_cb = None
         self.show_y_grid_cb = None
         self.grid_alpha_spin = None
+        self._classifier_group = None
 
         self._build_ui()
 
@@ -457,6 +458,13 @@ class BoxPlotSettingsDialog(QDialog):
         lay = QVBoxLayout(inner)
         scroll.setWidget(inner)
         root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope == 'all':
             g1 = QGroupBox("Plot Shape")
@@ -782,6 +790,8 @@ class BoxPlotSettingsDialog(QDialog):
         """
         d = {
         }
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self.shape_combo is not None:
             d['plot_shape'] = self.shape_combo.currentText()
             d['violin_bandwidth'] = self.bw_spin.value()
@@ -2162,7 +2172,8 @@ class BoxPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):

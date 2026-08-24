@@ -6371,7 +6371,8 @@ class ClusteringPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 

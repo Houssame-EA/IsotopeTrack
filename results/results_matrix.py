@@ -237,6 +237,7 @@ class MatrixSettingsDialog(QDialog):
         self.mode_combo = None
         self._font_grp = None
         self._export_grp = None
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -244,6 +245,13 @@ class MatrixSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_MULTI_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Data")
@@ -346,6 +354,8 @@ class MatrixSettingsDialog(QDialog):
             d.update(self._font_grp.collect())
         if self._export_grp is not None:
             d.update(self._export_grp.collect())
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self.mode_combo is not None:
             d['display_mode'] = self.mode_combo.currentText()
         return d
@@ -735,7 +745,8 @@ class CorrelationMatrixNode(QObject):
         self._has_output     = False
         self.input_channels  = ["input"]
         self.output_channels = []
-        self.config          = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config          = deep_copy_config(DEFAULT_CONFIG)
         self.input_data      = None
 
     def set_position(self, pos):

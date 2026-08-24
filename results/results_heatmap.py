@@ -116,6 +116,7 @@ class HeatmapSettingsDialog(QDialog):
         self._font_group = None
         self._export_grp = None
         self._sample_name_edits = None
+        self._classifier_group = None
         self._build()
 
     def _sample_name_keys(self) -> list[str]:
@@ -149,6 +150,13 @@ class HeatmapSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._config, self._input_data, cv.ARITY_KEY_SET)
+            layout.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities') and self._is_multi:
             g = QGroupBox("Multiple Sample Display")
@@ -360,6 +368,8 @@ class HeatmapSettingsDialog(QDialog):
             errors in format or quantity routes.
         """
         cfg = dict(self._config)
+        if self._classifier_group is not None:
+            cfg.update(self._classifier_group.collect())
         cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
         if self.y_axis_unit is not None:
             cfg['y_axis_unit'] = self.y_axis_unit.currentData()
@@ -1268,7 +1278,8 @@ class HeatmapPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):

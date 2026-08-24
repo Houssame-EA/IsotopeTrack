@@ -466,6 +466,7 @@ class SingleMultipleSettingsDialog(QDialog):
         self._multi = (input_data and input_data.get('type') == 'multiple_sample_data')
         self._scope = scope
         self.mode_combo = None
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -486,6 +487,13 @@ class SingleMultipleSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_KEY_SET)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Visualization")
@@ -620,6 +628,8 @@ class SingleMultipleSettingsDialog(QDialog):
             intentionally not collected, preventing confusing no-op updates.
         """
         d = dict(self._cfg)
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if hasattr(self, 'viz_combo'):
             d['visualization_type'] = self.viz_combo.currentText()
         if hasattr(self, 'pml_cb'):
@@ -1298,7 +1308,8 @@ class SingleMultipleElementPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(DEFAULT_CONFIG)
         self.input_data = None
 
     def set_position(self, pos):

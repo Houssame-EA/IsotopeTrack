@@ -398,7 +398,8 @@ class TernarySettingsDialog(QDialog):
 
     preview_requested = Signal(dict)
 
-    def __init__(self, config, available_elements, is_multi, sample_names, parent=None, scope='all'):
+    def __init__(self, config, available_elements, is_multi, sample_names, parent=None, scope='all',
+                 input_data=None):
         """
         Initialize the triangle settings dialog.
 
@@ -412,6 +413,9 @@ class TernarySettingsDialog(QDialog):
                 - 'format' shows only visual/appearance settings.
                 - 'quantities' shows only scientific/data selection settings.
                 - 'all' preserves legacy combined dialog behavior.
+            input_data (dict | None): The node's current upstream data, so the
+                Classifier Groups control can tell whether a classifier is
+                connected.
         """
         super().__init__(parent)
         if scope == 'format':
@@ -426,6 +430,8 @@ class TernarySettingsDialog(QDialog):
         self._is_multi = is_multi
         self._sample_names = sample_names
         self._scope = scope
+        self._input_data = input_data
+        self._classifier_group = None
 
         self.display_mode = None
         self.elem_a = None
@@ -502,6 +508,13 @@ class TernarySettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_MULTI_KEY)
+            layout.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities') and self._is_multi:
             g = QGroupBox("Multiple Sample Display")
@@ -970,6 +983,8 @@ class TernarySettingsDialog(QDialog):
             dict: Updated config containing scoped changes only.
         """
         out = dict(self._cfg)
+        if self._classifier_group is not None:
+            out.update(self._classifier_group.collect())
         if self.elem_a is not None:
             ea = self.elem_a.currentText()
             out['element_a'] = '' if ea.startswith('--') else ea
@@ -2010,7 +2025,8 @@ class TriangleDisplayDialog(QDialog):
         _snap = dict(self.node.config)
         dlg = TernarySettingsDialog(
             self.node.config, self._available_elements(),
-            self._is_multi(), self._sample_names(), self, scope='quantities')
+            self._is_multi(), self._sample_names(), self, scope='quantities',
+            input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (self.node.config.update(cfg), self._refresh()))
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
@@ -3166,7 +3182,8 @@ class TrianglePlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 

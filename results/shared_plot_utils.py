@@ -215,7 +215,7 @@ def compute_global_bin_edges_width_geo(all_values_list, bin_width, log_x=True, b
     return compute_bin_edges_width_geo(combined, bin_width, log_x, bin_mode=bin_mode)
 
 
-def _deep_copy_config(cfg):
+def deep_copy_config(cfg):
     """Return a fully independent copy of a config dict.
 
     A shallow ``dict(cfg)`` would leave nested values (e.g. ``element_colors``,
@@ -223,14 +223,30 @@ def _deep_copy_config(cfg):
     figures, so editing one figure's settings would bleed into the others. A
     deep copy keeps every figure's settings independent. Falls back to a shallow
     copy only if deep copy fails.
+
+    This matters at **node construction** as much as per-figure: a viz node
+    doing ``self.config = dict(DEFAULT_CONFIG)`` aliases every nested dict in
+    the class-level ``DEFAULT_CONFIG``, so anything that mutates one in place
+    -- notably :func:`seed_suggested_element_colors`, which does
+    ``config.setdefault('element_colors', {})`` and writes into whatever comes
+    back -- silently writes into the shared class default. That leaked
+    classifier bucket colors across every instance of a node class for the
+    process lifetime, and persisted them into all of them. Node ``__init__``
+    must use this, never ``dict(...)``.
     """
     if not cfg:
         return {}
     try:
         return copy.deepcopy(dict(cfg))
     except Exception:
-        _itk_log.exception("Handled exception in _deep_copy_config")
+        _itk_log.exception("Handled exception in deep_copy_config")
         return dict(cfg)
+
+
+#: Back-compat alias -- this helper was private before it was needed across
+#: modules (viz node ``__init__``s). Kept so any existing internal reference
+#: keeps resolving.
+_deep_copy_config = deep_copy_config
 
 
 class _HideOnCloseFilter(QObject):
@@ -1976,12 +1992,21 @@ def seed_suggested_element_colors(config: dict, input_data: dict | None) -> None
     suggested = (input_data or {}).get('label_colors') or {}
     if not suggested:
         return
-    colors = config.setdefault('element_colors', {})
-    seeded = config.setdefault('_seeded_element_colors', set())
+    # Copy-then-rebind rather than mutating in place. ``setdefault`` would
+    # hand back whatever dict is already on the config -- and if that config
+    # was built with a shallow ``dict(DEFAULT_CONFIG)``, that IS the
+    # class-level default dict, so writing into it would leak these colors
+    # into every other node of that class (and persist them). Node __init__s
+    # now use deep_copy_config, but this stays defensive so the leak cannot
+    # silently return if one regresses.
+    colors = dict(config.get('element_colors') or {})
+    seeded = set(config.get('_seeded_element_colors') or ())
     for label, hex_color in suggested.items():
         if label not in colors or label in seeded:
             colors[label] = hex_color
             seeded.add(label)
+    config['element_colors'] = colors
+    config['_seeded_element_colors'] = seeded
 
 
 def get_display_name(original_name: str, config: dict) -> str:
@@ -2312,26 +2337,57 @@ def per_ml_unit_label(per_ml: bool, base: str = "Particle Count") -> str:
 # Particle-by-element matrix extraction
 # ─────────────────────────────────────────────
 
-def build_element_matrix(particles: list, data_key: str) -> pd.DataFrame | None:
+def build_element_matrix(particles: list, data_key: str,
+                         raw: bool = False,
+                         dedupe: bool = False) -> pd.DataFrame | None:
     """Build a particles × elements DataFrame from a list of particle dicts.
+
+    This is the shared choke point for every node that needs a
+    particles×composition table (scatter/correlation, isotopic ratio,
+    composition wheel), which is why classifier awareness lives here rather
+    than being re-implemented per node.
 
     Args:
         particles: list of particle dicts
         data_key: key inside each particle dict ('elements', 'element_mass_fg', etc.)
+        raw: read each particle's REAL isotope composition instead of the
+            Particle Classifier's collapsed ``{bucket_label: value}`` entry.
+            Without this a classifier stream yields a single-column matrix
+            (one bucket per particle), which is why every multi-key chart
+            degenerates on classifier input. No effect on non-classifier
+            data -- see ``results.classifier_view.composition``.
+        dedupe: drop double-counted copies first. The classifier's
+            ``double_count`` overlap mode emits one source particle once per
+            matching definition, and each copy carries the same real
+            composition -- so any statistic computed off this matrix
+            (Pearson r, clustering) would silently double-weight it. Pair
+            this with ``raw=True`` for anything statistical; leave it off
+            when per-bucket multiplicity is the point.
+
+    Returns:
+        A DataFrame, or None when there is nothing to build.
     """
     if not particles:
         return None
 
+    from results.classifier_view import composition, dedupe_particles
+
+    if dedupe:
+        particles = dedupe_particles(particles)
+
+    def _comp(p):
+        return composition(p, data_key) if raw else (p.get(data_key) or {})
+
     all_elements = set()
     for p in particles:
-        all_elements.update(p.get(data_key, {}).keys())
+        all_elements.update(_comp(p).keys())
     if not all_elements:
         return None
     all_elements = sorted(all_elements)
 
     rows = []
     for p in particles:
-        d = p.get(data_key, {})
+        d = _comp(p)
         row = []
         for elem in all_elements:
             v = d.get(elem, 0)
@@ -3302,6 +3358,89 @@ class FontSettingsGroup:
             'font_italic': self.italic_cb.isChecked(),
             'font_color': self._color.name(),
         }
+
+
+class ClassifierViewGroup:
+    """Reusable "how should classifier groups be shown" QGroupBox builder.
+
+    Same contract as :class:`FontSettingsGroup` -- ``__init__(config)``,
+    ``build()``, ``collect()`` -- so it drops into any settings dialog the
+    same way, and its collected key merges straight into ``node.config``
+    (which is what actually gets persisted; a new node *attribute* would be
+    silently dropped by the save layer's attribute allow-list).
+
+    The group hides itself entirely when the upstream isn't a classifier
+    stream, so nodes can embed it unconditionally without showing a control
+    that has nothing to act on.
+
+    Args:
+        config (dict): The viz node's config.
+        input_data (dict | None): The node's current upstream data.
+        arity (str): The node's arity class -- one of
+            ``classifier_view.ARITY_PER_KEY`` / ``ARITY_KEY_SET`` /
+            ``ARITY_MULTI_KEY``. Determines which roles are offered.
+    """
+
+    def __init__(self, config: dict, input_data: dict | None, arity: str):
+        self._config = config
+        self._input_data = input_data
+        self._arity = arity
+        self.role_combo = None
+        self._applicable = False
+
+    def build(self, on_change=None):
+        from results import classifier_view as cv
+        group = QGroupBox("Classifier Groups")
+        layout = QVBoxLayout(group)
+
+        self._applicable = cv.is_classifier_stream(self._input_data)
+        if not self._applicable:
+            na = QLabel("N/A — no Particle Classifier connected upstream.")
+            na.setWordWrap(True)
+            na.setStyleSheet("color:#94A3B8; font-style:italic;")
+            layout.addWidget(na)
+            return group
+
+        self.role_combo = QComboBox()
+        for role in cv.available_roles(self._arity):
+            self.role_combo.addItem(cv.ROLE_LABELS.get(role, role), role)
+        current = cv.effective_role(self._config, self._input_data, self._arity)
+        idx = self.role_combo.findData(current)
+        if idx >= 0:
+            self.role_combo.setCurrentIndex(idx)
+        if on_change:
+            self.role_combo.currentIndexChanged.connect(on_change)
+        layout.addWidget(self.role_combo)
+
+        registry = cv.bucket_registry(self._input_data)
+        if registry:
+            summary = QLabel("\n".join(
+                f"• {cv.bucket_caption(self._input_data, lbl)}"
+                for lbl in registry))
+            summary.setWordWrap(True)
+            summary.setStyleSheet("color:#94A3B8; font-size:11px;")
+            layout.addWidget(summary)
+
+        if not cv.has_multiple_buckets(self._input_data):
+            note = QLabel(
+                "Only one group is defined — panels/colors by group will "
+                "not differentiate anything.")
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#B45309; font-size:11px;")
+            layout.addWidget(note)
+
+        return group
+
+    def collect(self) -> dict:
+        """Return the config delta, or ``{}`` when the group didn't apply.
+
+        Returning empty rather than a default keeps a node's stored role
+        intact while it is temporarily wired to a non-classifier upstream.
+        """
+        from results import classifier_view as cv
+        if not self._applicable or self.role_combo is None:
+            return {}
+        return {cv.ROLE_CONFIG_KEY: self.role_combo.currentData()}
 
 
 class LegendGroup:

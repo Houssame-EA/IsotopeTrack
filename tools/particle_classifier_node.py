@@ -445,7 +445,7 @@ class ParticleClassifierNode(QObject):
         """
         from tools.particle_filter import normalize_sources
         from tools.particle_classifier_relabel import (
-            relabel_particles, suggested_label_colors)
+            relabel_particles, suggested_label_colors, build_bucket_registry)
 
         data = self._combined_upstream_dict()
         if data is None:
@@ -474,14 +474,30 @@ class ParticleClassifierNode(QObject):
             self.definitions, self.groups, self.unmatched_mode,
             self.unclassified_color)
 
+        # Dual-carry, dict level. ``selected_isotopes`` gets rewritten below
+        # to name the synthetic bucket labels (design §7), which is right for
+        # every node that treats a bucket as just another isotope -- but it
+        # destroys the only record of the real upstream isotope vocabulary,
+        # and several nodes build their axis/element PICKERS from it with no
+        # particle-data fallback. Without this, a node rendering real
+        # isotopes would offer only bucket names to choose between. Per-
+        # particle raw composition (see relabel's RAW_KEY) is not enough --
+        # the vocabulary is a dict-level concern.
+        raw_registry = build_bucket_registry(
+            self.definitions, self.groups, self.unmatched_mode,
+            self.unclassified_color)
+        raw_selected = data.get('selected_isotopes')
+
         if data.get('type') == 'sample_data':
             out = dict(data)
             particles = relabeled_by_sample.get(sources[0]['name'], [])
             out['particle_data'] = particles
             out['filtered_particles'] = len(particles)
             out['label_colors'] = label_colors
+            out['_raw_selected_isotopes'] = raw_selected
+            out['_classifier_registry'] = raw_registry
             out['selected_isotopes'] = self._output_selected_isotopes(
-                particles, data.get('selected_isotopes'), label_colors)
+                particles, raw_selected, label_colors)
             return out
 
         # multiple_sample_data: preserve per-sample structure, only the
@@ -494,8 +510,10 @@ class ParticleClassifierNode(QObject):
         out['filtered_particles'] = len(combined)
         out['sample_names'] = [s['name'] for s in sources]
         out['label_colors'] = label_colors
+        out['_raw_selected_isotopes'] = raw_selected
+        out['_classifier_registry'] = raw_registry
         out['selected_isotopes'] = self._output_selected_isotopes(
-            combined, data.get('selected_isotopes'), label_colors)
+            combined, raw_selected, label_colors)
         return out
 
     @staticmethod
