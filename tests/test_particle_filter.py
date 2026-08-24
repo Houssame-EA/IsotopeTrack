@@ -401,3 +401,160 @@ class TestApplyToAllGroupOverwriteWarning:
         dlg._apply_to_all()
         assert not mock_group_overwrite_box["shown"]
         assert dlg._groups.get("S2") == "NewGroup"
+
+
+# --------------------------------------------------------------------------- #
+# Dilution-factor mismatch on merge (july22.md issue #7): detection, the
+# resolution dialog, and merge_single_sources honoring a stored resolution.
+# A bug here either silently produces a wrong particles/mL (pre-existing
+# first-member behavior) or crashes a merge outright, so the tolerance
+# boundary and all three resolution paths (sample/manual/unavailable) are
+# worth pinning down precisely.
+# --------------------------------------------------------------------------- #
+
+def _conc(dil, vol=2.0, te=True):
+    return {"volume_ml": vol, "dilution_factor": dil, "te_available": te}
+
+
+class TestDilutionFactorsConflict:
+    def test_identical_factors_no_conflict(self):
+        assert not pf.dilution_factors_conflict(
+            [("A", _conc(10.0)), ("B", _conc(10.0))])
+
+    def test_clearly_different_factors_conflict(self):
+        assert pf.dilution_factors_conflict(
+            [("A", _conc(10.0)), ("B", _conc(999.0))])
+
+    def test_within_rel_tol_not_a_conflict(self):
+        # 0.001% tolerance: comfortably inside for a large-magnitude factor.
+        assert not pf.dilution_factors_conflict(
+            [("A", _conc(5000.0)), ("B", _conc(5000.0 * (1 + 1e-7)))])
+
+    def test_just_outside_rel_tol_is_a_conflict(self):
+        assert pf.dilution_factors_conflict(
+            [("A", _conc(5000.0)), ("B", _conc(5000.0 * (1 + 1e-4)))])
+
+    def test_small_decimal_genuinely_different_values_conflict(self):
+        assert pf.dilution_factors_conflict(
+            [("A", _conc(1.001)), ("B", _conc(1.002))])
+
+    def test_single_member_never_conflicts(self):
+        assert not pf.dilution_factors_conflict([("A", _conc(10.0))])
+
+    def test_missing_meta_defaults_to_1_0(self):
+        assert not pf.dilution_factors_conflict([("A", None), ("B", _conc(1.0))])
+
+    def test_three_way_two_same_one_different(self):
+        assert pf.dilution_factors_conflict(
+            [("A", _conc(10.0)), ("B", _conc(10.0)), ("C", _conc(20.0))])
+
+
+class TestDilutionConflictDialog:
+    def test_groups_by_tolerance_equal_value(self, qapp):
+        members = [("S1", _conc(10.0)), ("S2", _conc(10.0)), ("S3", _conc(999.0))]
+        dlg = pf.DilutionConflictDialog(None, "Combined", members)
+        names_by_factor = {round(f, 3): names for f, names in dlg._groups}
+        assert names_by_factor[10.0] == ["S1", "S2"]
+        assert names_by_factor[999.0] == ["S3"]
+
+    def test_default_resolution_picks_first_group(self, qapp):
+        members = [("S1", _conc(10.0)), ("S2", _conc(999.0))]
+        dlg = pf.DilutionConflictDialog(None, "Combined", members)
+        res = dlg.resolution()
+        assert res["choice"] == "sample"
+        assert res["dilution_factor"] == pytest.approx(10.0)
+        assert sorted(n for n, _f in res["conflict_values"]) == ["S1", "S2"]
+
+    def test_unavailable_radio(self, qapp):
+        members = [("S1", _conc(10.0)), ("S2", _conc(999.0))]
+        dlg = pf.DilutionConflictDialog(None, "Combined", members)
+        dlg._unavailable_radio.setChecked(True)
+        res = dlg.resolution()
+        assert res == {
+            "choice": "unavailable", "dilution_factor": 0.0,
+            "source_label": "unavailable (dilution mismatch)",
+            "conflict_values": [("S1", 10.0), ("S2", 999.0)],
+        }
+
+    def test_manual_radio(self, qapp):
+        members = [("S1", _conc(10.0)), ("S2", _conc(999.0))]
+        dlg = pf.DilutionConflictDialog(None, "Combined", members)
+        dlg._custom_radio.setChecked(True)
+        dlg._custom_spin.setValue(42.5)
+        res = dlg.resolution()
+        assert res["choice"] == "manual"
+        assert res["dilution_factor"] == pytest.approx(42.5)
+
+
+class TestResolveDilutionConflict:
+    def test_no_conflict_returns_none_no_dialog(self, qapp, monkeypatch):
+        called = []
+        monkeypatch.setattr(pf.QDialog, "exec", lambda self: called.append(1) or pf.QDialog.Accepted)
+        result = pf.resolve_dilution_conflict(
+            None, "G", [("A", _conc(5.0)), ("B", _conc(5.0))])
+        assert result is None
+        assert called == []
+
+    def test_conflict_and_accept_returns_dict(self, qapp, monkeypatch):
+        monkeypatch.setattr(pf.QDialog, "exec", lambda self: pf.QDialog.Accepted)
+        result = pf.resolve_dilution_conflict(
+            None, "G", [("A", _conc(10.0)), ("B", _conc(20.0))])
+        assert isinstance(result, dict)
+        assert set(result) >= {"choice", "dilution_factor", "source_label",
+                               "conflict_values"}
+
+    def test_conflict_and_cancel_returns_false(self, qapp, monkeypatch):
+        monkeypatch.setattr(pf.QDialog, "exec", lambda self: pf.QDialog.Rejected)
+        result = pf.resolve_dilution_conflict(
+            None, "G", [("A", _conc(10.0)), ("B", _conc(20.0))])
+        assert result is False
+
+
+class TestMergeSingleSourcesDilution:
+    def _source(self, name, n, dil, vol=2.0):
+        parts = [{"elements": {"60Ni": 1.0}, "source_sample": name}
+                for _ in range(n)]
+        return {"name": name, "origin": "single", "particles": parts,
+                "total": n, "sample_data": None, "conc": _conc(dil, vol),
+                "isotopes": [{"label": "60Ni"}], "parent_window": None}
+
+    def test_no_resolution_uses_first_member_legacy_behavior(self):
+        merged = pf.merge_single_sources(
+            [self._source("A", 3, 10.0), self._source("B", 3, 20.0)], "Combined")
+        assert merged["conc"]["dilution_factor"] == pytest.approx(10.0)
+        assert "dilution_mismatch" not in merged["conc"]
+        assert merged["conc"]["volume_ml"] == pytest.approx(4.0)
+
+    def test_sample_resolution_overrides_first_member(self):
+        res = {"choice": "sample", "dilution_factor": 20.0,
+              "source_label": "B (20x)",
+              "conflict_values": [("A", 10.0), ("B", 20.0)]}
+        merged = pf.merge_single_sources(
+            [self._source("A", 3, 10.0), self._source("B", 3, 20.0)],
+            "Combined", res)
+        assert merged["conc"]["dilution_factor"] == pytest.approx(20.0)
+        assert merged["conc"]["dilution_mismatch"] is True
+        assert merged["conc"]["dilution_choice"] == "sample"
+        assert merged["conc"]["dilution_source_label"] == "B (20x)"
+
+    def test_unavailable_resolution_zeroes_factor(self):
+        res = {"choice": "unavailable", "dilution_factor": 0.0,
+              "source_label": "unavailable (dilution mismatch)",
+              "conflict_values": [("A", 10.0), ("B", 20.0)]}
+        merged = pf.merge_single_sources(
+            [self._source("A", 3, 10.0), self._source("B", 3, 20.0)],
+            "Combined", res)
+        assert merged["conc"]["dilution_factor"] == 0.0
+        assert merged["conc"]["dilution_choice"] == "unavailable"
+
+    def test_particle_composition_unaffected_by_dilution_path(self):
+        """Per-particle representations (counts, mass, moles) must be
+        byte-identical regardless of which dilution path was taken --
+        dilution factor only ever feeds particles/mL."""
+        sources = [self._source("A", 3, 10.0), self._source("B", 3, 20.0)]
+        m1 = pf.merge_single_sources(sources, "Combined")
+        m2 = pf.merge_single_sources(sources, "Combined",
+                                     {"choice": "manual", "dilution_factor": 1.0,
+                                      "source_label": "x", "conflict_values": []})
+        assert m1["particles"] == m2["particles"]
+        assert len(m1["particles"]) == 6

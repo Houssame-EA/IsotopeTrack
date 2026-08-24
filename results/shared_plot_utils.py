@@ -2022,6 +2022,38 @@ def per_ml_factor(input_data, sample_name) -> float:
     return entry.get('dilution_factor', 1.0) / volume
 
 
+def dilution_unavailable_for(input_data, sample_name) -> bool:
+    """
+    Whether a sample's particles/mL was explicitly disabled due to a
+    dilution-factor mismatch during a merge (see
+    tools.particle_filter.resolve_dilution_conflict) -- distinct from simply
+    having no calibration entered at all. Callers that render particles/mL
+    as literal text should check this before formatting a number, so a
+    corrupted sample reads as an explicit "N/A" rather than a misleadingly
+    plausible-looking value. Internal scaling arithmetic (bar heights, pie
+    values, etc.) is NOT gated on this -- per_ml_factor keeps returning 0.0
+    for this case, same as the pre-existing "no calibration" convention, by
+    deliberate design (see july22.md issue #7).
+
+    Args:
+        input_data (dict): Node input data dictionary.
+        sample_name (str): Output sample name to look up.
+
+    Returns:
+        bool: True when this sample's particles/mL was explicitly disabled.
+    """
+    meta = (input_data or {}).get('concentration_meta', {})
+    if not isinstance(meta, dict) or not meta:
+        return False
+    entry = meta.get(sample_name)
+    if not entry and len(meta) == 1:
+        entry = next(iter(meta.values()))
+    if not entry:
+        return False
+    return (bool(entry.get('dilution_mismatch'))
+            and entry.get('dilution_choice') == 'unavailable')
+
+
 def single_sample_name(input_data):
     """
     Return the sample name for single-sample input data.
@@ -2067,7 +2099,7 @@ def per_ml_active(cfg, input_data) -> bool:
 
 
 def format_per_ml(value, renderer: Renderer = Renderer.HTML,
-                  config: dict | None = None) -> str:
+                  config: dict | None = None, unavailable: bool = False) -> str:
     """
     Format a particles-per-mL value as a mantissa times ten-to-a-power.
 
@@ -2086,10 +2118,18 @@ def format_per_ml(value, renderer: Renderer = Renderer.HTML,
         config (dict | None): Font config dict. When provided, the label is
             rendered in the configured family/weight/style; for MATHTEXT this
             also syncs the mathtext font immediately.
+        unavailable (bool): When True, ``value`` is ignored and an explicit
+            "N/A" label is returned instead -- pass the result of
+            ``dilution_unavailable_for`` for the sample this label
+            represents.
 
     Returns:
         str: Formatted label ready to pass to the target renderer.
     """
+    if unavailable:
+        if renderer == Renderer.MATHTEXT:
+            return r'$\mathrm{N/A}$'
+        return "N/A (dilution mismatch)"
     try:
         v = float(value)
     except (TypeError, ValueError):
