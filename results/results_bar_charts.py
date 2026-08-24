@@ -2000,8 +2000,13 @@ class HistogramSettingsDialog(QDialog):
 
         from results.shared_plot_utils import ClassifierViewGroup
         from results import classifier_view as cv
+        disabled_roles = None
+        if self._multi:
+            reason = "already showing multiple samples"
+            disabled_roles = {cv.ROLE_FACET: reason, cv.ROLE_ENCODE: reason}
         self._classifier_group = ClassifierViewGroup(
-            self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            self._cfg, self._input_data, cv.ARITY_PER_KEY,
+            disabled_roles=disabled_roles)
         layout.addWidget(self._classifier_group.build())
 
         if self._multi:
@@ -2700,6 +2705,22 @@ class HistogramDisplayDialog(QDialog):
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
 
+    def _effective_is_multi(self):
+        """Whether to render through the multi-panel machinery.
+
+        True for a genuinely multi-sample stream (unchanged behavior), and
+        ALSO true for a single-sample stream under PANELS/COLORS, which
+        reuses the exact same subplot/overlay renderers keyed by bucket
+        label instead of by sample name (see
+        ``HistogramPlotNode._extract_by_bucket``).
+        """
+        from results import classifier_view as cv
+        if _is_multi(self.node.input_data):
+            return True
+        return (self.node.classifier_role() in (cv.ROLE_FACET, cv.ROLE_ENCODE)
+                and self.node.input_data
+                and self.node.input_data.get('type') == 'sample_data')
+
     def _build_ui(self):
         """
         Build histogram canvas, stats footer, and standardized bottom buttons.
@@ -2950,6 +2971,11 @@ class HistogramDisplayDialog(QDialog):
         if _is_multi(self.node.input_data):
             return _normalize_hist_display_mode(
                 self.node.config.get('display_mode', HIST_DISPLAY_MODES[0]))
+        if self._effective_is_multi():
+            from results import classifier_view as cv
+            role = self.node.classifier_role()
+            return ('Individual Subplots' if role == cv.ROLE_FACET
+                    else 'Overlaid (Different Colors)')
         return 'single'
 
     def _density_curve_supported(self, mode, plot_data):
@@ -3178,16 +3204,23 @@ class HistogramDisplayDialog(QDialog):
         self._refresh()
 
     def _get_available_elements(self):
-        """Get raw element names from input (before grouping)."""
+        """Get raw element names from input (before grouping).
+
+        Reads through the classifier role so OFF genuinely shows the real
+        isotope vocabulary here too (element-color pickers, legend toggles)
+        -- not just in the plotted data.
+        """
         try:
             data = self.node.input_data
             if not data:
                 return []
             dt = self.node.config.get('data_type_display', 'Counts')
             dk = HIST_DATA_KEY_MAP.get(dt, 'elements')
+            from results import classifier_view as cv
+            collapsed = self.node.classifier_role() != cv.ROLE_OFF
             elems = set()
             for p in data.get('particle_data', []):
-                elems.update(p.get(dk, {}).keys())
+                elems.update(cv.composition(p, dk, collapsed=collapsed).keys())
             return sorted(elems)
         except Exception:
             _itk_log.exception("Handled exception in _get_available_elements")
@@ -3314,6 +3347,20 @@ class HistogramDisplayDialog(QDialog):
                                     'Element/Group': elem,
                                     'Display Name': disp,
                                     dt: v})
+                elif self._effective_is_multi():
+                    # Bucket-faceted single sample (PANELS/COLORS): plot_data
+                    # is keyed by classifier bucket, not sample -- same shape,
+                    # different axis, so label the column accordingly rather
+                    # than misreading it as a sample breakdown.
+                    for bucket, sd in plot_data.items():
+                        for elem, vals in sd.items():
+                            disp = _get_element_display_name(elem, cfg)
+                            for v in vals:
+                                rows.append({
+                                    'Classifier Group': bucket,
+                                    'Element/Group': elem,
+                                    'Display Name': disp,
+                                    dt: v})
                 else:
                     for elem, vals in plot_data.items():
                         disp = _get_element_display_name(elem, cfg)
@@ -3413,9 +3460,20 @@ class HistogramDisplayDialog(QDialog):
                 self.stats_label.setText("")
                 return
 
-            if _is_multi(self.node.input_data):
-                mode = _normalize_hist_display_mode(
-                    cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
+            if self._effective_is_multi():
+                if _is_multi(self.node.input_data):
+                    mode = _normalize_hist_display_mode(
+                        cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
+                else:
+                    # Bucket-faceted single sample: PANELS/COLORS directly
+                    # pick the layout -- there's no separate multi-sample
+                    # display_mode choice to make in this case (§ PANELS =
+                    # one subplot per group, COLORS = one shared overlaid
+                    # plot color-coded by group).
+                    from results import classifier_view as cv
+                    role = self.node.classifier_role()
+                    mode = ('Individual Subplots' if role == cv.ROLE_FACET
+                            else 'Overlaid (Different Colors)')
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
                 elif mode == 'Side by Side Subplots':
@@ -3706,12 +3764,13 @@ class HistogramDisplayDialog(QDialog):
             if names:
                 group_info = f"  \u00b7  Groups: {', '.join(names)}"
 
-        if _is_multi(self.node.input_data):
+        if self._effective_is_multi():
             total = sum(
                 sum(len(v) for v in sd.values())
                 for sd in plot_data.values())
+            unit = "samples" if _is_multi(self.node.input_data) else "groups"
             self.stats_label.setText(
-                f"{len(plot_data)} samples  \u00b7  "
+                f"{len(plot_data)} {unit}  \u00b7  "
                 f"{total:,} values{group_info}")
         else:
             total = sum(len(v) for v in plot_data.values())
@@ -4296,6 +4355,18 @@ class HistogramPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The effective classifier presentation role for this render.
+
+        Resolved fresh every call (never cached) -- see
+        ``classifier_view.effective_role``'s docstring for why: a saved
+        project restores links with connection rules suspended, the user can
+        change the role after connecting, and upstream config can change
+        underneath a configured downstream node.
+        """
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
+
     def extract_plot_data(self):
         """Extract plottable data, applying element groups when active.
 
@@ -4303,6 +4374,17 @@ class HistogramPlotNode(QObject):
         particle has Fe=10fg, Si=5fg, Ti=3fg and group "FeSiTi"
         includes [Fe, Si, Ti], that particle contributes 18fg to
         the "FeSiTi" histogram. Ungrouped elements stay separate.
+
+        Classifier role (§ ``results.classifier_view``): GROUPS (default)
+        reads the classifier's collapsed bucket-labelled composition exactly
+        as before -- zero behavior change. OFF reads each particle's REAL
+        isotope composition instead, so the histogram renders exactly as if
+        no classifier were upstream at all. PANELS/ENCODE (bucket-faceted)
+        only apply to a single-sample stream -- ``_extract_by_bucket``
+        partitions particles by bucket instead of by sample; on an
+        already-multi-sample stream those two roles are disabled in the UI
+        (see ``HistogramSettingsDialog``), but this still falls back safely
+        rather than crashing if a stale saved role reaches here anyway.
         """
         if not self.input_data:
             return None
@@ -4314,12 +4396,19 @@ class HistogramPlotNode(QObject):
         groups = self.config.get('element_groups', [])
         use_groups = bool(groups) and _can_sum(self.config)
 
+        from results import classifier_view as cv
+        role = self.classifier_role()
+        collapsed = role != cv.ROLE_OFF
+
+        if role in (cv.ROLE_FACET, cv.ROLE_ENCODE) and itype == 'sample_data':
+            return self._extract_by_bucket(dk)
+
         if itype == 'sample_data':
             if use_groups:
                 particles = self.input_data.get('particle_data', [])
                 out = _apply_element_groups(particles, dk, groups)
                 return out or None
-            return self._extract_single(dk)
+            return self._extract_single(dk, collapsed)
 
         elif itype == 'multiple_sample_data':
             if use_groups:
@@ -4328,17 +4417,18 @@ class HistogramPlotNode(QObject):
                 out = _apply_element_groups_multi(
                     particles, names, dk, groups)
                 return out or None
-            return self._extract_multi(dk)
+            return self._extract_multi(dk, collapsed)
 
         return None
 
-    def _extract_single(self, dk):
+    def _extract_single(self, dk, collapsed=True):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
+        from results import classifier_view as cv
         out = {}
         for p in particles:
-            d = p.get(dk, {})
+            d = cv.composition(p, dk, collapsed=collapsed)
             for el, val in d.items():
                 if dk == 'elements':
                     if val > 0:
@@ -4348,17 +4438,18 @@ class HistogramPlotNode(QObject):
                         out.setdefault(el, []).append(val)
         return out or None
 
-    def _extract_multi(self, dk):
+    def _extract_multi(self, dk, collapsed=True):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
             return None
+        from results import classifier_view as cv
         result = {sn: {} for sn in names}
         for p in particles:
             src = p.get('source_sample')
             if src not in result:
                 continue
-            d = p.get(dk, {})
+            d = cv.composition(p, dk, collapsed=collapsed)
             for el, val in d.items():
                 if dk == 'elements':
                     if val > 0:
@@ -4366,6 +4457,35 @@ class HistogramPlotNode(QObject):
                 else:
                     if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         result[src].setdefault(el, []).append(val)
+        return {k: v for k, v in result.items() if v} or None
+
+    def _extract_by_bucket(self, dk):
+        """Bucket-faceted extraction for PANELS/COLORS: real isotopes,
+        partitioned by classifier bucket instead of by sample.
+
+        Returns ``{bucket_label: {element: [values]}}`` -- the exact same
+        shape ``_extract_multi`` returns keyed by sample, which is what lets
+        ``HistogramDisplayDialog`` reuse the existing multi-sample subplot/
+        overlay rendering unchanged (see ``_effective_is_multi``).
+        """
+        particles = self.input_data.get('particle_data')
+        if not particles:
+            return None
+        from results import classifier_view as cv
+        grouped = cv.particles_by_bucket(particles)
+        result = {}
+        for label, plist in grouped.items():
+            key = label if label is not None else 'Unclassified (raw)'
+            bucket_out = result.setdefault(key, {})
+            for p in plist:
+                d = cv.composition(p, dk)  # raw: real isotopes within this bucket
+                for el, val in d.items():
+                    if dk == 'elements':
+                        if val > 0:
+                            bucket_out.setdefault(el, []).append(val)
+                    else:
+                        if val > 0 and val == val:
+                            bucket_out.setdefault(el, []).append(val)
         return {k: v for k, v in result.items() if v} or None
 
 class BarChartSettingsDialog(QDialog):

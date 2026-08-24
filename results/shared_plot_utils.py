@@ -3379,12 +3379,22 @@ class ClassifierViewGroup:
         arity (str): The node's arity class -- one of
             ``classifier_view.ARITY_PER_KEY`` / ``ARITY_KEY_SET`` /
             ``ARITY_MULTI_KEY``. Determines which roles are offered.
+        disabled_roles (dict | None): ``{role: reason}`` for roles that are
+            valid for this arity in general but not usable right now for a
+            node-specific reason (e.g. a role's rendering isn't wired up for
+            this node yet, or needs a stream shape this node's current
+            upstream doesn't have). Disabled entries stay visible -- with the
+            reason appended to the label and as a tooltip -- rather than
+            disappearing, so the user can see *why* an option is missing
+            instead of wondering where it went.
     """
 
-    def __init__(self, config: dict, input_data: dict | None, arity: str):
+    def __init__(self, config: dict, input_data: dict | None, arity: str,
+                 disabled_roles: dict | None = None):
         self._config = config
         self._input_data = input_data
         self._arity = arity
+        self._disabled_roles = disabled_roles or {}
         self.role_combo = None
         self._applicable = False
 
@@ -3403,8 +3413,25 @@ class ClassifierViewGroup:
 
         self.role_combo = QComboBox()
         for role in cv.available_roles(self._arity):
-            self.role_combo.addItem(cv.ROLE_LABELS.get(role, role), role)
+            reason = self._disabled_roles.get(role)
+            label = cv.ROLE_LABELS.get(role, role)
+            if reason:
+                label = f"{label} (disabled for this node: {reason})"
+            self.role_combo.addItem(label, role)
+            if reason:
+                item_idx = self.role_combo.count() - 1
+                model_item = self.role_combo.model().item(item_idx)
+                if model_item is not None:
+                    model_item.setEnabled(False)
+                self.role_combo.setItemData(
+                    item_idx, f"Disabled for this node: {reason}", Qt.ToolTipRole)
+
         current = cv.effective_role(self._config, self._input_data, self._arity)
+        if current in self._disabled_roles:
+            # A stored role that's disabled for this instance (e.g. saved
+            # while single-sample, now multi-sample) -- fall back rather
+            # than leaving a disabled item selected.
+            current = cv.default_role(self._arity)
         idx = self.role_combo.findData(current)
         if idx >= 0:
             self.role_combo.setCurrentIndex(idx)

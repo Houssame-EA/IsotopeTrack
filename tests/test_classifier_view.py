@@ -603,3 +603,235 @@ class TestWiredIntoSettingsDialogs:
         offered = [dlg._classifier_group.role_combo.itemData(i) for i in
                    range(dlg._classifier_group.role_combo.count())]
         assert cv.ROLE_SERIES not in offered
+
+
+# --------------------------------------------------------------------------- #
+# Role labels (manual-QA-driven rename, 2026-08-24) + per-role disabling
+# --------------------------------------------------------------------------- #
+class TestRoleLabels:
+    """Names/descriptions are user-specified wording -- pin them exactly so a
+    future refactor can't silently drift from what was actually asked for."""
+
+    def test_labels_match_manual_qa_wording_exactly(self):
+        assert cv.ROLE_LABELS[cv.ROLE_SERIES] == \
+            "GROUPS - plot the classifier groups themselves"
+        assert cv.ROLE_LABELS[cv.ROLE_FACET] == \
+            "PANELS - one subplot per group, plotting isotopic data"
+        assert cv.ROLE_LABELS[cv.ROLE_ENCODE] == \
+            "COLORS - Isotopic data color-coded by classifier groups"
+        assert cv.ROLE_LABELS[cv.ROLE_OFF] == \
+            "OFF - Ignore particle classifier groups"
+
+
+class TestDisabledRoles:
+    def test_disabled_role_shows_reason_and_is_unselectable(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup(
+            {}, out, cv.ARITY_PER_KEY,
+            disabled_roles={cv.ROLE_FACET: "already showing multiple samples"})
+        box = grp.build()
+        assert box is not None
+        model = grp.role_combo.model()
+        idx = grp.role_combo.findData(cv.ROLE_FACET)
+        assert model.item(idx).isEnabled() is False
+        assert "already showing multiple samples" in grp.role_combo.itemText(idx)
+
+    def test_other_roles_stay_enabled(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup(
+            {}, out, cv.ARITY_PER_KEY,
+            disabled_roles={cv.ROLE_FACET: "reason"})
+        box = grp.build()
+        assert box is not None
+        model = grp.role_combo.model()
+        for role in (cv.ROLE_SERIES, cv.ROLE_ENCODE, cv.ROLE_OFF):
+            idx = grp.role_combo.findData(role)
+            assert model.item(idx).isEnabled() is True
+
+    def test_stored_disabled_role_falls_back_to_default_on_build(self, qapp):
+        """A role saved while single-sample, now disabled because the stream
+        is multi-sample -- must not leave a disabled item selected."""
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup(
+            {cv.ROLE_CONFIG_KEY: cv.ROLE_FACET}, out, cv.ARITY_PER_KEY,
+            disabled_roles={cv.ROLE_FACET: "reason"})
+        box = grp.build()
+        assert box is not None
+        assert grp.role_combo.currentData() == cv.default_role(cv.ARITY_PER_KEY)
+
+    def test_no_disabled_roles_behaves_as_before(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        box = grp.build()
+        assert box is not None
+        model = grp.role_combo.model()
+        for i in range(grp.role_combo.count()):
+            assert model.item(i).isEnabled() is True
+
+
+# --------------------------------------------------------------------------- #
+# Histogram: the actual per-node role behavior (GROUPS/OFF/PANELS/COLORS)
+# --------------------------------------------------------------------------- #
+def _hist_classifier_node():
+    """Two buckets, each defined by a DIFFERENT single isotope, so PANELS/
+    COLORS output is trivially distinguishable per bucket."""
+    from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+    def p(ni, ag):
+        e = {}
+        if ni:
+            e['60Ni'] = ni
+        if ag:
+            e['107Ag'] = ag
+        return {'elements': e, 'source_sample': 'SampleA'}
+
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'sample_data', 'sample_name': 'SampleA',
+        'particle_data': [p(10, 0), p(10, 0), p(0, 8), p(0, 8)],
+        'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'}],
+    }
+    clf.definitions = [
+        {'id': new_definition_id(), 'target_sample': 'SampleA',
+         'expression_text': '60Ni', 'match_mode': 'partial',
+         'group_name': 'Smelter', 'color': None},
+        {'id': new_definition_id(), 'target_sample': 'SampleA',
+         'expression_text': '107Ag', 'match_mode': 'partial',
+         'group_name': 'Background', 'color': None},
+    ]
+    clf.groups = {'Smelter': '#FF6600', 'Background': '#3B82F6'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = 'double_count'
+    return clf
+
+
+class TestHistogramRoleBehavior:
+    """The bug report this responds to: selecting OFF changed nothing.
+    Root cause was that no node read the stored role at all -- extract_plot_data
+    always used the classifier's collapsed view regardless of config. These pin
+    the fix at the data-extraction layer, not just the picker UI."""
+
+    def test_groups_is_unchanged_from_pre_role_behavior(self, qapp):
+        """GROUPS must still read the collapsed bucket-labelled composition --
+        this is the zero-behavior-change guarantee dual-carry promised."""
+        from results.results_bar_charts import HistogramPlotNode
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        assert node.classifier_role() == cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        assert set(data.keys()) == {'Smelter', 'Background'}
+
+    def test_off_reads_real_isotopes_not_buckets(self, qapp):
+        """The literal bug: OFF must render as if the classifier weren't
+        connected -- real isotope labels, not bucket names."""
+        from results.results_bar_charts import HistogramPlotNode
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = node.extract_plot_data()
+        assert set(data.keys()) == {'60Ni', '107Ag'}
+        assert 'Smelter' not in data and 'Background' not in data
+
+    def test_panels_partitions_by_bucket_with_real_isotopes_inside(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        data = node.extract_plot_data()
+        assert set(data.keys()) == {'Smelter', 'Background'}
+        assert set(data['Smelter'].keys()) == {'60Ni'}
+        assert set(data['Background'].keys()) == {'107Ag'}
+
+    def test_colors_same_shape_as_panels(self, qapp):
+        """PANELS and COLORS differ only in HOW the dialog renders the same
+        bucket-keyed extraction -- confirmed separately by the display-mode
+        test below."""
+        from results.results_bar_charts import HistogramPlotNode
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        data = node.extract_plot_data()
+        assert set(data.keys()) == {'Smelter', 'Background'}
+
+    def test_dialog_renders_without_crashing_across_all_roles(self, qapp):
+        """Real headless Qt dialog, not a mock -- exercises _refresh() end to
+        end for every role, which is where the shape-mismatch bugs (stats
+        label, CSV export) actually lived before being fixed alongside this."""
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        dlg = HistogramDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF, cv.ROLE_FACET, cv.ROLE_ENCODE):
+            node.config[cv.ROLE_CONFIG_KEY] = role
+            dlg._refresh()  # must not raise
+
+    def test_panels_forces_individual_subplots_layout(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        dlg = HistogramDisplayDialog(node, None)
+        assert dlg._effective_is_multi() is True
+        assert dlg._get_hist_display_mode() == 'Individual Subplots'
+
+    def test_colors_forces_overlaid_layout(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        dlg = HistogramDisplayDialog(node, None)
+        assert dlg._effective_is_multi() is True
+        assert dlg._get_hist_display_mode() == 'Overlaid (Different Colors)'
+
+    def test_groups_and_off_stay_single_panel_layout(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        dlg = HistogramDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            node.config[cv.ROLE_CONFIG_KEY] = role
+            assert dlg._effective_is_multi() is False
+
+    def test_settings_dialog_disables_panels_colors_when_already_multi_sample(self, qapp):
+        from results.results_bar_charts import HistogramSettingsDialog
+        out = _hist_classifier_node().get_output_data()
+        dlg = HistogramSettingsDialog({}, True, ['A', 'B'], input_data=out)
+        model = dlg._classifier_group.role_combo.model()
+        for role in (cv.ROLE_FACET, cv.ROLE_ENCODE):
+            idx = dlg._classifier_group.role_combo.findData(role)
+            assert model.item(idx).isEnabled() is False
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            idx = dlg._classifier_group.role_combo.findData(role)
+            assert model.item(idx).isEnabled() is True
+
+    def test_settings_dialog_keeps_panels_colors_enabled_for_single_sample(self, qapp):
+        from results.results_bar_charts import HistogramSettingsDialog
+        out = _hist_classifier_node().get_output_data()
+        dlg = HistogramSettingsDialog({}, False, [], input_data=out)
+        model = dlg._classifier_group.role_combo.model()
+        for i in range(dlg._classifier_group.role_combo.count()):
+            assert model.item(i).isEnabled() is True
+
+    def test_off_updates_available_elements_for_color_pickers(self, qapp):
+        """The per-element color/legend picker list must also reflect the
+        real isotope vocabulary under OFF, not just the plotted histogram."""
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _hist_classifier_node().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        dlg = HistogramDisplayDialog(node, None)
+        assert set(dlg._get_available_elements()) == {'Smelter', 'Background'}
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        assert set(dlg._get_available_elements()) == {'60Ni', '107Ag'}

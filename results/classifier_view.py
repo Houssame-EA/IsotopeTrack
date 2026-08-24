@@ -79,12 +79,14 @@ ROLE_OFF = 'off'
 #: shared-mutable config leak (see ``shared_plot_utils.deep_copy_config``).
 ROLE_CONFIG_KEY = 'classifier_role'
 
-#: Human-readable labels for the role picker.
+#: Human-readable labels for the role picker (per-node manual QA pass,
+#: 2026-08-24 -- names and one-line descriptions are user-specified wording,
+#: keep verbatim).
 ROLE_LABELS = {
-    ROLE_OFF: "Off - plot isotopes, ignore classifier groups",
-    ROLE_SERIES: "Groups as data - plot the classifier groups themselves",
-    ROLE_FACET: "One panel per group - isotopes on the axes",
-    ROLE_ENCODE: "Color by group - isotopes on the axes",
+    ROLE_SERIES: "GROUPS - plot the classifier groups themselves",
+    ROLE_FACET: "PANELS - one subplot per group, plotting isotopic data",
+    ROLE_ENCODE: "COLORS - Isotopic data color-coded by classifier groups",
+    ROLE_OFF: "OFF - Ignore particle classifier groups",
 }
 
 #: Arity classes (see the module docstring). A node declares its own class;
