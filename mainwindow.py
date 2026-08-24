@@ -25,6 +25,7 @@ import utils.signal_stats
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
+from utils.particles import mass_to_diameter
 from widget.periodic_table_widget import PeriodicTableWidget
 from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_trace_pen
 from calibration_methods.TE import TransportRateCalibrationWindow
@@ -152,9 +153,9 @@ class NoWheelComboBox(QComboBox):
         """
         event.ignore()
 
-    # ----------------------------------------------------------------------------------------------------
-    # ---------------------------------------Initialization & setup---------------------------------------
-    # ----------------------------------------------------------------------------------------------------
+# ----------------------------------------------------------------------------------------------------
+# ---------------------------------------Initialization & setup---------------------------------------
+# ----------------------------------------------------------------------------------------------------
 
 
 class MainWindow(QMainWindow):
@@ -6497,8 +6498,8 @@ class MainWindow(QMainWindow):
                                             mql = mdl * (10 / 3)
 
                                             if density and density > 0:
-                                                sdl = self.mass_to_diameter(mdl, density)
-                                                sql = self.mass_to_diameter(mql, density)
+                                                sdl = mass_to_diameter(mdl, density)
+                                                sql = mass_to_diameter(mql, density)
                                             else:
                                                 sdl = float('nan')
                                                 sql = float('nan')
@@ -6728,8 +6729,8 @@ class MainWindow(QMainWindow):
 
                 density = cal_data.get('density')
                 if density and density > 0:
-                    sdl = self.mass_to_diameter(mdl, density)
-                    sql = self.mass_to_diameter(mql, density)
+                    sdl = mass_to_diameter(mdl, density)
+                    sql = mass_to_diameter(mql, density)
                 else:
                     sdl = float('nan')
                     sql = float('nan')
@@ -6828,18 +6829,6 @@ class MainWindow(QMainWindow):
 
         self._mark_results_changed()
         self.unsaved_changes = True
-
-    def mass_to_diameter(self, mass_fg, density):
-        """Convert mass to spherical particle diameter.
-
-        Returns:
-            float: Diameter in nanometers
-        """
-        if mass_fg <= 0 or density <= 0:
-            return float('nan')
-        mass_g = mass_fg * 1e-15
-        diameter_cm = ((6 * mass_g) / (np.pi * density)) ** (1 / 3)
-        return diameter_cm * 1e7
 
     def get_sample_dilution(self, sample_name):
         """
@@ -7021,7 +7010,7 @@ class MainWindow(QMainWindow):
                         particle['particle_moles_fmol'][element_display] = particle_moles_fmol
 
                         if element_density and element_density > 0:
-                            element_diameter_nm = self.mass_to_diameter(element_mass_fg, element_density)
+                            element_diameter_nm = mass_to_diameter(element_mass_fg, element_density)
                             if not np.isnan(element_diameter_nm):
                                 particle['element_diameter_nm'][element_display] = element_diameter_nm
                             else:
@@ -7030,7 +7019,7 @@ class MainWindow(QMainWindow):
                             particle['element_diameter_nm'][element_display] = 0
 
                         if compound_density and compound_density > 0:
-                            particle_diameter_nm = self.mass_to_diameter(particle_mass_fg, compound_density)
+                            particle_diameter_nm = mass_to_diameter(particle_mass_fg, compound_density)
                             if not np.isnan(particle_diameter_nm):
                                 particle['particle_diameter_nm'][element_display] = particle_diameter_nm
                             else:

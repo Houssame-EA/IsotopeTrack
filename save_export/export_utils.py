@@ -15,12 +15,14 @@ import math
 import time
 
 from tools.theme import theme, dialog_qss
+from utils.particles import mass_to_diameter
 from utils.unit import ExportUnits, load_units
 from tools.unit import show_advanced_dialog
 from utils.app_version import __version__ as APP_VERSION
 from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
 import utils.signal_stats
 import logging
+
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
 
@@ -752,7 +754,9 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                 mass_fraction_row.append(_fmt(mass_fraction, ".6f"))
 
                 molecular_weight = mf_service.get_molecular_weight(element_key, sample_name)
-                molecular_weight_row.append(_fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f"))
+                molecular_weight_row.append(_fmt(molecular_weight, ".6f")
+                                            if molecular_weight
+                                            else _fmt(atomic_mass, ".6f"))
 
                 is_pure = is_pure_element(mass_fraction)
 
@@ -810,7 +814,7 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
 
                                             compound_density = mf_service.get_element_density(element_key, sample_name)
                                             if compound_density and compound_density > 0:
-                                                diameter = main_window.mass_to_diameter(particle_mass, compound_density)
+                                                diameter = mass_to_diameter(particle_mass, compound_density)
                                                 if not np.isnan(diameter):
                                                     diameters.append(diameter)
                                         else:
@@ -819,7 +823,7 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                                             moles.append(element_mole)
 
                                             if element_density and element_density > 0:
-                                                diameter = main_window.mass_to_diameter(element_mass, element_density)
+                                                diameter = mass_to_diameter(element_mass, element_density)
                                                 if not np.isnan(diameter):
                                                     diameters.append(diameter)
 
@@ -1238,7 +1242,9 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             if use_particle_calc:
                 compound_density = mf_service.get_element_density(element_key, sample_name)
                 working_density = compound_density if compound_density else element_density
-                density_label = _fmt(compound_density, ".3f") if compound_density else _fmt(element_density, ".3f") if element_density else "N/A"
+                density_label = (_fmt(compound_density, ".3f")
+                                 if compound_density
+                                 else _fmt(element_density, ".3f") if element_density else "N/A")
             else:
                 working_density = element_density
                 density_label = _fmt(element_density, ".3f") if element_density else "N/A"
@@ -1270,9 +1276,9 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
             sql = 0
             if working_density and working_density > 0:
                 if mdl > 0:
-                    sdl = main_window.mass_to_diameter(mdl, working_density)
+                    sdl = mass_to_diameter(mdl, working_density)
                 if mql > 0:
-                    sql = main_window.mass_to_diameter(mql, working_density)
+                    sql = mass_to_diameter(mql, working_density)
 
             mw_display = _fmt(molecular_weight, ".6f") if molecular_weight else _fmt(atomic_mass, ".6f")
 
@@ -1522,15 +1528,15 @@ def export_sample_file_with_mass_fractions(main_window: MainWindow, sample_name,
 
                                     compound_density = mf_service.get_element_density(element_key, sample_name)
                                     if compound_density and compound_density > 0:
-                                        diameter_nm = main_window.mass_to_diameter(mass_fg, compound_density)
+                                        diameter_nm = mass_to_diameter(mass_fg, compound_density)
                                 else:
                                     mass_fg = element_mass
                                     moles = element_mass / atomic_mass
 
                                     element_density = periodic_table.get_density_by_element(element)
                                     if element_density and element_density > 0:
-                                        diameter_nm = main_window.mass_to_diameter(element_mass,
-                                                                                   element_density)
+                                        diameter_nm = mass_to_diameter(element_mass,
+                                                                       element_density)
 
                                 total_mass += mass_fg
                                 total_moles += moles
