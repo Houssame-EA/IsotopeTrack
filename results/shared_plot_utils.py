@@ -3396,6 +3396,7 @@ class ClassifierViewGroup:
         self._arity = arity
         self._disabled_roles = disabled_roles or {}
         self.role_combo = None
+        self.scope_combo = None
         self._applicable = False
 
     def build(self, on_change=None):
@@ -3435,9 +3436,39 @@ class ClassifierViewGroup:
         idx = self.role_combo.findData(current)
         if idx >= 0:
             self.role_combo.setCurrentIndex(idx)
+        layout.addWidget(self.role_combo)
+
+        # Aggregation scope (BY DEFINITION vs TOTAL PARTICLE) -- a second,
+        # orthogonal axis that only means anything under GROUPS/SERIES (see
+        # classifier_view.SCOPE_* docs): every other role either shows real
+        # isotopes directly or has no single bucket value to scope at all.
+        # Kept visible-but-disabled rather than hidden when not applicable,
+        # matching disabled_roles' own convention above, so the control
+        # doesn't appear to vanish for no reason as the role changes.
+        self.scope_combo = QComboBox()
+        for scope in (cv.SCOPE_DEFINITION, cv.SCOPE_TOTAL_PARTICLE):
+            self.scope_combo.addItem(cv.SCOPE_LABELS.get(scope, scope), scope)
+        current_scope = cv.effective_scope(self._config, self._input_data)
+        scope_idx = self.scope_combo.findData(current_scope)
+        if scope_idx >= 0:
+            self.scope_combo.setCurrentIndex(scope_idx)
+
+        def _sync_scope_enabled():
+            is_groups = self.role_combo.currentData() == cv.ROLE_SERIES
+            self.scope_combo.setEnabled(is_groups)
+            self.scope_combo.setToolTip(
+                "" if is_groups else
+                "Only applies under GROUPS -- every other role already "
+                "shows real isotopes directly, with no single bucket "
+                "value for this choice to change.")
+        self.role_combo.currentIndexChanged.connect(_sync_scope_enabled)
+        _sync_scope_enabled()
+
         if on_change:
             self.role_combo.currentIndexChanged.connect(on_change)
-        layout.addWidget(self.role_combo)
+            self.scope_combo.currentIndexChanged.connect(on_change)
+        layout.addWidget(QLabel("Group value comes from:"))
+        layout.addWidget(self.scope_combo)
 
         registry = cv.bucket_registry(self._input_data)
         if registry:
@@ -3467,7 +3498,10 @@ class ClassifierViewGroup:
         from results import classifier_view as cv
         if not self._applicable or self.role_combo is None:
             return {}
-        return {cv.ROLE_CONFIG_KEY: self.role_combo.currentData()}
+        out = {cv.ROLE_CONFIG_KEY: self.role_combo.currentData()}
+        if self.scope_combo is not None:
+            out[cv.SCOPE_CONFIG_KEY] = self.scope_combo.currentData()
+        return out
 
 
 class LegendGroup:

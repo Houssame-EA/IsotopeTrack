@@ -57,7 +57,7 @@ not implemented here -- see ``aug24.md``'s "Hibernated: clustering".
 from __future__ import annotations
 
 from tools.particle_classifier_relabel import (
-    RAW_KEY, BUCKET_KEY, SRC_INDEX_KEY,
+    RAW_KEY, BUCKET_KEY, SRC_INDEX_KEY, MATCH_ISOTOPES_KEY,
 )
 
 import logging
@@ -173,6 +173,72 @@ def effective_role(config, input_data, arity):
             role, arity, default_role(arity))
         return default_role(arity)
     return role
+
+
+# ── Aggregation scope (GROUPS role only): DEFINITION vs TOTAL PARTICLE ───
+#
+# Orthogonal to the role model above, and meaningful only under
+# ROLE_SERIES/GROUPS -- every other role either shows real isotopes
+# directly (OFF) or has no single per-bucket number to begin with
+# (FACET/ENCODE), so there is nothing for this axis to modify there.
+#
+# **Two different, both-legitimate scientific questions, per-node choice
+# (found live, 2026-08-25, from a mean-above-the-whisker box-plot reading
+# that turned out to be real but misleading)**:
+#
+# - SCOPE_DEFINITION ("of the isotopes that DEFINE this group, how much is
+#   there"): a matched particle's bucket value counts only the isotopes its
+#   triggering expression names -- the classifier's own destructive
+#   collapse has always computed exactly this, so this is also the
+#   historical/default behavior, unchanged, for every node that doesn't
+#   opt into the other scope.
+# - SCOPE_TOTAL_PARTICLE ("of the particles that QUALIFY for this group,
+#   how much are they emitting in total"): every isotope a qualifying
+#   particle actually carries counts, not just the trigger isotope(s) --
+#   e.g. a "Smelter" particle triggered by 60Ni alone still contributes its
+#   Fe, Cu, everything else to Smelter's total, because the particle is
+#   what qualified, not just its diagnostic isotope.
+#
+# Neither is "more correct" -- a scientist asking "what does the arsenic
+# look like in particles I've called Poison" wants DEFINITION; one asking
+# "how much mass are Smelter-type particles emitting, period" wants
+# TOTAL PARTICLE. See ``MATCH_ISOTOPES_KEY`` in
+# ``tools.particle_classifier_relabel`` for the underlying dual-carried
+# isotope set this reads, and ``composition_items_for_role`` below for
+# where the choice actually changes what a node renders.
+SCOPE_DEFINITION = 'definition'
+SCOPE_TOTAL_PARTICLE = 'total_particle'
+
+#: Config key holding a node's chosen aggregation scope. Same flat-scalar
+#: rationale as ROLE_CONFIG_KEY.
+SCOPE_CONFIG_KEY = 'classifier_agg_scope'
+
+SCOPE_LABELS = {
+    SCOPE_DEFINITION: "BY DEFINITION - only the isotopes that define this group count toward its value",
+    SCOPE_TOTAL_PARTICLE: "TOTAL PARTICLE - every isotope on a qualifying particle counts toward its value",
+}
+
+
+def effective_scope(config, input_data):
+    """Resolve the aggregation scope actually in force for this render.
+
+    Same call-fresh-every-render discipline as :func:`effective_role`, and
+    for the same reasons (stale saved config, mid-session changes).
+
+    Args:
+        config (dict): The viz node's config.
+        input_data (dict | None): The node's current upstream data.
+
+    Returns:
+        str: ``SCOPE_DEFINITION`` or ``SCOPE_TOTAL_PARTICLE``. Always
+            ``SCOPE_DEFINITION`` (the historical behavior) when the upstream
+            isn't a classifier stream, or when the stored value is missing
+            or invalid.
+    """
+    if not is_classifier_stream(input_data):
+        return SCOPE_DEFINITION
+    scope = (config or {}).get(SCOPE_CONFIG_KEY)
+    return scope if scope in (SCOPE_DEFINITION, SCOPE_TOTAL_PARTICLE) else SCOPE_DEFINITION
 
 
 # ── Stream introspection ───────────────────────────────────────────────
@@ -317,52 +383,128 @@ def composition(particle, data_key, collapsed=False):
     return particle.get(data_key) or {}
 
 
-def composition_items_for_role(particle, data_key, role):
+def scope_isotopes(particle, scope):
+    """The isotope keys "in scope" for this particle's bucket membership,
+    under a :data:`SCOPE_DEFINITION` vs :data:`SCOPE_TOTAL_PARTICLE` choice.
+
+    ``SCOPE_TOTAL_PARTICLE`` always means "every isotope the particle
+    actually carries" -- recoverable directly from the particle's own raw
+    composition, so no dual-carried set is needed for that half.
+
+    ``SCOPE_DEFINITION`` reads ``MATCH_ISOTOPES_KEY`` (the isotope set the
+    particle's own matched definition(s) referenced, dual-carried at
+    relabel time -- see ``tools.particle_classifier_relabel``), falling
+    back to every isotope on the particle when that dual-carry is absent
+    (a non-classifier stream, or a particle from before this feature
+    existed), so this is always safe to call.
+
+    Args:
+        particle (dict): A particle dict.
+        scope (str): ``SCOPE_DEFINITION`` or ``SCOPE_TOTAL_PARTICLE``.
+
+    Returns:
+        set: Isotope label strings.
+    """
+    if scope == SCOPE_TOTAL_PARTICLE:
+        return set(composition(particle, 'elements', collapsed=False).keys())
+    match = particle.get(MATCH_ISOTOPES_KEY)
+    if match is not None:
+        return set(match)
+    return set(composition(particle, 'elements', collapsed=False).keys())
+
+
+def composition_items_for_role(particle, data_key, role, scope=SCOPE_DEFINITION):
     """``(label, value)`` pairs one particle contributes for ``data_key``
-    under a GROUPS-or-OFF role, for per-key nodes that read the same
-    quantity across every data type a user can pick (box/strip plot's
+    under a GROUPS-or-OFF role (and, only under GROUPS, a DEFINITION-vs-
+    TOTAL-PARTICLE aggregation scope -- see the module-level docs above
+    ``effective_scope``), for per-key nodes that read the same quantity
+    across every data type a user can pick (box/strip plot's
     Counts/Mass/Moles/Diameter switch is the motivating case).
 
-    Two different key shapes need two different answers:
+    Two different key shapes need two different answers, and ``scope``
+    changes each of them differently:
 
     - A key the classifier itself relabels (present in the particle's
       dual-carried :data:`RAW_KEY` snapshot -- ``elements``,
       ``element_mass_fg``, ``element_moles_fmol``, and the MFC-dependent
-      keys): these are already additive, so under GROUPS this returns the
-      classifier's own already-summed bucket entry (one value per particle,
-      via ``composition(collapsed=True)``); under OFF it returns the raw
-      per-isotope entries (``composition(collapsed=False)``).
+      keys): under OFF this returns the raw per-isotope entries
+      (``composition(collapsed=False)``), unaffected by ``scope``. Under
+      GROUPS with the default ``SCOPE_DEFINITION``, this returns the
+      classifier's own already-summed bucket entry exactly as it always
+      has -- bit-for-bit unchanged, since that collapse has always been
+      isotope-scoped to the matched definition. Under GROUPS with
+      ``SCOPE_TOTAL_PARTICLE``, this instead re-sums the particle's real
+      per-isotope values over *every* isotope the particle carries, not
+      just the ones its matched definition named -- honoring the SAME
+      Mass-Fraction-Calculator pooling-safety gate the classifier's own
+      collapse already enforces: if that collapse has no entry for this
+      particle's bucket at all (an MFC-dependent key the classifier chose
+      not to keep for a multi-definition "drop_mfc" pooled group -- see
+      ``tools.particle_classifier_relabel``'s module docstring), this
+      returns nothing here either, rather than silently fabricating a
+      mixed-MFC-basis number the classifier itself refused to compute.
     - A key the classifier deliberately never rewrites (the diameter
       fields -- there is no principled way to sum a diameter across
-      isotopes, so the classifier leaves them alone): there is no
-      bucket-collapsed dict to fall back on. OFF returns each isotope's own
-      value under its own label, unchanged. GROUPS instead re-labels every
-      one of the particle's raw per-isotope entries under its *bucket*
-      label -- each isotope stays its own data point, just filed by group
-      instead of by isotope, so a box/strip plot can still show one
-      distribution per group. A passthrough/unclassified particle (no
-      bucket assigned) falls back to its real isotope labels, since there
-      is nothing to group by.
+      isotopes, so the classifier leaves them alone regardless of scope):
+      there is no bucket-collapsed dict to fall back on at all. OFF returns
+      each isotope's own value under its own label, unchanged. GROUPS
+      instead re-labels the particle's raw per-isotope entries under its
+      *bucket* label -- ``SCOPE_DEFINITION`` keeps only the isotopes that
+      defined this particle's bucket membership, ``SCOPE_TOTAL_PARTICLE``
+      keeps every isotope the particle carries. Either way each isotope
+      stays its own data point (there is nothing to sum for a diameter),
+      just filed by group instead of by isotope. A passthrough particle
+      (no bucket assigned) falls back to its real isotope labels
+      unfiltered, since there is nothing to group by.
 
     Args:
         particle (dict): A particle dict.
         data_key (str): e.g. ``'elements'``, ``'element_diameter_nm'``.
         role (str): ``ROLE_OFF`` or ``ROLE_SERIES`` -- the only roles a
             per-key node ever has to pass here.
+        scope (str): ``SCOPE_DEFINITION`` (default, matches every node's
+            historical behavior) or ``SCOPE_TOTAL_PARTICLE``. Ignored
+            entirely under ``ROLE_OFF`` -- real isotopes are shown either
+            way, so there is no bucket value for a scope choice to modify.
 
     Returns:
         list[tuple]: ``(label, value)`` pairs, order-preserving.
     """
     if role == ROLE_OFF:
         return list(composition(particle, data_key, collapsed=False).items())
-    raw = particle.get(RAW_KEY)
-    if isinstance(raw, dict) and data_key in raw:
-        return list(composition(particle, data_key, collapsed=True).items())
+
+    raw_snapshot = particle.get(RAW_KEY)
+    is_relabeled_key = isinstance(raw_snapshot, dict) and data_key in raw_snapshot
+
+    if is_relabeled_key:
+        definition_view = composition(particle, data_key, collapsed=True)
+        if scope != SCOPE_TOTAL_PARTICLE:
+            return list(definition_view.items())
+        label = bucket_of(particle)
+        if label is None:
+            # Passthrough: no bucket was ever assigned, so definition_view
+            # here is already the particle's real, untouched isotope-keyed
+            # dict (never relabeled in the first place) -- nothing to
+            # re-sum, same value under either scope.
+            return list(definition_view.items())
+        if label not in definition_view:
+            # A matched particle whose bucket has no entry at all for this
+            # key -- e.g. an MFC-dependent key the classifier's own
+            # collapse deliberately dropped for a "drop_mfc" pooled group.
+            # TOTAL PARTICLE must not silently fabricate a number the
+            # classifier itself refused to compute.
+            return []
+        isotopes = scope_isotopes(particle, scope)
+        raw_values = raw_snapshot.get(data_key) or {}
+        total = sum(v for iso, v in raw_values.items() if iso in isotopes)
+        return [(label, total)]
+
     label = bucket_of(particle)
     if label is None:
         return list(composition(particle, data_key, collapsed=False).items())
-    return [(label, v)
-            for v in composition(particle, data_key, collapsed=False).values()]
+    isotopes = scope_isotopes(particle, scope)
+    raw_values = composition(particle, data_key, collapsed=False)
+    return [(label, v) for iso, v in raw_values.items() if iso in isotopes]
 
 
 def bucket_of(particle):

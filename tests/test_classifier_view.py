@@ -468,8 +468,12 @@ class TestClassifierViewGroup:
         grp.role_combo.setCurrentIndex(grp.role_combo.findData(cv.ROLE_FACET))
         collected = grp.collect()
         assert box is not None
-        assert collected == {cv.ROLE_CONFIG_KEY: cv.ROLE_FACET}
+        assert collected == {
+            cv.ROLE_CONFIG_KEY: cv.ROLE_FACET,
+            cv.SCOPE_CONFIG_KEY: cv.SCOPE_DEFINITION,
+        }
         assert isinstance(collected[cv.ROLE_CONFIG_KEY], str)
+        assert isinstance(collected[cv.SCOPE_CONFIG_KEY], str)
 
     def test_preselects_stored_role(self, qapp):
         from results.shared_plot_utils import ClassifierViewGroup
@@ -1633,4 +1637,479 @@ class TestBoxPlotSubplotModes:
             assert captured['name'].endswith(expected_suffix), \
                 f"[{mode}] {captured['name']!r}"
             dlg.close()
-        dlg.close()
+
+
+# --------------------------------------------------------------------------- #
+# Aggregation scope: BY DEFINITION vs TOTAL PARTICLE -- found live 2026-08-25
+# from a mean-above-the-whisker box-plot reading that turned out to be a real,
+# correct number, not a bug: a matched bucket's value has always counted only
+# the isotopes its triggering expression names, silently dropping every other
+# isotope a qualifying particle also carries. See aug24.md.
+# --------------------------------------------------------------------------- #
+class TestMatchIsotopesKeyDualCarry:
+    """Pure relabel-level: MATCH_ISOTOPES_KEY records exactly the isotope
+    set each output copy's own BY-DEFINITION collapse used, so a later
+    reader can recover it once the collapse is just a single number with
+    no memory of its own inputs."""
+
+    def test_matched_particle_carries_its_own_definition_isotopes(self):
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6, '63Cu': 4})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        assert out[0][pcr.MATCH_ISOTOPES_KEY] == {'60Ni'}
+
+    def test_unclassified_carries_every_isotope_the_particle_has(self):
+        """No expression to scope by -- MATCH_ISOTOPES_KEY is the full set,
+        the same thing TOTAL PARTICLE would also compute (see
+        TestCompositionItemsForRoleScope.test_unclassified_is_scope_invariant)."""
+        out = _relabel([_particle({'56Fe': 6, '63Cu': 4})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        assert out[0][pcr.BUCKET_KEY] == 'Unclassified'
+        assert out[0][pcr.MATCH_ISOTOPES_KEY] == {'56Fe', '63Cu'}
+
+    def test_passthrough_carries_no_match_isotopes_key(self):
+        out = _relabel([_particle({'56Fe': 6})], [_def('60Ni', group='Smelter')],
+                       overlap='priority', unmatched='passthrough')
+        assert out[0][pcr.BUCKET_KEY] is None
+        assert pcr.MATCH_ISOTOPES_KEY not in out[0]
+
+    def test_double_count_each_copy_keeps_its_own_definition_isotopes(self):
+        """Each copy stores the isotopes of the ONE definition it
+        represents, not the union across all matched definitions -- see
+        TestCompositionItemsForRoleScope's double_count test for why this
+        still gives each copy the WHOLE particle under TOTAL PARTICLE."""
+        out = _relabel(
+            [_particle({'60Ni': 10, '107Ag': 8, '63Cu': 4})],
+            [_def('60Ni', group='Smelter'), _def('107Ag', group='Background')],
+            overlap='double_count')
+        assert len(out) == 2
+        by_label = {c[pcr.BUCKET_KEY]: c for c in out}
+        assert by_label['Smelter'][pcr.MATCH_ISOTOPES_KEY] == {'60Ni'}
+        assert by_label['Background'][pcr.MATCH_ISOTOPES_KEY] == {'107Ag'}
+
+
+class TestCompositionItemsForRoleScope:
+    """classifier_view.composition_items_for_role's scope parameter."""
+
+    def test_default_scope_is_definition(self):
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        assert cv.composition_items_for_role(p, 'elements', cv.ROLE_SERIES) == \
+            cv.composition_items_for_role(
+                p, 'elements', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+
+    def test_scope_definition_matches_historical_collapse_bit_for_bit(self):
+        """The whole point: SCOPE_DEFINITION must be indistinguishable from
+        every node's behavior before this feature existed."""
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        assert cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_DEFINITION) == \
+            list(p['element_mass_fg'].items()) == [('Smelter', 1.0)]
+
+    def test_scope_total_particle_sums_every_isotope(self):
+        """element_mass_fg = 0.1 * elements per _particle()'s construction:
+        60Ni -> 1.0, 56Fe -> 0.6, total = 1.6 -- Fe now counts even though
+        the Smelter expression only names 60Ni."""
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        assert cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE) == \
+            [('Smelter', pytest.approx(1.6))]
+
+    def test_off_role_ignores_scope_entirely(self):
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        off_def = cv.composition_items_for_role(
+            p, 'elements', cv.ROLE_OFF, cv.SCOPE_DEFINITION)
+        off_total = cv.composition_items_for_role(
+            p, 'elements', cv.ROLE_OFF, cv.SCOPE_TOTAL_PARTICLE)
+        assert off_def == off_total
+        assert set(off_def) == {('60Ni', 10), ('56Fe', 6)}
+
+    def test_diameter_scope_definition_keeps_only_matched_isotopes(self):
+        """Diameter is never bucket-collapsed by the classifier at all (no
+        principled way to sum a diameter), so SCOPE_DEFINITION here means
+        something different than for additive keys: which of the
+        particle's own per-isotope diameter entries survive, not what gets
+        summed."""
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        items = cv.composition_items_for_role(
+            p, 'element_diameter_nm', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        assert items == [('Smelter', 42.0)]
+
+    def test_diameter_scope_total_particle_keeps_every_isotope(self):
+        out = _relabel([_particle({'60Ni': 10, '56Fe': 6})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        items = cv.composition_items_for_role(
+            p, 'element_diameter_nm', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert sorted(items) == sorted([('Smelter', 42.0), ('Smelter', 42.0)])
+
+    def test_diameter_passthrough_falls_back_unfiltered_regardless_of_scope(self):
+        out = _relabel([_particle({'56Fe': 6})], [_def('60Ni', group='Smelter')],
+                       overlap='priority', unmatched='passthrough')
+        p = out[0]
+        d = cv.composition_items_for_role(
+            p, 'element_diameter_nm', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        t = cv.composition_items_for_role(
+            p, 'element_diameter_nm', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert d == t == [('56Fe', 42.0)]
+
+    def test_unclassified_is_scope_invariant(self):
+        """No expression to scope by, so DEFINITION and TOTAL PARTICLE are
+        the same set for Unclassified, by construction, for every data
+        type -- additive keys here, diameter covered by the passthrough-
+        style test above via the same fallback path."""
+        out = _relabel([_particle({'56Fe': 6, '63Cu': 4})],
+                       [_def('60Ni', group='Smelter')], overlap='priority')
+        p = out[0]
+        assert p[pcr.BUCKET_KEY] == 'Unclassified'
+        d = cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        t = cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert d == t
+
+    def test_passthrough_is_scope_invariant_for_additive_keys(self):
+        out = _relabel([_particle({'56Fe': 6})], [_def('60Ni', group='Smelter')],
+                       overlap='priority', unmatched='passthrough')
+        p = out[0]
+        assert p[pcr.BUCKET_KEY] is None
+        d = cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        t = cv.composition_items_for_role(
+            p, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert d == t == [('56Fe', pytest.approx(0.6))]
+
+    def test_double_count_total_particle_gives_each_copy_the_whole_particle(self):
+        """The explicitly-confirmed interpretation: under double_count,
+        each of a particle's several copies gets the FULL original
+        particle's isotopes under TOTAL PARTICLE, not just its own
+        definition's -- isotopes unrelated to either definition (63Cu
+        here) count toward BOTH buckets' totals. Counts here are the raw
+        per-isotope values _particle() was given (10, 8, 4), not particle
+        presence, so the expected sum is 10+8+4=22 for BOTH copies."""
+        out = _relabel(
+            [_particle({'60Ni': 10, '107Ag': 8, '63Cu': 4})],
+            [_def('60Ni', group='Smelter'), _def('107Ag', group='Background')],
+            overlap='double_count')
+        by_label = {c[pcr.BUCKET_KEY]: c for c in out}
+        smelter_total = cv.composition_items_for_role(
+            by_label['Smelter'], 'elements', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        bg_total = cv.composition_items_for_role(
+            by_label['Background'], 'elements', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert smelter_total == [('Smelter', 22)]
+        assert bg_total == [('Background', 22)]
+        # BY DEFINITION stays exactly as before: no cross-bucket leakage,
+        # each copy sees only its own definition's isotope (60Ni=10 or
+        # 107Ag=8), never 63Cu and never the other definition's isotope.
+        smelter_def = cv.composition_items_for_role(
+            by_label['Smelter'], 'elements', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        bg_def = cv.composition_items_for_role(
+            by_label['Background'], 'elements', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        assert smelter_def == [('Smelter', 10)]
+        assert bg_def == [('Background', 8)]
+
+    def test_drop_mfc_group_blocks_total_particle_fabrication(self):
+        """The critical safety case: an MFC-dependent key (particle_mass_fg)
+        with REAL data present, on a multi-definition group whose pooling
+        policy is "drop_mfc" -- the classifier's own collapse refuses to
+        combine it (different isotopes may rest on different Mass Fraction
+        Calculator assumptions). TOTAL PARTICLE must respect that same
+        refusal rather than silently re-deriving the number the classifier
+        itself declined to compute."""
+        particle = {
+            'elements': {'60Ni': 1, '107Ag': 1},
+            'element_mass_fg': {'60Ni': 5.0, '107Ag': 8.0},
+            'particle_mass_fg': {'60Ni': 55.0, '107Ag': 88.0},
+            'source_sample': 'SampleA',
+        }
+        out = pcr.relabel_particles(
+            [particle],
+            [_def('60Ni', group='Mixed'), _def('107Ag', group='Mixed')],
+            {'Mixed': '#123456'}, 'double_count', 'unclassified', '#888888',
+            group_pooling_policies={'Mixed': 'drop_mfc'})
+        for copy in out:
+            assert 'particle_mass_fg' not in copy
+            # The raw data genuinely exists (proving this isn't a vacuous
+            # pass because there was nothing to fabricate from).
+            assert copy[pcr.RAW_KEY]['particle_mass_fg'] == \
+                {'60Ni': 55.0, '107Ag': 88.0}
+            total = cv.composition_items_for_role(
+                copy, 'particle_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+            assert total == []
+
+    def test_non_mfc_key_unaffected_by_drop_mfc_gate(self):
+        """The gate is specific to MFC-dependent keys -- element_mass_fg
+        (additive, MFC-independent) must still combine normally under
+        TOTAL PARTICLE even inside a drop_mfc-pooled group."""
+        particle = {
+            'elements': {'60Ni': 1, '107Ag': 1},
+            'element_mass_fg': {'60Ni': 5.0, '107Ag': 8.0},
+            'source_sample': 'SampleA',
+        }
+        out = pcr.relabel_particles(
+            [particle],
+            [_def('60Ni', group='Mixed'), _def('107Ag', group='Mixed')],
+            {'Mixed': '#123456'}, 'double_count', 'unclassified', '#888888',
+            group_pooling_policies={'Mixed': 'drop_mfc'})
+        mixed_copy = out[0]
+        total = cv.composition_items_for_role(
+            mixed_copy, 'element_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert total == [('Mixed', pytest.approx(13.0))]
+
+    def test_keep_mfc_group_allows_total_particle_through(self):
+        """The contrast case: a single-definition group (no pooling
+        ambiguity, keep_mfc naturally true) DOES let TOTAL PARTICLE compute
+        a real combined number for an MFC-dependent key."""
+        particle = {
+            'elements': {'60Ni': 1, '107Ag': 1},
+            'element_mass_fg': {'60Ni': 5.0, '107Ag': 8.0},
+            'particle_mass_fg': {'60Ni': 55.0, '107Ag': 88.0},
+            'source_sample': 'SampleA',
+        }
+        out = pcr.relabel_particles(
+            [particle], [_def('60Ni', group='Smelter')],
+            {'Smelter': '#123456'}, 'priority', 'unclassified', '#888888')
+        copy = out[0]
+        by_def = cv.composition_items_for_role(
+            copy, 'particle_mass_fg', cv.ROLE_SERIES, cv.SCOPE_DEFINITION)
+        total = cv.composition_items_for_role(
+            copy, 'particle_mass_fg', cv.ROLE_SERIES, cv.SCOPE_TOTAL_PARTICLE)
+        assert by_def == [('Smelter', 55.0)]
+        assert total == [('Smelter', pytest.approx(143.0))]
+
+
+class TestEffectiveScope:
+    def test_non_classifier_stream_always_definition(self):
+        assert cv.effective_scope({cv.SCOPE_CONFIG_KEY: cv.SCOPE_TOTAL_PARTICLE},
+                                  {'type': 'sample_data'}) == cv.SCOPE_DEFINITION
+
+    def test_invalid_stored_value_falls_back_to_definition(self):
+        out = _relabel([_particle({'60Ni': 10})], [_def('60Ni', group='Smelter')],
+                       overlap='priority')
+        stream = {'_classifier_registry': {'Smelter': {}}, 'particle_data': out}
+        assert cv.effective_scope({cv.SCOPE_CONFIG_KEY: 'garbage'}, stream) == \
+            cv.SCOPE_DEFINITION
+
+    def test_missing_config_key_defaults_to_definition(self):
+        out = _relabel([_particle({'60Ni': 10})], [_def('60Ni', group='Smelter')],
+                       overlap='priority')
+        stream = {'_classifier_registry': {'Smelter': {}}, 'particle_data': out}
+        assert cv.effective_scope({}, stream) == cv.SCOPE_DEFINITION
+
+    def test_explicit_total_particle_is_honored(self):
+        out = _relabel([_particle({'60Ni': 10})], [_def('60Ni', group='Smelter')],
+                       overlap='priority')
+        stream = {'_classifier_registry': {'Smelter': {}}, 'particle_data': out}
+        assert cv.effective_scope(
+            {cv.SCOPE_CONFIG_KEY: cv.SCOPE_TOTAL_PARTICLE}, stream) == \
+            cv.SCOPE_TOTAL_PARTICLE
+
+
+class TestClassifierViewGroupScopeCombo:
+    """The shared settings-dialog widget's second combo box."""
+
+    def test_offers_both_scopes(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        box = grp.build()
+        assert box is not None
+        offered = [grp.scope_combo.itemData(i)
+                  for i in range(grp.scope_combo.count())]
+        assert offered == [cv.SCOPE_DEFINITION, cv.SCOPE_TOTAL_PARTICLE]
+
+    def test_enabled_when_role_is_groups(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        box = grp.build()
+        assert box is not None
+        assert grp.role_combo.currentData() == cv.ROLE_SERIES
+        assert grp.scope_combo.isEnabled()
+
+    def test_disabled_when_role_is_off(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        box = grp.build()
+        assert box is not None
+        grp.role_combo.setCurrentIndex(grp.role_combo.findData(cv.ROLE_OFF))
+        assert not grp.scope_combo.isEnabled()
+
+    def test_disabled_for_multi_key_arity(self, qapp):
+        """ARITY_MULTI_KEY never offers SERIES at all, so the scope combo
+        should never be enabled for it regardless of the initial role."""
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_MULTI_KEY)
+        box = grp.build()
+        assert box is not None
+        assert grp.role_combo.currentData() != cv.ROLE_SERIES
+        assert not grp.scope_combo.isEnabled()
+
+    def test_collect_includes_scope(self, qapp):
+        from results.shared_plot_utils import ClassifierViewGroup
+        out = _wired_node().get_output_data()
+        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        box = grp.build()
+        assert box is not None
+        grp.scope_combo.setCurrentIndex(
+            grp.scope_combo.findData(cv.SCOPE_TOTAL_PARTICLE))
+        collected = grp.collect()
+        assert collected[cv.SCOPE_CONFIG_KEY] == cv.SCOPE_TOTAL_PARTICLE
+
+
+def _scope_test_stream():
+    """Single-sample classifier stream for node-level scope tests: 20
+    Smelter particles (60Ni+56Fe each) and 15 Unclassified particles
+    (107Ag), sized so BY-DEFINITION vs TOTAL-PARTICLE produce visibly
+    different, easy-to-assert-on numbers."""
+    def p(ni=None, fe=None, ag=None):
+        e, m, d = {}, {}, {}
+        for iso, val in (('60Ni', ni), ('56Fe', fe), ('107Ag', ag)):
+            if val is not None:
+                e[iso] = 1
+                m[iso] = val * 10.0
+                d[iso] = val + 100.0
+        return {'elements': e, 'element_mass_fg': m, 'element_diameter_nm': d,
+                'source_sample': 'A'}
+
+    particles = ([p(ni=5, fe=3) for _ in range(20)]
+                 + [p(ag=8) for _ in range(15)])
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'sample_data', 'sample_name': 'A', 'particle_data': particles,
+        'selected_isotopes': [{'label': '60Ni'}, {'label': '56Fe'},
+                              {'label': '107Ag'}],
+    }
+    clf.definitions = [_def('60Ni', target='A', group='Smelter')]
+    clf.groups = {'Smelter': '#FF6600'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = 'priority'
+    return clf
+
+
+class TestHistogramScopeWiring:
+    def test_classifier_scope_method_exists(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode
+        node = HistogramPlotNode()
+        assert hasattr(node, 'classifier_scope')
+
+    def test_mass_extraction_differs_by_scope(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode
+        out = _scope_test_stream().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_DEFINITION
+        data_def = node.extract_plot_data()
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+        data_total = node.extract_plot_data()
+
+        assert data_def['Smelter'] == [50.0] * 20
+        assert data_total['Smelter'] == [80.0] * 20
+
+    def test_diameter_now_respects_groups_role(self, qapp):
+        """Regression for the gap found while wiring this feature:
+        histogram's diameter data types never went through the
+        role-aware/bucket-collapse-aware reader at all, so GROUPS silently
+        showed real ungrouped isotopes -- same bug class box plot had,
+        just never fixed here until now."""
+        from results.results_bar_charts import HistogramPlotNode
+        out = _scope_test_stream().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Diameter (nm)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_DEFINITION
+        data_def = node.extract_plot_data()
+        assert set(data_def.keys()) <= {'Smelter', 'Unclassified'}
+        assert len(data_def['Smelter']) == 20
+
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+        data_total = node.extract_plot_data()
+        assert len(data_total['Smelter']) == 40  # 60Ni AND 56Fe per particle
+
+    def test_dialog_renders_across_role_and_scope_combinations(self, qapp):
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        out = _scope_test_stream().get_output_data()
+        node = HistogramPlotNode()
+        node.process_data(out)
+        dlg = HistogramDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            for scope in (cv.SCOPE_DEFINITION, cv.SCOPE_TOTAL_PARTICLE):
+                node.config[cv.ROLE_CONFIG_KEY] = role
+                node.config[cv.SCOPE_CONFIG_KEY] = scope
+                dlg._refresh()  # must not raise
+
+
+class TestBoxPlotScopeWiring:
+    def test_classifier_scope_method_exists(self, qapp):
+        from results.results_box_plot import BoxPlotNode
+        node = BoxPlotNode()
+        assert hasattr(node, 'classifier_scope')
+
+    def test_mass_extraction_differs_by_scope(self, qapp):
+        from results.results_box_plot import BoxPlotNode
+        out = _scope_test_stream().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_DEFINITION
+        data_def = node.extract_plot_data()
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+        data_total = node.extract_plot_data()
+
+        assert data_def['Smelter'] == [50.0] * 20
+        assert data_total['Smelter'] == [80.0] * 20
+
+    def test_dialog_renders_across_role_and_scope_combinations(self, qapp):
+        from results.results_box_plot import BoxPlotNode, BoxPlotDisplayDialog
+        out = _scope_test_stream().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        dlg = BoxPlotDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            for scope in (cv.SCOPE_DEFINITION, cv.SCOPE_TOTAL_PARTICLE):
+                node.config[cv.ROLE_CONFIG_KEY] = role
+                node.config[cv.SCOPE_CONFIG_KEY] = scope
+                dlg._refresh()  # must not raise
+
+
+class TestElementBarChartScopeInvariance:
+    """Confirms the deliberate choice NOT to wire scope into element bar
+    chart: it only ever counts particles (val > 0 -> +1), never reads the
+    numeric magnitude of a bucket's collapsed value, so BY DEFINITION and
+    TOTAL PARTICLE are provably indistinguishable in its output."""
+
+    def test_no_scope_wiring_present(self, qapp):
+        from results.results_bar_charts import ElementBarChartPlotNode
+        node = ElementBarChartPlotNode()
+        assert not hasattr(node, 'classifier_scope')
+
+    def test_output_identical_regardless_of_scope_config(self, qapp):
+        from results.results_bar_charts import ElementBarChartPlotNode
+        out = _scope_test_stream().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_DEFINITION
+        data_def = node.extract_plot_data()
+        node.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+        data_total = node.extract_plot_data()
+
+        assert data_def == data_total == {'Smelter': 20, 'Unclassified': 15}

@@ -2216,6 +2216,14 @@ class BoxPlotNode(QObject):
         from results import classifier_view as cv
         return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
 
+    def classifier_scope(self):
+        """The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for
+        this render (see ``results.classifier_view``'s scope-axis docs).
+        Only changes anything under GROUPS role; harmless to resolve and
+        pass through unconditionally otherwise."""
+        from results import classifier_view as cv
+        return cv.effective_scope(self.config, self.input_data)
+
     def extract_plot_data(self):
         if not self.input_data:
             return None
@@ -2234,9 +2242,10 @@ class BoxPlotNode(QObject):
             return None
         from results import classifier_view as cv
         role = self.classifier_role()
+        scope = self.classifier_scope()
         result = {}
         for p in particles:
-            for el, val in cv.composition_items_for_role(p, data_key, role):
+            for el, val in cv.composition_items_for_role(p, data_key, role, scope):
                 if data_key == 'elements':
                     if val > 0:
                         result.setdefault(el, []).append(val)
@@ -2252,11 +2261,12 @@ class BoxPlotNode(QObject):
             return None
         from results import classifier_view as cv
         role = self.classifier_role()
+        scope = self.classifier_scope()
         sd = {n: {} for n in names}
         for p in particles:
             src = p.get('source_sample')
             if src and src in sd:
-                for el, val in cv.composition_items_for_role(p, data_key, role):
+                for el, val in cv.composition_items_for_role(p, data_key, role, scope):
                     if data_key == 'elements':
                         if val > 0:
                             sd[src].setdefault(el, []).append(val)

@@ -110,6 +110,40 @@ BUCKET_KEY = '_classifier_bucket'
 #: ``results.classifier_view.particle_identity``.
 SRC_INDEX_KEY = '_classifier_src_index'
 
+#: Per-particle key holding the SET of isotopes that this particle's own
+#: matched definition(s) actually reference -- i.e. exactly the isotope set
+#: :func:`_relabel_composition` used to build the bucket-collapsed entry
+#: above (the ``elements``/``element_mass_fg``/etc. keys). This is how a
+#: downstream reader recovers "which isotopes were summed into this bucket
+#: value" once that value is just a single collapsed number with no memory
+#: of its own inputs.
+#:
+#: **Why this exists (counting-scope note, flagged per explicit request)**:
+#: a matched particle's bucket total has always counted only the isotopes
+#: its triggering expression names -- e.g. a "Smelter" particle defined by
+#: ``60Ni`` contributes only its ``60Ni`` mass/moles/count to Smelter's
+#: total, even if that same particle also carries Fe, Cu, or anything else.
+#: That is a deliberate, still-supported reading ("of the isotopes that
+#: DEFINE this group, how much is there") but it is not the only one a
+#: scientist needs: "of the particles that QUALIFY for this group, how much
+#: are they emitting in total" requires every isotope the qualifying
+#: particle actually carries, not just the trigger isotope(s). Neither
+#: reading is more "correct" than the other -- they answer different
+#: questions -- so both stay available: the classifier's own collapse above
+#: keeps computing the DEFINITION-scoped answer (unchanged, so every
+#: already-shipped node is bit-for-bit unaffected), and a viz node that
+#: wants the TOTAL-PARTICLE answer instead reads this isotope set (or, for
+#: "every isotope on the particle" specifically, just the particle's own
+#: full raw composition -- no dual-carry needed for that half) via
+#: ``results.classifier_view``'s ``SCOPE_DEFINITION`` / ``SCOPE_TOTAL_PARTICLE``
+#: choice. Absent for a passthrough particle (no bucket was ever assigned,
+#: so the question doesn't apply). Explicitly set to "every isotope the
+#: particle carries" for Unclassified, since there is no expression to
+#: scope by in the first place -- DEFINITION and TOTAL-PARTICLE are
+#: therefore always the SAME set for Unclassified, by construction, not by
+#: special-casing.
+MATCH_ISOTOPES_KEY = '_classifier_match_isotopes'
+
 
 def _raw_composition_snapshot(particle):
     """Capture references to a particle's pre-relabel composition dicts.
@@ -522,12 +556,15 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
                 continue
             else:  # 'unclassified'
                 copy = p.copy()
+                all_isotopes = set((p.get('elements') or {}).keys())
                 copy.update(_relabel_composition(
-                    p, 'Unclassified', set((p.get('elements') or {}).keys()),
-                    keep_mfc_keys=True))
+                    p, 'Unclassified', all_isotopes, keep_mfc_keys=True))
                 copy[RAW_KEY] = raw
                 copy[BUCKET_KEY] = 'Unclassified'
                 copy[SRC_INDEX_KEY] = src_index
+                # No expression to scope by, so DEFINITION and TOTAL-PARTICLE
+                # are the same set here by construction (see MATCH_ISOTOPES_KEY).
+                copy[MATCH_ISOTOPES_KEY] = all_isotopes
                 out.append(copy)
                 continue
         for d in matches:
@@ -563,5 +600,11 @@ def relabel_particles(particles, definitions, groups, overlap_mode,
             # which is exactly the dedupe key downstream statistics need under
             # double_count (see SRC_INDEX_KEY).
             copy[SRC_INDEX_KEY] = src_index
+            # This copy's own DEFINITION-scoped isotope set -- see
+            # MATCH_ISOTOPES_KEY. Under double_count, each of a particle's
+            # several copies carries its OWN matched definition's isotopes
+            # here (not the union), consistent with each copy representing
+            # that one definition's claim on the particle.
+            copy[MATCH_ISOTOPES_KEY] = set(isotopes)
             out.append(copy)
     return out

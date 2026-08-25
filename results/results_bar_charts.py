@@ -3196,9 +3196,10 @@ class HistogramDisplayDialog(QDialog):
     def _get_available_elements(self):
         """Get raw element names from input (before grouping).
 
-        Reads through the classifier role so OFF genuinely shows the real
-        isotope vocabulary here too (element-color pickers, legend toggles)
-        -- not just in the plotted data.
+        Reads through the classifier role/scope so OFF genuinely shows the
+        real isotope vocabulary here too (element-color pickers, legend
+        toggles), and a TOTAL-PARTICLE scope's wider isotope set is
+        reflected here too -- not just in the plotted data.
         """
         try:
             data = self.node.input_data
@@ -3207,10 +3208,12 @@ class HistogramDisplayDialog(QDialog):
             dt = self.node.config.get('data_type_display', 'Counts')
             dk = HIST_DATA_KEY_MAP.get(dt, 'elements')
             from results import classifier_view as cv
-            collapsed = self.node.classifier_role() != cv.ROLE_OFF
+            role = self.node.classifier_role()
+            scope = self.node.classifier_scope()
             elems = set()
             for p in data.get('particle_data', []):
-                elems.update(cv.composition(p, dk, collapsed=collapsed).keys())
+                elems.update(label for label, _val in
+                            cv.composition_items_for_role(p, dk, role, scope))
             return sorted(elems)
         except Exception:
             _itk_log.exception("Handled exception in _get_available_elements")
@@ -4331,6 +4334,14 @@ class HistogramPlotNode(QObject):
         from results import classifier_view as cv
         return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
 
+    def classifier_scope(self):
+        """The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for
+        this render (see ``results.classifier_view``'s scope-axis docs).
+        Only changes anything under GROUPS role; harmless to resolve and
+        pass through unconditionally otherwise."""
+        from results import classifier_view as cv
+        return cv.effective_scope(self.config, self.input_data)
+
     def extract_plot_data(self):
         """Extract plottable data, applying element groups when active.
 
@@ -4347,6 +4358,21 @@ class HistogramPlotNode(QObject):
         arity offers; PANELS/COLORS are a deferred future feature (see
         ``.claude/aug24.md``'s improvements list), and ``effective_role``
         cannot return them here.
+
+        Aggregation scope, GROUPS only (§ ``results.classifier_view``'s
+        SCOPE_* docs): the historical/default SCOPE_DEFINITION counts only
+        the isotopes a particle's matched definition names -- e.g. a
+        Smelter particle triggered by 60Ni contributes only its 60Ni value,
+        even carrying other isotopes the "Smelter" expression never
+        mentioned. SCOPE_TOTAL_PARTICLE instead counts every isotope a
+        qualifying particle actually carries. Routed through
+        ``classifier_view.composition_items_for_role`` (shared with box
+        plot), which also fixes a previously-unnoticed gap: Element/Particle
+        Diameter data types are never bucket-collapsed by the classifier at
+        all (no principled way to sum a diameter across isotopes), so this
+        extraction used to silently show real ungrouped isotopes under
+        GROUPS for those two data types specifically -- the same "diameter
+        never respects GROUPS" bug box plot had, just never fixed here.
         """
         if not self.input_data:
             return None
@@ -4358,15 +4384,15 @@ class HistogramPlotNode(QObject):
         groups = self.config.get('element_groups', [])
         use_groups = bool(groups) and _can_sum(self.config)
 
-        from results import classifier_view as cv
-        collapsed = self.classifier_role() != cv.ROLE_OFF
+        role = self.classifier_role()
+        scope = self.classifier_scope()
 
         if itype == 'sample_data':
             if use_groups:
                 particles = self.input_data.get('particle_data', [])
                 out = _apply_element_groups(particles, dk, groups)
                 return out or None
-            return self._extract_single(dk, collapsed)
+            return self._extract_single(dk, role, scope)
 
         elif itype == 'multiple_sample_data':
             if use_groups:
@@ -4375,19 +4401,18 @@ class HistogramPlotNode(QObject):
                 out = _apply_element_groups_multi(
                     particles, names, dk, groups)
                 return out or None
-            return self._extract_multi(dk, collapsed)
+            return self._extract_multi(dk, role, scope)
 
         return None
 
-    def _extract_single(self, dk, collapsed=True):
+    def _extract_single(self, dk, role, scope):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
         from results import classifier_view as cv
         out = {}
         for p in particles:
-            d = cv.composition(p, dk, collapsed=collapsed)
-            for el, val in d.items():
+            for el, val in cv.composition_items_for_role(p, dk, role, scope):
                 if dk == 'elements':
                     if val > 0:
                         out.setdefault(el, []).append(val)
@@ -4396,7 +4421,7 @@ class HistogramPlotNode(QObject):
                         out.setdefault(el, []).append(val)
         return out or None
 
-    def _extract_multi(self, dk, collapsed=True):
+    def _extract_multi(self, dk, role, scope):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -4407,8 +4432,7 @@ class HistogramPlotNode(QObject):
             src = p.get('source_sample')
             if src not in result:
                 continue
-            d = cv.composition(p, dk, collapsed=collapsed)
-            for el, val in d.items():
+            for el, val in cv.composition_items_for_role(p, dk, role, scope):
                 if dk == 'elements':
                     if val > 0:
                         result[src].setdefault(el, []).append(val)
