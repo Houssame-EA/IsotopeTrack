@@ -317,6 +317,54 @@ def composition(particle, data_key, collapsed=False):
     return particle.get(data_key) or {}
 
 
+def composition_items_for_role(particle, data_key, role):
+    """``(label, value)`` pairs one particle contributes for ``data_key``
+    under a GROUPS-or-OFF role, for per-key nodes that read the same
+    quantity across every data type a user can pick (box/strip plot's
+    Counts/Mass/Moles/Diameter switch is the motivating case).
+
+    Two different key shapes need two different answers:
+
+    - A key the classifier itself relabels (present in the particle's
+      dual-carried :data:`RAW_KEY` snapshot -- ``elements``,
+      ``element_mass_fg``, ``element_moles_fmol``, and the MFC-dependent
+      keys): these are already additive, so under GROUPS this returns the
+      classifier's own already-summed bucket entry (one value per particle,
+      via ``composition(collapsed=True)``); under OFF it returns the raw
+      per-isotope entries (``composition(collapsed=False)``).
+    - A key the classifier deliberately never rewrites (the diameter
+      fields -- there is no principled way to sum a diameter across
+      isotopes, so the classifier leaves them alone): there is no
+      bucket-collapsed dict to fall back on. OFF returns each isotope's own
+      value under its own label, unchanged. GROUPS instead re-labels every
+      one of the particle's raw per-isotope entries under its *bucket*
+      label -- each isotope stays its own data point, just filed by group
+      instead of by isotope, so a box/strip plot can still show one
+      distribution per group. A passthrough/unclassified particle (no
+      bucket assigned) falls back to its real isotope labels, since there
+      is nothing to group by.
+
+    Args:
+        particle (dict): A particle dict.
+        data_key (str): e.g. ``'elements'``, ``'element_diameter_nm'``.
+        role (str): ``ROLE_OFF`` or ``ROLE_SERIES`` -- the only roles a
+            per-key node ever has to pass here.
+
+    Returns:
+        list[tuple]: ``(label, value)`` pairs, order-preserving.
+    """
+    if role == ROLE_OFF:
+        return list(composition(particle, data_key, collapsed=False).items())
+    raw = particle.get(RAW_KEY)
+    if isinstance(raw, dict) and data_key in raw:
+        return list(composition(particle, data_key, collapsed=True).items())
+    label = bucket_of(particle)
+    if label is None:
+        return list(composition(particle, data_key, collapsed=False).items())
+    return [(label, v)
+            for v in composition(particle, data_key, collapsed=False).values()]
+
+
 def bucket_of(particle):
     """The bucket label assigned to one particle.
 
@@ -498,3 +546,20 @@ def sort_labels_by_mass(input_data, labels, data_key='elements'):
     """``sort_elements_by_mass``-shaped drop-in that also handles bucket
     labels sanely (see :func:`mass_sort_key`)."""
     return sorted(labels, key=lambda lbl: mass_sort_key(input_data, lbl, data_key))
+
+
+def sort_label_dict_by_mass(input_data, label_dict, data_key='elements'):
+    """``sort_element_dict_by_mass``-shaped drop-in that also handles
+    classifier bucket-label keys sanely (see :func:`mass_sort_key`).
+
+    ``data_key`` intentionally stays at its ``'elements'`` default even when
+    the caller is displaying a different quantity (mass/moles/diameter):
+    it only reads isotope-key *vocabulary* to compute a mass number, never
+    values, and ``elements`` (particle counts) is the one composition dict
+    guaranteed present for every particle regardless of which quantity is
+    selected for display.
+    """
+    if not label_dict:
+        return label_dict
+    ordered = sort_labels_by_mass(input_data, list(label_dict.keys()), data_key)
+    return {label: label_dict[label] for label in ordered}

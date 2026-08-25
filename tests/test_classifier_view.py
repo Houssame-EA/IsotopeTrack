@@ -1290,4 +1290,347 @@ class TestBySampleLegendElementVisibility:
         df = captured['csv_data']
         assert df is not None
         assert 'A' not in set(df['Sample'])
+
+
+# --------------------------------------------------------------------------- #
+# box_plot: GROUPS/OFF across all 7 data types + subplot-mode identity
+# --------------------------------------------------------------------------- #
+_BOX_BUCKET_LABELS = {'Smelter', 'Background', 'Unclassified'}
+_BOX_ISOTOPE_LABELS = {'60Ni', '107Ag', '197Au'}
+
+
+def _box_particle(sample, ni=None, ag=None, au=None):
+    """One particle with per-isotope entries for every box-plot data type
+    (elements/mass/moles x element-or-particle, plus both diameter keys).
+    Only 'elements' + the additive/percentage/MFC keys get bucket-collapsed
+    by the classifier; the diameter keys never do (see
+    tools/particle_classifier_relabel.py's module docstring)."""
+    part = {'elements': {}, 'element_mass_fg': {}, 'element_moles_fmol': {},
+            'particle_mass_fg': {}, 'particle_moles_fmol': {},
+            'element_diameter_nm': {}, 'particle_diameter_nm': {},
+            'source_sample': sample}
+    for iso, val in (('60Ni', ni), ('107Ag', ag), ('197Au', au)):
+        if val is not None:
+            part['elements'][iso] = 1
+            part['element_mass_fg'][iso] = val * 10
+            part['element_moles_fmol'][iso] = val
+            part['particle_mass_fg'][iso] = val * 20
+            part['particle_moles_fmol'][iso] = val * 2
+            part['element_diameter_nm'][iso] = val + 100
+            part['particle_diameter_nm'][iso] = val + 200
+    return part
+
+
+def _box_classifier_node(overlap_mode='priority', unmatched_mode='unclassified'):
+    """Two-sample classifier stream: sample A has Smelter(60Ni)+Background
+    (107Ag) particles, sample B has Smelter(60Ni)+unmatched(197Au) --
+    per-element totals comfortably clear box plot's default
+    min_particle_count of 0."""
+    from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+    particles = (
+        [_box_particle('A', ni=5) for _ in range(6)]
+        + [_box_particle('A', ag=8) for _ in range(4)]
+        + [_box_particle('B', ni=5) for _ in range(5)]
+        + [_box_particle('B', au=3) for _ in range(3)]
+    )
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+        'particle_data': particles,
+        'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'},
+                              {'label': '197Au'}],
+    }
+    defs = []
+    for s in ('A', 'B'):
+        defs.append({'id': new_definition_id(), 'target_sample': s,
+                      'expression_text': '60Ni', 'match_mode': 'partial',
+                      'group_name': 'Smelter', 'color': None})
+        defs.append({'id': new_definition_id(), 'target_sample': s,
+                      'expression_text': '107Ag', 'match_mode': 'partial',
+                      'group_name': 'Background', 'color': None})
+    clf.definitions = defs
+    clf.groups = {'Smelter': '#FF6600', 'Background': '#3B82F6'}
+    clf.unmatched_mode = unmatched_mode
+    clf.overlap_mode = overlap_mode
+    return clf
+
+
+class TestBoxPlotRoleBehavior:
+    """Regression coverage for a bug reported live: box plot's role picker
+    UI existed (ClassifierViewGroup was already wired into its settings
+    dialog) but nothing downstream ever read it. OFF was a total no-op, and
+    worse, behavior secretly depended on which data type was selected: the
+    additive keys (elements/mass/moles) are destructively bucket-collapsed
+    by the classifier itself, so they always showed groups; the diameter
+    keys are deliberately never touched by the classifier, so they always
+    showed real isotopes -- regardless of which role was picked, for every
+    data type."""
+
+    def test_groups_is_unchanged_from_pre_role_behavior(self, qapp):
+        from results.results_box_plot import BoxPlotNode
+        out = _box_classifier_node().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        assert node.classifier_role() == cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        labels = set()
+        for sd in data.values():
+            labels.update(sd.keys())
+        assert labels <= _BOX_BUCKET_LABELS
+        assert data['A']['Smelter'] == [1, 1, 1, 1, 1, 1]
+
+    def test_off_counts_real_isotopes_not_buckets(self, qapp):
+        from results.results_box_plot import BoxPlotNode
+        out = _box_classifier_node().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = node.extract_plot_data()
+        labels = set()
+        for sd in data.values():
+            labels.update(sd.keys())
+        assert labels == _BOX_ISOTOPE_LABELS
+        assert 'Smelter' not in labels
+
+    @pytest.mark.parametrize('display_name', [
+        'Counts', 'Element Mass (fg)', 'Particle Mass (fg)',
+        'Element Moles (fmol)', 'Particle Moles (fmol)',
+        'Element Diameter (nm)', 'Particle Diameter (nm)',
+    ])
+    def test_all_data_types_respect_role(self, qapp, display_name):
+        """The exact bug: OFF did nothing (additive keys always collapsed),
+        AND diameter never respected GROUPS (never collapsed by the
+        classifier at all) -- for every one of the 7 data types."""
+        from results.results_box_plot import BoxPlotNode
+        out = _box_classifier_node().get_output_data()
+
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = display_name
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        groups_data = node.extract_plot_data()
+        groups_labels = set()
+        for sd in (groups_data or {}).values():
+            groups_labels.update(sd.keys())
+        assert groups_labels, f"{display_name}: GROUPS produced nothing"
+        assert groups_labels <= _BOX_BUCKET_LABELS, \
+            f"{display_name}: GROUPS leaked real isotope labels {groups_labels}"
+
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        off_data = node.extract_plot_data()
+        off_labels = set()
+        for sd in (off_data or {}).values():
+            off_labels.update(sd.keys())
+        assert off_labels, f"{display_name}: OFF produced nothing"
+        assert off_labels == _BOX_ISOTOPE_LABELS, \
+            f"{display_name}: OFF did not switch to real isotopes ({off_labels})"
+
+    def test_diameter_groups_by_bucket_under_groups_role(self, qapp):
+        """The specific complaint: 'element diameter becomes all isotopes'
+        no matter the role, because the classifier never bucket-collapses
+        diameter fields. GROUPS must now re-key each isotope's diameter
+        under its particle's bucket instead."""
+        from results.results_box_plot import BoxPlotNode
+        out = _box_classifier_node().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Diameter (nm)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        assert set(data['A'].keys()) <= _BOX_BUCKET_LABELS
+        assert data['A']['Smelter'] == [105, 105, 105, 105, 105, 105]
+
+    def test_mass_respects_off_role(self, qapp):
+        """The specific complaint: 'element mass just stays in the group'
+        no matter the role, because the classifier destructively relabels
+        elements/mass/moles. OFF must now read the dual-carried raw
+        composition instead of the already-collapsed particle dict."""
+        from results.results_box_plot import BoxPlotNode
+        out = _box_classifier_node().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = node.extract_plot_data()
+        assert set(data['A'].keys()) == {'60Ni', '107Ag'}
+        assert data['A']['60Ni'] == [50, 50, 50, 50, 50, 50]
+
+    def test_passthrough_particle_falls_back_to_isotope_label(self, qapp):
+        """A particle with no bucket assigned (passthrough, unmatched) has
+        nothing to group diameter values by, so GROUPS must fall back to
+        its own real isotope label rather than dropping the data."""
+        from results.results_box_plot import BoxPlotNode
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'sample_data', 'sample_name': 'A',
+            'particle_data': [_box_particle('A', au=9)],
+            'selected_isotopes': [{'label': '197Au'}],
+        }
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '60Ni', 'match_mode': 'partial',
+             'group_name': 'Smelter', 'color': None},
+        ]
+        clf.groups = {'Smelter': '#FF6600'}
+        clf.unmatched_mode = 'passthrough'
+        clf.overlap_mode = 'priority'
+        out = clf.get_output_data()
+
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Diameter (nm)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        assert data == {'197Au': [109]}
+
+    def test_panels_colors_not_offered(self, qapp):
+        from results.results_box_plot import BoxPlotSettingsDialog
+        out = _box_classifier_node().get_output_data()
+        dlg = BoxPlotSettingsDialog({}, out, None, scope='quantities')
+        offered = [dlg._classifier_group.role_combo.itemData(i) for i in
+                   range(dlg._classifier_group.role_combo.count())]
+        assert offered == [cv.ROLE_SERIES, cv.ROLE_OFF]
+
+    def test_dialog_renders_without_crashing(self, qapp):
+        from results.results_box_plot import BoxPlotNode, BoxPlotDisplayDialog
+        out = _box_classifier_node().get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        dlg = BoxPlotDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            node.config[cv.ROLE_CONFIG_KEY] = role
+            dlg._refresh()  # must not raise
+        dlg.close()
+
+
+class TestBoxPlotSubplotModes:
+    """Multi-sample display-mode coverage: both 'Subplots by sample' and
+    'Subplots by isotope' read the same role-aware plot_data, so panel/box
+    identity should follow the role automatically with no per-mode special
+    casing -- plus the 'Export this subplot' fix (previously wired only
+    for 'Subplots by isotope')."""
+
+    def _dialog_for(self, role, mode, overlap_mode='priority'):
+        from results.results_box_plot import BoxPlotNode, BoxPlotDisplayDialog
+        out = _box_classifier_node(overlap_mode).get_output_data()
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = role
+        node.config['display_mode'] = mode
+        return BoxPlotDisplayDialog(node, None), node
+
+    def test_subplots_by_sample_panel_identity_is_sample_both_roles(self, qapp):
+        import pyqtgraph as pg
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            dlg, _node = self._dialog_for(role, 'Subplots by sample')
+            panels = [item for item in dlg.pw.scene().items()
+                      if isinstance(item, pg.PlotItem)]
+            assert len(panels) == 2, f"[{role}] expected 2 sample panels"
+            sample_ids = {c.get('sample') for c in
+                          dlg._subplot_context_by_plotitem.values()}
+            assert sample_ids == {'A', 'B'}, f"[{role}] {sample_ids}"
+            dlg.close()
+
+    def test_subplots_by_isotope_panel_identity_is_role_dependent(self, qapp):
+        import pyqtgraph as pg
+        dlg, _node = self._dialog_for(cv.ROLE_SERIES, 'Subplots by isotope')
+        panel_ids = {c.get('element') for c in
+                     dlg._subplot_context_by_plotitem.values()}
+        assert panel_ids <= _BOX_BUCKET_LABELS
+        dlg.close()
+
+        dlg2, _node2 = self._dialog_for(cv.ROLE_OFF, 'Subplots by isotope')
+        panel_ids2 = {c.get('element') for c in
+                      dlg2._subplot_context_by_plotitem.values()}
+        assert panel_ids2 == _BOX_ISOTOPE_LABELS
+        dlg2.close()
+
+    def test_bucket_panels_sort_by_mass_not_alphabetically(self, qapp):
+        """Adversarial fixture where alphabetical and mass order disagree,
+        proving the panel order comes from sort_labels_by_mass and isn't
+        coincidentally alphabetical."""
+        from results.results_box_plot import BoxPlotNode, BoxPlotDisplayDialog
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+        def p(iso, sample='A'):
+            return {'elements': {iso: 1}, 'source_sample': sample}
+
+        particles = (
+            [p('197Au')] * 4 + [p('60Ni')] * 4
+            + [p('197Au', 'B')] * 4 + [p('60Ni', 'B')] * 4
+        )
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+            'particle_data': particles,
+            'selected_isotopes': [{'label': '60Ni'}, {'label': '197Au'}],
+        }
+        defs = []
+        for s in ('A', 'B'):
+            defs.append({'id': new_definition_id(), 'target_sample': s,
+                          'expression_text': '197Au', 'match_mode': 'partial',
+                          'group_name': 'Alpha', 'color': None})
+            defs.append({'id': new_definition_id(), 'target_sample': s,
+                          'expression_text': '60Ni', 'match_mode': 'partial',
+                          'group_name': 'Zulu', 'color': None})
+        clf.definitions = defs
+        clf.groups = {'Alpha': '#FF0000', 'Zulu': '#00FF00'}
+        clf.unmatched_mode = 'discard'
+        clf.overlap_mode = 'priority'
+        out = clf.get_output_data()
+
+        node = BoxPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        node.config['display_mode'] = 'Subplots by isotope'
+        dlg = BoxPlotDisplayDialog(node, None)
+        dlg._refresh()
+        panel_order = [c.get('element') for c in
+                       dlg._subplot_context_by_plotitem.values()]
+        assert panel_order == ['Zulu', 'Alpha'], panel_order
+        dlg.close()
+
+    def test_export_subplot_enabled_for_both_multi_sample_modes(self, qapp):
+        import pyqtgraph as pg
+        from results.results_box_plot import _normalize_box_display_mode
+        for mode in ('Subplots by isotope', 'Subplots by sample'):
+            dlg, node = self._dialog_for(cv.ROLE_SERIES, mode)
+            plot_item = next(item for item in dlg.pw.scene().items()
+                             if isinstance(item, pg.PlotItem))
+            subplot_ctx = dlg._subplot_context_by_plotitem.get(plot_item)
+            assert subplot_ctx is not None, f"[{mode}] no subplot context"
+
+            display_mode = _normalize_box_display_mode(node.config.get('display_mode'))
+            can_export = (
+                display_mode in ('Subplots by isotope', 'Subplots by sample')
+                and plot_item is not None and subplot_ctx is not None
+            )
+            assert can_export, f"[{mode}] export-subplot still disabled"
+            dlg.close()
+
+    def test_export_subplot_filename_stems_differ_by_mode(self, qapp):
+        import pyqtgraph as pg
+        import results.results_box_plot as rbp
+        for mode, expected_suffix in (('Subplots by isotope', '_by_sample'),
+                                       ('Subplots by sample', '_by_element')):
+            dlg, _node = self._dialog_for(cv.ROLE_SERIES, mode)
+            plot_item = next(item for item in dlg.pw.scene().items()
+                             if isinstance(item, pg.PlotItem))
+            subplot_ctx = dlg._subplot_context_by_plotitem.get(plot_item)
+
+            captured = {}
+            def _fake_download(pw, parent, default_name=None, export_item=None):
+                captured['name'] = default_name
+            orig = rbp.download_pyqtgraph_figure
+            rbp.download_pyqtgraph_figure = _fake_download
+            try:
+                dlg._export_subplot(plot_item, subplot_ctx)
+            finally:
+                rbp.download_pyqtgraph_figure = orig
+
+            assert captured['name'].endswith(expected_suffix), \
+                f"[{mode}] {captured['name']!r}"
+            dlg.close()
         dlg.close()
