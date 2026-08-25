@@ -95,6 +95,17 @@ ARITY_PER_KEY = 'per_key'          #: one key at a time / population aggregate
 ARITY_KEY_SET = 'key_set'          #: needs the particle's whole key-set
 ARITY_MULTI_KEY = 'multi_key'      #: needs 2+ keys from one particle at once
 
+#: Heatmap is structurally a set-of-keys node (a row is a particle's whole
+#: isotope co-occurrence signature) -- the same class as ``element_composition
+#: _plot``/``single_multiple_element_plot``, for which offering ROLE_SERIES
+#: would be offering the original degenerate-collapse bug back. Heatmap gets
+#: its OWN arity constant, not ``ARITY_KEY_SET``, because it has a bespoke,
+#: safe GROUPS aggregation those other two don't (:func:`group_composition_rows`
+#: builds a real multi-isotope-column row per bucket, never a 1x1 collapse) --
+#: so SERIES is genuinely safe here, and *only* here. Do not reuse this arity
+#: for a node that lacks that dedicated aggregation path.
+ARITY_HEATMAP = 'heatmap'
+
 _ROLES_BY_ARITY = {
     # Per-key-independent charts (histogram, element bar, box, pie,
     # concentration) offer GROUPS and OFF only. PANELS/COLORS are genuinely
@@ -108,12 +119,14 @@ _ROLES_BY_ARITY = {
     ARITY_PER_KEY: (ROLE_SERIES, ROLE_OFF),
     ARITY_KEY_SET: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
     ARITY_MULTI_KEY: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
+    ARITY_HEATMAP: (ROLE_SERIES, ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
 }
 
 _DEFAULT_ROLE_BY_ARITY = {
     ARITY_PER_KEY: ROLE_SERIES,
     ARITY_KEY_SET: ROLE_OFF,
     ARITY_MULTI_KEY: ROLE_OFF,
+    ARITY_HEATMAP: ROLE_OFF,
 }
 
 
@@ -239,6 +252,55 @@ def effective_scope(config, input_data):
         return SCOPE_DEFINITION
     scope = (config or {}).get(SCOPE_CONFIG_KEY)
     return scope if scope in (SCOPE_DEFINITION, SCOPE_TOTAL_PARTICLE) else SCOPE_DEFINITION
+
+
+# ── Group-row denominator (GROUPS role, set-of-keys aggregation only) ────
+#
+# A third, independent axis -- meaningful only where a single row aggregates
+# MANY particles into a per-isotope statistic (today: heatmap_plot's GROUPS
+# role via group_composition_rows below). Per-key-independent nodes never
+# hit this ambiguity: a histogram/box-plot bucket's value is one number, not
+# a statistic-over-a-list. Heatmap's *existing* (non-classifier) combination
+# rows don't hit it either -- a combination is DEFINED by every member
+# particle sharing the exact same isotope set, so "mean over the row" and
+# "mean over detections" are always identical there. It only appears once
+# GROUPS makes a row's membership heterogeneous (particles that qualify for
+# one bucket don't all necessarily carry the same isotopes).
+#
+# Found live, 2026-08-25, working through the heatmap GROUPS spec: given a
+# classifier group's mean Fe value, is the denominator "every particle in
+# the group" (particles that don't carry Fe count as a real 0 -- the bulk,
+# population-wide average) or "only particles that carry Fe" (the average
+# conditioned on detection)? Both are real, different numbers a scientist
+# might want; neither is a bug.
+DENOMINATOR_WHOLE_GROUP = 'whole_group'
+DENOMINATOR_DETECTED_ONLY = 'detected_only'
+
+#: Config key holding a node's chosen group-row denominator. Same flat-
+#: scalar rationale as ROLE_CONFIG_KEY / SCOPE_CONFIG_KEY.
+DENOMINATOR_CONFIG_KEY = 'classifier_group_denominator'
+
+DENOMINATOR_LABELS = {
+    DENOMINATOR_WHOLE_GROUP: "Whole Group - every particle in the group counts, particles without the isotope count as 0",
+    DENOMINATOR_DETECTED_ONLY: "Detected Only - only particles that actually carry the isotope count",
+}
+
+
+def effective_denominator(config, input_data):
+    """Resolve the group-row denominator actually in force for this render.
+
+    Same call-fresh-every-render discipline as :func:`effective_role` /
+    :func:`effective_scope`.
+
+    Returns:
+        str: ``DENOMINATOR_WHOLE_GROUP`` or ``DENOMINATOR_DETECTED_ONLY``.
+            Always ``DENOMINATOR_WHOLE_GROUP`` when the upstream isn't a
+            classifier stream, or the stored value is missing or invalid.
+    """
+    if not is_classifier_stream(input_data):
+        return DENOMINATOR_WHOLE_GROUP
+    val = (config or {}).get(DENOMINATOR_CONFIG_KEY)
+    return val if val in (DENOMINATOR_WHOLE_GROUP, DENOMINATOR_DETECTED_ONLY) else DENOMINATOR_WHOLE_GROUP
 
 
 # ── Stream introspection ───────────────────────────────────────────────
@@ -590,6 +652,143 @@ def particles_by_bucket(particles, include_unclassified=True):
             continue
         out.setdefault(label, []).append(p)
     return out
+
+
+def group_composition_rows(particles, data_key, scope, denominator):
+    """Aggregate real per-isotope values into one row per classifier bucket.
+
+    The GROUPS-role primitive for any node whose row is a population
+    statistic rather than a single particle or a single bucket-collapsed
+    scalar -- today, ``heatmap_plot``'s GROUPS role (see ``ARITY_HEATMAP``);
+    built generally so a future node can reuse it without re-deriving the
+    MFC-gate/scope/denominator interaction below.
+
+    Returns the same ``{label: {'particle_count': int, 'total_values':
+    {isotope: [values...]}}}`` shape ``results_heatmap.py``'s existing
+    combination-row builder already produces, so the entire downstream
+    rendering pipeline (cell statistic, cell spread, search/filter,
+    percentage conversion) is reused unmodified -- a group row is, to that
+    pipeline, indistinguishable from a combination row.
+
+    Args:
+        particles (list): Particle dicts (one sample's worth).
+        data_key (str): e.g. ``'elements'``, ``'element_mass_fg'``.
+        scope (str): :data:`SCOPE_DEFINITION` or :data:`SCOPE_TOTAL_PARTICLE`
+            -- which isotopes are even eligible to appear in a matched
+            particle's row at all. Unlike ``composition_items_for_role``,
+            this never re-*sums* isotopes into one number (a heatmap column
+            is one isotope, not a bucket total), so the two scopes never
+            produce different numbers here, only different COLUMN
+            visibility: DEFINITION shows the same real per-isotope values as
+            TOTAL_PARTICLE, just with non-referenced-isotope columns absent.
+        denominator (str): :data:`DENOMINATOR_WHOLE_GROUP` (every accepted
+            member of the bucket contributes an entry to every column that
+            ANY member has -- 0 for isotopes it doesn't itself carry, giving
+            every column the same length so ``_per_particle_percentages``-
+            style parallel-index logic keeps working) or
+            :data:`DENOMINATOR_DETECTED_ONLY` (a particle only contributes
+            to columns it actually carries -- column lengths vary).
+
+    Returns:
+        dict: ``{bucket_label: {'particle_count': int, 'total_values':
+        {isotope: [values...]}}}``. ``particle_count`` is the bucket's TRUE
+        membership count (independent of ``data_key``/gating below, so it
+        doesn't fluctuate as the user switches data type) and drives both
+        "sorted by abundance" and the row's ``(N)`` label downstream.
+        Passthrough particles (no bucket) are excluded -- GROUPS has nothing
+        to group them by.
+    """
+    rows = {}
+    for p in particles:
+        label = bucket_of(p)
+        if label is None:
+            continue
+        entry = rows.setdefault(label, {'particle_count': 0, '_members': []})
+        entry['particle_count'] += 1
+
+        # An MFC-dependent key (particle_mass_fg etc.) that the classifier's
+        # OWN collapse refused to write for this particle's bucket (a
+        # multi-definition "drop_mfc" pooled group) must not have this
+        # aggregation silently re-derive a mixed-MFC-basis number from raw
+        # data the classifier itself declined to vouch for -- same principle
+        # as composition_items_for_role's TOTAL_PARTICLE gate, applied here
+        # to BOTH scopes: a per-isotope breakdown across the group's members
+        # is itself the kind of cross-particle aggregation that gate exists
+        # to block, so DEFINITION needs the same protection TOTAL_PARTICLE
+        # does (unlike composition_items_for_role, where DEFINITION was safe
+        # because it only ever echoed the classifier's own pre-vetted
+        # collapsed number back, never re-read raw values itself).
+        raw_snapshot = p.get(RAW_KEY)
+        is_relabeled_key = isinstance(raw_snapshot, dict) and data_key in raw_snapshot
+        if is_relabeled_key:
+            definition_view = composition(p, data_key, collapsed=True)
+            if label not in definition_view:
+                continue
+
+        isotopes = scope_isotopes(p, scope)
+        raw_values = composition(p, data_key, collapsed=False)
+        contributing = {iso: v for iso, v in raw_values.items() if iso in isotopes}
+        entry['_members'].append(contributing)
+
+    out = {}
+    for label, entry in rows.items():
+        total_values = {}
+        members = entry['_members']
+        if denominator == DENOMINATOR_DETECTED_ONLY:
+            for contributing in members:
+                for iso, v in contributing.items():
+                    total_values.setdefault(iso, []).append(v)
+        else:
+            all_isotopes = set()
+            for contributing in members:
+                all_isotopes.update(contributing.keys())
+            for contributing in members:
+                for iso in all_isotopes:
+                    total_values.setdefault(iso, []).append(contributing.get(iso, 0.0))
+        out[label] = {'particle_count': entry['particle_count'],
+                      'total_values': total_values}
+    return out
+
+
+def default_row_bucket_colors(input_data, row_particles):
+    """Classifier-derived highlight color(s) for one COLORS-mode heatmap row.
+
+    A heatmap row (outside GROUPS role) is a raw isotope co-occurrence
+    signature, not a single particle -- but classifier matching is
+    presence-only (``tools.particle_classifier_expr``'s grammar has no
+    value/threshold operators), so every particle sharing one row's exact
+    isotope signature evaluates identically against every definition. A
+    row's bucket membership is therefore always uniform: either every
+    particle in it matches the same single bucket, or (``double_count``)
+    every one of them matches the same SET of buckets. There is never a
+    genuine per-particle split to weight -- an equal fraction per distinct
+    matched bucket, collected across the row's members, is the complete
+    answer (verified 2026-08-25; an earlier headcount-weighted-split design
+    was based on a mistaken belief that value-based expressions existed in
+    this grammar -- they don't).
+
+    Args:
+        input_data (dict | None): The node's upstream data (for bucket
+            registry colors).
+        row_particles (list): The particle dicts that collapsed into this
+            one row (i.e. share its exact isotope signature). Under
+            ``double_count`` this naturally includes >1 dict per real
+            particle, one per matched bucket -- harmless here since only the
+            resulting SET of labels is used.
+
+    Returns:
+        list[str]: Hex color strings, one per distinct matched bucket,
+        registry-ordered (stable regardless of particle iteration order).
+        Empty when the row has no classified members at all (an
+        all-passthrough row -- nothing to color).
+    """
+    labels_in_row = {bucket_of(p) for p in row_particles} - {None}
+    if not labels_in_row:
+        return []
+    registry = bucket_registry(input_data)
+    ordered_labels = [lbl for lbl in registry if lbl in labels_in_row]
+    return [bucket_color(input_data, lbl) for lbl in ordered_labels
+            if bucket_color(input_data, lbl)]
 
 
 def has_multiple_buckets(input_data):

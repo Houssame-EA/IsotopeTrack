@@ -514,16 +514,20 @@ class TestClassifierViewGroup:
 # wiring pattern actually works end-to-end through a real Qt dialog, not just
 # through ClassifierViewGroup in isolation.
 class TestWiredIntoSettingsDialogs:
-    def test_heatmap_quantities_offers_key_set_roles(self, qapp):
-        """heatmap_plot is ARITY_KEY_SET -- SERIES must not be offered."""
+    def test_heatmap_quantities_offers_all_four_roles(self, qapp):
+        """heatmap_plot has its own ARITY_HEATMAP (2026-08-25) -- unlike the
+        generic ARITY_KEY_SET nodes (element composition, single/multiple),
+        heatmap has a bespoke, safe GROUPS aggregation
+        (classifier_view.group_composition_rows) that never degenerates the
+        way a naive set-of-keys SERIES collapse would, so SERIES is offered
+        here specifically -- see ARITY_HEATMAP's docstring."""
         from results.results_heatmap import HeatmapSettingsDialog
         out = _wired_node().get_output_data()
         dlg = HeatmapSettingsDialog({}, False, [], scope='quantities',
                                     input_data=out)
         offered = [dlg._classifier_group.role_combo.itemData(i) for i in
                    range(dlg._classifier_group.role_combo.count())]
-        assert cv.ROLE_SERIES not in offered
-        assert cv.ROLE_FACET in offered and cv.ROLE_ENCODE in offered
+        assert set(offered) == {cv.ROLE_SERIES, cv.ROLE_FACET, cv.ROLE_ENCODE, cv.ROLE_OFF}
 
     def test_heatmap_format_scope_has_no_classifier_group(self, qapp):
         """The picker belongs in quantities only -- format scope must not
@@ -2113,3 +2117,392 @@ class TestElementBarChartScopeInvariance:
         data_total = node.extract_plot_data()
 
         assert data_def == data_total == {'Smelter': 20, 'Unclassified': 15}
+
+
+# --------------------------------------------------------------------------- #
+# heatmap_plot: GROUPS/PANELS/COLORS/OFF roles (ARITY_HEATMAP, 2026-08-25)
+# --------------------------------------------------------------------------- #
+def _heatmap_particle(sample='A', **isotopes):
+    """One particle with 'elements'/'element_mass_fg' for every isotope
+    given -- values chosen (isotope_count * 10.0) so DEFINITION vs
+    TOTAL_PARTICLE and Whole-Group vs Detected-Only produce distinct,
+    easy-to-assert-on numbers."""
+    e, m = {}, {}
+    for iso, count in isotopes.items():
+        e[iso] = count
+        m[iso] = count * 10.0
+    return {'elements': e, 'element_mass_fg': m, 'source_sample': sample}
+
+
+def _heatmap_test_stream(sample='A'):
+    """Single-sample classifier stream: 3 "clean" Smelter particles
+    (60Ni+56Fe only), 1 "dirty" Smelter particle (also carries 63Cu -- only
+    visible under TOTAL_PARTICLE/Whole-Group), 2 Unclassified particles
+    (107Ag). Smelter triggered by 60Ni alone (partial match)."""
+    particles = (
+        [_heatmap_particle(sample, **{'60Ni': 5, '56Fe': 3}) for _ in range(3)]
+        + [_heatmap_particle(sample, **{'60Ni': 4, '56Fe': 2, '63Cu': 9})]
+        + [_heatmap_particle(sample, **{'107Ag': 8}) for _ in range(2)]
+    )
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'sample_data', 'sample_name': sample, 'particle_data': particles,
+        'selected_isotopes': [{'label': x} for x in ('60Ni', '56Fe', '63Cu', '107Ag')],
+    }
+    clf.definitions = [_def('60Ni', target=sample, group='Smelter')]
+    clf.groups = {'Smelter': '#FF6600'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = 'priority'
+    return clf
+
+
+class TestGroupCompositionRows:
+    """classifier_view.group_composition_rows -- the GROUPS-role primitive
+    heatmap_plot's ARITY_HEATMAP uses; built generally for reuse."""
+
+    def test_definition_scope_only_shows_referenced_isotopes(self):
+        out = _heatmap_test_stream().get_output_data()
+        rows = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_DEFINITION,
+            cv.DENOMINATOR_WHOLE_GROUP)
+        assert set(rows['Smelter']['total_values'].keys()) == {'60Ni'}
+        assert rows['Smelter']['particle_count'] == 4
+
+    def test_total_particle_scope_reveals_every_isotope(self):
+        out = _heatmap_test_stream().get_output_data()
+        rows = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_TOTAL_PARTICLE,
+            cv.DENOMINATOR_WHOLE_GROUP)
+        assert set(rows['Smelter']['total_values'].keys()) == {'60Ni', '56Fe', '63Cu'}
+
+    def test_whole_group_zero_pads_non_carriers(self):
+        out = _heatmap_test_stream().get_output_data()
+        rows = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_TOTAL_PARTICLE,
+            cv.DENOMINATOR_WHOLE_GROUP)
+        cu = rows['Smelter']['total_values']['63Cu']
+        assert sorted(cu) == [0.0, 0.0, 0.0, 90.0]
+        assert len(cu) == rows['Smelter']['particle_count'] == 4
+
+    def test_detected_only_has_no_padding(self):
+        out = _heatmap_test_stream().get_output_data()
+        rows = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_TOTAL_PARTICLE,
+            cv.DENOMINATOR_DETECTED_ONLY)
+        assert rows['Smelter']['total_values']['63Cu'] == [90.0]
+
+    def test_unclassified_scope_invariant(self):
+        out = _heatmap_test_stream().get_output_data()
+        rows_def = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_DEFINITION,
+            cv.DENOMINATOR_WHOLE_GROUP)
+        rows_total = cv.group_composition_rows(
+            out['particle_data'], 'element_mass_fg', cv.SCOPE_TOTAL_PARTICLE,
+            cv.DENOMINATOR_WHOLE_GROUP)
+        assert rows_def['Unclassified'] == rows_total['Unclassified']
+
+    def test_passthrough_particles_excluded(self):
+        particles = [_particle({'56Fe': 4})]
+        out = _relabel(particles, [_def('60Ni', group='Smelter')],
+                       overlap='priority', unmatched='passthrough')
+        rows = cv.group_composition_rows(out, 'elements', cv.SCOPE_DEFINITION,
+                                         cv.DENOMINATOR_WHOLE_GROUP)
+        assert rows == {}
+
+    def test_drop_mfc_gate_blocks_fabrication_both_scopes(self):
+        """A drop_mfc-pooled group's MFC-dependent key must show nothing --
+        under EITHER scope, unlike composition_items_for_role where
+        DEFINITION was safe by construction (it only ever echoed the
+        classifier's own number back). Here both scopes independently
+        re-read raw data, so both need the gate."""
+        p1 = _particle({'60Ni': 10, '107Ag': 8})
+        p1['particle_mass_fg'] = {'60Ni': 55.0, '107Ag': 88.0}
+        defs = [_def('60Ni', group='Mixed'), _def('107Ag', group='Mixed')]
+        out = _relabel([p1], defs, overlap='double_count', unmatched='unclassified',
+                       groups={'Mixed': '#123456'})
+        # simulate the drop_mfc policy the way relabel_particles would apply it
+        from tools.particle_classifier_relabel import relabel_particles
+        out = relabel_particles([p1], defs, {'Mixed': '#123456'}, 'double_count',
+                                'unclassified', '#9CA3AF',
+                                group_pooling_policies={'Mixed': 'drop_mfc'})
+        rows_def = cv.group_composition_rows(out, 'particle_mass_fg', cv.SCOPE_DEFINITION,
+                                             cv.DENOMINATOR_WHOLE_GROUP)
+        rows_total = cv.group_composition_rows(out, 'particle_mass_fg', cv.SCOPE_TOTAL_PARTICLE,
+                                               cv.DENOMINATOR_WHOLE_GROUP)
+        assert rows_def['Mixed']['total_values'] == {}
+        assert rows_total['Mixed']['total_values'] == {}
+        # particle_count still reflects true membership even though the
+        # data for this key is withheld
+        assert rows_def['Mixed']['particle_count'] == 2
+
+
+class TestDefaultRowBucketColors:
+    """classifier_view.default_row_bucket_colors -- the COLORS-role default-
+    underline primitive. Presence-only matching means a row's bucket
+    membership is always uniform (verified here, not just asserted)."""
+
+    def test_uniform_single_bucket_row(self):
+        out = _heatmap_test_stream().get_output_data()
+        smelter = [p for p in out['particle_data'] if cv.bucket_of(p) == 'Smelter']
+        assert cv.default_row_bucket_colors(out, smelter) == ['#FF6600']
+
+    def test_unclassified_has_its_own_color(self):
+        out = _heatmap_test_stream().get_output_data()
+        unclassified = [p for p in out['particle_data'] if cv.bucket_of(p) == 'Unclassified']
+        colors = cv.default_row_bucket_colors(out, unclassified)
+        assert len(colors) == 1 and colors[0]
+
+    def test_double_count_row_gets_one_color_per_matched_bucket(self):
+        clf = ParticleClassifierNode()
+        clf.input_data = {'type': 'sample_data', 'sample_name': 'SampleA',
+                          'particle_data': [_particle({'60Ni': 10, '107Ag': 8})],
+                          'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'}]}
+        clf.definitions = [_def('60Ni', group='Smelter'), _def('107Ag', group='Background')]
+        clf.groups = {'Smelter': '#FF0000', 'Background': '#00FF00'}
+        clf.unmatched_mode = 'unclassified'
+        clf.overlap_mode = 'double_count'
+        out = clf.get_output_data()
+        out_particles = out['particle_data']
+        assert len(out_particles) == 2  # one copy per matched definition
+        colors = cv.default_row_bucket_colors(out, out_particles)
+        assert colors == ['#FF0000', '#00FF00']
+
+    def test_all_passthrough_row_has_no_colors(self):
+        out = _relabel([_particle({'56Fe': 4})], [_def('60Ni', group='Smelter')],
+                       overlap='priority', unmatched='passthrough')
+        assert cv.default_row_bucket_colors({'_classifier_registry': {}}, out) == []
+
+
+class TestEffectiveDenominator:
+    def test_non_classifier_stream_defaults_whole_group(self):
+        assert cv.effective_denominator({}, {'type': 'sample_data'}) == cv.DENOMINATOR_WHOLE_GROUP
+
+    def test_invalid_stored_value_falls_back(self):
+        out = _heatmap_test_stream().get_output_data()
+        cfg = {cv.DENOMINATOR_CONFIG_KEY: 'nonsense'}
+        assert cv.effective_denominator(cfg, out) == cv.DENOMINATOR_WHOLE_GROUP
+
+    def test_explicit_detected_only_honored(self):
+        out = _heatmap_test_stream().get_output_data()
+        cfg = {cv.DENOMINATOR_CONFIG_KEY: cv.DENOMINATOR_DETECTED_ONLY}
+        assert cv.effective_denominator(cfg, out) == cv.DENOMINATOR_DETECTED_ONLY
+
+
+class TestHeatmapComboSignatureClassifierAware:
+    """Regression test for a real bug found while building GROUPS role: the
+    combination-row grouping (``_combo_signature``, used by OFF/COLORS/
+    PANELS) originally read a particle's composition dict directly, which
+    for a MATCHED classifier particle is already the collapsed
+    ``{bucket_label: value}`` singleton -- every particle sharing a bucket
+    would have produced the SAME degenerate one-key signature, reproducing
+    the exact "1x1 diagonal per bucket" bug this whole effort exists to fix,
+    for OFF/COLORS/PANELS specifically (GROUPS was never affected, it never
+    calls this function). Fixed by reading through
+    ``classifier_view.composition(..., collapsed=False)``."""
+
+    def test_off_role_shows_real_isotope_combinations_not_bucket_labels(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = node.extract_plot_data()
+        assert 'Smelter' not in data and 'Unclassified' not in data
+        assert any('60Ni' in k and '56Fe' in k for k in data)
+        assert '107Ag' in data
+
+    def test_combo_signature_matches_non_classifier_baseline(self):
+        """Safety net: for data that never touched a classifier, the fixed
+        version must be byte-identical to reading the dict directly (no
+        RAW_KEY dual-carry present, so classifier_view.composition() falls
+        straight through to the same particle.get(data_key))."""
+        from results.results_heatmap import _combo_signature
+        particle = {'element_mass_fg': {'60Ni': 50.0, '56Fe': 30.0}}
+        sig = _combo_signature(particle, 'element_mass_fg')
+        assert sig == (frozenset({'60Ni', '56Fe'}), {'60Ni': 50.0, '56Fe': 30.0})
+
+
+class TestHeatmapNodeExtraction:
+    """HeatmapPlotNode's role-aware extract_plot_data()/extract_panel_data()."""
+
+    def test_classifier_role_scope_denominator_methods_exist(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        node = HeatmapPlotNode()
+        assert hasattr(node, 'classifier_role')
+        assert hasattr(node, 'classifier_scope')
+        assert hasattr(node, 'classifier_denominator')
+
+    def test_groups_role_row_shape_has_count_and_particle_count(self, qapp):
+        """Regression test: _group_rows originally omitted 'count' (only
+        'particle_count'), which crashed _combine_data (Combined Heatmap
+        display mode) with a KeyError -- _build_combinations's rows always
+        carry both (redundantly equal) keys and _group_rows must match that
+        shape exactly, not just what draw_combinations_heatmap itself reads."""
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        for row in data.values():
+            assert row['count'] == row['particle_count']
+
+    def test_groups_role_show_expression_toggle(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        node.config['show_group_expression'] = True
+        data = node.extract_plot_data()
+        assert any(k.startswith('Smelter (') for k in data)
+        assert 'Unclassified' in data  # no expression -> unaffected
+
+    def test_panels_role_extract_plot_data_returns_none(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        assert node.extract_plot_data() is None
+
+    def test_panels_role_partitions_by_bucket(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        panels = node.extract_panel_data()
+        assert set(panels.keys()) == {'Smelter', 'Unclassified'}
+        assert sum(d['particle_count'] for d in panels['Smelter'].values()) == 4
+        assert sum(d['particle_count'] for d in panels['Unclassified'].values()) == 2
+
+    def test_colors_role_extraction_identical_to_off(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data_off = node.extract_plot_data()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        data_colors = node.extract_plot_data()
+        assert data_off == data_colors
+
+
+class TestHeatmapDialogRoleWiring:
+    """HeatmapDisplayDialog end-to-end across all 4 roles -- real headless
+    Qt, mirroring histogram/box_plot's own dialog-level role tests."""
+
+    def _dialog(self):
+        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        return node, HeatmapDisplayDialog(node, None)
+
+    def test_all_four_roles_render_without_raising(self, qapp):
+        node, dlg = self._dialog()
+        for role in (cv.ROLE_SERIES, cv.ROLE_FACET, cv.ROLE_ENCODE, cv.ROLE_OFF):
+            node.config[cv.ROLE_CONFIG_KEY] = role
+            dlg._refresh()
+            assert len(dlg.figure.get_axes()) >= 1
+
+    def test_groups_role_label_not_mangled_by_symbol_mode(self, qapp):
+        """'Smelter' starts with the real element symbol 'Sm' -- must not be
+        stripped to that under 'Symbol'/'Atomic Notation' label modes."""
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        node.config['label_mode'] = 'Symbol'
+        dlg._refresh()
+        ax = dlg.figure.get_axes()[0]
+        y_labels = [t.get_text() for t in ax.get_yticklabels()]
+        assert any('Smelter' in lbl for lbl in y_labels)
+
+    def test_panels_role_single_sample_no_selector_one_panel_per_bucket(self, qapp):
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        dlg._refresh()
+        assert not dlg._panel_selector_row.isVisible()
+        titled = [ax for ax in dlg.figure.get_axes() if ax.get_title()]
+        assert len(titled) == 2
+        assert {ax.get_title() for ax in titled} == {'Smelter (60Ni)', 'Unclassified'}
+
+    def test_colors_legend_hidden_by_manual_override_shown_otherwise(self, qapp):
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        node.config['highlighted_combos'] = {}
+        dlg._refresh()
+        ax = dlg.figure.get_axes()[0]
+        assert ax.get_legend() is not None
+
+        row = dlg._axes_row_combos[id(ax)][0]
+        node.config['highlighted_combos'] = {row: '#000000'}
+        dlg._refresh()
+        assert dlg.figure.get_axes()[0].get_legend() is None
+
+        node.config['highlighted_combos'] = {}
+        dlg._refresh()
+        assert dlg.figure.get_axes()[0].get_legend() is not None
+
+    def test_colors_role_draws_underline_segments(self, qapp):
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        node.config['highlighted_combos'] = {}
+        dlg._refresh()
+        ax = dlg.figure.get_axes()[0]
+        assert len(ax.lines) > 0
+
+    def test_multi_sample_panels_selector_populates_and_switches(self, qapp):
+        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+        out_a = _heatmap_test_stream('A').get_output_data()
+        out_b = _heatmap_test_stream('B').get_output_data()
+        multi = dict(out_a)
+        multi.update({'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+                      'particle_data': out_a['particle_data'] + out_b['particle_data']})
+        node = HeatmapPlotNode()
+        node.process_data(multi)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        dlg = HeatmapDisplayDialog(node, None)
+        dlg.show()
+        assert dlg._panel_selector_row.isVisible()
+        assert dlg.panel_sample_combo.count() == 2
+        b_idx = dlg.panel_sample_combo.findData('B')
+        dlg.panel_sample_combo.setCurrentIndex(b_idx)
+        assert dlg._panel_sample == 'B'
+
+    def test_combined_heatmap_display_mode_does_not_crash_under_groups(self, qapp):
+        """Regression test for the KeyError('count') bug: Combined Heatmap
+        mode merges every sample's rows via _combine_data, which reads
+        'count' -- must work for GROUPS rows exactly like combination rows."""
+        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+        out_a = _heatmap_test_stream('A').get_output_data()
+        out_b = _heatmap_test_stream('B').get_output_data()
+        multi = dict(out_a)
+        multi.update({'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+                      'particle_data': out_a['particle_data'] + out_b['particle_data']})
+        node = HeatmapPlotNode()
+        node.process_data(multi)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        node.config['display_mode'] = 'Combined Heatmap'
+        dlg = HeatmapDisplayDialog(node, None)
+        dlg._refresh()  # must not raise
+        assert len(dlg.figure.get_axes()) >= 1
+
+    def test_denominator_and_show_expression_dialog_controls(self, qapp):
+        from results.results_heatmap import HeatmapSettingsDialog
+        out = _heatmap_test_stream().get_output_data()
+        qdlg = HeatmapSettingsDialog({}, False, [], scope='quantities', input_data=out)
+        assert qdlg.denominator_combo is not None
+        offered = [qdlg.denominator_combo.itemData(i)
+                  for i in range(qdlg.denominator_combo.count())]
+        assert set(offered) == {cv.DENOMINATOR_WHOLE_GROUP, cv.DENOMINATOR_DETECTED_ONLY}
+
+        fdlg = HeatmapSettingsDialog({}, False, [], scope='format', input_data=out)
+        assert fdlg.show_expression_cb is not None

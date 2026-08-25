@@ -117,6 +117,8 @@ class HeatmapSettingsDialog(QDialog):
         self._export_grp = None
         self._sample_name_edits = None
         self._classifier_group = None
+        self.denominator_combo = None
+        self.show_expression_cb = None
         self._build()
 
     def _sample_name_keys(self) -> list[str]:
@@ -155,8 +157,39 @@ class HeatmapSettingsDialog(QDialog):
             from results.shared_plot_utils import ClassifierViewGroup
             from results import classifier_view as cv
             self._classifier_group = ClassifierViewGroup(
-                self._config, self._input_data, cv.ARITY_KEY_SET)
+                self._config, self._input_data, cv.ARITY_HEATMAP)
             layout.addWidget(self._classifier_group.build())
+
+            if self._classifier_group._applicable:
+                g = QGroupBox("Group Cell Denominator")
+                vl = QVBoxLayout(g)
+                self.denominator_combo = QComboBox()
+                for denom in (cv.DENOMINATOR_WHOLE_GROUP, cv.DENOMINATOR_DETECTED_ONLY):
+                    self.denominator_combo.addItem(cv.DENOMINATOR_LABELS.get(denom, denom), denom)
+                current_denom = cv.effective_denominator(self._config, self._input_data)
+                d_idx = self.denominator_combo.findData(current_denom)
+                if d_idx >= 0:
+                    self.denominator_combo.setCurrentIndex(d_idx)
+                vl.addWidget(self.denominator_combo)
+                layout.addWidget(g)
+
+                role_combo = self._classifier_group.role_combo
+
+                def _sync_denominator_enabled():
+                    """Only meaningful under GROUPS: every other role either
+                    shows real particles/isotopes directly (PANELS/COLORS/OFF)
+                    or has no per-group value list to take a denominator over.
+                    """
+                    is_groups = role_combo.currentData() == cv.ROLE_SERIES
+                    self.denominator_combo.setEnabled(is_groups)
+                    self.denominator_combo.setToolTip(
+                        "" if is_groups else
+                        "Only applies under GROUPS -- every other role "
+                        "already shows real particles/isotopes directly, "
+                        "with no per-group cell value for this to affect.")
+                if role_combo is not None:
+                    role_combo.currentIndexChanged.connect(_sync_denominator_enabled)
+                    _sync_denominator_enabled()
 
         if self._scope in ('all', 'quantities') and self._is_multi:
             g = QGroupBox("Multiple Sample Display")
@@ -253,6 +286,20 @@ class HeatmapSettingsDialog(QDialog):
             self.show_colorbar_cb.setChecked(self._config.get('show_colorbar', True))
             fl.addRow("Show colorbar:", self.show_colorbar_cb)
             layout.addWidget(g)
+
+            from results import classifier_view as cv
+            if cv.is_classifier_stream(self._input_data):
+                g = QGroupBox("Classifier Group Labels")
+                vl = QVBoxLayout(g)
+                self.show_expression_cb = QCheckBox(
+                    "Show expression next to group label")
+                self.show_expression_cb.setChecked(
+                    self._config.get('show_group_expression', False))
+                self.show_expression_cb.setToolTip(
+                    "GROUPS role only. Unclassified has no expression, so "
+                    "nothing is added to its label either way.")
+                vl.addWidget(self.show_expression_cb)
+                layout.addWidget(g)
 
             g = QGroupBox("Color Scale")
             vl = QVBoxLayout(g)
@@ -370,6 +417,11 @@ class HeatmapSettingsDialog(QDialog):
         cfg = dict(self._config)
         if self._classifier_group is not None:
             cfg.update(self._classifier_group.collect())
+        if self.denominator_combo is not None:
+            from results import classifier_view as cv
+            cfg[cv.DENOMINATOR_CONFIG_KEY] = self.denominator_combo.currentData()
+        if self.show_expression_cb is not None:
+            cfg['show_group_expression'] = self.show_expression_cb.isChecked()
         cfg['data_type_display'] = self.data_type.currentText() if self.data_type else self._config.get('data_type_display', 'Counts')
         if self.y_axis_unit is not None:
             cfg['y_axis_unit'] = self.y_axis_unit.currentData()
@@ -474,8 +526,31 @@ class HeatmapDisplayDialog(QDialog):
     def _setup_ui(self):
         self._axes_row_combos = {}
         self._axes_sample_map = {}
+        self._panel_sample = None  # currently-selected sample under PANELS role, multi-sample only
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
+
+        # ── PANELS-role sample selector ─────────────────────────────────
+        # One window, a switcher inside it -- rather than PANELS opening a
+        # separate OS window per sample -- so comparing several samples is
+        # "click the node, pick differently" instead of a pile of windows
+        # (explicit user decision, 2026-08-25: every other node/window in
+        # this app is a single persistent, reused, hide-on-close window --
+        # see shared_plot_utils.show_persistent_figure -- and PANELS stays
+        # consistent with that rather than introducing a new pattern).
+        # Hidden whenever it doesn't apply (single-sample input, or a role
+        # other than PANELS) rather than built/destroyed on demand, matching
+        # this dialog's general no-stale-widget-references discipline.
+        self._panel_selector_row = QWidget()
+        psl = QHBoxLayout(self._panel_selector_row)
+        psl.setContentsMargins(0, 0, 0, 4)
+        psl.addWidget(QLabel("Sample:"))
+        self.panel_sample_combo = QComboBox()
+        self.panel_sample_combo.currentIndexChanged.connect(self._on_panel_sample_changed)
+        psl.addWidget(self.panel_sample_combo)
+        psl.addStretch()
+        self._panel_selector_row.setVisible(False)
+        layout.addWidget(self._panel_selector_row)
 
         self.figure = Figure(figsize=(16, 10), dpi=140, tight_layout=True)
         self.canvas = MplDraggableCanvas(self.figure)
@@ -529,10 +604,14 @@ class HeatmapDisplayDialog(QDialog):
 
         row_combo = self._get_row_at(pos)
         highlighted = _normalize_highlighted_combos(cfg.get('highlighted_combos', {}))
+        role = self.node.classifier_role()
+        from results import classifier_view as cv
+        is_colors_role = role == cv.ROLE_ENCODE
         if row_combo is not None:
             menu.addSeparator()
             if row_combo in highlighted:
-                a = menu.addAction("Remove highlight from this row")
+                a = menu.addAction("Revert to classifier coloring" if is_colors_role
+                                   else "Remove highlight from this row")
                 a.triggered.connect(lambda _, rc=row_combo: self._toggle_row_highlight(rc, False))
                 a3 = menu.addAction("Change highlight color...")
                 a3.triggered.connect(lambda _, rc=row_combo: self._change_row_highlight_color(rc))
@@ -749,40 +828,50 @@ class HeatmapDisplayDialog(QDialog):
             and reapplies display-only sample names in rendered titles.
         """
         try:
+            from results import classifier_view as cv
             self._axes_row_combos = {}
             self._axes_sample_map = {}
             cfg = self.node.config
+            role = self.node.classifier_role()
 
             if cfg.get('use_custom_figsize', False):
                 self.figure.set_size_inches(cfg.get('figsize_w', 16.0),
                                             cfg.get('figsize_h', 10.0))
 
-            self.figure.clear()
-            bg = cfg.get('bg_color', '#FFFFFF')
-            self.figure.patch.set_facecolor(bg)
+            if role != cv.ROLE_FACET:
+                self._panel_selector_row.setVisible(False)
+                self.figure.clear()
+                bg = cfg.get('bg_color', '#FFFFFF')
+                self.figure.patch.set_facecolor(bg)
 
-            data = self.node.extract_plot_data()
+                data = self.node.extract_plot_data()
 
-            if not data:
-                ax = self.figure.add_subplot(111)
-                ax.text(0.5, 0.5,
-                        'No data available\nRight-click for options',
-                        ha='center', va='center', transform=ax.transAxes,
-                        fontsize=12, color='gray')
-                ax.set_xticks([]); ax.set_yticks([])
-            else:
-                cfg = self.node.config
-                if self._is_multi():
-                    dm = _normalize_heatmap_display_mode(
-                        cfg.get('display_mode', 'Individual Subplots'))
-                    cfg['display_mode'] = dm
-                    self._draw_multi(data, cfg, dm)
-                else:
+                if not data:
                     ax = self.figure.add_subplot(111)
-                    self._draw_heatmap(ax, data, cfg, self._single_sample_title(cfg))
-                    apply_font_to_matplotlib(ax, cfg)
+                    ax.text(0.5, 0.5,
+                            'No data available\nRight-click for options',
+                            ha='center', va='center', transform=ax.transAxes,
+                            fontsize=12, color='gray')
+                    ax.set_xticks([]); ax.set_yticks([])
+                else:
+                    cfg = self.node.config
+                    if self._is_multi():
+                        dm = _normalize_heatmap_display_mode(
+                            cfg.get('display_mode', 'Individual Subplots'))
+                        cfg['display_mode'] = dm
+                        self._draw_multi(data, cfg, dm, role)
+                    else:
+                        ax = self.figure.add_subplot(111)
+                        self._draw_heatmap(
+                            ax, data, cfg, self._single_sample_title(cfg),
+                            role=role, particles_for_colors=self._all_particles(),
+                            data_key=self._current_data_key())
+                        apply_font_to_matplotlib(ax, cfg)
 
-            self.figure.tight_layout()
+                self.figure.tight_layout()
+            else:
+                self._refresh_panels()
+
             self.canvas.draw()
             self.canvas.snapshot_positions()
         except Exception as e:
@@ -790,9 +879,96 @@ class HeatmapDisplayDialog(QDialog):
             _itk_log.error(f"Error refreshing heatmap: {e}")
             import traceback; traceback.print_exc()
 
+    def _current_data_key(self):
+        dt = self.node.config.get('data_type_display', 'Counts')
+        return DATA_KEY_MAPPING.get(dt, 'elements')
+
+    def _all_particles(self):
+        return self.node.input_data.get('particle_data', []) if self.node.input_data else []
+
+    def _particles_for_sample(self, sample_name):
+        return [p for p in self._all_particles()
+               if p.get('source_sample') == sample_name]
+
+    # ── PANELS role: sample selector + per-bucket subplots ─────────────
+
+    def _on_panel_sample_changed(self, _idx):
+        sn = self.panel_sample_combo.currentData()
+        if sn is not None and sn != self._panel_sample:
+            self._panel_sample = sn
+            self._refresh()
+
+    def _refresh_panels(self):
+        """Draw PANELS role: one heatmap subplot per classifier bucket, for
+        whichever sample the selector is currently set to (single-sample
+        input skips the selector entirely -- nothing to switch between).
+
+        Each panel is today's *unmodified* combination-row heatmap, built
+        from only that bucket's own members -- see
+        ``HeatmapPlotNode.extract_panel_data``. No GROUPS-role concepts
+        (aggregation scope, group-cell denominator, row_label_raw) apply
+        here: every panel shows real, per-particle isotope composition.
+        """
+        from results import classifier_view as cv
+        cfg = self.node.config
+        panel_data = self.node.extract_panel_data()
+        is_multi = self._is_multi()
+
+        if is_multi:
+            names = self.node.input_data.get('sample_names', [])
+            self.panel_sample_combo.blockSignals(True)
+            self.panel_sample_combo.clear()
+            for sn in names:
+                self.panel_sample_combo.addItem(get_display_name(sn, cfg), sn)
+            if self._panel_sample not in names and names:
+                self._panel_sample = names[0]
+            idx = self.panel_sample_combo.findData(self._panel_sample)
+            if idx >= 0:
+                self.panel_sample_combo.setCurrentIndex(idx)
+            self.panel_sample_combo.blockSignals(False)
+            self._panel_selector_row.setVisible(True)
+            sample_panels = (panel_data or {}).get(self._panel_sample) or {}
+        else:
+            self._panel_selector_row.setVisible(False)
+            sample_panels = panel_data or {}
+
+        self.figure.clear()
+        bg = cfg.get('bg_color', '#FFFFFF')
+        self.figure.patch.set_facecolor(bg)
+
+        if not sample_panels:
+            ax = self.figure.add_subplot(111)
+            ax.text(0.5, 0.5,
+                    'No classified data available\nRight-click for options',
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=12, color='gray')
+            ax.set_xticks([]); ax.set_yticks([])
+            self.figure.tight_layout()
+            return
+
+        # Sort panels the same way GROUPS rows sort -- most-abundant bucket
+        # first -- rather than dict/insertion order.
+        labels = sorted(sample_panels.keys(),
+                        key=lambda lbl: sum(d['particle_count']
+                                          for d in sample_panels[lbl].values()),
+                        reverse=True)
+        cols = min(2, len(labels))
+        rows = math.ceil(len(labels) / cols)
+        for i, label in enumerate(labels):
+            ax = self.figure.add_subplot(rows, cols, i + 1)
+            title = cv.bucket_caption(self.node.input_data, label)
+            row_combos = draw_combinations_heatmap(
+                ax, self.figure, sample_panels[label], cfg, title=title,
+                is_multi=True)
+            if row_combos is not None:
+                self._axes_row_combos[id(ax)] = row_combos
+            apply_font_to_matplotlib(ax, cfg)
+
+        self.figure.tight_layout()
+
     # ── Multi-sample dispatch ───────────────
 
-    def _draw_multi(self, data, cfg, display_mode):
+    def _draw_multi(self, data, cfg, display_mode, role=None):
         """Draw the active multi-sample Heatmap layout.
 
         Preserved behavior:
@@ -803,6 +979,7 @@ class HeatmapDisplayDialog(QDialog):
         display_mode = _normalize_heatmap_display_mode(display_mode)
         names = list(data.keys())
         n = len(names)
+        data_key = self._current_data_key()
 
         if display_mode == 'Individual Subplots':
             cols = min(2, n)
@@ -810,21 +987,27 @@ class HeatmapDisplayDialog(QDialog):
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(rows, cols, i + 1)
                 self._axes_sample_map[id(ax)] = sn
-                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
+                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg),
+                                   role=role, particles_for_colors=self._particles_for_sample(sn),
+                                   data_key=data_key)
                 apply_font_to_matplotlib(ax, cfg)
 
         elif display_mode == 'Side by Side Subplots':
             for i, sn in enumerate(names):
                 ax = self.figure.add_subplot(1, n, i + 1)
                 self._axes_sample_map[id(ax)] = sn
-                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg))
+                self._draw_heatmap(ax, data[sn], cfg, get_display_name(sn, cfg),
+                                   role=role, particles_for_colors=self._particles_for_sample(sn),
+                                   data_key=data_key)
                 apply_font_to_matplotlib(ax, cfg)
 
         else:
             combined = self._combine_data(data)
             ax = self.figure.add_subplot(111)
             self._draw_heatmap(ax, combined, cfg,
-                               f"Combined ({len(data)} samples)")
+                               f"Combined ({len(data)} samples)",
+                               role=role, particles_for_colors=self._all_particles(),
+                               data_key=data_key)
             apply_font_to_matplotlib(ax, cfg)
 
     @staticmethod
@@ -845,20 +1028,68 @@ class HeatmapDisplayDialog(QDialog):
 
     # ── Core heatmap drawing ────────────────
 
-    def _draw_heatmap(self, ax, sample_data, cfg, title):
+    def _draw_heatmap(self, ax, sample_data, cfg, title, role=None,
+                       particles_for_colors=None, data_key=None):
         """
         Args:
             ax (Any): The ax.
             sample_data (Any): The sample data.
             cfg (Any): The cfg.
             title (Any): Window or dialog title.
+            role (str | None): Current classifier role (GROUPS/COLORS/OFF --
+                PANELS never reaches this method, see ``_refresh_panels``).
+                Resolved from the node if not given.
+            particles_for_colors (list | None): The real particle dicts this
+                specific axes' rows were built from (one sample's worth, or
+                every sample combined) -- needed under COLORS role to derive
+                each row's default classifier color(s); ignored otherwise.
+            data_key (str | None): The composition key currently selected
+                (``'elements'``, ``'element_mass_fg'``, ...) -- needed
+                alongside ``particles_for_colors`` to recompute which row a
+                particle lands in (see ``_default_row_bucket_colors_by_combo``).
         """
+        from results import classifier_view as cv
+        if role is None:
+            role = self.node.classifier_role()
+
+        row_label_raw = (role == cv.ROLE_SERIES)
+        draw_cfg = cfg
+        bucket_legend = None
+
+        if role == cv.ROLE_ENCODE and particles_for_colors is not None and data_key is not None:
+            stored = _normalize_highlighted_combos(cfg.get('highlighted_combos', {}))
+            defaults = _default_row_bucket_colors_by_combo(
+                particles_for_colors, data_key, self.node.input_data)
+            merged = dict(defaults)
+            merged.update(stored)  # a manual right-click override always wins
+            draw_cfg = dict(cfg)
+            draw_cfg['highlighted_combos'] = merged
+            if not stored:
+                # Only offer the legend while every row shown is still its
+                # pure classifier-derived color -- see this dialog's
+                # _bucket_legend_entries and the 2026-08-25 decision in
+                # aug24.md (a legend next to a manually-recolored row would
+                # be actively wrong, not just stale).
+                bucket_legend = self._bucket_legend_entries()
+
         row_combos = draw_combinations_heatmap(
-            ax, self.figure, sample_data, cfg, title=title,
-            is_multi=self._is_multi(),
+            ax, self.figure, sample_data, draw_cfg, title=title,
+            is_multi=self._is_multi(), row_label_raw=row_label_raw,
+            bucket_legend=bucket_legend,
         )
         if row_combos is not None:
             self._axes_row_combos[id(ax)] = row_combos
+
+    def _bucket_legend_entries(self):
+        """``[(label, color), ...]`` for the COLORS-role "what color is what
+        classifier group" legend -- every registered bucket (including
+        Unclassified), registry order. Sample-independent (the registry is
+        stream-wide), unlike the per-row color merge itself.
+        """
+        from results import classifier_view as cv
+        registry = cv.bucket_registry(self.node.input_data)
+        return [(lbl, entry.get('color')) for lbl, entry in registry.items()
+               if entry.get('color')]
 
 
 def _combo_matches(combination: str, search_elements: list) -> bool:
@@ -1023,13 +1254,18 @@ def _bulk_percentages(total_values):
 
 
 def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
-                             is_multi=False):
+                             is_multi=False, row_label_raw=False,
+                             bucket_legend=None):
     """Draw a combinations heatmap onto an arbitrary axes/figure.
 
     This is the standalone, ``self``-free version of
     ``HeatmapDisplayDialog._draw_heatmap``. It's used by other tabs (e.g. the
     clustering Overview tab) that want the *exact same* heatmap rendering
-    without instantiating a HeatmapDisplayDialog.
+    without instantiating a HeatmapDisplayDialog, and by classifier GROUPS
+    role, whose rows are classifier bucket labels rather than isotope
+    combinations but need every other piece of this pipeline (cell
+    statistic, cell spread, search/filter, sorting, percentage handling)
+    unchanged -- see ``classifier_view.group_composition_rows``.
 
     Args:
         ax: Target matplotlib Axes.
@@ -1045,11 +1281,33 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
         ``end_range``, ``min_particles``, ``label_mode``,
         ``search_element``, ``highlight_matches``,
         ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
-        ``cell_linewidth``.
+        ``cell_linewidth``. ``highlighted_combos`` values may be a hex color
+        string (single-color underline, the historical shape) OR a list of
+        hex strings (an equal-fraction multi-color underline, split evenly
+        across the list -- used by classifier COLORS role for a row whose
+        members matched more than one bucket under ``double_count``).
         title (str): Title to render above the heatmap when provided.
         is_multi (bool): Whether this is a multi-sample panel. This still
             controls compatibility with existing multi-sample rendering paths,
             but a non-empty title is now honored in single-sample mode too.
+        row_label_raw (bool): Skip isotope-combination label formatting
+            (``format_combination_label``) for row labels and use the row
+            key text as-is. Column labels are unaffected -- they're always
+            real isotopes even under classifier GROUPS role. Needed because
+            a classifier bucket label ("Smelter", or "Smelter (60Ni)" with
+            the expression shown) is a human-chosen name, not an isotope
+            token list, and running it through isotope-label formatting can
+            mangle it (e.g. "Smelter" starts with the real element symbol
+            "Sm" under 'Symbol'/'Atomic Notation' label modes).
+        bucket_legend (list[tuple[str, str]] | None): ``[(bucket_label,
+            hex_color), ...]`` to render as a "what color is what classifier
+            group" legend below the axes -- COLORS role only, and only
+            meaningful while every row is still showing its pure
+            classifier-derived color. The caller is responsible for that
+            gating (pass ``None``/empty whenever ``highlighted_combos`` has
+            any manual entry at all, since a legend claiming "this color
+            means this group" would be actively wrong for an overridden
+            row): see ``HeatmapDisplayDialog._bucket_legend_entries``.
     """
     if not sample_data:
         ax.text(0.5, 0.5, 'No data', ha='center', va='center',
@@ -1120,7 +1378,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     for combo, d in selected:
         count = d['particle_count']
-        fmt = format_combination_label(combo, label_mode, Renderer.MATHTEXT, cfg)
+        fmt = combo if row_label_raw else format_combination_label(
+            combo, label_mode, Renderer.MATHTEXT, cfg)
         if cfg.get('y_axis_unit', 'count') == 'per_ml' and d.get('pml', 0.0) > 0:
             labels.append(f"{fmt} ({format_per_ml(d['pml'], Renderer.MATHTEXT, cfg)})")
         else:
@@ -1180,11 +1439,28 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     if highlighted_combos:
         combo_keys_list = [c for c, _ in selected]
+        # Widened from the historical -0.15 so an equal-fraction multi-color
+        # split (classifier COLORS role, a row matching 2+ buckets under
+        # double_count) stays legible instead of shrinking into a sliver.
+        underline_xmin, underline_xmax = -0.22, 0.0
         for i, ck in enumerate(combo_keys_list):
-            if ck in highlighted_combos:
-                ax.axhline(y=i + 0.35, color=highlighted_combos[ck], linewidth=2, alpha=0.9,
-                           xmin=-0.15, xmax=0, clip_on=False)
-                ax.get_yticklabels()[i].set_weight('bold')
+            hv = highlighted_combos.get(ck)
+            if not hv:
+                continue
+            # A single hex string (the historical shape, and always what a
+            # manual right-click override writes) draws one solid segment.
+            # A list (classifier-derived default, one color per distinct
+            # matched bucket) splits the same span into equal fractions --
+            # see classifier_view.default_row_bucket_colors for why an equal
+            # split is the complete answer here, not a headcount-weighted one.
+            colors = list(hv) if isinstance(hv, (list, tuple)) else [hv]
+            colors = [c for c in colors if c] or [DEFAULT_HIGHLIGHT_COLOR]
+            seg_width = (underline_xmax - underline_xmin) / len(colors)
+            for j, color in enumerate(colors):
+                seg_xmin = underline_xmin + j * seg_width
+                ax.axhline(y=i + 0.35, color=color, linewidth=2, alpha=0.9,
+                           xmin=seg_xmin, xmax=seg_xmin + seg_width, clip_on=False)
+            ax.get_yticklabels()[i].set_weight('bold')
 
     if title:
         ax.set_title(title, fontsize=fc['size'] + 2, fontfamily=fc['family'],
@@ -1223,6 +1499,15 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                             fontfamily=fc['family'], weight=weight,
                             style='italic' if fc['italic'] else 'normal')
 
+    if bucket_legend:
+        from matplotlib.patches import Patch
+        handles = [Patch(facecolor=color, edgecolor='none', label=label)
+                  for label, color in bucket_legend]
+        ncol = min(len(handles), 4)
+        ax.legend(handles=handles, loc='upper center',
+                  bbox_to_anchor=(0.5, -0.12), ncol=ncol,
+                  frameon=False, fontsize=max(6, fc['size'] - 2))
+
     return [c for c, _ in selected]
 
 
@@ -1259,6 +1544,9 @@ class HeatmapPlotNode(QObject):
         'cell_linewidth':    0.5,
         'cell_stat':         'Mean',
         'cell_spread':       'None',
+        # ── Classifier group rows (GROUPS role) ─────────────────────────
+        'classifier_group_denominator': 'whole_group',
+        'show_group_expression': False,
         # ── Export / appearance ──────────────────────────────────────────
         'bg_color':          '#FFFFFF',
         'export_format':     'svg',
@@ -1299,28 +1587,83 @@ class HeatmapPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The GROUPS/PANELS/COLORS/OFF role in force for this render (see
+        ``results.classifier_view``'s role-model docs). Resolved fresh every
+        call, never cached -- the upstream stream or the user's own choice
+        can change between renders.
+        """
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_HEATMAP)
+
+    def classifier_scope(self):
+        """The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for
+        this render. Only changes anything under GROUPS role; harmless to
+        resolve and pass through unconditionally otherwise. For heatmap
+        specifically this only changes which isotope COLUMNS are eligible to
+        appear at all, never the numeric value within a shown cell -- see
+        ``classifier_view.group_composition_rows``.
+        """
+        from results import classifier_view as cv
+        return cv.effective_scope(self.config, self.input_data)
+
+    def classifier_denominator(self):
+        """The Whole-Group-or-Detected-Only denominator in force for this
+        render. Only changes anything under GROUPS role.
+        """
+        from results import classifier_view as cv
+        return cv.effective_denominator(self.config, self.input_data)
+
     def extract_plot_data(self):
+        """Row data for the GROUPS/COLORS/OFF roles, in the same
+        ``{combo_or_group_label: {'particle_count', 'total_values', 'pml'}}``
+        (single-sample) / ``{sample: {...}}`` (multi-sample) shape regardless
+        of role -- GROUPS rows are classifier buckets (see ``_group_rows``),
+        COLORS/OFF rows are real isotope co-occurrence combinations exactly
+        as before classifier awareness existed.
+
+        Returns ``None`` under PANELS role: its shape is a sample-nested set
+        of *per-group* combination dicts, which callers of this method don't
+        expect -- ``HeatmapDisplayDialog`` calls ``extract_panel_data()``
+        directly instead when it detects PANELS, bypassing this method
+        entirely, so this contract stays exactly what it always was for
+        every other role (and for the clustering Overview tab, which reuses
+        ``draw_combinations_heatmap`` directly with its own synthesised data
+        and never goes through this method at all).
+        """
         if not self.input_data:
+            return None
+        from results import classifier_view as cv
+        role = self.classifier_role()
+        if role == cv.ROLE_FACET:
             return None
         dt = self.config.get('data_type_display', 'Counts')
         dk = DATA_KEY_MAPPING.get(dt, 'elements')
         itype = self.input_data.get('type')
 
         if itype == 'sample_data':
-            return self._extract_single(dk)
+            return self._extract_single(dk, role)
         elif itype == 'multiple_sample_data':
-            return self._extract_multi(dk)
+            return self._extract_multi(dk, role)
         return None
 
-    def _extract_single(self, data_key):
+    def _extract_single(self, data_key, role=None):
+        from results import classifier_view as cv
+        if role is None:
+            role = self.classifier_role()
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
         sname = self.input_data.get('sample_name', 'Sample')
-        return _build_combinations(particles, data_key,
-                                   per_ml_factor(self.input_data, sname))
+        pml = per_ml_factor(self.input_data, sname)
+        if role == cv.ROLE_SERIES:
+            return self._group_rows(particles, data_key, pml)
+        return _build_combinations(particles, data_key, pml)
 
-    def _extract_multi(self, data_key):
+    def _extract_multi(self, data_key, role=None):
+        from results import classifier_view as cv
+        if role is None:
+            role = self.classifier_role()
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -1334,11 +1677,158 @@ class HeatmapPlotNode(QObject):
 
         result = {}
         for sn, plist in grouped.items():
-            combos = _build_combinations(plist, data_key,
-                                         per_ml_factor(self.input_data, sn))
-            if combos:
-                result[sn] = combos
+            pml = per_ml_factor(self.input_data, sn)
+            rows = (self._group_rows(plist, data_key, pml) if role == cv.ROLE_SERIES
+                   else _build_combinations(plist, data_key, pml))
+            if rows:
+                result[sn] = rows
         return result or None
+
+    def _group_rows(self, particles, data_key, pml_factor):
+        """GROUPS-role rows: one row per classifier bucket, built via
+        ``classifier_view.group_composition_rows`` (real per-isotope values
+        aggregated across the bucket's members, honoring the aggregation
+        scope and group-cell denominator currently configured) and adapted
+        into the exact shape ``draw_combinations_heatmap`` already knows how
+        to render -- a group row is indistinguishable from a combination row
+        to that function.
+
+        Args:
+            particles (list): One sample's particle dicts.
+            data_key (str): e.g. ``'elements'``, ``'element_mass_fg'``.
+            pml_factor (float): Per-mL multiplier for this sample (see
+                ``shared_plot_utils.per_ml_factor``), applied the same way
+                ``_build_combinations`` applies it for combination rows.
+
+        Returns:
+            dict | None: ``{row_key: {'count', 'particle_count',
+            'total_values', 'pml'}}``, or ``None`` when there is nothing
+            classified to show (e.g. every particle is passthrough).
+            ``row_key`` is the bare bucket label, or ``"Label (expression)"``
+            when "Show expression next to group label" is on (Unclassified
+            has no expression, so its label is unaffected either way -- see
+            ``classifier_view.bucket_caption``). ``count`` duplicates
+            ``particle_count`` -- both are always equal, kept only because
+            ``_combine_data`` (Combined Heatmap display mode) reads ``count``
+            specifically, matching ``_build_combinations``'s own shape.
+        """
+        from results import classifier_view as cv
+        scope = self.classifier_scope()
+        denominator = self.classifier_denominator()
+        rows = cv.group_composition_rows(particles, data_key, scope, denominator)
+        if not rows:
+            return None
+        show_expr = self.config.get('show_group_expression', False)
+        out = {}
+        for label, row in rows.items():
+            key = cv.bucket_caption(self.input_data, label) if show_expr else label
+            out[key] = {
+                'count': row['particle_count'],
+                'particle_count': row['particle_count'],
+                'total_values': row['total_values'],
+                'pml': pml_factor * row['particle_count'],
+            }
+        return out
+
+    def extract_panel_data(self):
+        """PANELS-role data: particles partitioned by classifier bucket,
+        then EVERY bucket's partition run through today's unmodified
+        combination-row builder independently -- "just a standard heatmap,
+        but for each classifier group" (the user's own framing). No scope or
+        denominator applies here: each panel shows real, unfiltered
+        per-particle composition, the same as OFF, just restricted to one
+        bucket's members at a time.
+
+        Returns:
+            dict | None: ``{sample_name: {bucket_label: combo_dict}}`` for
+            multi-sample input, or ``{bucket_label: combo_dict}`` for
+            single-sample input (mirrors ``extract_plot_data``'s
+            single/multi distinction, one level down). ``None`` when there
+            is no classifier data to partition by.
+        """
+        if not self.input_data:
+            return None
+        from results import classifier_view as cv
+        if not cv.is_classifier_stream(self.input_data):
+            return None
+        dt = self.config.get('data_type_display', 'Counts')
+        dk = DATA_KEY_MAPPING.get(dt, 'elements')
+        itype = self.input_data.get('type')
+
+        def _panels_for(particles, pml_factor):
+            buckets = cv.particles_by_bucket(particles, include_unclassified=True)
+            out = {}
+            for label, plist in buckets.items():
+                if label is None or not plist:
+                    continue
+                combos = _build_combinations(plist, dk, pml_factor)
+                if combos:
+                    out[label] = combos
+            return out or None
+
+        if itype == 'sample_data':
+            particles = self.input_data.get('particle_data')
+            if not particles:
+                return None
+            sname = self.input_data.get('sample_name', 'Sample')
+            return _panels_for(particles, per_ml_factor(self.input_data, sname))
+
+        elif itype == 'multiple_sample_data':
+            particles = self.input_data.get('particle_data', [])
+            names = self.input_data.get('sample_names', [])
+            if not particles:
+                return None
+            grouped = {n: [] for n in names}
+            for p in particles:
+                src = p.get('source_sample')
+                if src in grouped:
+                    grouped[src].append(p)
+            result = {}
+            for sn, plist in grouped.items():
+                panels = _panels_for(plist, per_ml_factor(self.input_data, sn))
+                if panels:
+                    result[sn] = panels
+            return result or None
+        return None
+
+
+def _combo_signature(particle, data_key):
+    """One particle's contribution to a combination row for ``data_key``.
+
+    The "which isotopes actually carry a positive value" rule a combination
+    row is grouped by -- pulled out of ``_build_combinations`` so any other
+    code that needs to answer "which row would this particle land in" (e.g.
+    matching a classifier bucket's color to that row for COLORS role, see
+    ``_default_row_bucket_colors_by_combo``) uses the identical rule by
+    construction, rather than a second copy that could drift out of sync.
+
+    Reads through ``classifier_view.composition(..., collapsed=False)``,
+    not a direct ``particle.get(data_key)`` -- **load-bearing, not
+    cosmetic**: a matched classifier particle's OWN ``data_key`` entry has
+    already been destructively collapsed to a single ``{bucket_label:
+    value}`` entry by the time it reaches this node, so every particle
+    sharing a bucket would otherwise produce the IDENTICAL one-isotope
+    signature ``frozenset({bucket_label})`` -- the exact "degenerates to a
+    1x1 diagonal per bucket" failure this whole classifier-heatmap effort
+    exists to fix (``.claude/aug24.md``'s arity taxonomy table). Safe for
+    non-classifier data unconditionally: ``composition()`` falls back to
+    the particle's own real dict whenever there is no dual-carried raw
+    snapshot to read instead, so this is a strict bugfix, not a behavior
+    change, for anything that was never touched by a classifier.
+    """
+    from results import classifier_view as cv
+    d = cv.composition(particle, data_key, collapsed=False)
+    vals = {}
+    for name, v in d.items():
+        if data_key == 'elements':
+            if v > 0:
+                vals[name] = v
+        else:
+            if v > 0 and v == v:  # v==v false only for NaN, faster than np.isnan on a scalar
+                vals[name] = v
+    if not vals:
+        return None
+    return frozenset(vals.keys()), vals
 
 
 def _build_combinations(particles, data_key, pml_factor=0.0):
@@ -1358,26 +1848,14 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
         # re-running the mass-parsing regex + sort for every repeat.
         key_cache = {}
         for particle in particles:
-            d = particle.get(data_key, {})
-            elems = []
-            vals = {}
-            for name, v in d.items():
-                if data_key == 'elements':
-                    if v > 0:
-                        elems.append(name)
-                        vals[name] = v
-                else:
-                    if v > 0 and v == v:  # v==v false only for NaN, faster than np.isnan on a scalar
-                        elems.append(name)
-                        vals[name] = v
-
-            if not elems:
+            sig = _combo_signature(particle, data_key)
+            if sig is None:
                 continue
+            combo_id, vals = sig
 
-            combo_id = frozenset(elems)
             key = key_cache.get(combo_id)
             if key is None:
-                key = ', '.join(sort_elements_by_mass(elems))
+                key = ', '.join(sort_elements_by_mass(list(combo_id)))
                 key_cache[combo_id] = key
             if key not in combos:
                 combos[key] = {'count': 0, 'particle_count': 0, 'pml': 0.0,
@@ -1394,3 +1872,52 @@ def _build_combinations(particles, data_key, pml_factor=0.0):
         _itk_log.error(f"Error building combinations: {e}")
         import traceback; traceback.print_exc()
         return None
+
+
+def _default_row_bucket_colors_by_combo(particles, data_key, input_data):
+    """``{combo_key: [hex_color, ...]}`` classifier-derived defaults for
+    every combination row ``_build_combinations(particles, data_key, ...)``
+    would produce for these same particles.
+
+    The COLORS-role counterpart to ``_build_combinations``, computed as its
+    own pass rather than threaded through it: a combination row's aggregated
+    ``total_values`` doesn't retain which raw particles fed it, and
+    ``classifier_view.default_row_bucket_colors`` needs the row's actual
+    member particles (to collect their bucket labels), not its aggregated
+    values. Uses ``_combo_signature`` -- the exact same grouping rule -- so
+    which particles land in which row can never drift between the two
+    passes.
+
+    Args:
+        particles (list): Particle dicts (one sample's worth, or a combined
+            multi-sample list for "Combined Heatmap" display mode).
+        data_key (str): e.g. ``'elements'``, ``'element_mass_fg'``.
+        input_data (dict | None): The node's upstream data (for bucket
+            registry colors).
+
+    Returns:
+        dict: ``{combo_key: [hex_color, ...]}``. A row with no classified
+        members at all (all-passthrough) is simply absent -- nothing to
+        color, and an absent key reads as "no default" to any merge with a
+        manual override dict.
+    """
+    from results import classifier_view as cv
+    grouped = {}
+    key_cache = {}
+    for particle in particles:
+        sig = _combo_signature(particle, data_key)
+        if sig is None:
+            continue
+        combo_id, _ = sig
+        key = key_cache.get(combo_id)
+        if key is None:
+            key = ', '.join(sort_elements_by_mass(list(combo_id)))
+            key_cache[combo_id] = key
+        grouped.setdefault(key, []).append(particle)
+
+    out = {}
+    for key, plist in grouped.items():
+        colors = cv.default_row_bucket_colors(input_data, plist)
+        if colors:
+            out[key] = colors
+    return out
