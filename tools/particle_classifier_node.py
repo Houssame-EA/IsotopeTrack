@@ -496,6 +496,7 @@ class ParticleClassifierNode(QObject):
             out['label_colors'] = label_colors
             out['_raw_selected_isotopes'] = raw_selected
             out['_classifier_registry'] = raw_registry
+            out['_classifier_overlap_mode'] = self.overlap_mode
             out['selected_isotopes'] = self._output_selected_isotopes(
                 particles, raw_selected, label_colors)
             return out
@@ -512,6 +513,7 @@ class ParticleClassifierNode(QObject):
         out['label_colors'] = label_colors
         out['_raw_selected_isotopes'] = raw_selected
         out['_classifier_registry'] = raw_registry
+        out['_classifier_overlap_mode'] = self.overlap_mode
         out['selected_isotopes'] = self._output_selected_isotopes(
             combined, raw_selected, label_colors)
         return out

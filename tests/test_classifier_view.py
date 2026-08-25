@@ -624,48 +624,56 @@ class TestRoleLabels:
 
 
 class TestDisabledRoles:
+    """``disabled_roles`` is currently unused by any node -- the per-key-
+    independent nodes drop PANELS/COLORS at the arity level instead, which is
+    a cleaner fit for "this whole class of chart doesn't offer these." The
+    mechanism is kept and tested because per-NODE constraints are expected as
+    the remaining nodes land (e.g. a node where PANELS is meaningful but
+    COLORS isn't), and it's the UI pattern already agreed on for that case:
+    keep the option visible with its reason rather than making it vanish."""
+
     def test_disabled_role_shows_reason_and_is_unselectable(self, qapp):
         from results.shared_plot_utils import ClassifierViewGroup
         out = _wired_node().get_output_data()
         grp = ClassifierViewGroup(
-            {}, out, cv.ARITY_PER_KEY,
-            disabled_roles={cv.ROLE_FACET: "already showing multiple samples"})
+            {}, out, cv.ARITY_MULTI_KEY,
+            disabled_roles={cv.ROLE_FACET: "needs a single-sample stream"})
         box = grp.build()
         assert box is not None
         model = grp.role_combo.model()
         idx = grp.role_combo.findData(cv.ROLE_FACET)
         assert model.item(idx).isEnabled() is False
-        assert "already showing multiple samples" in grp.role_combo.itemText(idx)
+        assert "needs a single-sample stream" in grp.role_combo.itemText(idx)
 
     def test_other_roles_stay_enabled(self, qapp):
         from results.shared_plot_utils import ClassifierViewGroup
         out = _wired_node().get_output_data()
         grp = ClassifierViewGroup(
-            {}, out, cv.ARITY_PER_KEY,
+            {}, out, cv.ARITY_MULTI_KEY,
             disabled_roles={cv.ROLE_FACET: "reason"})
         box = grp.build()
         assert box is not None
         model = grp.role_combo.model()
-        for role in (cv.ROLE_SERIES, cv.ROLE_ENCODE, cv.ROLE_OFF):
+        for role in (cv.ROLE_ENCODE, cv.ROLE_OFF):
             idx = grp.role_combo.findData(role)
             assert model.item(idx).isEnabled() is True
 
     def test_stored_disabled_role_falls_back_to_default_on_build(self, qapp):
-        """A role saved while single-sample, now disabled because the stream
-        is multi-sample -- must not leave a disabled item selected."""
+        """A role saved when it was still usable, now disabled -- must not
+        leave a disabled item selected."""
         from results.shared_plot_utils import ClassifierViewGroup
         out = _wired_node().get_output_data()
         grp = ClassifierViewGroup(
-            {cv.ROLE_CONFIG_KEY: cv.ROLE_FACET}, out, cv.ARITY_PER_KEY,
+            {cv.ROLE_CONFIG_KEY: cv.ROLE_FACET}, out, cv.ARITY_MULTI_KEY,
             disabled_roles={cv.ROLE_FACET: "reason"})
         box = grp.build()
         assert box is not None
-        assert grp.role_combo.currentData() == cv.default_role(cv.ARITY_PER_KEY)
+        assert grp.role_combo.currentData() == cv.default_role(cv.ARITY_MULTI_KEY)
 
     def test_no_disabled_roles_behaves_as_before(self, qapp):
         from results.shared_plot_utils import ClassifierViewGroup
         out = _wired_node().get_output_data()
-        grp = ClassifierViewGroup({}, out, cv.ARITY_PER_KEY)
+        grp = ClassifierViewGroup({}, out, cv.ARITY_MULTI_KEY)
         box = grp.build()
         assert box is not None
         model = grp.role_combo.model()
@@ -738,33 +746,28 @@ class TestHistogramRoleBehavior:
         assert set(data.keys()) == {'60Ni', '107Ag'}
         assert 'Smelter' not in data and 'Background' not in data
 
-    def test_panels_partitions_by_bucket_with_real_isotopes_inside(self, qapp):
-        from results.results_bar_charts import HistogramPlotNode
+    def test_panels_colors_not_offered(self, qapp):
+        """PANELS/COLORS are deliberately deferred for per-key-independent
+        charts (see .claude/aug24.md improvements list) -- they must not be
+        selectable, and a stale saved role naming one must fall back rather
+        than silently rendering something unintended."""
+        from results.results_bar_charts import HistogramPlotNode, HistogramSettingsDialog
         out = _hist_classifier_node().get_output_data()
-        node = HistogramPlotNode()
-        node.process_data(out)
-        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
-        data = node.extract_plot_data()
-        assert set(data.keys()) == {'Smelter', 'Background'}
-        assert set(data['Smelter'].keys()) == {'60Ni'}
-        assert set(data['Background'].keys()) == {'107Ag'}
+        dlg = HistogramSettingsDialog({}, False, [], input_data=out)
+        offered = [dlg._classifier_group.role_combo.itemData(i) for i in
+                   range(dlg._classifier_group.role_combo.count())]
+        assert offered == [cv.ROLE_SERIES, cv.ROLE_OFF]
 
-    def test_colors_same_shape_as_panels(self, qapp):
-        """PANELS and COLORS differ only in HOW the dialog renders the same
-        bucket-keyed extraction -- confirmed separately by the display-mode
-        test below."""
-        from results.results_bar_charts import HistogramPlotNode
-        out = _hist_classifier_node().get_output_data()
         node = HistogramPlotNode()
         node.process_data(out)
-        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
-        data = node.extract_plot_data()
-        assert set(data.keys()) == {'Smelter', 'Background'}
+        for stale in (cv.ROLE_FACET, cv.ROLE_ENCODE):
+            node.config[cv.ROLE_CONFIG_KEY] = stale
+            assert node.classifier_role() == cv.ROLE_SERIES
 
     def test_dialog_renders_without_crashing_across_all_roles(self, qapp):
         """Real headless Qt dialog, not a mock -- exercises _refresh() end to
-        end for every role, which is where the shape-mismatch bugs (stats
-        label, CSV export) actually lived before being fixed alongside this."""
+        end for every offered role, plus the two deferred ones to prove a
+        stale saved config can't crash the render path."""
         from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
         out = _hist_classifier_node().get_output_data()
         node = HistogramPlotNode()
@@ -774,27 +777,9 @@ class TestHistogramRoleBehavior:
             node.config[cv.ROLE_CONFIG_KEY] = role
             dlg._refresh()  # must not raise
 
-    def test_panels_forces_individual_subplots_layout(self, qapp):
-        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
-        out = _hist_classifier_node().get_output_data()
-        node = HistogramPlotNode()
-        node.process_data(out)
-        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
-        dlg = HistogramDisplayDialog(node, None)
-        assert dlg._effective_is_multi() is True
-        assert dlg._get_hist_display_mode() == 'Individual Subplots'
-
-    def test_colors_forces_overlaid_layout(self, qapp):
-        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
-        out = _hist_classifier_node().get_output_data()
-        node = HistogramPlotNode()
-        node.process_data(out)
-        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
-        dlg = HistogramDisplayDialog(node, None)
-        assert dlg._effective_is_multi() is True
-        assert dlg._get_hist_display_mode() == 'Overlaid (Different Colors)'
-
-    def test_groups_and_off_stay_single_panel_layout(self, qapp):
+    def test_layout_follows_upstream_shape_only(self, qapp):
+        """With PANELS/COLORS deferred, no role re-partitions the data, so the
+        multi-panel path must key off the upstream stream shape alone."""
         from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
         out = _hist_classifier_node().get_output_data()
         node = HistogramPlotNode()
@@ -803,26 +788,7 @@ class TestHistogramRoleBehavior:
         for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
             node.config[cv.ROLE_CONFIG_KEY] = role
             assert dlg._effective_is_multi() is False
-
-    def test_settings_dialog_disables_panels_colors_when_already_multi_sample(self, qapp):
-        from results.results_bar_charts import HistogramSettingsDialog
-        out = _hist_classifier_node().get_output_data()
-        dlg = HistogramSettingsDialog({}, True, ['A', 'B'], input_data=out)
-        model = dlg._classifier_group.role_combo.model()
-        for role in (cv.ROLE_FACET, cv.ROLE_ENCODE):
-            idx = dlg._classifier_group.role_combo.findData(role)
-            assert model.item(idx).isEnabled() is False
-        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
-            idx = dlg._classifier_group.role_combo.findData(role)
-            assert model.item(idx).isEnabled() is True
-
-    def test_settings_dialog_keeps_panels_colors_enabled_for_single_sample(self, qapp):
-        from results.results_bar_charts import HistogramSettingsDialog
-        out = _hist_classifier_node().get_output_data()
-        dlg = HistogramSettingsDialog({}, False, [], input_data=out)
-        model = dlg._classifier_group.role_combo.model()
-        for i in range(dlg._classifier_group.role_combo.count()):
-            assert model.item(i).isEnabled() is True
+            assert dlg._get_hist_display_mode() == 'single'
 
     def test_off_updates_available_elements_for_color_pickers(self, qapp):
         """The per-element color/legend picker list must also reflect the
@@ -835,3 +801,283 @@ class TestHistogramRoleBehavior:
         assert set(dlg._get_available_elements()) == {'Smelter', 'Background'}
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
         assert set(dlg._get_available_elements()) == {'60Ni', '107Ag'}
+
+
+# --------------------------------------------------------------------------- #
+# classifier_view: overlap-mode awareness + mass-aware sorting
+# --------------------------------------------------------------------------- #
+class TestOverlapModeAwareness:
+    def test_overlap_mode_exposed_on_classifier_output(self, qapp):
+        out = _hist_classifier_node().get_output_data()
+        assert cv.overlap_mode(out) == 'double_count'
+        assert cv.is_double_count(out) is True
+
+    def test_priority_mode_not_double_count(self, qapp):
+        node = _hist_classifier_node()
+        node.overlap_mode = 'priority'
+        out = node.get_output_data()
+        assert cv.overlap_mode(out) == 'priority'
+        assert cv.is_double_count(out) is False
+
+    def test_none_for_non_classifier_stream(self):
+        assert cv.overlap_mode({'type': 'sample_data'}) is None
+        assert cv.is_double_count({'type': 'sample_data'}) is False
+        assert cv.overlap_mode(None) is None
+
+
+class TestMassSortKey:
+    """See classifier_view.mass_sort_key's docstring: a classifier bucket
+    label has no parseable mass of its own, so it must sort by the mean mass
+    of the real isotopes matched within its particles, not tie at the
+    'unparseable' fallback every bucket would otherwise share."""
+
+    def _two_group_node(self):
+        """'Alpha' backed by heavy 197Au, 'Zulu' backed by light 60Ni --
+        alphabetical and mass order disagree, so any test that passes here
+        is actually exercising mass, not coincidentally matching another
+        ordering."""
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+        def p(iso):
+            return {'elements': {iso: 5}, 'source_sample': 'A'}
+
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'sample_data', 'sample_name': 'A',
+            'particle_data': [p('197Au')] * 4 + [p('60Ni')] * 4,
+            'selected_isotopes': [{'label': '60Ni'}, {'label': '197Au'}],
+        }
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '197Au', 'match_mode': 'partial',
+             'group_name': 'Alpha', 'color': None},
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '60Ni', 'match_mode': 'partial',
+             'group_name': 'Zulu', 'color': None},
+        ]
+        clf.groups = {'Alpha': '#FF0000', 'Zulu': '#00FF00'}
+        clf.unmatched_mode = 'discard'
+        clf.overlap_mode = 'double_count'
+        return clf
+
+    def test_bucket_sorts_by_mean_matched_isotope_mass(self, qapp):
+        out = self._two_group_node().get_output_data()
+        assert cv.mass_sort_key(out, 'Alpha') == 197.0
+        assert cv.mass_sort_key(out, 'Zulu') == 60.0
+
+    def test_sort_labels_disagrees_with_alphabetical_on_purpose(self, qapp):
+        """The whole point of the fixture: alphabetical says Alpha first,
+        mass says Zulu first. If this ever returns ['Alpha', 'Zulu'] the
+        sort silently fell back to alphabetical/insertion order again."""
+        out = self._two_group_node().get_output_data()
+        assert cv.sort_labels_by_mass(out, ['Alpha', 'Zulu']) == ['Zulu', 'Alpha']
+
+    def test_multi_isotope_group_averages(self, qapp):
+        """A group matching two isotopes across its particles sorts by
+        their mean, not just one of them."""
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+        def p(ni=0, ag=0):
+            e = {}
+            if ni:
+                e['60Ni'] = ni
+            if ag:
+                e['107Ag'] = ag
+            return {'elements': e, 'source_sample': 'A'}
+
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'sample_data', 'sample_name': 'A',
+            'particle_data': [p(ni=5), p(ag=5)],
+            'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'}],
+        }
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '[60Ni,107Ag]', 'match_mode': 'partial',
+             'group_name': 'Mixed', 'color': None},
+        ]
+        clf.groups = {'Mixed': '#3B82F6'}
+        clf.unmatched_mode = 'discard'
+        clf.overlap_mode = 'double_count'
+        out = clf.get_output_data()
+        assert cv.mass_sort_key(out, 'Mixed') == pytest.approx((60 + 107) / 2)
+
+    def test_real_isotope_label_falls_through_to_own_mass(self, qapp):
+        """A label that isn't a registered bucket (e.g. a real isotope under
+        OFF, or a passthrough particle's own key) must sort by its own
+        parsed mass, identically to sort_elements_by_mass -- not get treated
+        as an unknown bucket."""
+        out = self._two_group_node().get_output_data()
+        assert cv.mass_sort_key(out, '107Ag') == 107.0
+
+    def test_unclassified_bucket_with_no_isotopes_does_not_crash(self, qapp):
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'sample_data', 'sample_name': 'A',
+            'particle_data': [], 'selected_isotopes': [],
+        }
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '60Ni', 'match_mode': 'partial',
+             'group_name': None, 'color': None},
+        ]
+        clf.groups = {}
+        clf.unmatched_mode = 'unclassified'
+        clf.overlap_mode = 'double_count'
+        out = clf.get_output_data()
+        assert cv.mass_sort_key(out, 'Unclassified') == 999.0
+
+    def test_identical_result_to_plain_sorter_on_non_classifier_data(self):
+        """No regression for the common case: no classifier upstream at all."""
+        from results.utils_sort import sort_elements_by_mass
+        labels = ['107Ag', '60Ni', '197Au']
+        assert cv.sort_labels_by_mass(None, labels) == sort_elements_by_mass(labels)
+        assert cv.sort_labels_by_mass({'type': 'sample_data'}, labels) == \
+            sort_elements_by_mass(labels)
+
+
+# --------------------------------------------------------------------------- #
+# element_bar_chart_plot: GROUPS/OFF + double-count note + mass-aware sort
+# --------------------------------------------------------------------------- #
+def _ebc_classifier_node(overlap_mode='double_count'):
+    """Mirrors _hist_classifier_node but for element bar chart's shape
+    (counts, not value lists) -- two buckets, each a single distinct
+    isotope, plus a third real isotope that stays unclassified."""
+    from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+    def p(ni=0, ag=0, au=0):
+        e = {}
+        if ni:
+            e['60Ni'] = ni
+        if ag:
+            e['107Ag'] = ag
+        if au:
+            e['197Au'] = au
+        return {'elements': e, 'source_sample': 'A'}
+
+    particles = ([p(ni=10) for _ in range(5)]
+                 + [p(ag=8) for _ in range(3)]
+                 + [p(au=7) for _ in range(2)])
+
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'sample_data', 'sample_name': 'A', 'particle_data': particles,
+        'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'},
+                              {'label': '197Au'}],
+    }
+    clf.definitions = [
+        {'id': new_definition_id(), 'target_sample': 'A',
+         'expression_text': '60Ni', 'match_mode': 'partial',
+         'group_name': 'Smelter', 'color': None},
+        {'id': new_definition_id(), 'target_sample': 'A',
+         'expression_text': '107Ag', 'match_mode': 'partial',
+         'group_name': 'Background', 'color': None},
+    ]
+    clf.groups = {'Smelter': '#FF6600', 'Background': '#3B82F6'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = overlap_mode
+    return clf
+
+
+class TestElementBarChartRoleBehavior:
+    def test_groups_is_unchanged_from_pre_role_behavior(self, qapp):
+        from results.results_bar_charts import ElementBarChartPlotNode
+        out = _ebc_classifier_node().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        assert node.classifier_role() == cv.ROLE_SERIES
+        data = node.extract_plot_data()
+        assert data == {'Smelter': 5, 'Background': 3, 'Unclassified': 2}
+
+    def test_off_counts_real_isotopes_not_buckets(self, qapp):
+        """The same bug class as histogram's OFF, fixed the same way."""
+        from results.results_bar_charts import ElementBarChartPlotNode
+        out = _ebc_classifier_node().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = node.extract_plot_data()
+        assert data == {'60Ni': 5, '107Ag': 3, '197Au': 2}
+        assert 'Smelter' not in data
+
+    def test_panels_colors_not_offered(self, qapp):
+        from results.results_bar_charts import BarChartSettingsDialog
+        out = _ebc_classifier_node().get_output_data()
+        dlg = BarChartSettingsDialog({}, False, [], input_data=out)
+        offered = [dlg._classifier_group.role_combo.itemData(i) for i in
+                   range(dlg._classifier_group.role_combo.count())]
+        assert offered == [cv.ROLE_SERIES, cv.ROLE_OFF]
+
+    def test_available_bar_elements_follows_role(self, qapp):
+        from results.results_bar_charts import ElementBarChartPlotNode, ElementBarChartDisplayDialog
+        out = _ebc_classifier_node().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        dlg = ElementBarChartDisplayDialog(node, None)
+        assert set(dlg._get_available_bar_elements()) == \
+            {'Smelter', 'Background', 'Unclassified'}
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        assert set(dlg._get_available_bar_elements()) == {'60Ni', '107Ag', '197Au'}
+
+    def test_dialog_renders_without_crashing(self, qapp):
+        from results.results_bar_charts import ElementBarChartPlotNode, ElementBarChartDisplayDialog
+        out = _ebc_classifier_node().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        dlg = ElementBarChartDisplayDialog(node, None)
+        for role in (cv.ROLE_SERIES, cv.ROLE_OFF):
+            node.config[cv.ROLE_CONFIG_KEY] = role
+            dlg._refresh()  # must not raise
+
+    def test_double_count_note_shown_when_applicable(self, qapp):
+        from PySide6.QtWidgets import QLabel
+        from results.results_bar_charts import BarChartSettingsDialog
+        out = _ebc_classifier_node(overlap_mode='double_count').get_output_data()
+        dlg = BarChartSettingsDialog({}, False, [], input_data=out)
+        found = any('double count' in child.text().lower()
+                    for child in dlg.findChildren(QLabel))
+        assert found
+
+    def test_double_count_note_absent_for_priority_mode(self, qapp):
+        from PySide6.QtWidgets import QLabel
+        from results.results_bar_charts import BarChartSettingsDialog
+        out = _ebc_classifier_node(overlap_mode='priority').get_output_data()
+        dlg = BarChartSettingsDialog({}, False, [], input_data=out)
+        found = any('double count' in child.text().lower()
+                    for child in dlg.findChildren(QLabel))
+        assert not found
+
+    def test_mass_aware_bar_order(self, qapp):
+        """End-to-end: the dropdown/bar order for a classifier stream must
+        come from sort_labels_by_mass, not the plain isotope-only sorter --
+        proven with a fixture where the two orderings disagree."""
+        from results.results_bar_charts import ElementBarChartPlotNode, ElementBarChartDisplayDialog
+        from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+        def p(iso):
+            return {'elements': {iso: 5}, 'source_sample': 'A'}
+
+        clf = ParticleClassifierNode()
+        clf.input_data = {
+            'type': 'sample_data', 'sample_name': 'A',
+            'particle_data': [p('197Au')] * 4 + [p('60Ni')] * 4,
+            'selected_isotopes': [{'label': '60Ni'}, {'label': '197Au'}],
+        }
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '197Au', 'match_mode': 'partial',
+             'group_name': 'Alpha', 'color': None},
+            {'id': new_definition_id(), 'target_sample': 'A',
+             'expression_text': '60Ni', 'match_mode': 'partial',
+             'group_name': 'Zulu', 'color': None},
+        ]
+        clf.groups = {'Alpha': '#FF0000', 'Zulu': '#00FF00'}
+        clf.unmatched_mode = 'discard'
+        clf.overlap_mode = 'double_count'
+        out = clf.get_output_data()
+
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        dlg = ElementBarChartDisplayDialog(node, None)
+        assert dlg._get_available_bar_elements() == ['Zulu', 'Alpha']

@@ -2000,13 +2000,8 @@ class HistogramSettingsDialog(QDialog):
 
         from results.shared_plot_utils import ClassifierViewGroup
         from results import classifier_view as cv
-        disabled_roles = None
-        if self._multi:
-            reason = "already showing multiple samples"
-            disabled_roles = {cv.ROLE_FACET: reason, cv.ROLE_ENCODE: reason}
         self._classifier_group = ClassifierViewGroup(
-            self._cfg, self._input_data, cv.ARITY_PER_KEY,
-            disabled_roles=disabled_roles)
+            self._cfg, self._input_data, cv.ARITY_PER_KEY)
         layout.addWidget(self._classifier_group.build())
 
         if self._multi:
@@ -2708,18 +2703,18 @@ class HistogramDisplayDialog(QDialog):
     def _effective_is_multi(self):
         """Whether to render through the multi-panel machinery.
 
-        True for a genuinely multi-sample stream (unchanged behavior), and
-        ALSO true for a single-sample stream under PANELS/COLORS, which
-        reuses the exact same subplot/overlay renderers keyed by bucket
-        label instead of by sample name (see
-        ``HistogramPlotNode._extract_by_bucket``).
+        Currently equivalent to the plain upstream check: Histogram offers
+        only GROUPS/OFF (see ``classifier_view._ROLES_BY_ARITY``), neither of
+        which re-partitions the data, so nothing but a genuinely multi-sample
+        stream needs the multi-panel path. Kept as its own method because the
+        deferred PANELS/COLORS feature (`.claude/aug24.md` improvements list)
+        would make this diverge again, and because several call sites
+        (`_get_hist_display_mode`, `_update_stats`, `_download_figure`) must
+        agree on one answer -- that they didn't is exactly what made the
+        earlier bucket-faceted build silently mis-shape the stats line and
+        CSV export.
         """
-        from results import classifier_view as cv
-        if _is_multi(self.node.input_data):
-            return True
-        return (self.node.classifier_role() in (cv.ROLE_FACET, cv.ROLE_ENCODE)
-                and self.node.input_data
-                and self.node.input_data.get('type') == 'sample_data')
+        return bool(_is_multi(self.node.input_data))
 
     def _build_ui(self):
         """
@@ -2968,14 +2963,9 @@ class HistogramDisplayDialog(QDialog):
             Uses the existing mode normalization and does not change scientific
             display-mode semantics.
         """
-        if _is_multi(self.node.input_data):
+        if self._effective_is_multi():
             return _normalize_hist_display_mode(
                 self.node.config.get('display_mode', HIST_DISPLAY_MODES[0]))
-        if self._effective_is_multi():
-            from results import classifier_view as cv
-            role = self.node.classifier_role()
-            return ('Individual Subplots' if role == cv.ROLE_FACET
-                    else 'Overlaid (Different Colors)')
         return 'single'
 
     def _density_curve_supported(self, mode, plot_data):
@@ -3347,20 +3337,6 @@ class HistogramDisplayDialog(QDialog):
                                     'Element/Group': elem,
                                     'Display Name': disp,
                                     dt: v})
-                elif self._effective_is_multi():
-                    # Bucket-faceted single sample (PANELS/COLORS): plot_data
-                    # is keyed by classifier bucket, not sample -- same shape,
-                    # different axis, so label the column accordingly rather
-                    # than misreading it as a sample breakdown.
-                    for bucket, sd in plot_data.items():
-                        for elem, vals in sd.items():
-                            disp = _get_element_display_name(elem, cfg)
-                            for v in vals:
-                                rows.append({
-                                    'Classifier Group': bucket,
-                                    'Element/Group': elem,
-                                    'Display Name': disp,
-                                    dt: v})
                 else:
                     for elem, vals in plot_data.items():
                         disp = _get_element_display_name(elem, cfg)
@@ -3461,19 +3437,8 @@ class HistogramDisplayDialog(QDialog):
                 return
 
             if self._effective_is_multi():
-                if _is_multi(self.node.input_data):
-                    mode = _normalize_hist_display_mode(
-                        cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
-                else:
-                    # Bucket-faceted single sample: PANELS/COLORS directly
-                    # pick the layout -- there's no separate multi-sample
-                    # display_mode choice to make in this case (§ PANELS =
-                    # one subplot per group, COLORS = one shared overlaid
-                    # plot color-coded by group).
-                    from results import classifier_view as cv
-                    role = self.node.classifier_role()
-                    mode = ('Individual Subplots' if role == cv.ROLE_FACET
-                            else 'Overlaid (Different Colors)')
+                mode = _normalize_hist_display_mode(
+                    cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
                 if mode == 'Individual Subplots':
                     self._draw_subplots(plot_data, cfg)
                 elif mode == 'Side by Side Subplots':
@@ -3768,9 +3733,8 @@ class HistogramDisplayDialog(QDialog):
             total = sum(
                 sum(len(v) for v in sd.values())
                 for sd in plot_data.values())
-            unit = "samples" if _is_multi(self.node.input_data) else "groups"
             self.stats_label.setText(
-                f"{len(plot_data)} {unit}  \u00b7  "
+                f"{len(plot_data)} samples  \u00b7  "
                 f"{total:,} values{group_info}")
         else:
             total = sum(len(v) for v in plot_data.values())
@@ -4379,12 +4343,10 @@ class HistogramPlotNode(QObject):
         reads the classifier's collapsed bucket-labelled composition exactly
         as before -- zero behavior change. OFF reads each particle's REAL
         isotope composition instead, so the histogram renders exactly as if
-        no classifier were upstream at all. PANELS/ENCODE (bucket-faceted)
-        only apply to a single-sample stream -- ``_extract_by_bucket``
-        partitions particles by bucket instead of by sample; on an
-        already-multi-sample stream those two roles are disabled in the UI
-        (see ``HistogramSettingsDialog``), but this still falls back safely
-        rather than crashing if a stale saved role reaches here anyway.
+        no classifier were upstream at all. Those are the only two roles this
+        arity offers; PANELS/COLORS are a deferred future feature (see
+        ``.claude/aug24.md``'s improvements list), and ``effective_role``
+        cannot return them here.
         """
         if not self.input_data:
             return None
@@ -4397,11 +4359,7 @@ class HistogramPlotNode(QObject):
         use_groups = bool(groups) and _can_sum(self.config)
 
         from results import classifier_view as cv
-        role = self.classifier_role()
-        collapsed = role != cv.ROLE_OFF
-
-        if role in (cv.ROLE_FACET, cv.ROLE_ENCODE) and itype == 'sample_data':
-            return self._extract_by_bucket(dk)
+        collapsed = self.classifier_role() != cv.ROLE_OFF
 
         if itype == 'sample_data':
             if use_groups:
@@ -4457,35 +4415,6 @@ class HistogramPlotNode(QObject):
                 else:
                     if val > 0 and val == val:  # val==val false only for NaN, faster than np.isnan on a scalar
                         result[src].setdefault(el, []).append(val)
-        return {k: v for k, v in result.items() if v} or None
-
-    def _extract_by_bucket(self, dk):
-        """Bucket-faceted extraction for PANELS/COLORS: real isotopes,
-        partitioned by classifier bucket instead of by sample.
-
-        Returns ``{bucket_label: {element: [values]}}`` -- the exact same
-        shape ``_extract_multi`` returns keyed by sample, which is what lets
-        ``HistogramDisplayDialog`` reuse the existing multi-sample subplot/
-        overlay rendering unchanged (see ``_effective_is_multi``).
-        """
-        particles = self.input_data.get('particle_data')
-        if not particles:
-            return None
-        from results import classifier_view as cv
-        grouped = cv.particles_by_bucket(particles)
-        result = {}
-        for label, plist in grouped.items():
-            key = label if label is not None else 'Unclassified (raw)'
-            bucket_out = result.setdefault(key, {})
-            for p in plist:
-                d = cv.composition(p, dk)  # raw: real isotopes within this bucket
-                for el, val in d.items():
-                    if dk == 'elements':
-                        if val > 0:
-                            bucket_out.setdefault(el, []).append(val)
-                    else:
-                        if val > 0 and val == val:
-                            bucket_out.setdefault(el, []).append(val)
         return {k: v for k, v in result.items() if v} or None
 
 class BarChartSettingsDialog(QDialog):
@@ -4579,6 +4508,29 @@ class BarChartSettingsDialog(QDialog):
             self._classifier_group = ClassifierViewGroup(
                 self._cfg, self._input_data, cv.ARITY_PER_KEY)
             layout.addWidget(self._classifier_group.build())
+
+            if cv.is_classifier_stream(self._input_data):
+                if cv.is_double_count(self._input_data):
+                    note = QLabel(
+                        "Note: the classifier's overlap mode is \"double "
+                        "count\" — a particle matching more than one group "
+                        "is counted once per group it matches, so bar "
+                        "heights can sum to MORE than the total particle "
+                        "count. This reflects real group membership, not a "
+                        "miscount.")
+                    note.setWordWrap(True)
+                    note.setStyleSheet("color:#B45309; font-size:11px;")
+                    layout.addWidget(note)
+
+                mass_note = QLabel(
+                    "Note: bars for a classifier group are ordered by the "
+                    "MEAN mass of the real isotopes matched within that "
+                    "group's particles (not the group name itself, which "
+                    "has no mass) — so groups sort alongside isotopes of "
+                    "similar mass rather than trailing at the end.")
+                mass_note.setWordWrap(True)
+                mass_note.setStyleSheet("color:#94A3B8; font-size:11px;")
+                layout.addWidget(mass_note)
 
         if self._multi and self._scope in ('all', 'quantities'):
             g = QGroupBox("Multiple Sample Display")
@@ -5485,9 +5437,23 @@ def _draw_single_histogram(
     return sorted_data
 
 
-def _sort_elements_for_display(elements, counts, sort_option):
-    """Sort elements by user preference."""
-    mass_sorted = sort_elements_by_mass(elements)
+def _sort_elements_for_display(elements, counts, sort_option, input_data=None):
+    """Sort elements by user preference.
+
+    Args:
+        input_data (dict | None): The node's upstream data. When given, mass
+            sorting goes through ``classifier_view.sort_labels_by_mass``
+            instead of the plain isotope-only sorter, so classifier bucket
+            labels sort by the mean mass of their real matched isotopes
+            rather than tying at "no parseable mass" (see that function's
+            docstring). Identical result to the plain sorter on
+            non-classifier data.
+    """
+    if input_data is not None:
+        from results import classifier_view as cv
+        mass_sorted = cv.sort_labels_by_mass(input_data, elements)
+    else:
+        mass_sorted = sort_elements_by_mass(elements)
     if sort_option == 'No Sorting':
         ec = dict(zip(elements, counts))
         return mass_sorted, [ec[e] for e in mass_sorted]
@@ -5505,7 +5471,8 @@ def _sort_elements_for_display(elements, counts, sort_option):
 
 
 def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
-                            show_y_label=True, y_scale=1.0, per_ml=False):
+                            show_y_label=True, y_scale=1.0, per_ml=False,
+                            input_data=None):
     """Draw one element bar chart and tag element-colored bars for sync hooks.
     Args:
         plot_item (Any): The plot item.
@@ -5515,6 +5482,8 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
         show_y_label (Any): The show y label.
         y_scale (float): Multiplier converting counts to particles per mL.
         per_ml (bool): Whether values are rendered as a concentration.
+        input_data (dict | None): The node's upstream data, threaded through
+            to mass-aware sorting (see ``_sort_elements_for_display``).
 
     Preserved behavior:
         Scientific counts, ordering rules, and value scaling are unchanged.
@@ -5533,7 +5502,7 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
 
     elems = list(element_counts.keys())
     counts = [element_counts[e] * y_scale for e in elems]
-    elems, counts = _sort_elements_for_display(elems, counts, sort_opt)
+    elems, counts = _sort_elements_for_display(elems, counts, sort_opt, input_data)
 
     original_counts = list(counts)
     if log_y:
@@ -5875,12 +5844,13 @@ class ElementBarChartDisplayDialog(QDialog):
         plot_data = self.node.extract_plot_data()
         if not plot_data:
             return []
+        from results import classifier_view as cv
         if _is_multi(self.node.input_data):
             keys = set()
             for sample_data in plot_data.values():
                 keys.update(sample_data.keys())
-            return sort_elements_by_mass(list(keys))
-        return sort_elements_by_mass(list(plot_data.keys()))
+            return cv.sort_labels_by_mass(self.node.input_data, list(keys))
+        return cv.sort_labels_by_mass(self.node.input_data, list(plot_data.keys()))
 
     def _open_plot_settings(self, title_override=None, show_apply=True):
         """
@@ -6400,7 +6370,8 @@ class ElementBarChartDisplayDialog(QDialog):
                 def _draw(pi, is_top, is_bottom):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, plot_data, cfg,
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6446,7 +6417,8 @@ class ElementBarChartDisplayDialog(QDialog):
                           y_scale=y_scale):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, sd, cfg, single_color=color,
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6484,7 +6456,8 @@ class ElementBarChartDisplayDialog(QDialog):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, sd, cfg, single_color=color,
                                            show_y_label=(idx == 0),
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6511,7 +6484,8 @@ class ElementBarChartDisplayDialog(QDialog):
         all_elems = set()
         for sd in plot_data.values():
             all_elems.update(sd.keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems))
 
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
@@ -6630,7 +6604,8 @@ class ElementBarChartDisplayDialog(QDialog):
         all_elems = set()
         for sd in plot_data.values():
             all_elems.update(sd.keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems))
 
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
@@ -6763,7 +6738,8 @@ class ElementBarChartDisplayDialog(QDialog):
             all_elems_set = {
                 e for e in all_elems_set
                 if sum(plot_data[s].get(e, 0) for s in samples) >= min_count}
-        all_elems = sort_elements_by_mass(list(all_elems_set))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems_set))
 
         if sort_opt != 'No Sorting' and samples:
             totals = [(e, sum(plot_data[s].get(e, 0) for s in samples))
@@ -6927,12 +6903,35 @@ class ElementBarChartPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The effective classifier presentation role for this render.
+
+        Resolved fresh every call, never cached -- see
+        ``classifier_view.effective_role``'s docstring for why (saved
+        projects, roles changed mid-session, upstream config changes).
+        """
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
+
     def extract_plot_data(self):
-        """Extract element particle counts from input."""
+        """Extract element particle counts from input.
+
+        Classifier role: GROUPS (default) counts the classifier's collapsed
+        bucket labels exactly as before -- zero behavior change. OFF counts
+        each particle's REAL isotopes instead, via
+        ``classifier_view.composition(..., collapsed=False)``, so the chart
+        renders exactly as if no classifier were upstream. Only these two
+        roles exist for this arity (per-key-independent) -- see
+        ``.claude/aug24.md``'s improvements list for why PANELS/COLORS are
+        deliberately not offered here.
+        """
         if not self.input_data:
             return None
 
         itype = self.input_data.get('type')
+
+        from results import classifier_view as cv
+        collapsed = self.classifier_role() != cv.ROLE_OFF
 
         if itype == 'sample_data':
             particles = self.input_data.get('particle_data')
@@ -6940,7 +6939,7 @@ class ElementBarChartPlotNode(QObject):
                 return None
             counts = {}
             for p in particles:
-                for el, val in p.get('elements', {}).items():
+                for el, val in cv.composition(p, 'elements', collapsed=collapsed).items():
                     if val > 0:
                         counts[el] = counts.get(el, 0) + 1
             return counts or None
@@ -6955,7 +6954,7 @@ class ElementBarChartPlotNode(QObject):
                 src = p.get('source_sample')
                 if src not in result:
                     continue
-                for el, val in p.get('elements', {}).items():
+                for el, val in cv.composition(p, 'elements', collapsed=collapsed).items():
                     if val > 0:
                         result[src][el] = result[src].get(el, 0) + 1
             return {k: v for k, v in result.items() if v} or None

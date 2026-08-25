@@ -96,7 +96,16 @@ ARITY_KEY_SET = 'key_set'          #: needs the particle's whole key-set
 ARITY_MULTI_KEY = 'multi_key'      #: needs 2+ keys from one particle at once
 
 _ROLES_BY_ARITY = {
-    ARITY_PER_KEY: (ROLE_SERIES, ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
+    # Per-key-independent charts (histogram, element bar, box, pie,
+    # concentration) offer GROUPS and OFF only. PANELS/COLORS are genuinely
+    # useful on these -- "one histogram per particle type" and "one shared
+    # histogram color-coded by particle type" are both real comparative
+    # questions -- but they're deliberately OUT OF SCOPE for the
+    # classifier->viz push and deferred as a future "extra feature" (see
+    # .claude/aug24.md's improvements list for the rationale and worked
+    # examples). GROUPS already answers what these charts are for; the
+    # multi-key/set-of-keys nodes need the effort far more.
+    ARITY_PER_KEY: (ROLE_SERIES, ROLE_OFF),
     ARITY_KEY_SET: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
     ARITY_MULTI_KEY: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
 }
@@ -400,3 +409,92 @@ def has_multiple_buckets(input_data):
     one color) -- worth checking before offering them as meaningful.
     """
     return len(bucket_registry(input_data)) > 1
+
+
+# ── Overlap mode / double-count awareness ──────────────────────────────
+
+def overlap_mode(input_data):
+    """The classifier's overlap resolution mode for this stream.
+
+    Returns:
+        str | None: ``'double_count'`` or ``'priority'``, or None when the
+            stream isn't a classifier stream at all (nothing to report).
+    """
+    if not isinstance(input_data, dict):
+        return None
+    return input_data.get('_classifier_overlap_mode')
+
+
+def is_double_count(input_data):
+    """Whether a particle can be emitted into more than one bucket at once.
+
+    Under ``double_count`` overlap mode, one source particle matching 2+
+    definitions is emitted once per matching definition (see
+    ``tools.particle_classifier_relabel.relabel_particles``). Any node that
+    SUMS or COUNTS per bucket (GROUPS-role bar/pie/concentration charts) will
+    therefore total to MORE than the real particle count when this is true
+    -- worth surfacing to the user rather than leaving as an unexplained
+    discrepancy.
+    """
+    return overlap_mode(input_data) == 'double_count'
+
+
+# ── Mass-aware sorting for classifier bucket labels ─────────────────────
+
+def mass_sort_key(input_data, label, data_key='elements'):
+    """A numeric sort key that makes classifier bucket labels sort like
+    isotopes, instead of tying at the "no parseable mass" fallback.
+
+    ``results.utils_sort.sort_elements_by_mass`` sorts real isotope labels
+    (e.g. ``'60Ni'``) by their embedded mass number, and falls back to a
+    constant for anything it can't parse -- which is every classifier bucket
+    label (``'Smelter'`` has no mass number), so under GROUPS role every
+    bucket ties and the resulting order is just whatever the data happened
+    to build in, not a real ordering. This computes each bucket's substitute:
+    the MEAN mass number of the real isotopes actually present across every
+    particle assigned to that bucket (via the classifier's dual-carried raw
+    composition) -- e.g. a "Smelter" bucket defined by ``60Ni+107Ag`` sorts
+    at roughly (60+107)/2, alongside isotopes of similar mass, rather than
+    after all of them.
+
+    A label that ISN'T a registered bucket (a real isotope -- OFF role, or a
+    passthrough particle's own key showing through under GROUPS) falls
+    through to its own parsed mass number, so this is a safe drop-in
+    replacement for ``sort_elements_by_mass`` wherever ``input_data`` is
+    available: identical behavior on non-classifier data, meaningful
+    behavior on bucket labels.
+
+    Args:
+        input_data (dict | None): The node's upstream data.
+        label (str): One bar/wedge/series label to compute a sort key for.
+        data_key (str): Which composition dict to read masses from -- only
+            matters in that it must be one whose keys are isotope labels
+            (e.g. ``'elements'``); the values themselves aren't used.
+
+    Returns:
+        float: Ascending sort key, comparable across bucket and isotope
+            labels alike.
+    """
+    from results.utils_sort import extract_mass_and_element
+    registry = bucket_registry(input_data)
+    if label not in registry:
+        mass, _ = extract_mass_and_element(label)
+        return mass
+    particles = (input_data or {}).get('particle_data') or []
+    masses = []
+    for p in particles:
+        if bucket_of(p) != label:
+            continue
+        for iso in composition(p, data_key).keys():
+            m, _ = extract_mass_and_element(iso)
+            if m != 999:
+                masses.append(m)
+    if masses:
+        return sum(masses) / len(masses)
+    return 999.0  # e.g. an Unclassified bucket with zero matched isotopes
+
+
+def sort_labels_by_mass(input_data, labels, data_key='elements'):
+    """``sort_elements_by_mass``-shaped drop-in that also handles bucket
+    labels sanely (see :func:`mass_sort_key`)."""
+    return sorted(labels, key=lambda lbl: mass_sort_key(input_data, lbl, data_key))
