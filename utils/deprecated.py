@@ -10,12 +10,19 @@ This system is based of the following article:
 import functools
 import warnings
 import sys
+from inspect import getframeinfo, stack
 
 if sys.version_info.major == 3 and sys.version_info.minor >= 13:
     import logging
+
     logging.critical("The python version of the project has changed. Please "
                      "remove any `from utils.deprecated import deprecated` "
                      "and use `from warning import deprecated` instead.")
+
+warnings.filterwarnings(action="default", category=DeprecationWarning)
+
+"""Lines that already received a deprecated warning"""
+warned_deprecated_lines = set()
 
 
 def deprecated(message: str):
@@ -26,16 +33,21 @@ def deprecated(message: str):
     Args:
         message: message warning or helping to resolve the deprecation.
     """
+
     def _decorator(func):
         @functools.wraps(func)
         def _new_func(*args, **kwargs):
-            warnings.simplefilter("default", DeprecationWarning)
-            warnings.warn(
-                f"Call to deprecated function {func.__name__}: {message}.",
-                category=DeprecationWarning,
-                stacklevel=2
-            )
-            warnings.simplefilter("default", DeprecationWarning)
+            caller = getframeinfo(stack()[1][0])
+            line = (caller.filename, caller.lineno)
+
+            if line not in warned_deprecated_lines:
+                warnings.warn(
+                    f"Call to deprecated function {func.__name__}: {message}.",
+                    category=DeprecationWarning,
+                    stacklevel=2,
+                )
+                warned_deprecated_lines.add(line)
+
             return func(*args, **kwargs)
 
         return _new_func
