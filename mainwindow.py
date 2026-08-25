@@ -3098,6 +3098,7 @@ class MainWindow(QMainWindow):
 
     def display_data(self, new_data, run_info, time_array, sample_name):
         """Display processed data in UI."""
+        # TODO: Verify if this is dead code
         self.handle_thread_finished(new_data, run_info, time_array, sample_name)
         self.progress_bar.setVisible(False)
         self.status_label.setText("Data processed successfully!")
@@ -4975,6 +4976,7 @@ class MainWindow(QMainWindow):
 
     def process_multi_element_particles(self, all_particles):
         """Process and identify multi-element particles."""
+        # TODO: Verify if this is dead code
         self.multi_element_particles = self.peak_detector.process_multi_element_particles(
             all_particles, self.time_array, self.sample_detected_peaks,
             self.selected_isotopes, self.get_formatted_label,
