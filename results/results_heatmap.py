@@ -831,6 +831,7 @@ class HeatmapDisplayDialog(QDialog):
             from results import classifier_view as cv
             self._axes_row_combos = {}
             self._axes_sample_map = {}
+            self._any_highlights_this_render = False
             cfg = self.node.config
             role = self.node.classifier_role()
 
@@ -869,6 +870,7 @@ class HeatmapDisplayDialog(QDialog):
                         apply_font_to_matplotlib(ax, cfg)
 
                 self.figure.tight_layout()
+                self._ensure_highlight_margin()
             else:
                 self._refresh_panels()
 
@@ -1064,6 +1066,8 @@ class HeatmapDisplayDialog(QDialog):
             merged.update(stored)  # a manual right-click override always wins
             draw_cfg = dict(cfg)
             draw_cfg['highlighted_combos'] = merged
+            if merged:
+                self._any_highlights_this_render = True
             if not stored:
                 # Only offer the legend while every row shown is still its
                 # pure classifier-derived color -- see this dialog's
@@ -1079,6 +1083,34 @@ class HeatmapDisplayDialog(QDialog):
         )
         if row_combos is not None:
             self._axes_row_combos[id(ax)] = row_combos
+
+    def _ensure_highlight_margin(self):
+        """Widen the figure's left margin when COLORS-role underline
+        segments were drawn this render, so they have real room to be
+        visible instead of running off the edge of the canvas.
+
+        **Real bug, found by actually rendering and looking, not just
+        checking that the Line2D/Legend objects exist** (2026-08-25):
+        the underline is drawn at ``xmin=-0.22`` in AXES-fraction
+        coordinates (see ``draw_combinations_heatmap``) -- 22% of the
+        AXES' own width, to its left. ``tight_layout()`` sizes the left
+        margin from standard tick-label width alone; it has no idea a
+        custom, off-axes decoration needs room too. On a real render this
+        left the axes' own left edge at ~8% of FIGURE width while the
+        underline needed ~16% of figure width further left than that --
+        landing at a *negative* figure-fraction x position, i.e. past the
+        edge of the canvas entirely, rendering as a barely-visible sliver
+        at best. Confirmed by saving an actual PNG and inspecting it, not
+        by assumption.
+        """
+        if not getattr(self, '_any_highlights_this_render', False):
+            return
+        min_left = 0.24
+        try:
+            if self.figure.subplotpars.left < min_left:
+                self.figure.subplots_adjust(left=min_left)
+        except Exception:
+            pass
 
     def _bucket_legend_entries(self):
         """``[(label, color), ...]`` for the COLORS-role "what color is what

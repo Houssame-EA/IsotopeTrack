@@ -2506,3 +2506,35 @@ class TestHeatmapDialogRoleWiring:
 
         fdlg = HeatmapSettingsDialog({}, False, [], scope='format', input_data=out)
         assert fdlg.show_expression_cb is not None
+
+    def test_colors_underline_margin_widened_when_highlights_present(self, qapp):
+        """Regression test for a real bug found by rendering to PNG and
+        looking, not just checking Line2D objects exist: the underline is
+        drawn at xmin=-0.22 AXES-fraction, well outside the axes' own
+        bounding box, but tight_layout() has no idea that decoration needs
+        room -- on a real render this left the axes' own left edge around
+        figure-fraction 0.08, and the underline's -0.22-of-axes-width reach
+        landed at a NEGATIVE figure-fraction x, i.e. past the edge of the
+        canvas -- rendering as a barely-visible sliver at best. Confirmed
+        by user report ("there never is highlighting") and by an actual
+        saved-PNG inspection, not assumption."""
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        dlg._refresh()
+        off_left = dlg.figure.subplotpars.left
+
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        node.config['highlighted_combos'] = {}
+        dlg._refresh()
+        assert dlg._any_highlights_this_render is True
+        assert dlg.figure.subplotpars.left >= 0.24
+        assert dlg.figure.subplotpars.left > off_left
+
+    def test_no_margin_widening_when_no_highlights(self, qapp):
+        """OFF/GROUPS/PANELS never draw the underline at all -- the margin
+        fix must not fire (and must not needlessly shrink normal charts)
+        when there's nothing to make room for."""
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        dlg._refresh()
+        assert dlg._any_highlights_this_render is False
