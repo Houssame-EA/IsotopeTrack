@@ -5558,6 +5558,7 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node = bar_node
         self.parent_window = parent_window
         self._hidden_bar_samples = set()
+        self._hidden_bar_elements = set()
         self._bar_subplot_contexts = {}
         self.setWindowTitle("Element Particle Count Bar Chart")
         self.setMinimumSize(1000, 700)
@@ -5728,6 +5729,26 @@ class ElementBarChartDisplayDialog(QDialog):
             self._hidden_bar_samples.add(raw_sample_key)
         self._refresh()
 
+    def _toggle_bar_element_visibility(self, raw_element_key):
+        """Toggle one raw element/bucket's visibility in By Sample (Element Colors) mode.
+
+        Args:
+            raw_element_key (str): Canonical raw element or classifier-bucket
+                key represented by the clicked legend row.
+
+        Preserved behavior:
+            This updates only render-layer visibility state for the current
+            Element Bar Chart dialog. Scientific data extraction, counts, and
+            grouping semantics remain unchanged.
+        """
+        if not raw_element_key:
+            return
+        if raw_element_key in self._hidden_bar_elements:
+            self._hidden_bar_elements.remove(raw_element_key)
+        else:
+            self._hidden_bar_elements.add(raw_element_key)
+        self._refresh()
+
     @staticmethod
     def _no_visible_samples_message():
         """Return the standard empty-state message for fully hidden samples.
@@ -5738,19 +5759,31 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         return "No visible samples. Use the legend to show at least one sample."
 
-    def _add_no_visible_samples_message(self, plot_item):
-        """Render the standard no-visible-samples message on one plot item.
+    @staticmethod
+    def _no_visible_elements_message():
+        """Return the standard empty-state message for fully hidden elements.
+
+        Returns:
+            str: User-visible guidance shown when no elements remain visible
+                in By Sample (Element Colors) mode.
+        """
+        return "No visible elements. Use the legend to show at least one element."
+
+    def _add_no_visible_samples_message(self, plot_item, message=None):
+        """Render a no-visible-items empty-state message on one plot item.
 
         Args:
             plot_item (Any): Target ``pg.PlotItem`` receiving the empty-state
                 message.
+            message (str | None): Override text; defaults to the
+                no-visible-samples message.
 
         Preserved behavior:
             This is informational UI only and does not change scientific data,
             bar heights, or extraction behavior.
         """
         ti = pg.TextItem(
-            self._no_visible_samples_message(),
+            message or self._no_visible_samples_message(),
             anchor=(0.5, 0.5),
             color='#9CA3AF')
         plot_item.addItem(ti, ignoreBounds=True)
@@ -6230,7 +6263,12 @@ class ElementBarChartDisplayDialog(QDialog):
             active_mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
             hidden_samples = (
                 set(self._hidden_bar_samples)
-                if active_mode in ('Grouped Bars', 'Stacked Bars')
+                if active_mode in ('Grouped Bars (Side by Side)', 'Stacked Bars')
+                else set()
+            )
+            hidden_elements = (
+                set(self._hidden_bar_elements)
+                if active_mode == 'By Sample (Element Colors)'
                 else set()
             )
 
@@ -6242,6 +6280,8 @@ class ElementBarChartDisplayDialog(QDialog):
                             continue
                         dname = get_display_name(sn, cfg)
                         for elem, count in sd.items():
+                            if elem in hidden_elements:
+                                continue
                             rows.append({'Sample': dname, 'Element': elem, 'Particle Count': count})
                 else:
                     for elem, count in plot_data.items():
@@ -6753,8 +6793,9 @@ class ElementBarChartDisplayDialog(QDialog):
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(samples), dtype=float)
-        n_elems = max(len(all_elems), 1)
-        bar_w = 0.8 / n_elems
+        visible_elems = [e for e in all_elems if e not in self._hidden_bar_elements]
+        n_visible_elems = len(visible_elems)
+        bar_w = 0.8 / max(n_visible_elems, 1)
         per_ml = _per_ml_active(cfg, self.node.input_data)
         cuts = _get_broken_cuts(cfg)
 
@@ -6767,9 +6808,33 @@ class ElementBarChartDisplayDialog(QDialog):
                 pi.legend = legend
 
             global_max = 0.0
+            visible_index = 0
             for j, elem in enumerate(all_elems):
+                elem_hidden = elem in self._hidden_bar_elements
                 color = _get_element_color(elem, j, cfg)
                 label = _fmt_elem(elem, cfg)
+                co = QColor(color)
+
+                if legend is not None:
+                    alpha = 55 if elem_hidden else 215
+                    swatch = _ClickableLegendSwatch(
+                        x=[0], height=[0], width=0,
+                        brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                        raw_key=elem,
+                        toggle_callback=self._toggle_bar_element_visibility,
+                    )
+                    _tag_element_color_item(swatch, elem, label)
+                    legend_label = label + (" (hidden)" if elem_hidden else "")
+                    legend.addItem(swatch, legend_label)
+                    _attach_bar_chart_legend_toggle(
+                        legend,
+                        raw_key=elem,
+                        toggle_callback=self._toggle_bar_element_visibility,
+                    )
+
+                if elem_hidden:
+                    continue
+
                 heights = [plot_data[s].get(elem, 0) *
                            (_pml_factor(self.node.input_data, s) if per_ml else 1.0)
                            for s in samples]
@@ -6780,8 +6845,8 @@ class ElementBarChartDisplayDialog(QDialog):
                 if cur_max > global_max:
                     global_max = cur_max
 
-                offsets = x + (j - n_elems / 2 + 0.5) * bar_w
-                co = QColor(color)
+                offsets = x + (visible_index - n_visible_elems / 2 + 0.5) * bar_w
+                visible_index += 1
                 bar = pg.BarGraphItem(
                     x=offsets, height=heights, width=bar_w,
                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
@@ -6789,12 +6854,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 bar.opts['_trace_name'] = label
                 _tag_element_color_item(bar, elem, label)
                 pi.addItem(bar)
-
-                if legend is not None:
-                    swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                             brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
-                    _tag_element_color_item(swatch, elem, label)
-                    legend.addItem(swatch, label)
 
                 if show_vals:
                     for xp, h, o in zip(offsets, heights, orig):
@@ -6805,6 +6864,10 @@ class ElementBarChartDisplayDialog(QDialog):
                                              max(fc.get('size', 18) - 5, 6)))
                             pi.addItem(ti)
                             ti.setPos(xp, h + global_max * 0.02)
+
+            if not visible_elems and is_top:
+                self._add_no_visible_samples_message(
+                    pi, message=self._no_visible_elements_message())
 
             ax_bottom = pi.getAxis('bottom')
             ticks = [(float(i), get_display_name(s, cfg))

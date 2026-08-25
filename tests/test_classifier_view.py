@@ -1081,3 +1081,213 @@ class TestElementBarChartRoleBehavior:
         node.process_data(out)
         dlg = ElementBarChartDisplayDialog(node, None)
         assert dlg._get_available_bar_elements() == ['Zulu', 'Alpha']
+
+
+def _ebc_multi_sample_classifier_node(overlap_mode='priority'):
+    """Two-sample classifier stream for By Sample (Element Colors) mode.
+
+    Per-element totals across both samples clear the default
+    ``min_particle_count`` (10) threshold on purpose, so every legend row
+    that should render actually does."""
+    from tools.particle_classifier_node import ParticleClassifierNode, new_definition_id
+
+    def p(sample, ni=0, ag=0, au=0):
+        e = {}
+        if ni:
+            e['60Ni'] = ni
+        if ag:
+            e['107Ag'] = ag
+        if au:
+            e['197Au'] = au
+        return {'elements': e, 'source_sample': sample}
+
+    particles = (
+        [p('A', ni=10) for _ in range(15)]
+        + [p('A', ag=8) for _ in range(12)]
+        + [p('B', ni=10) for _ in range(14)]
+        + [p('B', au=7) for _ in range(11)]
+    )
+
+    clf = ParticleClassifierNode()
+    clf.input_data = {
+        'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+        'particle_data': particles,
+        'selected_isotopes': [{'label': '60Ni'}, {'label': '107Ag'},
+                              {'label': '197Au'}],
+    }
+    defs = []
+    for s in ('A', 'B'):
+        defs.append({'id': new_definition_id(), 'target_sample': s,
+                      'expression_text': '60Ni', 'match_mode': 'partial',
+                      'group_name': 'Smelter', 'color': None})
+        defs.append({'id': new_definition_id(), 'target_sample': s,
+                      'expression_text': '107Ag', 'match_mode': 'partial',
+                      'group_name': 'Background', 'color': None})
+    clf.definitions = defs
+    clf.groups = {'Smelter': '#FF6600', 'Background': '#3B82F6'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = overlap_mode
+    return clf
+
+
+class TestBySampleLegendElementVisibility:
+    """Regression coverage for a legend-click-to-hide bug reported live:
+    in Element Bar Chart's 'By Sample (Element Colors)' mode (multi-sample
+    input, x-axis = samples, legend = elements), clicking a legend swatch
+    built no interactive object at all -- the click silently did nothing,
+    for both GROUPS and OFF roles. Root cause: _draw_by_sample built plain
+    pg.BarGraphItem legend swatches instead of _ClickableLegendSwatch, and
+    never called _attach_bar_chart_legend_toggle -- unlike the Grouped/
+    Stacked sample-legend path, which already had this wiring for samples."""
+
+    def _dialog_for(self, role, overlap_mode='priority'):
+        from results.results_bar_charts import ElementBarChartPlotNode, ElementBarChartDisplayDialog
+        out = _ebc_multi_sample_classifier_node(overlap_mode).get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        node.config[cv.ROLE_CONFIG_KEY] = role
+        node.config['display_mode'] = 'By Sample (Element Colors)'
+        return ElementBarChartDisplayDialog(node, None), node
+
+    def _legend_of(self, dlg):
+        import pyqtgraph as pg
+        pi = next(item for item in dlg.pw.scene().items()
+                  if isinstance(item, pg.PlotItem))
+        return pi, getattr(pi, 'legend', None)
+
+    def test_groups_legend_click_hides_element(self, qapp):
+        from PySide6.QtCore import Qt
+        from results.results_bar_charts import _get_legend_sample_graphics_item
+
+        dlg, node = self._dialog_for(cv.ROLE_SERIES)
+        assert node.classifier_role() == cv.ROLE_SERIES
+        _pi, legend = self._legend_of(dlg)
+        assert legend is not None and len(legend.items) == 3
+
+        sample_item, _label = legend.items[0]
+        swatch = _get_legend_sample_graphics_item(sample_item)
+        raw_key = getattr(swatch, '_raw_key', None)
+        assert raw_key, "legend swatch has no raw key bound -- click does nothing"
+
+        class _Ev:
+            def button(self):
+                return Qt.LeftButton
+            def accept(self):
+                pass
+
+        assert raw_key not in dlg._hidden_bar_elements
+        swatch.mouseClickEvent(_Ev())
+        assert raw_key in dlg._hidden_bar_elements
+
+        swatch.mouseClickEvent(_Ev())
+        assert raw_key not in dlg._hidden_bar_elements
+        dlg.close()
+
+    def test_off_legend_click_hides_element(self, qapp):
+        """Same bug, same fix, verified for OFF (real isotopes) too."""
+        from PySide6.QtCore import Qt
+        from results.results_bar_charts import _get_legend_sample_graphics_item
+
+        dlg, node = self._dialog_for(cv.ROLE_OFF)
+        assert node.classifier_role() == cv.ROLE_OFF
+        _pi, legend = self._legend_of(dlg)
+        assert legend is not None and len(legend.items) == 3
+
+        sample_item, _label = legend.items[0]
+        swatch = _get_legend_sample_graphics_item(sample_item)
+        raw_key = getattr(swatch, '_raw_key', None)
+        assert raw_key
+
+        class _Ev:
+            def button(self):
+                return Qt.LeftButton
+            def accept(self):
+                pass
+
+        swatch.mouseClickEvent(_Ev())
+        assert raw_key in dlg._hidden_bar_elements
+        dlg.close()
+
+    def test_hiding_all_elements_shows_empty_state_message(self, qapp):
+        dlg, node = self._dialog_for(cv.ROLE_SERIES)
+        _pi, legend = self._legend_of(dlg)
+        for row in list(legend.items):
+            sample_item, _label = row
+            from results.results_bar_charts import _get_legend_sample_graphics_item
+            raw_key = getattr(_get_legend_sample_graphics_item(sample_item), '_raw_key', None)
+            dlg._toggle_bar_element_visibility(raw_key)
+
+        import pyqtgraph as pg
+        pi, _legend = self._legend_of(dlg)
+        texts = [it.toPlainText() for it in pi.items
+                if isinstance(it, pg.TextItem) and hasattr(it, 'toPlainText')]
+        assert any('No visible elements' in t for t in texts)
+        dlg.close()
+
+    def test_hidden_state_isolated_per_dialog(self, qapp):
+        """Hiding an element in one dialog instance must not leak into a
+        freshly constructed one for the same node."""
+        from results.results_bar_charts import ElementBarChartDisplayDialog
+        dlg1, node = self._dialog_for(cv.ROLE_SERIES)
+        dlg1._toggle_bar_element_visibility('Smelter')
+        assert 'Smelter' in dlg1._hidden_bar_elements
+
+        dlg2 = ElementBarChartDisplayDialog(node, None)
+        assert dlg2._hidden_bar_elements == set()
+        dlg1.close()
+        dlg2.close()
+
+    def test_csv_export_respects_hidden_elements_in_by_sample_mode(self, qapp):
+        import pandas as pd
+        dlg, node = self._dialog_for(cv.ROLE_SERIES)
+        dlg._toggle_bar_element_visibility('Smelter')
+
+        captured = {}
+
+        def _fake_download(pw, parent, default_name=None, csv_data=None):
+            captured['csv_data'] = csv_data
+
+        import results.results_bar_charts as rbc
+        orig = rbc.download_pyqtgraph_figure
+        rbc.download_pyqtgraph_figure = _fake_download
+        try:
+            dlg._download_figure()
+        finally:
+            rbc.download_pyqtgraph_figure = orig
+
+        df = captured['csv_data']
+        assert df is not None
+        assert 'Smelter' not in set(df['Element'])
+        assert {'Background', 'Unclassified'}.issubset(set(df['Element']))
+        dlg.close()
+
+    def test_grouped_bars_csv_hidden_sample_mode_string_matches(self, qapp):
+        """The mode-string comparison must match BAR_DISPLAY_MODES exactly
+        ('Grouped Bars (Side by Side)', not the truncated 'Grouped Bars'),
+        otherwise hidden-sample CSV filtering silently never applies in the
+        default display mode."""
+        from results.results_bar_charts import ElementBarChartPlotNode, ElementBarChartDisplayDialog
+        out = _ebc_multi_sample_classifier_node().get_output_data()
+        node = ElementBarChartPlotNode()
+        node.process_data(out)
+        node.config['display_mode'] = 'Grouped Bars (Side by Side)'
+        dlg = ElementBarChartDisplayDialog(node, None)
+        dlg._toggle_bar_sample_visibility('A')
+
+        captured = {}
+
+        def _fake_download(pw, parent, default_name=None, csv_data=None):
+            captured['csv_data'] = csv_data
+
+        import results.results_bar_charts as rbc
+        orig = rbc.download_pyqtgraph_figure
+        rbc.download_pyqtgraph_figure = _fake_download
+        try:
+            dlg._download_figure()
+        finally:
+            rbc.download_pyqtgraph_figure = orig
+
+        df = captured['csv_data']
+        assert df is not None
+        assert 'A' not in set(df['Sample'])
+        dlg.close()
