@@ -236,6 +236,97 @@ class TestGroupsRoleMixedVocabulary:
         assert 'diameter' in dlg._header.text()
 
 
+class TestDoubleCountRecombination:
+    """Found in manual QA, 2026-08-26: **every** group x group cell was blank
+    even with ``double_count`` enabled -- the exact situation double-counting
+    exists to make plottable.
+
+    Cause: ``build_mixed_columns`` iterated the classifier's emitted COPIES.
+    A particle matching two definitions arrives as two dicts, each carrying
+    one bucket key, so it produced one row with ``common>0, carney=0`` and
+    another with ``common=0, carney>0``. No row ever held both, so the pair
+    could never co-occur. The same bug also made a doubly-matched particle
+    contribute its isotope values twice, double-weighting every isotope x
+    isotope correlation on the matrix.
+    """
+
+    def _dc_view(self, qapp, scope=None):
+        node = CorrelationMatrixNode()
+        node.process_data(_classified_stream(overlap='double_count'))
+        view = _FigureView(node, CorrelationMatrixDisplayDialog, None)
+        view.config['min_particles'] = 2
+        view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        if scope:
+            view.config[cv.SCOPE_CONFIG_KEY] = scope
+        return view
+
+    def test_group_by_group_populates_under_double_count(self, qapp):
+        view = self._dc_view(qapp)
+        data = view.extract_matrix_data()
+        e = data['elements']
+        r = data['matrix'][e.index('common'), e.index('carney')]
+        assert not np.isnan(r), "group x group must populate under double_count"
+
+    def test_one_row_per_real_particle(self, qapp):
+        from results.results_matrix import build_mixed_columns, _merge_copies_by_identity
+        stream = _classified_stream(overlap='double_count')
+        particles = stream['particle_data']
+        n_real = len(_merge_copies_by_identity(particles))
+        assert n_real < len(particles), "fixture must actually double-count"
+        cols, _ = build_mixed_columns(
+            particles, ['27Al', '49Ti', '56Fe', '63Cu'],
+            ['common', 'carney'], 'elements', cv.SCOPE_TOTAL_PARTICLE)
+        assert {len(c) for c in cols.values()} == {n_real}
+
+    def test_isotope_pairs_are_not_double_weighted(self, qapp):
+        """OFF role is a pure isotope statistic, so each real particle must
+        count once no matter how many buckets claimed it."""
+        view = self._dc_view(qapp)
+        view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+        data = view.extract_matrix_data()
+        e = data['elements']
+        n_used = data['pair_counts'][e.index('27Al'), e.index('56Fe')]
+        # 40 Ti+Al+Fe particles + 12 Al+Fe particles, each counted ONCE.
+        assert n_used == 52, n_used
+
+    def test_group_by_group_is_tautological_under_total_particle(self, qapp):
+        """Exposed only once the recombination fix made these cells
+        computable at all: under TOTAL PARTICLE a group's value is the sum of
+        every isotope on the particle, which does not depend on which group
+        is asking -- so two groups sharing a particle hold identical numbers
+        and correlate at exactly 1. Marked, not reported as a finding."""
+        view = self._dc_view(qapp, cv.SCOPE_TOTAL_PARTICLE)
+        data = view.extract_matrix_data()
+        e = data['elements']
+        i, j = e.index('common'), e.index('carney')
+        assert abs(data['matrix'][i, j] - 1.0) < 1e-9
+        assert data['exact_trivial'][i, j]
+
+    def test_by_definition_group_pairs_stay_informative(self, qapp):
+        """Different isotope sets are summed, so the same cell IS a real
+        correlation and must NOT be marked."""
+        view = self._dc_view(qapp, cv.SCOPE_DEFINITION)
+        data = view.extract_matrix_data()
+        e = data['elements']
+        i, j = e.index('common'), e.index('carney')
+        assert not data['exact_trivial'][i, j]
+        assert not np.isnan(data['matrix'][i, j])
+
+    def test_priority_mode_is_still_genuinely_empty(self, qapp):
+        """The fix must not paper over the case the warning describes."""
+        node = CorrelationMatrixNode()
+        node.process_data(_classified_stream(overlap='priority'))
+        view = _FigureView(node, CorrelationMatrixDisplayDialog, None)
+        view.config['min_particles'] = 2
+        view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        data = view.extract_matrix_data()
+        e = data['elements']
+        assert np.isnan(data['matrix'][e.index('common'), e.index('carney')])
+        dlg = CorrelationMatrixDisplayDialog(view, None)
+        dlg._refresh()
+        assert 'priority' in dlg._header.text()
+
+
 class TestPartWholeMasks:
     def test_total_particle_marks_every_contributing_isotope(self, classified):
         view, _ = classified

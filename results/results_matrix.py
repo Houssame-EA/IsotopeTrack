@@ -310,6 +310,42 @@ def _compute_correlation_matrix(particles, elements, data_key, min_particles=5,
 _UNSUMMABLE_KEYS = ('element_diameter_nm', 'particle_diameter_nm')
 
 
+def _merge_copies_by_identity(particles):
+    """Group a particle list into one entry per REAL particle.
+
+    Under ``double_count`` the classifier emits a particle matching several
+    definitions once per match, each copy carrying a single bucket key. Any
+    statistic computed over those copies as if they were separate particles
+    is wrong twice over: the isotope values get double-weighted, and no
+    single row ever holds two groups at once, so group x group can never
+    populate.
+
+    ``classifier_view.dedupe_particles`` deliberately does something else --
+    it keeps ONE copy and discards the rest, which is right for a pure
+    isotope statistic but throws away exactly the per-bucket values a mixed
+    matrix needs. Hence grouping rather than deduping.
+
+    Args:
+        particles (list): Particle dicts, possibly containing several copies
+            of the same source particle.
+
+    Returns:
+        list[list]: One inner list of copies per real particle, in first-
+        appearance order so the result is reproducible run to run. Particles
+        with no identity (a non-classifier stream) each stand alone.
+    """
+    from results import classifier_view as cv
+    order, groups_by_key = [], {}
+    for p in particles:
+        ident = cv.particle_identity(p)
+        key = ident if ident is not None else id(p)
+        if key not in groups_by_key:
+            groups_by_key[key] = []
+            order.append(key)
+        groups_by_key[key].append(p)
+    return [groups_by_key[k] for k in order]
+
+
 def build_mixed_columns(particles, isotopes, groups, data_key, scope):
     """Per-particle value columns for a MIXED isotope + group vocabulary.
 
@@ -351,14 +387,26 @@ def build_mixed_columns(particles, isotopes, groups, data_key, scope):
     contributing = {g: set() for g in groups}
     group_set = set(groups)
 
-    for p in particles:
-        raw = cv.composition(p, data_key, collapsed=False)
+    # One row per REAL particle, not per emitted copy. Under ``double_count``
+    # the classifier emits a particle matching two definitions as TWO dicts,
+    # each carrying only ONE bucket key. Iterating those directly gives one
+    # row with common>0/carney=0 and another with common=0/carney>0, so no
+    # row ever has both -- and group x group comes out entirely blank even
+    # WITH double-counting enabled, which is precisely the case
+    # double-counting exists to make plottable. (Bug found in manual QA,
+    # 2026-08-26.) Merging also stops a doubly-matched particle contributing
+    # its isotope values twice and double-weighting every isotope x isotope
+    # correlation.
+    for copies in _merge_copies_by_identity(particles):
+        raw = cv.composition(copies[0], data_key, collapsed=False)
         for iso in isotopes:
             columns[iso].append(_clean_value(raw.get(iso, 0), data_key))
 
-        bucket = cv.bucket_of(p)
-        value_for_bucket = 0
-        if bucket in group_set:
+        per_group = {g: 0 for g in groups}
+        for p in copies:
+            bucket = cv.bucket_of(p)
+            if bucket not in group_set:
+                continue
             # Reuse the same reader every other node's GROUPS role goes
             # through, so scope semantics (and the MFC pooling-safety gate)
             # cannot drift between nodes.
@@ -366,14 +414,15 @@ def build_mixed_columns(particles, isotopes, groups, data_key, scope):
                 p, data_key, cv.ROLE_SERIES, scope)
             value_for_bucket = sum(
                 _clean_value(v, data_key) for lbl, v in items if lbl == bucket)
+            per_group[bucket] = value_for_bucket
             contributing[bucket] |= (cv.scope_isotopes(p, scope) & set(raw))
         for g in groups:
-            columns[g].append(value_for_bucket if g == bucket else 0)
+            columns[g].append(per_group[g])
 
     return columns, contributing
 
 
-def triviality_masks(labels, isotopes, groups, contributing):
+def triviality_masks(labels, isotopes, groups, contributing, scope=None):
     """``(exact, partial)`` NxN bool masks for a mixed-vocabulary matrix.
 
     Marks correlations that are arithmetic rather than evidence, so a
@@ -392,17 +441,38 @@ def triviality_masks(labels, isotopes, groups, contributing):
     The leading diagonal is not included here; ``_draw_matrix_ax`` always
     adds it, with or without a classifier.
 
-    Known gap, deliberately not handled: under ``double_count`` +
-    TOTAL PARTICLE two DIFFERENT groups can end up fed by identical isotope
-    sets and thus correlate at 1 tautologically too. Flagged in
-    ``.claude/aug24.md`` rather than guessed at.
+    **group x group under TOTAL PARTICLE is exact by construction.** In that
+    scope a group's value for a particle is the sum of EVERY isotope that
+    particle carries -- which does not depend on which group is asking. So
+    for any particle belonging to two groups at once, both columns hold the
+    identical number and the pair correlates at exactly 1. This only becomes
+    visible once ``double_count`` lets a particle occupy two groups, and it
+    is emphatically not a finding, so it is marked rather than reported.
+    Under BY DEFINITION the two groups sum different isotope sets, so the
+    same cell IS informative and is left unmarked.
+
+    Args:
+        labels (list): Ordered axis labels (isotopes then groups).
+        isotopes (list): The isotope labels among them.
+        groups (list): The classifier group labels among them.
+        contributing (dict): ``{group: set(isotopes that fed its value)}``.
+        scope (str | None): ``classifier_view.SCOPE_*`` in force; needed
+            because whether group x group is tautological depends on it.
     """
+    from results import classifier_view as cv
     n = len(labels)
     exact = np.zeros((n, n), dtype=bool)
     partial = np.zeros((n, n), dtype=bool)
     if not groups:
         return exact, partial
     index = {lbl: k for k, lbl in enumerate(labels)}
+
+    if scope == cv.SCOPE_TOTAL_PARTICLE:
+        for a in groups:
+            for b in groups:
+                ia, ib = index.get(a), index.get(b)
+                if ia is not None and ib is not None and ia != ib:
+                    exact[ia, ib] = True
     for g in groups:
         fed_by = contributing.get(g) or set()
         gi = index.get(g)
@@ -1402,14 +1472,15 @@ class CorrelationMatrixNode(QObject):
             labels = list(isotopes) + list(groups)
             if len(labels) < 2:
                 return None
+            scope = self.classifier_scope()
             columns, contributing = build_mixed_columns(
-                particles, isotopes, groups, data_key, self.classifier_scope())
+                particles, isotopes, groups, data_key, scope)
             mat, p_mat, counts = correlate_columns(
                 columns, labels, min_particles, zero_mode)
             if mat is None:
                 return None
             exact, partial = triviality_masks(
-                labels, isotopes, groups, contributing)
+                labels, isotopes, groups, contributing, scope)
             return {'elements': labels, 'matrix': mat, 'p_matrix': p_mat,
                     'pair_counts': counts, 'min_particles': min_particles,
                     'n_particles': len(particles),
@@ -1418,13 +1489,17 @@ class CorrelationMatrixNode(QObject):
                     'groups_dropped': bool(data_key in _UNSUMMABLE_KEYS
                                            and cv.bucket_registry(self.input_data))}
 
-        elements = (self._isotope_labels()
-                    if cv.is_classifier_stream(self.input_data)
-                    else self._get_elements())
+        is_clf = cv.is_classifier_stream(self.input_data)
+        elements = self._isotope_labels() if is_clf else self._get_elements()
         if len(elements) < 2:
             return None
+        # Pure isotope statistic, so a double_count particle must be counted
+        # ONCE -- every copy carries the same real composition, and leaving
+        # them in silently double-weights that particle's contribution to
+        # every Pearson r on this matrix.
+        rows = cv.dedupe_particles(particles) if is_clf else particles
         columns = {el: [] for el in elements}
-        for p in particles:
+        for p in rows:
             raw = cv.composition(p, data_key, collapsed=False)
             for el in elements:
                 columns[el].append(_clean_value(raw.get(el, 0), data_key))
@@ -1490,7 +1565,14 @@ class CorrelationMatrixNode(QObject):
         itype = self.input_data.get('type')
 
         def _panel(plist):
-            """Isotope-only matrix over one bucket's particles."""
+            """Isotope-only matrix over one bucket's particles.
+
+            Deduped: a group backed by SEVERAL definitions can, under
+            ``double_count``, receive the same real particle once per
+            matching definition -- all landing in this one bucket. Left as
+            is, that particle would be counted twice inside its own panel.
+            """
+            plist = cv.dedupe_particles(plist)
             eligible = set()
             for p in plist:
                 eligible |= (cv.scope_isotopes(p, scope)
