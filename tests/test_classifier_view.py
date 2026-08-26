@@ -2246,11 +2246,19 @@ class TestDefaultRowBucketColors:
         smelter = [p for p in out['particle_data'] if cv.bucket_of(p) == 'Smelter']
         assert cv.default_row_bucket_colors(out, smelter) == ['#FF6600']
 
-    def test_unclassified_has_its_own_color(self):
+    def test_unclassified_is_not_colored_by_default(self):
+        """Spec correction (2026-08-25): COLORS colors particles that matched
+        something the user DEFINED. "Unclassified" and "passthrough" both
+        mean "matched nothing", so they must look identical -- uncolored --
+        rather than differing purely by an upstream mode switch that says
+        nothing about the science. Was previously colored gray."""
         out = _heatmap_test_stream().get_output_data()
         unclassified = [p for p in out['particle_data'] if cv.bucket_of(p) == 'Unclassified']
-        colors = cv.default_row_bucket_colors(out, unclassified)
-        assert len(colors) == 1 and colors[0]
+        assert unclassified, "fixture must actually contain unclassified particles"
+        assert cv.default_row_bucket_colors(out, unclassified) == []
+        # Still reachable for any future caller that genuinely wants it.
+        assert cv.default_row_bucket_colors(
+            out, unclassified, include_unclassified=True)
 
     def test_double_count_row_gets_one_color_per_matched_bucket(self):
         clf = ParticleClassifierNode()
@@ -2423,42 +2431,91 @@ class TestHeatmapDialogRoleWiring:
         y_labels = [t.get_text() for t in ax.get_yticklabels()]
         assert any('Smelter' in lbl for lbl in y_labels)
 
-    def test_panels_role_single_sample_no_selector_one_panel_per_bucket(self, qapp):
+    def test_panels_role_single_sample_one_panel_per_group(self, qapp):
+        """Single-sample PANELS shows every group at once, no selector --
+        there is nothing to switch between (spec, 2026-08-25)."""
+        from results.results_heatmap import PANEL_GROUP_CONFIG_KEY
         node, dlg = self._dialog()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
         dlg._refresh()
-        assert not dlg._panel_selector_row.isVisible()
         titled = [ax for ax in dlg.figure.get_axes() if ax.get_title()]
-        assert len(titled) == 2
-        assert {ax.get_title() for ax in titled} == {'Smelter (60Ni)', 'Unclassified'}
+        assert {ax.get_title() for ax in titled} == {'Smelter', 'Unclassified'}
+
+    def test_panels_titles_follow_show_expression_toggle(self, qapp):
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        node.config['show_group_expression'] = True
+        dlg._refresh()
+        titles = {ax.get_title() for ax in dlg.figure.get_axes() if ax.get_title()}
+        assert 'Smelter (60Ni)' in titles
+        # Unclassified has no expression, so it is unaffected either way.
+        assert 'Unclassified' in titles
 
     def test_colors_legend_hidden_by_manual_override_shown_otherwise(self, qapp):
+        from results.results_heatmap import UNDERLINE_CONFIG_KEY
         node, dlg = self._dialog()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
-        node.config['highlighted_combos'] = {}
+        node.config[UNDERLINE_CONFIG_KEY] = {}
         dlg._refresh()
         ax = dlg.figure.get_axes()[0]
         assert ax.get_legend() is not None
 
         row = dlg._axes_row_combos[id(ax)][0]
-        node.config['highlighted_combos'] = {row: '#000000'}
+        node.config[UNDERLINE_CONFIG_KEY] = {row: '#000000'}
         dlg._refresh()
         assert dlg.figure.get_axes()[0].get_legend() is None
 
-        node.config['highlighted_combos'] = {}
+        node.config[UNDERLINE_CONFIG_KEY] = {}
+        dlg._refresh()
+        assert dlg.figure.get_axes()[0].get_legend() is not None
+
+    def test_colors_legend_survives_offscreen_manual_override(self, qapp):
+        """Regression: the legend was suppressed whenever ANY stored override
+        existed, even for a row outside heatmap's visible top-N slice -- so
+        one old underline on a since-filtered-out row hid the legend forever.
+        Gating must consider only rows actually on screen."""
+        from results.results_heatmap import UNDERLINE_CONFIG_KEY
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        node.config[UNDERLINE_CONFIG_KEY] = {'zz_row_not_currently_shown': '#000000'}
         dlg._refresh()
         assert dlg.figure.get_axes()[0].get_legend() is not None
 
     def test_colors_role_draws_underline_segments(self, qapp):
+        from results.results_heatmap import UNDERLINE_CONFIG_KEY
         node, dlg = self._dialog()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
-        node.config['highlighted_combos'] = {}
+        node.config[UNDERLINE_CONFIG_KEY] = {}
         dlg._refresh()
         ax = dlg.figure.get_axes()[0]
         assert len(ax.lines) > 0
 
-    def test_multi_sample_panels_selector_populates_and_switches(self, qapp):
-        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+    def test_colors_does_not_underline_unclassified(self, qapp):
+        """COLORS colors particles that matched something the user DEFINED.
+        "Unclassified" and "passthrough" are two spellings of "matched
+        nothing" and must look the same (uncolored), rather than differing
+        purely by an upstream mode switch (spec correction, 2026-08-25)."""
+        from results.results_heatmap import _default_row_bucket_colors_by_combo
+        node, dlg = self._dialog()
+        out = node.input_data
+        defaults = _default_row_bucket_colors_by_combo(
+            out['particle_data'], 'element_mass_fg', out)
+        assert defaults, "matched rows must still be colored"
+        assert not any(
+            cv.bucket_of(p) == cv.UNCLASSIFIED_LABEL
+            for key in defaults
+            for p in out['particle_data']
+            if key == '107Ag')
+
+    def test_colors_legend_excludes_unclassified(self, qapp):
+        node, dlg = self._dialog()
+        node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        entries = dict(dlg._bucket_legend_entries())
+        assert 'Smelter' in entries
+        assert cv.UNCLASSIFIED_LABEL not in entries
+
+    def _multi_node(self):
+        from results.results_heatmap import HeatmapPlotNode
         out_a = _heatmap_test_stream('A').get_output_data()
         out_b = _heatmap_test_stream('B').get_output_data()
         multi = dict(out_a)
@@ -2467,14 +2524,79 @@ class TestHeatmapDialogRoleWiring:
         node = HeatmapPlotNode()
         node.process_data(multi)
         node.config['data_type_display'] = 'Element Mass (fg)'
+        return node, multi
+
+    def test_multi_sample_panels_one_subplot_per_sample_for_chosen_group(self, qapp):
+        """Multi-sample PANELS inverts the single-sample layout: the user
+        picks ONE group and gets one subplot per SAMPLE, so the comparison
+        is across samples rather than across groups (spec, 2026-08-25)."""
+        from results.results_heatmap import (
+            HeatmapDisplayDialog, PANEL_GROUP_CONFIG_KEY)
+        node, _ = self._multi_node()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        node.config[PANEL_GROUP_CONFIG_KEY] = 'Smelter'
         dlg = HeatmapDisplayDialog(node, None)
-        dlg.show()
-        assert dlg._panel_selector_row.isVisible()
-        assert dlg.panel_sample_combo.count() == 2
-        b_idx = dlg.panel_sample_combo.findData('B')
-        dlg.panel_sample_combo.setCurrentIndex(b_idx)
-        assert dlg._panel_sample == 'B'
+        dlg._refresh()
+        titles = {ax.get_title() for ax in dlg.figure.get_axes() if ax.get_title()}
+        assert titles == {'A', 'B'}
+
+    def test_multi_sample_panels_skips_samples_without_the_group(self, qapp):
+        """A group defined for some samples but not others must yield no
+        subplot at all for the samples it never applied to -- not an empty
+        one (the classifier can hold different definitions per sample)."""
+        from results.results_heatmap import HeatmapPlotNode
+        out_a = _heatmap_test_stream('A').get_output_data()
+        # Sample B: same particles, but NO definitions -> nothing is Smelter.
+        clf_b = _heatmap_test_stream('B')
+        clf_b.definitions = []
+        out_b = clf_b.get_output_data()
+        multi = dict(out_a)
+        multi.update({'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+                      'particle_data': out_a['particle_data'] + out_b['particle_data']})
+        node = HeatmapPlotNode()
+        node.process_data(multi)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        panels = node.extract_panel_data()
+        assert set(panels['Smelter'].keys()) == {'A'}
+
+    def test_panel_group_falls_back_when_stored_group_is_gone(self, qapp):
+        """A saved project whose classifier was later re-configured must not
+        render an empty window -- resolve against the CURRENT group list."""
+        from results.results_heatmap import PANEL_GROUP_CONFIG_KEY
+        node, _ = self._multi_node()
+        node.config[PANEL_GROUP_CONFIG_KEY] = 'a_group_that_no_longer_exists'
+        assert node.panel_group() in node.panel_groups()
+
+    def test_panels_group_combo_and_display_mode_gating(self, qapp):
+        """The group dropdown lives in Configure plot quantities (not inline),
+        and PANELS defines its own layout so the multi-sample display-mode
+        options are disabled with a visible reason under that role."""
+        from results.results_heatmap import HeatmapSettingsDialog
+        node, multi = self._multi_node()
+        dlg = HeatmapSettingsDialog(node.config, True, ['A', 'B'],
+                                    scope='quantities', input_data=multi)
+        assert dlg.panel_group_combo is not None
+        offered = [dlg.panel_group_combo.itemData(i)
+                  for i in range(dlg.panel_group_combo.count())]
+        assert 'Smelter' in offered
+
+        role_combo = dlg._classifier_group.role_combo
+        role_combo.setCurrentIndex(role_combo.findData(cv.ROLE_FACET))
+        assert dlg.panel_group_combo.isEnabled()
+        assert not dlg.display_mode.isEnabled()
+
+        role_combo.setCurrentIndex(role_combo.findData(cv.ROLE_OFF))
+        assert not dlg.panel_group_combo.isEnabled()
+        assert dlg.display_mode.isEnabled()
+
+    def test_single_sample_settings_has_no_panel_group_combo(self, qapp):
+        """Single-sample PANELS shows every group at once, so there is
+        nothing to select -- the combo must not be built at all."""
+        from results.results_heatmap import HeatmapSettingsDialog
+        out = _heatmap_test_stream().get_output_data()
+        dlg = HeatmapSettingsDialog({}, False, [], scope='quantities',
+                                    input_data=out)
+        assert dlg.panel_group_combo is None
 
     def test_combined_heatmap_display_mode_does_not_crash_under_groups(self, qapp):
         """Regression test for the KeyError('count') bug: Combined Heatmap
@@ -2507,7 +2629,7 @@ class TestHeatmapDialogRoleWiring:
         fdlg = HeatmapSettingsDialog({}, False, [], scope='format', input_data=out)
         assert fdlg.show_expression_cb is not None
 
-    def test_colors_underline_margin_widened_when_highlights_present(self, qapp):
+    def test_colors_underline_margin_widened_when_underlines_present(self, qapp):
         """Regression test for a real bug found by rendering to PNG and
         looking, not just checking Line2D objects exist: the underline is
         drawn at xmin=-0.22 AXES-fraction, well outside the axes' own
@@ -2516,25 +2638,99 @@ class TestHeatmapDialogRoleWiring:
         figure-fraction 0.08, and the underline's -0.22-of-axes-width reach
         landed at a NEGATIVE figure-fraction x, i.e. past the edge of the
         canvas -- rendering as a barely-visible sliver at best. Confirmed
-        by user report ("there never is highlighting") and by an actual
-        saved-PNG inspection, not assumption."""
+        by user report and by an actual saved-PNG inspection."""
+        from results.results_heatmap import UNDERLINE_CONFIG_KEY
         node, dlg = self._dialog()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
         dlg._refresh()
         off_left = dlg.figure.subplotpars.left
 
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
-        node.config['highlighted_combos'] = {}
+        node.config[UNDERLINE_CONFIG_KEY] = {}
         dlg._refresh()
-        assert dlg._any_highlights_this_render is True
+        assert dlg._any_underlines_this_render is True
         assert dlg.figure.subplotpars.left >= 0.24
         assert dlg.figure.subplotpars.left > off_left
 
-    def test_no_margin_widening_when_no_highlights(self, qapp):
+    def test_no_margin_widening_when_no_underlines(self, qapp):
         """OFF/GROUPS/PANELS never draw the underline at all -- the margin
         fix must not fire (and must not needlessly shrink normal charts)
         when there's nothing to make room for."""
         node, dlg = self._dialog()
         node.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
         dlg._refresh()
-        assert dlg._any_highlights_this_render is False
+        assert dlg._any_underlines_this_render is False
+
+
+class TestUnderlineRenameMigration:
+    """The feature was renamed highlight -> underline (2026-08-25) because
+    that is what it draws. The config key moved with it, so saved projects
+    must keep working."""
+
+    def test_legacy_key_is_read(self):
+        from results.results_heatmap import (
+            _read_underlined_combos, LEGACY_UNDERLINE_CONFIG_KEY)
+        cfg = {LEGACY_UNDERLINE_CONFIG_KEY: {'60Ni': '#ABCDEF'}}
+        assert _read_underlined_combos(cfg) == {'60Ni': '#ABCDEF'}
+
+    def test_current_key_wins_over_legacy(self):
+        from results.results_heatmap import (
+            _read_underlined_combos, UNDERLINE_CONFIG_KEY,
+            LEGACY_UNDERLINE_CONFIG_KEY)
+        cfg = {UNDERLINE_CONFIG_KEY: {'60Ni': '#111111'},
+               LEGACY_UNDERLINE_CONFIG_KEY: {'60Ni': '#222222'}}
+        assert _read_underlined_combos(cfg) == {'60Ni': '#111111'}
+
+    def test_writing_clears_the_legacy_key(self):
+        from results.results_heatmap import (
+            _write_underlined_combos, UNDERLINE_CONFIG_KEY,
+            LEGACY_UNDERLINE_CONFIG_KEY)
+        cfg = {LEGACY_UNDERLINE_CONFIG_KEY: {'60Ni': '#222222'}}
+        _write_underlined_combos(cfg, {'60Ni': '#333333'})
+        assert cfg[UNDERLINE_CONFIG_KEY] == {'60Ni': '#333333'}
+        assert LEGACY_UNDERLINE_CONFIG_KEY not in cfg
+
+    def test_legacy_list_format_still_normalizes(self):
+        """The even older list-of-keys shape (all rendered black) predates
+        per-row colors and must still load."""
+        from results.results_heatmap import (
+            _read_underlined_combos, LEGACY_UNDERLINE_CONFIG_KEY,
+            DEFAULT_UNDERLINE_COLOR)
+        cfg = {LEGACY_UNDERLINE_CONFIG_KEY: ['60Ni', '107Ag']}
+        assert _read_underlined_combos(cfg) == {
+            '60Ni': DEFAULT_UNDERLINE_COLOR, '107Ag': DEFAULT_UNDERLINE_COLOR}
+
+
+class TestFalsyGroupColorDoesNotEraseBucket:
+    """``groups.get(name, fallback)`` only substitutes when the key is
+    ABSENT, so a group registered with an explicitly empty color resolved to
+    None and was then silently dropped by every color consumer -- a bucket
+    that renders as nothing at all is indistinguishable from a bug."""
+
+    def test_registry_gets_a_real_color_for_a_none_valued_group(self):
+        out = _relabel([_particle({'60Ni': 10})],
+                       [_def('60Ni', group='Smelter')],
+                       overlap='priority', groups={'Smelter': None})
+        assert out[0][pcr.BUCKET_KEY] == 'Smelter'
+        from tools.particle_classifier_relabel import build_bucket_registry
+        reg = build_bucket_registry([_def('60Ni', group='Smelter')],
+                                    {'Smelter': None}, 'unclassified', '#9CA3AF')
+        assert reg['Smelter']['color']
+
+    def test_bucket_without_registry_color_still_gets_a_color(self):
+        """Even if a colorless entry somehow reaches the reader, the row must
+        still be colored rather than silently skipped."""
+        particles = _relabel([_particle({'60Ni': 10})],
+                             [_def('60Ni', group='Smelter')], overlap='priority')
+        stream = {'_classifier_registry': {'Smelter': {'color': None}}}
+        assert cv.default_row_bucket_colors(stream, particles) == [
+            cv.FALLBACK_BUCKET_COLOR]
+
+    def test_unclassified_excluded_by_default_included_on_request(self):
+        particles = _relabel([_particle({'107Ag': 4})],
+                             [_def('60Ni', group='Smelter')], overlap='priority')
+        stream = {'_classifier_registry': {
+            cv.UNCLASSIFIED_LABEL: {'color': '#9CA3AF'}}}
+        assert cv.default_row_bucket_colors(stream, particles) == []
+        assert cv.default_row_bucket_colors(
+            stream, particles, include_unclassified=True) == ['#9CA3AF']

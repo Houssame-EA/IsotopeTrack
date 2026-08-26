@@ -750,8 +750,21 @@ def group_composition_rows(particles, data_key, scope, denominator):
     return out
 
 
-def default_row_bucket_colors(input_data, row_particles):
-    """Classifier-derived highlight color(s) for one COLORS-mode heatmap row.
+#: Last-resort color for a bucket the registry has no usable color for.
+#: Deliberately a real, visible color rather than None: a bucket that
+#: silently renders as "no color at all" is indistinguishable from a bug
+#: (and was one -- see ``default_row_bucket_colors``).
+FALLBACK_BUCKET_COLOR = '#3B82F6'
+
+#: The synthetic bucket the classifier assigns to particles that matched no
+#: definition, when its unmatched mode is "unclassified" (the literal label
+#: ``tools.particle_classifier_relabel`` emits and registers).
+UNCLASSIFIED_LABEL = 'Unclassified'
+
+
+def default_row_bucket_colors(input_data, row_particles,
+                              include_unclassified=False):
+    """Classifier-derived underline color(s) for one COLORS-mode heatmap row.
 
     A heatmap row (outside GROUPS role) is a raw isotope co-occurrence
     signature, not a single particle -- but classifier matching is
@@ -776,19 +789,39 @@ def default_row_bucket_colors(input_data, row_particles):
             particle, one per matched bucket -- harmless here since only the
             resulting SET of labels is used.
 
+        include_unclassified (bool): Whether the synthetic
+            :data:`UNCLASSIFIED_LABEL` bucket earns a color. Defaults to
+            **False**: "unclassified" and "passthrough" are two spellings of
+            the same fact -- this particle matched nothing the user defined
+            -- and they should look identical (uncolored) rather than
+            differing purely because of an upstream mode switch that says
+            nothing about the science. Colored = matched something the user
+            actually defined.
+
     Returns:
         list[str]: Hex color strings, one per distinct matched bucket,
         registry-ordered (stable regardless of particle iteration order).
-        Empty when the row has no classified members at all (an
-        all-passthrough row -- nothing to color).
+        Empty when the row has no colorable classified members (an
+        all-passthrough or all-unclassified row -- nothing to color).
+
+        A bucket whose registry entry carries no usable color still gets
+        :data:`FALLBACK_BUCKET_COLOR` rather than being dropped: silently
+        omitting it is indistinguishable from "this row isn't classified",
+        which is exactly how a colorless-bucket bug hid itself once already.
     """
     labels_in_row = {bucket_of(p) for p in row_particles} - {None}
+    if not include_unclassified:
+        labels_in_row -= {UNCLASSIFIED_LABEL}
     if not labels_in_row:
         return []
     registry = bucket_registry(input_data)
+    # Registry order first (stable, user-meaningful), then any label the
+    # particles carry that the registry somehow doesn't list -- rather than
+    # dropping it, which would silently under-color a real row.
     ordered_labels = [lbl for lbl in registry if lbl in labels_in_row]
-    return [bucket_color(input_data, lbl) for lbl in ordered_labels
-            if bucket_color(input_data, lbl)]
+    ordered_labels += sorted(labels_in_row - set(ordered_labels))
+    return [bucket_color(input_data, lbl, FALLBACK_BUCKET_COLOR)
+            for lbl in ordered_labels]
 
 
 def has_multiple_buckets(input_data):

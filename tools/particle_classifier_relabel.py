@@ -212,7 +212,13 @@ def _bucket_label_and_color(d, groups):
     """
     group = d.get('group_name')
     if group:
-        return group, groups.get(group, d.get('color') or '#3B82F6')
+        # ``groups.get(group, fallback)`` would be WRONG here: dict.get only
+        # substitutes its default when the key is ABSENT, so a group present
+        # in the registry with an explicitly None/empty color would return
+        # None and propagate a colorless bucket downstream (found 2026-08-25
+        # -- it silently erased classifier coloring in heatmap COLORS role).
+        # ``or`` chaining treats "present but empty" the same as "missing".
+        return group, (groups.get(group) or d.get('color') or '#3B82F6')
     label = d.get('expression_text') or d.get('id')
     return label, d.get('color') or '#3B82F6'
 

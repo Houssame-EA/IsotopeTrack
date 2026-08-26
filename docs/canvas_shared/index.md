@@ -17,7 +17,7 @@ Workflow canvas and shared plotting infrastructure.
 ### [`shared_plot_utils.py`](shared-plot-utils.md)
 
 
-**10** classes &nbsp;·&nbsp; **86** functions &nbsp;·&nbsp; **48** methods
+**11** classes &nbsp;·&nbsp; **87** functions &nbsp;·&nbsp; **51** methods
 
 ### [`shared_annotation.py`](shared-annotation.md)
 shared_annotations.py — Figure annotation system for IsotopeTrack.

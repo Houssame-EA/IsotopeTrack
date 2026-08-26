@@ -501,7 +501,7 @@ AI sparkle icon.
 | `_ual` | `()` | Return the UserActionLogger, or None if logging isn't ready. |
 | `_collect_main_windows` | `()` | Return every visible MainWindow in this process. |
 | `_sample_concentration_meta` | `(window, sample_name)` | Build the per sample concentration metadata for a source window. |
-| `_combine_concentration_meta` | `(metas)` | Combine per member concentration metadata into a single entry. |
+| `_combine_concentration_meta` | `(metas, dilution_resolution=None)` | Combine per member concentration metadata into a single entry. |
 | `_warn_before_apply_changes` | `(parent, node)` | Remind the user that applying this node's configuration now may |
 | `_dialog_base_style` | `()` | Dialog stylesheet synced to the current app theme. The canvas itself |
 | `_canvas_chrome_style` | `()` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
