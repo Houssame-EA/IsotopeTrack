@@ -6936,7 +6936,7 @@ class MainWindow(QMainWindow):
                     return
                 QApplication.processEvents()
 
-            sample_name = particle.get('_source_sample', sample_name)
+            sample_name = particle.get('_source_sample', sample_name) # TODO _source_sample --> source_sample
 
             if 'element_mass_fg' not in particle:
                 particle['element_mass_fg'] = {}
