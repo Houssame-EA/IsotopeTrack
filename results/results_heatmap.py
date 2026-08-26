@@ -152,6 +152,11 @@ class HeatmapSettingsDialog(QDialog):
         self.x_rotation_spin = None
         self.ann_fontsize_spin = None
         self.cell_lw_spin = None
+        # Declared here like every other widget so a scope that doesn't build
+        # them still has a real attribute to test -- collect() previously
+        # relied on getattr() defaults to cover the gap.
+        self.cell_stat_combo = None
+        self.cell_spread_combo = None
         self._font_group = None
         self._export_grp = None
         self._sample_name_edits = None
@@ -362,6 +367,25 @@ class HeatmapSettingsDialog(QDialog):
             fl.addRow("Min particles:", self.min_particles)
             layout.addWidget(g)
 
+            # Cell Statistic belongs to QUANTITIES, not format: these two
+            # choose WHAT NUMBER each cell reports (which central statistic
+            # over the cell's value list, and which spread to append), not
+            # how it is drawn. Moved out of the format scope 2026-08-26 --
+            # it sat there historically, alongside the genuinely cosmetic
+            # "Cell Appearance" group it is easy to confuse it with.
+            g = QGroupBox("Cell Statistic")
+            fl = QFormLayout(g)
+            self.cell_stat_combo = QComboBox()
+            self.cell_stat_combo.addItems(CELL_STAT_OPTIONS)
+            self.cell_stat_combo.setCurrentText(self._config.get('cell_stat', 'Mean'))
+            fl.addRow("Cell value:", self.cell_stat_combo)
+            self.cell_spread_combo = QComboBox()
+            self.cell_spread_combo.addItems(CELL_SPREAD_OPTIONS)
+            self.cell_spread_combo.setCurrentText(
+                self._config.get('cell_spread', 'None'))
+            fl.addRow("Show spread:", self.cell_spread_combo)
+            layout.addWidget(g)
+
         if self._scope in ('all', 'format'):
             g = QGroupBox("Labels")
             fl = QFormLayout(g)
@@ -436,19 +460,6 @@ class HeatmapSettingsDialog(QDialog):
             self.cell_lw_spin.setDecimals(2); self.cell_lw_spin.setSpecialValueText("Off")
             self.cell_lw_spin.setValue(self._config.get('cell_linewidth', 0.5))
             fl.addRow("Cell border width:", self.cell_lw_spin)
-            layout.addWidget(g)
-
-            g = QGroupBox("Cell Statistic")
-            fl = QFormLayout(g)
-            self.cell_stat_combo = QComboBox()
-            self.cell_stat_combo.addItems(CELL_STAT_OPTIONS)
-            self.cell_stat_combo.setCurrentText(self._config.get('cell_stat', 'Mean'))
-            fl.addRow("Cell value:", self.cell_stat_combo)
-            self.cell_spread_combo = QComboBox()
-            self.cell_spread_combo.addItems(CELL_SPREAD_OPTIONS)
-            self.cell_spread_combo.setCurrentText(
-                self._config.get('cell_spread', 'None'))
-            fl.addRow("Show spread:", self.cell_spread_combo)
             layout.addWidget(g)
 
             self._font_group = FontSettingsGroup(self._config)

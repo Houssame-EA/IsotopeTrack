@@ -106,6 +106,18 @@ ARITY_MULTI_KEY = 'multi_key'      #: needs 2+ keys from one particle at once
 #: for a node that lacks that dedicated aggregation path.
 ARITY_HEATMAP = 'heatmap'
 
+#: ``correlation_matrix``, same reasoning as ``ARITY_HEATMAP``: it is a
+#: multi-key node, but unlike its ``ARITY_MULTI_KEY`` siblings (network,
+#: molar/isotopic ratio, ternary) it has a bespoke, non-degenerate GROUPS
+#: mode -- a MIXED vocabulary where real isotopes and classifier groups share
+#: both axes (:func:`results.results_matrix.build_mixed_columns`), so an
+#: isotope x group cell is populated for every matched particle with no
+#: overlap between definitions required. Handing plain SERIES to the other
+#: multi-key nodes would hand them the original degenerate collapse instead,
+#: which is exactly why this needs its own constant rather than widening
+#: ``ARITY_MULTI_KEY``.
+ARITY_MATRIX = 'matrix'
+
 _ROLES_BY_ARITY = {
     # Per-key-independent charts (histogram, element bar, box, pie,
     # concentration) offer GROUPS and OFF only. PANELS/COLORS are genuinely
@@ -120,6 +132,7 @@ _ROLES_BY_ARITY = {
     ARITY_KEY_SET: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
     ARITY_MULTI_KEY: (ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
     ARITY_HEATMAP: (ROLE_SERIES, ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
+    ARITY_MATRIX: (ROLE_SERIES, ROLE_FACET, ROLE_ENCODE, ROLE_OFF),
 }
 
 _DEFAULT_ROLE_BY_ARITY = {
@@ -127,6 +140,7 @@ _DEFAULT_ROLE_BY_ARITY = {
     ARITY_KEY_SET: ROLE_OFF,
     ARITY_MULTI_KEY: ROLE_OFF,
     ARITY_HEATMAP: ROLE_OFF,
+    ARITY_MATRIX: ROLE_OFF,
 }
 
 

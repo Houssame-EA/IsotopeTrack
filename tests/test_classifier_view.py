@@ -538,15 +538,24 @@ class TestWiredIntoSettingsDialogs:
                                     input_data=out)
         assert dlg._classifier_group is None
 
-    def test_correlation_matrix_quantities_offers_multi_key_roles(self, qapp):
-        """correlation_matrix is ARITY_MULTI_KEY -- SERIES must not be
-        offered (there is no single-key axis a bucket could be)."""
+    def test_correlation_matrix_offers_all_four_roles(self, qapp):
+        """correlation_matrix moved to its own ARITY_MATRIX (2026-08-26).
+
+        It IS a multi-key node, but unlike its former ``ARITY_MULTI_KEY``
+        siblings it has a non-degenerate GROUPS mode: a MIXED vocabulary
+        where real isotopes and classifier groups share both axes, so an
+        isotope x group cell is populated for every matched particle with no
+        overlap between definitions needed. The other multi-key nodes still
+        must NOT be handed SERIES -- that is the whole reason this got its
+        own constant instead of widening the shared one."""
         from results.results_matrix import MatrixSettingsDialog
         out = _wired_node().get_output_data()
         dlg = MatrixSettingsDialog({}, out, scope='quantities')
         offered = [dlg._classifier_group.role_combo.itemData(i) for i in
                    range(dlg._classifier_group.role_combo.count())]
-        assert cv.ROLE_SERIES not in offered
+        assert set(offered) == {cv.ROLE_SERIES, cv.ROLE_FACET,
+                                cv.ROLE_ENCODE, cv.ROLE_OFF}
+        assert cv.ROLE_SERIES not in cv.available_roles(cv.ARITY_MULTI_KEY)
 
     def test_histogram_quantities_offers_series(self, qapp):
         """histogram_plot is ARITY_PER_KEY -- SERIES (today's behavior) must
@@ -2588,6 +2597,30 @@ class TestHeatmapDialogRoleWiring:
         role_combo.setCurrentIndex(role_combo.findData(cv.ROLE_OFF))
         assert not dlg.panel_group_combo.isEnabled()
         assert dlg.display_mode.isEnabled()
+
+    def test_cell_statistic_lives_in_quantities_not_format(self, qapp):
+        """Cell value / Show spread decide WHAT NUMBER a cell reports, so they
+        belong to "Configure plot quantities". They sat in the format scope
+        historically, next to the genuinely cosmetic "Cell Appearance" group
+        they are easy to confuse with (moved 2026-08-26)."""
+        from results.results_heatmap import HeatmapSettingsDialog
+        q = HeatmapSettingsDialog({}, False, [], scope='quantities', input_data=None)
+        f = HeatmapSettingsDialog({}, False, [], scope='format', input_data=None)
+        assert q.cell_stat_combo is not None and q.cell_spread_combo is not None
+        assert f.cell_stat_combo is None and f.cell_spread_combo is None
+        # The cosmetic neighbours must NOT have moved with it.
+        assert f.cell_lw_spin is not None
+        assert f.ann_fontsize_spin is not None
+
+    def test_format_scope_preserves_cell_statistic_values(self, qapp):
+        """A scope that no longer builds those widgets must pass the stored
+        values through untouched rather than resetting them to defaults."""
+        from results.results_heatmap import HeatmapSettingsDialog
+        f = HeatmapSettingsDialog({'cell_stat': 'Mode', 'cell_spread': 'SD'},
+                                  False, [], scope='format', input_data=None)
+        cfg = f.collect()
+        assert cfg['cell_stat'] == 'Mode'
+        assert cfg['cell_spread'] == 'SD'
 
     def test_single_sample_settings_has_no_panel_group_combo(self, qapp):
         """Single-sample PANELS shows every group at once, so there is
