@@ -395,6 +395,26 @@ def _finish_prime(node, dlg):
             _itk_log.exception("Handled exception in _finish_prime")
 
 
+def view_config_method(func):
+    """Mark a node method as config-derived, so a per-figure view computes it
+    against THAT FIGURE's config rather than the node's.
+
+    Use on any node method whose return value depends on ``self.config`` and
+    that a figure dialog may call -- see ``_FigureView._VIEW_CONFIG_PREFIXES``
+    for why silently getting this wrong is so hard to notice (the method keeps
+    returning its default answer forever while tests built on the raw node
+    keep passing).
+
+    Args:
+        func (callable): An unbound node method.
+
+    Returns:
+        callable: The same function, marked for ``_FigureView`` to wrap.
+    """
+    func._reads_view_config = True
+    return func
+
+
 class _FigureView:
     """One figure of a node: its own ``config``, shared underlying data.
 
@@ -469,19 +489,48 @@ class _FigureView:
         return _add_node_figure(self._node, self._dialog_class,
                                 self._parent_window, base_config=self.config)
 
-    def __getattr__(self, name):
-        """Delegate to the node, applying this view's config to extractions.
+    #: Name prefixes marking node methods whose ANSWER IS DERIVED FROM
+    #: ``config`` and therefore must be computed against *this figure's*
+    #: config, not the node's.
+    #:
+    #: **Read this before adding a config-derived method to any viz node.**
+    #: A figure dialog is handed a ``_FigureView``, never the node itself
+    #: (see ``open_node_figures``), and the settings dialog writes the user's
+    #: choices into ``view.config``. A node method reached through plain
+    #: delegation still sees ``node.config`` -- which nothing writes to under
+    #: multi-figure nodes -- so it silently returns the DEFAULT answer
+    #: forever, no matter what the user picks.
+    #:
+    #: That is not hypothetical: it shipped. The heatmap classifier roles
+    #: (``classifier_role``/``classifier_scope``/``classifier_denominator``/
+    #: ``panel_group``) were invisible in the running app for a full day of
+    #: manual QA -- PANELS rendered "No data available", COLORS drew no
+    #: underlines and no legend -- while GROUPS appeared to work purely
+    #: because ``extract_plot_data`` *is* wrapped and did see the right role.
+    #: Every automated test passed throughout, because they all built the
+    #: dialog around the raw node instead of a ``_FigureView`` (2026-08-25).
+    #:
+    #: Prefer :func:`view_config_method` on new methods -- it is explicit at
+    #: the definition site and immune to naming drift. These prefixes stay
+    #: for the many pre-existing ``extract_*`` methods across the viz nodes.
+    _VIEW_CONFIG_PREFIXES = ('extract_', 'classifier_', 'panel_')
 
-        Nodes name their extraction methods differently
-        (``extract_matrix_data``, ``extract_network_data`` and so on). Any
-        ``extract_*`` callable is wrapped so per-figure settings reach the
-        extraction step, not just the drawing step.
+    def __getattr__(self, name):
+        """Delegate to the node, applying this view's config where it matters.
+
+        Wrapped when the attribute is a callable and either its name starts
+        with one of :data:`_VIEW_CONFIG_PREFIXES` (nodes name extractions
+        differently -- ``extract_matrix_data``, ``extract_network_data``, and
+        so on) or it was explicitly marked with :func:`view_config_method`.
+        Everything else delegates untouched.
         """
         if name == '_node':
             raise AttributeError(name)
         attr = getattr(self._node, name)
-        if (name.startswith('extract_') and callable(attr)
-                and hasattr(self._node, 'config')):
+        if not (callable(attr) and hasattr(self._node, 'config')):
+            return attr
+        if (name.startswith(_FigureView._VIEW_CONFIG_PREFIXES)
+                or getattr(attr, '_reads_view_config', False)):
             return self._with_view_config(attr)
         return attr
 

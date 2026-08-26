@@ -1744,6 +1744,16 @@ class HeatmapPlotNode(QObject):
         ``results.classifier_view``'s role-model docs). Resolved fresh every
         call, never cached -- the upstream stream or the user's own choice
         can change between renders.
+
+        **Config-derived, and therefore view-sensitive.** This node is
+        multi-figure: its dialog is handed a ``_FigureView``, not the node,
+        and the user's role choice lands in *that figure's* config. The
+        ``classifier_`` prefix is what makes ``_FigureView`` evaluate this
+        against the figure's config instead of the node's -- do not rename it
+        without adding ``@view_config_method``, or this silently returns the
+        default role forever and the whole classifier UI goes dead in the app
+        while every test still passes. See
+        ``shared_plot_utils._FigureView._VIEW_CONFIG_PREFIXES``.
         """
         from results import classifier_view as cv
         return cv.effective_role(self.config, self.input_data, cv.ARITY_HEATMAP)

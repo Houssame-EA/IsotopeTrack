@@ -2662,6 +2662,147 @@ class TestHeatmapDialogRoleWiring:
         assert dlg._any_underlines_this_render is False
 
 
+class TestFigureViewConfigRouting:
+    """The bug that made a full day of classifier work invisible in the app
+    while every automated test passed (2026-08-25).
+
+    Multi-figure viz nodes are never handed to their dialog directly: the app
+    wraps them in a ``_FigureView`` so each figure window keeps independent
+    settings (``open_node_figures`` -> ``_add_node_figure`` ->
+    ``dialog_class(VIEW, ...)``). The settings dialog writes the user's
+    choices into ``view.config``. But ``_FigureView.__getattr__`` only swapped
+    that config in for methods named ``extract_*`` -- so ``classifier_role``,
+    ``classifier_scope``, ``classifier_denominator`` and ``panel_group`` read
+    the NODE's config, which nothing ever writes to, and returned their
+    defaults forever.
+
+    Symptoms, all reproduced before the fix: PANELS showed "No data
+    available" (``extract_plot_data`` correctly returned None for FACET while
+    ``_refresh`` still believed the role was OFF and took the non-FACET
+    branch); COLORS drew no underlines and no legend; GROUPS *appeared* to
+    work purely because extraction was wrapped and did see the right role.
+
+    **Every test in this file previously built its dialog around the raw
+    node**, which the app never does -- which is why 1204 green tests said
+    nothing about production. These tests use the real path on purpose.
+    """
+
+    def _view_and_dialog(self, role):
+        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+        from results.shared_plot_utils import _FigureView
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        node.config['data_type_display'] = 'Element Mass (fg)'
+        view = _FigureView(node, HeatmapDisplayDialog, None)
+        view.config[cv.ROLE_CONFIG_KEY] = role
+        return node, view, HeatmapDisplayDialog(view, None)
+
+    def test_role_follows_the_figures_config_not_the_nodes(self, qapp):
+        node, view, _ = self._view_and_dialog(cv.ROLE_FACET)
+        assert node.config.get(cv.ROLE_CONFIG_KEY) is None
+        assert view.classifier_role() == cv.ROLE_FACET
+
+    def test_scope_and_denominator_follow_the_figures_config(self, qapp):
+        node, view, _ = self._view_and_dialog(cv.ROLE_SERIES)
+        view.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+        view.config[cv.DENOMINATOR_CONFIG_KEY] = cv.DENOMINATOR_DETECTED_ONLY
+        assert view.classifier_scope() == cv.SCOPE_TOTAL_PARTICLE
+        assert view.classifier_denominator() == cv.DENOMINATOR_DETECTED_ONLY
+
+    def test_panels_render_through_a_view_instead_of_no_data(self, qapp):
+        """The headline symptom: "No data available, right-click for options"
+        under PANELS."""
+        _, _, dlg = self._view_and_dialog(cv.ROLE_FACET)
+        dlg._refresh()
+        texts = [t.get_text() for a in dlg.figure.get_axes() for t in a.texts]
+        assert not any('No data available' in t for t in texts), texts
+        titled = [a.get_title() for a in dlg.figure.get_axes() if a.get_title()]
+        assert set(titled) == {'Smelter', 'Unclassified'}
+
+    def test_colors_draw_through_a_view(self, qapp):
+        from results.results_heatmap import UNDERLINE_CONFIG_KEY
+        _, view, dlg = self._view_and_dialog(cv.ROLE_ENCODE)
+        view.config[UNDERLINE_CONFIG_KEY] = {}
+        dlg._refresh()
+        ax = dlg.figure.get_axes()[0]
+        assert ax.get_legend() is not None
+        assert len(ax.lines) > 0
+        assert dlg.figure.subplotpars.left >= 0.24
+
+    def test_panel_group_selection_follows_the_figures_config(self, qapp):
+        from results.results_heatmap import (
+            HeatmapPlotNode, HeatmapDisplayDialog, PANEL_GROUP_CONFIG_KEY)
+        from results.shared_plot_utils import _FigureView
+        out_a = _heatmap_test_stream('A').get_output_data()
+        out_b = _heatmap_test_stream('B').get_output_data()
+        multi = dict(out_a)
+        multi.update({'type': 'multiple_sample_data', 'sample_names': ['A', 'B'],
+                      'particle_data': out_a['particle_data'] + out_b['particle_data']})
+        node = HeatmapPlotNode()
+        node.process_data(multi)
+        view = _FigureView(node, HeatmapDisplayDialog, None)
+        view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_FACET
+        view.config[PANEL_GROUP_CONFIG_KEY] = 'Unclassified'
+        assert view.panel_group() == 'Unclassified'
+
+    def test_two_figures_of_one_node_keep_independent_roles(self, qapp):
+        """The whole reason _FigureView exists -- and the thing that broke."""
+        from results.results_heatmap import HeatmapPlotNode, HeatmapDisplayDialog
+        from results.shared_plot_utils import _FigureView
+        out = _heatmap_test_stream().get_output_data()
+        node = HeatmapPlotNode()
+        node.process_data(out)
+        v1 = _FigureView(node, HeatmapDisplayDialog, None)
+        v2 = _FigureView(node, HeatmapDisplayDialog, None)
+        v1.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        v2.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_ENCODE
+        assert v1.classifier_role() == cv.ROLE_SERIES
+        assert v2.classifier_role() == cv.ROLE_ENCODE
+
+    def test_other_nodes_classifier_methods_route_too(self, qapp):
+        """histogram and box plot carry the same config-derived methods and
+        are equally multi-figure -- the general fix must cover them, not just
+        heatmap (histogram's element-colour picker reads the role from the
+        dialog, so it was silently wrong through a view as well)."""
+        from results.results_bar_charts import HistogramPlotNode, HistogramDisplayDialog
+        from results.results_box_plot import BoxPlotNode, BoxPlotDisplayDialog
+        from results.shared_plot_utils import _FigureView
+        out = _scope_test_stream().get_output_data()
+        for node_cls, dlg_cls in ((HistogramPlotNode, HistogramDisplayDialog),
+                                  (BoxPlotNode, BoxPlotDisplayDialog)):
+            node = node_cls()
+            node.process_data(out)
+            view = _FigureView(node, dlg_cls, None)
+            view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_OFF
+            view.config[cv.SCOPE_CONFIG_KEY] = cv.SCOPE_TOTAL_PARTICLE
+            assert view.classifier_role() == cv.ROLE_OFF, node_cls.__name__
+            assert view.classifier_scope() == cv.SCOPE_TOTAL_PARTICLE, node_cls.__name__
+
+    def test_marker_decorator_also_routes(self, qapp):
+        """view_config_method covers methods that don't match a prefix, so a
+        future config-derived method can opt in explicitly instead of relying
+        on being named just so."""
+        from results.shared_plot_utils import _FigureView, view_config_method
+
+        class _Node:
+            def __init__(self):
+                self.config = {'x': 'node'}
+
+            @view_config_method
+            def marked(self):
+                return self.config.get('x')
+
+            def unmarked(self):
+                return self.config.get('x')
+
+        node = _Node()
+        view = _FigureView(node, None, None)
+        view.config['x'] = 'figure'
+        assert view.marked() == 'figure'
+        assert view.unmarked() == 'node'
+
+
 class TestUnderlineRenameMigration:
     """The feature was renamed highlight -> underline (2026-08-25) because
     that is what it draws. The config key moved with it, so saved projects
