@@ -839,6 +839,48 @@ class TestMatchCounts:
         dlg._expr_edit.setText("197Au")
         assert "(" not in dlg._def_list_label(dlg._current_definition())
 
+    def test_apply_to_selected_computes_count_with_one_sample(self, qapp, no_modal):
+        """Regression (2026-08-26, manual QA): with a single sample connected,
+        "Apply to Selected Samples" did nothing at all -- ``targets``
+        deliberately excludes the current sample, so it was always empty and
+        the method returned before recomputing anything. The match count
+        beside each definition (the classifier's core feedback) therefore
+        never appeared unless the user happened to press the OTHER button.
+        Both buttons must now give the same answer for the sample in hand."""
+        d = pcd.ParticleClassifierDialog(
+            None, [_sample("SampleA", ["60Ni", "107Ag"])])
+        d.show()
+        qapp.processEvents()
+        d._list.setCurrentRow(0)
+        d._add_definition()
+        d._expr_edit.setText("60Ni")
+        assert "(" not in d._def_list_label(d._current_definition())
+
+        d._apply_to_selected_samples()
+        assert d._def_list_label(d._current_definition()) == "60Ni (1)"
+
+    def test_apply_to_selected_skips_recompute_when_current_unchecked(self, dlg):
+        """Only recompute for the current sample when it is actually checked
+        for output -- an unchecked sample contributes nothing downstream, so
+        there is nothing to report a count for."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._list.item(0).setCheckState(Qt.Unchecked)  # current, unchecked
+        dlg._list.item(1).setCheckState(Qt.Unchecked)  # no other targets
+        dlg._apply_to_selected_samples()
+        assert "(" not in dlg._def_list_label(dlg._current_definition())
+
+    def test_apply_to_selected_still_copies_when_targets_exist(self, dlg):
+        """The single-sample shortcut must not disturb the normal path."""
+        dlg._list.setCurrentRow(0)
+        dlg._add_definition()
+        dlg._expr_edit.setText("60Ni")
+        dlg._list.item(1).setCheckState(Qt.Checked)
+        dlg._apply_to_selected_samples()
+        assert [d['expression_text'] for d in dlg._defs_for("SampleB")] == ["60Ni"]
+        assert dlg._def_list_label(dlg._current_definition()) == "60Ni (1)"
+
     def test_count_reflects_priority_exclusion(self, dlg):
         """Effective post-priority count: a higher-priority definition
         claims the shared particle, dropping the lower one's count to 0."""
