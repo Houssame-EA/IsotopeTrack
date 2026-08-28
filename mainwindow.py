@@ -310,10 +310,10 @@ class MainWindow(QMainWindow):
         if callable(_flush_opens):
             QTimer.singleShot(0, _flush_opens)
         self.update_window_title()
-        from tools.update_checker import UpdateChecker
+        from tools.update_checker import UpdateChecker, auto_check_enabled
         self._update_checker = UpdateChecker(self)
         _app = QApplication.instance()
-        if not getattr(_app, '_update_check_done', False):
+        if auto_check_enabled() and not getattr(_app, '_update_check_done', False):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
 
@@ -1105,6 +1105,11 @@ class MainWindow(QMainWindow):
                            self.show_about_dialog)
         update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
                             lambda: self._update_checker.check(silent=False))
+        self._auto_update_action = QAction("Check for Updates on Startup", self)
+        self._auto_update_action.setCheckable(True)
+        from tools.update_checker import auto_check_enabled, set_auto_check_enabled
+        self._auto_update_action.setChecked(auto_check_enabled())
+        self._auto_update_action.toggled.connect(set_auto_check_enabled)
 
         help_menu.addAction(welcome_action)
         help_menu.addSeparator()
@@ -1113,6 +1118,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(calibration_action)
         help_menu.addSeparator()
         help_menu.addAction(update_action)
+        help_menu.addAction(self._auto_update_action)
         help_menu.addAction(about_action)
 
     def open_new_window(self):
