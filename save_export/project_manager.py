@@ -861,7 +861,9 @@ Terminal=false
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
             'unclassified_color', 'group_pooling_policies',
             '_has_unresolved_issues', 'confound_dismissals',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Custom Cluster Test sweep snapshot (results/cluster/tools.py)
+            '_cluster_test_state'
         ]
 
         for attr in config_attributes:
@@ -869,7 +871,8 @@ Terminal=false
                 value = getattr(node, attr)
                 if isinstance(value, set):
                     value = list(value)
-                if attr == 'saved_cluster_state' and value:
+                if attr in ('saved_cluster_state',
+                            '_cluster_test_state') and value:
                     try:
                         import pickle
                         pickle.dumps(value)
@@ -1075,7 +1078,9 @@ Terminal=false
             'definitions', 'groups', 'overlap_mode', 'unmatched_mode',
             'unclassified_color', 'group_pooling_policies',
             '_has_unresolved_issues', 'confound_dismissals',
-            'saved_cluster_state'
+            'saved_cluster_state',
+            # Custom Cluster Test sweep snapshot (results/cluster/tools.py)
+            '_cluster_test_state'
         ]
 
         for attr in config_attributes:

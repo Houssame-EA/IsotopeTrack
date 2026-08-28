@@ -1,0 +1,48 @@
+name: Build Docs for Dev
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "**.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+concurrency:
+  group: dev-docs-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Regenerate module reference pages
+        run: python docs_gen.py
+
+      - name: Configure git (to commit back to dev)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Infos about what files were modified
+        run: git status --short
+
+      - name: Git Commit
+        uses: stefanzweifel/git-auto-commit-action@v7.2.0
+        with:
+          commit_message: Automatic documentation update
+          file_pattern: docs mkdocs.yml

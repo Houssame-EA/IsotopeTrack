@@ -38,9 +38,9 @@ decimal notation, 4 decimals for mass, 6 for moles, 2 for diameter).
 | `fmt_mass` | `(self, mass_fg: float) → str` | Format an internal fg mass in the user's chosen unit + format. |
 | `fmt_moles` | `(self, moles_fmol: float) → str` |  |
 | `fmt_diameter` | `(self, diameter_nm: float) → str` |  |
-| `fmt_mass_or_zero` | `(self, mass_fg: float) → str` |  |
-| `fmt_moles_or_zero` | `(self, moles_fmol: float) → str` |  |
-| `fmt_diameter_or_zero` | `(self, diameter_nm: float) → str` |  |
+| `fmt_mass_or_zero` | `(self, mass_fg: float) → str` | Format a mass, rendering anything non-positive as a plain "0". |
+| `fmt_moles_or_zero` | `(self, moles_fmol: float) → str` | Format an amount, rendering anything non-positive as a plain "0". |
+| `fmt_diameter_or_zero` | `(self, diameter_nm: float) → str` | Format a diameter, rendering non-positive values and NaN as "0". |
 
 ## Functions
 

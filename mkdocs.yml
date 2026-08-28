@@ -102,8 +102,8 @@ nav:
     - "colors.py": theme/colors.md
 - Data Loading:
     - Overview: loading/index.md
-    - "data_thread.py": loading/data-thread.md
     - "SIA_manager.py": loading/sia-manager.md
+    - "data_thread.py": loading/data-thread.md
     - "tofwerk_loading.py": loading/tofwerk-loading.md
     - "vitesse_loading.py": loading/vitesse-loading.md
 - Project & I/O:
@@ -120,13 +120,13 @@ nav:
     - "peak_detection.py": peak_detection/peak-detection.md
 - Calibration:
     - Overview: calibration/index.md
-    - "calibration_registry.py": calibration/calibration-registry.md
-    - "ionic_CAL.py": calibration/ionic-cal.md
     - "TE.py": calibration/te.md
-    - "te_common.py": calibration/te-common.md
     - "TE_input.py": calibration/te-input.md
     - "TE_mass.py": calibration/te-mass.md
     - "TE_number.py": calibration/te-number.md
+    - "calibration_registry.py": calibration/calibration-registry.md
+    - "ionic_CAL.py": calibration/ionic-cal.md
+    - "te_common.py": calibration/te-common.md
 - Canvas & Shared:
     - Overview: canvas_shared/index.md
     - "canvas_widgets.py": canvas_shared/canvas-widgets.md
@@ -154,7 +154,9 @@ nav:
     - "results_triangle.py": results/results-triangle.md
 - Clustering:
     - Overview: cluster/index.md
+    - "detail.py": cluster/detail.md
     - "dialog.py": cluster/dialog.md
+    - "export_workbook.py": cluster/export-workbook.md
     - "live.py": cluster/live.md
     - "live_engine.py": cluster/live-engine.md
     - "palette.py": cluster/palette.md
@@ -192,8 +194,13 @@ nav:
     - "compound_database.py": tools_utilities/compound-database.md
     - "formula_editor.py": tools_utilities/formula-editor.md
     - "formula_utils.py": tools_utilities/formula-utils.md
+    - "particle_classifier_dialog.py": tools_utilities/particle-classifier-dialog.md
+    - "particle_classifier_expr.py": tools_utilities/particle-classifier-expr.md
+    - "particle_classifier_node.py": tools_utilities/particle-classifier-node.md
+    - "particle_classifier_relabel.py": tools_utilities/particle-classifier-relabel.md
     - "particle_filter.py": tools_utilities/particle-filter.md
     - "periodic_table_info.py": tools_utilities/periodic-table-info.md
+    - "render_settings.py": tools_utilities/render-settings.md
     - "toast.py": tools_utilities/toast.md
     - "undo_manager.py": tools_utilities/undo-manager.md
     - "update_checker.py": tools_utilities/update-checker.md
@@ -205,9 +212,12 @@ nav:
     - Overview: utils/index.md
     - "__init__.py": utils/--init--.md
     - "app_version.py": utils/app-version.md
+    - "dialog_chrome.py": utils/dialog-chrome.md
     - "dilution.py": utils/dilution.md
     - "file_dialog_memory.py": utils/file-dialog-memory.md
     - "isobaric_correction.py": utils/isobaric-correction.md
     - "numba_guard.py": utils/numba-guard.md
+    - "numeric_format.py": utils/numeric-format.md
     - "pyqtgraph_patches.py": utils/pyqtgraph-patches.md
+    - "signal_stats.py": utils/signal-stats.md
     - "unit.py": utils/unit.md

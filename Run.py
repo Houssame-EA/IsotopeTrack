@@ -15,7 +15,7 @@ import multiprocessing
 multiprocessing.freeze_support()
 
 os.environ['NUMBA_THREADING_LAYER'] = 'workqueue'
-os.environ.setdefault('JOBLIB_MULTIPROCESSING', '1')
+os.environ.setdefault('JOBLIB_MULTIPROCESSING', '0')
 from tools.cli_utils import get_argument_parser
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.Run")

@@ -47,6 +47,11 @@ except Exception:
 from utils.numba_guard import numba_serial
 
 try:
+    from results.cluster.prep import reduction_kwargs, supported_kwargs
+except ImportError:
+    from .prep import reduction_kwargs, supported_kwargs
+
+try:
     from results.compositional import (
         _apply_clr, _apply_ilr, _apply_robust_zscore,
     )
@@ -128,36 +133,73 @@ except ImportError:
     )
 
 ALGO_PARAM_MAP = {
-    'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'kmeans_n_init'},
+    'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'kmeans_n_init',
+                'tol': 'kmeans_tol', 'algorithm': 'kmeans_algorithm'},
     'MiniBatch K-Means': {'batch_size': 'mbkm_batch_size',
-                          'max_iter': 'mbkm_max_iter', 'n_init': 'mbkm_n_init'},
-    'Gaussian Mixture': {'covariance_type': 'gmm_covariance_type'},
+                          'max_iter': 'mbkm_max_iter', 'n_init': 'mbkm_n_init',
+                          'max_no_improvement': 'mbkm_max_no_improvement',
+                          'reassignment_ratio': 'mbkm_reassignment_ratio'},
+    'Gaussian Mixture': {'covariance_type': 'gmm_covariance_type',
+                         'n_init': 'gmm_n_init',
+                         'init_params': 'gmm_init_params',
+                         'tol': 'gmm_tol', 'reg_covar': 'gmm_reg_covar'},
     'Hierarchical': {'linkage': 'hier_linkage', 'metric': 'hier_metric'},
     'DBSCAN': {'eps': 'dbscan_eps', 'min_samples': 'dbscan_min_samples',
-               'metric': 'dbscan_metric'},
+               'metric': 'dbscan_metric', 'algorithm': 'dbscan_algorithm',
+               'leaf_size': 'dbscan_leaf_size'},
     'Mean Shift': {'bandwidth': 'meanshift_bandwidth',
                    'min_bin_freq': 'meanshift_min_bin_freq',
-                   'auto_bw': 'meanshift_auto_bw'},
+                   'auto_bw': 'meanshift_auto_bw',
+                   'max_iter': 'meanshift_max_iter',
+                   'cluster_all': 'meanshift_cluster_all'},
     'OPTICS': {'min_samples': 'optics_min_samples',
                'metric': 'optics_metric',
-               'cluster_method': 'optics_cluster_method'},
+               'cluster_method': 'optics_cluster_method',
+               'xi': 'optics_xi', 'max_eps': 'optics_max_eps',
+               'min_cluster_size': 'optics_min_cluster_size',
+               'predecessor_correction': 'optics_predecessor_correction'},
     'Birch': {'threshold': 'birch_threshold',
               'branching_factor': 'birch_branching_factor'},
     'Spectral': {'n_neighbors': 'spectral_n_neighbors',
-                 'affinity': 'spectral_affinity'},
+                 'affinity': 'spectral_affinity',
+                 'gamma': 'spectral_gamma', 'n_init': 'spectral_n_init',
+                 'assign_labels': 'spectral_assign_labels'},
     'HDBSCAN': {'min_cluster_size': 'hdbscan_min_cluster_size',
                 'min_samples': 'hdbscan_min_samples',
-                'metric': 'hdbscan_metric'},
+                'metric': 'hdbscan_metric',
+                'cluster_selection_method':
+                    'hdbscan_cluster_selection_method',
+                'cluster_selection_epsilon':
+                    'hdbscan_cluster_selection_epsilon',
+                'alpha': 'hdbscan_alpha',
+                'max_cluster_size': 'hdbscan_max_cluster_size',
+                'allow_single_cluster': 'hdbscan_allow_single_cluster'},
     'SOM': {'som_rows': 'som_rows', 'som_cols': 'som_cols',
-            'som_iter': 'som_n_iter', 'som_sigma': 'som_sigma',
-            'som_lr': 'som_lr'},
+            'som_iter': 'som_n_iter', 'som_n_iter': 'som_n_iter',
+            'som_sigma': 'som_sigma', 'som_lr': 'som_lr',
+            'som_final_algo': 'som_final_algo'},
 }
+"""Engine parameter name to ``node.config`` key, per algorithm.
+
+Every parameter the custom sweep can vary appears here, because this map is
+what carries a swept pipeline into the shared configuration when a result is
+applied — a parameter missing from it is silently dropped, and the Settings
+panel then reproduces a different fit from the one that won. It is equally the
+map :func:`fit_fingerprint` walks to decide whether two fits are the same, so
+an omission also lets a stale cached fit stand in for a changed one.
+
+``SOM`` accepts both ``som_iter`` and ``som_n_iter`` for the iteration count:
+the animated engine names it the first way, the sweep grid the second, and
+both must land on the same config key.
+"""
+
 
 PROJECTION_TO_DIMRED = {'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP',
                         'None': 'None'}
 
 FIT_CONFIG_KEYS = ('scaling', 'data_type_display', 'filter_zeros',
-                   'min_particle_type_count', 'dim_reduction')
+                   'min_particle_type_count', 'dim_reduction',
+                   'dim_reduction_params')
 
 
 def fit_fingerprint(cfg, algo, k):
@@ -412,7 +454,7 @@ def _place_rest(Xs, fit_idx, Pf):
     return P
 
 
-def _embed(Xs, projection, n_dims):
+def _embed(Xs, projection, n_dims, params=None):
     """Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method.
 
     Returns (P, var_ratio, projection_used, loadings). ``loadings`` is the
@@ -422,6 +464,12 @@ def _embed(Xs, projection, n_dims):
 
     t-SNE/UMAP fall back to PCA if scikit-learn / umap aren't importable, so
     this never hard-fails.
+
+    ``params`` are the app's shared reduction settings (``dim_reduction_params``
+    in the node config), so the panel draws the embedding the clustering
+    actually ran in rather than one built from different hard-coded values. The
+    component count is *not* taken from them: this output has to be 2-D or 3-D
+    to be drawable, so ``n_dims`` always wins.
     """
     n_dims = 3 if int(n_dims) == 3 else 2
     n = len(Xs)
@@ -434,9 +482,9 @@ def _embed(Xs, projection, n_dims):
             from sklearn.manifold import TSNE
             fit_idx = _embed_fit_index(n)
             Xf = Xs[fit_idx]
-            perp = min(30, max(5, (len(Xf) - 1) // 3))
-            Pf = TSNE(n_components=n_dims, random_state=42, init="pca",
-                      perplexity=perp).fit_transform(Xf)
+            kw = reduction_kwargs("t-SNE", params, len(Xf), Xf.shape[1],
+                                  n_components=n_dims)
+            Pf = TSNE(**supported_kwargs(TSNE, kw)).fit_transform(Xf)
             P = _place_rest(Xs, fit_idx, np.asarray(Pf, float))
             return P, [float("nan")] * n_dims, "t-SNE", None
         except Exception:
@@ -448,10 +496,10 @@ def _embed(Xs, projection, n_dims):
             from umap import UMAP
             fit_idx = _embed_fit_index(n)
             Xf = Xs[fit_idx]
-            nn = min(15, max(2, len(Xf) - 1))
+            kw = reduction_kwargs("UMAP", params, len(Xf), Xf.shape[1],
+                                  n_components=n_dims)
             with numba_serial("UMAP (live projection)"):
-                model = UMAP(n_components=n_dims, n_neighbors=nn,
-                             random_state=42).fit(Xf)
+                model = UMAP(**supported_kwargs(UMAP, kw)).fit(Xf)
                 if len(fit_idx) == n:
                     P = np.asarray(model.embedding_, float)
                 else:
@@ -593,7 +641,8 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
     if projection == "None":
         P, var, proj_used, axis_labels = _raw_axes(Xs, elements, n_dims)
     else:
-        P, var, proj_used, loadings = _embed(Xs, projection, n_dims)
+        P, var, proj_used, loadings = _embed(
+            Xs, projection, n_dims, (cfg or {}).get("dim_reduction_params"))
 
     # ILR replaces the elements with D-1 balance coordinates, so a loading no
     # longer belongs to any single element and cannot be drawn as its arrow.
@@ -1051,11 +1100,18 @@ class ClusterLiveController(QObject):
         Mirrors the app's ``dim_reduction`` so the Settings dialog and the
         Cluster tab stay in sync. The 2-D/3-D choice is display-only and does
         not change the space the clustering runs in.
+
+        Changing the reduction clears ``dim_reduction_params``: parameters
+        belong to the reduction they were set for, and carrying them across
+        would reinterpret shared names such as ``n_components``.
         """
         self._proj = projection or "PCA"
         self._dims = 3 if int(dims) == 3 else 2
         cfg = self._dialog.node.config
-        cfg["dim_reduction"] = PROJECTION_TO_DIMRED.get(self._proj, "PCA")
+        new_dr = PROJECTION_TO_DIMRED.get(self._proj, "PCA")
+        if cfg.get("dim_reduction") != new_dr:
+            cfg["dim_reduction_params"] = {}
+        cfg["dim_reduction"] = new_dr
         cfg["live_dims"] = self._dims
         self._invalidate_host_matrix()
         self.rebuild_async()

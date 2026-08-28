@@ -415,6 +415,28 @@ class _FigureView:
         else:
             object.__setattr__(self, name, value)
 
+    def _with_view_config(self, func):
+        """Wrap a node method so it runs against this view's config.
+
+        Args:
+            func (callable): Bound method of the underlying node.
+
+        Returns:
+            callable: Wrapper that swaps the view's config onto the node for the
+            duration of the call and restores the node's own config afterwards.
+        """
+        node = self._node
+
+        def runner(*args, **kwargs):
+            saved = node.config
+            node.config = self.config
+            try:
+                return func(*args, **kwargs)
+            finally:
+                node.config = saved
+
+        return runner
+
     def extract_plot_data(self, *args, **kwargs):
         """Run the node's extraction with this view's config swapped in.
 
@@ -424,12 +446,7 @@ class _FigureView:
         n = self._node
         if not hasattr(n, 'config'):
             return n.extract_plot_data(*args, **kwargs)
-        saved = n.config
-        n.config = self.config
-        try:
-            return n.extract_plot_data(*args, **kwargs)
-        finally:
-            n.config = saved
+        return self._with_view_config(n.extract_plot_data)(*args, **kwargs)
 
     def new_figure(self):
         """Spawn another independent figure for the same node."""
@@ -437,9 +454,20 @@ class _FigureView:
                                 self._parent_window, base_config=self.config)
 
     def __getattr__(self, name):
+        """Delegate to the node, applying this view's config to extractions.
+
+        Nodes name their extraction methods differently
+        (``extract_matrix_data``, ``extract_network_data`` and so on). Any
+        ``extract_*`` callable is wrapped so per-figure settings reach the
+        extraction step, not just the drawing step.
+        """
         if name == '_node':
             raise AttributeError(name)
-        return getattr(self._node, name)
+        attr = getattr(self._node, name)
+        if (name.startswith('extract_') and callable(attr)
+                and hasattr(self._node, 'config')):
+            return self._with_view_config(attr)
+        return attr
 
 
 def _connect_view_thumb_refresh(view, dlg):

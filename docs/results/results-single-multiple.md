@@ -13,6 +13,11 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.
 | Name | Value |
 |------|-------|
 | `VIZ_TYPES` | `['Pie Charts', 'Heatmaps']` |
+| `QUANTITY_BASES` | `['Particle Count', 'Mass (fg)', 'Moles (fmol)']` |
+| `CELL_VALUE_MODES` | `['Quantity', 'Percentage', 'Both']` |
+| `QUANTITY_BASIS_KEYS` | `{'Particle Count': None, 'Mass (fg)': 'element_mass_fg', …` |
+| `QUANTITY_BASIS_DETAIL_KEYS` | `{'Particle Count': 'count', 'Mass (fg)': 'mass_fg', 'Mole…` |
+| `QUANTITY_BASIS_UNITS` | `{'Particle Count': ('P', 'P/mL'), 'Mass (fg)': ('fg', 'fg…` |
 | `SM_DISPLAY_MODES` | `['Individual Subplots', 'Side by Side Subplots', 'Combine…` |
 | `DEGREE_SIGN` | `'°'` |
 | `DEFAULT_CONFIG` | `{'custom_title': 'Single vs Multiple Element Analysis', '…` |
@@ -25,12 +30,12 @@ Analysis helper for single vs multiple element particle classification.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `analyze_particles` | `(particle_data, pct_single=0.5, pct_multiple=0.5)` |  |
+| `analyze_particles` | `(particle_data, pct_single=0.5, pct_multiple=0.5, quantity_basis='Part` | Classify particles into single- and multiple-element combinations. |
 | `format_clean` | `(combo_str, label_mode='Symbol', cfg=None)` | Format a raw combination label for display using the selected isotope label mode. |
 | `calc_per_ml` | `(count, parent_window, dilution=1.0, sample_info=None)` |  |
-| `pie_data` | `(results, combo_type, custom_colors=None, per_ml=False, parent_window=` |  |
+| `pie_data` | `(results, combo_type, custom_colors=None, per_ml=False, parent_window=` | Build slice values, labels and colors for one pie chart. |
 | `heatmap_data` | `(results_dict, per_ml=False, parent_window=None, dilution=1.0, label_m` | Build heatmap matrices for single- and multiple-element combinations. |
-| `statistics_table` | `(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilu` |  |
+| `statistics_table` | `(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilu` | Build the statistics table shown next to the figure. |
 
 ### `_ColorBtn` *(extends `QPushButton`)*
 
@@ -99,4 +104,14 @@ Main dialog with matplotlib figure and right-click context menu.
 | `configure` | `(self, parent_window)` |  |
 | `process_data` | `(self, input_data)` |  |
 | `extract_analysis_data` | `(self)` |  |
-| `_extract_multi` | `(self, st, mt)` |  |
+| `_extract_multi` | `(self, st, mt, quantity_basis='Particle Count')` |  |
+
+## Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `normalize_quantity_basis` | `(basis)` | Return a supported quantity basis name. |
+| `basis_unit` | `(basis, per_ml=False)` | Return the display unit belonging to a quantity basis. |
+| `format_quantity` | `(value, basis)` | Format a quantity for axis, slice and table text. |
+| `particle_quantity` | `(particle, basis)` | Return one particle's contribution on the requested basis. |
+| `detail_quantity` | `(detail, basis)` | Return a combination's aggregated quantity on the requested basis. |

@@ -1,5 +1,24 @@
 # `dialog.py`
 
+Clustering analysis dialog — algorithms, validity indices and result figures.
+
+Defines :class:`ClusteringDisplayDialog`, the workflow-node dialog that runs the
+clustering pipeline (scaling, dimensionality reduction, one of the algorithms in
+:data:`ALGORITHMS`, then internal validity scoring), and
+:class:`ClusteringPlotNode`, the canvas node that owns its configuration and
+opens the dialog.
+
+Matplotlib backend
+------------------
+The canvas is imported from ``backend_qtagg``, never ``backend_qt5agg``.
+Importing the latter sets matplotlib's global ``_QT_FORCE_QT5_BINDING`` flag,
+which tells matplotlib to bind PyQt5 or PySide2 rather than the PySide6 this
+application runs on. Whether that matters depends on which module imports a Qt
+backend first, so the failure is load-order dependent and intermittent — and
+two Qt bindings live in one process is a native crash, not a catchable
+exception. Every other plotting module in this package uses ``backend_qtagg``;
+keep this one consistent with them.
+
 ---
 
 ## Constants
@@ -16,6 +35,11 @@
 | `DENSITY_BASED_ALGOS` | `{'DBSCAN', 'HDBSCAN', 'OPTICS', 'Mean Shift'}` |
 | `DEFAULT_K_RANGE` | `list(range(2, 16))` |
 | `PROGRESS_RESOLUTION` | `1000` |
+| `METRIC_OPTIONS` | `['euclidean', 'manhattan', 'cosine', 'chebyshev', 'canber…` |
+| `METRIC_ALIASES` | `{'l1': 'manhattan', 'l2': 'euclidean'}` |
+| `ON_OFF` | `['off', 'on']` |
+| `SPECTRAL_AFFINITY_OPTIONS` | `['rbf', 'nearest_neighbors']` |
+| `SOM_FINAL_ALGO_OPTIONS` | `['Hierarchical (Ward)', 'Hierarchical (Average)', 'Hierar…` |
 | `SCALING_OPTIONS` | `['CLR', 'ILR', 'Robust Z-score', 'None']` |
 | `DIM_REDUCTION_OPTIONS` | `['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])` |
 | `DATA_TYPE_OPTIONS` | `['Counts', 'Element Mass (fg)', 'Particle Mass (fg)', 'El…` |
@@ -27,12 +51,20 @@
 
 ### `_SafeFigureCanvas` *(extends `FigureCanvas`)*
 
-FigureCanvas subclass that suppresses the PySide6 installEventFilter crash.
+FigureCanvas subclass that tolerates being shown before it has a window.
 
-In certain PySide6 + matplotlib combinations, FigureCanvas.showEvent calls
-self.window().installEventFilter(self) but window() returns a QWidgetItem
-(a layout item) rather than a real QWidget, causing an AttributeError that
-crashes the dialog on first show.
+``FigureCanvasQT.showEvent`` does ``self.window().windowHandle()`` and then
+installs an event filter on the result to track device-pixel-ratio changes.
+When the canvas is shown while its top-level widget does not yet have a
+native window — which happens for canvases built inside a tab page or a
+not-yet-mapped dialog — ``windowHandle()`` returns ``None`` and the
+attribute access raises ``AttributeError``.
+
+Swallowing it keeps the dialog alive, but the event filter is then never
+installed, so the canvas will not follow a move to a screen with a
+different pixel ratio. Rather than lose that permanently, remember that
+the setup was skipped and retry on the next show, by which point the
+native window normally exists.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
@@ -47,10 +79,7 @@ crashes the dialog on first show.
 | `fit` | `(self, X, progress_cb=None, snapshot_every=0)` | Train the SOM, optionally reporting live convergence snapshots. |
 | `predict` | `(self, X)` |  |
 | `get_weights` | `(self)` |  |
-| `get_grid_labels` | `(self, neuron_cluster_labels)` |  |
 | `get_u_matrix` | `(self)` | Compute the U-matrix: mean Euclidean distance from each neuron to |
-| `get_hit_count` | `(self, X)` | Count how many input samples have each neuron as their BMU |
-| `get_quantization_error` | `(self, X)` | Mean Euclidean distance from each input to its BMU. |
 
 ### `ClusteringSettingsDialog` *(extends `QDialog`)*
 
@@ -60,6 +89,8 @@ Full settings dialog opened from right-click → Configure.
 |--------|-----------|-------------|
 | `__init__` | `(self, config, parent=None, input_data=None)` | Initialise the dialog and build the UI from the supplied config. |
 | `_build_ui` | `(self)` |  |
+| `_build_dr_param_form` | `(self, dim_reduction)` | Rebuild the reduction-parameter rows for ``dim_reduction``. |
+| `_collect_dr_params` | `(self)` | Return ``{param: value}`` for the current reduction's widgets. |
 | `collect` | `(self) → dict` | Collect all widget values into a configuration dictionary. |
 
 ### `_ClusterWorker` *(extends `QThread`)*
@@ -74,8 +105,6 @@ thread, since matplotlib/Qt widgets are not thread-safe.
 
 Signals:
     progressed (int, str): Percent complete (0-100) and a status message.
-    som_snapshot (object, int, int): Live SOM convergence frame —
-        ``(weights_copy, current_iter, total_iter)``.
     done (object): Emitted on success with a results payload dict.
     failed (str): Emitted on error with the exception message.
 
@@ -186,22 +215,15 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_btn_style` | `(self, color)` | Return the stylesheet for a flat coloured action button. |
 | `_make_btn` | `(self, text, color, slot)` |  |
 | `_build_eval_tab` | `(self)` |  |
-| `_build_summary_tab` | `(self)` | Build the Summary tab holding the consensus decision matrix. |
-| `_refresh_summary` | `(self)` | Redraw the consensus summary table from the latest evaluation state. |
 | `_ctx_menu` | `(self, pos, tab)` |  |
 | `_make_popout_btn` | `(self, slot)` |  |
 | `_pop_out_figure` | `(self, tab: str)` | Redraw the requested figure into a standalone resizable window. |
 | `_edit_figure` | `(self, tab: str)` | Open the per-figure display settings dialog. |
-| `_redraw_figure` | `(self, tab: str)` |  |
-| `_set` | `(self, key, value)` |  |
 | `_build_overview_tab` | `(self)` |  |
 | `_on_overview_view_changed` | `(self, text)` | Handle a change to the Strips/Heatmap toggle in the Overview toolbar. |
 | `_open_overview_element_picker` | `(self)` | Pop a small multi-select menu of available elements. |
 | `_clear_overview_elements` | `(self)` | Empty the selected-elements list and redraw. |
 | `_refresh_overview_elem_btn` | `(self)` | Sync the picker button's label with the current selection. |
-| `_build_dendrogram_tab` | `(self)` |  |
-| `_draw_dendrogram` | `(self)` |  |
-| `_draw_dendrogram_into` | `(self, target_fig)` |  |
 | `_draw_overview` | `(self)` | Render the Overview tab: composition strips (or heatmap) on the |
 | `_draw_overview_into` | `(self, target_fig)` | Draw the Overview content into an arbitrary Figure. |
 | `_restyle_heatmap_axes` | `(self, ax, fig, cfg)` | Re-apply font and theme to an externally-drawn heatmap axes. |
@@ -211,7 +233,8 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_on_node_changed` | `(self)` |  |
 | `_get_elements` | `(self)` |  |
 | `_prepare_data` | `(self, elements)` | Prepare data matrix — identical logic to original. |
-| `_run_algo` | `(self, name, k, data)` |  |
+| `_keep_fit` | `(self, name, est, data)` | Fit ``est``, remembering it so other tabs need not refit. |
+| `_run_algo` | `(self, name, k, data)` | Fit one algorithm on the prepared matrix and return its labels. |
 | `_run_som` | `(self, k, data, cfg, progress_cb=None)` | Train a SOM and cluster the resulting neuron weight vectors. |
 | `_evaluate_data` | `(self, data, *, enabled_algos=None, enabled_metrics=None, min_k=None, ` | Run the full algorithm × K × metric sweep on ``data`` once. |
 | `_pick_optimal_per_metric` | `(self, eval_results)` | Reduce an eval-results dict to ``{metric: K}`` using vote+tiebreak. |
@@ -234,10 +257,10 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_run_clustering` | `(self)` | Launch the clustering pipeline on a background worker thread. |
 | `_set_progress` | `(self, pct)` | Set the toolbar progress bar from a 0-100 percentage. |
 | `_on_cluster_progress` | `(self, pct, message)` | Update the progress bar and status text from worker signals. |
-| `_on_som_snapshot` | `(self, weights, t, total)` | Render a live SOM convergence frame during training. |
 | `_persist_results_to_node` | `(self, sel_k=None)` | Store the full clustering state on the workflow node so it is |
 | `_restore_saved_results` | `(self)` | Restore a previously saved clustering state from the workflow |
 | `_on_cluster_done` | `(self, payload)` | Finalise clustering results on the main thread and draw all figures. |
+| `_stamp_fit` | `(self, data, sel_k)` | Record what this clustering run fitted, so other tabs can reuse it. |
 | `_on_cluster_failed` | `(self, message)` | Report a worker-thread failure to the user. |
 | `_on_cluster_thread_finished` | `(self)` | Clean up after the worker thread terminates (success or failure). |
 | `closeEvent` | `(self, event)` | Ensure a running clustering worker finishes before teardown. |
@@ -247,7 +270,6 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_on_k_slider_changed` | `(self, k)` | Sync the combo to the slider and, if live mode is on, schedule a recut. |
 | `_do_live_k` | `(self)` | Recompute clustering for the current slider K on the main thread. |
 | `_hier_recut` | `(self, data, k, cfg)` | Cut a cached hierarchical linkage tree at K clusters. |
-| `_build_som_tab` | `(self)` |  |
 | `_build_live_tab` | `(self)` | Add the interactive '② Cluster' tab (animated clustering). |
 | `_on_live_tab_shown` | `(self, idx)` | Refresh the live view's data when its tab is opened. |
 | `_characterise` | `(self, elements, data)` | Generate cluster characterisation with real element-% composition labels. |
@@ -259,7 +281,9 @@ Main clustering dialog with toolbar, tabs, and right-click menus.
 | `_on_stability_failed` | `(self, message)` | Report a stability-worker failure to the user. |
 | `_on_stability_thread_finished` | `(self)` | Restore the toolbar and progress state after the worker exits. |
 | `_show_stability_dialog` | `(self)` | Open a window with the stability figure (Jaccard bars + histogram). |
-| `_export_results` | `(self)` | Serialise clustering results and characterisation to a JSON file. |
+| `_export_results` | `(self)` | Export the clustering results to a workbook or a JSON file. |
+| `_export_results_xlsx` | `(self, path)` | Write the results as a multi-sheet Excel workbook. |
+| `_export_results_json` | `(self, path)` | Write the results as a single nested JSON document. |
 | `_export_methods` | `(self)` | Preview and export an auto-generated methods paragraph. |
 
 ### `ClusteringPlotNode` *(extends `QObject`)*
@@ -284,13 +308,13 @@ Clustering analysis node with matplotlib figures.
 | `_dunn_sym_score` | `(data, labels, max_points=2000, random_state=0)` | Dunn-Symmetric (Sym-Dunn) cluster validity index (higher is better). |
 | `_c_index_score` | `(data, labels, max_points=2000, random_state=0)` | C-index cluster validity index (lower is better, bounded in ``[0, 1]``). |
 | `_vote_optimal_per_metric` | `(eval_results, elbow_fn, enabled_metrics=None)` | Select an optimal K per metric by voting across algorithms. |
-| `_cluster_col` | `(cid, cfg=None)` | Colour for a cluster label, honouring the user's saved overrides. |
+| `normalize_metric` | `(name, default='euclidean')` | Resolve a stored metric name to one :data:`METRIC_OPTIONS` still offers. |
+| `effective_metric` | `(name, params)` | Return the distance metric a configuration will really be fitted with. |
+| `as_flag` | `(value, default)` | Resolve a boolean estimator flag from a configuration value. |
 | `_palette_to_plot` | `(pal)` | Map an app ``Palette`` (or None) to the plot/theme keys used here. |
 | `_current_plot_palette` | `()` | Return the active plot/theme dict from the app ThemeManager. |
 | `_filter_rare_particle_types` | `(matrix, sample_labels, original_indices, min_count)` | Remove particles whose elemental signature occurs fewer than min_count times. |
-| `_som_cluster_cmap` | `(name, n_clusters)` | Build a discrete categorical colormap for the SOM cluster grid. |
 | `_contrast_text_for` | `(cmap_name, norm_value)` | Pick black or white text for legibility over a colormap cell. |
-| `_draw_som_grid` | `(fig, som_obj, neuron_cluster_labels, data_labels, cfg, sample_labels=` | Draw the SOM diagnostic panels: cluster grid, U-matrix, hit-count, |
 | `_font_scale` | `(cfg, role='label')` | Return a (FontProperties, color) pair scaled for a given text role. |
 | `_text_color` | `(cfg)` | Resolve the colour for figure text in a theme-consistent way. |
 | `_muted_color` | `(cfg)` | Theme-aware muted colour for placeholder / empty-state text. |
@@ -310,8 +334,6 @@ Clustering analysis node with matplotlib figures.
 | `_draw_detection_panel` | `(ax, char_for_algo, selected_elements, cfg, group_by_dominant=True, in` | Draw per-cluster real detection counts for selected elements. |
 | `_draw_evaluation` | `(fig, eval_results, cfg, optimal_k=None, view_algo='All Algorithms', o` | Draw evaluation metric curves on a matplotlib Figure. |
 | `_draw_evaluation_per_sample` | `(fig, per_sample_eval, cfg, per_sample_optk=None, view_algo='All Algor` | Draw per-sample evaluation curves as a single metric × sample grid. |
-| `_consensus_k` | `(per_metric_k)` | Return the consensus K and its agreement fraction from per-metric picks. |
-| `_draw_consensus_summary` | `(fig, eval_results, per_sample_eval, cfg, elbow_fn, optimal_per_metric` | Draw a metric × scope consensus decision table for choosing K. |
 | `_draw_stability` | `(fig, stab, cfg)` | Draw bootstrap stability results: cluster Jaccard bars + particle histogram. |
 | `_algo_params_str` | `(cfg, algo)` | Return a human-readable parameter summary for one algorithm. |
 | `build_methods_paragraph` | `(cfg, optimal_k=None, algorithm=None, n_particles=None, n_elements=Non` | Generate a publication-ready methods paragraph from the node settings. |

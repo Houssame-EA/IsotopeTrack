@@ -10,6 +10,7 @@
 | `DEGREE_SIGN` | `'°'` |
 | `HEATMAP_MULTI_DISPLAY_MODES` | `['Individual Subplots', 'Side by Side Subplots', 'Combine…` |
 | `DEFAULT_HIGHLIGHT_COLOR` | `'#000000'` |
+| `HEATMAP_SORT_MODES` | `['Particle count', 'Mass share (%)']` |
 | `CELL_STAT_OPTIONS` | `['Mean', 'Median', 'Mode', 'Geometric Mean']` |
 | `CELL_SPREAD_OPTIONS` | `['None', 'SD', 'SEM', 'IQR (Q1–Q3)', 'Min–Max', 'CV %']` |
 
@@ -89,5 +90,6 @@ Heatmap plot node with multiple sample support.
 | `_fmt_cell_number` | `(v)` | Format one numeric cell value with the heatmap's standard precision. |
 | `_per_particle_percentages` | `(total_values)` | Convert a combination's raw per-element values into per-particle %. |
 | `_bulk_percentages` | `(total_values)` | Bulk composition %: each element's summed signal over the grand total. |
+| `_combination_mass_shares` | `(sample_data)` | Return each combination's share of the sample's total signal. |
 | `draw_combinations_heatmap` | `(ax, fig, sample_data, cfg, title='', is_multi=False)` | Draw a combinations heatmap onto an arbitrary axes/figure. |
 | `_build_combinations` | `(particles, data_key, pml_factor=0.0)` | Build combination dict from a list of particle dicts. |

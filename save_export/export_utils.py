@@ -19,6 +19,7 @@ from utils.unit import ExportUnits, load_units
 from tools.unit import show_advanced_dialog
 from utils.app_version import __version__ as APP_VERSION
 from utils.numeric_format import as_scalar as _as_scalar, fmt as _fmt
+import utils.signal_stats
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.save_export.export_utils")
 
@@ -688,6 +689,10 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
     detection_params_data = []
     background_counts_data = []
     background_ppt_data = []
+    mean_signal_counts_data = []
+    signal_sd_counts_data = []
+    signal_rsd_data = []
+    mean_signal_ppb_data = []
     mean_mass_data = []
     median_mass_data = []
     std_mass_data = []
@@ -707,6 +712,10 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
             molecular_weight_row = [sample_name]
             background_counts_row = [sample_name]
             background_ppt_row = [sample_name]
+            mean_signal_counts_row = [sample_name]
+            signal_sd_counts_row = [sample_name]
+            signal_rsd_row = [sample_name]
+            mean_signal_ppb_row = [sample_name]
             mean_mass_row = [sample_name]
             median_mass_row = [sample_name]
             std_mass_row = [sample_name]
@@ -722,6 +731,9 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
             dilution_factor = sample_dilutions.get(sample_name, 1.0)
 
             total_volume_ml = main_window.effective_volume_ml(sample_name)
+
+            sample_channels = getattr(main_window, 'data_by_sample', {}).get(sample_name, {}) or {}
+            dwell_time_sec = main_window.sample_dwell_times.get(sample_name, 0) / 1000.0
 
             for element_key, display_label, element, isotope, atomic_mass in all_elements:
                 particle_count = 0
@@ -875,6 +887,51 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
                 background_counts_row.append(_fmt(background, ".2f"))
                 background_ppt_row.append(_fmt(background_ppt, ".5f"))
 
+                channel_key = main_window.find_closest_isotope(isotope, sample_channels)
+                signal_values = sample_channels.get(channel_key) if channel_key is not None else None
+
+                mean_signal = 0.0
+                signal_sd = 0.0
+                signal_rsd = 0.0
+                mean_signal_ppb = 0.0
+
+                if signal_values is not None and len(signal_values) > 0:
+                    signal_array = utils.signal_stats.analyzed_signal(
+                        main_window, sample_name, element_key, signal_values)
+                    mean_signal = float(np.mean(signal_array)) if signal_array.size else 0.0
+                    signal_sd = float(np.std(signal_array, ddof=1)) if signal_array.size > 1 else 0.0
+                    signal_rsd = (signal_sd / mean_signal * 100) if mean_signal > 0 else 0.0
+
+                    cal_data = ionic_data.get(element_key)
+                    if cal_data:
+                        preferred_method = main_window.isotope_method_preferences.get(element_key,
+                                                                                      'Force through zero')
+                        method_map = {
+                            'Force through zero': 'zero',
+                            'Simple linear': 'simple',
+                            'Weighted': 'weighted',
+                            'Manual': 'manual',
+                        }
+                        method_key = method_map.get(preferred_method, 'zero')
+                        method_data = cal_data.get(method_key,
+                                                   cal_data.get('weighted',
+                                                                cal_data.get('simple',
+                                                                             cal_data.get(
+                                                                                 'zero',
+                                                                                 cal_data.get(
+                                                                                     'manual',
+                                                                                     {})))))
+
+                        slope = method_data.get('slope') if method_data else None
+                        if slope and slope > 0:
+                            mean_signal_cps = (mean_signal / dwell_time_sec) if dwell_time_sec > 0 else mean_signal
+                            mean_signal_ppb = mean_signal_cps / slope
+
+                mean_signal_counts_row.append(_fmt(mean_signal, ".4f"))
+                signal_sd_counts_row.append(_fmt(signal_sd, ".4f"))
+                signal_rsd_row.append(_fmt(signal_rsd, ".2f"))
+                mean_signal_ppb_row.append(_fmt(mean_signal_ppb, ".5f"))
+
                 if element_key in main_window.sample_parameters.get(sample_name, {}):
                     params = main_window.sample_parameters[sample_name][element_key]
                     use_window = params.get('use_window_size', False)
@@ -903,6 +960,10 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
             molecular_weight_data.append(molecular_weight_row)
             background_counts_data.append(background_counts_row)
             background_ppt_data.append(background_ppt_row)
+            mean_signal_counts_data.append(mean_signal_counts_row)
+            signal_sd_counts_data.append(signal_sd_counts_row)
+            signal_rsd_data.append(signal_rsd_row)
+            mean_signal_ppb_data.append(mean_signal_ppb_row)
             mean_mass_data.append(mean_mass_row)
             median_mass_data.append(median_mass_row)
             std_mass_data.append(std_mass_row)
@@ -1009,6 +1070,30 @@ def export_summary_file_with_mass_fractions(main_window: MainWindow, summary_fil
     summary_file.write("Ionic Background (ppt)\n")
     summary_file.write("Sample," + ",".join(element_labels) + "\n")
     for row in background_ppt_data:
+        summary_file.write(",".join(row) + "\n")
+    summary_file.write("\n")
+
+    summary_file.write("Mean Signal (counts)\n")
+    summary_file.write("Sample," + ",".join(element_labels) + "\n")
+    for row in mean_signal_counts_data:
+        summary_file.write(",".join(row) + "\n")
+    summary_file.write("\n")
+
+    summary_file.write("Signal Standard Deviation (counts)\n")
+    summary_file.write("Sample," + ",".join(element_labels) + "\n")
+    for row in signal_sd_counts_data:
+        summary_file.write(",".join(row) + "\n")
+    summary_file.write("\n")
+
+    summary_file.write("Signal RSD (%)\n")
+    summary_file.write("Sample," + ",".join(element_labels) + "\n")
+    for row in signal_rsd_data:
+        summary_file.write(",".join(row) + "\n")
+    summary_file.write("\n")
+
+    summary_file.write("Mean Signal (ppb)\n")
+    summary_file.write("Sample," + ",".join(element_labels) + "\n")
+    for row in mean_signal_ppb_data:
         summary_file.write(",".join(row) + "\n")
     summary_file.write("\n")
 

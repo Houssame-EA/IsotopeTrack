@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit, QScrollArea,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox, QPushButton, QLineEdit,
+    QScrollArea,
     QWidget, QMenu, QDialogButtonBox, QInputDialog, QColorDialog
 )
 from PySide6.QtCore import Qt, Signal, QObject
@@ -41,6 +42,11 @@ HEATMAP_MULTI_DISPLAY_MODES = [
 ]
 
 DEFAULT_HIGHLIGHT_COLOR = '#000000'
+
+HEATMAP_SORT_MODES = [
+    'Particle count',
+    'Mass share (%)',
+]
 
 
 def _normalize_highlighted_combos(raw):
@@ -102,6 +108,8 @@ class HeatmapSettingsDialog(QDialog):
         self.end_spin = None
         self.filter_zeros = None
         self.min_particles = None
+        self.sort_by = None
+        self.min_mass_percent = None
         self.label_mode_combo = None
         self.show_numbers_cb = None
         self.show_colorbar_cb = None
@@ -225,6 +233,19 @@ class HeatmapSettingsDialog(QDialog):
             self.min_particles.setRange(1, 1000)
             self.min_particles.setValue(self._config.get('min_particles', 1))
             fl.addRow("Min particles:", self.min_particles)
+            self.sort_by = QComboBox()
+            self.sort_by.addItems(HEATMAP_SORT_MODES)
+            self.sort_by.setCurrentText(
+                self._config.get('sort_by', 'Particle count'))
+            fl.addRow("Rank combinations by:", self.sort_by)
+            self.min_mass_percent = QDoubleSpinBox()
+            self.min_mass_percent.setRange(0.0, 100.0)
+            self.min_mass_percent.setDecimals(3)
+            self.min_mass_percent.setSingleStep(0.1)
+            self.min_mass_percent.setSuffix(" %")
+            self.min_mass_percent.setValue(
+                float(self._config.get('min_mass_percent', 0.0)))
+            fl.addRow("Min mass share:", self.min_mass_percent)
             layout.addWidget(g)
 
         if self._scope in ('all', 'format'):
@@ -370,6 +391,11 @@ class HeatmapSettingsDialog(QDialog):
         cfg['end_range'] = self.end_spin.value() if self.end_spin else self._config.get('end_range', 10)
         cfg['filter_zeros'] = self.filter_zeros.isChecked() if self.filter_zeros else self._config.get('filter_zeros', True)
         cfg['min_particles'] = self.min_particles.value() if self.min_particles else self._config.get('min_particles', 1)
+        cfg['sort_by'] = (self.sort_by.currentText() if self.sort_by
+                          else self._config.get('sort_by', 'Particle count'))
+        cfg['min_mass_percent'] = (float(self.min_mass_percent.value())
+                                   if self.min_mass_percent is not None
+                                   else float(self._config.get('min_mass_percent', 0.0)))
 
         selected_mode = self.label_mode_combo.currentText() if self.label_mode_combo else self._config.get('label_mode', 'Mass + Symbol')
         cfg['label_mode'] = selected_mode
@@ -1012,6 +1038,38 @@ def _bulk_percentages(total_values):
     return {e: [s / grand * 100.0] for e, s in sums.items()}
 
 
+def _combination_mass_shares(sample_data):
+    """Return each combination's share of the sample's total signal.
+
+    Args:
+        sample_data (dict): ``{combination_label: {'total_values': {element:
+            [values...]}, ...}}`` as built by ``_build_combinations``.
+
+    Returns:
+        dict: ``{combination_label: percent}``, where ``percent`` is the
+        combination's summed signal divided by the summed signal of all
+        combinations in ``sample_data``, times 100. Every share is ``0.0``
+        when the grand total is zero or negative.
+
+    Notes:
+        The summed signal carries the unit of the active heatmap data type,
+        so the shares are mass shares for the ``(fg)`` data types, mole
+        shares for the ``(fmol)`` data types and count shares for
+        ``Counts``.
+    """
+    totals = {}
+    for combo, d in sample_data.items():
+        total = 0.0
+        for vals in (d.get('total_values') or {}).values():
+            if len(vals):
+                total += float(np.nansum(vals))
+        totals[combo] = total
+    grand = sum(totals.values())
+    if grand <= 0:
+        return {combo: 0.0 for combo in totals}
+    return {combo: (total / grand * 100.0) for combo, total in totals.items()}
+
+
 def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
                              is_multi=False):
     """Draw a combinations heatmap onto an arbitrary axes/figure.
@@ -1032,7 +1090,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
         Heatmap tab: ``data_type_display``, ``colorscale``,
         ``show_numbers``, ``show_colorbar``, ``log_scale``,
         ``use_custom_range``/``vmin``/``vmax``, ``start_range``,
-        ``end_range``, ``min_particles``, ``label_mode``,
+        ``end_range``, ``min_particles``, ``sort_by``,
+        ``min_mass_percent``, ``label_mode``,
         ``search_element``, ``highlight_matches``,
         ``filter_combinations``, ``x_rotation``, ``annotation_fontsize``,
         ``cell_linewidth``.
@@ -1054,6 +1113,8 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
     start = cfg.get('start_range', 1)
     end = cfg.get('end_range', 10)
     min_p = cfg.get('min_particles', 1)
+    sort_by = cfg.get('sort_by', 'Particle count')
+    min_mass_pct = float(cfg.get('min_mass_percent', 0.0) or 0.0)
     label_mode = cfg.get('label_mode', 'Mass + Symbol')
     import matplotlib.cm as _cm
     cscale = cfg.get('colorscale', 'YlGnBu')
@@ -1077,8 +1138,15 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
         search_elems = [e.strip() for e in search_text.replace(',', ' ').split()
                         if e.strip()]
 
-    sorted_combos = sorted(sample_data.items(),
-                           key=lambda x: x[1]['particle_count'], reverse=True)
+    mass_shares = _combination_mass_shares(sample_data)
+    if sort_by == 'Mass share (%)':
+        sorted_combos = sorted(sample_data.items(),
+                               key=lambda x: mass_shares.get(x[0], 0.0),
+                               reverse=True)
+    else:
+        sorted_combos = sorted(sample_data.items(),
+                               key=lambda x: x[1]['particle_count'],
+                               reverse=True)
 
     if search_elems and filter_exact:
         sorted_combos = [(c, d) for c, d in sorted_combos
@@ -1089,6 +1157,10 @@ def draw_combinations_heatmap(ax, fig, sample_data, cfg, title='',
 
     sorted_combos = [(c, d) for c, d in sorted_combos
                      if d['particle_count'] >= min_p]
+
+    if min_mass_pct > 0:
+        sorted_combos = [(c, d) for c, d in sorted_combos
+                         if mass_shares.get(c, 0.0) >= min_mass_pct]
 
     end = min(end, len(sorted_combos))
     start = max(1, min(start, end))
@@ -1231,6 +1303,7 @@ class HeatmapPlotNode(QObject):
         'highlighted_combos': {},
         'start_range': 1, 'end_range': 10,
         'filter_zeros': True, 'min_particles': 1,
+        'sort_by': 'Particle count', 'min_mass_percent': 0.0,
         'label_mode': 'Mass + Symbol',
         'colorscale': 'YlGnBu',
         'show_numbers': True, 'show_colorbar': True,

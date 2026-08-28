@@ -1,20 +1,21 @@
 # `live.py`
 
-Interactive *live* clustering tab for the Clustering Analysis dialog.
+Interactive clustering tab for the Clustering Analysis dialog.
 
-Adds a QWebEngineView-backed tab that animates *how each clustering algorithm
-builds its answer* — centroids sliding, densities flooding, neuron grids
-unfolding — on the same particle data the rest of the dialog uses. Python does
-the maths (``live_engine`` — pure NumPy steppers); a small JS/Canvas
-frontend renders it and talks back over ``QWebChannel``.
+Shows the clustering the rest of the dialog computed, in a 2-D or 3-D view of
+the same particles, alongside a detail figure and a worked example describing
+that fit. :mod:`results.cluster.detail` derives both from the fit;
+:mod:`results.cluster.live_qt` draws everything.
 
-The tab is **read-only** with respect to the dialog: it builds its own 2-D PCA
-view of the data and never mutates the dialog's caches, so it can't interfere
-with the real evaluate/cluster pipeline or the strips/heatmap figures. It
-follows the application's dark/light palette live.
+**The clustering is computed once.** When ② Cluster has already fitted this
+configuration over these particles, its labels are adopted as they are — see
+:meth:`ClusterLiveController._reusable_labels`. Only a configuration ② Cluster
+has not fitted causes this tab to fit, and then only once, off the UI thread.
+That is also why the two tabs cannot show different answers.
 
-If QtWebEngine is unavailable the tab degrades to a short message and the rest
-of the dialog is unaffected.
+The tab builds its own display projection and does not mutate the dialog's
+caches while an authoritative run is active. It follows the application's
+dark/light palette live.
 
 ---
 
@@ -28,6 +29,7 @@ of the dialog is unaffected.
 | `DATA_KEY_MAP` | `{'Counts': 'elements', 'Element Mass (fg)': 'element_mass…` |
 | `ALGO_PARAM_MAP` | `{'K-Means': {'max_iter': 'kmeans_max_iter', 'n_init': 'km…` |
 | `PROJECTION_TO_DIMRED` | `{'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP', 'None': …` |
+| `FIT_CONFIG_KEYS` | `('scaling', 'data_type_display', 'filter_zeros', 'min_par…` |
 | `SHAPE_OVERRIDE_KEY` | `'cluster_sample_shapes'` |
 | `OVERLAY_CMAP_KEY` | `'cluster_overlay_colormap'` |
 | `DEFAULT_OVERLAY_CMAP` | `OVERLAY_COLORMAPS[0] if OVERLAY_COLORMAPS else 'viridis'` |
@@ -35,25 +37,6 @@ of the dialog is unaffected.
 | `EMBED_FIT_MAX` | `3000` |
 
 ## Classes
-
-### `_FrameWorker` *(extends `QThread`)*
-
-QThread that streams one clustering run's frames as JSON.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self, xy, algo, params, seed=42, parent=None)` | Store the run configuration. |
-| `cancel` | `(self)` | Request cancellation of the running stream. |
-| `run` | `(self)` | Iterate the engine and emit each frame as JSON, then emit done. |
-
-### `_SkWorker` *(extends `QThread`)*
-
-QThread that computes the authoritative scikit-learn labels.
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `__init__` | `(self, Xs, xy, cfg, k, seq=0, settle=False, parent=None)` | Store the matrices and config for one comparison run. |
-| `run` | `(self)` | Fit with scikit-learn and emit one frame in the page's frame shape. |
 
 ### `_ProjWorker` *(extends `QThread`)*
 
@@ -64,25 +47,30 @@ Compute a projection off the UI thread (t-SNE/UMAP can take seconds).
 | `__init__` | `(self, input_data, cfg, elements, projection, dims, parent=None)` | Store the projection arguments. |
 | `run` | `(self)` | Build the projection view off the UI thread and emit it. |
 
-### `ClusterLiveBridge` *(extends `QObject`)*
+### `ClusterLiveController` *(extends `QObject`)*
 
-QWebChannel object bridging the NumPy engine to the web page.
+Drives the live view: owns the projection, the fit and the config.
+
+Holds the built view for the current projection, produces the tab's one
+clustering result off the UI thread, and is the single place where the
+shared ``node.config`` is written.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `__init__` | `(self, dialog, parent=None)` | Initialise the bridge's state from the shared node config. |
-| `attach_page` | `(self, page)` | Give the bridge direct access to the page for runJavaScript pushes. |
-| `_push_js` | `(self, code)` | Run a snippet of JavaScript on the page if one is attached. |
+| `attach_view` | `(self, view)` | Adopt the :class:`~results.cluster.live_qt.view.LiveView` to drive. |
 | `rebuild` | `(self)` | Synchronous rebuild (used for the fast PCA path / fallbacks). |
-| `rebuild_async` | `(self, animate=False)` | Compute the projection on a worker thread, then push state to JS. |
-| `_on_projected` | `(self, view)` | Store the finished view and push the new state to the page. |
+| `rebuild_async` | `(self)` | Compute the projection on a worker thread, then push state to the view. |
+| `_retire_proj_worker` | `(self, worker)` | Park a superseded projection worker until its thread has stopped. |
+| `_on_retired_proj_finished` | `(self)` | Release a retired worker once its thread has fully stopped. |
+| `_on_projected` | `(self, view)` | Store the finished view and hand the new state to the widget. |
 | `_current_k` | `(self)` | Return the cluster count K shared with the app (toolbar / config). |
 | `_param_values` | `(self)` | Config-derived value for every algorithm's parameters. |
 | `_cfg_snapshot` | `(self)` | Return the current preprocessing/algorithm config as a plain dict. |
 | `_state_payload` | `(self)` | Assemble the full state dict that is sent to the page. |
-| `get_schema` | `(self)` | Return algorithms, scalings, data types and projections as JSON. |
-| `get_theme` | `(self)` | Return the current theme CSS variables as JSON. |
-| `get_state` | `(self)` | Return the current view state as JSON, building it if needed. |
+| `get_schema` | `(self)` | Return algorithms, scalings, data types and projections. |
+| `get_theme` | `(self)` | Return the current theme colours. |
+| `get_state` | `(self)` | Return the current view state, building it if needed. |
 | `set_label_mode` | `(self, mode)` | Persist the element label style and repaint the other views. |
 | `set_cluster_color` | `(self, cid, color)` | Persist one cluster's colour and repaint the other views. |
 | `reset_cluster_colors` | `(self)` | Drop every colour override and repaint the other views. |
@@ -91,58 +79,56 @@ QWebChannel object bridging the NumPy engine to the web page.
 | `set_overlay_colormap` | `(self, name)` | Persist the colormap used by the colour-by-element overlay. |
 | `_redraw_host_figures` | `(self)` | Redraw the dialog's figures after a shared appearance change. |
 | `_do_redraw_host` | `(self)` | Repaint the dialog's figures without re-running the clustering. |
-| `pick_color` | `(self, initial)` | Open the native colour dialog and return the chosen ``#RRGGBB``. |
 | `set_projection` | `(self, projection, dims)` | Change projection / dimensionality, persist to config, re-project. |
-| `set_config` | `(self, payload_json)` | Update the shared node config from the panel, then re-project. |
+| `set_config` | `(self, patch)` | Update the shared node config from the panel, then re-project. |
 | `_invalidate_host_matrix` | `(self)` | Drop the dialog's cached matrix so the next run re-prepares it. |
-| `set_param` | `(self, algo, key, value_json)` | Persist one algorithm parameter to the shared node config. |
-| `run` | `(self, algo, params_json)` | Start a clustering run and stream its frames to the page. |
-| `run_sklearn` | `(self, settle=False)` | Compute the authoritative scikit-learn labels for the shown particles. |
-| `_sk_finished` | `(self, payload)` | Adopt the settled labels, then re-run if a request was queued. |
-| `_push_compare` | `(self, s)` | Main-thread relay: deliver the comparison result to the page. |
-| `_relay_frame` | `(self, s)` | Main-thread relay: deliver a frame to the page. |
-| `_flush_frames` | `(self)` | Push any buffered frames to the page in a single batch. |
-| `stop` | `(self)` | Cancel and dispose of the running frame worker. |
-| `_on_done` | `(self, summary)` | Flush remaining frames, then settle the view on the real result. |
-| `_apply_to_overview` | `(self)` | Feed the Cluster tab's result into the Overview strips/heatmap. |
+| `set_param` | `(self, algo, key, value)` | Persist one algorithm parameter to the shared node config. |
+| `run` | `(self, algo, params=None)` | Produce the tab's clustering result for ``algo``. |
+| `_cache_fit` | `(self, res)` | Remember a completed fit so an identical request need not redo it. |
+| `_reusable_labels` | `(self, algo, k)` | Return an existing fit for ``algo`` that this run can adopt as-is. |
+| `_host_matrix` | `(self)` | Return the matrix ② Cluster clustered, when it is still cached. |
+| `_host_estimator` | `(self, algo)` | Return the estimator ② Cluster fitted for ``algo``, if it kept one. |
+| `_host_som` | `(self)` | Return the host's trained self-organising map, if there is one. |
+| `fit` | `(self)` | Show the clustering for the current configuration. |
+| `_request_host_run` | `(self, algo, k)` | Ask ② Cluster to compute the configuration the tab is showing. |
+| `_adopt` | `(self, payload)` | Take on a result and report it. |
+| `_push_result` | `(self, res)` | Main-thread relay: deliver the clustering result to the view. |
+| `stop` | `(self)` | No-op: the tab owns no worker of its own. |
 
 ### `ClusterLiveTab` *(extends `QWidget`)*
 
-QWidget hosting the interactive clustering web view.
+QWidget hosting the interactive clustering view.
+
+``dialog.py`` constructs this with the dialog, then calls :meth:`arm`,
+:meth:`mark_dirty`, :meth:`refresh_data` and :meth:`apply_theme`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `__init__` | `(self, dialog)` | Set up the tab shell without starting the web engine. |
-| `ensure_view` | `(self)` | Create the web view the first time this tab is actually shown. |
-| `showEvent` | `(self, event)` | Build the web view on first display, then behave normally. |
+| `__init__` | `(self, dialog)` | Set up the tab shell without building the view. |
+| `ensure_view` | `(self)` | Create the view the first time this tab is actually shown. |
+| `showEvent` | `(self, event)` | Build the view on first display, then behave normally. |
 | `arm` | `(self)` | Allow the view to draw, once a clustering run has produced results. |
-| `_connect_downloads` | `(self)` | Accept image exports from the page and let the user choose where. |
-| `_on_download` | `(self, item)` | Prompt for a destination and accept or cancel the download. |
-| `_on_download_done` | `(self, item)` | Report the saved path (or the failure) on the page's status line. |
-| `_inject_qwebchannel` | `(self)` | Load qwebchannel.js from the Qt resource and inject at doc creation. |
-| `_on_load_finished` | `(self, ok)` | Apply the theme and push data once the page has loaded. |
 | `mark_dirty` | `(self)` | Flag that the data/config changed, so the next show rebuilds. |
 | `refresh_data` | `(self, force=False)` | Rebuild the view only when the data changed since last time. |
-| `apply_theme` | `(self)` | Push the current app palette into the page (dark/light switch). |
+| `apply_theme` | `(self)` | Push the current app palette into the view (dark/light switch). |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `_safe_dumps` | `(obj)` | json.dumps that never emits bare NaN/Infinity (invalid JSON for JS). |
 | `_projection_options` | `()` | Return every projection method, each flagged with its availability. |
-| `_last_dir` | `()` | Folder that file dialogs should open in, via the app's shared memory. |
-| `_remember_dir` | `(path)` | Persist *path* as the folder future file dialogs should start in. |
+| `fit_fingerprint` | `(cfg, algo, k)` | Identify a clustering fit by everything that can change its answer. |
+| `index_signature` | `(idx)` | Return an exact, cheap identity for a particle index array. |
+| `_compare_payload` | `(labels, xy, info, seq)` | Build the result payload the view expects from a fit. |
 | `_theme_vars` | `()` | Map the active app Palette to the CSS variables the page consumes. |
 | `colormap_stops` | `(n_stops=32)` | Sample every offered colormap into plain hex stops for the web view. |
 | `overlay_colormap` | `(cfg)` | Return the colour-by-element colormap saved on the node config. |
 | `sample_shape_overrides` | `(cfg)` | Return the per-sample marker shapes stored on the node config. |
 | `_rare_filter` | `(matrix, samples, min_count)` | Drop particles whose non-zero element signature is rarer than min_count. |
-| `_propagate_labels` | `(sub_raw, sub_labels, raw_full)` | Give every particle the label of its nearest labelled sample particle. |
 | `_embed_fit_index` | `(n)` | Row indices used to fit an embedding. |
 | `_place_rest` | `(Xs, fit_idx, Pf)` | Give every particle a position in an embedding fitted on a subset. |
-| `_embed` | `(Xs, projection, n_dims)` | Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method. |
+| `_embed` | `(Xs, projection, n_dims, params=None)` | Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method. |
 | `_raw_axes` | `(Xs, elements, n_dims)` | Select raw feature axes for the 'None' (no-reduction) projection. |
 | `build_view` | `(input_data, cfg, elements, projection='PCA', n_dims=2, max_points=Non` | Build an N-D projection view + aligned raw matrix from the dialog's data. |
-| `sklearn_cluster` | `(Xs, cfg, k)` | Cluster ``Xs`` exactly the way the ② Cluster tab would. |
-| `_sklearn_params` | `(algo, cfg, k)` | Translate ``node.config`` into the parameter names run_algorithm expects. |
+| `_sklearn_params` | `(algo, cfg, k)` | Translate ``node.config`` into an algorithm's own parameter names. |
+| `describe_fit` | `(cfg, k, labels, info, xy=None, som=None)` | Derive the detail view and worked example from a finished fit. |

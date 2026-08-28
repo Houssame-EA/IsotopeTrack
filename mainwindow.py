@@ -20,11 +20,12 @@ from PySide6.QtGui import QColor, QBrush, QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QWidget
 import tools.dilution_utils
 import utils.dilution
+import utils.signal_stats
 import json
 from calibration_methods.ionic_CAL import IonicCalibrationWindow
 from tools.periodic_table_utils.periodic_table_info import PeriodicTableInfo
 from widget.periodic_table_widget import PeriodicTableWidget
-from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget
+from widget.custom_plot_widget import EnhancedPlotWidget, MzBarPlotWidget, make_trace_pen
 from calibration_methods.TE import TransportRateCalibrationWindow
 from calibration_methods import calibration_registry
 from widget.numeric_table import NumericTableWidgetItem
@@ -309,10 +310,10 @@ class MainWindow(QMainWindow):
         if callable(_flush_opens):
             QTimer.singleShot(0, _flush_opens)
         self.update_window_title()
-        from tools.update_checker import UpdateChecker
+        from tools.update_checker import UpdateChecker, auto_check_enabled
         self._update_checker = UpdateChecker(self)
         _app = QApplication.instance()
-        if not getattr(_app, '_update_check_done', False):
+        if auto_check_enabled() and not getattr(_app, '_update_check_done', False):
             _app._update_check_done = True
             QTimer.singleShot(4000, lambda: self._update_checker.check(silent=True))
 
@@ -549,7 +550,7 @@ class MainWindow(QMainWindow):
 
         self.edge_strip = QWidget()
         self.edge_strip.setFixedWidth(25)
-        self.edge_strip.setCursor(Qt.PointingHandCursor)
+        self.edge_strip.setCursor(Qt.CursorShape.PointingHandCursor)
 
         import weakref as _wr
         self.edge_strip.mousePressEvent = (
@@ -564,7 +565,7 @@ class MainWindow(QMainWindow):
         self.sidebar_grip = QWidget()
         self.sidebar_grip.setObjectName("sidebarGrip")
         self.sidebar_grip.setFixedWidth(12)
-        self.sidebar_grip.setCursor(Qt.SizeHorCursor)
+        self.sidebar_grip.setCursor(Qt.CursorShape.SizeHorCursor)
 
         _grip_layout = QGridLayout(self.sidebar_grip)
         _grip_layout.setContentsMargins(0, 0, 0, 0)
@@ -572,15 +573,18 @@ class MainWindow(QMainWindow):
         _grip_line = QWidget()
         _grip_line.setObjectName("gripLine")
         _grip_line.setFixedWidth(1)
-        _grip_line.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        _grip_line.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        _grip_layout.addWidget(_grip_line, 0, 0, Qt.AlignHCenter)
+        _grip_line.setSizePolicy(QSizePolicy.Policy.Fixed,
+                                 QSizePolicy.Policy.Expanding)
+        _grip_line.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        _grip_layout.addWidget(_grip_line, 0, 0, Qt.AlignmentFlag.AlignHCenter)
 
         _grip_pill = QWidget()
         _grip_pill.setObjectName("gripPill")
         _grip_pill.setFixedSize(5, 40)
-        _grip_pill.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        _grip_layout.addWidget(_grip_pill, 0, 0, Qt.AlignCenter)
+        _grip_pill.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        _grip_layout.addWidget(_grip_pill, 0, 0, Qt.AlignmentFlag.AlignCenter)
 
         self._apply_sidebar_grip_style()
         self.sidebar_grip.mousePressEvent = self._sidebar_grip_press
@@ -594,10 +598,12 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QFrame
         scroll_area = QScrollArea()
         scroll_area.setObjectName("mainScrollArea")
-        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         plot_container = QWidget()
         plot_container.setObjectName("plotContainer")
@@ -606,7 +612,8 @@ class MainWindow(QMainWindow):
         plot_container_layout.setSpacing(0)
 
         plot_widget = self.create_plot_widget()
-        plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                  QSizePolicy.Policy.Expanding)
         plot_container_layout.addWidget(plot_widget)
 
         page_content = QWidget()
@@ -879,7 +886,8 @@ class MainWindow(QMainWindow):
         self.toggle_button.setIconSize(QSize(24, 24))
         self.toggle_button.setFixedSize(32, 32)
         self.toggle_button.clicked.connect(self.toggle_sidebar)
-        header_layout.addWidget(self.toggle_button, alignment=Qt.AlignVCenter)
+        header_layout.addWidget(self.toggle_button,
+                                alignment=Qt.AlignmentFlag.AlignVCenter)
 
         sidebar_layout.addWidget(header_container)
 
@@ -1097,6 +1105,11 @@ class MainWindow(QMainWindow):
                            self.show_about_dialog)
         update_action = _ma('fa6s.cloud-arrow-down', "Check for Updates…",
                             lambda: self._update_checker.check(silent=False))
+        self._auto_update_action = QAction("Check for Updates on Startup", self)
+        self._auto_update_action.setCheckable(True)
+        from tools.update_checker import auto_check_enabled, set_auto_check_enabled
+        self._auto_update_action.setChecked(auto_check_enabled())
+        self._auto_update_action.toggled.connect(set_auto_check_enabled)
 
         help_menu.addAction(welcome_action)
         help_menu.addSeparator()
@@ -1105,6 +1118,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(calibration_action)
         help_menu.addSeparator()
         help_menu.addAction(update_action)
+        help_menu.addAction(self._auto_update_action)
         help_menu.addAction(about_action)
 
     def open_new_window(self):
@@ -1141,7 +1155,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         self.status_label = QLabel("Ready")
-        self.status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.status_label.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                        QSizePolicy.Policy.Preferred)
         layout.addWidget(self.status_label, 1)
 
         self.progress_bar = QProgressBar()
@@ -1353,7 +1368,9 @@ class MainWindow(QMainWindow):
         self._dataviz_title.setStyleSheet(
             f"font-weight: bold; font-size: 14px; color: {theme.palette.text_secondary};"
         )
-        header.addWidget(self._dataviz_title, 0, Qt.AlignVCenter)
+        header.addWidget(self._dataviz_title,
+                         0,
+                         Qt.AlignmentFlag.AlignVCenter)
         header.addStretch()
         self.element_picker = ElementPicker(columns=7)
         self.element_picker.setFixedHeight(28)
@@ -1362,14 +1379,16 @@ class MainWindow(QMainWindow):
         self.element_picker.elementActivated.connect(
             self._on_element_selector_activated
         )
-        header.addWidget(self.element_picker, 0, Qt.AlignVCenter)
+        header.addWidget(self.element_picker,
+                         0,
+                         Qt.AlignmentFlag.AlignVCenter)
 
         self._view_btn_time = QPushButton("Time")
         self._view_btn_mz = QPushButton("m/z")
         for btn in (self._view_btn_time, self._view_btn_mz):
             btn.setCheckable(True)
             btn.setFixedHeight(28)
-            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._view_btn_time.setChecked(True)
         self._view_btn_time.clicked.connect(lambda: self.switch_plot_view('time'))
         self._view_btn_mz.clicked.connect(lambda: self.switch_plot_view('mz'))
@@ -1380,13 +1399,13 @@ class MainWindow(QMainWindow):
         self.info_button.setIcon(qta.icon('fa6s.circle-info', color=theme.palette.accent))
         self.info_button.setFixedSize(28, 28)
         self.info_button.setToolTip("Sample information")
-        self.info_button.setCursor(Qt.PointingHandCursor)
+        self.info_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.info_button.clicked.connect(self.toggle_info)
         header.addWidget(self.info_button)
 
         self.theme_toggle_button = QPushButton()
         self.theme_toggle_button.setFixedSize(28, 28)
-        self.theme_toggle_button.setCursor(Qt.PointingHandCursor)
+        self.theme_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.theme_toggle_button.setToolTip("Toggle light / dark mode")
         self.theme_toggle_button.clicked.connect(theme.toggle)
         header.addWidget(self.theme_toggle_button)
@@ -1405,7 +1424,8 @@ class MainWindow(QMainWindow):
         self._plot_stack = QStackedWidget()
 
         self.plot_widget = EnhancedPlotWidget(self)
-        self.plot_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.plot_widget.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Expanding)
         self.plot_widget.setMinimumHeight(400)
         try:
             self.plot_widget.exclusionRegionsChanged.connect(
@@ -1415,7 +1435,8 @@ class MainWindow(QMainWindow):
         self._plot_stack.addWidget(self.plot_widget)
 
         self._mz_pg_widget = MzBarPlotWidget(self)
-        self._mz_pg_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._mz_pg_widget.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                         QSizePolicy.Policy.Expanding)
         self._mz_pg_widget.setMinimumHeight(400)
         self._plot_stack.addWidget(self._mz_pg_widget)
 
@@ -1493,7 +1514,7 @@ class MainWindow(QMainWindow):
         self.parameters_table.setMinimumHeight(180)
         self.parameters_table.cellClicked.connect(self.parameters_table_clicked)
         self.parameters_table.installEventFilter(self)
-        self.parameters_table.setFocusPolicy(Qt.StrongFocus)
+        self.parameters_table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.parameters_table._model.cellChanged.connect(self._on_param_model_changed)
         main_layout.addWidget(self.parameters_table)
 
@@ -1531,7 +1552,8 @@ class MainWindow(QMainWindow):
             "Right-click: customize the criteria and highlighting."
         )
         self.saturation_filter_button.toggled.connect(self.on_saturation_filter_toggled)
-        self.saturation_filter_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.saturation_filter_button.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         self.saturation_filter_button.customContextMenuRequested.connect(
             self.show_saturation_filter_menu)
         button_layout.addWidget(self.saturation_filter_button)
@@ -1556,8 +1578,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(group_box)
 
         self.summary_label = QLabel("Select an element to view summary statistics")
-        self.summary_label.setTextFormat(Qt.RichText)
-        self.summary_label.setAlignment(Qt.AlignCenter)
+        self.summary_label.setTextFormat(Qt.TextFormat.RichText)
+        self.summary_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.summary_label.setWordWrap(True)
         self.summary_label.setMinimumHeight(70)
 
@@ -1660,13 +1682,15 @@ class MainWindow(QMainWindow):
         self.sample_table = QTableWidget()
         self.sample_table.setColumnCount(2)
         self.sample_table.setHorizontalHeaderLabels(['Sample Name', 'Status'])
-        self.sample_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.sample_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
         self.sample_table.itemClicked.connect(self.on_sample_selected)
-        self.sample_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.sample_table.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         self.sample_table.customContextMenuRequested.connect(self.show_sample_context_menu)
 
         self.sample_table.keyPressEvent = self.sample_table_key_press
-        self.sample_table.setFocusPolicy(Qt.StrongFocus)
+        self.sample_table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         return self.sample_table
 
@@ -1778,7 +1802,7 @@ class MainWindow(QMainWindow):
         span = max(1, self.sidebar_width)
         fraction = abs(target_width - current_width) / span
         duration = max(120, int(240 * fraction))
-        easing = QEasingCurve.OutCubic
+        easing = QEasingCurve.Type.OutCubic
 
         self.animation = QPropertyAnimation(self.sidebar, b"minimumWidth")
         self.animation.setDuration(duration)
@@ -1834,7 +1858,7 @@ class MainWindow(QMainWindow):
 
     def _sidebar_grip_press(self, event):
         """Begin a sidebar resize drag."""
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._grip_dragging = True
             if getattr(self, '_grip_apply_timer', None) is None:
                 # Coalesces the live resize to ~one layout pass per frame, so a
@@ -1959,9 +1983,9 @@ class MainWindow(QMainWindow):
 
     def keyPressEvent(self, event):
         """Handle keyboard events."""
-        if event.key() == Qt.Key_F11:
+        if event.key() == Qt.Key.Key_F11:
             self.toggle_fullscreen()
-        elif event.key() == Qt.Key_Escape and self.isFullScreen():
+        elif event.key() == Qt.Key.Key_Escape and self.isFullScreen():
             self.exit_fullscreen()
         else:
             super().keyPressEvent(event)
@@ -1977,7 +2001,8 @@ class MainWindow(QMainWindow):
 
     def changeEvent(self, event):
         """Attribute subsequent log records to whichever window is active."""
-        if event.type() == QEvent.ActivationChange and self.isActiveWindow():
+        if (event.type() == QEvent.Type.ActivationChange
+                and self.isActiveWindow()):
             set_current_window(getattr(self, "window_id", None))
         super().changeEvent(event)
 
@@ -2049,10 +2074,10 @@ class MainWindow(QMainWindow):
                 f"you are trying to add are of type {new_label}.\n\n"
                 "Different file types can't be mixed in the same window.\n\n"
                 "Open the new files in a separate analysis window?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
             )
-            if resp == QMessageBox.Yes:
+            if resp == QMessageBox.StandardButton.Yes:
                 self._open_in_new_window(paths, source_type)
             return False, False
 
@@ -2069,7 +2094,7 @@ class MainWindow(QMainWindow):
 
             if range_diff > 1.0 or overlap_ratio < 0.5:
                 msg = QMessageBox(self)
-                msg.setIcon(QMessageBox.Warning)
+                msg.setIcon(QMessageBox.Icon.Warning)
                 msg.setWindowTitle("Different mass range")
                 msg.setText(
                     "The new data has a different mass range than the currently loaded data.\n\n"
@@ -2078,9 +2103,12 @@ class MainWindow(QMainWindow):
                     f"Common:  {overlap}/{len(new)} masses match within ±{tol} u\n\n"
                     "What would you like to do?"
                 )
-                btn_ignore = msg.addButton("Ignore and Add", QMessageBox.AcceptRole)
-                btn_window = msg.addButton("Open in New Window", QMessageBox.ActionRole)
-                btn_cancel = msg.addButton("Cancel", QMessageBox.RejectRole)
+                btn_ignore = msg.addButton("Ignore and Add",
+                                           QMessageBox.ButtonRole.AcceptRole)
+                btn_window = msg.addButton("Open in New Window",
+                                           QMessageBox.ButtonRole.ActionRole)
+                btn_cancel = msg.addButton("Cancel",
+                                           QMessageBox.ButtonRole.RejectRole)
                 msg.setDefaultButton(btn_cancel)
                 msg.exec()
                 clicked = msg.clickedButton()
@@ -2282,7 +2310,7 @@ class MainWindow(QMainWindow):
         ok_button.clicked.connect(dialog.accept)
         cancel_button.clicked.connect(dialog.reject)
 
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             if folder_radio.isChecked():
                 self.select_folders()
             elif csv_radio.isChecked():
@@ -2344,18 +2372,21 @@ class MainWindow(QMainWindow):
         self.user_action_logger.log_action('FILE_OP', 'Open multiple NU folders dialog')
         try:
             file_dialog = QFileDialog(self)
-            file_dialog.setFileMode(QFileDialog.Directory)
-            file_dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+            file_dialog.setFileMode(QFileDialog.FileMode.Directory)
+            file_dialog.setOption(
+                QFileDialog.Option.DontUseNativeDialog, True)
 
             list_view = file_dialog.findChild(QListView)
             tree_view = file_dialog.findChild(QTreeView)
 
             if list_view:
-                list_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+                list_view.setSelectionMode(
+                    QAbstractItemView.SelectionMode.ExtendedSelection)
             if tree_view:
-                tree_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
+                tree_view.setSelectionMode(
+                    QAbstractItemView.SelectionMode.ExtendedSelection)
 
-            if file_dialog.exec() == QDialog.Accepted:
+            if file_dialog.exec() == QDialog.DialogCode.Accepted:
                 selected_paths = file_dialog.selectedFiles()
 
                 if not selected_paths:
@@ -2474,7 +2505,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
 
-        return dialog.exec() == QDialog.Accepted
+        return dialog.exec() == QDialog.DialogCode.Accepted
 
     def rebuild_isotope_dict_from_set(self, isotope_set):
         """Rebuild isotope dictionary from a set of (element, isotope) tuples.
@@ -3219,8 +3250,10 @@ class MainWindow(QMainWindow):
             status = "Loaded (CSV)" if is_csv else "Loaded (Folder)"
             status_item = QTableWidgetItem(status)
 
-            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
-            status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
+            name_item.setFlags(name_item.flags()
+                               & ~Qt.ItemFlag.ItemIsEditable)
+            status_item.setFlags(status_item.flags()
+                                 & ~Qt.ItemFlag.ItemIsEditable)
 
             self.sample_table.setItem(row, 0, name_item)
             self.sample_table.setItem(row, 1, status_item)
@@ -3293,11 +3326,11 @@ class MainWindow(QMainWindow):
             '• Parameters\n'
             '• Calibration data\n\n'
             'This action cannot be undone.',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.user_action_logger.log_action(
@@ -3389,11 +3422,11 @@ class MainWindow(QMainWindow):
             'Are you sure you want to remove ALL samples?\n\n'
             'This will permanently delete all data and reset the application.\n'
             'This action cannot be undone.',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             try:
                 _removed_count = len(self.sample_to_folder_map)
                 self.user_action_logger.log_action(
@@ -3418,17 +3451,17 @@ class MainWindow(QMainWindow):
         """Handle keyboard navigation in sample table."""
         current_row = self.sample_table.currentRow()
 
-        if event.key() == Qt.Key_Up:
+        if event.key() == Qt.Key.Key_Up:
             if current_row > 0:
                 self.sample_table.setCurrentCell(current_row - 1, 0)
                 item = self.sample_table.item(current_row - 1, 0)
                 self.on_sample_selected(item)
-        elif event.key() == Qt.Key_Down:
+        elif event.key() == Qt.Key.Key_Down:
             if current_row < self.sample_table.rowCount() - 1:
                 self.sample_table.setCurrentCell(current_row + 1, 0)
                 item = self.sample_table.item(current_row + 1, 0)
                 self.on_sample_selected(item)
-        elif event.key() == Qt.Key_Tab:
+        elif event.key() == Qt.Key.Key_Tab:
             self.parameters_table.setFocus()
             if self.parameters_table.currentRow() < 0 and self.parameters_table.rowCount() > 0:
                 self.parameters_table.setCurrentCell(0, 0)
@@ -4426,7 +4459,8 @@ class MainWindow(QMainWindow):
                                 self.time_array,
                                 signal,
                                 pen='b',
-                                name=f'Raw Signal {display_label}'
+                                name=f'Raw Signal {display_label}',
+                                antialias=False
                             )
 
                             if current_x_range and current_y_range:
@@ -4476,7 +4510,7 @@ class MainWindow(QMainWindow):
             all_samples
         )
 
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             selected_elements = dialog.selected_elements
             parameters = dialog.get_parameters()
             selected_samples = dialog.get_selected_samples()
@@ -4908,7 +4942,7 @@ class MainWindow(QMainWindow):
                     left = int(p.get('left_idx', 0))
                     right = int(min(p.get('right_idx', left), n - 1))
                     if left < 0 or left >= n:
-                        kept.append(p);
+                        kept.append(p)
                         continue
                     t_centre = 0.5 * (time_arr[left] + time_arr[right])
                     if not any(x0 <= t_centre <= x1 for x0, x1 in bands):
@@ -5233,7 +5267,8 @@ class MainWindow(QMainWindow):
         threshold_counts = 0.00000
 
         if isotope_key and isotope_key in self.data:
-            overall_mean_signal = float(np.mean(self.data[isotope_key]))
+            overall_mean_signal = utils.signal_stats.mean_signal(
+                self, self.current_sample, element_key, self.data[isotope_key])
 
         if (self.current_sample in self.element_thresholds and
                 element_key in self.element_thresholds[self.current_sample]):
@@ -5403,7 +5438,7 @@ class MainWindow(QMainWindow):
             from PySide6.QtWidgets import QProgressDialog
             progress = QProgressDialog("Calculating mass data for all samples...", "Cancel",
                                        0, len(all_samples_with_data), self)
-            progress.setWindowModality(Qt.WindowModal)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
             progress.show()
 
             for i, sample_name in enumerate(all_samples_with_data):
@@ -5423,7 +5458,7 @@ class MainWindow(QMainWindow):
             if len(particles) > 1000:
                 from PySide6.QtWidgets import QProgressDialog
                 progress = QProgressDialog("Calculating mass data...", "Cancel", 0, len(particles), self)
-                progress.setWindowModality(Qt.WindowModal)
+                progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.show()
             else:
                 progress = None
@@ -5455,9 +5490,14 @@ class MainWindow(QMainWindow):
         display_label = self.get_formatted_label(mass)
 
         STYLES = {
-            'raw_signal': pg.mkPen(color=(30, 144, 255), width=1),
-            'background': pg.mkPen(color=(128, 128, 128), style=Qt.DashLine, width=1),
-            'threshold': pg.mkPen(color=(220, 20, 60), style=Qt.DashLine, width=1),
+            'raw_signal': pg.mkPen(color=(30, 144, 255),
+                                   width=1),
+            'background': pg.mkPen(color=(128, 128, 128),
+                                   style=Qt.PenStyle.DashLine,
+                                   width=1),
+            'threshold': pg.mkPen(color=(220, 20, 60),
+                                  style=Qt.PenStyle.DashLine,
+                                  width=1),
             'peaks': {'symbol': 'o', 'size': 18, 'brush': 'r', 'pen': 'match'},
         }
 
@@ -5476,8 +5516,11 @@ class MainWindow(QMainWindow):
         ]
 
         _STYLE_MAP = {
-            'Solid': Qt.SolidLine, 'Dash': Qt.DashLine, 'Dot': Qt.DotLine,
-            'Dash-Dot': Qt.DashDotLine, 'Dash-Dot-Dot': Qt.DashDotDotLine,
+            'Solid': Qt.PenStyle.SolidLine,
+            'Dash': Qt.PenStyle.DashLine,
+            'Dot': Qt.PenStyle.DotLine,
+            'Dash-Dot': Qt.PenStyle.DashDotLine,
+            'Dash-Dot-Dot': Qt.PenStyle.DashDotDotLine,
         }
         _SYM_MAP = {
             'Circle': 'o', 'Square': 's', 'Triangle Up': 't',
@@ -5496,15 +5539,16 @@ class MainWindow(QMainWindow):
                 pen=pen,
                 name=name,
                 skipFiniteCheck=True,
+                antialias=False,
             )
             if name in _saved_traces:
                 s = _saved_traces[name]
-                _p = pg.mkPen(
+                _p = make_trace_pen(
                     QColor(s['color']),
-                    width=s.get('width', 1),
-                    style=_STYLE_MAP.get(s.get('style', 'Solid'), Qt.SolidLine),
+                    s.get('width', 1),
+                    _STYLE_MAP.get(s.get('style', 'Solid'),
+                                   Qt.PenStyle.SolidLine),
                 )
-                _p.setCosmetic(True)
                 curve.setPen(_p)
             self.plot_widget.addItem(curve)
 
@@ -5695,9 +5739,11 @@ class MainWindow(QMainWindow):
                     continue
                 sig = np.asarray(self.data[closest], dtype=float)
                 ek = f"{element}-{isotope:.4f}"
+                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                    self, self.current_sample, ek, sig)
                 masses.append(float(isotope))
-                mean_cts.append(float(np.mean(sig)))
-                std_cts.append(float(np.std(sig)))
+                mean_cts.append(mean_sig)
+                std_cts.append(std_sig)
                 labels.append(self.get_formatted_label(ek))
                 element_keys.append(ek)
 
@@ -5780,8 +5826,8 @@ class MainWindow(QMainWindow):
         stats.horizontalHeader().setStretchLastSection(True)
         stats.verticalHeader().setVisible(False)
         stats.setMaximumHeight(160)
-        stats.setEditTriggers(QTableWidget.NoEditTriggers)
-        stats.setSelectionBehavior(QTableWidget.SelectRows)
+        stats.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        stats.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         stats.setStyleSheet(results_table_qss(p))
 
         for row_i, (lbl, mn, sd) in enumerate(zip(labels, mean_cts, std_cts)):
@@ -5866,9 +5912,11 @@ class MainWindow(QMainWindow):
                     continue
                 sig = np.asarray(self.data[closest], dtype=float)
                 ek = f"{element}-{isotope:.4f}"
+                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                    self, self.current_sample, ek, sig)
                 masses.append(float(isotope))
-                mean_cts.append(float(np.mean(sig)))
-                std_cts.append(float(np.std(sig)))
+                mean_cts.append(mean_sig)
+                std_cts.append(std_sig)
                 labels.append(self.get_formatted_label(ek))
 
         if not masses:
@@ -5984,7 +6032,8 @@ class MainWindow(QMainWindow):
                             self.time_array[start_index:end_index + 1],
                             signal[start_index:end_index + 1],
                             pen=pg.mkPen('r', width=1),
-                            name='Highlighted Peak'
+                            name='Highlighted Peak',
+                            antialias=False
                         )
 
                         particle_duration = end_time - start_time
@@ -6019,19 +6068,25 @@ class MainWindow(QMainWindow):
             [start_time, end_time],
             movable=False,
             brush=pg.mkBrush(100, 150, 200, 30),
-            pen=pg.mkPen(100, 150, 200, 80, width=1, style=Qt.DashLine)
+            pen=pg.mkPen(100, 150, 200, 80,
+                         width=1,
+                         style=Qt.PenStyle.DashLine)
         )
         self.plot_widget.addItem(region)
 
         start_line = pg.InfiniteLine(
             pos=start_time,
             angle=90,
-            pen=pg.mkPen(70, 70, 70, 150, width=1.5, style=Qt.DashLine)
+            pen=pg.mkPen(70, 70, 70, 150,
+                         width=1.5,
+                         style=Qt.PenStyle.DashLine)
         )
         end_line = pg.InfiniteLine(
             pos=end_time,
             angle=90,
-            pen=pg.mkPen(70, 70, 70, 150, width=1.5, style=Qt.DashLine)
+            pen=pg.mkPen(70, 70, 70, 150,
+                         width=1.5,
+                         style=Qt.PenStyle.DashLine)
         )
         self.plot_widget.addItem(start_line)
         self.plot_widget.addItem(end_line)
@@ -6117,7 +6172,7 @@ class MainWindow(QMainWindow):
                                 view_section,
                                 pen=pg.mkPen(primary_color, width=1),
                                 name=f"{display_label} ({counts:.0f} counts)",
-                                antialias=True
+                                antialias=False
                             )
 
                             if (element, isotope) in self.detected_peaks:
@@ -6131,7 +6186,8 @@ class MainWindow(QMainWindow):
                                     particle_start = self.time_array[particle['left_idx']]
                                     particle_end = self.time_array[particle['right_idx']]
 
-                                    if (particle_start <= end_time and particle_end >= start_time):
+                                    if (particle_start <= end_time
+                                            and particle_end >= start_time):
                                         peak_idx = particle['left_idx'] + np.argmax(
                                             signal[particle['left_idx']:particle['right_idx'] + 1])
                                         peak_x = self.time_array[peak_idx]
@@ -6260,8 +6316,12 @@ class MainWindow(QMainWindow):
                                         self.plot_widget.plot(
                                             [view_start, view_end],
                                             [threshold, threshold],
-                                            pen=pg.mkPen(primary_color, width=1, style=Qt.DotLine),
-                                            alpha=0.6
+                                            pen=pg.mkPen(
+                                                primary_color,
+                                                width=1,
+                                                style=Qt.PenStyle.DotLine),
+                                            alpha=0.6,
+                                            antialias=False
                                         )
                             except Exception as e:
                                 _itk_log.exception("Handled exception in highlight_multi_element_particle")
@@ -6281,9 +6341,11 @@ class MainWindow(QMainWindow):
             self.plot_widget.enableAutoRange()
 
         if element_data:
-            info_lines = [f"<b>Particle #{particle_number} Composition</b>"]
-            info_lines.append(f"<b>Duration:</b> {particle_duration * 1000:.2f} ms")
-            info_lines.append("")
+            info_lines = [
+                f"<b>Particle #{particle_number} Composition</b>",
+                f"<b>Duration:</b> {particle_duration * 1000:.2f} ms",
+                "",
+            ]
 
             sorted_elements = sorted(element_data.items(), key=lambda x: x[1]['counts'], reverse=True)
 
@@ -6414,7 +6476,7 @@ class MainWindow(QMainWindow):
             parent
         )
 
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             parent.selected_transport_rate_methods = dialog.selected_methods
             parent.average_transport_rate = dialog.average_transport_rate
             parent.update_calibration_display()
@@ -7747,7 +7809,7 @@ class MainWindow(QMainWindow):
         buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
 
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
 
         self.saturation_filter_ms = float(spin.value())
@@ -7857,10 +7919,10 @@ class MainWindow(QMainWindow):
             "Recover unsaved session?",
             "IsotopeTrack didn't close normally last time.\n\n"
             f"An autosaved session from {ts} was found. Recover it?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             try:
                 self.project_manager.load_project(filepath=str(path))
                 AutosaveManager.apply_light_overlay(self, str(path))
@@ -8002,15 +8064,17 @@ class MainWindow(QMainWindow):
         Returns:
             bool: True if event was handled, False otherwise
         """
-        if event.type() == QEvent.KeyPress:
+        if event.type() == QEvent.Type.KeyPress:
             if obj == self.sample_table:
-                if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+                if (event.key() == Qt.Key.Key_Up
+                        or event.key() == Qt.Key.Key_Down):
                     current_row = self.sample_table.currentRow()
                     new_row = current_row
 
-                    if event.key() == Qt.Key_Up and current_row > 0:
+                    if event.key() == Qt.Key.Key_Up and current_row > 0:
                         new_row = current_row - 1
-                    elif event.key() == Qt.Key_Down and current_row < self.sample_table.rowCount() - 1:
+                    elif (event.key() == Qt.Key.Key_Down
+                          and current_row < self.sample_table.rowCount() - 1):
                         new_row = current_row + 1
 
                     if new_row != current_row:
@@ -8020,7 +8084,7 @@ class MainWindow(QMainWindow):
                             self.on_sample_selected(item)
                         return True
 
-                elif event.key() == Qt.Key_Tab:
+                elif event.key() == Qt.Key.Key_Tab:
                     self.parameters_table.setFocus()
                     if self.parameters_table.currentRow() < 0 and self.parameters_table.rowCount() > 0:
                         self.parameters_table.setCurrentCell(0, 0)
@@ -8028,13 +8092,16 @@ class MainWindow(QMainWindow):
                     return True
 
             elif obj == self.parameters_table:
-                if event.key() == Qt.Key_Up or event.key() == Qt.Key_Down:
+                if (event.key() == Qt.Key.Key_Up
+                        or event.key() == Qt.Key.Key_Down):
                     current_row = self.parameters_table.currentRow()
                     new_row = current_row
 
-                    if event.key() == Qt.Key_Up and current_row > 0:
+                    if event.key() == Qt.Key.Key_Up and current_row > 0:
                         new_row = current_row - 1
-                    elif event.key() == Qt.Key_Down and current_row < self.parameters_table.rowCount() - 1:
+                    elif (event.key() == Qt.Key.Key_Down
+                          and current_row
+                          < self.parameters_table.rowCount() - 1):
                         new_row = current_row + 1
 
                     if new_row != current_row:
@@ -8042,7 +8109,9 @@ class MainWindow(QMainWindow):
                         self.parameters_table_clicked(new_row, 0)
                         return True
 
-                elif event.key() == Qt.Key_Tab and event.modifiers() & Qt.ShiftModifier:
+                elif (event.key() == Qt.Key.Key_Tab
+                      and Qt.KeyboardModifier.ShiftModifier
+                      & event.modifiers()):
                     self.sample_table.setFocus()
                     return True
 
@@ -8098,7 +8167,8 @@ if __name__ == "__main__":
     """
     from PySide6.QtCore import QCoreApplication
 
-    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    QCoreApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
     theme.sync_with_system()

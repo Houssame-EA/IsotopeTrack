@@ -7,8 +7,10 @@
 | Name | Value |
 |------|-------|
 | `_PENDING_DRAG_NODE_TYPE` | `None` |
+| `_NODE_IO_FAMILIES` | `{'batch_sample_selector': (None, 'batch'), 'sample_select…` |
 | `_NODE_FACTORIES` | `{'sample_selector': SampleSelectorNode, 'multiple_sample_…` |
 | `_NODE_ITEM_MAP` | `{'sample_selector': SampleSelectorNodeItem, 'multiple_sam…` |
+| `_VIZ_NODE_TYPES` | `frozenset({'histogram_plot', 'element_bar_chart_plot', 'b…` |
 
 ## Classes
 
@@ -64,6 +66,9 @@
 | `hoverLeaveEvent` | `(self, event)` |  |
 | `mousePressEvent` | `(self, event)` |  |
 | `show_context_menu` | `(self, global_pos)` |  |
+| `_temp_wired_both_ends` | `(self)` |  |
+| `remove_and_reconnect` | `(self)` |  |
+| `manage_connections` | `(self)` |  |
 | `_ctx_menu_style` | `()` |  |
 | `duplicate_node` | `(self)` |  |
 | `delete_node` | `(self)` |  |
@@ -174,6 +179,56 @@ Simplified multi-sample configurator: sample list with inline group fields + iso
 | `__init__` | `(self, parent_window=None)` |  |
 | `get_output_data` | `(self)` | Combined dataset for the selected windows. |
 | `configure` | `(self, parent_window)` | Open the window selector; selecting live windows rebuilds the batch. |
+
+### `TempPassThroughNode` *(extends `WorkflowNode`)*
+
+Neutral single-input, single-output relay.
+
+Created by "Create Temp Node" (Manage Connections) to hold a fan-out's
+sinks in place while the user swaps in a new upstream node — passes its
+input straight through unchanged. Deliberately kept single-input, with
+no configuration or merge logic of its own: any real multi-source
+combining need already has a home in a `supports_multi_input` node
+(e.g. the Particle Filter), so this stays a plain relay rather than
+becoming a second filter with its own opinions.
+
+Holds NO data of its own — it is pure wiring, not a data bank. Anything
+pulling its output reads the current upstream live (``get_output_data``),
+and any value pushed into it is forwarded straight on to whatever it
+feeds (``process_data`` → ``_forward``). This is what makes a source
+swap behave correctly: reconnect a different upstream and the plots
+behind the temp update to the new source instead of showing a cached
+copy of the old one, and no second copy of the particle data is kept
+alive by the temp.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, parent_window=None)` |  |
+| `_forward` | `(self, data)` | Push a value straight on to every node this temp feeds. |
+| `process_data` | `(self, input_data)` |  |
+| `get_output_data` | `(self)` |  |
+
+### `ManageConnectionsDialog` *(extends `QDialog`)*
+
+Right-click "Manage Connections" — one checkbox per current link on
+this node, checked = keep. Everything is staged locally and only
+applied to the scene graph on OK; Cancel touches nothing. "Create Temp
+Node" is the one exception — it's a distinct, deliberate compound
+action (add a node + rewire several links) and commits immediately
+rather than waiting for OK.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, scene, node, parent=None)` |  |
+| `_current_output_links` | `(self)` |  |
+| `_current_input_links` | `(self)` |  |
+| `_temp_connectivity_summary` | `(self)` | Human-readable description of this Temp Node's current, |
+| `_build` | `(self)` |  |
+| `_section_label` | `(text)` |  |
+| `_muted_label` | `(text)` |  |
+| `_toggle_all` | `(self, checks)` |  |
+| `_create_temp_node` | `(self)` | Insert a TempPassThroughNode between this node and the checked |
+| `_apply_and_accept` | `(self)` |  |
 
 ### `BatchSampleSelectorDialog` *(extends `QDialog`)*
 
@@ -382,13 +437,21 @@ AI sparkle icon.
 | `undo` | `(self)` | Reverse the last tracked action (add/delete node or link). |
 | `delete_selected_items` | `(self)` |  |
 | `delete_node` | `(self, ni)` |  |
+| `remove_and_reconnect_temp` | `(self, ni)` | Right-click "Remove and Reconnect" on a Temp Node: delete it and |
 | `delete_link` | `(self, li)` |  |
+| `_clear_if_orphaned` | `(self, node)` | Drop a node's cached input once it has no incoming link left. |
+| `_clear_node_data` | `(self, node)` |  |
 | `duplicate_selected_nodes` | `(self)` |  |
 | `duplicate_node` | `(self, ni)` |  |
 | `select_all_items` | `(self)` |  |
 | `add_node` | `(self, wf_node, pos)` |  |
+| `_reaches` | `(self, start, target)` | True if ``target`` is reachable downstream from ``start``. |
+| `_direct_link_allowed` | `(self, src_node, snk_node)` | Whether src_node -> snk_node is a valid link on its own terms. |
+| `_temp_real_peers` | `(self, temp, direction, _seen=None)` | The real (non-temp) node(s) currently wired to ``temp`` on |
+| `_check_link_allowed` | `(self, src_node, snk_node)` | Temp-aware connectivity check wrapping _direct_link_allowed. |
 | `add_link` | `(self, src_node, src_ch, snk_node, snk_ch)` |  |
 | `_trigger_data_flow` | `(self, wl)` |  |
+| `flush_data_flow` | `(self)` | Push each node's output to its sinks exactly once, sources first. |
 | `contextMenuEvent` | `(self, event)` | Right-click on empty canvas space → canvas context menu. |
 | `mousePressEvent` | `(self, event)` |  |
 | `mouseMoveEvent` | `(self, event)` |  |
@@ -439,7 +502,10 @@ AI sparkle icon.
 | `_collect_main_windows` | `()` | Return every visible MainWindow in this process. |
 | `_sample_concentration_meta` | `(window, sample_name)` | Build the per sample concentration metadata for a source window. |
 | `_combine_concentration_meta` | `(metas)` | Combine per member concentration metadata into a single entry. |
+| `_warn_before_apply_changes` | `(parent, node)` | Remind the user that applying this node's configuration now may |
 | `_dialog_base_style` | `()` | Dialog stylesheet synced to the current app theme. The canvas itself |
 | `_canvas_chrome_style` | `()` | Stylesheet for the canvas dialog chrome (header, palette, statusbar). |
 | `_make_viz_icon_node` | `(grad_colors, icon_name, label, dialog_class, multi_figure=False)` | Factory: creates a circular icon node for each visualization type. |
+| `_io_families` | `(node)` | Return (input_family, output_family) for a node. |
+| `validate_classifier_link` | `(src_node, snk_node)` | Check a proposed link against Particle Classifier connectivity rules. |
 | `show_canvas_results` | `(parent_window)` |  |

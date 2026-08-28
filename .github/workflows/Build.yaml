@@ -2,10 +2,10 @@ name: Build IsotopeTrack
 
 on:
   push:
-    branches: [main, dev, 'ci/**']
-    tags: ['v*']
+    branches: [ main, dev, 'ci/**' ]
+    tags: [ 'v*' ]
   pull_request:
-    branches: [main, dev]
+    branches: [ main, dev ]
   workflow_dispatch:
 
 jobs:
@@ -120,11 +120,14 @@ jobs:
   # Release — only runs when you push a tag like v1.0.4
   # =========================================================
   release:
-    needs: [build-macos-arm, build-windows]
+    needs:
+      - build-macos-arm
+      - build-windows
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -133,11 +136,29 @@ jobs:
       - name: List artifacts (debug)
         run: find artifacts -type f
 
+      # Consumed by the in-app updater (tools/update_checker.py) to verify a
+      # download before opening it. Names are stored without a path so the
+      # manifest matches the asset names on the release.
+      - name: Generate SHA256SUMS.txt
+        run: |
+          : > SHA256SUMS.txt
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' \) -print0 |
+            while IFS= read -r -d '' f; do
+              printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")" \
+                >> SHA256SUMS.txt
+            done
+          cat SHA256SUMS.txt
+
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
-            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
             artifacts/IsotopeTrack_Windows/*.exe
-          generate_release_notes: true
-          draft: false
+            artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
+            SHA256SUMS.txt
+          draft: true
+      - name: Create Draft GitHub Release
+        uses: release-drafter/release-drafter@v7
+        with:
+          config-name: release-drafter.yml
+          tag: ${{ github.ref_name }}

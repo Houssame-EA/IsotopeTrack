@@ -257,13 +257,10 @@ class WorkflowNode(QObject):
         self._has_output = False
         self.input_channels = []
         self.output_channels = []
-        # Per-node opt-out for the "applying this may change downstream
-        # plots" reminder (see _warn_before_apply_changes below). Lives on
-        # the base class so every node type — current and future — gets
-        # independent suppression state for free, matching the pattern
-        # already used by tools/particle_filter.py's ParticleFilterNode
-        # (which subclasses QObject directly, not this base, and carries
-        # its own separate copy of the same attribute).
+        # Legacy per-node opt-out for the "applying this may change
+        # downstream plots" reminder. The live opt-out is application-wide
+        # (tools/render_settings.py); this is still honoured if set, and
+        # kept so older callers and saved state stay valid.
         self.suppress_stale_warning = False
         # Declares whether more than one link may target this node's input
         # at once. Most node types read a single overwritable input_data
@@ -301,23 +298,30 @@ def _warn_before_apply_changes(parent, node):
     shared implementation here rather than copy-pasted per node type so a
     future node only needs one call to get the same behavior.
 
-    The opt-out is stored as ``node.suppress_stale_warning`` (set on every
-    ``WorkflowNode`` by its base ``__init__``), so it's independent per
-    node instance: dismissing it for one Single Sample node never silences
-    a different Single Sample (or Multi-Sample, or Batch) node.
+    The opt-out is application-wide and permanent, stored outside both
+    implementations in :mod:`tools.render_settings`: ticking "Don't show
+    this again" on any one node silences the reminder for every node of
+    every type, including the Particle Filter's own copy of it, and the
+    choice survives a restart. ``node.suppress_stale_warning`` is still
+    read first as a per-node override for anything that sets it directly.
 
     Args:
         parent (QWidget): Parent for the message box (typically the
             just-accepted configuration dialog, or the canvas window).
         node (WorkflowNode): The node about to have its configuration
-            committed; read/written for ``suppress_stale_warning``.
+            committed; read for a per-node ``suppress_stale_warning``
+            override.
 
     Returns:
         bool: True if the caller should proceed and commit the new
             configuration; False if the user chose "Go back" (the caller
             should leave the node's prior configuration untouched).
     """
+    from tools.render_settings import (stale_warning_suppressed,
+                                       set_stale_warning_suppressed)
     if getattr(node, 'suppress_stale_warning', False):
+        return True
+    if stale_warning_suppressed():
         return True
     from PySide6.QtWidgets import QMessageBox, QCheckBox
     box = QMessageBox(parent)
@@ -329,14 +333,14 @@ def _warn_before_apply_changes(parent, node):
         "settings, so any open plot window fed by this node will update "
         "to match.\n\nIf you want to keep a plot's current view, save it "
         "first, then come back and apply this change.")
-    dont_show = QCheckBox("Don't show this again for this node")
+    dont_show = QCheckBox("Don't show this again (any node)")
     box.setCheckBox(dont_show)
     proceed = box.addButton("Proceed anyway", QMessageBox.AcceptRole)
     box.addButton("Go back", QMessageBox.RejectRole)
     box.setDefaultButton(proceed)
     box.exec()
     if dont_show.isChecked():
-        node.suppress_stale_warning = True
+        set_stale_warning_suppressed(True)
     return box.clickedButton() is proceed
 
 
