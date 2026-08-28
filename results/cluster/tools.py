@@ -30,6 +30,7 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.
 
 from __future__ import annotations
 
+import re
 import time
 import threading
 import itertools
@@ -64,9 +65,23 @@ except ImportError:
 from utils.numba_guard import numba_serial
 
 try:
-    from results.cluster.prep import reduction_components
+    from results.cluster import prep as _prep
 except ImportError:
-    from .prep import reduction_components
+    from . import prep as _prep
+
+reduction_components = _prep.reduction_components
+EMBED_DIMS = _prep.EMBED_DIMS
+KEEP_ALL = _prep.KEEP_ALL
+DR_METRIC_OPTIONS = _prep.DR_METRIC_OPTIONS
+DR_PARAM_SPECS = _prep.DR_PARAM_SPECS
+apply_reduction = _prep.apply_reduction
+reduction_kwargs = _prep.reduction_kwargs
+dr_defaults = _prep.dr_defaults
+_supported_kwargs = _prep.supported_kwargs
+_n_components_value = _prep.n_components_value
+_learning_rate_value = _prep.learning_rate_value
+_dr_params_str = _prep.dr_params_str
+_non_default_dr_params = _prep.non_default_dr_params
 
 try:
     from sklearn.cluster import HDBSCAN as _HDBSCAN_CLS
@@ -101,8 +116,9 @@ except Exception:
     ON_OFF = ['off', 'on']
     SPECTRAL_AFFINITY_OPTIONS = ['rbf', 'nearest_neighbors']
     SOM_FINAL_ALGO_OPTIONS = ['Hierarchical (Ward)', 'Hierarchical (Average)',
-                              'Hierarchical (Complete)', 'K-Means',
-                              'Gaussian Mixture', 'Spectral']
+                              'Hierarchical (Complete)',
+                              'Hierarchical (Single)',
+                              'K-Means', 'MiniBatch K-Means', 'Spectral']
 
     def as_flag(value, default):
         """Resolve a boolean estimator flag when the host dialog is absent.
@@ -225,6 +241,10 @@ DEFAULT_EXTERNAL_METRICS = ['ARI', 'AMI', 'V-measure']
 PRIMARY_EXTERNAL_METRIC = 'ARI'
 
 OTHER_LABEL_NAME = 'other'
+
+#: Tolerance, in percentage points, applied to a component that declares target
+#: percentages without an explicit ``~`` tolerance.
+DEFAULT_COMPOSITION_TOL = 10.0
 
 ALGO_PARAM_SPECS = {
     'K-Means': {
@@ -440,19 +460,39 @@ DEFAULT_SCALINGS = ['None']
 DEFAULT_DIM_REDUCTIONS = ['None']
 DEFAULT_ALGORITHMS = ['K-Means']
 
+_TOL_RE = re.compile(r'\s*[~±]\s*([0-9]*\.?[0-9]+)\s*%?\s*$')
+
 
 def parse_components(text):
-    """Parse a component string into ``[(name, [elements]), ...]``.
+    """Parse a component string into ``[(name, [elements], spec), ...]``.
 
     Groups are separated by ``;`` or newlines.  Within a group, elements may be
     joined with ``+`` (``Fe+Ni+Co``) or written fused (``FeNiCo``, split on
     capital-letter boundaries).  ``Name=El1+El2`` gives an explicit label; for a
     fused token the label is kept exactly as typed.
 
+    An element token may carry a **target percentage** written after a colon,
+    and the group may end with a tolerance in percentage points::
+
+        AgAu(1) = 107Ag:80 + 197Au:20 ~5
+        AgAu(2) = 107Ag:50 + 197Au:50 ~5
+
+    This is what lets two standards made of the same elements stay separate:
+    without percentages both entries describe the identical elemental
+    combination and only one of them can survive :func:`resolve_components`.
+    Targets are normalised to sum to 100, so ``Ag:8+Au:2`` means the same thing
+    as ``Ag:80+Au:20``.  When no tolerance is written,
+    :data:`DEFAULT_COMPOSITION_TOL` applies.  An unreadable percentage degrades
+    that one token to presence-only rather than dropping the element.
+
+    Args:
+        text (str): The raw components field.
+
     Returns:
-        list[tuple[str, list[str]]]: Ordered component definitions.
+        list[tuple[str, list[str], dict | None]]: Ordered component definitions.
+        ``spec`` is None for a presence-only component, otherwise
+        ``{'targets': {token: percent}, 'tol': float, 'raw_sum': float}``.
     """
-    import re
     comps = []
     raw = [c.strip() for c in re.split(r'[;\n]', text) if c.strip()]
     for token in raw:
@@ -462,15 +502,46 @@ def parse_components(text):
             name, body = token.split('=', 1)
             name = name.strip()
             body = body.strip()
-        if '+' in body:
-            elems = [e.strip() for e in body.split('+') if e.strip()]
+
+        tol = None
+        m = _TOL_RE.search(body)
+        if m:
+            tol = float(m.group(1))
+            body = body[:m.start()].strip()
+
+        if '+' in body or ':' in body:
+            parts = [e.strip() for e in body.split('+') if e.strip()]
         else:
-            elems = re.findall(r'\d*[A-Z][a-z]?', body)
-            if not elems:
-                elems = [body]
+            parts = re.findall(r'\d*[A-Z][a-z]?', body)
+            if not parts:
+                parts = [body]
+
+        elems, targets = [], {}
+        for part in parts:
+            if ':' in part:
+                tok, pct = part.split(':', 1)
+                tok = tok.strip()
+                try:
+                    targets[tok] = float(pct.strip().rstrip('%'))
+                except ValueError:
+                    pass
+                elems.append(tok)
+            else:
+                elems.append(part)
+        elems = [e for e in elems if e]
+
+        spec = None
+        if targets:
+            raw_sum = float(sum(targets.values()))
+            if raw_sum > 0:
+                targets = {k: v / raw_sum * 100.0 for k, v in targets.items()}
+            spec = {'targets': targets,
+                    'tol': DEFAULT_COMPOSITION_TOL if tol is None else tol,
+                    'raw_sum': raw_sum}
+
         if name is None:
             name = body
-        comps.append((name, elems))
+        comps.append((name, elems, spec))
     return comps
 
 
@@ -502,36 +573,58 @@ def resolve_components(components, elements):
 
     * an element token that matches no column in the data;
     * a component whose name was already used by an earlier entry;
-    * a component whose element set is identical to an earlier component's, since
-      exact matching could never separate the two.
+    * a component whose element set is identical to an earlier component's **and
+      neither declares target percentages**, since presence matching alone could
+      never separate the two.
+
+    Two components *may* share an element set when both declare percentages —
+    that is how ``AgAu(1)`` and ``AgAu(2)`` coexist.  If one of a colliding pair
+    declares percentages and the other does not, the bare one is rejected: it
+    would swallow every particle of that combination before the composition
+    stage ever ran.
 
     Args:
-        components (list[tuple[str, list[str]]]): Output of :func:`parse_components`.
+        components (list[tuple]): Output of :func:`parse_components`. Entries may
+            be ``(name, elements)`` or ``(name, elements, spec)``; a 2-tuple is
+            treated as presence-only.
         elements (list[str]): Active element column names.
 
     Returns:
-        dict: ``{'names', 'colsets', 'unknown_elements', 'duplicate_names',
-            'duplicate_sets', 'empty_components', 'issues'}``.  ``names`` and
-        ``colsets`` are the accepted components, aligned; ``issues`` is a list of
-        human-readable strings suitable for showing under the input field.
+        dict: ``{'names', 'colsets', 'specs', 'unknown_elements',
+            'duplicate_names', 'duplicate_sets', 'empty_components',
+            'partial_percentages', 'renormalised', 'issues'}``.  ``names``,
+        ``colsets`` and ``specs`` are the accepted components, aligned; a
+        ``specs`` entry is None for a presence-only component, otherwise
+        ``{'targets': {column_index: percent}, 'tol': float}``.  ``issues`` is a
+        list of human-readable strings suitable for showing under the input
+        field.
     """
     elem_index = {e: i for i, e in enumerate(elements)}
     sym_index = {}
     for i, e in enumerate(elements):
         sym_index.setdefault(_element_symbol(e), i)
 
-    names, colsets = [], []
+    names, colsets, specs = [], [], []
     unknown_elements, duplicate_names = [], []
     duplicate_sets, empty_components = [], []
+    partial_percentages, renormalised = [], []
     seen_sets = {}
 
-    for name, elems in components:
+    for entry in components:
+        if len(entry) >= 3:
+            name, elems, spec = entry[0], entry[1], entry[2]
+        else:
+            name, elems, spec = entry[0], entry[1], None
         present, missing = [], []
+        token_col = {}
         for e in elems:
             if e in elem_index:
                 present.append(e)
+                token_col[e] = elem_index[e]
             elif _element_symbol(e) in sym_index:
-                present.append(elements[sym_index[_element_symbol(e)]])
+                col = sym_index[_element_symbol(e)]
+                present.append(elements[col])
+                token_col[e] = col
             else:
                 missing.append(e)
         if not present:
@@ -543,15 +636,42 @@ def resolve_components(components, elements):
             duplicate_names.append(name)
             continue
         cols = frozenset(elem_index[c] for c in present)
-        if cols in seen_sets:
-            duplicate_sets.append((name, seen_sets[cols]))
+        prior = seen_sets.get(cols)
+        if prior is not None and not (prior['spec'] and spec):
+            duplicate_sets.append((name, prior['name']))
             continue
         for e in missing:
             if e not in unknown_elements:
                 unknown_elements.append(e)
-        seen_sets[cols] = name
+
+        resolved_spec = None
+        if spec:
+            targets = {}
+            for tok, pct in spec.get('targets', {}).items():
+                col = token_col.get(tok)
+                if col is None:
+                    col = elem_index.get(tok)
+                    if col is None and _element_symbol(tok) in sym_index:
+                        col = sym_index[_element_symbol(tok)]
+                if col is not None and col in cols:
+                    targets[col] = float(pct)
+            uncovered = sorted(cols - set(targets))
+            if uncovered:
+                partial_percentages.append(
+                    (name, [elements[c] for c in uncovered]))
+                for c in uncovered:
+                    targets[c] = 0.0
+            raw_sum = float(spec.get('raw_sum') or 0.0)
+            if raw_sum > 0 and abs(raw_sum - 100.0) > 0.5:
+                renormalised.append((name, raw_sum))
+            resolved_spec = {'targets': targets,
+                             'tol': float(spec.get('tol',
+                                                   DEFAULT_COMPOSITION_TOL))}
+
+        seen_sets[cols] = {'name': name, 'spec': resolved_spec}
         names.append(name)
         colsets.append(cols)
+        specs.append(resolved_spec)
 
     def _join(items):
         """Quote and comma-join a list of tokens for a message."""
@@ -568,30 +688,56 @@ def resolve_components(components, elements):
         issues.append("%s listed twice (ignored)" % _join(duplicate_names))
     if duplicate_sets:
         issues.append("; ".join(
-            "'%s' has the same elements as '%s' (ignored)" % (dup, first)
+            "'%s' has the same elements as '%s' with no percentages to tell "
+            "them apart (ignored)" % (dup, first)
             for dup, first in duplicate_sets))
+    if partial_percentages:
+        issues.append("; ".join(
+            "'%s' gives no percentage for %s (treated as 0%%)"
+            % (nm, _join(cols)) for nm, cols in partial_percentages))
+    if renormalised:
+        issues.append("; ".join(
+            "'%s' percentages sum to %g, rescaled to 100" % (nm, s)
+            for nm, s in renormalised))
     return {
         'names': names,
         'colsets': colsets,
+        'specs': specs,
+        'composition_count': len([s for s in specs if s]),
         'unknown_elements': unknown_elements,
         'duplicate_names': duplicate_names,
         'duplicate_sets': duplicate_sets,
         'empty_components': empty_components,
+        'partial_percentages': partial_percentages,
+        'renormalised': renormalised,
         'issues': issues,
     }
 
 
 def build_ground_truth(raw_matrix, elements, components, other_flags=None,
-                       presence_threshold=0.0):
+                       presence_threshold=0.0, composition_matrix=None):
     """Assign each particle to a named component or to ``"other"``.
 
-    A component is an **elemental combination**: the set of elements actually
-    present in a particle must equal the set of elements named by the component.
-    This is what makes single-metal and alloy standards separable — ``107Ag``
-    matches particles carrying silver and nothing else, while ``107Ag+197Au``
-    matches particles carrying both.  An element counts as present when its share
-    of that particle's total signal reaches ``presence_threshold``; the default
-    of 0 accepts any non-zero value.
+    Matching runs in two stages.
+
+    **Stage one — elemental combination.** The set of elements actually present
+    in a particle must equal the set of elements named by the component.  This is
+    what makes single-metal and alloy standards separable — ``107Ag`` matches
+    particles carrying silver and nothing else, while ``107Ag+197Au`` matches
+    particles carrying both.  An element counts as present when its share of that
+    particle's total signal reaches ``presence_threshold``; the default of 0
+    accepts any non-zero value.
+
+    **Stage two — composition.** When several components claim the same elemental
+    combination, every one of them declares target percentages (see
+    :func:`parse_components`), and each particle in that combination goes to the
+    nearest target — provided it lies inside that component's tolerance.  The
+    distance is the largest absolute deviation, in percentage points, across the
+    component's elements, so ``~5`` reads as "every element within 5 points of
+    its target".  Percentages are taken over the component's **own** elements
+    only, renormalised to 100, so a trace of an unrelated element cannot shift
+    an alloy's ratio.  A particle inside no candidate's tolerance becomes
+    ``"other"`` rather than being forced into the closer of two wrong answers.
 
     Particles matching no component — and particles with no signal — become
     ``"other"``.  An optional boolean ``other_flags`` mask forces rows to
@@ -600,27 +746,36 @@ def build_ground_truth(raw_matrix, elements, components, other_flags=None,
 
     Args:
         raw_matrix (np.ndarray): Pre-scaling matrix ``(n_particles, n_elements)``
-            of non-negative element intensities.
+            of non-negative element intensities, used for presence matching.
         elements (list[str]): Column names aligned to ``raw_matrix`` columns.
-        components (list[tuple[str, list[str]]]): Output of :func:`parse_components`.
+        components (list[tuple]): Output of :func:`parse_components`.
         other_flags (np.ndarray or None): Optional boolean mask forcing rows to
             ``"other"``.
         presence_threshold (float): Minimum fraction (0–1) of a particle's total
             signal an element must carry to count as present.
+        composition_matrix (np.ndarray or None): Matrix the stage-two
+            percentages are computed from, same shape as ``raw_matrix``. Pass the
+            element-mass matrix so targets read as mass %. Defaults to
+            ``raw_matrix``, in which case they read as signal %.
 
     Returns:
         dict: ``{'labels', 'names', 'name_to_id', 'other_id', 'counts',
-                 'unmatched'}``.
+                 'unmatched', 'specs', 'composition_basis',
+                 'outside_tolerance'}``. ``outside_tolerance`` counts particles
+        sent to ``"other"`` by stage two alone.
     """
     resolved = resolve_components(components, elements)
     comp_names = resolved['names']
     comp_colsets = resolved['colsets']
+    comp_specs = resolved.get('specs') or [None] * len(comp_names)
 
     names = comp_names + [OTHER_LABEL_NAME]
     name_to_id = {n: i for i, n in enumerate(names)}
     other_id = name_to_id[OTHER_LABEL_NAME]
 
     n = raw_matrix.shape[0]
+    outside = 0
+    basis = 'none'
 
     if n == 0 or raw_matrix.shape[1] == 0:
         labels = np.full(n, other_id, dtype=int)
@@ -638,9 +793,10 @@ def build_ground_truth(raw_matrix, elements, components, other_flags=None,
         if empty.any():
             mask[empty, np.argmax(m[empty], axis=1)] = True
 
-        set_to_id = {}
+        set_to_ids = {}
         for cid, cols in enumerate(comp_colsets):
-            set_to_id.setdefault(cols, cid)
+            set_to_ids.setdefault(cols, []).append(cid)
+        set_to_id = {cols: ids[0] for cols, ids in set_to_ids.items()}
 
         # Group identical presence patterns so the dict lookup runs once per
         # distinct combination rather than once per particle.
@@ -650,6 +806,47 @@ def build_ground_truth(raw_matrix, elements, components, other_flags=None,
              for row in patterns], dtype=int)
         labels = pat_ids[inverse.ravel()]
         labels[totals <= 0] = other_id
+
+        if any(comp_specs):
+            cm = m if composition_matrix is None else np.asarray(
+                composition_matrix, dtype=float)
+            if cm.shape != m.shape:
+                cm, basis = m, 'presence matrix (shape mismatch)'
+            else:
+                cm = np.where(np.isfinite(cm) & (cm > 0), cm, 0.0)
+                basis = ('presence matrix' if composition_matrix is None
+                         else 'supplied matrix')
+                if not cm.any():
+                    cm, basis = m, 'presence matrix (supplied was empty)'
+
+            for cols, cands in set_to_ids.items():
+                specced = [c for c in cands if comp_specs[c]]
+                if not specced:
+                    continue
+                rows = np.flatnonzero(np.isin(labels, cands))
+                if rows.size == 0:
+                    continue
+                idx = sorted(cols)
+                sub = cm[np.ix_(rows, idx)]
+                sub_tot = sub.sum(axis=1)
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    pct = np.where(sub_tot[:, None] > 0,
+                                   sub / np.where(sub_tot[:, None] > 0,
+                                                  sub_tot[:, None], 1.0) * 100.0,
+                                   np.nan)
+                best = np.full(rows.size, other_id, dtype=int)
+                best_dev = np.full(rows.size, np.inf)
+                for c in specced:
+                    tgt = np.array([comp_specs[c]['targets'].get(col, 0.0)
+                                    for col in idx], dtype=float)
+                    dev = np.max(np.abs(pct - tgt[None, :]), axis=1)
+                    take = (np.isfinite(dev)
+                            & (dev <= float(comp_specs[c]['tol']))
+                            & (dev < best_dev))
+                    best[take] = c
+                    best_dev[take] = dev[take]
+                labels[rows] = best
+                outside += int(np.sum(best == other_id))
     labels = np.asarray(labels, dtype=int)
 
     if other_flags is not None:
@@ -663,6 +860,10 @@ def build_ground_truth(raw_matrix, elements, components, other_flags=None,
         'other_id': other_id,
         'counts': counts,
         'unmatched': counts[OTHER_LABEL_NAME],
+        'specs': comp_specs,
+        'composition_basis': basis,
+        'outside_tolerance': outside,
+        'issues': resolved['issues'],
     }
 
 
@@ -694,11 +895,17 @@ def _row_for_particle(p, data_type, elements):
     return [d.get(e, 0) for e in elements]
 
 
+def _freeze_params(params):
+    """Return a hashable, order-independent key for a parameter dict."""
+    return tuple(sorted((str(k), str(v)) for k, v in (params or {}).items()))
+
+
+
 class Preprocessor:
     """Builds and caches preprocessed matrices for the sweep.
 
-    Each ``(data_type, scaling, dim_reduction)`` matrix is computed once and
-    reused across every algorithm and cluster count, which is what keeps a large
+    Each ``(data_type, scaling, dim_reduction, params)`` matrix is computed once
+    and reused across every algorithm and cluster count, which is what keeps a large
     grid tractable.  The kept-row set is fixed once from the count matrix so
     ground-truth labels stay aligned across all data types.
     """
@@ -780,24 +987,28 @@ class Preprocessor:
         self._scaled_cache[key] = out
         return out
 
-    def matrix(self, data_type, scaling, dim_reduction):
-        """Return the fully preprocessed matrix for one pipeline (cached)."""
-        key = (data_type, scaling, dim_reduction)
+    def matrix(self, data_type, scaling, dim_reduction, params=None):
+        """Return the fully preprocessed matrix for one pipeline (cached).
+
+        Args:
+            data_type (str): A key from :data:`DATA_TYPES`.
+            scaling (str): A key from :data:`SCALINGS`.
+            dim_reduction (str): A key from :data:`DIM_REDUCTIONS`.
+            params (dict or None): Reduction parameters, as built by
+                :func:`build_dr_param_grid`. None runs the reduction at its
+                spec defaults, which reproduce the historical behaviour.
+
+        Returns:
+            np.ndarray: The reduced matrix.
+        """
+        params = dict(params or {})
+        key = (data_type, scaling, dim_reduction, _freeze_params(params))
         if key in self._reduced_cache:
             return self._reduced_cache[key]
         m = self._scaled(data_type, scaling)
-        nc = reduction_components(dim_reduction, m.shape[1])
-        if dim_reduction == 'PCA' and m.shape[1] > 1:
-            m = PCA(n_components=min(nc, m.shape[0])).fit_transform(m)
-        elif dim_reduction == 't-SNE' and m.shape[1] > 1:
-            perp = min(30, max(5, (m.shape[0] - 1) // 3))
-            m = TSNE(n_components=nc, random_state=self.tsne_rs,
-                     init='pca', perplexity=perp).fit_transform(m)
-        elif dim_reduction == 'UMAP' and _UMAP_OK and m.shape[1] > 1:
-            nn = min(15, max(2, m.shape[0] - 1))
-            with numba_serial("UMAP (sweep reduction)"):
-                m = _UMAP_CLS(n_components=nc, n_neighbors=nn,
-                              random_state=self.tsne_rs).fit_transform(m)
+        if m.shape[1] > 1:
+            m = apply_reduction(dim_reduction, m, params,
+                                default_random_state=self.tsne_rs)
         self._reduced_cache[key] = m
         return m
 
@@ -1116,11 +1327,104 @@ def build_param_grid(name, selections):
     return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
 
 
+def build_dr_param_grid(name, selections):
+    """Expand one reduction's per-parameter value lists into parameter dicts.
+
+    The mirror of :func:`build_param_grid` for dimensionality reduction.  A
+    reduction with no parameters — ``'None'``, or an unknown key — yields a
+    single empty dict, so callers can iterate uniformly.
+
+    Args:
+        name (str): Reduction key from :data:`DR_PARAM_SPECS`.
+        selections (dict or None): ``{param_name: [values...]}``; missing
+            parameters use their spec default list.
+
+    Returns:
+        list[dict]: One parameter dict per combination.
+    """
+    spec = DR_PARAM_SPECS.get(name, {}).get('params', {})
+    if not spec:
+        return [{}]
+    selections = selections or {}
+    keys, value_lists = [], []
+    for pname, pspec in spec.items():
+        vals = selections.get(pname)
+        if not vals:
+            vals = pspec['default']
+        keys.append(pname)
+        value_lists.append(list(vals))
+    return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
+
+
+def normalize_dr_selections(dim_reductions=None, dr_selections=None):
+    """Return ``{reduction: {param: [values]}}`` from either calling style.
+
+    The sweep accepted a plain list of reduction names long before reductions
+    had parameters, and project files saved under that scheme must keep loading.
+    A name given without selections runs at its spec defaults, which reproduce
+    the old hard-coded behaviour exactly.
+
+    Args:
+        dim_reductions (list[str] or None): Reduction names.
+        dr_selections (dict or None): ``{reduction: {param: [values]}}``. Takes
+            precedence; names present here need not repeat in ``dim_reductions``.
+
+    Returns:
+        dict: ``{reduction: {param: [values]}}``, ordered as
+        :data:`DIM_REDUCTIONS`.
+    """
+    out = {}
+    for name in (dim_reductions or []):
+        out.setdefault(name, {})
+    for name, sel in (dr_selections or {}).items():
+        out[name] = dict(sel or {})
+    order = {n: i for i, n in enumerate(DIM_REDUCTIONS)}
+    return {k: out[k] for k in sorted(out, key=lambda n: order.get(n, 999))}
+
+
+def expand_pre_combos(data_types, scalings, dr_map):
+    """Build the preprocessing axis as ``(data_type, scaling, reduction, params)``.
+
+    Args:
+        data_types (list[str]): Selected data types.
+        scalings (list[str]): Selected scalings.
+        dr_map (dict): Output of :func:`normalize_dr_selections`.
+
+    Returns:
+        list[tuple]: One tuple per preprocessing pipeline.
+    """
+    return [(dt, sc, dr, params)
+            for dt in data_types
+            for sc in scalings
+            for dr, sel in dr_map.items()
+            for params in build_dr_param_grid(dr, sel)]
+
+
+
+def _best_dr_suffix(row):
+    """Return ``" [perplexity=50, ...]"`` for a result row, or an empty string.
+
+    Kept separate from :func:`_dr_params_str` because the summary line reads
+    better without brackets when a pipeline used no reduction at all.
+
+    Args:
+        row (dict): A leaderboard result row.
+
+    Returns:
+        str: The bracketed parameter string, or ``''``.
+    """
+    txt = row.get('dr_params_str') or _dr_params_str(row.get('dim_reduction'),
+                                                     row.get('dr_params'))
+    return f" [{txt}]" if txt else ''
+
+
+
 def count_combinations(pre_combos, algo_selections):
     """Return the total number of fits a sweep would perform.
 
     Args:
-        pre_combos (list): Preprocessing ``(data_type, scaling, reduction)`` tuples.
+        pre_combos (list): Preprocessing tuples, as built by
+            :func:`expand_pre_combos`.
         algo_selections (dict): ``{algo: {param: [values]}}``.
 
     Returns:
@@ -1139,7 +1443,7 @@ def _params_str(algo, params):
 
 
 def run_sweep(particle_data, elements, components, *,
-              data_types, scalings, dim_reductions,
+              data_types, scalings, dim_reductions=None, dr_selections=None,
               algo_selections, internal_metrics, external_metrics,
               other_flags=None, filter_zeros=True,
               truth_presence_threshold=0.0,
@@ -1151,7 +1455,19 @@ def run_sweep(particle_data, elements, components, *,
         particle_data (list[dict]): Particle records.
         elements (list[str]): Active element columns.
         components (list[tuple]): Parsed component definitions.
-        data_types / scalings / dim_reductions (list[str]): Axis selections.
+        data_types / scalings (list[str]): Axis selections.
+        dim_reductions (list[str] or None): Reduction names to run at their
+            default parameters. Kept for callers written before reductions were
+            parameterised.
+        dr_selections (dict or None): ``{reduction: {param: [values]}}``. Each
+            reduction contributes one preprocessing pipeline per parameter
+            combination, so a five-value perplexity list means five separate
+            t-SNE embeddings per (data type, scaling) pair.
+
+            Composition targets on ``components`` are written as mass %, so
+            stage-two ground-truth matching reads from the element-mass matrix,
+            falling back to counts (signal %) when the dataset carries no mass
+            calibration.
         algo_selections (dict): ``{algo: {param: [values]}}``.
         internal_metrics (list[str]): Internal index names to compute.
         external_metrics (list[str]): External (truth) index names to compute.
@@ -1190,13 +1506,19 @@ def run_sweep(particle_data, elements, components, *,
         of = np.asarray(other_flags, dtype=bool)
         if len(of) == len(pre.keep_mask):
             kept_other = of[pre.keep_mask]
+    try:
+        comp_mat = pre.raw_matrix('Element Mass (fg)')
+    except Exception:
+        _itk_log.exception("Handled exception building composition matrix")
+        comp_mat = None
     truth = build_ground_truth(pre.counts_matrix(), elements, components,
                                other_flags=kept_other,
-                               presence_threshold=truth_presence_threshold)
+                               presence_threshold=truth_presence_threshold,
+                               composition_matrix=comp_mat)
     truth_labels = truth['labels']
 
-    pre_combos = [(dt, sc, dr)
-                  for dt in data_types for sc in scalings for dr in dim_reductions]
+    dr_map = normalize_dr_selections(dim_reductions, dr_selections)
+    pre_combos = expand_pre_combos(data_types, scalings, dr_map)
     total = count_combinations(pre_combos, algo_selections)
     done = 0
     results = []
@@ -1204,12 +1526,16 @@ def run_sweep(particle_data, elements, components, *,
     attempts = {a: 0 for a in algo_selections}
     cancelled = False
 
-    for (dt, sc, dr) in pre_combos:
+    for (dt, sc, dr, dr_params) in pre_combos:
         if cancel_event is not None and cancel_event.is_set():
             cancelled = True
             break
+        drstr = _dr_params_str(dr, dr_params)
+        tag = f"{dt} / {sc} / {dr}" + (f" [{drstr}]" if drstr else "")
+        if progress_cb and dr != 'None':
+            progress_cb(done, total, f"Reducing · {tag}")
         try:
-            data = pre.matrix(dt, sc, dr)
+            data = pre.matrix(dt, sc, dr, dr_params)
         except Exception:
             _itk_log.exception("Handled exception in run_sweep")
             for a, s in algo_selections.items():
@@ -1219,9 +1545,11 @@ def run_sweep(particle_data, elements, components, *,
                 for _ in range(n_grid):
                     failures.append({'algorithm': a, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
+                                     'dr_params_str': drstr,
                                      'reason': 'error'})
             if progress_cb:
-                progress_cb(done, total, f"{dt} / {sc} / {dr}: skipped")
+                progress_cb(done, total,
+                            f"{tag} — reduction failed, skipped")
             continue
 
         for algo, sel in algo_selections.items():
@@ -1234,18 +1562,29 @@ def run_sweep(particle_data, elements, components, *,
                     attempts[algo] += 1
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
+                                     'dr_params_str': drstr,
                                      'reason': 'metric_undefined'})
+                    if progress_cb:
+                        pstr = _params_str(algo, params)
+                        progress_cb(done, total,
+                                    f"{algo} · {tag}"
+                                    " — skipped (metric undefined)"
+                                    + (f" · params: {pstr}" if pstr else ""))
                     continue
                 t0 = time.perf_counter()
                 labels = run_algorithm(algo, params, data, som_runner=som_runner)
                 elapsed = time.perf_counter() - t0
                 done += 1
                 attempts[algo] += 1
-                if progress_cb and (done % 5 == 0 or done == total):
-                    progress_cb(done, total, f"{algo} · {dt}/{sc}/{dr}")
+                if progress_cb:
+                    pstr = _params_str(algo, params)
+                    progress_cb(done, total,
+                                f"{algo} · {tag}"
+                                + (f" · params: {pstr}" if pstr else ""))
                 if labels is None:
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
+                                     'dr_params_str': drstr,
                                      'reason': 'no_labels'})
                     continue
                 labels = np.asarray(labels)
@@ -1255,6 +1594,7 @@ def run_sweep(particle_data, elements, components, *,
                 if n_clusters < min_clusters or n_clusters > max_clusters:
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
+                                     'dr_params_str': drstr,
                                      'reason': 'out_of_range'})
                     continue
 
@@ -1263,6 +1603,8 @@ def run_sweep(particle_data, elements, components, *,
                     'data_type': dt,
                     'scaling': sc,
                     'dim_reduction': dr,
+                    'dr_params': dict(dr_params),
+                    'dr_params_str': drstr,
                     'params': dict(params),
                     'params_str': _params_str(algo, params),
                     'n_clusters': n_clusters,
@@ -1776,6 +2118,63 @@ if _QT_OK:
                 if p in self.controls and vals:
                     self.controls[p].set_values(vals)
 
+    class _DRCard(QGroupBox):
+        """One dimensionality reduction's parameter controls.
+
+        Unlike :class:`_AlgoCard` this card carries no enable checkbox: the
+        "Dim. reduction" axis column above already decides which reductions
+        run, and duplicating that switch here would let the two disagree. The
+        card mirrors that checkbox instead, greying itself out when the
+        reduction is not selected.
+        """
+
+        def __init__(self, name, parent=None):
+            """Build the card for reduction ``name``.
+
+            Args:
+                name (str): Reduction key from :data:`DR_PARAM_SPECS`.
+                parent (QWidget or None): Optional parent.
+            """
+            super().__init__(name, parent)
+            self.name = name
+            form = QGridLayout(self)
+            form.setContentsMargins(8, 4, 8, 8)
+            self.controls = {}
+            r = 0
+            for pname, pspec in DR_PARAM_SPECS.get(name, {}).get(
+                    'params', {}).items():
+                form.addWidget(QLabel(pspec['label'] + ':'), r, 0,
+                               alignment=Qt.AlignTop)
+                if pspec['kind'] in ('int_range', 'float_range'):
+                    w = _RangeBuilder(pspec)
+                else:
+                    w = _ChoiceList(pspec['options'], pspec['default'])
+                self.controls[pname] = w
+                form.addWidget(w, r, 1)
+                r += 1
+            if 'n_components' in self.controls:
+                warn = QLabel(
+                    "'%s' keeps every component. Choosing fewer discards "
+                    "variance, and the first thing that usually goes is the "
+                    "rare particle types." % KEEP_ALL)
+                warn.setWordWrap(True)
+                warn.setStyleSheet("color:#B45309;font-size:10px;")
+                form.addWidget(warn, r, 0, 1, 2)
+
+        def selections(self):
+            """Return ``{param: [values]}`` for this reduction."""
+            return {p: w.values() for p, w in self.controls.items()}
+
+        def get_state(self):
+            """Return a serialisable ``{'params': ...}`` snapshot."""
+            return {'params': self.selections()}
+
+        def set_state(self, state):
+            """Restore parameter values from a snapshot."""
+            for p, vals in (state or {}).get('params', {}).items():
+                if p in self.controls and vals:
+                    self.controls[p].set_values(vals)
+
     class _LeaderboardModel(QAbstractTableModel):
         """Virtualised model behind the sweep leaderboard.
 
@@ -2127,8 +2526,15 @@ if _QT_OK:
                 "<b>107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co</b><br>"
                 "A '+' entry is its own truth group: "
                 "<b>107Ag ; 197Au ; 107Ag+197Au</b> gives pure silver, pure "
-                "gold and the Ag–Au alloy as three separate groups."))
+                "gold and the Ag–Au alloy as three separate groups.<br>"
+                "To separate two standards made of the <i>same</i> elements, "
+                "give each one its mass percentages and a tolerance: "
+                "<b>AgAu(1)=107Ag:80+197Au:20 ~5 ; "
+                "AgAu(2)=107Ag:50+197Au:50 ~5</b>. Particles outside every "
+                "tolerance fall to 'other'."))
             self.components_edit = QLineEdit("107Ag ; 48Ti ; 140Ce ; 56Fe+60Ni+59Co")
+            self.components_edit.setToolTip(
+                "Name=El:pct+El:pct ~tol   e.g. AgAu(1)=107Ag:80+197Au:20 ~5")
             self.components_edit.textChanged.connect(self._refresh_components_note)
             gtb.addWidget(self.components_edit)
             self.components_note = QLabel("")
@@ -2227,6 +2633,33 @@ if _QT_OK:
                 list(METRIC_REGISTRY.keys())[:3], 'int_boxes'))
             v.addLayout(axes)
 
+            dr_group = QGroupBox("Reduction parameters "
+                                 "(ranges build the sweep, like the "
+                                 "algorithms below)")
+            dr_grid = QGridLayout(dr_group)
+            dr_grid.setSpacing(10)
+            self.dr_cards = {}
+            parametrised = [n for n in DIM_REDUCTIONS
+                            if DR_PARAM_SPECS.get(n, {}).get('params')]
+            for i, name in enumerate(parametrised):
+                card = _DRCard(name)
+                self.dr_cards[name] = card
+                dr_grid.addWidget(card, i // 2, i % 2)
+                cb = self.dr_boxes.get(name)
+                if cb is not None:
+                    card.setEnabled(cb.isChecked())
+                    cb.toggled.connect(card.setEnabled)
+                    cb.toggled.connect(self._update_estimate)
+            dr_note = QLabel(
+                "Each parameter combination is a separate embedding, not a "
+                "separate fit: five perplexities means five t-SNE runs for "
+                "every data type and scaling you ticked. Reductions dominate "
+                "the runtime — the estimate below counts them.")
+            dr_note.setWordWrap(True)
+            dr_note.setStyleSheet("color:#64748B;font-size:10px;")
+            dr_grid.addWidget(dr_note, (len(parametrised) + 1) // 2, 0, 1, 2)
+            v.addWidget(dr_group)
+
             algo_group = QGroupBox("Algorithms & parameters "
                                    "(tick to include; ranges build the sweep)")
             grid = QGridLayout(algo_group)
@@ -2261,6 +2694,15 @@ if _QT_OK:
             self.progress = QProgressBar()
             self.progress.setVisible(False)
             outer.addWidget(self.progress)
+
+            self.progress_detail = QLabel("")
+            self.progress_detail.setVisible(False)
+            self.progress_detail.setWordWrap(True)
+            self.progress_detail.setTextInteractionFlags(
+                Qt.TextSelectableByMouse)
+            self.progress_detail.setStyleSheet(
+                "color: #64748B; font-size: 11px;")
+            outer.addWidget(self.progress_detail)
             return tab
 
         def _axis_box(self, title, options, defaults, attr):
@@ -2402,6 +2844,9 @@ if _QT_OK:
                 return
             n = len(res['names'])
             parts = ["%d truth group%s recognised" % (n, '' if n == 1 else 's')]
+            nc = res.get('composition_count', 0)
+            if nc:
+                parts.append("%d matched by composition" % nc)
             parts.extend(res['issues'])
             colour = '#B45309' if (res['issues'] or n == 0) else '#64748B'
             note.setText("<span style='color:%s'>%s.</span>"
@@ -2433,6 +2878,11 @@ if _QT_OK:
                 data_types=[o for o, cb in self.data_boxes.items() if cb.isChecked()],
                 scalings=[o for o, cb in self.scale_boxes.items() if cb.isChecked()],
                 dim_reductions=[o for o, cb in self.dr_boxes.items() if cb.isChecked()],
+                dr_selections={
+                    name: card.selections()
+                    for name, card in getattr(self, 'dr_cards', {}).items()
+                    if self.dr_boxes.get(name) is not None
+                    and self.dr_boxes[name].isChecked()},
                 algo_selections=algo_selections,
                 internal_metrics=[o for o, cb in self.int_boxes.items() if cb.isChecked()],
                 external_metrics=external,
@@ -2449,11 +2899,18 @@ if _QT_OK:
             if not kw['algo_selections']:
                 self.estimate_lbl.setText("Select at least one algorithm.")
                 return 0
-            pre = [(d, s, r) for d in kw['data_types']
-                   for s in kw['scalings'] for r in kw['dim_reductions']]
+            dr_map = normalize_dr_selections(kw['dim_reductions'],
+                                             kw.get('dr_selections'))
+            pre = expand_pre_combos(kw['data_types'], kw['scalings'], dr_map)
             n = count_combinations(pre, kw['algo_selections'])
-            self.estimate_lbl.setText(
-                f"≈ {n:,} fits across {len(pre)} preprocessing combo(s).")
+            n_red = len([c for c in pre if c[2] != 'None'])
+            msg = f"≈ {n:,} fits across {len(pre)} preprocessing combo(s)"
+            if n_red:
+                msg += f", incl. {n_red:,} embedding(s) to compute"
+            self.estimate_lbl.setText(msg + ".")
+            self.estimate_lbl.setStyleSheet(
+                "color:#B45309;" if n_red > 40 else "")
+            self._last_reduction_count = n_red
             return n
 
         def _run(self):
@@ -2476,7 +2933,16 @@ if _QT_OK:
                                     "Select at least one external metric.")
                 return
             n = self._update_estimate()
-            if n > 20000:
+            n_red = getattr(self, '_last_reduction_count', 0)
+            if n_red > 40:
+                ok = QMessageBox.question(
+                    self, "Many embeddings",
+                    f"This will compute {n_red:,} separate t-SNE/UMAP/PCA "
+                    "embeddings before any clustering runs, which usually "
+                    "dominates the runtime.\n\nProceed?")
+                if ok != QMessageBox.Yes:
+                    return
+            elif n > 20000:
                 ok = QMessageBox.question(
                     self, "Large sweep",
                     f"This will run about {n:,} fits and may take a while.\n"
@@ -2489,6 +2955,8 @@ if _QT_OK:
             self.progress.setVisible(True)
             self.progress.setRange(0, 100)
             self.progress.setValue(0)
+            self.progress_detail.setText("")
+            self.progress_detail.setVisible(False)
             self._worker = _SweepWorker(kw)
             self._worker.progressed.connect(self._on_progress)
             self._worker.done.connect(self._on_done)
@@ -2505,13 +2973,18 @@ if _QT_OK:
             """Update the progress bar from worker progress signals."""
             pct = int(100 * done / total) if total else 0
             self.progress.setValue(pct)
-            self.progress.setFormat(f"{done}/{total} — {msg}")
+            head, _, detail = msg.partition(' · params: ')
+            self.progress.setFormat(f"{done}/{total} — {head}")
+            self.progress.setToolTip(msg.replace(' · params: ', '\n'))
+            self.progress_detail.setVisible(bool(detail))
+            self.progress_detail.setText(detail)
 
         def _on_failed(self, msg):
             """Restore controls and report a sweep failure."""
             self.run_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
             self.progress.setVisible(False)
+            self.progress_detail.setVisible(False)
             QMessageBox.critical(self, "Sweep failed", msg)
 
         def _on_done(self, payload):
@@ -2519,6 +2992,7 @@ if _QT_OK:
             self.run_btn.setEnabled(True)
             self.cancel_btn.setEnabled(False)
             self.progress.setVisible(False)
+            self.progress_detail.setVisible(False)
             self._detail_pre = None
             if payload.get('error'):
                 QMessageBox.warning(self, "No results", payload['error'])
@@ -2556,7 +3030,8 @@ if _QT_OK:
             if payload.get('unknown'):
                 self.best_lbl.setText(
                     f"<b>Best pipeline ({score_str}):</b> "
-                    f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']} · "
+                    f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']}"
+                    f"{_best_dr_suffix(best)} · "
                     f"{best['algorithm']} ({best['params_str']}) → "
                     f"{best['n_clusters']} clusters, {best['n_noise']} noise."
                     f"<br><span style='color:#64748B'>No ground truth — ranked by "
@@ -2566,7 +3041,8 @@ if _QT_OK:
                 n_truth = max(len(counts) - 1, 0)
                 self.best_lbl.setText(
                     f"<b>Best pipeline ({score_str}):</b> "
-                    f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']} · "
+                    f"{best['data_type']} · {best['scaling']} · {best['dim_reduction']}"
+                    f"{_best_dr_suffix(best)} · "
                     f"{best['algorithm']} ({best['params_str']}) → "
                     f"{best['n_clusters']} clusters, {best['n_noise']} noise "
                     f"(you named {n_truth} components)."
@@ -2608,6 +3084,7 @@ if _QT_OK:
                     ('Data type', 'data_type', 'text'),
                     ('Scaling', 'scaling', 'text'),
                     ('Reduction', 'dim_reduction', 'text'),
+                    ('Reduction params', 'dr_params_str', 'text'),
                     ('Params', 'params_str', 'text'),
                     ('K', 'n_clusters', 'int'),
                     ('Noise', 'n_noise', 'int')]
@@ -2779,6 +3256,7 @@ if _QT_OK:
             cfg['scaling'] = {'None': 'Standard'}.get(
                 result['scaling'], result['scaling'])
             cfg['dim_reduction'] = result['dim_reduction']
+            cfg['dim_reduction_params'] = dict(result.get('dr_params') or {})
             cfg['selected_algorithm'] = result['algorithm']
             cfg['enabled_algorithms'] = [result['algorithm']]
             if 'k' in result['params']:
@@ -2900,6 +3378,13 @@ if _QT_OK:
                    "② Cluster is ready with the chosen K — no evaluation needed."
                    if prepped else
                    "Pipeline written to the clustering configuration.")
+            changed = _non_default_dr_params(result.get('dim_reduction'),
+                                             result.get('dr_params'))
+            if changed:
+                msg += ("\n\nReduction settings applied too: "
+                        + _dr_params_str(result.get('dim_reduction'), changed)
+                        + ". They are visible under Settings › Preprocessing "
+                        "and the live panel redraws in the same space.")
             QMessageBox.information(self, "Applied", msg)
 
         def _export_csv(self):
@@ -2918,11 +3403,13 @@ if _QT_OK:
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
                 w.writerow(['rank', 'algorithm', 'data_type', 'scaling',
-                            'dim_reduction', 'params', 'n_clusters', 'n_noise',
+                            'dim_reduction', 'dr_params_str', 'params',
+                            'n_clusters', 'n_noise',
                             'runtime_s'] + metric_cols)
                 for i, row in enumerate(results):
                     w.writerow([i + 1, row['algorithm'], row['data_type'],
                                 row['scaling'], row['dim_reduction'],
+                                row.get('dr_params_str', ''),
                                 row['params_str'], row['n_clusters'],
                                 row['n_noise'], row['runtime_s']]
                                + [row.get(m, '') for m in metric_cols])
@@ -2954,6 +3441,8 @@ if _QT_OK:
                 'unknown': self._is_unknown(),
                 'kfilter': self.kfilter_cb.isChecked(),
                 'algos': {n: c.get_state() for n, c in self.algo_cards.items()},
+                'dr_params': {n: c.get_state()
+                              for n, c in getattr(self, 'dr_cards', {}).items()},
                 'last': compact_payload(self._last),
                 'last_min_type': self._last_min_type,
             }
@@ -2978,6 +3467,9 @@ if _QT_OK:
                 self._set_axis(self.data_boxes, state.get('data_types'))
                 self._set_axis(self.scale_boxes, state.get('scalings'))
                 self._set_axis(self.dr_boxes, state.get('dim_reductions'))
+                for n, st in (state.get('dr_params') or {}).items():
+                    if n in getattr(self, 'dr_cards', {}):
+                        self.dr_cards[n].set_state(st)
                 self._set_axis(self.ext_boxes, state.get('ext'))
                 self._set_axis(self.int_boxes, state.get('int'))
                 self.gt_group.setChecked(not bool(state.get('unknown', True)))
