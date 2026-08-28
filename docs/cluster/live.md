@@ -127,7 +127,7 @@ QWidget hosting the interactive clustering view.
 | `_rare_filter` | `(matrix, samples, min_count)` | Drop particles whose non-zero element signature is rarer than min_count. |
 | `_embed_fit_index` | `(n)` | Row indices used to fit an embedding. |
 | `_place_rest` | `(Xs, fit_idx, Pf)` | Give every particle a position in an embedding fitted on a subset. |
-| `_embed` | `(Xs, projection, n_dims)` | Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method. |
+| `_embed` | `(Xs, projection, n_dims, params=None)` | Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method. |
 | `_raw_axes` | `(Xs, elements, n_dims)` | Select raw feature axes for the 'None' (no-reduction) projection. |
 | `build_view` | `(input_data, cfg, elements, projection='PCA', n_dims=2, max_points=Non` | Build an N-D projection view + aligned raw matrix from the dialog's data. |
 | `_sklearn_params` | `(algo, cfg, k)` | Translate ``node.config`` into an algorithm's own parameter names. |
