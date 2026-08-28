@@ -47,6 +47,11 @@ except Exception:
 from utils.numba_guard import numba_serial
 
 try:
+    from results.cluster.prep import reduction_kwargs, supported_kwargs
+except ImportError:
+    from .prep import reduction_kwargs, supported_kwargs
+
+try:
     from results.compositional import (
         _apply_clr, _apply_ilr, _apply_robust_zscore,
     )
@@ -193,7 +198,8 @@ PROJECTION_TO_DIMRED = {'PCA': 'PCA', 't-SNE': 't-SNE', 'UMAP': 'UMAP',
                         'None': 'None'}
 
 FIT_CONFIG_KEYS = ('scaling', 'data_type_display', 'filter_zeros',
-                   'min_particle_type_count', 'dim_reduction')
+                   'min_particle_type_count', 'dim_reduction',
+                   'dim_reduction_params')
 
 
 def fit_fingerprint(cfg, algo, k):
@@ -448,7 +454,7 @@ def _place_rest(Xs, fit_idx, Pf):
     return P
 
 
-def _embed(Xs, projection, n_dims):
+def _embed(Xs, projection, n_dims, params=None):
     """Project the scaled matrix to ``n_dims`` (2 or 3) with the chosen method.
 
     Returns (P, var_ratio, projection_used, loadings). ``loadings`` is the
@@ -458,6 +464,12 @@ def _embed(Xs, projection, n_dims):
 
     t-SNE/UMAP fall back to PCA if scikit-learn / umap aren't importable, so
     this never hard-fails.
+
+    ``params`` are the app's shared reduction settings (``dim_reduction_params``
+    in the node config), so the panel draws the embedding the clustering
+    actually ran in rather than one built from different hard-coded values. The
+    component count is *not* taken from them: this output has to be 2-D or 3-D
+    to be drawable, so ``n_dims`` always wins.
     """
     n_dims = 3 if int(n_dims) == 3 else 2
     n = len(Xs)
@@ -470,9 +482,9 @@ def _embed(Xs, projection, n_dims):
             from sklearn.manifold import TSNE
             fit_idx = _embed_fit_index(n)
             Xf = Xs[fit_idx]
-            perp = min(30, max(5, (len(Xf) - 1) // 3))
-            Pf = TSNE(n_components=n_dims, random_state=42, init="pca",
-                      perplexity=perp).fit_transform(Xf)
+            kw = reduction_kwargs("t-SNE", params, len(Xf), Xf.shape[1],
+                                  n_components=n_dims)
+            Pf = TSNE(**supported_kwargs(TSNE, kw)).fit_transform(Xf)
             P = _place_rest(Xs, fit_idx, np.asarray(Pf, float))
             return P, [float("nan")] * n_dims, "t-SNE", None
         except Exception:
@@ -484,10 +496,10 @@ def _embed(Xs, projection, n_dims):
             from umap import UMAP
             fit_idx = _embed_fit_index(n)
             Xf = Xs[fit_idx]
-            nn = min(15, max(2, len(Xf) - 1))
+            kw = reduction_kwargs("UMAP", params, len(Xf), Xf.shape[1],
+                                  n_components=n_dims)
             with numba_serial("UMAP (live projection)"):
-                model = UMAP(n_components=n_dims, n_neighbors=nn,
-                             random_state=42).fit(Xf)
+                model = UMAP(**supported_kwargs(UMAP, kw)).fit(Xf)
                 if len(fit_idx) == n:
                     P = np.asarray(model.embedding_, float)
                 else:
@@ -629,7 +641,8 @@ def build_view(input_data, cfg, elements, projection="PCA", n_dims=2,
     if projection == "None":
         P, var, proj_used, axis_labels = _raw_axes(Xs, elements, n_dims)
     else:
-        P, var, proj_used, loadings = _embed(Xs, projection, n_dims)
+        P, var, proj_used, loadings = _embed(
+            Xs, projection, n_dims, (cfg or {}).get("dim_reduction_params"))
 
     # ILR replaces the elements with D-1 balance coordinates, so a loading no
     # longer belongs to any single element and cannot be drawn as its arrow.
@@ -1087,11 +1100,18 @@ class ClusterLiveController(QObject):
         Mirrors the app's ``dim_reduction`` so the Settings dialog and the
         Cluster tab stay in sync. The 2-D/3-D choice is display-only and does
         not change the space the clustering runs in.
+
+        Changing the reduction clears ``dim_reduction_params``: parameters
+        belong to the reduction they were set for, and carrying them across
+        would reinterpret shared names such as ``n_components``.
         """
         self._proj = projection or "PCA"
         self._dims = 3 if int(dims) == 3 else 2
         cfg = self._dialog.node.config
-        cfg["dim_reduction"] = PROJECTION_TO_DIMRED.get(self._proj, "PCA")
+        new_dr = PROJECTION_TO_DIMRED.get(self._proj, "PCA")
+        if cfg.get("dim_reduction") != new_dr:
+            cfg["dim_reduction_params"] = {}
+        cfg["dim_reduction"] = new_dr
         cfg["live_dims"] = self._dims
         self._invalidate_host_matrix()
         self.rebuild_async()
