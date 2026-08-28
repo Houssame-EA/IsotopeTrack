@@ -4919,6 +4919,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5060,11 +5088,13 @@ ground truth derived from your component list, using external validity indices
 <p>It answers two questions: which complete pipeline best reproduces your known
 components, and which scoring metric to trust when no ground truth is available
 (by correlating each internal metric against the external truth across the grid).</p>
-<p>Ground truth is decided by each particle's dominant element: if a particle's
-strongest element belongs to a named component the particle is that component,
-otherwise it is the <code>"other"</code> group (coincidences, outliers, background).
-Nothing is excluded; a pipeline that parks <code>"other"</code> particles in a noise
-label or its own cluster is rewarded for it.</p>
+<p>Ground truth is decided by each particle's elemental combination: a particle
+belongs to a named component when the set of elements it contains is exactly the
+set that component names, so <code>107Ag</code>, <code>197Au</code> and <code>107Ag+197Au</code> are three
+separate truth groups.  Everything else is the <code>"other"</code> group (unnamed
+combinations, coincidences, outliers, background).  Nothing is excluded; a
+pipeline that parks <code>"other"</code> particles in a noise label or its own cluster is
+rewarded for it.</p>
 <p>The engine (everything above the GUI guard) has no Qt dependency and is fully
 usable and testable on its own.  The GUI is defined only when PySide6 imports.</p>
 <hr />
@@ -5077,6 +5107,22 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.</
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>EMBED_DIMS</code></td>
+<td><code>_prep.EMBED_DIMS</code></td>
+</tr>
+<tr>
+<td><code>KEEP_ALL</code></td>
+<td><code>_prep.KEEP_ALL</code></td>
+</tr>
+<tr>
+<td><code>DR_METRIC_OPTIONS</code></td>
+<td><code>_prep.DR_METRIC_OPTIONS</code></td>
+</tr>
+<tr>
+<td><code>DR_PARAM_SPECS</code></td>
+<td><code>_prep.DR_PARAM_SPECS</code></td>
+</tr>
 <tr>
 <td><code>EXTERNAL_METRICS</code></td>
 <td><code>{'ARI': {'display': 'Adjusted Rand Index', 'func': lambda…</code></td>
@@ -5092,6 +5138,10 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.</
 <tr>
 <td><code>OTHER_LABEL_NAME</code></td>
 <td><code>'other'</code></td>
+</tr>
+<tr>
+<td><code>DEFAULT_COMPOSITION_TOL</code></td>
+<td><code>10.0</code></td>
 </tr>
 <tr>
 <td><code>ALGO_PARAM_SPECS</code></td>
@@ -5129,13 +5179,17 @@ usable and testable on its own.  The GUI is defined only when PySide6 imports.</
 <td><code>DEFAULT_ALGORITHMS</code></td>
 <td><code>['K-Means']</code></td>
 </tr>
+<tr>
+<td><code>_TOL_RE</code></td>
+<td><code>re.compile('\\s*[~±]\\s*([0-9]*\\.?[0-9]+)\\s*%?\\s*$')</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="classes">Classes<a class="headerlink" href="#classes" title="Permanent link">&para;</a></h2>
 <h3 id="preprocessor"><code>Preprocessor</code><a class="headerlink" href="#preprocessor" title="Permanent link">&para;</a></h3>
 <p>Builds and caches preprocessed matrices for the sweep.</p>
-<p>Each <code>(data_type, scaling, dim_reduction)</code> matrix is computed once and
-reused across every algorithm and cluster count, which is what keeps a large
+<p>Each <code>(data_type, scaling, dim_reduction, params)</code> matrix is computed once
+and reused across every algorithm and cluster count, which is what keeps a large
 grid tractable.  The kept-row set is fixed once from the count matrix so
 ground-truth labels stay aligned across all data types.</p>
 <table>
@@ -5174,7 +5228,7 @@ ground-truth labels stay aligned across all data types.</p>
 </tr>
 <tr>
 <td><code>matrix</code></td>
-<td><code>(self, data_type, scaling, dim_reduction)</code></td>
+<td><code>(self, data_type, scaling, dim_reduction, params=None)</code></td>
 <td>Return the fully preprocessed matrix for one pipeline (cached).</td>
 </tr>
 </tbody>
@@ -5207,17 +5261,47 @@ ground-truth labels stay aligned across all data types.</p>
 <tr>
 <td><code>parse_components</code></td>
 <td><code>(text)</code></td>
-<td>Parse a component string into <code>[(name, [elements]), ...]</code>.</td>
+<td>Parse a component string into <code>[(name, [elements], spec), ...]</code>.</td>
+</tr>
+<tr>
+<td><code>_element_symbol</code></td>
+<td><code>(label)</code></td>
+<td>Bare element symbol from a column or component token.</td>
+</tr>
+<tr>
+<td><code>resolve_components</code></td>
+<td><code>(components, elements)</code></td>
+<td>Match parsed components to data columns and report what was dropped.</td>
 </tr>
 <tr>
 <td><code>build_ground_truth</code></td>
-<td><code>(raw_matrix, elements, components, other_flags=None)</code></td>
+<td><code>(raw_matrix, elements, components, other_flags=None, presence_threshol</code></td>
 <td>Assign each particle to a named component or to <code>"other"</code>.</td>
 </tr>
 <tr>
 <td><code>_row_for_particle</code></td>
 <td><code>(p, data_type, elements)</code></td>
 <td>Build one matrix row for a particle in the requested representation.</td>
+</tr>
+<tr>
+<td><code>_freeze_params</code></td>
+<td><code>(params)</code></td>
+<td>Return a hashable, order-independent key for a parameter dict.</td>
+</tr>
+<tr>
+<td><code>zero_row_count</code></td>
+<td><code>(data)</code></td>
+<td>Count rows that are zero in every column.</td>
+</tr>
+<tr>
+<td><code>constant_row_count</code></td>
+<td><code>(data)</code></td>
+<td>Count rows whose values are identical across every column.</td>
+</tr>
+<tr>
+<td><code>metric_undefined</code></td>
+<td><code>(name, params, data)</code></td>
+<td>Return True when the chosen metric has no defined answer on <code>data</code>.</td>
 </tr>
 <tr>
 <td><code>run_algorithm</code></td>
@@ -5233,6 +5317,26 @@ ground-truth labels stay aligned across all data types.</p>
 <td><code>build_param_grid</code></td>
 <td><code>(name, selections)</code></td>
 <td>Expand per-parameter value lists into concrete parameter dicts.</td>
+</tr>
+<tr>
+<td><code>build_dr_param_grid</code></td>
+<td><code>(name, selections)</code></td>
+<td>Expand one reduction's per-parameter value lists into parameter dicts.</td>
+</tr>
+<tr>
+<td><code>normalize_dr_selections</code></td>
+<td><code>(dim_reductions=None, dr_selections=None)</code></td>
+<td>Return <code>{reduction: {param: [values]}}</code> from either calling style.</td>
+</tr>
+<tr>
+<td><code>expand_pre_combos</code></td>
+<td><code>(data_types, scalings, dr_map)</code></td>
+<td>Build the preprocessing axis as <code>(data_type, scaling, reduction, params)</code>.</td>
+</tr>
+<tr>
+<td><code>_best_dr_suffix</code></td>
+<td><code>(row)</code></td>
+<td>Return <code>" [perplexity=50, ...]"</code> for a result row, or an empty string.</td>
 </tr>
 <tr>
 <td><code>count_combinations</code></td>
@@ -5273,6 +5377,11 @@ ground-truth labels stay aligned across all data types.</p>
 <td><code>summarize_sweep_failures</code></td>
 <td><code>(failures, total=None)</code></td>
 <td>Summarise where a sweep produced no usable partition, per algorithm.</td>
+</tr>
+<tr>
+<td><code>compact_payload</code></td>
+<td><code>(payload)</code></td>
+<td>Return a sweep payload trimmed for long-term storage.</td>
 </tr>
 <tr>
 <td><code>per_cluster_silhouette</code></td>

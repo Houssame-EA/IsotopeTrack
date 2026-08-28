@@ -4402,6 +4402,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_downloadworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _DownloadWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_downloadcancelled-extends-exception" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _DownloadCancelled (extends Exception)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#updatechecker-extends-qobject" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4930,6 +4952,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5021,6 +5071,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#_downloadworker-extends-qthread" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _DownloadWorker (extends QThread)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_downloadcancelled-extends-exception" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        _DownloadCancelled (extends Exception)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#updatechecker-extends-qobject" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5069,10 +5141,17 @@
 
 <h1 id="update_checkerpy"><code>update_checker.py</code><a class="headerlink" href="#update_checkerpy" title="Permanent link">&para;</a></h1>
 <p>tools/update_checker.py</p>
-<p>Checks GitHub Releases for a newer version of IsotopeTrack and, if one exists,
-shows a non-blocking notification with a "Download" button.</p>
-<p>The network request runs in a background QThread so the UI never freezes.
-Uses only the standard library + PySide6 (no extra dependencies).</p>
+<p>Checks GitHub Releases for a newer version of IsotopeTrack, downloads the
+installer for this platform inside the application and hands the verified file
+to the operating system, so the user's remaining work is one drag (macOS) or
+one installer wizard (Windows).</p>
+<p>Both network steps run in background QThreads so the UI never freezes, and the
+downloaded file is checked against the <code>SHA256SUMS.txt</code> asset published by
+the release workflow before it is opened. A file fetched here is written by
+Python rather than by a browser, so on macOS it carries no <code>com.apple</code>
+quarantine attribute and Gatekeeper does not raise its "unidentified
+developer" warning for it.</p>
+<p>Uses only the standard library + PySide6 (no extra dependencies).</p>
 <hr />
 <h2 id="constants">Constants<a class="headerlink" href="#constants" title="Permanent link">&para;</a></h2>
 <table>
@@ -5100,6 +5179,18 @@ Uses only the standard library + PySide6 (no extra dependencies).</p>
 <td><code>8</code></td>
 </tr>
 <tr>
+<td><code>DOWNLOAD_TIMEOUT</code></td>
+<td><code>60</code></td>
+</tr>
+<tr>
+<td><code>DOWNLOAD_CHUNK</code></td>
+<td><code>256 * 1024</code></td>
+</tr>
+<tr>
+<td><code>CHECKSUMS_ASSET</code></td>
+<td><code>'sha256sums.txt'</code></td>
+</tr>
+<tr>
 <td><code>SETTINGS_ORG</code></td>
 <td><code>'IsotopeTrack'</code></td>
 </tr>
@@ -5110,6 +5201,10 @@ Uses only the standard library + PySide6 (no extra dependencies).</p>
 <tr>
 <td><code>SKIP_KEY</code></td>
 <td><code>'updates/skipped_version'</code></td>
+</tr>
+<tr>
+<td><code>AUTO_CHECK_KEY</code></td>
+<td><code>'updates/auto_check'</code></td>
 </tr>
 </tbody>
 </table>
@@ -5132,6 +5227,45 @@ Uses only the standard library + PySide6 (no extra dependencies).</p>
 </tr>
 </tbody>
 </table>
+<h3 id="_downloadworker-extends-qthread"><code>_DownloadWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#_downloadworker-extends-qthread" title="Permanent link">&para;</a></h3>
+<p>Streams one release asset to disk, reporting progress as it goes.</p>
+<p>The bytes land in a <code>.part</code> file that is renamed only once the transfer
+completes, so a cancelled or interrupted download never leaves behind a
+truncated installer that looks ready to open. The SHA-256 is computed on
+the way past, costing nothing extra in time or memory.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__init__</code></td>
+<td><code>(self, url, dest_path, parent=None)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>cancel</code></td>
+<td><code>(self)</code></td>
+<td>Ask the transfer to stop at the next chunk boundary.</td>
+</tr>
+<tr>
+<td><code>run</code></td>
+<td><code>(self)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>_discard_partial</code></td>
+<td><code>(self)</code></td>
+<td>Remove the incomplete file, ignoring a failure to do so.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_downloadcancelled-extends-exception"><code>_DownloadCancelled</code> <em>(extends <code>Exception</code>)</em><a class="headerlink" href="#_downloadcancelled-extends-exception" title="Permanent link">&para;</a></h3>
+<p>Raised inside the download thread when the user presses Cancel.</p>
 <h3 id="updatechecker-extends-qobject"><code>UpdateChecker</code> <em>(extends <code>QObject</code>)</em><a class="headerlink" href="#updatechecker-extends-qobject" title="Permanent link">&para;</a></h3>
 <p>Usage (from the main window):
     self._update_checker = UpdateChecker(self)
@@ -5173,6 +5307,46 @@ silent=False -&gt; always reports the result (for a "Check for Updates" menu)</p
 <td><code>(self, info)</code></td>
 <td></td>
 </tr>
+<tr>
+<td><code>_start_download</code></td>
+<td><code>(self, info)</code></td>
+<td>Fetch the installer in the background, showing a progress dialog.</td>
+</tr>
+<tr>
+<td><code>_on_download_progress</code></td>
+<td><code>(self, done, total)</code></td>
+<td>Advance the progress dialog as bytes arrive.</td>
+</tr>
+<tr>
+<td><code>_on_download_failed</code></td>
+<td><code>(self, message)</code></td>
+<td>Close the progress dialog and report a failed or cancelled transfer.</td>
+</tr>
+<tr>
+<td><code>_on_download_finished</code></td>
+<td><code>(self, path, digest)</code></td>
+<td>Verify the finished download and offer to open it.</td>
+</tr>
+<tr>
+<td><code>_offer_to_open</code></td>
+<td><code>(self, path)</code></td>
+<td>Tell the user where the installer is and offer to launch it.</td>
+</tr>
+<tr>
+<td><code>_launch</code></td>
+<td><code>(self, path)</code></td>
+<td>Hand the downloaded file to the operating system.</td>
+</tr>
+<tr>
+<td><code>_open_release_page</code></td>
+<td><code>(self, info)</code></td>
+<td>Open the release in the browser as the fallback route.</td>
+</tr>
+<tr>
+<td><code>_close_progress</code></td>
+<td><code>(self)</code></td>
+<td>Dispose of the progress dialog once a transfer ends.</td>
+</tr>
 </tbody>
 </table>
 <h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
@@ -5185,6 +5359,16 @@ silent=False -&gt; always reports the result (for a "Check for Updates" menu)</p
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>auto_check_enabled</code></td>
+<td><code>()</code></td>
+<td>Return True when IsotopeTrack may check for updates on startup.</td>
+</tr>
+<tr>
+<td><code>set_auto_check_enabled</code></td>
+<td><code>(enabled)</code></td>
+<td>Store whether IsotopeTrack checks for updates on startup.</td>
+</tr>
 <tr>
 <td><code>_parse_version</code></td>
 <td><code>(text)</code></td>
@@ -5201,9 +5385,39 @@ silent=False -&gt; always reports the result (for a "Check for Updates" menu)</p
 <td>Return an SSL context with a trusted CA bundle.</td>
 </tr>
 <tr>
+<td><code>_request</code></td>
+<td><code>(url)</code></td>
+<td>Build a GitHub request carrying the headers the API expects.</td>
+</tr>
+<tr>
 <td><code>_pick_asset</code></td>
 <td><code>(assets)</code></td>
-<td>Choose the download URL matching this OS, by name hint + extension.</td>
+<td>Choose the release asset matching this OS, by name hint + extension.</td>
+</tr>
+<tr>
+<td><code>_checksums_url</code></td>
+<td><code>(assets)</code></td>
+<td>Return the URL of the release's checksum manifest, when published.</td>
+</tr>
+<tr>
+<td><code>_parse_checksums</code></td>
+<td><code>(text, asset_name)</code></td>
+<td>Extract one asset's expected digest from a <code>shasum</code> manifest.</td>
+</tr>
+<tr>
+<td><code>_download_dir</code></td>
+<td><code>()</code></td>
+<td>Return the folder new installers are written to.</td>
+</tr>
+<tr>
+<td><code>_unique_path</code></td>
+<td><code>(directory, filename)</code></td>
+<td>Return a path in <code>directory</code> that does not overwrite an existing file.</td>
+</tr>
+<tr>
+<td><code>_human_size</code></td>
+<td><code>(num_bytes)</code></td>
+<td>Format a byte count for the progress dialog.</td>
 </tr>
 </tbody>
 </table>

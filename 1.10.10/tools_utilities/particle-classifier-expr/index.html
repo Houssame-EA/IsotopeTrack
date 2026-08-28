@@ -4996,6 +4996,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5209,11 +5237,11 @@ users about overlapping or self-contradictory definitions — confound
 detection (§5) and contradiction/tautology classification (§9.3).</p>
 <p>Grammar (§8), <code>+</code> is the only bare infix operator (n-ary AND); everything
 else is bracket-delimited so there is never a precedence conflict::</p>
-<div class="language-text highlight"><pre><span></span><code>expression := term ( &#39;+&#39; term )*                     # AND, n-ary
-term       := isotope | or_group | xor_group | not_group | &#39;(&#39; expression &#39;)&#39;
-or_group   := &#39;[&#39; expression (&#39;,&#39; expression)* &#39;]&#39;    # inclusive OR
-xor_group  := &#39;{&#39; expression (&#39;;&#39; expression)* &#39;}&#39;    # ONE-HOT (not parity)
-not_group  := &#39;!&#39; &#39;(&#39; expression &#39;)&#39;                  # negation
+<div class="language-text highlight"><pre><span></span><code>expression := term ( '+' term )*                     # AND, n-ary
+term       := isotope | or_group | xor_group | not_group | '(' expression ')'
+or_group   := '[' expression (',' expression)* ']'    # inclusive OR
+xor_group  := '{' expression (';' expression)* '}'    # ONE-HOT (not parity)
+not_group  := '!' '(' expression ')'                  # negation
 isotope    := mass number then correctly-cased symbol, e.g. 60Ni, 208Pb
 </code></pre></div>
 <p>This module is pure Python: no Qt, no particle data model, no canvas

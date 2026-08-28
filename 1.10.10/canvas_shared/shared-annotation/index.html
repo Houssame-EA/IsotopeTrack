@@ -5117,6 +5117,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5451,19 +5479,19 @@ serializes with the workflow and can be rendered to either PyQtGraph (interactiv
 or Matplotlib (publication export, future work).</p>
 <p>Annotation schema (MVP — 5 types):</p>
 <div class="language-text highlight"><pre><span></span><code>Common fields:
-    &#39;id&#39;:    str       — unique identifier (e.g. &#39;ann_3f9a2b&#39;)
-    &#39;type&#39;:  str       — &#39;text&#39; | &#39;vline&#39; | &#39;hline&#39; | &#39;vband&#39; | &#39;rect&#39;
-    &#39;color&#39;: str       — hex, e.g. &#39;#A32D2D&#39;
-    &#39;width&#39;: int       — line/border width in px
-    &#39;alpha&#39;: float     — 0..1 fill opacity (where applicable)
+    'id':    str       — unique identifier (e.g. 'ann_3f9a2b')
+    'type':  str       — 'text' | 'vline' | 'hline' | 'vband' | 'rect'
+    'color': str       — hex, e.g. '#A32D2D'
+    'width': int       — line/border width in px
+    'alpha': float     — 0..1 fill opacity (where applicable)
 
 Type-specific fields:
-    text:  &#39;x&#39;, &#39;y&#39;, &#39;text&#39;, &#39;font_size&#39;, &#39;box&#39;(bool),
-           &#39;arrow_to&#39;: [x, y] | None
-    vline: &#39;x&#39;, &#39;label&#39;, &#39;style&#39;(&#39;solid&#39;|&#39;dash&#39;|&#39;dot&#39;)
-    hline: &#39;y&#39;, &#39;label&#39;, &#39;style&#39;
-    vband: &#39;x1&#39;, &#39;x2&#39;, &#39;label&#39;
-    rect:  &#39;x1&#39;, &#39;y1&#39;, &#39;x2&#39;, &#39;y2&#39;, &#39;label&#39;, &#39;filled&#39;(bool)
+    text:  'x', 'y', 'text', 'font_size', 'box'(bool),
+           'arrow_to': [x, y] | None
+    vline: 'x', 'label', 'style'('solid'|'dash'|'dot')
+    hline: 'y', 'label', 'style'
+    vband: 'x1', 'x2', 'label'
+    rect:  'x1', 'y1', 'x2', 'y2', 'label', 'filled'(bool)
 </code></pre></div>
 <p>Usage in a display dialog:</p>
 <div class="language-text highlight"><pre><span></span><code>from results.shared_annotations import (

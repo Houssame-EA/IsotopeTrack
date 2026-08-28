@@ -4891,6 +4891,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -4991,8 +5019,17 @@
 
 <h1 id="preppy"><code>prep.py</code><a class="headerlink" href="#preppy" title="Permanent link">&para;</a></h1>
 <p>Shared preprocessing rules for every clustering entry point.</p>
-<p>Keeps the ② Cluster tab, the ④ How it works view and the sweep tool agreeing on
-how the scaled matrix is reduced before clustering.</p>
+<p>Keeps the ② Cluster tab, the ④ How it works view, the live panel and the sweep
+tool agreeing on how the scaled matrix is reduced before clustering.</p>
+<p>Every reduction parameter the app exposes is declared once here, in
+:data:<code>DR_PARAM_SPECS</code>, and applied once here, in :func:<code>apply_reduction</code>. That
+matters more than it looks: before this module owned them, the sweep, the
+clustering matrix and the live projection each built their own t-SNE with their
+own hard-coded perplexity, so a pipeline the sweep ranked first could not be
+reproduced by the tab the user then clicked into.</p>
+<p>scikit-learn and umap are imported lazily inside the functions that need them,
+so importing this module stays cheap for callers that only want
+:func:<code>reduction_components</code>.</p>
 <hr />
 <h2 id="constants">Constants<a class="headerlink" href="#constants" title="Permanent link">&para;</a></h2>
 <table>
@@ -5007,6 +5044,18 @@ how the scaled matrix is reduced before clustering.</p>
 <td><code>EMBED_DIMS</code></td>
 <td><code>3</code></td>
 </tr>
+<tr>
+<td><code>KEEP_ALL</code></td>
+<td><code>'all'</code></td>
+</tr>
+<tr>
+<td><code>DR_METRIC_OPTIONS</code></td>
+<td><code>['euclidean', 'manhattan', 'cosine', 'chebyshev', 'correl…</code></td>
+</tr>
+<tr>
+<td><code>DR_PARAM_SPECS</code></td>
+<td><code>{'None': {'params': {}}, 'PCA': {'params': {'n_components…</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
@@ -5020,9 +5069,49 @@ how the scaled matrix is reduced before clustering.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>dr_defaults</code></td>
+<td><code>(dim_reduction)</code></td>
+<td>Return <code>{param: default}</code> for one reduction.</td>
+</tr>
+<tr>
+<td><code>dr_params_str</code></td>
+<td><code>(dim_reduction, params)</code></td>
+<td>Return a compact human-readable parameter string for a reduction.</td>
+</tr>
+<tr>
+<td><code>non_default_dr_params</code></td>
+<td><code>(dim_reduction, params)</code></td>
+<td>Return only the parameters that differ from the reduction's defaults.</td>
+</tr>
+<tr>
 <td><code>reduction_components</code></td>
 <td><code>(dim_reduction, n_features)</code></td>
-<td>Number of components to keep for <code>dim_reduction</code>.</td>
+<td>Number of components to keep for <code>dim_reduction</code> by default.</td>
+</tr>
+<tr>
+<td><code>supported_kwargs</code></td>
+<td><code>(cls, kwargs)</code></td>
+<td>Drop keyword arguments the estimator does not accept.</td>
+</tr>
+<tr>
+<td><code>n_components_value</code></td>
+<td><code>(raw, dim_reduction, n_features, n_samples)</code></td>
+<td>Resolve an <code>n_components</code> selection to what the estimator should get.</td>
+</tr>
+<tr>
+<td><code>learning_rate_value</code></td>
+<td><code>(raw)</code></td>
+<td>Resolve a t-SNE learning rate, which may be the string <code>'auto'</code>.</td>
+</tr>
+<tr>
+<td><code>reduction_kwargs</code></td>
+<td><code>(dim_reduction, params, n_samples, n_features, n_components=None, defa</code></td>
+<td>Build the estimator keyword arguments for one reduction.</td>
+</tr>
+<tr>
+<td><code>apply_reduction</code></td>
+<td><code>(dim_reduction, m, params=None, default_random_state=42)</code></td>
+<td>Reduce <code>m</code> with <code>dim_reduction</code> under <code>params</code>.</td>
 </tr>
 </tbody>
 </table>

@@ -5018,6 +5018,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5310,6 +5338,26 @@ keep this one consistent with them.</p>
 <td><code>1000</code></td>
 </tr>
 <tr>
+<td><code>METRIC_OPTIONS</code></td>
+<td><code>['euclidean', 'manhattan', 'cosine', 'chebyshev', 'canber…</code></td>
+</tr>
+<tr>
+<td><code>METRIC_ALIASES</code></td>
+<td><code>{'l1': 'manhattan', 'l2': 'euclidean'}</code></td>
+</tr>
+<tr>
+<td><code>ON_OFF</code></td>
+<td><code>['off', 'on']</code></td>
+</tr>
+<tr>
+<td><code>SPECTRAL_AFFINITY_OPTIONS</code></td>
+<td><code>['rbf', 'nearest_neighbors']</code></td>
+</tr>
+<tr>
+<td><code>SOM_FINAL_ALGO_OPTIONS</code></td>
+<td><code>['Hierarchical (Ward)', 'Hierarchical (Average)', 'Hierar…</code></td>
+</tr>
+<tr>
 <td><code>SCALING_OPTIONS</code></td>
 <td><code>['CLR', 'ILR', 'Robust Z-score', 'None']</code></td>
 </tr>
@@ -5427,6 +5475,16 @@ native window normally exists.</p>
 <td><code>_build_ui</code></td>
 <td><code>(self)</code></td>
 <td></td>
+</tr>
+<tr>
+<td><code>_build_dr_param_form</code></td>
+<td><code>(self, dim_reduction)</code></td>
+<td>Rebuild the reduction-parameter rows for <code>dim_reduction</code>.</td>
+</tr>
+<tr>
+<td><code>_collect_dr_params</code></td>
+<td><code>(self)</code></td>
+<td>Return <code>{param: value}</code> for the current reduction's widgets.</td>
 </tr>
 <tr>
 <td><code>collect</code></td>
@@ -6089,6 +6147,21 @@ assignment is.</p>
 <td><code>_vote_optimal_per_metric</code></td>
 <td><code>(eval_results, elbow_fn, enabled_metrics=None)</code></td>
 <td>Select an optimal K per metric by voting across algorithms.</td>
+</tr>
+<tr>
+<td><code>normalize_metric</code></td>
+<td><code>(name, default='euclidean')</code></td>
+<td>Resolve a stored metric name to one :data:<code>METRIC_OPTIONS</code> still offers.</td>
+</tr>
+<tr>
+<td><code>effective_metric</code></td>
+<td><code>(name, params)</code></td>
+<td>Return the distance metric a configuration will really be fitted with.</td>
+</tr>
+<tr>
+<td><code>as_flag</code></td>
+<td><code>(value, default)</code></td>
+<td>Resolve a boolean estimator flag from a configuration value.</td>
 </tr>
 <tr>
 <td><code>_palette_to_plot</code></td>

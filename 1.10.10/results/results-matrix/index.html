@@ -4941,6 +4941,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5129,8 +5157,12 @@ Multi-sample   → side-by-side or individual subplot matrices.</p>
 <td><code>'#000000'</code></td>
 </tr>
 <tr>
+<td><code>CELL_LABEL_MODES</code></td>
+<td><code>['r value', 'Particle count', 'Both']</code></td>
+</tr>
+<tr>
 <td><code>DEFAULT_CONFIG</code></td>
-<td><code>{'data_type_display': 'Counts', 'min_particles': 5, 'r_th…</code></td>
+<td><code>{'data_type_display': 'Counts', 'min_particles': 5, 'cell…</code></td>
 </tr>
 </tbody>
 </table>
@@ -5265,7 +5297,7 @@ Multi-sample   → side-by-side or individual subplot matrices.</p>
 </tr>
 <tr>
 <td><code>_draw_matrix_ax</code></td>
-<td><code>(self, ax, mat, elems, cfg, title='')</code></td>
+<td><code>(self, ax, mat, elems, cfg, title='', counts=None)</code></td>
 <td>Draw one correlation matrix onto ax using imshow.</td>
 </tr>
 </tbody>
@@ -5311,6 +5343,11 @@ Multi-sample   → side-by-side or individual subplot matrices.</p>
 <td></td>
 </tr>
 <tr>
+<td><code>_min_particles</code></td>
+<td><code>(self)</code></td>
+<td>Return the configured Min Particles value, clamped to a usable minimum.</td>
+</tr>
+<tr>
 <td><code>_extract_single</code></td>
 <td><code>(self, data_key)</code></td>
 <td></td>
@@ -5344,13 +5381,18 @@ Multi-sample   → side-by-side or individual subplot matrices.</p>
 </tr>
 <tr>
 <td><code>_compute_correlation_matrix</code></td>
-<td><code>(particles, elements, data_key)</code></td>
+<td><code>(particles, elements, data_key, min_particles=5)</code></td>
 <td>Build NxN Pearson-r matrix from particle data.</td>
 </tr>
 <tr>
 <td><code>_matrix_stats</code></td>
 <td><code>(mat)</code></td>
 <td></td>
+</tr>
+<tr>
+<td><code>_pair_count_stats</code></td>
+<td><code>(counts, min_particles)</code></td>
+<td>Summarise how the Min Particles cut-off lands on the current data.</td>
 </tr>
 </tbody>
 </table>

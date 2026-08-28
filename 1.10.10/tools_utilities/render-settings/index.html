@@ -4891,6 +4891,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -4990,7 +5018,7 @@
 
 
 <h1 id="render_settingspy"><code>render_settings.py</code><a class="headerlink" href="#render_settingspy" title="Permanent link">&para;</a></h1>
-<p>Persisted rendering preferences shared by the launcher and the UI.</p>
+<p>Persisted rendering and canvas preferences shared by the launcher and the UI.</p>
 <p>The cluster animation is drawn by Chromium, which reads its GPU flag from the
 environment before any application object exists. Keeping the key and its
 default in one place lets <code>Run.py</code> apply the preference at startup and the
@@ -4998,6 +5026,13 @@ View menu change it later without the two drifting apart.</p>
 <p>GPU rendering is the default. Old graphics drivers can make Chromium abort
 below Python, taking the whole application with it, so the preference exists
 as an escape hatch for machines where the Clusters tab misbehaves.</p>
+<p>The same store also holds the application-wide opt-out for the "Downstream
+plots may change" reminder raised when a canvas node's configuration is
+applied. That reminder is shown by two independent implementations —
+<code>widget.canvas_widgets._warn_before_apply_changes</code> for the sample-selector
+family and <code>tools.particle_filter.ParticleFilterDialog._try_accept</code> for the
+Particle Filter — so the flag lives here, outside both, and ticking "Don't
+show this again" in either one silences all of them for good.</p>
 <hr />
 <h2 id="constants">Constants<a class="headerlink" href="#constants" title="Permanent link">&para;</a></h2>
 <table>
@@ -5020,6 +5055,10 @@ as an escape hatch for machines where the Clusters tab misbehaves.</p>
 <td><code>_CLUSTER_GPU_KEY</code></td>
 <td><code>'render/cluster_gpu'</code></td>
 </tr>
+<tr>
+<td><code>_STALE_WARNING_KEY</code></td>
+<td><code>'canvas/suppress_stale_warning'</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
@@ -5041,6 +5080,16 @@ as an escape hatch for machines where the Clusters tab misbehaves.</p>
 <td><code>set_cluster_gpu_enabled</code></td>
 <td><code>(enabled)</code></td>
 <td>Store whether the cluster animation may use the GPU.</td>
+</tr>
+<tr>
+<td><code>stale_warning_suppressed</code></td>
+<td><code>()</code></td>
+<td>Return True when the "Downstream plots may change" reminder is off.</td>
+</tr>
+<tr>
+<td><code>set_stale_warning_suppressed</code></td>
+<td><code>(suppressed)</code></td>
+<td>Store whether the "Downstream plots may change" reminder is silenced.</td>
 </tr>
 </tbody>
 </table>

@@ -2878,6 +2878,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4963,6 +4974,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5113,6 +5152,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Functions
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5153,6 +5203,26 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.</p>
 <td><code>['Pie Charts', 'Heatmaps']</code></td>
 </tr>
 <tr>
+<td><code>QUANTITY_BASES</code></td>
+<td><code>['Particle Count', 'Mass (fg)', 'Moles (fmol)']</code></td>
+</tr>
+<tr>
+<td><code>CELL_VALUE_MODES</code></td>
+<td><code>['Quantity', 'Percentage', 'Both']</code></td>
+</tr>
+<tr>
+<td><code>QUANTITY_BASIS_KEYS</code></td>
+<td><code>{'Particle Count': None, 'Mass (fg)': 'element_mass_fg', …</code></td>
+</tr>
+<tr>
+<td><code>QUANTITY_BASIS_DETAIL_KEYS</code></td>
+<td><code>{'Particle Count': 'count', 'Mass (fg)': 'mass_fg', 'Mole…</code></td>
+</tr>
+<tr>
+<td><code>QUANTITY_BASIS_UNITS</code></td>
+<td><code>{'Particle Count': ('P', 'P/mL'), 'Mass (fg)': ('fg', 'fg…</code></td>
+</tr>
+<tr>
 <td><code>SM_DISPLAY_MODES</code></td>
 <td><code>['Individual Subplots', 'Side by Side Subplots', 'Combine…</code></td>
 </tr>
@@ -5180,8 +5250,8 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.</p>
 <tbody>
 <tr>
 <td><code>analyze_particles</code></td>
-<td><code>(particle_data, pct_single=0.5, pct_multiple=0.5)</code></td>
-<td></td>
+<td><code>(particle_data, pct_single=0.5, pct_multiple=0.5, quantity_basis='Part</code></td>
+<td>Classify particles into single- and multiple-element combinations.</td>
 </tr>
 <tr>
 <td><code>format_clean</code></td>
@@ -5196,7 +5266,7 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.</p>
 <tr>
 <td><code>pie_data</code></td>
 <td><code>(results, combo_type, custom_colors=None, per_ml=False, parent_window=</code></td>
-<td></td>
+<td>Build slice values, labels and colors for one pie chart.</td>
 </tr>
 <tr>
 <td><code>heatmap_data</code></td>
@@ -5206,7 +5276,7 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.</p>
 <tr>
 <td><code>statistics_table</code></td>
 <td><code>(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilu</code></td>
-<td></td>
+<td>Build the statistics table shown next to the figure.</td>
 </tr>
 </tbody>
 </table>
@@ -5458,8 +5528,45 @@ Uses shared_plot_utils for fonts, colors, sample helpers, and download.</p>
 </tr>
 <tr>
 <td><code>_extract_multi</code></td>
-<td><code>(self, st, mt)</code></td>
+<td><code>(self, st, mt, quantity_basis='Particle Count')</code></td>
 <td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Signature</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>normalize_quantity_basis</code></td>
+<td><code>(basis)</code></td>
+<td>Return a supported quantity basis name.</td>
+</tr>
+<tr>
+<td><code>basis_unit</code></td>
+<td><code>(basis, per_ml=False)</code></td>
+<td>Return the display unit belonging to a quantity basis.</td>
+</tr>
+<tr>
+<td><code>format_quantity</code></td>
+<td><code>(value, basis)</code></td>
+<td>Format a quantity for axis, slice and table text.</td>
+</tr>
+<tr>
+<td><code>particle_quantity</code></td>
+<td><code>(particle, basis)</code></td>
+<td>Return one particle's contribution on the requested basis.</td>
+</tr>
+<tr>
+<td><code>detail_quantity</code></td>
+<td><code>(detail, basis)</code></td>
+<td>Return a combination's aggregated quantity on the requested basis.</td>
 </tr>
 </tbody>
 </table>

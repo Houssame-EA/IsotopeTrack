@@ -5139,6 +5139,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../utils/signal-stats/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    signal_stats.py
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../utils/unit/" class="md-nav__link">
         
   
@@ -5498,7 +5526,7 @@
 <tbody>
 <tr>
 <td><code>OLLAMA_BASE</code></td>
-<td><code>'http://localhost:11434'</code></td>
+<td><code>'http://127.0.0.1:11434'</code></td>
 </tr>
 <tr>
 <td><code>OLLAMA_CHAT</code></td>
@@ -5510,7 +5538,7 @@
 </tr>
 <tr>
 <td><code>MLX_BASE</code></td>
-<td><code>'http://localhost:8080'</code></td>
+<td><code>'http://127.0.0.1:8080'</code></td>
 </tr>
 <tr>
 <td><code>MLX_CHAT</code></td>
@@ -5531,6 +5559,30 @@
 <tr>
 <td><code>STREAM_RENDER_INTERVAL</code></td>
 <td><code>80</code></td>
+</tr>
+<tr>
+<td><code>PROBE_TIMEOUT</code></td>
+<td><code>4.0</code></td>
+</tr>
+<tr>
+<td><code>PROBE_ATTEMPTS</code></td>
+<td><code>3</code></td>
+</tr>
+<tr>
+<td><code>PROBE_RETRY_GAP</code></td>
+<td><code>2.0</code></td>
+</tr>
+<tr>
+<td><code>_LOCAL_HOST_ALIASES</code></td>
+<td><code>('localhost', '127.0.0.1', '[::1]', '::1', '0.0.0.0')</code></td>
+</tr>
+<tr>
+<td><code>_LAUNCHED_SERVERS</code></td>
+<td><code>[]</code></td>
+</tr>
+<tr>
+<td><code>_RETIRED_THREADS</code></td>
+<td><code>[]</code></td>
 </tr>
 <tr>
 <td><code>_UI_PREFS</code></td>
@@ -5656,6 +5708,11 @@
 <td></td>
 </tr>
 <tr>
+<td><code>_iter_stream_lines</code></td>
+<td><code>(self)</code></td>
+<td>Yield response lines, absorbing the teardown that Stop causes.</td>
+</tr>
+<tr>
 <td><code>_stream_ndjson</code></td>
 <td><code>(self)</code></td>
 <td></td>
@@ -5683,9 +5740,11 @@
 </tbody>
 </table>
 <h3 id="probeworker-extends-qthread"><code>ProbeWorker</code> <em>(extends <code>QThread</code>)</em><a class="headerlink" href="#probeworker-extends-qthread" title="Permanent link">&para;</a></h3>
-<p>Briefly probe localhost for a running model server so the assistant can
-self-configure on first open — no need to visit settings. Ollama is checked
-first, then MLX. Emits at most one signal.</p>
+<p>Probe loopback for a running model server so the assistant can
+self-configure on first open — no need to visit settings.</p>
+<p>Ollama is checked first, then MLX, and both are retried a few times because
+a server that is still loading its model list refuses connections for the
+first second or two after launch. Emits at most one <code>ready</code> signal.</p>
 <table>
 <thead>
 <tr>
@@ -5697,8 +5756,13 @@ first, then MLX. Emits at most one signal.</p>
 <tbody>
 <tr>
 <td><code>__init__</code></td>
-<td><code>(self, mlx_host=MLX_BASE)</code></td>
+<td><code>(self, mlx_host=MLX_BASE, attempts=PROBE_ATTEMPTS)</code></td>
 <td></td>
+</tr>
+<tr>
+<td><code>stop</code></td>
+<td><code>(self)</code></td>
+<td>Ask the probe loop to end before its next retry.</td>
 </tr>
 <tr>
 <td><code>run</code></td>
@@ -5730,17 +5794,62 @@ first, then MLX. Emits at most one signal.</p>
 <tr>
 <td><code>_fetch_ollama_models</code></td>
 <td><code>(self)</code></td>
-<td></td>
+<td>Refresh the model combo from the running Ollama server.</td>
 </tr>
 <tr>
 <td><code>_test_mlx</code></td>
 <td><code>(self)</code></td>
-<td></td>
+<td>Check the MLX server and report the models it exposes.</td>
+</tr>
+<tr>
+<td><code>_scan_mlx_models</code></td>
+<td><code>(self)</code></td>
+<td>Fill the MLX model list from the running server and the local cache.</td>
+</tr>
+<tr>
+<td><code>_selected_mlx_model</code></td>
+<td><code>(self)</code></td>
+<td>Return the model id chosen in the MLX list.</td>
+</tr>
+<tr>
+<td><code>_start_mlx_server</code></td>
+<td><code>(self)</code></td>
+<td>Launch mlx_lm.server for the selected model and wait for it to answer.</td>
+</tr>
+<tr>
+<td><code>_stop_mlx_server</code></td>
+<td><code>(self)</code></td>
+<td>Stop the MLX server and free the memory its weights occupy.</td>
+</tr>
+<tr>
+<td><code>_poll_mlx_server</code></td>
+<td><code>(self, model, host)</code></td>
+<td>Check whether the launched MLX server has finished loading.</td>
+</tr>
+<tr>
+<td><code>_ctx_value</code></td>
+<td><code>(self)</code></td>
+<td>Return the context window as an integer, falling back to 8192.</td>
+</tr>
+<tr>
+<td><code>_apply_model_context</code></td>
+<td><code>(self)</code></td>
+<td>Set the context window to what the selected Ollama model supports.</td>
+</tr>
+<tr>
+<td><code>_selected_ollama_model</code></td>
+<td><code>(self)</code></td>
+<td>Return the Ollama model name highlighted in the list.</td>
+</tr>
+<tr>
+<td><code>_resolve_mlx_model</code></td>
+<td><code>(self)</code></td>
+<td>Ask the MLX server which model it has loaded.</td>
 </tr>
 <tr>
 <td><code>_test_custom</code></td>
 <td><code>(self)</code></td>
-<td></td>
+<td>Check the custom OpenAI-compatible endpoint and prefill a model.</td>
 </tr>
 <tr>
 <td><code>get_config</code></td>
@@ -6494,6 +6603,11 @@ bubbles alive when switching tabs (no rebuild needed).</p>
 <td></td>
 </tr>
 <tr>
+<td><code>_on_usage</code></td>
+<td><code>(self, prompt_tokens, completion_tokens)</code></td>
+<td>Show the token counts reported by the backend for the last reply.</td>
+</tr>
+<tr>
 <td><code>_on_stats</code></td>
 <td><code>(self, n, el)</code></td>
 <td></td>
@@ -6636,17 +6750,47 @@ bubbles alive when switching tabs (no rebuild needed).</p>
 <tr>
 <td><code>_start_autodetect</code></td>
 <td><code>(self)</code></td>
-<td>Probe localhost for a running model server and self-configure, so the</td>
+<td>Probe loopback for a running model server and self-configure, so the</td>
 </tr>
 <tr>
 <td><code>_on_autodetect</code></td>
 <td><code>(self, backend, model, label)</code></td>
-<td></td>
+<td>Apply a detected backend unless the user already picked one.</td>
 </tr>
 <tr>
 <td><code>_on_autodetect_info</code></td>
 <td><code>(self, msg)</code></td>
 <td></td>
+</tr>
+<tr>
+<td><code>_eject_model</code></td>
+<td><code>(self)</code></td>
+<td>Free the memory held by the model currently loaded.</td>
+</tr>
+<tr>
+<td><code>_set_disconnected_status</code></td>
+<td><code>(self)</code></td>
+<td>Reset the header indicator after a model has been unloaded.</td>
+</tr>
+<tr>
+<td><code>shutdown</code></td>
+<td><code>(self)</code></td>
+<td>Release background work and stop servers this app launched.</td>
+</tr>
+<tr>
+<td><code>closeEvent</code></td>
+<td><code>(self, event)</code></td>
+<td>Stop background threads and launched servers before closing.</td>
+</tr>
+<tr>
+<td><code>_set_connected_status</code></td>
+<td><code>(self, label)</code></td>
+<td>Turn the header indicator green and show the active backend label.</td>
+</tr>
+<tr>
+<td><code>_ensure_backend_ready</code></td>
+<td><code>(self)</code></td>
+<td>Detect a local server on demand when nothing is configured yet.</td>
 </tr>
 </tbody>
 </table>
@@ -6697,6 +6841,116 @@ bubbles alive when switching tabs (no rebuild needed).</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>local_session</code></td>
+<td><code>()</code></td>
+<td>Return a requests session that ignores environment proxy settings.</td>
+</tr>
+<tr>
+<td><code>local_get</code></td>
+<td><code>(url, timeout=PROBE_TIMEOUT, headers=None)</code></td>
+<td>GET a local URL without going through any configured proxy.</td>
+</tr>
+<tr>
+<td><code>host_variants</code></td>
+<td><code>(base_url)</code></td>
+<td>Yield the loopback spellings worth trying for a local server URL.</td>
+</tr>
+<tr>
+<td><code>style_combo_popup</code></td>
+<td><code>(combo)</code></td>
+<td>Make a combo box drop-down readable inside themed dialogs.</td>
+</tr>
+<tr>
+<td><code>style_model_list</code></td>
+<td><code>(widget)</code></td>
+<td>Style an always-visible model list so rows stay readable and clickable.</td>
+</tr>
+<tr>
+<td><code>fetch_ollama_model_context</code></td>
+<td><code>(model, base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)</code></td>
+<td>Ask Ollama how large a context window a model actually supports.</td>
+</tr>
+<tr>
+<td><code>register_launched_server</code></td>
+<td><code>(proc)</code></td>
+<td>Track a model server this app started so it can be stopped on exit.</td>
+</tr>
+<tr>
+<td><code>shutdown_launched_servers</code></td>
+<td><code>(timeout=6)</code></td>
+<td>Stop every model server this app started.</td>
+</tr>
+<tr>
+<td><code>install_server_shutdown_hooks</code></td>
+<td><code>()</code></td>
+<td>Register app-exit hooks that stop servers this app started.</td>
+</tr>
+<tr>
+<td><code>unload_ollama_model</code></td>
+<td><code>(model, base_url=OLLAMA_BASE, timeout=10)</code></td>
+<td>Ask Ollama to drop a model from memory immediately.</td>
+</tr>
+<tr>
+<td><code>pids_listening_on</code></td>
+<td><code>(port)</code></td>
+<td>Return the process ids listening on a TCP port.</td>
+</tr>
+<tr>
+<td><code>port_of</code></td>
+<td><code>(url, default=8080)</code></td>
+<td>Extract the TCP port from a base URL.</td>
+</tr>
+<tr>
+<td><code>terminate_pids</code></td>
+<td><code>(pids, timeout=6)</code></td>
+<td>Terminate processes by id, escalating to kill when they do not exit.</td>
+</tr>
+<tr>
+<td><code>park_thread</code></td>
+<td><code>(thread)</code></td>
+<td>Hold a reference to a thread until Qt reports it finished.</td>
+</tr>
+<tr>
+<td><code>_unpark_thread</code></td>
+<td><code>(thread)</code></td>
+<td>Drop a parked thread once it has finished running.</td>
+</tr>
+<tr>
+<td><code>retire_thread</code></td>
+<td><code>(thread, grace=8000)</code></td>
+<td>Stop a QThread and keep it alive until it has really finished.</td>
+</tr>
+<tr>
+<td><code>hf_cache_roots</code></td>
+<td><code>()</code></td>
+<td>Return the Hugging Face cache directories that exist on this machine.</td>
+</tr>
+<tr>
+<td><code>discover_cached_mlx_models</code></td>
+<td><code>()</code></td>
+<td>Find MLX-ready models already downloaded into the local model cache.</td>
+</tr>
+<tr>
+<td><code>mlx_server_command</code></td>
+<td><code>(model, port)</code></td>
+<td>Build the command that starts an MLX server for a model.</td>
+</tr>
+<tr>
+<td><code>discover_local_models</code></td>
+<td><code>(mlx_host=MLX_BASE)</code></td>
+<td>Collect every model this machine can serve without further setup.</td>
+</tr>
+<tr>
+<td><code>fetch_ollama_models</code></td>
+<td><code>(base_url=OLLAMA_BASE, timeout=PROBE_TIMEOUT)</code></td>
+<td>List the models installed in a running Ollama server.</td>
+</tr>
+<tr>
+<td><code>fetch_openai_models</code></td>
+<td><code>(base_url, timeout=PROBE_TIMEOUT, api_key='')</code></td>
+<td>List models advertised by an OpenAI-compatible <code>/v1/models</code> endpoint.</td>
+</tr>
 <tr>
 <td><code>_fs</code></td>
 <td><code>(delta=0)</code></td>
