@@ -2,6 +2,7 @@ from __future__ import annotations
 import sys
 import gc
 from pathlib import Path
+from utils.deprecated import deprecated
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, QLineEdit, QScrollArea,
                                QFileDialog, QProgressBar, QLabel, QHBoxLayout, QComboBox, QSizePolicy,
@@ -267,8 +268,6 @@ class MainWindow(QMainWindow):
         self.sample_run_info = {}
         self._display_label_to_element = {}
         self.element_parameter_hashes = {}
-        self._formatted_label_cache = {}
-        self._element_data_cache = {}
         self.project_manager = ProjectManager(self)
         self.detection_states = {}
         self.needs_initial_detection = set()
@@ -3982,57 +3981,36 @@ class MainWindow(QMainWindow):
             return None
         return closest
 
-    def get_formatted_label(self, element_key):
+    @deprecated("Use 'PeriodicTableInfo.get_formatted_label' instead")
+    def get_formatted_label(self, element_key: str) -> str:
         """Get proper isotope label from periodic table data with caching.
+
+        Args:
+            element_key (str): key of the element (e.g., "Au-196.9665").
 
         Returns:
             str: Formatted isotope label (e.g., "197Au")
         """
-        if element_key in self._formatted_label_cache:
-            return self._formatted_label_cache[element_key]
-
         try:
-            element, mass = element_key.split('-')
-            mass = float(mass)
-
-            if element not in self._element_data_cache:
-                self._element_data_cache[element] = self.periodic_table_info.get_element_by_symbol(element)
-
-            element_data = self._element_data_cache[element]
-
-            if element_data:
-                isotope = next((iso
-                                for iso in element_data['isotopes']
-                                if isinstance(iso, dict) and abs(iso['mass'] - mass) < 0.001), None)
-                if isotope and 'label' in isotope:
-                    formatted_label = isotope['label']
-
-                    self._formatted_label_cache[element_key] = formatted_label
-                    return formatted_label
-
-            formatted_label = f"{round(mass)}{element}"
-            self._formatted_label_cache[element_key] = formatted_label
-            return formatted_label
-
+            return self.periodic_table_info.get_formatted_label(element_key)
         except Exception as e:
             self.logger.warning(f"Error formatting element label for {element_key}: {str(e)}")
             return element_key
 
     def clear_element_caches(self):
         """Clear element-related caches when data changes."""
-        self._formatted_label_cache.clear()
-        self._element_data_cache.clear()
+        self.periodic_table_info.get_formatted_label.cache_clear()
 
     def _build_element_lookup_cache(self):
         """Build fast lookup cache for element display labels."""
         self._display_label_to_element.clear()
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                display_label = self.get_formatted_label(element_key)
-                self._display_label_to_element[display_label] = (element, isotope, element_key)
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            display_label = self.get_formatted_label(element_key)
+            self._display_label_to_element[display_label] = (element, isotope, element_key)
 
-    def _build_element_conversion_cache(self):
+    def _build_element_conversion_cache(self) \
+            -> dict[str, dict[str, str | [float | None]]]:
         """Build cache for element count to mass conversions.
 
         Returns:
@@ -4042,41 +4020,50 @@ class MainWindow(QMainWindow):
         """
         cache = {}
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                display_label = self.get_formatted_label(element_key)
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            display_label = self.periodic_table_info.get_formatted_label(element_key)
 
-                conversion_factor = None
-                if ("Ionic Calibration" in self.calibration_results and
-                        element_key in self.calibration_results["Ionic Calibration"]):
+            conversion_factor = None
+            if ("Ionic Calibration" in self.calibration_results and
+                    element_key in self.calibration_results["Ionic Calibration"]):
 
-                    cal_data = self.calibration_results["Ionic Calibration"][element_key]
+                cal_data = self.calibration_results["Ionic Calibration"][element_key]
 
-                    preferred_method = self.isotope_method_preferences.get(element_key, 'Force through zero')
-                    method_map = {
-                        'Force through zero': 'zero',
-                        'Simple linear': 'simple',
-                        'Weighted': 'weighted',
-                        'Manual': 'manual'
-                    }
-                    method_key = method_map.get(preferred_method, 'zero')
-
-                    method_data = cal_data.get(method_key)
-                    if not method_data:
-                        method_data = cal_data.get('weighted', cal_data.get('simple', cal_data.get('zero', cal_data.get(
-                            'manual', {}))))
-
-                    if method_data and 'slope' in method_data and self.average_transport_rate > 0:
-                        slope = method_data['slope']
-                        conversion_factor = slope / (self.average_transport_rate * 1000)
-
-                cache[display_label] = {
-                    'element_key': element_key,
-                    'conversion_factor': conversion_factor
+                preferred_method = self.isotope_method_preferences.get(element_key, 'Force through zero')
+                method_map = {
+                    'Force through zero': 'zero',
+                    'Simple linear': 'simple',
+                    'Weighted': 'weighted',
+                    'Manual': 'manual'
                 }
+                method_key = method_map.get(preferred_method, 'zero')
+
+                method_data = cal_data.get(method_key)
+                if not method_data:
+                    method_data = cal_data.get('weighted', cal_data.get('simple', cal_data.get('zero', cal_data.get(
+                        'manual', {}))))
+
+                if method_data and 'slope' in method_data and self.average_transport_rate > 0:
+                    slope = method_data['slope']
+                    conversion_factor = slope / (self.average_transport_rate * 1000)
+
+            cache[display_label] = {
+                'element_key': element_key,
+                'conversion_factor': conversion_factor
+            }
 
         return cache
+
+    def selected_isotopes_as_element_mass(self) -> list[tuple[str, float]]:
+        """
+        Gets the selected isotopes as element and mass tuples.
+        Returns:
+            A list of tuple with the element symbole as string and the isotope mass as float.
+        """
+        return [(element, float(isotope))
+                for element, isotopes in self.selected_isotopes.items()
+                for isotope in isotopes]
 
     def _update_periodic_table_selections(self):
         """Update periodic table with current isotope selections."""
@@ -4103,11 +4090,9 @@ class MainWindow(QMainWindow):
         try:
             signature = (
                 self.current_sample,
-                tuple(sorted(
-                    (element, float(isotope))
-                    for element, isotopes in self.selected_isotopes.items()
-                    for isotope in isotopes
-                )),
+                tuple(
+                    sorted(self.selected_isotopes_as_element_mass())
+                ),
                 getattr(self, '_sigma_mode', 'global'),
                 len(getattr(self, 'detected_peaks', {}) or {}),
             )
@@ -4216,12 +4201,11 @@ class MainWindow(QMainWindow):
             display_label = label_item.text()
 
             particles = None
-            for element, isotopes in self.selected_isotopes.items():
-                for isotope in isotopes:
-                    element_key = f"{element}-{isotope:.4f}"
-                    if self.get_formatted_label(element_key) == display_label:
-                        particles = self.detected_peaks.get((element, isotope))
-                        break
+            for element, isotope in self.selected_isotopes_as_element_mass():
+                element_key = f"{element}-{isotope:.4f}"
+                if self.get_formatted_label(element_key) == display_label:
+                    particles = self.detected_peaks.get((element, isotope))
+                    break
                 if particles is not None:
                     break
 
@@ -4248,25 +4232,24 @@ class MainWindow(QMainWindow):
             else:
                 current_sigma = 0.55
 
-            for element, isotopes in self.selected_isotopes.items():
-                for isotope in isotopes:
-                    element_key = f"{element}-{isotope:.4f}"
+            for element, isotope in self.selected_isotopes_as_element_mass():
+                element_key = f"{element}-{isotope:.4f}"
 
-                    self.sample_parameters[sample_name][element_key] = {
-                        'include': True,
-                        'method': "CPLN table",
-                        'manual_threshold': 10.0,
-                        'min_continuous': 1,
-                        'alpha': 0.000001,
-                        'integration_method': "Background",
-                        'iterative': True,
-                        'max_iterations': 4,
-                        'sigma': current_sigma,
-                        'use_window_size': False,
-                        'window_size': 5000,
-                        'split_method': "1D Watershed",
-                        'valley_ratio': 0.50,
-                    }
+                self.sample_parameters[sample_name][element_key] = {
+                    'include': True,
+                    'method': "CPLN table",
+                    'manual_threshold': 10.0,
+                    'min_continuous': 1,
+                    'alpha': 0.000001,
+                    'integration_method': "Background",
+                    'iterative': True,
+                    'max_iterations': 4,
+                    'sigma': current_sigma,
+                    'use_window_size': False,
+                    'window_size': 5000,
+                    'split_method': "1D Watershed",
+                    'valley_ratio': 0.50,
+                }
         else:
             if hasattr(self, 'sigma_spinbox'):
                 self.sigma_spinbox.blockSignals(True)
@@ -4361,12 +4344,11 @@ class MainWindow(QMainWindow):
 
         display_label = element_item.text()
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                if self.get_formatted_label(element_key) == display_label:
-                    self.mark_element_changed(self.current_sample, element_key)
-                    break
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            if self.get_formatted_label(element_key) == display_label:
+                self.mark_element_changed(self.current_sample, element_key)
+                break
 
         self.save_current_parameters()
         self.unsaved_changes = True
@@ -4493,11 +4475,10 @@ class MainWindow(QMainWindow):
             return
 
         elements = {}
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                display_label = self.get_formatted_label(element_key)
-                elements[element_key] = display_label
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            display_label = self.get_formatted_label(element_key)
+            elements[element_key] = display_label
 
         current_parameters = self.sample_parameters.get(self.current_sample, {})
 
@@ -4573,16 +4554,17 @@ class MainWindow(QMainWindow):
                     d = self.parameters_table.get_row_params(row)
                     if per_isotope_mode:
                         display_label = d.get('element_label', '')
-                        for element, isotopes in self.selected_isotopes.items():
-                            for isotope in isotopes:
-                                element_key = f"{element}-{isotope:.4f}"
-                                if self.get_formatted_label(element_key) == display_label:
-                                    el_params = self.sample_parameters.get(
-                                        self.current_sample, {}).get(element_key, {})
-                                    if not el_params.get('_sigma_from_sia', False):
-                                        self.parameters_table.set_row_field(row, 'sigma', value)
-                                        self.parameters_table.set_row_field(row, '_sigma_highlighted', False)
-                                    break
+                        for element, isotope in self.selected_isotopes_as_element_mass():
+                            # Find the element key that gives the display_label to use it in the sample_parameters
+                            element_key = f"{element}-{isotope:.4f}"
+                            if self.get_formatted_label(element_key) == display_label:
+                                el_params = (self.sample_parameters
+                                             .get(self.current_sample, {})
+                                             .get(element_key, {}))
+                                if not el_params.get('_sigma_from_sia', False):
+                                    self.parameters_table.set_row_field(row, 'sigma', value)
+                                    self.parameters_table.set_row_field(row, '_sigma_highlighted', False)
+                                break
                     else:
                         self.parameters_table.set_row_field(row, 'sigma', value)
                         self.parameters_table.set_row_field(row, '_sigma_highlighted', False)
@@ -4654,23 +4636,22 @@ class MainWindow(QMainWindow):
         finally:
             self._suppress_model_callbacks = False
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                if self.get_formatted_label(element_key) == display_label:
-                    el_params = self.sample_parameters.get(
-                        self.current_sample, {}).get(element_key)
-                    if el_params is not None:
-                        el_params['sigma'] = value
-                        el_params['_sigma_from_sia'] = highlighted
-                        self.mark_element_changed(self.current_sample, element_key)
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            if self.get_formatted_label(element_key) == display_label:
+                el_params = self.sample_parameters.get(
+                    self.current_sample, {}).get(element_key)
+                if el_params is not None:
+                    el_params['sigma'] = value
+                    el_params['_sigma_from_sia'] = highlighted
+                    self.mark_element_changed(self.current_sample, element_key)
 
-                    self.save_current_parameters()
-                    self.unsaved_changes = True
-                    self.status_label.setText(
-                        f"Sigma for {display_label} updated to {value:.3f}"
-                    )
-                    return
+                self.save_current_parameters()
+                self.unsaved_changes = True
+                self.status_label.setText(
+                    f"Sigma for {display_label} updated to {value:.3f}"
+                )
+                return
 
     # ----------------------------------------------------------------------------------------------------------
     # ------------------------------------peak detection and analysis--------------------------------------------
@@ -5425,8 +5406,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Data", "No particle data available. Please run particle detection first.")
             return
 
-        element_cache = self._build_element_conversion_cache()
-
         if getattr(self, 'saturation_filter_enabled', False):
             for sample_name in list(self.sample_particle_data.keys()):
                 self.rebuild_particle_data(sample_name)
@@ -5450,7 +5429,7 @@ class MainWindow(QMainWindow):
                     break
 
                 particles = self.sample_particle_data[sample_name]
-                self._calculate_mass_data_optimized(particles, element_cache, sample_name)
+                self._calculate_mass_data_optimized(particles, sample_name)
 
             progress.close()
         else:
@@ -5463,7 +5442,7 @@ class MainWindow(QMainWindow):
             else:
                 progress = None
 
-            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample, progress)
+            self._calculate_mass_data_optimized(particles, self.current_sample, progress)
 
             if progress:
                 progress.close()
@@ -5732,20 +5711,19 @@ class MainWindow(QMainWindow):
 
         masses, mean_cts, std_cts, labels, element_keys = [], [], [], [], []
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                closest = self.find_closest_isotope(isotope)
-                if closest is None or closest not in self.data:
-                    continue
-                sig = np.asarray(self.data[closest], dtype=float)
-                ek = f"{element}-{isotope:.4f}"
-                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
-                    self, self.current_sample, ek, sig)
-                masses.append(float(isotope))
-                mean_cts.append(mean_sig)
-                std_cts.append(std_sig)
-                labels.append(self.get_formatted_label(ek))
-                element_keys.append(ek)
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            closest = self.find_closest_isotope(isotope)
+            if closest is None or closest not in self.data:
+                continue
+            sig = np.asarray(self.data[closest], dtype=float)
+            ek = f"{element}-{isotope:.4f}"
+            mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                self, self.current_sample, ek, sig)
+            masses.append(float(isotope))
+            mean_cts.append(mean_sig)
+            std_cts.append(std_sig)
+            labels.append(self.get_formatted_label(ek))
+            element_keys.append(ek)
 
         if not masses:
             QMessageBox.information(
@@ -5905,19 +5883,18 @@ class MainWindow(QMainWindow):
 
         masses, mean_cts, std_cts, labels = [], [], [], []
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                closest = self.find_closest_isotope(isotope)
-                if closest is None or closest not in self.data:
-                    continue
-                sig = np.asarray(self.data[closest], dtype=float)
-                ek = f"{element}-{isotope:.4f}"
-                mean_sig, std_sig = utils.signal_stats.mean_std_signal(
-                    self, self.current_sample, ek, sig)
-                masses.append(float(isotope))
-                mean_cts.append(mean_sig)
-                std_cts.append(std_sig)
-                labels.append(self.get_formatted_label(ek))
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            closest = self.find_closest_isotope(isotope)
+            if closest is None or closest not in self.data:
+                continue
+            sig = np.asarray(self.data[closest], dtype=float)
+            ek = f"{element}-{isotope:.4f}"
+            mean_sig, std_sig = utils.signal_stats.mean_std_signal(
+                self, self.current_sample, ek, sig)
+            masses.append(float(isotope))
+            mean_cts.append(mean_sig)
+            std_cts.append(std_sig)
+            labels.append(self.get_formatted_label(ek))
 
         if not masses:
             pw.set_bar_meta([])
@@ -6018,33 +5995,32 @@ class MainWindow(QMainWindow):
                     self.detected_peaks[(self.current_element, self.current_isotope)]
                 )
 
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                if self.get_formatted_label(element_key) == display_label:
-                    closest_mass = self.find_closest_isotope(isotope)
-                    if closest_mass is not None and closest_mass in self.data:
-                        signal = self.data[closest_mass]
-                        start_index = np.argmin(np.abs(self.time_array - start_time))
-                        end_index = np.argmin(np.abs(self.time_array - end_time))
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            if self.get_formatted_label(element_key) == display_label:
+                closest_mass = self.find_closest_isotope(isotope)
+                if closest_mass is not None and closest_mass in self.data:
+                    signal = self.data[closest_mass]
+                    start_index = np.argmin(np.abs(self.time_array - start_time))
+                    end_index = np.argmin(np.abs(self.time_array - end_time))
 
-                        self.plot_widget.plot(
-                            self.time_array[start_index:end_index + 1],
-                            signal[start_index:end_index + 1],
-                            pen=pg.mkPen('r', width=1),
-                            name='Highlighted Peak',
-                            antialias=False
-                        )
+                    self.plot_widget.plot(
+                        self.time_array[start_index:end_index + 1],
+                        signal[start_index:end_index + 1],
+                        pen=pg.mkPen('r', width=1),
+                        name='Highlighted Peak',
+                        antialias=False
+                    )
 
-                        particle_duration = end_time - start_time
-                        padding = 0.5 * particle_duration
-                        self.plot_widget.setXRange(start_time - padding, end_time + padding)
+                    particle_duration = end_time - start_time
+                    padding = 0.5 * particle_duration
+                    self.plot_widget.setXRange(start_time - padding, end_time + padding)
 
-                        y_min = np.min(signal[start_index:end_index + 1])
-                        y_max = np.max(signal[start_index:end_index + 1])
-                        y_range = y_max - y_min
-                        self.plot_widget.setYRange(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
-                        return
+                    y_min = np.min(signal[start_index:end_index + 1])
+                    y_max = np.max(signal[start_index:end_index + 1])
+                    y_range = y_max - y_min
+                    self.plot_widget.setYRange(y_min - 0.1 * y_range, y_max + 0.1 * y_range)
+                    return
 
     def highlight_multi_element_particle(self):
         """Highlight and display selected multi-element particle."""
@@ -6597,9 +6573,8 @@ class MainWindow(QMainWindow):
             if (self.current_sample
                     and self.current_sample in self.sample_particle_data
                     and self.sample_particle_data[self.current_sample]):
-                element_cache = self._build_element_conversion_cache()
                 particles = self.sample_particle_data[self.current_sample]
-                self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
+                self._calculate_mass_data_optimized(particles, self.current_sample)
 
     def update_calibration_display(self):
         """Update calibration information display panel."""
@@ -6641,11 +6616,10 @@ class MainWindow(QMainWindow):
         threshold_data = self.element_thresholds.get(self.current_sample, {})
 
         element_data = []
-        for element, isotopes in self.selected_isotopes.items():
-            for isotope in isotopes:
-                element_key = f"{element}-{isotope:.4f}"
-                display_label = self.get_formatted_label(element_key)
-                element_data.append((isotope, display_label, element_key))
+        for element, isotope in self.selected_isotopes_as_element_mass():
+            element_key = f"{element}-{isotope:.4f}"
+            display_label = self.get_formatted_label(element_key)
+            element_data.append((isotope, display_label, element_key))
         element_data.sort()
 
         for _, display_label, element_key in element_data:
@@ -6853,9 +6827,8 @@ class MainWindow(QMainWindow):
         if (self.current_sample
                 and self.current_sample in self.sample_particle_data
                 and self.sample_particle_data[self.current_sample]):
-            element_cache = self._build_element_conversion_cache()
             particles = self.sample_particle_data[self.current_sample]
-            self._calculate_mass_data_optimized(particles, element_cache, self.current_sample)
+            self._calculate_mass_data_optimized(particles, self.current_sample)
 
             self.status_label.setText(f"Recalculated particle masses with new mass fractions and molecular weights")
 
@@ -6966,10 +6939,10 @@ class MainWindow(QMainWindow):
 
     def _calculate_mass_data_optimized(self,
                                        particles,
-                                       element_cache,
                                        sample_name: str,
                                        progress=None):
         """Calculate comprehensive mass, mole, and diameter data for particles of a sample."""
+        element_cache = self._build_element_conversion_cache()
 
         for i, particle in enumerate(particles):
             if progress and i % 100 == 0:
@@ -7943,15 +7916,17 @@ class MainWindow(QMainWindow):
                 self,
                 'Save Project?',
                 'You have unsaved changes. Would you like to save your project before closing?',
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-                QMessageBox.Save
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save
             )
-            if reply == QMessageBox.Save:
+            if reply == QMessageBox.StandardButton.Save:
                 saved = self.project_manager.save_project(blocking=True)
                 if not saved:
                     event.ignore()
                     return
-            elif reply == QMessageBox.Cancel:
+            elif reply == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
         export_thread = getattr(self, '_export_thread', None)

@@ -733,10 +733,9 @@ Terminal=false
         
         self.main_window.element_parameter_hashes = project_data.get('element_parameter_hashes', {})
         self.main_window._display_label_to_element = project_data.get('_display_label_to_element', {})
-        
-        self.main_window._formatted_label_cache = {}
-        self.main_window._element_data_cache = {}
-        
+
+        self.main_window.clear_element_caches()
+
         self.main_window.all_masses = project_data.get('all_masses', None)
         self.main_window.folder_paths = project_data.get('folder_paths', [])
         
@@ -1131,8 +1130,7 @@ Terminal=false
             self.main_window._sync_saturation_filter_ui()
         self.main_window.folder_paths = []
         
-        self.main_window._formatted_label_cache = {}
-        self.main_window._element_data_cache = {}
+        self.main_window.clear_element_caches()
         self.main_window._display_label_to_element = {}
         
         self.main_window.current_sample = None
