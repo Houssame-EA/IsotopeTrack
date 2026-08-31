@@ -12,12 +12,12 @@ All plot/analysis result modules (bar charts, isotope ratios, AI, …).
 ### [`results_bar_charts.py`](results-bar-charts.md)
 
 
-**14** classes &nbsp;·&nbsp; **45** functions &nbsp;·&nbsp; **184** methods
+**14** classes &nbsp;·&nbsp; **45** functions &nbsp;·&nbsp; **190** methods
 
 ### [`results_box_plot.py`](results-box-plot.md)
 Distribution Plot Node – Box / Violin / Strip / Bar-with-errors.
 
-**3** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **52** methods
+**3** classes &nbsp;·&nbsp; **22** functions &nbsp;·&nbsp; **54** methods
 
 ### [`results_composition_wheel.py`](results-composition-wheel.md)
 Composition Wheel (2D / 3D) — single & multi-sample particle-signature plot.
@@ -37,7 +37,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_heatmap.py`](results-heatmap.md)
 
 
-**3** classes &nbsp;·&nbsp; **13** functions &nbsp;·&nbsp; **39** methods
+**3** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **53** methods
 
 ### [`results_isotope.py`](results-isotope.md)
 
@@ -47,7 +47,7 @@ Concentration-Comparison Plot Node – dot-and-circle strip chart.
 ### [`results_matrix.py`](results-matrix.md)
 Correlation-Matrix Plot Node – pairwise Pearson-r heat-maps.
 
-**3** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **31** methods
+**3** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **43** methods
 
 ### [`results_molar_ratio.py`](results-molar-ratio.md)
 

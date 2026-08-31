@@ -13,11 +13,13 @@ unmodified.
 Connectivity (design §2):
     Upstream:   Particle Filter, Single Sample, Multiple Sample only.
     Downstream: any Visualization-category node except AI Data Assistant
-                (permanently excluded) and the work-in-progress set in
-                WIP_EXCLUDED_DOWNSTREAM_TYPES (Clustering,
-                Single/Multiple, Correlation Matrix, Network, Molar Ratio,
-                Isotopic Ratio, Ternary Plot) -- temporarily disabled until
-                each is verified meaningful on classifier-bucketed data.
+                (permanently excluded). WIP_EXCLUDED_DOWNSTREAM_TYPES was
+                emptied 2026-08-24 -- connectivity is unblocked for every
+                Visualization node, even though the classifier->viz
+                plotting-correctness redesign that would make several of
+                them scientifically meaningful is hibernated, not done
+                (see .claude/aug24.md's "Classifier -> viz plotting
+                correctness" section).
 Invalid link attempts must be hard-blocked at the canvas level (the link
 cannot be drawn) with an explicit error dialog — see
 ``validate_classifier_link`` and its wiring into
@@ -31,7 +33,7 @@ cannot be drawn) with an explicit error dialog — see
 |------|-------|
 | `NODE_TYPE` | `'particle_classifier'` |
 | `ALLOWED_UPSTREAM_TYPES` | `frozenset({'particle_filter', 'sample_selector', 'multipl…` |
-| `WIP_EXCLUDED_DOWNSTREAM_TYPES` | `frozenset({'clustering_plot', 'single_multiple_element_pl…` |
+| `WIP_EXCLUDED_DOWNSTREAM_TYPES` | `frozenset()` |
 | `EXCLUDED_DOWNSTREAM_TYPES` | `WIP_EXCLUDED_DOWNSTREAM_TYPES \| frozenset({'ai_assistant'})` |
 | `DEFAULT_UNCLASSIFIED_COLOR` | `'#9CA3AF'` |
 | `_HIDE_ONBOARDING_SETTING` | `'hide_particle_classifier_onboarding'` |

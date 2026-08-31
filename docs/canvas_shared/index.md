@@ -7,7 +7,7 @@ Workflow canvas and shared plotting infrastructure.
 ### [`canvas_widgets.py`](canvas-widgets.md)
 
 
-**33** classes &nbsp;·&nbsp; **11** functions &nbsp;·&nbsp; **252** methods
+**33** classes &nbsp;·&nbsp; **11** functions &nbsp;·&nbsp; **253** methods
 
 ### [`custom_plot_widget.py`](custom-plot-widget.md)
 
@@ -17,7 +17,7 @@ Workflow canvas and shared plotting infrastructure.
 ### [`shared_plot_utils.py`](shared-plot-utils.md)
 
 
-**10** classes &nbsp;·&nbsp; **86** functions &nbsp;·&nbsp; **48** methods
+**11** classes &nbsp;·&nbsp; **89** functions &nbsp;·&nbsp; **51** methods
 
 ### [`shared_annotation.py`](shared-annotation.md)
 shared_annotations.py — Figure annotation system for IsotopeTrack.
@@ -28,3 +28,8 @@ shared_annotations.py — Figure annotation system for IsotopeTrack.
 
 
 **0** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **0** methods
+
+### [`classifier_view.py`](classifier-view.md)
+Shared reader API for rendering Particle Classifier output in viz nodes.
+
+**0** classes &nbsp;·&nbsp; **32** functions &nbsp;·&nbsp; **0** methods

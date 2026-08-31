@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QComboBox, QSpinBox, QDoubleSpinBox, QGroupBox, QFormLayout,
     QDialogButtonBox, QApplication, QGraphicsItem, QListWidget,
     QListWidgetItem, QSplitter, QScrollArea, QFrame, QLineEdit, QCheckBox,
+    QRadioButton, QButtonGroup,
 )
 from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPointF, QRectF
 from PySide6.QtGui import QPen, QColor
@@ -878,16 +879,204 @@ def retag_particles(particles, name):
     return particles
 
 
-def merge_single_sources(sources, name):
+#: Relative tolerance for treating two dilution factors as "the same" (see
+#: july22.md issue #7 design) -- tight enough to catch genuinely different
+#: values including small decimals, loose enough to absorb float noise
+#: regardless of magnitude (a fixed absolute epsilon would be wrong at both
+#: ends: too tight for a factor of 5000, too loose for one of 0.001).
+DILUTION_REL_TOL = 1e-5
+
+
+def dilution_factors_conflict(members):
+    """Whether members' dilution factors differ beyond floating-point tolerance.
+
+    Per-particle representations (counts, mass, moles) are never affected by
+    a dilution mismatch -- dilution factor only ever feeds particles/mL (see
+    per_ml_factor in results/shared_plot_utils.py). This only decides
+    whether that one derived number needs a resolution before merging.
+
+    Args:
+        members (list): ``[(name, meta_dict_or_None), ...]`` concentration-
+            meta entries for the samples about to be merged/summed together.
+
+    Returns:
+        bool: True when 2+ genuinely different dilution factors are present.
+    """
+    factors = [(m or {}).get('dilution_factor', 1.0) for _n, m in members]
+    if len(factors) < 2:
+        return False
+    first = factors[0]
+    return not all(math.isclose(f, first, rel_tol=DILUTION_REL_TOL)
+                   for f in factors)
+
+
+class DilutionConflictDialog(QDialog):
+    """Ask how to resolve a dilution-factor mismatch among merging samples.
+
+    Every particle-level representation stays valid regardless of this
+    choice; this only decides what, if anything, the ONE derived
+    particles/mL number should be for the merged/summed sample.
+    """
+
+    def __init__(self, parent, group_label, members):
+        """
+        Args:
+            parent: Dialog parent.
+            group_label (str): Name of the merged/summed sample being created.
+            members (list): ``[(name, meta_dict_or_None), ...]`` the
+                conflicting sources.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Dilution factor mismatch")
+        self.setModal(True)
+        self.setMinimumWidth(480)
+        self._groups = self._group_by_factor(members)
+
+        lay = QVBoxLayout(self)
+        rows = "\n".join(
+            f"  • {', '.join(names)}: {factor:g}×"
+            for factor, names in self._groups)
+        lbl = QLabel(
+            f"\"{group_label}\" combines samples that don't all share the "
+            f"same dilution factor:\n\n{rows}\n\nEvery other representation "
+            f"(counts, mass, moles) stays fully valid regardless of this "
+            f"choice — only particles/mL for the combined sample is "
+            f"affected. How should it be handled?")
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+
+        self._button_group = QButtonGroup(self)
+        self._radio_factor = {}
+        for factor, names in self._groups:
+            rb = QRadioButton(
+                f"Use {factor:g}× (from {', '.join(names)})")
+            self._button_group.addButton(rb)
+            lay.addWidget(rb)
+            self._radio_factor[id(rb)] = factor
+
+        custom_row = QHBoxLayout()
+        self._custom_radio = QRadioButton("Enter a custom factor:")
+        self._button_group.addButton(self._custom_radio)
+        custom_row.addWidget(self._custom_radio)
+        self._custom_spin = QDoubleSpinBox()
+        self._custom_spin.setRange(0.0001, 1_000_000.0)
+        self._custom_spin.setDecimals(4)
+        self._custom_spin.setValue(self._groups[0][0] if self._groups else 1.0)
+        self._custom_spin.setEnabled(False)
+        custom_row.addWidget(self._custom_spin)
+        custom_row.addStretch()
+        lay.addLayout(custom_row)
+        self._custom_radio.toggled.connect(self._custom_spin.setEnabled)
+
+        self._unavailable_radio = QRadioButton(
+            "Don't compute particles/mL for this merge")
+        self._button_group.addButton(self._unavailable_radio)
+        lay.addWidget(self._unavailable_radio)
+
+        first_btn = self._button_group.buttons()[0] \
+            if self._button_group.buttons() else None
+        if first_btn:
+            first_btn.setChecked(True)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    @staticmethod
+    def _group_by_factor(members):
+        """Group member names by (tolerance-equal) dilution factor value.
+
+        Returns:
+            list: ``[(factor, [names...]), ...]`` in first-seen order.
+        """
+        groups = []
+        for name, meta in members:
+            f = (meta or {}).get('dilution_factor', 1.0)
+            for rep, names in groups:
+                if math.isclose(f, rep, rel_tol=DILUTION_REL_TOL):
+                    names.append(name)
+                    break
+            else:
+                groups.append((f, [name]))
+        return groups
+
+    def resolution(self):
+        """Build the resolution dict for the checked option.
+
+        Returns:
+            dict: ``{'choice': 'sample'|'manual'|'unavailable',
+                'dilution_factor': float, 'source_label': str,
+                'conflict_values': [(name, factor), ...]}``.
+        """
+        conflict_values = [(n, f) for f, names in self._groups for n in names]
+        if self._unavailable_radio.isChecked():
+            return {'choice': 'unavailable', 'dilution_factor': 0.0,
+                    'source_label': 'unavailable (dilution mismatch)',
+                    'conflict_values': conflict_values}
+        if self._custom_radio.isChecked():
+            v = self._custom_spin.value()
+            return {'choice': 'manual', 'dilution_factor': v,
+                    'source_label': f'manually entered ({v:g}×)',
+                    'conflict_values': conflict_values}
+        checked = self._button_group.checkedButton()
+        factor = self._radio_factor.get(id(checked), self._groups[0][0])
+        names = next((names for f, names in self._groups
+                     if math.isclose(f, factor, rel_tol=DILUTION_REL_TOL)), [])
+        return {'choice': 'sample', 'dilution_factor': factor,
+                'source_label': f'{", ".join(names)} ({factor:g}×)',
+                'conflict_values': conflict_values}
+
+
+def resolve_dilution_conflict(parent_window, group_label, members):
+    """Detect and, if needed, ask the user to resolve a dilution-factor
+    mismatch among samples about to be merged/summed into one.
+
+    Must only be called from a dialog's Accept/OK handler (never from a
+    recompute/get_output_data path) -- the resolution it returns is meant to
+    be stored once and reused on every subsequent recompute, not re-prompted.
+
+    Args:
+        parent_window: Dialog parent.
+        group_label (str): Name of the merged/summed sample being created.
+        members (list): ``[(name, meta_dict_or_None), ...]`` the sources
+            being combined.
+
+    Returns:
+        dict | None | False: The resolution dict (see
+            ``DilutionConflictDialog.resolution``) when a conflict existed
+            and the user resolved it; ``None`` when there was no conflict at
+            all (caller should combine normally, no resolution needed);
+            ``False`` when the user cancelled -- caller must abort the merge
+            entirely.
+    """
+    if not dilution_factors_conflict(members):
+        return None
+    dlg = DilutionConflictDialog(parent_window, group_label, members)
+    if dlg.exec() != QDialog.Accepted:
+        return False
+    return dlg.resolution()
+
+
+def merge_single_sources(sources, name, dilution_resolution=None):
     """Combine several single-sample source entries into one synthetic one.
 
-    Totals add up, volumes add up, the dilution factor comes from the first
-    member, transport availability requires every member to provide it, and
-    the isotope list is the de-duplicated union.
+    Totals add up, volumes add up, transport availability requires every
+    member to provide it, and the isotope list is the de-duplicated union.
+
+    The dilution factor comes from the first member UNLESS
+    ``dilution_resolution`` is given (see :func:`resolve_dilution_conflict`),
+    in which case that already-made decision is used instead -- this
+    function never itself detects a conflict or prompts; that must already
+    have happened at Accept/OK time, once, with the result passed in here on
+    every subsequent recompute.
 
     Args:
         sources (list): Single-origin source entries to merge.
         name (str): The merged sample name.
+        dilution_resolution (dict | None): A resolution dict from
+            :func:`resolve_dilution_conflict`, or None when no mismatch
+            resolution applies (normal first-member behavior).
 
     Returns:
         dict: A synthetic source entry representing the merged sample.
@@ -901,11 +1090,20 @@ def merge_single_sources(sources, name):
                 isotopes.append(iso)
     metas = [s.get('conc') for s in sources if s.get('conc')]
     if metas:
+        dilution_factor = (dilution_resolution['dilution_factor']
+                           if dilution_resolution is not None
+                           else metas[0].get('dilution_factor', 1.0))
         conc = {
             'volume_ml': sum(m.get('volume_ml', 0.0) for m in metas),
-            'dilution_factor': metas[0].get('dilution_factor', 1.0),
+            'dilution_factor': dilution_factor,
             'te_available': all(m.get('te_available', False) for m in metas),
         }
+        if dilution_resolution is not None:
+            conc['dilution_mismatch'] = True
+            conc['dilution_choice'] = dilution_resolution['choice']
+            conc['dilution_source_label'] = dilution_resolution['source_label']
+            conc['dilution_conflict_values'] = \
+                dilution_resolution['conflict_values']
     else:
         conc = _empty_conc_meta()
     return {
@@ -1148,7 +1346,7 @@ class ParticleFilterDialog(QDialog):
                  selected_sources=None, merged_name="Combined",
                  owner_node=None, suppress_stale_warning=False,
                  merge_singles=True, sample_groups=None,
-                 duplicate_resolutions=None):
+                 duplicate_resolutions=None, dilution_resolutions=None):
         super().__init__(parent)
         self.setWindowTitle("Particle Filter Configuration")
         self.setModal(True)
@@ -1174,6 +1372,9 @@ class ParticleFilterDialog(QDialog):
         self._sources = resolve_and_normalize_sources(
             self._upstreams, self._duplicate_resolutions)
         self._src_by_name = {s['name']: s for s in self._sources}
+        # {merged_group_name: resolution_dict}; a working copy the accept
+        # handler updates in place, read back via get_dilution_resolutions().
+        self._dilution_resolutions = dict(dilution_resolutions or {})
         self._filters = _copy.deepcopy(sample_filters) if sample_filters else {}
         self._groups = _copy.deepcopy(sample_groups) if sample_groups else {}
         self._selected_sources = (list(selected_sources)
@@ -1901,20 +2102,30 @@ class ParticleFilterDialog(QDialog):
         the "Check = include in output · Click = edit its filter" hint), so
         this only touches samples the user has actually opted into the
         output, not every connected sample regardless of inclusion.
+
+        If applying would overwrite one or more checked samples' EXISTING,
+        DIFFERENT group name, this asks for confirmation first (naming the
+        affected samples) rather than silently clobbering an assignment the
+        user made deliberately elsewhere — see _group_overwrite_conflicts.
+        A no-op re-application (checked samples that already carry the same
+        group name) never triggers this, only an actual change does.
         """
         if not self._current:
             return
         cfg = self._pane_config()
-        self._filters[self._current] = cfg
         src_cur = self._src_by_name.get(self._current)
         gname = (self._group_edit.text().strip()
                  if src_cur and src_cur.get('origin') == 'single' else '')
+        checked = set(self._checked_names())
+        conflicts = self._group_overwrite_conflicts(checked, gname)
+        if conflicts and not self._confirm_group_overwrite(conflicts, gname):
+            return
+        self._filters[self._current] = cfg
         if src_cur and src_cur.get('origin') == 'single':
             if gname:
                 self._groups[self._current] = gname
             else:
                 self._groups.pop(self._current, None)
-        checked = set(self._checked_names())
         for s in self._sources:
             if s['name'] == self._current or s['name'] not in checked:
                 continue
@@ -1928,6 +2139,61 @@ class ParticleFilterDialog(QDialog):
         for i in range(self._list.count()):
             self._refresh_row(self._list.item(i))
         self._schedule_preview()
+
+    def _group_overwrite_conflicts(self, checked, gname):
+        """List checked single-sample names whose EXISTING group name would
+        actually change if _apply_to_all proceeded with ``gname``.
+
+        Excludes ``self._current`` (the user is editing that one directly,
+        so no surprise there) and any sample whose stored group already
+        equals ``gname`` (a re-application that changes nothing).
+
+        Args:
+            checked (set): Names checked in the left list.
+            gname (str): The group name about to be applied (may be '').
+
+        Returns:
+            list: Affected sample names, in source order.
+        """
+        out = []
+        for s in self._sources:
+            name = s['name']
+            if (name == self._current or name not in checked
+                    or s.get('origin') != 'single'):
+                continue
+            existing = (self._groups.get(name) or '').strip()
+            if existing and existing != gname:
+                out.append(name)
+        return out
+
+    def _confirm_group_overwrite(self, conflicts, gname):
+        """Ask before overwriting samples' existing, different group names.
+
+        Args:
+            conflicts (list): Sample names from _group_overwrite_conflicts.
+            gname (str): The group name about to be applied (may be '').
+
+        Returns:
+            bool: True if the user chose to proceed.
+        """
+        from PySide6.QtWidgets import QMessageBox
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Overwrite existing group assignments?")
+        shown = conflicts[:5]
+        names_txt = ", ".join(f'"{n}"' for n in shown)
+        if len(conflicts) > 5:
+            names_txt += f", and {len(conflicts) - 5} more"
+        new_txt = f'"{gname}"' if gname else "no group (ungrouped)"
+        box.setText(
+            f"{len(conflicts)} of the selected samples already belong to a "
+            f"different group: {names_txt}.\n\nApplying now will overwrite "
+            f"their group assignment to {new_txt}.\n\nContinue?")
+        proceed = box.addButton("Overwrite", QMessageBox.AcceptRole)
+        box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(proceed)
+        box.exec()
+        return box.clickedButton() is proceed
 
     def _toggle_select_all(self):
         """Check every sample row, or uncheck every row if all are already
@@ -1987,6 +2253,62 @@ class ParticleFilterDialog(QDialog):
         if self._current:
             self._save_pane(self._current)
         return {k: v for k, v in self._groups.items() if v}
+
+    def get_dilution_resolutions(self):
+        """Return the current dilution-mismatch resolutions.
+
+        Returns:
+            dict: {merged_group_name: resolution_dict}.
+        """
+        return dict(self._dilution_resolutions)
+
+    def _compute_pending_merge_groups(self):
+        """Mirror ParticleFilterNode._get_output_data_impl's group-formation
+        logic against the dialog's OWN in-progress state (not yet committed
+        to the node), so a dilution-mismatch check can run at Accept time
+        before anything is saved.
+
+        Returns:
+            dict: {group_name: [sample_name, ...]} for every group of 2+
+                single-origin samples that will actually be merged/summed
+                together once this dialog is accepted.
+        """
+        singles = [s for s in self._sources if s.get('origin') == 'single']
+        groups = {}
+        if self._merge_chk is not None and self._merge_chk.isChecked():
+            if len(singles) >= 2:
+                gname = ((self._merge_edit.text().strip()
+                         if self._merge_edit else '') or 'Combined')
+                groups[gname] = [s['name'] for s in singles]
+        else:
+            for s in singles:
+                gname = (self._groups.get(s['name']) or '').strip()
+                if gname:
+                    groups.setdefault(gname, []).append(s['name'])
+        return {g: names for g, names in groups.items() if len(names) >= 2}
+
+    def _resolve_pending_dilution_conflicts(self):
+        """Run the dilution-mismatch check for every group about to form.
+
+        Called from the Accept/OK handler, once. Updates
+        self._dilution_resolutions in place for groups that need one and
+        clears stale entries for groups that no longer conflict.
+
+        Returns:
+            bool: True to proceed with accept, False if the user cancelled
+                a merge because of an unresolved dilution mismatch.
+        """
+        for gname, names in self._compute_pending_merge_groups().items():
+            members = [(n, self._src_by_name.get(n, {}).get('conc'))
+                       for n in names]
+            res = resolve_dilution_conflict(self, gname, members)
+            if res is False:
+                return False
+            if res is not None:
+                self._dilution_resolutions[gname] = res
+            else:
+                self._dilution_resolutions.pop(gname, None)
+        return True
 
     def _on_chips_changed(self):
         """React to a chip toggle: refresh threshold rows and the preview."""
@@ -2369,6 +2691,12 @@ class ParticleFilterNode(QObject):
         # Sample node both carrying "S1") was resolved, so reconnecting or
         # reopening the project doesn't ask again for the same pair.
         self.duplicate_resolutions = {}
+        # {merged_group_name: resolution_dict} -- how a dilution-factor
+        # mismatch among the samples merging into that group name was
+        # resolved (see resolve_dilution_conflict / DilutionConflictDialog),
+        # made once at Accept/OK time in ParticleFilterDialog._try_accept
+        # and reused here on every recompute rather than re-prompted.
+        self.dilution_resolutions = {}
         self._stale = []
         self._incoming_names = []
         # Legacy per-node opt-out for the "applying this will change open
@@ -2686,6 +3014,32 @@ class ParticleFilterNode(QObject):
                 "nodes will keep their previous data instead of updating")
             return None
 
+    def _dilution_resolution_for(self, group_name, sources):
+        """Look up the stored dilution-mismatch resolution for a group,
+        re-validated against its CURRENT members rather than blindly reused.
+
+        The resolution was made once at Accept/OK time
+        (ParticleFilterDialog._resolve_pending_dilution_conflicts); this
+        just reads it back on every recompute. If the group's members no
+        longer actually conflict (e.g. the user fixed a dilution factor
+        elsewhere), the stale resolution is ignored so normal first-member
+        behavior applies instead of forcing an unnecessary override.
+
+        Args:
+            group_name (str): The merged/summed output name.
+            sources (list): The source entries currently forming that group.
+
+        Returns:
+            dict | None: The resolution dict, or None if none applies.
+        """
+        res = self.dilution_resolutions.get(group_name)
+        if res is None:
+            return None
+        members = [(s['name'], s.get('conc')) for s in sources]
+        if not dilution_factors_conflict(members):
+            return None
+        return res
+
     def _get_output_data_impl(self):
         upstreams = self._pull_upstream_all()
         if not upstreams:
@@ -2751,8 +3105,10 @@ class ParticleFilterNode(QObject):
                 merged_kept = []
                 for _s, kept in singles:
                     merged_kept.extend(retag_particles(kept, name))
+                res = self._dilution_resolution_for(
+                    name, [s for s, _k in singles])
                 final.append((merge_single_sources(
-                    [s for s, _k in singles], name), merged_kept))
+                    [s for s, _k in singles], name, res), merged_kept))
             else:
                 final.extend(singles)
         else:
@@ -2771,8 +3127,10 @@ class ParticleFilterNode(QObject):
                 merged_kept = []
                 for _s, kept in members:
                     merged_kept.extend(retag_particles(kept, gname))
+                res = self._dilution_resolution_for(
+                    gname, [s for s, _k in members])
                 final.append((merge_single_sources(
-                    [s for s, _k in members], gname), merged_kept))
+                    [s for s, _k in members], gname, res), merged_kept))
             final.extend(ungrouped)
         final.extend(others)
         # Stamp each output sample with the filter-provenance suffix
@@ -2958,13 +3316,15 @@ class ParticleFilterNode(QObject):
             self.selected_sources, self.merged_name, owner_node=self,
             suppress_stale_warning=self.suppress_stale_warning,
             merge_singles=self.merge_singles, sample_groups=self.sample_groups,
-            duplicate_resolutions=self.duplicate_resolutions)
+            duplicate_resolutions=self.duplicate_resolutions,
+            dilution_resolutions=self.dilution_resolutions)
         if dlg.exec() == QDialog.Accepted:
             self.sample_filters = dlg.get_sample_filters()
             self.selected_sources = dlg.get_selected_sources()
             self.merged_name = dlg.get_merged_name()
             self.merge_singles = dlg.get_merge_singles()
             self.sample_groups = dlg.get_sample_groups()
+            self.dilution_resolutions = dlg.get_dilution_resolutions()
             self.suppress_stale_warning = dlg.stale_warning_suppressed()
             self._recompute_stale(resolve_and_normalize_sources(
                 snapshots, self.duplicate_resolutions))

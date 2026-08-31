@@ -227,6 +227,7 @@ class MolarRatioSettingsDialog(QDialog):
         self._ref_color = None
         self._ref_style = None
         self._ref_width = None
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -234,6 +235,13 @@ class MolarRatioSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_MULTI_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Element Selection for Ratio")
@@ -638,6 +646,8 @@ class MolarRatioSettingsDialog(QDialog):
         in_format = self._scope in ('all', 'format')
 
         if in_quantities:
+            if self._classifier_group is not None:
+                d.update(self._classifier_group.collect())
             if self.num_combo is not None:
                 d['numerator_element'] = self.num_combo.currentText()
                 d['denominator_element'] = self.den_combo.currentText()
@@ -1614,7 +1624,8 @@ class MolarRatioPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(DEFAULT_CONFIG)
         self.input_data = None
         self._last_extract_reason = None
 
@@ -1632,7 +1643,14 @@ class MolarRatioPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
         self.configuration_changed.emit()
 
     def extract_available_elements(self):

@@ -31,40 +31,35 @@ class TestDownstreamRule:
         assert pcn.is_allowed_downstream(
             "histogram_plot", pcn_viz_types()) is True
 
-    @pytest.mark.parametrize("node_type", [
-        "clustering_plot", "ai_assistant"])
-    def test_excluded_viz_nodes_blocked(self, node_type):
-        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
-
-    def test_dashboard_is_allowed_downstream(self):
-        """Dashboard was released from the WIP set and must now be accepted.
-
-        It is a Visualization-category node that does not need two
-        within-particle components, so bucket-collapsing does not empty it.
-        """
-        assert pcn.is_allowed_downstream("dashboard", pcn_viz_types()) is True
-        assert "dashboard" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
-        assert "dashboard" not in pcn.EXCLUDED_DOWNSTREAM_TYPES
+    def test_ai_assistant_blocked(self):
+        """AI Data Assistant is excluded permanently, for an unrelated,
+        non-WIP reason (see EXCLUDED_DOWNSTREAM_TYPES docstring)."""
+        assert pcn.is_allowed_downstream("ai_assistant", pcn_viz_types()) is False
 
     def test_non_viz_node_blocked(self):
         assert pcn.is_allowed_downstream(
             "particle_filter", pcn_viz_types()) is False
 
     @pytest.mark.parametrize("node_type", [
-        "single_multiple_element_plot", "correlation_matrix",
-        "network_diagram", "molar_ratio_plot", "isotopic_ratio_plot",
-        "triangle_plot"])
-    def test_wip_excluded_viz_nodes_blocked(self, node_type):
-        """These are within-particle-relationship charts made empty/
-        meaningless by classifier bucket-collapsing (see
-        classifier-ratio-nodes-meaningless memory note) -- temporarily
-        disabled, distinct from AI Assistant's permanent exclusion."""
-        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is False
-        assert node_type in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
+        "clustering_plot", "single_multiple_element_plot",
+        "correlation_matrix", "network_diagram", "molar_ratio_plot",
+        "isotopic_ratio_plot", "triangle_plot"])
+    def test_formerly_wip_viz_nodes_now_allowed(self, node_type):
+        """WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied 2026-08-24 -- connectivity
+        is unblocked for every Visualization node even though the underlying
+        plotting-correctness redesign that would make several of these
+        scientifically meaningful is hibernated, not done (see
+        .claude/aug24.md's "Classifier -> viz plotting correctness" section
+        and the classifier-ratio-nodes-meaningless memory note)."""
+        assert pcn.is_allowed_downstream(node_type, pcn_viz_types()) is True
+        assert node_type not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
 
-    def test_wip_set_excludes_ai_assistant(self):
-        """AI Data Assistant is excluded for an unrelated, non-WIP reason --
-        it must stay out of the WIP set so it gets its own refusal message."""
+    def test_wip_set_is_empty(self):
+        """Emptied 2026-08-24 -- kept as a named empty frozenset (not
+        deleted) so EXCLUDED_DOWNSTREAM_TYPES and the canvas refusal-message
+        branch that checks membership in it both keep working, and so a
+        real WIP exclusion can be added back for a specific node type."""
+        assert pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES == frozenset()
         assert "ai_assistant" not in pcn.WIP_EXCLUDED_DOWNSTREAM_TYPES
         assert "ai_assistant" in pcn.EXCLUDED_DOWNSTREAM_TYPES
 
@@ -112,12 +107,16 @@ class TestAddLinkEnforcement:
         assert scene.add_link(hist, "output", clf, "input") is None
 
     def test_excluded_downstream_link_is_blocked(self, cw):
+        """AI Data Assistant is the only remaining excluded downstream type
+        -- WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied 2026-08-24, so a
+        formerly-WIP node like ClusteringPlotNode no longer belongs here
+        (see TestFormerlyWipDownstream)."""
         from tools.particle_classifier_node import ParticleClassifierNode
         scene = cw.EnhancedCanvasScene(parent_window=None)
-        clf, viz = ParticleClassifierNode(), cw.ClusteringPlotNode()
+        clf, ai = ParticleClassifierNode(), cw.AIAssistantNode()
         scene.add_node(clf, cw.QPointF(0, 0))
-        scene.add_node(viz, cw.QPointF(200, 0))
-        assert scene.add_link(clf, "output", viz, "input") is None
+        scene.add_node(ai, cw.QPointF(200, 0))
+        assert scene.add_link(clf, "output", ai, "input") is None
 
     def test_allowed_viz_downstream_link_is_created(self, cw):
         from tools.particle_classifier_node import ParticleClassifierNode
@@ -136,11 +135,14 @@ class TestAddLinkEnforcement:
 
 
 # --------------------------------------------------------------------------- #
-# WIP_EXCLUDED_DOWNSTREAM_TYPES -- temporarily disabled chart types (see
-# WIP_EXCLUDED_DOWNSTREAM_TYPES docstring / classifier-ratio-nodes-meaningless
-# memory note): classifier collapses each particle's composition to one
-# bucket-label key, which breaks any chart needing two within-particle
-# components (ratio/correlation/network) or that does its own grouping.
+# Formerly-WIP downstream types -- WIP_EXCLUDED_DOWNSTREAM_TYPES was emptied
+# 2026-08-24 (connectivity unblocked; the plotting-correctness redesign that
+# would make several of these scientifically meaningful is hibernated, not
+# done -- see .claude/aug24.md's "Classifier -> viz plotting correctness"
+# section and the classifier-ratio-nodes-meaningless memory note). These
+# tests pin down that links to these node types succeed, both direct and
+# through a Temp Node chain, mirroring TestAddLinkEnforcement's positive
+# cases above.
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def cw_capture(qapp, monkeypatch):
@@ -154,7 +156,7 @@ def cw_capture(qapp, monkeypatch):
     return cw_mod, msgs
 
 
-_WIP_NODE_CTORS = [
+_FORMERLY_WIP_NODE_CTORS = [
     ("clustering_plot", "ClusteringPlotNode"),
     ("single_multiple_element_plot", "SingleMultipleElementPlotNode"),
     ("correlation_matrix", "CorrelationMatrixNode"),
@@ -165,9 +167,9 @@ _WIP_NODE_CTORS = [
 ]
 
 
-class TestWipExcludedDownstream:
-    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
-    def test_direct_link_blocked_with_wip_message(
+class TestFormerlyWipDownstream:
+    @pytest.mark.parametrize("node_type,ctor_name", _FORMERLY_WIP_NODE_CTORS)
+    def test_direct_link_now_allowed(
             self, cw_capture, node_type, ctor_name):
         from tools.particle_classifier_node import ParticleClassifierNode
         cw_mod, msgs = cw_capture
@@ -177,12 +179,11 @@ class TestWipExcludedDownstream:
         scene.add_node(clf, cw_mod.QPointF(0, 0))
         scene.add_node(viz, cw_mod.QPointF(200, 0))
         result = scene.add_link(clf, "output", viz, "input")
-        assert result is None
-        assert msgs and "work in progress" in msgs[0]
-        assert viz.title in msgs[0]
+        assert result is not None
+        assert not msgs
 
-    @pytest.mark.parametrize("node_type,ctor_name", _WIP_NODE_CTORS)
-    def test_blocked_through_temp_node(self, cw_capture, node_type, ctor_name):
+    @pytest.mark.parametrize("node_type,ctor_name", _FORMERLY_WIP_NODE_CTORS)
+    def test_allowed_through_temp_node(self, cw_capture, node_type, ctor_name):
         from tools.particle_classifier_node import ParticleClassifierNode
         cw_mod, msgs = cw_capture
         scene = cw_mod.EnhancedCanvasScene(parent_window=None)
@@ -194,8 +195,8 @@ class TestWipExcludedDownstream:
         scene.add_node(viz, cw_mod.QPointF(400, 0))
         assert scene.add_link(clf, "output", temp, "input") is not None
         result = scene.add_link(temp, "output", viz, "input")
-        assert result is None
-        assert msgs and "Temp Node" in msgs[0] and "work in progress" in msgs[0]
+        assert result is not None
+        assert not msgs
 
     def test_ai_assistant_keeps_its_own_non_wip_message(self, cw_capture):
         from tools.particle_classifier_node import ParticleClassifierNode
@@ -513,3 +514,140 @@ class TestOnboarding:
 
         pcn.maybe_show_classifier_onboarding(None)
         assert _FakeOnboardingBox.exec_calls == 1  # second call suppressed
+
+
+# --------------------------------------------------------------------------- #
+# Downstream propagation — an upstream change must reach the plots
+# --------------------------------------------------------------------------- #
+def _multi_sample(n):
+    """A ``multiple_sample_data`` dict carrying ``n`` distinct samples."""
+    names = [f'S{i+1}' for i in range(n)]
+    parts = []
+    for nm in names:
+        for k in range(12):
+            parts.append({'elements': {'66Zn': 10.0 + k, '208Pb': 5.0 + k,
+                                       '56Fe': 7.0 + k},
+                          'element_mass_fg': {'66Zn': 100.0, '208Pb': 50.0,
+                                              '56Fe': 70.0},
+                          'source_sample': nm})
+    return {'type': 'multiple_sample_data', 'sample_names': names,
+            'particle_data': parts,
+            'selected_isotopes': [{'label': x} for x in
+                                  ('66Zn', '208Pb', '56Fe')]}
+
+
+class TestClassifierPropagatesDownstream:
+    """The classifier was the ONE data-transforming node in the app whose
+    node item connected ``configuration_changed`` to a repaint only, never to
+    a downstream push -- every sample selector and the Particle Filter push;
+    only the terminal sinks (viz, AI assistant) legitimately stop at a
+    repaint.
+
+    Consequence, reported in manual QA 2026-08-31: change the source from 4
+    samples to 3 and a downstream correlation matrix kept rendering 4
+    subplots, and kept doing so after the figure was closed and reopened,
+    because the sink's ``input_data`` was never replaced.
+
+    The push is debounced onto a 0 ms singleShot, so these tests must spin
+    the event loop; asserting in the same turn measures the timer, not the
+    behaviour.
+    """
+
+    def _wire(self, cw, n_initial):
+        """classifier -> correlation matrix, data present BEFORE the link so
+        the sink legitimately starts out holding ``n_initial`` samples."""
+        from tools.particle_classifier_node import (
+            ParticleClassifierNode, new_definition_id)
+        from results.results_matrix import CorrelationMatrixNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf = ParticleClassifierNode()
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'S1',
+             'expression_text': '66Zn', 'match_mode': 'partial',
+             'group_name': 'tirewear', 'color': '#E11D48'}]
+        clf.groups = {'tirewear': '#E11D48'}
+        clf.unmatched_mode = 'unclassified'
+        mat = CorrelationMatrixNode()
+        scene.add_node(clf, cw.QPointF(0, 0))
+        scene.add_node(mat, cw.QPointF(200, 0))
+        clf.process_data(_multi_sample(n_initial))
+        assert scene.add_link(clf, 'output', mat, 'input') is not None
+        return scene, clf, mat
+
+    @staticmethod
+    def _names(node):
+        return list((node.input_data or {}).get('sample_names') or [])
+
+    def test_upstream_sample_change_reaches_the_sink(self, cw, qapp):
+        scene, clf, mat = self._wire(cw, 4)
+        assert self._names(mat) == ['S1', 'S2', 'S3', 'S4']
+        clf.process_data(_multi_sample(3))
+        qapp.processEvents()
+        assert self._names(mat) == ['S1', 'S2', 'S3']
+
+    def test_burst_of_pushes_collapses_to_one_relabel(self, cw, qapp):
+        """The relabel is expensive, so several emissions in one turn must
+        coalesce -- and the sink must still end on the LAST payload."""
+        scene, clf, mat = self._wire(cw, 4)
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        for k in (4, 3, 4, 2):
+            clf.process_data(_multi_sample(k))
+        qapp.processEvents()
+        assert len(calls) == 1, len(calls)
+        assert self._names(mat) == ['S1', 'S2']
+
+    def test_no_auto_push_while_data_flow_is_suppressed(self, cw, qapp):
+        """Guards the project-load hang that made this connection be removed
+        in the first place: during bulk link restore a single
+        ``flush_data_flow`` pass does the work, and pushing per arriving
+        payload would re-run the whole chain once per link."""
+        scene, clf, mat = self._wire(cw, 4)
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        scene._suppress_data_flow = True
+        try:
+            clf.process_data(_multi_sample(3))
+            qapp.processEvents()
+        finally:
+            scene._suppress_data_flow = False
+        assert calls == []
+
+    def test_flush_delivers_without_double_pushing(self, cw, qapp):
+        """flush_data_flow already walks the chain topologically, so the
+        auto-push must not queue a second pass behind it."""
+        scene, clf, mat = self._wire(cw, 4)
+        clf.process_data(_multi_sample(3))
+        qapp.processEvents()
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        scene.flush_data_flow()
+        qapp.processEvents()
+        assert len(calls) == 1, len(calls)
+        assert self._names(mat) == ['S1', 'S2', 'S3']
+
+    def test_every_transforming_node_item_pushes_downstream(self):
+        """Regression guard on the asymmetry itself. If a new transforming
+        node item is added without downstream wiring, this fails rather than
+        waiting for someone to notice a stale plot."""
+        import re, io
+        wired, sinks = [], {'VizIconNodeItem', 'AIAssistantNodeItem'}
+        for path in ('widget/canvas_widgets.py', 'tools/particle_filter.py',
+                     'tools/particle_classifier_node.py'):
+            lines = io.open(path, encoding='utf-8').read().split('\n')
+            hits = [(i, m.group(1)) for i, l in enumerate(lines)
+                    for m in [re.match(
+                        r'\s*class (\w+)\((?:[^)]*NodeItem[^)]*)\):', l)] if m]
+            for idx, (ln, name) in enumerate(hits):
+                end = hits[idx + 1][0] if idx + 1 < len(hits) else len(lines)
+                body = '\n'.join(lines[ln:end])
+                pushes = ('configuration_changed.connect(self._trigger)' in body
+                          or 'configuration_changed.connect('
+                             'self._schedule_downstream_push)' in body)
+                wired.append((name, pushes))
+        missing = [n for n, p in wired if not p and n not in sinks]
+        assert not missing, f"transforming node items with no downstream push: {missing}"
+        assert any(n == 'ParticleClassifierNodeItem' and p for n, p in wired)

@@ -631,6 +631,7 @@ class NetworkSettingsDialog(QDialog):
         self._font_grp = None
         self._export_grp = None
         self._sample_edits = {}
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -639,6 +640,13 @@ class NetworkSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_MULTI_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Data")
@@ -826,6 +834,8 @@ class NetworkSettingsDialog(QDialog):
             d.update(self._font_grp.collect())
         if self._export_grp is not None:
             d.update(self._export_grp.collect())
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self._sample_edits:
             d['sample_name_mappings'] = {
                 raw_name: edit.text().strip()
@@ -1468,7 +1478,8 @@ class NetworkDiagramNode(QObject):
         self._has_output     = False
         self.input_channels  = ["input"]
         self.output_channels = []
-        self.config          = dict(DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config          = deep_copy_config(DEFAULT_CONFIG)
         self.input_data      = None
 
     def set_position(self, pos):
@@ -1484,7 +1495,14 @@ class NetworkDiagramNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
         self.configuration_changed.emit()
 
     def _get_elements(self):

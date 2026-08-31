@@ -92,12 +92,12 @@ Particle Classifier canvas node.
 ### [`particle_classifier_relabel.py`](particle-classifier-relabel.md)
 Particle relabeling logic for the Particle Classifier node (Stage 4).
 
-**0** classes &nbsp;·&nbsp; **9** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **11** functions &nbsp;·&nbsp; **0** methods
 
 ### [`particle_filter.py`](particle-filter.md)
 Particle Filter node for the Workflow Canvas.
 
-**2** classes &nbsp;·&nbsp; **34** functions &nbsp;·&nbsp; **54** methods
+**3** classes &nbsp;·&nbsp; **36** functions &nbsp;·&nbsp; **63** methods
 
 ### [`periodic_table_info.py`](periodic-table-info.md)
 This file contains a readonly service (info) for periodic table data.

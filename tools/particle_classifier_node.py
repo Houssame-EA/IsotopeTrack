@@ -12,11 +12,13 @@ unmodified.
 Connectivity (design §2):
     Upstream:   Particle Filter, Single Sample, Multiple Sample only.
     Downstream: any Visualization-category node except AI Data Assistant
-                (permanently excluded) and the work-in-progress set in
-                WIP_EXCLUDED_DOWNSTREAM_TYPES (Clustering,
-                Single/Multiple, Correlation Matrix, Network, Molar Ratio,
-                Isotopic Ratio, Ternary Plot) -- temporarily disabled until
-                each is verified meaningful on classifier-bucketed data.
+                (permanently excluded). WIP_EXCLUDED_DOWNSTREAM_TYPES was
+                emptied 2026-08-24 -- connectivity is unblocked for every
+                Visualization node, even though the classifier->viz
+                plotting-correctness redesign that would make several of
+                them scientifically meaningful is hibernated, not done
+                (see .claude/aug24.md's "Classifier -> viz plotting
+                correctness" section).
 Invalid link attempts must be hard-blocked at the canvas level (the link
 cannot be drawn) with an explicit error dialog — see
 ``validate_classifier_link`` and its wiring into
@@ -27,7 +29,7 @@ from __future__ import annotations
 
 import uuid
 
-from PySide6.QtCore import QObject, QPointF, QSettings, Signal
+from PySide6.QtCore import QObject, QPointF, QSettings, QTimer, Signal
 from PySide6.QtWidgets import QCheckBox, QDialog, QMessageBox
 
 import logging
@@ -55,20 +57,21 @@ ALLOWED_UPSTREAM_TYPES = frozenset({
 })
 
 #: Downstream node types temporarily excluded because classifier -> this
-#: chart is not yet scientifically meaningful (or not yet verified to be):
-#: the classifier collapses each particle's composition to one bucket-label
-#: key, which breaks any node that needs TWO within-particle components
-#: (molar/isotopic ratio, correlation matrix, network) or that does its own
-#: grouping that would conflict with classifier buckets (clustering,
-#: single/multiple, ternary). See the classifier-ratio-nodes-
-#: meaningless memory note and .claude/july22.md #7-#10. Re-enable each once
-#: its own follow-up work lands -- this is a work-in-progress restriction,
-#: not a permanent design boundary (contrast with "ai_assistant" below).
-WIP_EXCLUDED_DOWNSTREAM_TYPES = frozenset({
-    "clustering_plot", "single_multiple_element_plot",
-    "correlation_matrix", "network_diagram", "molar_ratio_plot",
-    "isotopic_ratio_plot", "triangle_plot",
-})
+#: chart is not yet scientifically meaningful. Emptied 2026-08-24 per user
+#: decision: connectivity is unblocked for experimentation even though the
+#: underlying plotting-correctness work (the classifier collapses each
+#: particle's composition to one bucket-label key, which breaks any node
+#: that needs 2+ within-particle composition values at once, or that does
+#: its own grouping/aggregation that conflicts with classifier buckets) is
+#: hibernated, not resolved -- see .claude/aug24.md's "Classifier -> viz
+#: plotting correctness" section for the full investigation (which node
+#: types are actually affected, how, and the proposed fix shape) and
+#: .claude/july22.md #7-#10 for the original issue history. Kept as an
+#: empty frozenset (not deleted) so EXCLUDED_DOWNSTREAM_TYPES and the
+#: canvas refusal-message branch that checks membership in this set both
+#: keep working, and so a real WIP exclusion can be added back here if a
+#: specific node type needs one again.
+WIP_EXCLUDED_DOWNSTREAM_TYPES = frozenset()
 
 #: Downstream node types explicitly excluded even though they are
 #: Visualization-category (design §2, §12). AI Data Assistant is excluded
@@ -442,7 +445,7 @@ class ParticleClassifierNode(QObject):
         """
         from tools.particle_filter import normalize_sources
         from tools.particle_classifier_relabel import (
-            relabel_particles, suggested_label_colors)
+            relabel_particles, suggested_label_colors, build_bucket_registry)
 
         data = self._combined_upstream_dict()
         if data is None:
@@ -471,14 +474,31 @@ class ParticleClassifierNode(QObject):
             self.definitions, self.groups, self.unmatched_mode,
             self.unclassified_color)
 
+        # Dual-carry, dict level. ``selected_isotopes`` gets rewritten below
+        # to name the synthetic bucket labels (design §7), which is right for
+        # every node that treats a bucket as just another isotope -- but it
+        # destroys the only record of the real upstream isotope vocabulary,
+        # and several nodes build their axis/element PICKERS from it with no
+        # particle-data fallback. Without this, a node rendering real
+        # isotopes would offer only bucket names to choose between. Per-
+        # particle raw composition (see relabel's RAW_KEY) is not enough --
+        # the vocabulary is a dict-level concern.
+        raw_registry = build_bucket_registry(
+            self.definitions, self.groups, self.unmatched_mode,
+            self.unclassified_color)
+        raw_selected = data.get('selected_isotopes')
+
         if data.get('type') == 'sample_data':
             out = dict(data)
             particles = relabeled_by_sample.get(sources[0]['name'], [])
             out['particle_data'] = particles
             out['filtered_particles'] = len(particles)
             out['label_colors'] = label_colors
+            out['_raw_selected_isotopes'] = raw_selected
+            out['_classifier_registry'] = raw_registry
+            out['_classifier_overlap_mode'] = self.overlap_mode
             out['selected_isotopes'] = self._output_selected_isotopes(
-                particles, data.get('selected_isotopes'), label_colors)
+                particles, raw_selected, label_colors)
             return out
 
         # multiple_sample_data: preserve per-sample structure, only the
@@ -491,8 +511,11 @@ class ParticleClassifierNode(QObject):
         out['filtered_particles'] = len(combined)
         out['sample_names'] = [s['name'] for s in sources]
         out['label_colors'] = label_colors
+        out['_raw_selected_isotopes'] = raw_selected
+        out['_classifier_registry'] = raw_registry
+        out['_classifier_overlap_mode'] = self.overlap_mode
         out['selected_isotopes'] = self._output_selected_isotopes(
-            combined, data.get('selected_isotopes'), label_colors)
+            combined, raw_selected, label_colors)
         return out
 
     @staticmethod
@@ -669,6 +692,69 @@ def build_particle_classifier_node_item():
             super().__init__(wf)
             self.parent_window = pw
             wf.configuration_changed.connect(self.update)
+            # Coalescing timer for the downstream push. Every other
+            # data-TRANSFORMING node item (the three sample selectors and
+            # ParticleFilterNodeItem) connects configuration_changed to a
+            # _trigger that forwards its recomputed output; only terminal
+            # sinks (VizIconNodeItem, AIAssistantNodeItem) legitimately stop
+            # at a repaint. This node used to stop at a repaint too, which
+            # meant an upstream change reached the classifier and died there
+            # -- a plot fed by it kept rendering the OLD sample set forever,
+            # even after closing and reopening the figure, because the sink's
+            # input_data was never replaced. See _schedule_downstream_push
+            # for why this is debounced rather than a direct connection.
+            self._push_timer = QTimer()
+            self._push_timer.setSingleShot(True)
+            self._push_timer.setInterval(0)
+            self._push_timer.timeout.connect(self._push_downstream)
+            wf.configuration_changed.connect(self._schedule_downstream_push)
+
+        def _schedule_downstream_push(self):
+            """Queue one downstream push for the end of this event-loop turn.
+
+            Debounced and guarded rather than wired straight through, because
+            a direct connection is what caused the project-load hang this
+            class's ``configure_node`` docstring warns about:
+
+            * ``scene._suppress_data_flow`` is set while a project's links are
+              being restored and for the duration of ``flush_data_flow``. In
+              both cases a single batched pass already recomputes every node
+              exactly once, so pushing here would redo the whole chain per
+              link -- the original hang.
+            * A burst of ``configuration_changed`` emissions in one turn (a
+              push plus a reconfigure, say) collapses into one recompute
+              instead of one per emission, because the relabel is expensive.
+            """
+            s = self.scene()
+            if s is None or getattr(s, '_suppress_data_flow', False):
+                return
+            self._push_timer.start()
+
+        def _push_downstream(self):
+            """Recompute this node's output and hand it to every sink.
+
+            Cancels any queued push first, so a synchronous caller
+            (``configure_node``) and the debounce timer cannot both run the
+            relabel for the same change.
+            """
+            self._push_timer.stop()
+            s = self.scene()
+            if not s:
+                return
+            try:
+                result = self.workflow_node.get_output_data()
+            except Exception:
+                _itk_log.exception(
+                    "Handled exception in ParticleClassifierNodeItem._push_downstream")
+                return
+            for lk in s.workflow_links:
+                if lk.source_node == self.workflow_node:
+                    try:
+                        if hasattr(lk.sink_node, "process_data"):
+                            lk.sink_node.process_data(result)
+                    except Exception:
+                        _itk_log.exception(
+                            "Handled exception in ParticleClassifierNodeItem._push_downstream")
 
         def itemChange(self, change, value):
             """Track scene membership so the node can pull data via its
@@ -707,33 +793,27 @@ def build_particle_classifier_node_item():
             reflects the new configuration immediately, instead of only on
             its next unrelated redraw (design §7 "stale plot" fix).
 
-            Deliberately NOT wired to ``configuration_changed`` (which also
-            fires from ``process_data`` on every routine upstream push,
-            including during project-load link restoration) — that would
-            re-run this node's full downstream chain on every data arrival
-            instead of only on a user-initiated reconfigure, and did cause
-            a real startup hang on project load. This push only ever runs
-            once, synchronously, as a direct result of this dialog's OK
-            button — never automatically.
+            Pushes SYNCHRONOUSLY rather than leaving it to the debounced
+            timer, so the new configuration is on screen the instant the
+            dialog closes. ``_push_downstream`` cancels the queued push, so
+            the relabel still runs only once even though ``configure()``
+            also emits ``configuration_changed``.
+
+            Historical note: this synchronous push used to be the ONLY way
+            output ever reached a sink, because ``configuration_changed``
+            was deliberately left unconnected after a direct connection
+            caused a project-load hang. That left the classifier as the one
+            transforming node in the app that never propagated an upstream
+            change, so a downstream plot silently kept rendering a stale
+            sample set (reported 2026-08-31: 4 samples -> 3 upstream, plot
+            stuck on 4 even after being closed and reopened). The connection
+            is back, with the load path guarded — see
+            ``_schedule_downstream_push``.
             """
             if not self.parent_window:
                 return
             if not self.workflow_node.configure(self.parent_window):
                 return
-            s = self.scene()
-            if not s:
-                return
-            try:
-                result = self.workflow_node.get_output_data()
-            except Exception:
-                _itk_log.exception("Handled exception in ParticleClassifierNodeItem.configure_node")
-                return
-            for lk in s.workflow_links:
-                if lk.source_node == self.workflow_node:
-                    try:
-                        if hasattr(lk.sink_node, "process_data"):
-                            lk.sink_node.process_data(result)
-                    except Exception:
-                        _itk_log.exception("Handled exception in ParticleClassifierNodeItem.configure_node")
+            self._push_downstream()
 
     return ParticleClassifierNodeItem

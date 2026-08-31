@@ -56,7 +56,12 @@ SECTIONS = [
      "Workflow canvas and shared plotting infrastructure.",
      [ROOT / "widget/canvas_widgets.py", ROOT / "widget/custom_plot_widget.py",
       ROOT / "results/shared_plot_utils.py", ROOT / "results/shared_annotation.py",
-      ROOT / "results/utils_sort.py"]),
+      ROOT / "results/utils_sort.py",
+      # The classifier's shared reader API -- every viz node reads classifier
+      # data through this and nothing else, so it belongs beside the other
+      # cross-node shared modules. It matches no results_*.py glob, so it had
+      # no reference page at all until it was listed here explicitly.
+      ROOT / "results/classifier_view.py"]),
     ("Results", "results",
      "All plot/analysis result modules (bar charts, isotope ratios, AI, …).",
      [p for p in _glob("results/results_*.py")]),
@@ -187,8 +192,19 @@ def render_page(path, mod_doc, constants, classes, functions):
     return "\n".join(L).rstrip() + "\n"
 
 
+#: Hand-written pages that live in docs/ but are NOT generated from source.
+#: They must be listed here or the nav rewrite below silently drops them --
+#: the page keeps existing on disk while disappearing from the published
+#: site, which is easy to miss because nothing errors.
+STATIC_NAV_PAGES = [
+    "- Home: index.md",
+    "- Changelog: changelog.md",
+    "- Particle Classifier Guide: particle-classifier-guide.md",
+]
+
+
 def main():
-    nav_lines = ["nav:", "- Home: index.md", "- Changelog: changelog.md"]
+    nav_lines = ["nav:"] + list(STATIC_NAV_PAGES)
     for title, subdir, desc, files in SECTIONS:
         files = [f for f in files if f.exists()]
         if not files:

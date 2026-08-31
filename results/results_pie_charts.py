@@ -689,6 +689,7 @@ class PieChartSettingsDialog(QDialog):
         self._sample_edits: dict[str, QLineEdit] = {}
         self._elem_color_btns: dict[str, _ColorBtn] = {}
         self._elem_explode: dict[str, QDoubleSpinBox] = {}
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -703,6 +704,13 @@ class PieChartSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Data & Chart Type"); f1 = QFormLayout(g1)
@@ -849,6 +857,8 @@ class PieChartSettingsDialog(QDialog):
             unchanged for both formatting and quantity settings.
         """
         d = dict(self._cfg)
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self._chart_type is not None:
             d['chart_type'] = self._chart_type.currentText()
         if self._data_type is not None:
@@ -1304,7 +1314,14 @@ class PieChartPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
@@ -1412,6 +1429,7 @@ class ElementCompositionSettingsDialog(QDialog):
         self._legend = None
         self._export = None
         self._font_grp = None
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -1430,6 +1448,13 @@ class ElementCompositionSettingsDialog(QDialog):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         inner = QWidget(); lay = QVBoxLayout(inner)
         scroll.setWidget(inner); root.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_KEY_SET)
+            lay.addWidget(self._classifier_group.build())
 
         if self._scope in ('all', 'quantities'):
             g1 = QGroupBox("Analysis & Data Type"); f1 = QFormLayout(g1)
@@ -1585,6 +1610,8 @@ class ElementCompositionSettingsDialog(QDialog):
             outside the current scope when callers use ``config.update(...)``.
         """
         d = dict(self._cfg)
+        if self._classifier_group is not None:
+            d.update(self._classifier_group.collect())
         if self._analysis is not None:
             d['analysis_type'] = self._analysis.currentText()
         if self._data_type is not None:
@@ -2078,7 +2105,14 @@ class ElementCompositionPlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
         self.configuration_changed.emit()
 
     def extract_plot_data(self):
