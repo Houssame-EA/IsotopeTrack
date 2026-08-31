@@ -3200,7 +3200,14 @@ class TrianglePlotNode(QObject):
     def process_data(self, input_data):
         if not input_data:
             return
-        self.input_data = input_data
+        # Classifier support is NOT shipped for this node type (see
+        # classifier_view.CLASSIFIER_WIP_NODE_TYPES). Undo the
+        # classifier's destructive composition collapse and its
+        # double_count copies, so this chart plots exactly what it
+        # would have plotted with no classifier attached instead of
+        # treating each bucket label as though it were an isotope.
+        from results import classifier_view as _cv
+        self.input_data = _cv.adopt_declassified(self, input_data)
 
         ea = self.config.get('element_a', '')
         if not ea or ea.startswith('--'):

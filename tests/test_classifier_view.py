@@ -2908,3 +2908,204 @@ class TestFalsyGroupColorDoesNotEraseBucket:
         assert cv.default_row_bucket_colors(stream, particles) == []
         assert cv.default_row_bucket_colors(
             stream, particles, include_unclassified=True) == ['#9CA3AF']
+
+
+# --------------------------------------------------------------------------- #
+# Nodes whose classifier support is not shipped (2026-08-31)
+# --------------------------------------------------------------------------- #
+_WIP_NODE_SPECS = [
+    ('pie_chart_plot',               'results.results_pie_charts',      'PieChartPlotNode'),
+    ('element_composition_plot',     'results.results_pie_charts',      'ElementCompositionPlotNode'),
+    ('concentration_comparison',     'results.results_concentration',   'ConcentrationComparisonNode'),
+    ('molar_ratio_plot',             'results.results_molar_ratio',     'MolarRatioPlotNode'),
+    ('isotopic_ratio_plot',          'results.results_isotope',         'IsotopicRatioPlotNode'),
+    ('single_multiple_element_plot', 'results.results_single_multiple', 'SingleMultipleElementPlotNode'),
+    ('network_diagram',              'results.results_network',         'NetworkDiagramNode'),
+    ('triangle_plot',                'results.results_triangle',        'TrianglePlotNode'),
+    ('correlation_plot',             'results.results_correlation',     'CorrelationPlotNode'),
+]
+
+_WIP_ISO = ['66Zn', '208Pb', '56Fe']
+
+
+def _wip_classified_stream():
+    """Both definitions match every particle, so ``double_count`` emits two
+    copies of each -- the case that must collapse back to one."""
+    from tools.particle_classifier_node import (
+        ParticleClassifierNode, new_definition_id)
+    parts = [{'elements': {'66Zn': 10.0 + k, '208Pb': 5.0 + k, '56Fe': 7.0 + k},
+              'element_mass_fg': {'66Zn': 100.0, '208Pb': 50.0, '56Fe': 70.0},
+              'source_sample': 'S1'} for k in range(20)]
+    clf = ParticleClassifierNode()
+    clf.input_data = {'type': 'sample_data', 'sample_name': 'S1',
+                      'particle_data': parts,
+                      'selected_isotopes': [{'label': x} for x in _WIP_ISO]}
+    clf.definitions = [
+        {'id': new_definition_id(), 'target_sample': 'S1',
+         'expression_text': '66Zn', 'match_mode': 'partial',
+         'group_name': 'tirewear', 'color': '#E11D48'},
+        {'id': new_definition_id(), 'target_sample': 'S1',
+         'expression_text': '208Pb', 'match_mode': 'partial',
+         'group_name': 'poison', 'color': '#2563EB'}]
+    clf.groups = {'tirewear': '#E11D48', 'poison': '#2563EB'}
+    clf.unmatched_mode = 'unclassified'
+    clf.overlap_mode = 'double_count'
+    return clf.get_output_data()
+
+
+class TestClassifierWipNodes:
+    """Nine viz nodes embedded the shared role picker but never read it, so
+    the control was inert AND they were reading bucket-collapsed
+    compositions as though each bucket label were an isotope. They now strip
+    classifier structure entirely and plot what they would have plotted with
+    no classifier attached, with a one-time notice.
+    """
+
+    def test_registry_lists_exactly_the_unshipped_nodes(self):
+        assert cv.CLASSIFIER_WIP_NODE_TYPES == {
+            'pie_chart_plot', 'element_composition_plot',
+            'concentration_comparison', 'molar_ratio_plot',
+            'isotopic_ratio_plot', 'single_multiple_element_plot',
+            'network_diagram', 'triangle_plot', 'correlation_plot'}
+
+    @pytest.mark.parametrize('node_type', [
+        'histogram_plot', 'element_bar_chart_plot', 'box_plot',
+        'heatmap_plot', 'correlation_matrix'])
+    def test_supported_nodes_are_not_marked_wip(self, node_type):
+        assert not cv.classifier_support_is_wip(node_type)
+
+    def test_clustering_is_not_listed_it_is_blocked_not_wip(self):
+        """Hibernated by decision (the VALIDATE concept is its own project),
+        which is a different state from 'not wired yet'."""
+        assert not cv.classifier_support_is_wip('clustering_plot')
+
+    def test_declassify_restores_raw_composition_and_dedupes(self):
+        out = _wip_classified_stream()
+        # Precondition: the collapse really happened.
+        assert list(out['particle_data'][0]['elements']) == ['tirewear']
+        assert len(out['particle_data']) == 40
+
+        plain = cv.declassified_stream(out)
+        assert len(plain['particle_data']) == 20, "double_count copies must go"
+        assert sorted(plain['particle_data'][0]['elements']) == sorted(_WIP_ISO)
+        assert not cv.is_classifier_stream(plain)
+
+    def test_declassify_restores_selected_isotopes(self):
+        """The classifier replaces this list with bucket labels; a node that
+        ignores buckets must be offered real isotopes to plot."""
+        plain = cv.declassified_stream(_wip_classified_stream())
+        assert sorted(d['label'] for d in plain['selected_isotopes']) == \
+            sorted(_WIP_ISO)
+
+    def test_non_classifier_stream_passes_through_untouched(self):
+        plain = {'type': 'sample_data', 'particle_data': [{'elements': {}}]}
+        assert cv.declassified_stream(plain) is plain
+
+    @pytest.mark.parametrize('node_type,module,cls_name', _WIP_NODE_SPECS)
+    def test_each_wip_node_declassifies_on_process_data(
+            self, node_type, module, cls_name, qapp):
+        import importlib
+        node = getattr(importlib.import_module(module), cls_name)()
+        assert node.node_type == node_type, node.node_type
+        node.process_data(_wip_classified_stream())
+        d = node.input_data
+        assert len(d['particle_data']) == 20
+        assert sorted(d['particle_data'][0]['elements']) == sorted(_WIP_ISO)
+        assert not cv.is_classifier_stream(d)
+        assert node._classifier_was_stripped is True
+
+    def test_supported_node_still_sees_classifier_structure(self, qapp):
+        """The strip must not leak onto nodes that DO support the classifier."""
+        from results.results_matrix import CorrelationMatrixNode
+        node = CorrelationMatrixNode()
+        node.process_data(_wip_classified_stream())
+        assert cv.is_classifier_stream(node.input_data)
+        assert len(node.input_data['particle_data']) == 40
+
+    def test_role_picker_is_hidden_on_a_wip_node(self, qapp):
+        """Same as when no classifier is connected -- which is now literally
+        true from the node's point of view."""
+        from results.shared_plot_utils import ClassifierViewGroup
+        from results.results_network import NetworkDiagramNode
+        from results.results_matrix import CorrelationMatrixNode
+        data = _wip_classified_stream()
+
+        wip = NetworkDiagramNode()
+        wip.process_data(data)
+        g = ClassifierViewGroup(wip.config, wip.input_data, cv.ARITY_MULTI_KEY)
+        g.build()
+        assert g._applicable is False
+
+        ok = CorrelationMatrixNode()
+        ok.process_data(data)
+        g2 = ClassifierViewGroup(ok.config, ok.input_data, cv.ARITY_MATRIX)
+        g2.build()
+        assert g2._applicable is True
+
+    def test_notice_only_fires_for_a_wip_node_with_a_classifier(self, qapp,
+                                                                monkeypatch):
+        from results import shared_plot_utils as spu
+        shown = []
+
+        class _Box:
+            Icon = type('I', (), {'Information': 0})
+            ButtonRole = type('B', (), {'AcceptRole': 0})
+
+            def __init__(self, *a, **kw):
+                pass
+
+            def setIcon(self, *a):
+                pass
+
+            def setWindowTitle(self, *a):
+                pass
+
+            def setText(self, t):
+                shown.append(t)
+
+            def setCheckBox(self, *a):
+                pass
+
+            def addButton(self, *a):
+                pass
+
+            def exec(self):
+                return 0
+
+        class _Settings:
+            def __init__(self, *a):
+                pass
+
+            def value(self, *a, **kw):
+                return False
+
+            def setValue(self, *a):
+                pass
+
+        import PySide6.QtWidgets as QtW
+        import PySide6.QtCore as QtC
+        monkeypatch.setattr(QtW, 'QMessageBox', _Box)
+        monkeypatch.setattr(QtC, 'QSettings', _Settings)
+
+        from results.results_network import NetworkDiagramNode
+        from results.results_matrix import CorrelationMatrixNode
+
+        # supported node -> silent even with a classifier attached
+        ok = CorrelationMatrixNode()
+        ok.process_data(_wip_classified_stream())
+        spu.maybe_warn_classifier_wip(ok, None)
+        assert shown == []
+
+        # WIP node, no classifier -> silent
+        quiet = NetworkDiagramNode()
+        quiet.process_data({'type': 'sample_data',
+                            'particle_data': [{'elements': {'56Fe': 1.0}}]})
+        spu.maybe_warn_classifier_wip(quiet, None)
+        assert shown == []
+
+        # WIP node WITH a classifier -> warns once
+        loud = NetworkDiagramNode()
+        loud.process_data(_wip_classified_stream())
+        spu.maybe_warn_classifier_wip(loud, None)
+        assert len(shown) == 1
+        assert 'does not support the Particle Classifier yet' in shown[0]

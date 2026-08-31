@@ -951,3 +951,138 @@ def sort_label_dict_by_mass(input_data, label_dict, data_key='elements'):
         return label_dict
     ordered = sort_labels_by_mass(input_data, list(label_dict.keys()), data_key)
     return {label: label_dict[label] for label in ordered}
+
+
+# ── Nodes whose classifier support is not shipped yet ──────────────────
+#
+# These viz nodes embed the shared ClassifierViewGroup UI (so a role picker
+# APPEARS in their settings) but nothing in them ever reads the chosen role
+# -- an audit on 2026-08-31 found the picker was inert on nine node types.
+# Worse than inert, in fact: a classified particle's composition dict is
+# destructively collapsed to {bucket_label: total}, so a node that reads
+# particle['elements'] directly sees one synthetic "isotope" per bucket and
+# renders confident nonsense rather than failing.
+#
+# Until each node gets its own role wiring (see the per-node checklist in
+# .claude/aug24.md), the honest behaviour is the one the user asked for:
+# operate EXACTLY as if no classifier were attached, and say so once.
+# `declassified_stream` provides the "exactly as if" half.
+CLASSIFIER_WIP_NODE_TYPES = frozenset({
+    'pie_chart_plot',
+    'element_composition_plot',
+    'concentration_comparison',
+    'molar_ratio_plot',
+    'isotopic_ratio_plot',
+    'single_multiple_element_plot',
+    'network_diagram',
+    'triangle_plot',
+    # Built 2026-08-26 on branch `clank-away-at-correlation`, deleted with
+    # that branch 2026-08-31 without ever being manually verified.
+    'correlation_plot',
+    # clustering_plot is hibernated by decision (the VALIDATE concept is its
+    # own project), and is deliberately NOT listed -- it is blocked, not WIP.
+})
+
+
+def classifier_support_is_wip(node_type):
+    """Whether classifier support is unshipped for this viz node type.
+
+    Args:
+        node_type (str | None): A viz node's ``node_type`` string.
+
+    Returns:
+        bool: True when the node must ignore classifier structure entirely.
+    """
+    return node_type in CLASSIFIER_WIP_NODE_TYPES
+
+
+def declassified_particles(particles):
+    """Particles as they would have been with no classifier in the chain.
+
+    Two things have to be undone, and undoing only one of them still leaves
+    a wrong plot:
+
+    1. **The destructive collapse.** Each matched particle's composition
+       dicts were replaced by ``{bucket_label: summed_total}``. The originals
+       were dual-carried under :data:`RAW_KEY`, so they can be restored
+       exactly -- this is the whole reason dual-carry exists.
+    2. **``double_count`` copies.** A particle matching two definitions was
+       emitted as two dicts. With no classifier there would be ONE particle,
+       so leaving both in double-weights it in every count, sum and
+       distribution. :func:`dedupe_particles` drops the copies.
+
+    The ``_``-prefixed classifier keys are left on the returned dicts: they
+    are additive, no non-classifier code path reads them, and stripping them
+    would cost a second full copy for no benefit.
+
+    Args:
+        particles (list): Particle dicts from a classifier stream.
+
+    Returns:
+        list: New particle dicts with raw composition restored, one per real
+        particle. Non-classifier particles pass through untouched.
+    """
+    out = []
+    for p in dedupe_particles(particles or []):
+        raw = p.get(RAW_KEY)
+        if not isinstance(raw, dict):
+            out.append(p)
+            continue
+        restored = dict(p)
+        # Only the keys the classifier actually rewrote are in the snapshot;
+        # everything else on the particle is already original.
+        for data_key, original in raw.items():
+            restored[data_key] = original
+        out.append(restored)
+    return out
+
+
+def declassified_stream(input_data):
+    """``input_data`` with classifier structure undone -- see
+    :func:`declassified_particles`.
+
+    Returns the input unchanged when it did not come through a classifier,
+    so callers can apply this unconditionally in ``process_data``.
+
+    ``selected_isotopes`` is restored from the ``_raw_selected_isotopes``
+    snapshot too: the classifier replaces that list with its bucket labels,
+    and a node that ignores buckets must be offered real isotopes to plot.
+
+    Args:
+        input_data (dict | None): Upstream data dict.
+
+    Returns:
+        dict | None: A shallow copy with raw particles, or the original.
+    """
+    if not is_classifier_stream(input_data):
+        return input_data
+    out = dict(input_data)
+    out['particle_data'] = declassified_particles(
+        input_data.get('particle_data') or [])
+    raw_iso = input_data.get('_raw_selected_isotopes')
+    if raw_iso:
+        out['selected_isotopes'] = raw_iso
+    # Drop the registry LAST: is_classifier_stream keys off it, so removing
+    # it is what makes every downstream `is_classifier_stream` check answer
+    # False and every role resolve to OFF, with no per-node cooperation.
+    out.pop('_classifier_registry', None)
+    return out
+
+
+def adopt_declassified(node, input_data):
+    """``process_data`` helper for a node whose classifier support is WIP.
+
+    Records on the node whether classifier structure was actually stripped
+    (so ``shared_plot_utils.maybe_warn_classifier_wip`` can tell the user
+    once, and only when a classifier really is upstream), then returns the
+    stream with that structure undone.
+
+    Args:
+        node: The viz node adopting the data.
+        input_data (dict | None): Upstream data dict.
+
+    Returns:
+        dict | None: What the node should store as ``self.input_data``.
+    """
+    node._classifier_was_stripped = is_classifier_stream(input_data)
+    return declassified_stream(input_data)

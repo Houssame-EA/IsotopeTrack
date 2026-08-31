@@ -320,6 +320,66 @@ def _connect_thumb_refresh(node, dlg):
         _itk_log.exception("Handled exception in _connect_thumb_refresh")
 
 
+def maybe_warn_classifier_wip(node, parent=None):
+    """Tell the user once that this node ignores an attached classifier.
+
+    Nine viz node types embed the shared classifier role picker but never
+    read it (see ``classifier_view.CLASSIFIER_WIP_NODE_TYPES``). Rather than
+    let them render confident nonsense from bucket-collapsed compositions,
+    they now strip the classifier structure out entirely and plot exactly
+    what they would have plotted with no classifier attached -- which is
+    correct, but invisible, and would otherwise look like the classifier
+    silently failing.
+
+    Only fires when a classifier is actually upstream, so a plain workflow
+    never sees it. Gated by a per-node-TYPE QSettings flag, matching the
+    app's existing "don't show again" pattern
+    (``tools/dilution_utils.py``, ``maybe_show_classifier_onboarding``):
+    the question is "has this user been told about THIS chart type", not
+    "does this node instance need telling", so it must not be per-instance
+    or per-project.
+
+    Args:
+        node: The viz node whose figure is being opened.
+        parent: Parent widget for the modal (may be None).
+    """
+    from results import classifier_view as cv
+    node_type = getattr(node, 'node_type', None)
+    if not cv.classifier_support_is_wip(node_type):
+        return
+    # The node's own input_data has already been declassified by its
+    # process_data, so ask the raw upstream flag it stashed at that moment.
+    if not getattr(node, '_classifier_was_stripped', False):
+        return
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QCheckBox, QMessageBox
+    key = f"hide_classifier_wip_notice_{node_type}"
+    settings = QSettings("IsotopeTrack", "IsotopeTrack")
+    if settings.value(key, False, type=bool):
+        return
+    title = (getattr(node, 'title', None) or node_type or 'This chart')
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setWindowTitle("Classifier not supported by this chart yet")
+    box.setText(
+        f"<b>{title}</b> does not support the Particle Classifier yet.<br><br>"
+        "A classifier is connected upstream, but this chart is ignoring it "
+        "completely: it is plotting the original isotopes, exactly as if no "
+        "classifier were attached. Group names will not appear, and "
+        "double-counted particles are counted once.<br><br>"
+        "This is deliberate. Reading classifier output without support for "
+        "it would show one synthetic \"isotope\" per group and produce "
+        "misleading numbers.<br><br>"
+        "Charts that <i>do</i> support the classifier today: histogram, "
+        "element bar chart, box plot, heatmap, and correlation matrix.")
+    dont_show = QCheckBox("Don't show this again for this chart type")
+    box.setCheckBox(dont_show)
+    box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+    box.exec()
+    if dont_show.isChecked():
+        settings.setValue(key, True)
+
+
 def show_persistent_figure(node, factory, _parent_window=None):
     """Open a node's figure, reusing one window and hiding (not killing) it.
 
@@ -349,6 +409,10 @@ def show_persistent_figure(node, factory, _parent_window=None):
     dlg.raise_()
     dlg.activateWindow()
     QTimer.singleShot(350, lambda: capture_figure_thumbnail(node, dlg))
+    # Deferred: a modal raised inline here would block the first paint, and
+    # that exact mistake already cost a debugging session on the correlation
+    # scatter's zero-handling advisory.
+    QTimer.singleShot(0, lambda: maybe_warn_classifier_wip(node, dlg))
     return dlg
 
 
@@ -583,6 +647,8 @@ def _open_view(view):
     dlg.raise_()
     dlg.activateWindow()
     QTimer.singleShot(350, lambda: capture_view_thumbnail(view))
+    # Same deferral rationale as show_persistent_figure.
+    QTimer.singleShot(0, lambda: maybe_warn_classifier_wip(view._node, dlg))
     return dlg
 
 
