@@ -122,7 +122,7 @@ In-session undo/redo for IsotopeTrack's editable analysis state.
 ### [`update_checker.py`](update-checker.md)
 tools/update_checker.py
 
-**2** classes &nbsp;·&nbsp; **4** functions &nbsp;·&nbsp; **6** methods
+**4** classes &nbsp;·&nbsp; **12** functions &nbsp;·&nbsp; **18** methods
 
 ### [`welcome.py`](welcome.md)
 Welcome / Home screen for IsotopeTrack.

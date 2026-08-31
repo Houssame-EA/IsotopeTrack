@@ -89,6 +89,8 @@ Full settings dialog opened from right-click → Configure.
 |--------|-----------|-------------|
 | `__init__` | `(self, config, parent=None, input_data=None)` | Initialise the dialog and build the UI from the supplied config. |
 | `_build_ui` | `(self)` |  |
+| `_build_dr_param_form` | `(self, dim_reduction)` | Rebuild the reduction-parameter rows for ``dim_reduction``. |
+| `_collect_dr_params` | `(self)` | Return ``{param: value}`` for the current reduction's widgets. |
 | `collect` | `(self) → dict` | Collect all widget values into a configuration dictionary. |
 
 ### `_ClusterWorker` *(extends `QThread`)*

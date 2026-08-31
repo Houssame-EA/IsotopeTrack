@@ -136,12 +136,26 @@ jobs:
       - name: List artifacts (debug)
         run: find artifacts -type f
 
+      # Consumed by the in-app updater (tools/update_checker.py) to verify a
+      # download before opening it. Names are stored without a path so the
+      # manifest matches the asset names on the release.
+      - name: Generate SHA256SUMS.txt
+        run: |
+          : > SHA256SUMS.txt
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' \) -print0 |
+            while IFS= read -r -d '' f; do
+              printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")" \
+                >> SHA256SUMS.txt
+            done
+          cat SHA256SUMS.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/IsotopeTrack_Windows/*.exe
             artifacts/IsotopeTrack_M/IsotopeTrack_M.dmg
+            SHA256SUMS.txt
           draft: true
       - name: Create Draft GitHub Release
         uses: release-drafter/release-drafter@v7

@@ -699,8 +699,8 @@ dropped rather than left as a control that always fails.
 """
 
 SOM_FINAL_ALGO_OPTIONS = ['Hierarchical (Ward)', 'Hierarchical (Average)',
-                          'Hierarchical (Complete)', 'K-Means',
-                          'Gaussian Mixture', 'Spectral']
+                          'Hierarchical (Complete)', 'Hierarchical (Single)',
+                          'K-Means', 'MiniBatch K-Means', 'Spectral']
 """Algorithms available for grouping a trained map's neurons."""
 
 
@@ -799,9 +799,15 @@ DATA_KEY_MAP = {
 }
 
 try:
-    from results.cluster.prep import EMBED_DIMS, reduction_components
+    from results.cluster.prep import (
+        EMBED_DIMS, reduction_components, apply_reduction, dr_defaults,
+        dr_params_str, non_default_dr_params, DR_PARAM_SPECS, KEEP_ALL,
+    )
 except ImportError:
-    from .prep import EMBED_DIMS, reduction_components
+    from .prep import (
+        EMBED_DIMS, reduction_components, apply_reduction, dr_defaults,
+        dr_params_str, non_default_dr_params, DR_PARAM_SPECS, KEEP_ALL,
+    )
 
 try:
     from tools.theme import theme as _app_theme
@@ -1102,6 +1108,14 @@ class ClusteringSettingsDialog(QDialog):
         _dr_note.setWordWrap(True)
         _dr_note.setStyleSheet("color:#64748B;font-size:10px;")
         fl.addRow("", _dr_note)
+
+        self.dr_param_box = QGroupBox("Reduction parameters")
+        self.dr_param_form = QFormLayout(self.dr_param_box)
+        self.dr_param_form.setContentsMargins(8, 4, 8, 8)
+        self.dr_param_widgets = {}
+        self._build_dr_param_form(self.dim_red.currentText())
+        self.dim_red.currentTextChanged.connect(self._build_dr_param_form)
+        fl.addRow(self.dr_param_box)
 
         self.filter_zeros = QCheckBox("Filter zero-only particles")
         self.filter_zeros.setChecked(self._cfg.get('filter_zeros', True))
@@ -1474,6 +1488,80 @@ class ClusteringSettingsDialog(QDialog):
         btns.rejected.connect(self.reject)
         outer.addWidget(btns)
 
+    def _build_dr_param_form(self, dim_reduction):
+        """Rebuild the reduction-parameter rows for ``dim_reduction``.
+
+        One widget per parameter in :data:`~results.cluster.prep.DR_PARAM_SPECS`,
+        seeded from the saved config and falling back to the spec default — the
+        value this pipeline used before the parameter was exposed, so an
+        untouched project keeps clustering exactly as it did.
+
+        Unlike the sweep tool's cards these are single values, not ranges: the
+        clustering tab runs one pipeline, it does not explore a grid.
+
+        Saved values are reused only for the reduction they were saved under.
+        ``n_components`` and ``random_state`` exist on several reductions and
+        mean different things on each, so a PCA variance ratio of 0.95 carried
+        into UMAP would silently become a single component.
+
+        Args:
+            dim_reduction (str): The reduction now selected.
+        """
+        form = getattr(self, 'dr_param_form', None)
+        if form is None:
+            return
+        while form.rowCount():
+            form.removeRow(0)
+        self.dr_param_widgets = {}
+        spec = DR_PARAM_SPECS.get(dim_reduction, {}).get('params', {})
+        self.dr_param_box.setVisible(bool(spec))
+        if not spec:
+            return
+        saved = (dict(self._cfg.get('dim_reduction_params') or {})
+                 if self._cfg.get('dim_reduction') == dim_reduction else {})
+        defaults = dr_defaults(dim_reduction)
+        for pname, pspec in spec.items():
+            value = saved.get(pname, defaults.get(pname))
+            if pspec['kind'] == 'choice':
+                w = QComboBox()
+                w.addItems([str(o) for o in pspec['options']])
+                w.setCurrentText(str(value))
+                getter = w.currentText
+            elif pspec['kind'] == 'float_range':
+                w = QDoubleSpinBox()
+                w.setDecimals(int(pspec.get('decimals', 3)))
+                w.setRange(float(pspec.get('min', 0.0)),
+                           float(pspec.get('max', 1e6)))
+                try:
+                    w.setValue(float(value))
+                except (TypeError, ValueError):
+                    w.setValue(float(defaults.get(pname) or 0.0))
+                getter = w.value
+            else:
+                w = QSpinBox()
+                w.setRange(int(pspec.get('min', 0)), int(pspec.get('max', 10**6)))
+                try:
+                    w.setValue(int(value))
+                except (TypeError, ValueError):
+                    w.setValue(int(defaults.get(pname) or 0))
+                getter = w.value
+            w.setMaximumWidth(140)
+            self.dr_param_widgets[pname] = getter
+            form.addRow(pspec['label'] + ':', w)
+        if 'n_components' in spec:
+            warn = QLabel(
+                "'%s' keeps every component, which is what makes PCA a plain "
+                "rotation. Choosing fewer discards variance, and the first "
+                "thing that usually goes is the rare particle types." % KEEP_ALL)
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color:#B45309;font-size:10px;")
+            form.addRow("", warn)
+
+    def _collect_dr_params(self):
+        """Return ``{param: value}`` for the current reduction's widgets."""
+        return {p: get() for p, get in
+                getattr(self, 'dr_param_widgets', {}).items()}
+
     def collect(self) -> dict:
         """Collect all widget values into a configuration dictionary.
 
@@ -1487,6 +1575,7 @@ class ClusteringSettingsDialog(QDialog):
         out['y_axis_unit'] = self.y_axis_unit.currentData()
         out['scaling'] = self.scaling.currentText()
         out['dim_reduction'] = self.dim_red.currentText()
+        out['dim_reduction_params'] = self._collect_dr_params()
         out['filter_zeros'] = self.filter_zeros.isChecked()
         out['min_particle_type_count'] = self.min_type_count.value()
         out['min_clusters'] = self.min_k.value()
@@ -2814,25 +2903,36 @@ def build_methods_paragraph(cfg, optimal_k=None, algorithm=None,
         lines.append("No feature scaling was applied.")
 
     dr = g('dim_reduction', 'None')
-    nc = EMBED_DIMS
-    if dr == 'PCA':
+    nc = reduction_components(dr, n_elements) if n_elements else None
+    nc_txt = f"{nc}" if nc else "the full set of"
+    dr_params = g('dim_reduction_params') or {}
+    dr_txt = dr_params_str(dr, {**dr_defaults(dr), **dr_params})
+    settings = f" ({dr_txt})" if dr_txt else ""
+    kept_all = str(dr_params.get('n_components', KEEP_ALL)) == KEEP_ALL
+    if dr == 'PCA' and kept_all:
         lines.append("The scaled matrix was rotated onto its full set of "
                      "principal components (PCA). Retaining every component "
                      "makes the transform an orthonormal rotation, so "
                      "inter-particle distances — and therefore the clustering "
                      "— are identical to those of the scaled element matrix, "
                      "while the figures can be drawn against the leading "
-                     "components.")
+                     f"components{settings}.")
+    elif dr == 'PCA':
+        lines.append("The scaled matrix was projected onto a reduced set of "
+                     "principal components (PCA)"
+                     f"{settings}. Discarding components changes "
+                     "inter-particle distances, so the clustering is not "
+                     "equivalent to clustering the scaled element matrix.")
     elif dr == 't-SNE':
-        lines.append(f"The scaled matrix was embedded into {nc} "
-                     f"dimensions with t-SNE (van der Maaten & Hinton, 2008; "
-                     f"random_state = 42).")
+        lines.append(f"The scaled matrix was embedded into {nc_txt} "
+                     f"dimensions with t-SNE (van der Maaten & Hinton, 2008)"
+                     f"{settings}.")
         refs.append("van der Maaten, L. & Hinton, G. (2008). Visualizing "
                     "data using t-SNE. Journal of Machine Learning Research, "
                     "9, 2579-2605.")
     elif dr == 'UMAP':
-        lines.append(f"The scaled matrix was embedded into {nc} dimensions "
-                     f"with UMAP (McInnes et al., 2018; random_state = 42).")
+        lines.append(f"The scaled matrix was embedded into {nc_txt} dimensions "
+                     f"with UMAP (McInnes et al., 2018){settings}.")
         refs.append("McInnes, L., Healy, J. & Melville, J. (2018). UMAP: "
                     "Uniform Manifold Approximation and Projection for "
                     "dimension reduction. arXiv:1802.03426.")
@@ -4355,17 +4455,7 @@ class ClusteringDisplayDialog(QDialog):
             matrix = _apply_robust_zscore(matrix)
 
         dr = cfg.get('dim_reduction', 'None')
-        nc = reduction_components(dr, matrix.shape[1])
-        if dr == 'PCA':
-            nc = min(nc, matrix.shape[0])
-            matrix = PCA(n_components=nc).fit_transform(matrix)
-        elif dr == 't-SNE':
-            matrix = TSNE(n_components=nc, random_state=42).fit_transform(matrix)
-        elif dr == 'UMAP' and _UMAP_OK:
-            nn = min(15, max(2, matrix.shape[0] - 1))
-            with numba_serial("UMAP (cluster reduction)"):
-                matrix = _UMAP_CLS(n_components=nc, n_neighbors=nn,
-                                   random_state=42).fit_transform(matrix)
+        matrix = apply_reduction(dr, matrix, cfg.get('dim_reduction_params'))
 
         cfg['_matrix_mode'] = dr if dr != 'UMAP' or _UMAP_OK else 'None'
         return matrix
@@ -4582,45 +4672,6 @@ class ClusteringDisplayDialog(QDialog):
         k_eff = min(k, n_neurons)
         neuron_w = np.asarray(weights, dtype=np.float64)
 
-        def _neuron_gmm():
-            """Fit a Gaussian mixture to the neuron weights, robustly.
-
-            The map is trained on the same matrix the user is clustering, so
-            when that matrix is rank-deficient the neurons inherit the
-            deficiency. Compositional data is the standard case here: a row of
-            percentages sums to a constant, so the cloud lies on a plane inside
-            its own dimensionality and any component's full covariance is
-            singular in the leftover direction. Cholesky then fails on that
-            leading minor and scikit-learn raises, which used to drop the whole
-            SOM into the K-Means fallback below — silently, so a run labelled
-            "Gaussian Mixture" was really K-Means.
-
-            Two defences, in order. Fitting in float64 rather than the map's
-            native float32 is enough on its own for ordinary rank deficiency
-            (measured: k=8..10 on 3-column percentage data fails in float32 and
-            succeeds in float64). Beyond that the fit is retried with a larger
-            covariance floor and then with progressively simpler covariance
-            families, which covers neurons that have genuinely collapsed onto
-            each other. Only if every rung fails does the caller's fallback
-            take over.
-
-            Returns:
-                np.ndarray: One cluster label per neuron.
-
-            Raises:
-                Exception: The last error, when no configuration converges.
-            """
-            last = None
-            for cov_type in ('full', 'diag', 'spherical'):
-                for reg in (1e-6, 1e-4, 1e-2):
-                    try:
-                        return GaussianMixture(
-                            n_components=k_eff, random_state=42,
-                            covariance_type=cov_type, n_init=3,
-                            reg_covar=reg).fit_predict(neuron_w)
-                    except Exception as exc:
-                        last = exc
-            raise last
 
         def _cluster_neurons(algo):
             """Run ``algo`` on the neuron weight vectors, return labels.
@@ -4628,9 +4679,8 @@ class ClusteringDisplayDialog(QDialog):
             Reasonable defaults are used for hyperparams since the user only
             picks the algorithm name in this UI; the neuron count is tiny
             (≤900 typically) so quality matters more than speed. The weights
-            are clustered in float64: the map itself trains in float32 for
-            speed, but that precision is not enough for the covariance work in
-            :func:`_neuron_gmm`.
+            are clustered in float64 even though the map trains in float32,
+            so the neuron geometry is not degraded by the map's own precision.
             """
             if algo == 'Hierarchical (Ward)':
                 return AgglomerativeClustering(
@@ -4644,12 +4694,19 @@ class ClusteringDisplayDialog(QDialog):
                 return AgglomerativeClustering(
                     n_clusters=k_eff, linkage='complete', metric='euclidean',
                 ).fit_predict(neuron_w)
+            if algo == 'Hierarchical (Single)':
+                return AgglomerativeClustering(
+                    n_clusters=k_eff, linkage='single', metric='euclidean',
+                ).fit_predict(neuron_w)
             if algo == 'K-Means':
                 return KMeans(
                     n_clusters=k_eff, random_state=42, n_init=10,
                 ).fit_predict(neuron_w)
-            if algo == 'Gaussian Mixture':
-                return _neuron_gmm()
+            if algo == 'MiniBatch K-Means':
+                return MiniBatchKMeans(
+                    n_clusters=k_eff, random_state=42, n_init=10,
+                    batch_size=min(1024, max(k_eff, n_neurons)),
+                ).fit_predict(neuron_w)
             if algo == 'Spectral':
                 nn = min(10, max(2, n_neurons - 1))
                 return SpectralClustering(
@@ -4657,6 +4714,9 @@ class ClusteringDisplayDialog(QDialog):
                     n_neighbors=nn, random_state=42,
                     assign_labels='kmeans',
                 ).fit_predict(neuron_w)
+            _itk_log.warning(
+                "Unknown SOM final algorithm %r; using Hierarchical (Ward)",
+                algo)
             return AgglomerativeClustering(
                 n_clusters=k_eff, linkage='ward', metric='euclidean',
             ).fit_predict(neuron_w)
@@ -6301,6 +6361,7 @@ class ClusteringPlotNode(QObject):
         'data_type_display': 'Counts',
         'scaling': 'CLR',
         'dim_reduction': 'None',
+        'dim_reduction_params': {},
         'filter_zeros': True,
         'min_particle_type_count': 5,
         'cluster_color_by': 'Cluster',

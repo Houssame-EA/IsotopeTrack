@@ -12,7 +12,7 @@ Detail views and worked examples, built from a finished clustering fit.
 ### [`dialog.py`](dialog.md)
 Clustering analysis dialog — algorithms, validity indices and result figures.
 
-**9** classes &nbsp;·&nbsp; **36** functions &nbsp;·&nbsp; **105** methods
+**9** classes &nbsp;·&nbsp; **36** functions &nbsp;·&nbsp; **107** methods
 
 ### [`export_workbook.py`](export-workbook.md)
 Excel export for the Clustering Analysis results.
@@ -37,9 +37,9 @@ Cluster colours shared by every clustering view.
 ### [`prep.py`](prep.md)
 Shared preprocessing rules for every clustering entry point.
 
-**0** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
+**0** classes &nbsp;·&nbsp; **9** functions &nbsp;·&nbsp; **0** methods
 
 ### [`tools.py`](tools.md)
 Custom Cluster Test — exhaustive pipeline search against known components.
 
-**1** classes &nbsp;·&nbsp; **24** functions &nbsp;·&nbsp; **6** methods
+**1** classes &nbsp;·&nbsp; **29** functions &nbsp;·&nbsp; **6** methods

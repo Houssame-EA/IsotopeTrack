@@ -36,6 +36,114 @@ _itk_log = logging.getLogger("IsotopeTrack.results.results_single_multiple")
 # ── Constants ──────────────────────────────────────────────────────────
 
 VIZ_TYPES = ['Pie Charts', 'Heatmaps']
+
+QUANTITY_BASES = ['Particle Count', 'Mass (fg)', 'Moles (fmol)']
+
+CELL_VALUE_MODES = ['Quantity', 'Percentage', 'Both']
+
+QUANTITY_BASIS_KEYS = {
+    'Particle Count': None,
+    'Mass (fg)': 'element_mass_fg',
+    'Moles (fmol)': 'element_moles_fmol',
+}
+
+QUANTITY_BASIS_DETAIL_KEYS = {
+    'Particle Count': 'count',
+    'Mass (fg)': 'mass_fg',
+    'Moles (fmol)': 'moles_fmol',
+}
+
+QUANTITY_BASIS_UNITS = {
+    'Particle Count': ('P', 'P/mL'),
+    'Mass (fg)': ('fg', 'fg/mL'),
+    'Moles (fmol)': ('fmol', 'fmol/mL'),
+}
+
+
+def normalize_quantity_basis(basis):
+    """Return a supported quantity basis name.
+
+    Args:
+        basis (Any): Configured or stored quantity basis value.
+
+    Returns:
+        str: One of :data:`QUANTITY_BASES`, defaulting to ``'Particle Count'``
+        for missing, legacy or unknown values.
+    """
+    return basis if basis in QUANTITY_BASES else 'Particle Count'
+
+
+def basis_unit(basis, per_ml=False):
+    """Return the display unit belonging to a quantity basis.
+
+    Args:
+        basis (str): Quantity basis name.
+        per_ml (bool): Whether values are normalised to a sample volume.
+
+    Returns:
+        str: ``P``/``fg``/``fmol``, or their per-mL form when ``per_ml``.
+    """
+    plain, per_volume = QUANTITY_BASIS_UNITS[normalize_quantity_basis(basis)]
+    return per_volume if per_ml else plain
+
+
+def format_quantity(value, basis):
+    """Format a quantity for axis, slice and table text.
+
+    Args:
+        value (float): Quantity value already converted to its display unit.
+        basis (str): Quantity basis the value belongs to.
+
+    Returns:
+        str: Integer text for particle counts, three significant digits for
+        mass and mole quantities.
+    """
+    if normalize_quantity_basis(basis) == 'Particle Count':
+        return f'{value:.0f}'
+    return f'{value:.3g}'
+
+
+def particle_quantity(particle, basis):
+    """Return one particle's contribution on the requested basis.
+
+    Args:
+        particle (dict): Particle record holding ``elements``,
+            ``element_mass_fg`` and ``element_moles_fmol`` maps.
+        basis (str): Quantity basis name.
+
+    Returns:
+        float: ``1.0`` for the particle-count basis, otherwise the sum of the
+        particle's positive, finite per-element mass or mole values. Particles
+        without the requested map contribute ``0.0``.
+    """
+    key = QUANTITY_BASIS_KEYS[normalize_quantity_basis(basis)]
+    if key is None:
+        return 1.0
+    total = 0.0
+    for value in (particle.get(key) or {}).values():
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if v > 0 and v == v:
+            total += v
+    return total
+
+
+def detail_quantity(detail, basis):
+    """Return a combination's aggregated quantity on the requested basis.
+
+    Args:
+        detail (dict): Combination detail dict carrying ``count``, ``mass_fg``
+            and ``moles_fmol``.
+        basis (str): Quantity basis name.
+
+    Returns:
+        float: The aggregated value for that basis, ``0.0`` when the
+        combination never accumulated it.
+    """
+    return float(detail.get(
+        QUANTITY_BASIS_DETAIL_KEYS[normalize_quantity_basis(basis)], 0.0) or 0.0)
 SM_DISPLAY_MODES = ['Individual Subplots', 'Side by Side Subplots', 'Combined View']
 DEGREE_SIGN = "\N{DEGREE SIGN}"
 
@@ -47,6 +155,9 @@ DEFAULT_CONFIG = {
     'dilution_factor': 1.0,
     'single_threshold': 0.5,
     'multiple_threshold': 0.5,
+    'quantity_basis': 'Particle Count',
+    'show_all_quantities': False,
+    'cell_value_display': 'Quantity',
     'show_percentages': True,
     'explode_slices': False,
     'label_color': '#000000',
@@ -98,7 +209,36 @@ class SingleMultipleElementHelper:
     """Analysis helper for single vs multiple element particle classification."""
 
     @staticmethod
-    def analyze_particles(particle_data, pct_single=0.5, pct_multiple=0.5):
+    def analyze_particles(particle_data, pct_single=0.5, pct_multiple=0.5,
+                          quantity_basis='Particle Count'):
+        """Classify particles into single- and multiple-element combinations.
+
+        Args:
+            particle_data (list): Particle records for one sample.
+            pct_single (float): Minimum share (%) a single-element combination
+                must reach to be kept.
+            pct_multiple (float): Minimum share (%) a multiple-element
+                combination must reach to be kept.
+            quantity_basis (str): Quantity the shares, ordering and plotted
+                values are built from - ``'Particle Count'``, ``'Mass (fg)'``
+                or ``'Moles (fmol)'``.
+
+        Returns:
+            dict | None: ``single_combinations`` and ``multiple_combinations``
+            as ``(combination, detail, percent)`` triples sorted by the active
+            quantity, plus ``total_particles``, ``total_mass_fg``,
+            ``total_moles_fmol``, ``total_value``, the resolved
+            ``quantity_basis`` and every combination in ``all_combinations``.
+            ``None`` when no particles are supplied. Each detail dict carries
+            ``count``, ``mass_fg``, ``moles_fmol`` and the active ``value``,
+            so callers can show all three quantities side by side.
+
+        Preserved behavior:
+            The particle-count basis reproduces the previous counts, ordering
+            and percentages exactly. A mass or mole basis whose totals are
+            missing or zero falls back to the particle-count basis instead of
+            emptying the figure.
+        """
         if not particle_data:
             return None
         combo_data = defaultdict(list)
@@ -107,14 +247,34 @@ class SingleMultipleElementHelper:
             if elems:
                 combo_data[', '.join(sorted(elems))].append(i)
 
+        basis = normalize_quantity_basis(quantity_basis)
         combos = {}
         for key, idx in combo_data.items():
-            combos[key] = {'count': len(idx), 'indices': idx, 'is_single': len(key.split(', ')) == 1}
+            combos[key] = {
+                'count': len(idx),
+                'mass_fg': sum(particle_quantity(particle_data[i], 'Mass (fg)')
+                               for i in idx),
+                'moles_fmol': sum(particle_quantity(particle_data[i], 'Moles (fmol)')
+                                  for i in idx),
+                'indices': idx,
+                'is_single': len(key.split(', ')) == 1,
+            }
 
         total = len(particle_data)
+        total_mass = sum(particle_quantity(p, 'Mass (fg)') for p in particle_data)
+        total_moles = sum(particle_quantity(p, 'Moles (fmol)') for p in particle_data)
+        totals = {'Particle Count': float(total), 'Mass (fg)': total_mass,
+                  'Moles (fmol)': total_moles}
+        if totals[basis] <= 0:
+            basis = 'Particle Count'
+        total_value = totals[basis]
+        for det in combos.values():
+            det['value'] = detail_quantity(det, basis)
+
         single, multi = [], []
-        for combo, det in sorted(combos.items(), key=lambda x: x[1]['count'], reverse=True):
-            pct = det['count'] / total * 100
+        ordered = sorted(combos.items(), key=lambda x: x[1]['value'], reverse=True)
+        for combo, det in ordered:
+            pct = (det['value'] / total_value * 100) if total_value else 0.0
             if det['is_single']:
                 if pct >= pct_single:
                     single.append((combo, det, pct))
@@ -123,7 +283,9 @@ class SingleMultipleElementHelper:
                     multi.append((combo, det, pct))
 
         return {'single_combinations': single, 'multiple_combinations': multi,
-                'total_particles': total, 'all_combinations': sorted(combos.items(), key=lambda x: x[1]['count'], reverse=True)}
+                'total_particles': total, 'total_mass_fg': total_mass,
+                'total_moles_fmol': total_moles, 'total_value': total_value,
+                'quantity_basis': basis, 'all_combinations': ordered}
 
     @staticmethod
     def format_clean(combo_str, label_mode='Symbol', cfg=None):
@@ -178,17 +340,53 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def pie_data(results, combo_type, custom_colors=None, per_ml=False,
-                 parent_window=None, dilution=1.0, sample_info=None, label_mode='Symbol'):
+                 parent_window=None, dilution=1.0, sample_info=None,
+                 label_mode='Symbol', quantity_basis=None,
+                 show_all_quantities=False):
+        """Build slice values, labels and colors for one pie chart.
+
+        Args:
+            results (dict): Analysis result from :meth:`analyze_particles`.
+            combo_type (str): ``'single'`` or ``'multiple'``.
+            custom_colors (dict | None): Per-combination color overrides.
+            per_ml (bool): Whether to normalise quantities to sample volume.
+            parent_window (Any): Window supplying transport/time metadata.
+            dilution (float): Dilution factor used with the volume conversion.
+            sample_info (dict | None): Sample metadata for the conversion.
+            label_mode (str): Isotope label mode used for display labels.
+            quantity_basis (str | None): Quantity the slices represent. When
+                omitted the basis stored on ``results`` is used.
+            show_all_quantities (bool): Append the particle, mass and mole
+                values of each combination to its label.
+
+        Returns:
+            dict | None: ``labels``, ``values``, ``colors`` and the raw
+            ``combinations`` keys, or ``None`` when the requested group holds
+            no combination.
+        """
         combos = results['single_combinations'] if combo_type == 'single' else results['multiple_combinations']
         if not combos:
             return None
         palette = default_colors if combo_type == 'single' else list(reversed(default_colors))
-        unit = "P/mL" if per_ml else "P"
+        basis = normalize_quantity_basis(
+            quantity_basis if quantity_basis is not None
+            else results.get('quantity_basis', 'Particle Count'))
+        unit = basis_unit(basis, per_ml)
+        convert = (lambda v: SingleMultipleElementHelper.calc_per_ml(
+            v, parent_window, dilution, sample_info)) if per_ml else (lambda v: v)
         labels, values, colors, keys = [], [], [], []
         for i, (combo, det, pct) in enumerate(combos):
-            val = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, sample_info) if per_ml else det['count']
+            val = convert(detail_quantity(det, basis))
             clean = SingleMultipleElementHelper.format_clean(combo, label_mode)
-            labels.append(f"{clean}\n({val:.0f} {unit})")
+            text = f"{clean}\n({format_quantity(val, basis)} {unit})"
+            if show_all_quantities:
+                parts = [
+                    f"{format_quantity(convert(detail_quantity(det, b)), b)}"
+                    f" {basis_unit(b, per_ml)}"
+                    for b in QUANTITY_BASES
+                ]
+                text += "\n" + " | ".join(parts)
+            labels.append(text)
             values.append(val)
             colors.append((custom_colors or {}).get(combo, palette[i % len(palette)]))
             keys.append(combo)
@@ -196,7 +394,7 @@ class SingleMultipleElementHelper:
 
     @staticmethod
     def heatmap_data(results_dict, per_ml=False, parent_window=None, dilution=1.0,
-                     label_mode='Symbol', cfg=None):
+                     label_mode='Symbol', cfg=None, quantity_basis=None):
         """
         Build heatmap matrices for single- and multiple-element combinations.
 
@@ -207,13 +405,17 @@ class SingleMultipleElementHelper:
             dilution (float): Dilution factor used with particles/mL conversion.
             label_mode (str): Isotope label mode used for display labels.
             cfg (dict | None): Optional plotting config passed to label formatting.
+            quantity_basis (str | None): Quantity the cell values represent -
+                ``'Particle Count'``, ``'Mass (fg)'`` or ``'Moles (fmol)'``.
+                When omitted the basis stored on each sample result is used.
 
         Returns:
-            dict | None: Heatmap dataframes for particle values and percentages.
+            dict | None: Heatmap dataframes for combination values and their
+            percentage shares, on the active quantity basis.
 
         Preserved behavior:
-            Single/multiple calculations and thresholds are unchanged; only label
-            formatting wiring now accepts optional config safely.
+            Single/multiple calculations and thresholds are unchanged, and the
+            particle-count basis reproduces the previous matrices exactly.
         """
         if not results_dict:
             return None
@@ -228,8 +430,14 @@ class SingleMultipleElementHelper:
         s_part = pd.DataFrame(0.0, index=sorted(all_single), columns=names)
         s_pct = pd.DataFrame(0.0, index=sorted(all_single), columns=names)
 
+        def _basis_for(sample_result):
+            return normalize_quantity_basis(
+                quantity_basis if quantity_basis is not None
+                else sample_result.get('quantity_basis', 'Particle Count'))
+
         top_multi = sorted(all_multi, key=lambda x: sum(
-            next((d['count'] for c, d, _ in sr['multiple_combinations']
+            next((detail_quantity(d, _basis_for(sr))
+                  for c, d, _ in sr['multiple_combinations']
                   if SingleMultipleElementHelper.format_clean(c, label_mode, cfg) == x), 0)
             for sr in results_dict.values()), reverse=True)[:30]
         m_part = pd.DataFrame(0.0, index=top_multi, columns=names)
@@ -237,16 +445,19 @@ class SingleMultipleElementHelper:
 
         for sn, sr in results_dict.items():
             si = {'is_summed': False}
+            basis = _basis_for(sr)
             for combo, det, pct in sr['single_combinations']:
                 clean = SingleMultipleElementHelper.format_clean(combo, label_mode, cfg)
                 if clean in s_part.index:
-                    v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
+                    raw = detail_quantity(det, basis)
+                    v = SingleMultipleElementHelper.calc_per_ml(raw, parent_window, dilution, si) if per_ml else raw
                     s_part.loc[clean, sn] = v
                     s_pct.loc[clean, sn] = pct
             for combo, det, pct in sr['multiple_combinations']:
                 clean = SingleMultipleElementHelper.format_clean(combo, label_mode, cfg)
                 if clean in m_part.index:
-                    v = SingleMultipleElementHelper.calc_per_ml(det['count'], parent_window, dilution, si) if per_ml else det['count']
+                    raw = detail_quantity(det, basis)
+                    v = SingleMultipleElementHelper.calc_per_ml(raw, parent_window, dilution, si) if per_ml else raw
                     m_part.loc[clean, sn] = v
                     m_pct.loc[clean, sn] = pct
 
@@ -254,46 +465,97 @@ class SingleMultipleElementHelper:
                 'multiple_particles': m_part, 'multiple_percentage': m_pct}
 
     @staticmethod
-    def statistics_table(analysis_data, is_multi=False, per_ml=False, parent_window=None, dilution=1.0, label_mode='Symbol'):
-        unit = 'P/mL' if per_ml else 'P'
+    def statistics_table(analysis_data, is_multi=False, per_ml=False,
+                         parent_window=None, dilution=1.0, label_mode='Symbol',
+                         quantity_basis=None):
+        """Build the statistics table shown next to the figure.
+
+        Args:
+            analysis_data (dict): Single-sample analysis result, or a mapping
+                ``sample_name -> analysis result`` when ``is_multi``.
+            is_multi (bool): Whether ``analysis_data`` holds several samples.
+            per_ml (bool): Whether to normalise quantities to sample volume.
+            parent_window (Any): Window supplying transport/time metadata.
+            dilution (float): Dilution factor used with the volume conversion.
+            label_mode (str): Isotope label mode used for display labels.
+            quantity_basis (str | None): Quantity the ``%`` column refers to.
+                When omitted the basis stored on the analysis result is used.
+
+        Returns:
+            pandas.DataFrame: One row per summary line and per combination,
+            carrying the particle, mass and mole quantities together plus the
+            share of the active basis.
+        """
         si = {'is_summed': False}
-        calc = lambda c: SingleMultipleElementHelper.calc_per_ml(c, parent_window, dilution, si) if per_ml else c
+        convert = (lambda v: SingleMultipleElementHelper.calc_per_ml(
+            v, parent_window, dilution, si)) if per_ml else (lambda v: v)
+
+        def _basis_for(sample_result):
+            return normalize_quantity_basis(
+                quantity_basis if quantity_basis is not None
+                else sample_result.get('quantity_basis', 'Particle Count'))
+
+        def _quantity_cells(detail):
+            return [format_quantity(convert(detail_quantity(detail, b)), b)
+                    for b in QUANTITY_BASES]
+
+        def _total_cells(sample_result):
+            totals = {
+                'Particle Count': float(sample_result.get('total_particles', 0)),
+                'Mass (fg)': float(sample_result.get('total_mass_fg', 0.0)),
+                'Moles (fmol)': float(sample_result.get('total_moles_fmol', 0.0)),
+            }
+            return [format_quantity(convert(totals[b]), b) for b in QUANTITY_BASES]
+
+        def _group_detail(sample_result, group_key):
+            detail = {'count': 0, 'mass_fg': 0.0, 'moles_fmol': 0.0}
+            for _, det, _ in sample_result[group_key]:
+                detail['count'] += det.get('count', 0)
+                detail['mass_fg'] += det.get('mass_fg', 0.0)
+                detail['moles_fmol'] += det.get('moles_fmol', 0.0)
+            return detail
+
+        def _sample_rows(sample_result, prefix):
+            basis = _basis_for(sample_result)
+            unit = basis_unit(basis, per_ml)
+            total_value = float(sample_result.get('total_value', 0.0) or 0.0)
+            single_detail = _group_detail(sample_result, 'single_combinations')
+            multi_detail = _group_detail(sample_result, 'multiple_combinations')
+            share = lambda d: ((detail_quantity(d, basis) / total_value * 100)
+                               if total_value else 0.0)
+            rows = [
+                prefix + ['SUMMARY', 'Total'] + _total_cells(sample_result)
+                + ['100.0%', f'All {unit}'],
+                prefix + ['SUMMARY', 'Single Total'] + _quantity_cells(single_detail)
+                + [f'{share(single_detail):.1f}%', f'sNPs {unit}'],
+                prefix + ['SUMMARY', 'Multiple Total'] + _quantity_cells(multi_detail)
+                + [f'{share(multi_detail):.1f}%', f'mNPs {unit}'],
+            ]
+            for combo, det, pct in sample_result['single_combinations']:
+                rows.append(
+                    prefix + ['SINGLE',
+                              SingleMultipleElementHelper.format_clean(combo, label_mode)]
+                    + _quantity_cells(det) + [f'{pct:.1f}%', f'sNP {unit}'])
+            for combo, det, pct in sample_result['multiple_combinations']:
+                ne = len(combo.split(', '))
+                rows.append(
+                    prefix + ['MULTIPLE',
+                              SingleMultipleElementHelper.format_clean(combo, label_mode)]
+                    + _quantity_cells(det)
+                    + [f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
+            return rows
+
+        quantity_columns = ['Particles', 'Mass (fg)', 'Moles (fmol)']
         rows = []
         if is_multi:
             for sn, sr in analysis_data.items():
-                t = sr['total_particles']
-                sc = sum(d['count'] for _, d, _ in sr['single_combinations'])
-                mc = sum(d['count'] for _, d, _ in sr['multiple_combinations'])
-                sp = sc/t*100 if t else 0
-                mp = mc/t*100 if t else 0
-                rows.append([sn, 'SUMMARY', 'Total', f'{calc(t):.1f}', '100.0%', f'All {unit}'])
-                rows.append([sn, 'SUMMARY', 'Single Total', f'{calc(sc):.1f}', f'{sp:.1f}%', f'sNPs {unit}'])
-                rows.append([sn, 'SUMMARY', 'Multiple Total', f'{calc(mc):.1f}', f'{mp:.1f}%', f'mNPs {unit}'])
-                for combo, det, pct in sr['single_combinations']:
-                    rows.append([sn, 'SINGLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
-                                 f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'sNP {unit}'])
-                for combo, det, pct in sr['multiple_combinations']:
-                    ne = len(combo.split(', '))
-                    rows.append([sn, 'MULTIPLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
-                                 f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
-            return pd.DataFrame(rows, columns=['Sample', 'Type', 'Combination', 'Count', '%', 'Description'])
+                rows.extend(_sample_rows(sr, [sn]))
+            columns = (['Sample', 'Type', 'Combination'] + quantity_columns
+                       + ['%', 'Description'])
         else:
-            t = analysis_data['total_particles']
-            sc = sum(d['count'] for _, d, _ in analysis_data['single_combinations'])
-            mc = sum(d['count'] for _, d, _ in analysis_data['multiple_combinations'])
-            sp = sc/t*100 if t else 0
-            mp = mc/t*100 if t else 0
-            rows.append(['SUMMARY', 'Total', f'{calc(t):.1f}', '100.0%', f'All {unit}'])
-            rows.append(['SUMMARY', 'Single Total', f'{calc(sc):.1f}', f'{sp:.1f}%', f'sNPs {unit}'])
-            rows.append(['SUMMARY', 'Multiple Total', f'{calc(mc):.1f}', f'{mp:.1f}%', f'mNPs {unit}'])
-            for combo, det, pct in analysis_data['single_combinations']:
-                rows.append(['SINGLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
-                             f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'sNP {unit}'])
-            for combo, det, pct in analysis_data['multiple_combinations']:
-                ne = len(combo.split(', '))
-                rows.append(['MULTIPLE', SingleMultipleElementHelper.format_clean(combo, label_mode),
-                             f'{calc(det["count"]):.1f}', f'{pct:.1f}%', f'mNP ({ne} elem) {unit}'])
-            return pd.DataFrame(rows, columns=['Type', 'Combination', 'Count', '%', 'Description'])
+            rows.extend(_sample_rows(analysis_data, []))
+            columns = ['Type', 'Combination'] + quantity_columns + ['%', 'Description']
+        return pd.DataFrame(rows, columns=columns)
 
 
 # ── Small colour-swatch button ─────────────────────────────────────────
@@ -505,6 +767,13 @@ class SingleMultipleSettingsDialog(QDialog):
 
             g2 = QGroupBox("Units & Dilution")
             f2 = QFormLayout(g2)
+            self.basis_combo = QComboBox(); self.basis_combo.addItems(QUANTITY_BASES)
+            self.basis_combo.setCurrentText(normalize_quantity_basis(
+                self._cfg.get('quantity_basis', 'Particle Count')))
+            f2.addRow("Quantity Basis:", self.basis_combo)
+            self.allq_cb = QCheckBox()
+            self.allq_cb.setChecked(self._cfg.get('show_all_quantities', False))
+            f2.addRow("Show All Quantities:", self.allq_cb)
             self.pml_cb = QCheckBox(); self.pml_cb.setChecked(self._cfg.get('use_particles_per_ml', False))
             f2.addRow("Use Particles/mL:", self.pml_cb)
             self.dil_spin = QDoubleSpinBox(); self.dil_spin.setRange(0.001, 100000)
@@ -551,7 +820,12 @@ class SingleMultipleSettingsDialog(QDialog):
             g5 = QGroupBox("Heatmap Settings")
             f5 = QFormLayout(g5)
             self.val_cb = QCheckBox(); self.val_cb.setChecked(self._cfg.get('show_values', True))
-            f5.addRow("Show % on Cells:", self.val_cb)
+            f5.addRow("Show Values on Cells:", self.val_cb)
+            self.cellval_combo = QComboBox(); self.cellval_combo.addItems(CELL_VALUE_MODES)
+            self.cellval_combo.setCurrentText(
+                self._cfg.get('cell_value_display', 'Quantity')
+                if self._cfg.get('cell_value_display') in CELL_VALUE_MODES else 'Quantity')
+            f5.addRow("Cell Value:", self.cellval_combo)
             self.cmap_combo = QComboBox(); self.cmap_combo.addItems(colorheatmap)
             self.cmap_combo.setCurrentText(self._cfg.get('colormap', 'YlGn'))
             f5.addRow("Colormap:", self.cmap_combo)
@@ -632,6 +906,10 @@ class SingleMultipleSettingsDialog(QDialog):
             d.update(self._classifier_group.collect())
         if hasattr(self, 'viz_combo'):
             d['visualization_type'] = self.viz_combo.currentText()
+        if hasattr(self, 'basis_combo'):
+            d['quantity_basis'] = normalize_quantity_basis(self.basis_combo.currentText())
+        if hasattr(self, 'allq_cb'):
+            d['show_all_quantities'] = self.allq_cb.isChecked()
         if hasattr(self, 'pml_cb'):
             d['use_particles_per_ml'] = self.pml_cb.isChecked()
         if hasattr(self, 'dil_spin'):
@@ -648,6 +926,8 @@ class SingleMultipleSettingsDialog(QDialog):
             d['use_log_scale'] = self.log_cb.isChecked()
         if hasattr(self, 'val_cb'):
             d['show_values'] = self.val_cb.isChecked()
+        if hasattr(self, 'cellval_combo'):
+            d['cell_value_display'] = self.cellval_combo.currentText()
         if hasattr(self, 'cmap_combo'):
             d['colormap'] = self.cmap_combo.currentText()
         if self._font_grp is not None:
@@ -1022,27 +1302,50 @@ class SingleMultipleElementDisplayDialog(QDialog):
 
         Returns:
             dict: Aggregated analysis in the schema expected by existing pie
-            rendering/statistics helpers.
+            rendering/statistics helpers, carrying the particle, mass and mole
+            totals plus the node's active quantity basis.
 
         Preserved behavior:
-            Classification semantics are preserved; this only aggregates counts for
-            Combined View rendering.
+            Classification semantics are preserved; this only aggregates the
+            per-combination quantities for Combined View rendering, and the
+            particle-count basis reproduces the previous aggregation.
         """
-        combo_counts = defaultdict(int)
+        basis = normalize_quantity_basis(
+            self.node.config.get('quantity_basis', 'Particle Count'))
+        combo_totals = defaultdict(
+            lambda: {'count': 0, 'mass_fg': 0.0, 'moles_fmol': 0.0})
         total_particles = 0
+        total_mass = 0.0
+        total_moles = 0.0
         for sample_result in analysis_by_sample.values():
             total_particles += int(sample_result.get('total_particles', 0))
+            total_mass += float(sample_result.get('total_mass_fg', 0.0) or 0.0)
+            total_moles += float(sample_result.get('total_moles_fmol', 0.0) or 0.0)
             for combo, det in sample_result.get('all_combinations', []):
-                combo_counts[combo] += int(det.get('count', 0))
+                agg = combo_totals[combo]
+                agg['count'] += int(det.get('count', 0))
+                agg['mass_fg'] += float(det.get('mass_fg', 0.0) or 0.0)
+                agg['moles_fmol'] += float(det.get('moles_fmol', 0.0) or 0.0)
+
+        totals = {'Particle Count': float(total_particles),
+                  'Mass (fg)': total_mass, 'Moles (fmol)': total_moles}
+        if totals[basis] <= 0:
+            basis = 'Particle Count'
+        total_value = totals[basis]
 
         all_combos = []
-        for combo, count in sorted(combo_counts.items(), key=lambda kv: kv[1], reverse=True):
-            all_combos.append((combo, {'count': count, 'indices': [], 'is_single': len(combo.split(', ')) == 1}))
+        for combo, agg in combo_totals.items():
+            det = dict(agg)
+            det['indices'] = []
+            det['is_single'] = len(combo.split(', ')) == 1
+            det['value'] = detail_quantity(det, basis)
+            all_combos.append((combo, det))
+        all_combos.sort(key=lambda kv: kv[1]['value'], reverse=True)
 
         single = []
         multiple = []
         for combo, det in all_combos:
-            pct = (det['count'] / total_particles * 100) if total_particles else 0.0
+            pct = (det['value'] / total_value * 100) if total_value else 0.0
             if det['is_single']:
                 single.append((combo, det, pct))
             else:
@@ -1052,13 +1355,19 @@ class SingleMultipleElementDisplayDialog(QDialog):
             'single_combinations': single,
             'multiple_combinations': multiple,
             'total_particles': total_particles,
+            'total_mass_fg': total_mass,
+            'total_moles_fmol': total_moles,
+            'total_value': total_value,
+            'quantity_basis': basis,
             'all_combinations': all_combos,
         }
 
     def _pie_one(self, ax, results, ctype, custom_colors, pml, dil, si, cfg, fp, lc, sp_key=''):
         pd_data = SingleMultipleElementHelper.pie_data(
             results, ctype, custom_colors, pml, self.parent_window, dil, si,
-            cfg.get('label_mode', 'Symbol'))
+            cfg.get('label_mode', 'Symbol'),
+            cfg.get('quantity_basis', 'Particle Count'),
+            cfg.get('show_all_quantities', False))
         if not pd_data:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center',
                     transform=ax.transAxes, color='gray')
@@ -1199,13 +1508,15 @@ class SingleMultipleElementDisplayDialog(QDialog):
         fc = cfg.get('font_color', '#000000')
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
+        basis = normalize_quantity_basis(cfg.get('quantity_basis', 'Particle Count'))
         hd = SingleMultipleElementHelper.heatmap_data(
-            ad, pml, self.parent_window, dil, cfg.get('label_mode', 'Symbol'), cfg)
+            ad, pml, self.parent_window, dil, cfg.get('label_mode', 'Symbol'), cfg,
+            basis)
         if not hd:
             return
         cmap_name = cfg.get('colormap', 'YlGn')
         cmap = plt.cm.get_cmap(cmap_name)
-        unit = 'P/mL' if pml else 'P'
+        unit = basis_unit(basis, pml)
         log = cfg.get('use_log_scale', True)
 
         for idx, (title, df_p, df_pct) in enumerate([
@@ -1230,9 +1541,13 @@ class SingleMultipleElementDisplayDialog(QDialog):
                 dmin = np.nanmin(plot_d.values)
                 dmax = np.nanmax(plot_d.values)
                 norm = plt.Normalize(vmin=dmin, vmax=dmax)
+                cell_mode = cfg.get('cell_value_display', 'Quantity')
+                if cell_mode not in CELL_VALUE_MODES:
+                    cell_mode = 'Quantity'
                 for r in range(len(df_pct.index)):
                     for c in range(len(df_pct.columns)):
                         pct = df_pct.iloc[r, c]
+                        value = df_p.iloc[r, c]
                         if not np.isnan(pct) and pct > 0:
                             dv = plot_d.iloc[r, c]
                             if not np.isnan(dv):
@@ -1241,7 +1556,14 @@ class SingleMultipleElementDisplayDialog(QDialog):
                                 tc = 'white' if lum < 0.5 else 'black'
                             else:
                                 tc = 'black'
-                            ax.text(c, r, f'{pct:.2f}%', ha='center', va='center',
+                            quantity_text = f'{format_quantity(value, basis)} {unit}'
+                            if cell_mode == 'Percentage':
+                                text = f'{pct:.2f}%'
+                            elif cell_mode == 'Both':
+                                text = f'{quantity_text}\n{pct:.2f}%'
+                            else:
+                                text = quantity_text
+                            ax.text(c, r, text, ha='center', va='center',
                                     color=tc, fontweight='bold')
 
             cbar = self.fig.colorbar(im, ax=ax, shrink=0.8)
@@ -1255,20 +1577,26 @@ class SingleMultipleElementDisplayDialog(QDialog):
         cfg = self.node.config
         pml = cfg.get('use_particles_per_ml', False)
         dil = cfg.get('dilution_factor', 1.0)
-        unit = "P/mL" if pml else "P"
+        basis = normalize_quantity_basis(cfg.get('quantity_basis', 'Particle Count'))
+        unit = basis_unit(basis, pml)
         calc = lambda c: SingleMultipleElementHelper.calc_per_ml(c, self.parent_window, dil) if pml else c
+        group = lambda sr, key: sum(detail_quantity(d, basis) for _, d, _ in sr[key])
+        total_key = {'Particle Count': 'total_particles', 'Mass (fg)': 'total_mass_fg',
+                     'Moles (fmol)': 'total_moles_fmol'}[basis]
 
         if self._multi:
-            tp = sum(sr['total_particles'] for sr in ad.values())
-            sc = sum(sum(d['count'] for _, d, _ in sr['single_combinations']) for sr in ad.values())
-            mc = sum(sum(d['count'] for _, d, _ in sr['multiple_combinations']) for sr in ad.values())
+            tp = sum(float(sr.get(total_key, 0.0) or 0.0) for sr in ad.values())
+            sc = sum(group(sr, 'single_combinations') for sr in ad.values())
+            mc = sum(group(sr, 'multiple_combinations') for sr in ad.values())
         else:
-            tp = ad['total_particles']
-            sc = sum(d['count'] for _, d, _ in ad['single_combinations'])
-            mc = sum(d['count'] for _, d, _ in ad['multiple_combinations'])
+            tp = float(ad.get(total_key, 0.0) or 0.0)
+            sc = group(ad, 'single_combinations')
+            mc = group(ad, 'multiple_combinations')
 
         self._stats.setText(
-            f"Total: {calc(tp):.1f} {unit}  |  Single: {calc(sc):.1f}  |  Multiple: {calc(mc):.1f}")
+            f"Total: {format_quantity(calc(tp), basis)} {unit}  |  "
+            f"Single: {format_quantity(calc(sc), basis)}  |  "
+            f"Multiple: {format_quantity(calc(mc), basis)}")
 
     def _update_table(self, ad):
         try:
@@ -1276,7 +1604,8 @@ class SingleMultipleElementDisplayDialog(QDialog):
             df = SingleMultipleElementHelper.statistics_table(
                 ad, self._multi, cfg.get('use_particles_per_ml'),
                 self.parent_window, cfg.get('dilution_factor', 1.0),
-                cfg.get('label_mode', 'Symbol'))
+                cfg.get('label_mode', 'Symbol'),
+                cfg.get('quantity_basis', 'Particle Count'))
             self.table.setRowCount(len(df))
             self.table.setColumnCount(len(df.columns))
             self.table.setHorizontalHeaderLabels(df.columns.tolist())
@@ -1340,15 +1669,17 @@ class SingleMultipleElementPlotNode(QObject):
             return None
         st = self.config.get('single_threshold', 0.5)
         mt = self.config.get('multiple_threshold', 0.5)
+        basis = normalize_quantity_basis(
+            self.config.get('quantity_basis', 'Particle Count'))
         itype = self.input_data.get('type')
         if itype == 'sample_data':
             return SingleMultipleElementHelper.analyze_particles(
-                self.input_data.get('particle_data', []), st, mt)
+                self.input_data.get('particle_data', []), st, mt, basis)
         elif itype == 'multiple_sample_data':
-            return self._extract_multi(st, mt)
+            return self._extract_multi(st, mt, basis)
         return None
 
-    def _extract_multi(self, st, mt):
+    def _extract_multi(self, st, mt, quantity_basis='Particle Count'):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
@@ -1361,7 +1692,8 @@ class SingleMultipleElementPlotNode(QObject):
         result = {}
         for sn, plist in buckets.items():
             if plist:
-                r = SingleMultipleElementHelper.analyze_particles(plist, st, mt)
+                r = SingleMultipleElementHelper.analyze_particles(
+                    plist, st, mt, quantity_basis)
                 if r:
                     result[sn] = r
         return result if result else None

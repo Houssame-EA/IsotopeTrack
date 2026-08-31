@@ -2,48 +2,62 @@
 
 All notable changes to IsotopeTrack are documented here.
 
+
 ---
+
+## v1.10.12 - 2026-08-28
+
+### What’s Changed
+
+- Dev ([#31](https://github.com/Houssame-EA/IsotopeTrack/pull/31)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Updater: download and verify the installer in-app ([#30](https://github.com/Houssame-EA/IsotopeTrack/pull/30)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Cluster: composition truth variants ([#29](https://github.com/Houssame-EA/IsotopeTrack/pull/29)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Filter upgrades done, classifier still WIP by @1nvertedProtagonist in https://github.com/Houssame-EA/IsotopeTrack/pull/20
+- Heatmap and Single/Multiple: mass and mole quantity basis ([#28](https://github.com/Houssame-EA/IsotopeTrack/pull/28)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Clustering dialog and results_AI improvements ([#27](https://github.com/Houssame-EA/IsotopeTrack/pull/27)) [@Houssame-EA](https://github.com/Houssame-EA)
+- Workflow improvements ([#25](https://github.com/Houssame-EA/IsotopeTrack/pull/25)) [@TNTY100](https://github.com/TNTY100)
+- MainWindow enum cleanup ([#22](https://github.com/Houssame-EA/IsotopeTrack/pull/22)) [@TNTY100](https://github.com/TNTY100)
+
+### Contributors
+
+@Houssame-EA and @TNTY100
+
+**Full Changelog**: [v1.10.10...v1.10.12](https://github.com/Houssame-EA/IsotopeTrack/compare/v1.10.10...v1.10.12)
 
 ## v1.10.10 — 2026-08-10
 
-
-- fixing a bug with the csv file export (need more test for some windows) 
-- rm the Qtweb engine from the app 
+- fixing a bug with the csv file export (need more test for some windows)
+- rm the Qtweb engine from the app
 - rm the dashboard form the results canvas
-- changing the cluster analysis form webengine to PyQtgraph 
-- rm the live cluster analysis 
+- changing the cluster analysis form webengine to PyQtgraph
+- rm the live cluster analysis
 - fixing some bugs in the clusters (does not effect the results just the visuals)
 - using the same algorithm in the sensitivity now in the TE Mass calibration
-- rm dead code from the TE does not effect the results 
-
+- rm dead code from the TE does not effect the results
 
 ## v1.10.9 — 2026-08-05
 
 - Fixing the cluster crash the user can only disable the GPU if the app crashes only for Windows
-- Adding color change element in the cluster analysis 
+- Adding color change element in the cluster analysis
 - Multiple sample cluster available in the cluster tab
-- Resolve some bugs 
+- Resolve some bugs
 
 ## v1.10.8 — 2026-07-29
 
 - Improve csv loading files
-- Improving the docstring information 
+- Improving the docstring information
 - Updating cluster analysis more information how the cluster work
-- Removing the components from the cluster parameters 
-- Heatmap adding SD to mass and mole fraction data 
-- Improving Insight in the results Canvas 
-
-
+- Removing the components from the cluster parameters
+- Heatmap adding SD to mass and mole fraction data
+- Improving Insight in the results Canvas
 
 ## v1.10.7 — 2026-07-17
-
 
 - Memory to the path folder
 - Updating the user guide
 - Removed the redundant display mode type in composition results node
 - Relocated histogram making stuff to shared_plot_utils instead of keeping the repetition
 - Heatmap now shows changes for when we have change the data type (bug fix)
-
 
 ## v1.10.6 — 2026-07-10
 
@@ -55,18 +69,15 @@ All notable changes to IsotopeTrack are documented here.
 
 ## v1.10.5 — 2026-06-25
 
-
 - adding preview figures and you can keep all the figures from a single node figure
 - Autosave (disable) the same for the homescreen
-- uniform some plot setting 
-- save project include all the figures in a single node 
+- uniform some plot setting
+- save project include all the figures in a single node
 - heatmap you can display SD
-- easy connection with lines 
-- if multiple windows are open and they have the user did prepared some batch samples the window that is saved will have the results from different windows 
-
+- easy connection with lines
+- if multiple windows are open and they have the user did prepared some batch samples the window that is saved will have the results from different windows
 
 ## v1.10.4 — 2026-06-22
-
 
 - major upgrades to ternary (colors, less confusion, replace hexbin)
 - small bug fixes here and there (other results types)
@@ -75,7 +86,6 @@ All notable changes to IsotopeTrack are documented here.
 - Enable opening projects via double-click.
 - Implement auto-save for minor changes; restrict large data saves.
 - Add standard "Save" and "Save As" functionality.
-
 
 ## v1.10.3 — 2026-06-17
 
@@ -95,62 +105,69 @@ All notable changes to IsotopeTrack are documented here.
 
 - Add test files for some function (need more to be added in new version)
 - Log file improve you can trace output for each window open
-- fix bug with the bundle pyarrow 
+- fix bug with the bundle pyarrow
 
 ## v1.10.1 — 2026-06-13
 
 ### New Features
+
 - "Results" button is highlighted when there are unsaved modifications
 - All application `print()` output replaced with structured logging (`logs/*.jsonl`)
 - Example datasets moved to a dedicated [GitHub release](https://github.com/Houssame-EA/IsotopeTrack/releases/tag/example-data), slimming the repository
 - Developer/build dependencies split into `requirements-dev.txt`
 - Documentation reference pages now auto-generated from source (`docs_gen.py`)
 
-
 ## v1.10.0 — 2026-06-11
 
 ### New Features
+
 - Particle filter added to the results
 - Isobaric correction module
 - Filter for non-linear peaks
 - Import multiple folders inside a main folder at once
 
 ### Improvements
+
 - Added legend to network results figure
 - Cluster results now saved with project
-
 
 ## v1.0.9 — 2026-06-09
 
 ### Bug Fixes
+
 - Fixed bugs with table parameters
 - Fixed bugs in results figures
-
 
 ## v1.0.8 — 2026-06-06
 
 ### New Features
+
 - CLI support — app can now be launched from terminal with arguments:
   - Load project files directly
   - Load Nu and TOFWERK data files
   - Select isotopes and presets via command line
   - See `tools/cli_utils.py` for details
+  
 - Isobaric correction module (still in development)
 
 ### Improvements
+
 - Improved Windows performance — replaced QTableWidget with QTableView in main window reducing lag significantly
 - Theme file moved to `tools/` for better organization
 
 ## v1.0.7 — 2026-06-01
 
 ### New Features
+
 - Cluster analysis added option to test all clustering methods at once
 
 ### Improvements
+
 - Particle concentration per mL now reported in results figures
 - UI improvements in the main window
 
 ## v1.0.6 — 2026-05-30
+
 New Features
 
 Version checker app now automatically checks for newer versions on startup
@@ -170,75 +187,94 @@ Fixed mass method — users can now select a new isotope after an initial select
 Fixed cluster visualisation bugs
 Fixed requirements
 
-
 ## 2026-05-30 (dev)
 
 ### New Features
+
 - Version checker app now automatically checks for newer versions on startup
 - Cluster analysis new metric scores added
 
 ### Improvements
+
 - Updated main window UI
 - Fixed cluster visualisation bugs
 
 ### Bug Fixes
+
 - Fixed requirements
 - Fixed memory leaks across multiple modules
 - Fixed errors and bugs in the AI results module
 
-##  2026-05-27
+## 2026-05-27
+
 ### Bug Fixes
+
 - Fixed memory leaks across multiple modules
 - Fixed errors and bugs in the AI results module
 - Fixed mass method — users can now select a new isotope after an initial selection
 
-##  2026-05-22
+## 2026-05-22
+
 Standardizes several Results plot dialogs around the four-button UI contract:Plot format settingsConfigure plot quantitiesReset layoutExport figureAlso cleans right-click menus to avoid duplicating bottom-button actions, while preserving quick toggles and isotope label controls.Implemented the feature for:-Ternary plots-Correlation Matrix-Concentration-Network-Pie Chart-Heatmap-Single/MultipleMinor rendering bug with the x axis rotation option, easy fix and will be done.Manually tested migrated plots after merging latest dev:Network, Correlation Matrix, Concentration, Heatmap, Triangle, Single/Multiple, Pie chart.
 
 ## v1.0.5 — 2026-05-22
 
 ### Bug Fixes
+
 - Fixed atomic notation rendering inconsistency across platforms
 
 ## v1.0.4 — 2026-05-21
- 
+
 ### New Features
+
 - **Window titles** — each window now displays its own name in the title bar
 - **CPLN quantiles** — implemented Compound Poisson Log-Normal quantiles from SPCal lookup table (`cpln_quantiles.npz`)
 - **Detection method info** — added additional information displayed in the detection method panel
+
 ### Bug Fixes
+
 - Fixed main window: the background bug, when the user calculate the background using window size
 - Fixed bar plot display order — elements now appear in the correct order
+
 ### Internal
+
 - Automated CI/CD pipeline for macOS and Windows builds
 - Added `version.py` to update version across all files in one command
+
 
 ---
 
 ## v1.0.3 — 2026-05-19
 
 ### Improvements
+
 - Integrated data points are now shown directly in the main window results
 - Updated cluster analysis with improved metrics
 
 ### Bug Fixes
+
 - Fixed several rendering and interaction bugs on the results canvas
+
 
 ---
 
 ## v1.0.2 — 2026-04-30
 
 ### Main Window
+
 - Full light / dark theme toggle with live switching across all dialogs and widgets
 
 ### Single-Ion Analysis (SIA)
+
 - Detection parameters now configured independently per isotope
 
 ### Export
+
 - CSV export supports multiple unit systems (ag, fg, pg, ng · amol, fmol, pmol · nm, µm)
 - Export includes additional analysis detection parameters
 
 ### Peak Detection
+
 - Added integration threshold method
 - Added midpoint and watershed separation
 - Added Aiken iterative threshold method
@@ -246,35 +282,44 @@ Standardizes several Results plot dialogs around the four-button UI contract:Plo
 - Implemented result caching — significantly reduces processing time on large datasets
 
 ### Signal Time Scan
+
 - Exclusion regions can now be defined per sample and per isotope
 
 ### Ionic Calibration
+
 - Mass range mismatches detected and reported for Nu Vitesse data
 - Individual calibration points can be excluded interactively
 
 ### Transport Rate Calibration
+
 - All three calibration tabs unified in a single window
 
 ### Results Canvas
+
 - Plot backends unified: Matplotlib and PyQtGraph for interactive plots
 - Clustering module improved with more control over distance metrics and linkage
+
 
 ---
 
 ## v1.0.1 — 2026-03-11
 
 ### New Features
+
 - Results Canvas completely redesigned with three new figures:
   - **Network** — multi-element particle relationships
   - **Concentration** — particle concentration overview
   - **Matrix** — element correlation matrix
+  
 - Intel Mac support — dedicated native bundle for Intel-based Macs (x86_64)
 - Faster project saving and loading
 
 ### Bug Fixes
+
 - Fixed multiple bugs in the Results Canvas display
 - Fixed several issues in the main window
 - Fixed Windows lag and slow response
+
 
 ---
 

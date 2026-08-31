@@ -77,7 +77,7 @@ Smart Insights for the Workflow Builder canvas.
 ### [`results_single_multiple.py`](results-single-multiple.md)
 Single vs Multiple Element Analysis Node – Pie charts & heatmaps.
 
-**6** classes &nbsp;·&nbsp; **0** functions &nbsp;·&nbsp; **44** methods
+**6** classes &nbsp;·&nbsp; **5** functions &nbsp;·&nbsp; **44** methods
 
 ### [`results_triangle.py`](results-triangle.md)
 Ternary Plot Node — full-figure view with right-click context menu.
