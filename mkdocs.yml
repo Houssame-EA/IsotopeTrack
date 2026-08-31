@@ -87,6 +87,7 @@ markdown_extensions:
 nav:
 - Home: index.md
 - Changelog: changelog.md
+- Particle Classifier Guide: particle-classifier-guide.md
 - Entry Points:
     - Overview: entry_points/index.md
     - "Run.py": entry_points/run.md
@@ -134,6 +135,7 @@ nav:
     - "shared_plot_utils.py": canvas_shared/shared-plot-utils.md
     - "shared_annotation.py": canvas_shared/shared-annotation.md
     - "utils_sort.py": canvas_shared/utils-sort.md
+    - "classifier_view.py": canvas_shared/classifier-view.md
 - Results:
     - Overview: results/index.md
     - "results_AI.py": results/results-ai.md

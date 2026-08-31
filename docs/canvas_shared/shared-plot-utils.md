@@ -51,7 +51,7 @@ config swapped in; everything else delegates to the real node.
 | `_with_view_config` | `(self, func)` | Wrap a node method so it runs against this view's config. |
 | `extract_plot_data` | `(self, *args, **kwargs)` | Run the node's extraction with this view's config swapped in. |
 | `new_figure` | `(self)` | Spawn another independent figure for the same node. |
-| `__getattr__` | `(self, name)` | Delegate to the node, applying this view's config to extractions. |
+| `__getattr__` | `(self, name)` | Delegate to the node, applying this view's config where it matters. |
 
 ### `MplDraggableCanvas` *(extends `_FigureCanvasBase`)*
 
@@ -235,9 +235,11 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `_figure_alive` | `(dlg)` | Return True if the dialog's underlying C++ object still exists. |
 | `capture_figure_thumbnail` | `(node, dlg)` | Grab a small snapshot of the figure's plot for the node hover preview. |
 | `_connect_thumb_refresh` | `(node, dlg)` | Re-capture the thumbnail (debounced) whenever the figure changes. |
+| `maybe_warn_classifier_wip` | `(node, parent=None)` | Tell the user once that this node ignores an attached classifier. |
 | `show_persistent_figure` | `(node, factory, _parent_window=None)` | Open a node's figure, reusing one window and hiding (not killing) it. |
 | `prime_figure_thumbnail` | `(node, factory)` | Build a figure off-screen once so its hover thumbnail exists before the |
 | `_finish_prime` | `(node, dlg)` | Capture the primed thumbnail, then keep the window hidden + ready. |
+| `view_config_method` | `(func)` | Mark a node method as config-derived, so a per-figure view computes it |
 | `_connect_view_thumb_refresh` | `(view, dlg)` |  |
 | `capture_view_thumbnail` | `(view)` | Grab a thumbnail for one figure view (and mirror to the node). |
 | `_open_view` | `(view)` | Show a figure view's window, creating it on first open. |

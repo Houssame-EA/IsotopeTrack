@@ -452,6 +452,7 @@ AI sparkle icon.
 | `add_link` | `(self, src_node, src_ch, snk_node, snk_ch)` |  |
 | `_trigger_data_flow` | `(self, wl)` |  |
 | `flush_data_flow` | `(self)` | Push each node's output to its sinks exactly once, sources first. |
+| `_flush_data_flow_inner` | `(self)` | The topological push itself; see :meth:`flush_data_flow`. |
 | `contextMenuEvent` | `(self, event)` | Right-click on empty canvas space → canvas context menu. |
 | `mousePressEvent` | `(self, event)` |  |
 | `mouseMoveEvent` | `(self, event)` |  |
