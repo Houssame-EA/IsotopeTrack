@@ -514,3 +514,140 @@ class TestOnboarding:
 
         pcn.maybe_show_classifier_onboarding(None)
         assert _FakeOnboardingBox.exec_calls == 1  # second call suppressed
+
+
+# --------------------------------------------------------------------------- #
+# Downstream propagation — an upstream change must reach the plots
+# --------------------------------------------------------------------------- #
+def _multi_sample(n):
+    """A ``multiple_sample_data`` dict carrying ``n`` distinct samples."""
+    names = [f'S{i+1}' for i in range(n)]
+    parts = []
+    for nm in names:
+        for k in range(12):
+            parts.append({'elements': {'66Zn': 10.0 + k, '208Pb': 5.0 + k,
+                                       '56Fe': 7.0 + k},
+                          'element_mass_fg': {'66Zn': 100.0, '208Pb': 50.0,
+                                              '56Fe': 70.0},
+                          'source_sample': nm})
+    return {'type': 'multiple_sample_data', 'sample_names': names,
+            'particle_data': parts,
+            'selected_isotopes': [{'label': x} for x in
+                                  ('66Zn', '208Pb', '56Fe')]}
+
+
+class TestClassifierPropagatesDownstream:
+    """The classifier was the ONE data-transforming node in the app whose
+    node item connected ``configuration_changed`` to a repaint only, never to
+    a downstream push -- every sample selector and the Particle Filter push;
+    only the terminal sinks (viz, AI assistant) legitimately stop at a
+    repaint.
+
+    Consequence, reported in manual QA 2026-08-31: change the source from 4
+    samples to 3 and a downstream correlation matrix kept rendering 4
+    subplots, and kept doing so after the figure was closed and reopened,
+    because the sink's ``input_data`` was never replaced.
+
+    The push is debounced onto a 0 ms singleShot, so these tests must spin
+    the event loop; asserting in the same turn measures the timer, not the
+    behaviour.
+    """
+
+    def _wire(self, cw, n_initial):
+        """classifier -> correlation matrix, data present BEFORE the link so
+        the sink legitimately starts out holding ``n_initial`` samples."""
+        from tools.particle_classifier_node import (
+            ParticleClassifierNode, new_definition_id)
+        from results.results_matrix import CorrelationMatrixNode
+        scene = cw.EnhancedCanvasScene(parent_window=None)
+        clf = ParticleClassifierNode()
+        clf.definitions = [
+            {'id': new_definition_id(), 'target_sample': 'S1',
+             'expression_text': '66Zn', 'match_mode': 'partial',
+             'group_name': 'tirewear', 'color': '#E11D48'}]
+        clf.groups = {'tirewear': '#E11D48'}
+        clf.unmatched_mode = 'unclassified'
+        mat = CorrelationMatrixNode()
+        scene.add_node(clf, cw.QPointF(0, 0))
+        scene.add_node(mat, cw.QPointF(200, 0))
+        clf.process_data(_multi_sample(n_initial))
+        assert scene.add_link(clf, 'output', mat, 'input') is not None
+        return scene, clf, mat
+
+    @staticmethod
+    def _names(node):
+        return list((node.input_data or {}).get('sample_names') or [])
+
+    def test_upstream_sample_change_reaches_the_sink(self, cw, qapp):
+        scene, clf, mat = self._wire(cw, 4)
+        assert self._names(mat) == ['S1', 'S2', 'S3', 'S4']
+        clf.process_data(_multi_sample(3))
+        qapp.processEvents()
+        assert self._names(mat) == ['S1', 'S2', 'S3']
+
+    def test_burst_of_pushes_collapses_to_one_relabel(self, cw, qapp):
+        """The relabel is expensive, so several emissions in one turn must
+        coalesce -- and the sink must still end on the LAST payload."""
+        scene, clf, mat = self._wire(cw, 4)
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        for k in (4, 3, 4, 2):
+            clf.process_data(_multi_sample(k))
+        qapp.processEvents()
+        assert len(calls) == 1, len(calls)
+        assert self._names(mat) == ['S1', 'S2']
+
+    def test_no_auto_push_while_data_flow_is_suppressed(self, cw, qapp):
+        """Guards the project-load hang that made this connection be removed
+        in the first place: during bulk link restore a single
+        ``flush_data_flow`` pass does the work, and pushing per arriving
+        payload would re-run the whole chain once per link."""
+        scene, clf, mat = self._wire(cw, 4)
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        scene._suppress_data_flow = True
+        try:
+            clf.process_data(_multi_sample(3))
+            qapp.processEvents()
+        finally:
+            scene._suppress_data_flow = False
+        assert calls == []
+
+    def test_flush_delivers_without_double_pushing(self, cw, qapp):
+        """flush_data_flow already walks the chain topologically, so the
+        auto-push must not queue a second pass behind it."""
+        scene, clf, mat = self._wire(cw, 4)
+        clf.process_data(_multi_sample(3))
+        qapp.processEvents()
+        calls = []
+        orig = clf.get_output_data
+        clf.get_output_data = lambda: (calls.append(1), orig())[1]
+        scene.flush_data_flow()
+        qapp.processEvents()
+        assert len(calls) == 1, len(calls)
+        assert self._names(mat) == ['S1', 'S2', 'S3']
+
+    def test_every_transforming_node_item_pushes_downstream(self):
+        """Regression guard on the asymmetry itself. If a new transforming
+        node item is added without downstream wiring, this fails rather than
+        waiting for someone to notice a stale plot."""
+        import re, io
+        wired, sinks = [], {'VizIconNodeItem', 'AIAssistantNodeItem'}
+        for path in ('widget/canvas_widgets.py', 'tools/particle_filter.py',
+                     'tools/particle_classifier_node.py'):
+            lines = io.open(path, encoding='utf-8').read().split('\n')
+            hits = [(i, m.group(1)) for i, l in enumerate(lines)
+                    for m in [re.match(
+                        r'\s*class (\w+)\((?:[^)]*NodeItem[^)]*)\):', l)] if m]
+            for idx, (ln, name) in enumerate(hits):
+                end = hits[idx + 1][0] if idx + 1 < len(hits) else len(lines)
+                body = '\n'.join(lines[ln:end])
+                pushes = ('configuration_changed.connect(self._trigger)' in body
+                          or 'configuration_changed.connect('
+                             'self._schedule_downstream_push)' in body)
+                wired.append((name, pushes))
+        missing = [n for n, p in wired if not p and n not in sinks]
+        assert not missing, f"transforming node items with no downstream push: {missing}"
+        assert any(n == 'ParticleClassifierNodeItem' and p for n, p in wired)

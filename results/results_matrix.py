@@ -422,7 +422,8 @@ def build_mixed_columns(particles, isotopes, groups, data_key, scope):
     return columns, contributing
 
 
-def triviality_masks(labels, isotopes, groups, contributing, scope=None):
+def triviality_masks(labels, isotopes, groups, contributing, scope=None,
+                     zero_mode=None):
     """``(exact, partial)`` NxN bool masks for a mixed-vocabulary matrix.
 
     Marks correlations that are arithmetic rather than evidence, so a
@@ -441,15 +442,31 @@ def triviality_masks(labels, isotopes, groups, contributing, scope=None):
     The leading diagonal is not included here; ``_draw_matrix_ax`` always
     adds it, with or without a classifier.
 
-    **group x group under TOTAL PARTICLE is exact by construction.** In that
-    scope a group's value for a particle is the sum of EVERY isotope that
-    particle carries -- which does not depend on which group is asking. So
-    for any particle belonging to two groups at once, both columns hold the
-    identical number and the pair correlates at exactly 1. This only becomes
-    visible once ``double_count`` lets a particle occupy two groups, and it
-    is emphatically not a finding, so it is marked rather than reported.
+    **group x group under TOTAL PARTICLE depends on the ZERO MODE too.** In
+    that scope a group's value for a particle is the sum of EVERY isotope
+    that particle carries -- which does not depend on which group is asking.
+    So for any particle belonging to two groups at once, both columns hold
+    the identical number. What that implies for the cell splits by which
+    particles the pair is correlated over:
+
+    - **both-present** -- the pair is correlated over exactly the rows where
+      both columns are nonzero, i.e. exactly the rows where they are
+      identical. The two columns ARE the same vector there and r is 1 every
+      time. Nothing is being measured, so the value is replaced (*exact*).
+    - **either-present / all** -- the rows where a particle belongs to one
+      group but not the other are back in, and there the columns differ. r
+      is no longer pinned to 1: it becomes a real co-occurrence measure,
+      which is precisely what those modes exist to expose (see the
+      ``ZERO_MODE_*`` note on r drifting from co-variation toward
+      co-occurrence). It is still inflated by construction on the shared
+      rows, so it is annotated rather than replaced (*partial*). Marking it
+      exact would blank a genuine finding -- most starkly under ``priority``
+      overlap, where two mutually exclusive groups anti-correlate strongly
+      and that number is the whole point. (Bug found in manual QA,
+      2026-08-26.)
+
     Under BY DEFINITION the two groups sum different isotope sets, so the
-    same cell IS informative and is left unmarked.
+    cell is informative in every zero mode and is left unmarked entirely.
 
     Args:
         labels (list): Ordered axis labels (isotopes then groups).
@@ -458,6 +475,10 @@ def triviality_masks(labels, isotopes, groups, contributing, scope=None):
         contributing (dict): ``{group: set(isotopes that fed its value)}``.
         scope (str | None): ``classifier_view.SCOPE_*`` in force; needed
             because whether group x group is tautological depends on it.
+        zero_mode (str | None): ``ZERO_MODE_*`` in force; needed because
+            whether that tautology actually BINDS depends on whether the
+            non-overlapping rows are in the correlation. Defaults to the
+            historical both-present rule.
     """
     from results import classifier_view as cv
     n = len(labels)
@@ -468,11 +489,14 @@ def triviality_masks(labels, isotopes, groups, contributing, scope=None):
     index = {lbl: k for k, lbl in enumerate(labels)}
 
     if scope == cv.SCOPE_TOTAL_PARTICLE:
+        # Only the both-present rule pins the pair to 1; the wider modes
+        # leave a real number that must survive to the screen.
+        gxg = exact if (zero_mode or ZERO_MODE_BOTH) == ZERO_MODE_BOTH else partial
         for a in groups:
             for b in groups:
                 ia, ib = index.get(a), index.get(b)
                 if ia is not None and ib is not None and ia != ib:
-                    exact[ia, ib] = True
+                    gxg[ia, ib] = True
     for g in groups:
         fed_by = contributing.get(g) or set()
         gi = index.get(g)
@@ -1044,6 +1068,13 @@ class CorrelationMatrixDisplayDialog(QDialog):
         under ``priority`` overlap mode never happens -- every particle lands
         in exactly one bucket. That is a property of the classifier's
         settings, not a failure here, so it is stated plainly.
+
+        The emptiness is conditional on the zero mode, though: "both present"
+        correlates a pair only over particles carrying both, and under
+        ``priority`` there are none. Widen to either-present or all and the
+        region populates -- with a strong ANTI-correlation, since membership
+        is mutually exclusive -- so claiming it is empty would contradict the
+        grid the user is looking at.
         """
         from results import classifier_view as cv
         groups = info.get('groups') or []
@@ -1054,6 +1085,10 @@ class CorrelationMatrixDisplayDialog(QDialog):
             return ""
         if cv.is_double_count(self.node.input_data):
             return ""
+        if info.get('zero_mode', ZERO_MODE_BOTH) != ZERO_MODE_BOTH:
+            return ("group x group shows mutual exclusion under 'priority' "
+                    "overlap: no particle is in two groups, so with zeros "
+                    "included the groups anti-correlate by construction")
         return ("group x group is empty under 'priority' overlap: a particle "
                 "belongs to one group only, so no two groups ever co-occur")
 
@@ -1480,12 +1515,16 @@ class CorrelationMatrixNode(QObject):
             if mat is None:
                 return None
             exact, partial = triviality_masks(
-                labels, isotopes, groups, contributing, scope)
+                labels, isotopes, groups, contributing, scope, zero_mode)
             return {'elements': labels, 'matrix': mat, 'p_matrix': p_mat,
                     'pair_counts': counts, 'min_particles': min_particles,
                     'n_particles': len(particles),
                     'exact_trivial': exact, 'partial_trivial': partial,
                     'groups': groups, 'isotopes': isotopes,
+                    # Carried so the explanatory note can describe the matrix
+                    # that was ACTUALLY computed -- "group x group is empty
+                    # under priority" only holds under the both-present rule.
+                    'zero_mode': zero_mode,
                     'groups_dropped': bool(data_key in _UNSUMMABLE_KEYS
                                            and cv.bucket_registry(self.input_data))}
 

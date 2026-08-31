@@ -327,6 +327,122 @@ class TestDoubleCountRecombination:
         assert 'priority' in dlg._header.text()
 
 
+class TestGroupByGroupTrivialityFollowsZeroMode:
+    """The group x group tautology under TOTAL PARTICLE only BINDS under the
+    both-present rule, and the mask must say so.
+
+    Found in manual QA 2026-08-26. The mask was unconditional on scope alone,
+    so widening the zero mode replaced a real number with a bare marker --
+    silent on-screen data loss, and in the actively misleading direction:
+    the wider modes exist precisely to measure CO-OCCURRENCE, and group x
+    group is the cell that measures it.
+    """
+
+    def _view(self, qapp, overlap, zero_mode, scope=cv.SCOPE_TOTAL_PARTICLE):
+        from results.results_matrix import ZERO_MODE_CONFIG_KEY
+        node = CorrelationMatrixNode()
+        node.process_data(_classified_stream(overlap=overlap))
+        view = _FigureView(node, CorrelationMatrixDisplayDialog, None)
+        view.config['min_particles'] = 2
+        view.config[cv.ROLE_CONFIG_KEY] = cv.ROLE_SERIES
+        view.config[cv.SCOPE_CONFIG_KEY] = scope
+        view.config[ZERO_MODE_CONFIG_KEY] = zero_mode
+        return view
+
+    def _gxg(self, view):
+        data = view.extract_matrix_data()
+        e = data['elements']
+        i, j = e.index('common'), e.index('carney')
+        return data, i, j
+
+    def test_both_present_still_replaces_the_tautology(self, qapp):
+        """The original behaviour is the one case that was always right: the
+        pair is correlated over exactly the rows where the columns are
+        identical, so r is pinned to 1 and carries nothing."""
+        data, i, j = self._gxg(
+            self._view(qapp, 'double_count', ZERO_MODE_BOTH))
+        assert abs(data['matrix'][i, j] - 1.0) < 1e-9
+        assert data['exact_trivial'][i, j]
+        assert not data['partial_trivial'][i, j]
+
+    @pytest.mark.parametrize('zero_mode', [ZERO_MODE_EITHER, ZERO_MODE_ALL])
+    def test_wider_modes_annotate_instead_of_replacing(self, qapp, zero_mode):
+        """Rows where a particle is in one group but not the other come back
+        in, the columns stop being identical, and r stops being 1 -- so the
+        number must survive. Still annotated: the shared rows remain
+        identical, so it is inflated by construction."""
+        data, i, j = self._gxg(
+            self._view(qapp, 'double_count', zero_mode))
+        r = data['matrix'][i, j]
+        assert not np.isnan(r)
+        assert abs(r - 1.0) > 1e-6, "r must no longer be pinned to 1"
+        assert not data['exact_trivial'][i, j], "value must not be replaced"
+        assert data['partial_trivial'][i, j], "but it IS still contaminated"
+
+    def test_priority_anti_correlation_reaches_the_screen(self, qapp):
+        """The starkest case. Under ``priority`` the groups are mutually
+        exclusive, so with zeros included they anti-correlate strongly --
+        a real, interesting result that was being blanked to a bare '*'."""
+        view = self._view(qapp, 'priority', ZERO_MODE_EITHER)
+        data, i, j = self._gxg(view)
+        r = data['matrix'][i, j]
+        assert not np.isnan(r)
+        assert r < -0.3, r
+        assert not data['exact_trivial'][i, j]
+        dlg = CorrelationMatrixDisplayDialog(view, None)
+        dlg._refresh()
+        # Read what is DRAWN, not just the mask -- masks have been right here
+        # while the screen was wrong.
+        texts = _cell_texts(dlg)
+        assert f'{r:.2f}{TRIVIALITY_MARKER}' in texts, sorted(set(texts))
+
+    def test_by_definition_is_unmarked_in_every_zero_mode(self, qapp):
+        """Scope still decides first: different isotope sets are summed, so
+        the cell is informative however the zeros are handled."""
+        for zm in (ZERO_MODE_BOTH, ZERO_MODE_EITHER, ZERO_MODE_ALL):
+            data, i, j = self._gxg(self._view(
+                qapp, 'double_count', zm, scope=cv.SCOPE_DEFINITION))
+            assert not data['exact_trivial'][i, j], zm
+            assert not data['partial_trivial'][i, j], zm
+
+    def test_isotope_by_group_marking_is_unaffected(self, qapp):
+        """Part-whole contamination is a property of the sum, not of which
+        particles the pair is correlated over -- it must not move."""
+        for zm in (ZERO_MODE_BOTH, ZERO_MODE_EITHER, ZERO_MODE_ALL):
+            view = self._view(qapp, 'double_count', zm)
+            data = view.extract_matrix_data()
+            e = data['elements']
+            assert data['partial_trivial'][e.index('27Al'), e.index('common')], zm
+
+    def test_empty_note_is_not_claimed_when_the_region_populates(self, qapp):
+        """``_group_note`` said group x group is empty under 'priority'. With
+        zeros included it is not empty, so the note would contradict the grid
+        the user is looking at."""
+        view = self._view(qapp, 'priority', ZERO_MODE_EITHER)
+        dlg = CorrelationMatrixDisplayDialog(view, None)
+        dlg._refresh()
+        header = dlg._header.text()
+        assert 'is empty' not in header, header
+        assert 'mutual' in header or 'anti-correlate' in header, header
+
+    def test_empty_note_is_still_shown_under_both_present(self, qapp):
+        """And the original note must survive where it is still true."""
+        view = self._view(qapp, 'priority', ZERO_MODE_BOTH)
+        dlg = CorrelationMatrixDisplayDialog(view, None)
+        dlg._refresh()
+        assert 'empty' in dlg._header.text()
+
+    def test_non_classifier_matrices_are_untouched(self, view_and_dialog):
+        """No groups means no masks at all, in any zero mode -- this fix must
+        not reach an ordinary isotope matrix."""
+        from results.results_matrix import ZERO_MODE_CONFIG_KEY
+        view, _ = view_and_dialog
+        for zm in (ZERO_MODE_BOTH, ZERO_MODE_EITHER, ZERO_MODE_ALL):
+            view.config[ZERO_MODE_CONFIG_KEY] = zm
+            data = view.extract_matrix_data()
+            assert 'exact_trivial' not in data, zm
+
+
 class TestPartWholeMasks:
     def test_total_particle_marks_every_contributing_isotope(self, classified):
         view, _ = classified

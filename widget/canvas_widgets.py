@@ -4707,7 +4707,23 @@ class EnhancedCanvasScene(QGraphicsScene):
         to all its sinks, instead of add_link's per-link recompute. Ordered
         so a node is processed after the nodes feeding it, so each level's
         input is populated before it computes.
+
+        Runs with ``_suppress_data_flow`` set for its whole duration. The
+        ``process_data`` calls below make each node emit
+        ``configuration_changed``, and nodes that auto-forward on that signal
+        (see ``ParticleClassifierNodeItem._schedule_downstream_push``) would
+        otherwise queue a second, redundant push of the chain this pass is
+        already walking in topological order.
         """
+        prev_suppress = self._suppress_data_flow
+        self._suppress_data_flow = True
+        try:
+            self._flush_data_flow_inner()
+        finally:
+            self._suppress_data_flow = prev_suppress
+
+    def _flush_data_flow_inner(self):
+        """The topological push itself; see :meth:`flush_data_flow`."""
         # Kahn topological order over the workflow graph.
         nodes = list(self.workflow_nodes)
         indeg = {n: 0 for n in nodes}
