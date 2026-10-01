@@ -5173,7 +5173,8 @@ def validate_classifier_link(src_node, snk_node):
         if not is_allowed_upstream(getattr(src_node, 'node_type', None)):
             return (
                 "Particle Classifier can only accept input from a "
-                "Particle Filter, Single Sample, or Multiple Sample node.")
+                "Particle Filter, Single Sample, Multiple Sample node, or "
+                "Particle Viewer.")
     if getattr(src_node, 'node_type', None) == "particle_classifier":
         snk_type = getattr(snk_node, 'node_type', None)
         if not is_allowed_downstream(snk_type, _VIZ_NODE_TYPES):

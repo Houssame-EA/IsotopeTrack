@@ -2,19 +2,29 @@
 This node enables the viewing of individual particle values as a tree/json
 format.
 
-TODO: Should we enable users to modify directly in this ndoe.
+TODO:
+    Resizing of the window. Right now it's clanky.
+TODO:
+    Make it respect the single responsibility principle.
+TODO:
+    "Filters" the user should be able to :
+    * Add and remove fields
+    * Filter particles based on value
+    * The filter should give number previews (similar to filter already there)
+    * Filters should be saved as configs
+TODO:
+    Nice to have, particle matcher using start/end time with the sample to
+    see how they change.
+TODO: Export to JSON or CSV
 """
 from __future__ import annotations
 
-import keyword
 from dataclasses import dataclass
-from typing import Any, Hashable, Optional
+from typing import Any
 
 from PySide6.QtCore import Signal, QAbstractItemModel, QObject, QPersistentModelIndex, QModelIndex, Qt
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QDialog, QWidget, QVBoxLayout, QTreeView
-
-from results import results_reader
 
 DEFAULT_CONFIG = {}
 
@@ -29,9 +39,9 @@ class ParticleViewerNode(QObject):
         self.node_type = "particle_viewer"
         self.position = None
         self._has_input = True
-        self._has_ouput = False  # TODO: Change this to true because we want observability
+        self._has_output = True
         self.input_channels = ["input"]
-        self.output_channels = []  # TODO: Maybe try this
+        self.output_channels = ["output"]
         self.config = dict(DEFAULT_CONFIG)
         self.input_data = None
 
@@ -55,6 +65,8 @@ class ParticleViewerNode(QObject):
         if not self.input_data:
             return []
         return self.input_data.get('particle_data', [])
+    def get_output_data(self):
+        return self.input_data
 
 
 @dataclass
@@ -147,7 +159,7 @@ class ParticleModel(QAbstractItemModel):
               parent: QModelIndex | QPersistentModelIndex = QModelIndex()
               ) -> QModelIndex:
         if not self.hasIndex(row, column, parent):
-            return QModelIndex()  # TODO: check if that's it
+            return QModelIndex()
 
         parent_item: ParticleModelItem | ParticleModelRootItem | ParticleModelLeafItem = (
             self.get_item(parent)
