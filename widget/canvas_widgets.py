@@ -21,6 +21,7 @@ import numpy as np
 from collections import deque
 from pathlib import Path
 
+from results.results_particle_viewer import ParticleViewerDialog, ParticleViewerNode
 from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
     ElementCompositionDisplayDialog, ElementCompositionPlotNode,
@@ -3773,6 +3774,11 @@ NetworkDiagramNodeItem = _make_viz_icon_node(
     ("#14B8A6", "#0F766E"), "fa6s.diagram-project", "Network",
     NetworkDisplayDialog, multi_figure=True)
 
+ParticleViewerNodeItem = _make_viz_icon_node(
+    ("#FF0000", "#FF9C9C"), "fa6s.magnifying-glass-arrow-right", "Particle Viewer",
+    ParticleViewerDialog, multi_figure=False
+)
+
 
 class AIAssistantNodeItem(NodeItem):
     """AI sparkle icon."""
@@ -3980,6 +3986,13 @@ class NodePalette(QWidget):
         ag.addWidget(b)
         self._all_buttons.append((b, "AI Data Assistant"))
         cl.addWidget(ag)
+
+        debug_section = _CollapsibleGroup("DEBUGING")
+        particle_viewer_btn = DraggableNodeButton("Particle Viewer", "particle_viewer",
+                                                  "fa6s.magnifying-glass-arrow-right", "#FF0000")
+
+        debug_section.addWidget(particle_viewer_btn)
+        cl.addWidget(debug_section)
 
         cl.addStretch()
         scroll.setWidget(content)
@@ -5093,6 +5106,7 @@ _NODE_FACTORIES = {
     "correlation_matrix":           CorrelationMatrixNode,
     "concentration_comparison":     ConcentrationComparisonNode,
     "network_diagram":              NetworkDiagramNode,
+    "particle_viewer":              ParticleViewerNode,
 }
 
 _NODE_ITEM_MAP = {
@@ -5117,6 +5131,7 @@ _NODE_ITEM_MAP = {
     "correlation_matrix":           CorrelationMatrixNodeItem,
     "concentration_comparison":     ConcentrationComparisonNodeItem,
     "network_diagram":              NetworkDiagramNodeItem,
+    "particle_viewer":              ParticleViewerNodeItem,
 }
 
 #: Every Visualization-category node type (mirrors the palette's
@@ -5130,6 +5145,7 @@ _VIZ_NODE_TYPES = frozenset({
     "heatmap_plot", "molar_ratio_plot", "isotopic_ratio_plot",
     "triangle_plot", "single_multiple_element_plot", "clustering_plot",
     "correlation_matrix", "concentration_comparison", "network_diagram",
+    "particle_viewer",
 })
 
 
