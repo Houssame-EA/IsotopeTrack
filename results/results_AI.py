@@ -760,7 +760,7 @@ def _extract_element_per_ml(particles, dc):
     default_sample = (dc or {}).get('sample_name', 'Sample')
     out = {}
     for p in particles:
-        sn = p.get('source_sample', default_sample)
+        sn = p.get('source_sample', default_sample) # TODO!: Already source_sample
         f = _factor(sn)
         if f <= 0:
             continue
@@ -789,7 +789,7 @@ def _extract_by_sample(particles, dc):
     names = dc.get('sample_names', [])
     bs = {}
     for p in particles:
-        src = p.get('source_sample', p.get('_source_sample', ''))
+        src = p.get('source_sample', p.get('_source_sample', '')) # TODO: only keep source_sample
         if src: bs.setdefault(src, []).append(p)
     ordered = {}
     for n in names:
@@ -1030,7 +1030,7 @@ show_table(['Element','N','% total','Diam mean','Diam median','Diam p95','Mass m
             'element_diameter_nm':{k:round(v,2) for k,v in p.get('element_diameter_nm',{}).items() if _safe_positive(v)},
             'mass_percentages':  {k: round(v,2) for k,v in p.get('mass_percentages',{}).items() if _safe_positive(v)},
             'totals':            {k: round(v,4) for k,v in p.get('totals',{}).items() if _safe_positive(v)},
-            'source_sample':     p.get('source_sample', p.get('_source_sample', '')),
+            'source_sample':     p.get('source_sample', p.get('_source_sample', '')), # TODO: only keep source_sample
         }
         ctx += f"\n[{label} — index {idx}]\n{json.dumps(compact, indent=2, default=str)}\n"
 

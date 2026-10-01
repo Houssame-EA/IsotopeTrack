@@ -1999,7 +1999,7 @@ class PeakDetection:
                 {sample_name: main_window.element_thresholds[sample_name]},
                 main_window.parameters_table,
             )
-            main_window.sample_particle_data[sample_name] = updated_multi_element_particles
+            main_window.sample_particle_data[sample_name] = updated_multi_element_particles  # TODO: add source_sample here
 
         except (KeyError, ValueError, IndexError) as e:
             _itk_log.exception("Handled exception in merge_detection_results")
@@ -2259,7 +2259,7 @@ class PeakDetection:
 
                             main_window.sample_detected_peaks[sample_name] = result['detected_peaks']
                             main_window.sample_results_data[sample_name] = result['results_data']
-                            main_window.sample_particle_data[sample_name] = temp_multi_element_particles.copy()
+                            main_window.sample_particle_data[sample_name] = temp_multi_element_particles.copy()  # TODO: add source_sample here
                             main_window.element_thresholds[sample_name] = result['thresholds']
 
                             if sample_name == main_window.current_sample:

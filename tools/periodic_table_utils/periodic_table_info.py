@@ -2,6 +2,7 @@
 This file contains a readonly service (info) for periodic table data.
 """
 from enum import StrEnum, auto
+from functools import lru_cache
 from typing import Optional
 
 from widget.periodic_table_widget import PeriodicTableWidget
@@ -84,3 +85,36 @@ class PeriodicTableInfo:
             a set of all elements in the periodic table.
         """
         return set(self.elements.keys())
+
+    @lru_cache(maxsize=None)
+    def get_formatted_label(self, element_key: str) -> str:
+        """
+        Get proper isotope label from element key.
+        Args:
+            element_key (str): key of the element ``<Element>-<mass>``
+                (e.g., "Au-196.9665")
+
+        Returns:
+            str: Formated isotope label (e.g., "197Au")
+        Raises:
+            ValueError: If the element key doesn't have the right two
+                part format or if the float part of the string is
+                invalid.
+        """
+        element, mass = element_key.split('-')
+
+        mass = float(mass)
+
+        element_data = self.get_element_by_symbol(element)
+
+        if element_data:
+            isotope = next((iso
+                            for iso in element_data['isotopes']
+                            if isinstance(iso, dict)
+                            and abs(iso['mass'] - mass) < 0.001), None)
+            if isotope:
+                formatted_label = isotope['label']
+                return formatted_label
+
+        formatted_label = f"{round(mass)}{element}"
+        return formatted_label
