@@ -91,7 +91,6 @@ class ParticleModel(QAbstractItemModel):
 
     def __init__(self, /, particle_data: list, parent: QObject | None = None):
         super().__init__(parent=parent)
-        print("ParticleModel __init__", flush=True)
         self.root_item: ParticleModelRootItem = ParticleModel._to_tree(particle_data)
 
     @staticmethod
@@ -134,7 +133,6 @@ class ParticleModel(QAbstractItemModel):
     def get_item(self,
                  index: QModelIndex | QPersistentModelIndex = QModelIndex()
                  ) -> ParticleModelRootItem | ParticleModelItem | ParticleModelLeafItem:
-        print("ParticleModel get_item", flush=True)
         if index.isValid():
             item = index.internalPointer()
             if item:
@@ -148,8 +146,6 @@ class ParticleModel(QAbstractItemModel):
               /,
               parent: QModelIndex | QPersistentModelIndex = QModelIndex()
               ) -> QModelIndex:
-        print("ParticleModel index", flush=True)
-
         if not self.hasIndex(row, column, parent):
             return QModelIndex()  # TODO: check if that's it
 
@@ -165,7 +161,6 @@ class ParticleModel(QAbstractItemModel):
         return QModelIndex()
 
     def parent(self, index: QModelIndex = QModelIndex()) -> QAbstractItemModel:
-        print("ParticleModel parent", flush=True)
         if not index.isValid():
             return QModelIndex()
 
@@ -186,7 +181,6 @@ class ParticleModel(QAbstractItemModel):
     def rowCount(self, /,
                  parent: QModelIndex | QPersistentModelIndex = QModelIndex()
                  ) -> int:
-        print("ParticleModel rowCount", flush=True)
         if parent.isValid() and parent.column() > 0:
             return 0
 
@@ -199,14 +193,11 @@ class ParticleModel(QAbstractItemModel):
                     parent: QModelIndex | QPersistentModelIndex = QModelIndex()
                     ) -> int:
         # Because of key values
-        print("ParticleModel columnCount", flush=True)
         return 2
 
     def data(self,
              index: QModelIndex | QPersistentModelIndex, /,
              role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        print("ParticleModel data", flush=True)
-
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
         particle_item = index.internalPointer()
@@ -221,7 +212,7 @@ class ParticleModel(QAbstractItemModel):
                 case 0:
                     return str(particle_item.user_key)
                 case 1:
-                    return str(particle_item.children)
+                    return ""
                 case _:
                     return None
         elif isinstance(particle_item, ParticleModelRootItem):
@@ -229,7 +220,7 @@ class ParticleModel(QAbstractItemModel):
                 case 0:
                     return "Key"
                 case 1:
-                    return str(particle_item.children)
+                    return ""
                 case _:
                     return None
         else:
@@ -238,7 +229,6 @@ class ParticleModel(QAbstractItemModel):
     def flags(self,
               index: QModelIndex | QPersistentModelIndex,
               /) -> Qt.ItemFlag:
-        print("ParticleModel flags", flush=True)
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
 
@@ -248,8 +238,6 @@ class ParticleModel(QAbstractItemModel):
                    section: int,
                    orientation: Qt.Orientation, /,
                    role: int = Qt.ItemDataRole.DisplayRole) -> Any:
-        print("ParticleModel headerData", flush=True)
-
         if role != Qt.ItemDataRole.DisplayRole or orientation != Qt.Orientation.Horizontal:
             return None
 
@@ -262,7 +250,6 @@ class ParticleModel(QAbstractItemModel):
                 return None
 
     def set_particle_data(self, particle_data: list):
-        print("ParticleModel set_particle_data", flush=True)
         self.beginResetModel()
         self.root_item = self._to_tree(particle_data)
         self.endResetModel()
@@ -275,7 +262,6 @@ class ParticleViewerSettingsDialog(QDialog):
 class ParticleViewerDialog(QDialog):
     def __init__(self, /, node: ParticleViewerNode, parent: QWidget | Any = None):
         super().__init__(parent=parent)
-        print("ParticleViewerDialog __init__", flush=True)
         self.node = node
         self.setWindowTitle("Particle Data Viewer")
 
@@ -290,13 +276,11 @@ class ParticleViewerDialog(QDialog):
         self.node.configuration_changed.connect(self._refresh)
 
     def showEvent(self, event: QShowEvent, /) -> None:
-        print("ParticleViewerDialog showEvent", flush=True)
         super().showEvent(event)
         if self._initial_refresh_pending:
             self._initial_refresh_pending = False
 
     def _build_ui(self):
-        print("ParticleViewerDialog _build_ui", flush=True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.addWidget(self.tree_view)
@@ -307,5 +291,4 @@ class ParticleViewerDialog(QDialog):
         pass
 
     def _refresh(self):
-        print("ParticleViewerDialog refresh", flush=True)
         self.tree_model.set_particle_data(self.node.extract_data())
