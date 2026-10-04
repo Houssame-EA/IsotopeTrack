@@ -2024,7 +2024,7 @@ if _QT_OK:
     _BEST_ROW_COLOR = QColor("#57CB3A")
 
     class _RangeBuilder(QWidget):
-        """A from / to / step selector for one numeric sweep parameter.
+        """A from / to / step selector, or an explicit list, for one parameter.
 
         The sweep tests every value the range produces; the values themselves
         are not displayed, only the bounds and the step (default derived from
@@ -2034,6 +2034,27 @@ if _QT_OK:
         defaulting to 3. Tolerances and regularisation terms live at 1e-6 or
         below and would round to a flat zero at three decimals, which is not a
         value any estimator accepts.
+
+        A from/to/step range is evenly spaced, which suits a cluster count
+        swept one at a time but not a parameter whose effect is multiplicative.
+        A neighbourhood radius, a merge threshold, a covariance regulariser and
+        a perplexity all act on scale: the interesting values are spread over
+        orders of magnitude, so the useful samples are 0.5, 1, 2, 5, 10, 20
+        rather than anything a constant step produces. Reaching 20 from 0.5 by
+        a step small enough to resolve the bottom of that span costs tens of
+        fits per parameter, and the grid is multiplicative, so that waste is
+        paid again for every other parameter and every preprocessing pipeline
+        in the sweep. The practical outcome is a range chosen narrow enough to
+        stay affordable, which then samples one decade and silently leaves the
+        rest of the parameter untested.
+
+        The ``values`` field accepts an explicit comma- or space-separated list
+        and takes precedence over the range whenever it parses to at least one
+        number in the spec's bounds, so a log-spaced set can be entered
+        directly. Values outside the bounds, and text that is not a number, are
+        ignored rather than rejected, which keeps a half-typed entry from
+        blocking the dialog; an empty field falls back to the range, so the
+        existing behaviour is unchanged for anyone who does not use it.
         """
 
         def __init__(self, spec, parent=None):
@@ -2072,13 +2093,19 @@ if _QT_OK:
             self.f_from.setValue(defaults[0])
             self.f_to.setValue(defaults[-1])
             self.f_step.setValue(self._default_step(defaults))
+            self.f_list = QLineEdit()
+            self.f_list.setPlaceholderText("or list: 0.5, 1, 2, 5, 10")
+            self.f_list.setToolTip(
+                "Comma- or space-separated values. Overrides from/to/step "
+                "when it contains at least one number.")
+            self.f_list.setMinimumWidth(150)
             lay.addWidget(QLabel("from"))
             lay.addWidget(self.f_from)
             lay.addWidget(QLabel("to"))
             lay.addWidget(self.f_to)
             lay.addWidget(QLabel("step"))
             lay.addWidget(self.f_step)
-            lay.addStretch()
+            lay.addWidget(self.f_list, 1)
 
         def _default_step(self, sorted_defaults):
             """Return a sensible step: the smallest gap in the defaults, else 1/0.1."""
@@ -2090,8 +2117,38 @@ if _QT_OK:
                             else max(1, int(round(g))))
             return (10.0 ** -min(self._decimals, 1)) if self._is_float else 1
 
+        def _parse_list(self):
+            """Return the values typed into the list field, in the order given.
+
+            Returns:
+                list: Parsed values within the spec's bounds, duplicates
+                    removed and order preserved; empty when the field holds no
+                    usable number.
+            """
+            text = self.f_list.text().replace(',', ' ').split()
+            out = []
+            for token in text:
+                try:
+                    v = float(token)
+                except ValueError:
+                    continue
+                if not (self._min <= v <= self._max):
+                    continue
+                v = round(v, self._decimals) if self._is_float else int(round(v))
+                if v not in out:
+                    out.append(v)
+            return out
+
         def values(self):
-            """Return every value the current range produces."""
+            """Return every value this parameter should be swept over.
+
+            Returns:
+                list: The explicit list when one was typed, otherwise every
+                    value the from/to/step range produces.
+            """
+            listed = self._parse_list()
+            if listed:
+                return listed
             a, b, s = self.f_from.value(), self.f_to.value(), self.f_step.value()
             if s <= 0 or b < a:
                 return [round(a, self._decimals) if self._is_float else int(a)]
@@ -2104,13 +2161,30 @@ if _QT_OK:
             return out
 
         def set_values(self, vals):
-            """Restore from/to/step to span the given list of values."""
+            """Restore the widget so it reproduces ``vals``.
+
+            An evenly spaced set is restored as from/to/step, which keeps the
+            familiar display for cluster counts and other regular sweeps. An
+            irregular set has no such representation, so it goes into the list
+            field verbatim; coercing it to the nearest range would silently
+            hand back a different sweep than the one that was saved.
+
+            Args:
+                vals (list): The values this widget should produce.
+            """
             vals = sorted(set(vals))
             if not vals:
                 return
             self.f_from.setValue(vals[0])
             self.f_to.setValue(vals[-1])
-            self.f_step.setValue(self._default_step(vals))
+            step = self._default_step(vals)
+            self.f_step.setValue(step)
+            gaps = [b - a for a, b in zip(vals, vals[1:])]
+            even = all(abs(g - step) <= 10.0 ** -self._decimals for g in gaps)
+            if len(vals) > 1 and not even:
+                self.f_list.setText(", ".join(str(v) for v in vals))
+            else:
+                self.f_list.clear()
 
     class _ChoiceList(QWidget):
         """A horizontal checkbox group for categorical parameter options."""
