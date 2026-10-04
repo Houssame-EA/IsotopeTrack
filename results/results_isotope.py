@@ -2384,7 +2384,7 @@ class IsotopicRatioDisplayDialog(QDialog):
         if e1 not in element_data.columns or e2 not in element_data.columns:
             return None
 
-        meta_cols = [c for c in ['_source_sample', '_original_sample'] if c in element_data.columns]
+        meta_cols = [c for c in ['_source_sample', '_original_sample'] if c in element_data.columns] # TODO?: _source_sample --> source_sample
         meta_data = element_data[meta_cols]
         numeric_data = element_data.drop(columns=meta_cols)
 
@@ -2428,7 +2428,7 @@ class IsotopicRatioDisplayDialog(QDialog):
                       pd.to_numeric(df[e2], errors='coerce').astype(float)).values
 
         method = eff_cfg.get('correction_method', 'None')
-        corr_col = '_original_sample' if '_original_sample' in df.columns else '_source_sample'
+        corr_col = '_original_sample' if '_original_sample' in df.columns else '_source_sample'  # TODO?: _source_sample --> source_sample ? Inner working of the module
         if method != 'None' and corr_col in df.columns:
             sources = df[corr_col].values
             unique_sources = set(s for s in sources if s)
@@ -3235,13 +3235,13 @@ class IsotopicRatioPlotNode(QObject):
             particles = self.input_data.get('particle_data')
             df = build_element_matrix(particles, dk) if particles else None
             if df is not None:
-                sources = [p.get('source_sample', '') for p in particles]
+                sources = [p.get('source_sample', '') for p in particles] # TODO!: already source_sample
                 originals = [
                     p.get('original_sample', p.get('source_sample', ''))
                     for p in particles
                 ]
                 if len(sources) == len(df):
-                    df['_source_sample'] = sources
+                    df['_source_sample'] = sources # TODO?: _source_sample --> source_sample ? Inner working of the module
                     df['_original_sample'] = originals
             return {'element_data': df} if df is not None else None
 
@@ -3252,20 +3252,20 @@ class IsotopicRatioPlotNode(QObject):
                 return None
             grouped = {n: [] for n in names}
             for p in particles:
-                src = p.get('source_sample')
+                src = p.get('source_sample') # TODO!: already source_sample
                 if src in grouped:
                     grouped[src].append(p)
             result = {}
             for sn, plist in grouped.items():
                 df = build_element_matrix(plist, dk)
                 if df is not None:
-                    sources = [p.get('source_sample', sn) for p in plist]
+                    sources = [p.get('source_sample', sn) for p in plist] # TODO!: already source_sample
                     originals = [
                         p.get('original_sample', p.get('source_sample', sn))
                         for p in plist
                     ]
                     if len(sources) == len(df):
-                        df['_source_sample'] = sources
+                        df['_source_sample'] = sources  # TODO: _source_sample --> source_sample
                         df['_original_sample'] = originals
                     result[sn] = {'element_data': df}
             return result or None

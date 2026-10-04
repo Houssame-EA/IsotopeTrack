@@ -54,6 +54,7 @@ NODE_TYPE = "particle_classifier"
 #: Upstream node types this node accepts a link from (design §2).
 ALLOWED_UPSTREAM_TYPES = frozenset({
     "particle_filter", "sample_selector", "multiple_sample_selector",
+    "particle_viewer"
 })
 
 #: Downstream node types temporarily excluded because classifier -> this

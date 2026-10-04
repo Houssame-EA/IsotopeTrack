@@ -582,8 +582,7 @@ def _restore_metadata(mw: MainWindow, metadata):
     folder_map = metadata.get('sample_to_folder_map', {})
     mw.sample_to_folder_map = {k: Path(v) if v else v for k, v in folder_map.items()}
 
-    mw._formatted_label_cache = {}
-    mw._element_data_cache = {}
+    mw.clear_element_caches()
 
     if 'canvas_workflow' in metadata and metadata['canvas_workflow']:
         mw._pending_canvas_workflow = metadata['canvas_workflow']

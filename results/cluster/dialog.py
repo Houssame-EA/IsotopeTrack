@@ -35,7 +35,7 @@ import math
 import warnings
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.cluster.dialog")
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', append=True)
 
 from sklearn.cluster import (
     KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering,
