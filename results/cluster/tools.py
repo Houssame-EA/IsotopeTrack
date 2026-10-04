@@ -1656,6 +1656,9 @@ def run_sweep(particle_data, elements, components, *,
                 valid = labels[labels >= 0]
                 n_clusters = int(len(np.unique(valid)))
                 n_noise = int(np.sum(labels < 0))
+                sizes = sorted((int(c) for c in np.unique(valid,
+                                                          return_counts=True)[1]),
+                               reverse=True)
                 if n_clusters < min_clusters or n_clusters > max_clusters:
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
@@ -1675,6 +1678,9 @@ def run_sweep(particle_data, elements, components, *,
                     'params_str': _params_str(algo, params),
                     'n_clusters': n_clusters,
                     'n_noise': n_noise,
+                    'cluster_sizes': '|'.join(str(c) for c in sizes),
+                    'largest_cluster_frac': (round(sizes[0] / len(labels), 4)
+                                             if sizes else 0.0),
                     'runtime_s': round(elapsed, 4),
                 }
                 for m in external_metrics:
@@ -1708,6 +1714,8 @@ def run_sweep(particle_data, elements, components, *,
             'failures': failures, 'attempts': attempts,
             'n_particles': int(len(truth_labels)),
             'n_features': int(len(elements)),
+            'truth_counts_str': '|'.join(
+                f'{nm}:{truth["counts"][nm]}' for nm in truth['names']),
             'seed': SWEEP_SEED}
 
 
@@ -3553,8 +3561,29 @@ if _QT_OK:
             per-algorithm summary is recoverable, and so is the question of why
             a configuration is absent.
 
-            Four run-level columns are repeated on every row: ``n_particles``,
-            ``n_features``, ``seed`` and ``rank_by``. The first three make the
+            ``n_clusters`` counts the partition's groups but says nothing
+            about how the particles are distributed between them, and those
+            two are not interchangeable: nine balanced clusters and one
+            cluster holding almost everything beside eight stragglers both
+            report nine. The distinction is the difference between a real
+            partition and a degenerate one, and it decides how an external
+            score should be read — a high index earned on a partition whose
+            largest cluster holds most of the data is measuring the majority
+            class, not the clustering. ``cluster_sizes`` therefore records
+            every cluster's particle count, largest first, and
+            ``largest_cluster_frac`` gives the share held by the biggest one
+            as a number that can be filtered and plotted directly.
+
+            ``truth_counts`` carries the same information for the ground
+            truth, as ``name:count`` per class. Class balance is a property of
+            the dataset rather than of any fit, so it is repeated on every row
+            alongside the other run-level columns; without it a score cannot
+            be placed against the baseline a majority class already
+            guarantees, and the rare classes that motivate the measurement in
+            the first place are invisible.
+
+            Five run-level columns are repeated on every row: ``n_particles``,
+            ``n_features``, ``truth_counts``, ``seed`` and ``rank_by``. The first three make the
             file self-describing, since a sweep is usually analysed later and
             alongside others. ``rank_by`` names the metric the leaderboard was
             sorted by, which the ``rank`` column alone does not reveal — two
@@ -3583,30 +3612,36 @@ if _QT_OK:
                            [m for m in METRIC_REGISTRY if m in results[0]])
             n_particles = self._last.get('n_particles', '')
             n_features = self._last.get('n_features', '')
+            truth_counts = self._last.get('truth_counts_str', '')
             seed = self._last.get('seed', SWEEP_SEED)
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
                 w.writerow(['rank', 'status', 'reason', 'algorithm', 'data_type',
                             'scaling', 'dim_reduction', 'dr_params_str', 'params',
-                            'n_clusters', 'n_noise', 'runtime_s',
-                            'n_particles', 'n_features', 'seed', 'rank_by']
-                           + metric_cols)
+                            'n_clusters', 'n_noise', 'cluster_sizes',
+                            'largest_cluster_frac', 'runtime_s',
+                            'n_particles', 'n_features', 'truth_counts', 'seed',
+                            'rank_by'] + metric_cols)
                 for i, row in enumerate(results):
                     w.writerow([i + 1, 'ok', '', row['algorithm'],
                                 row['data_type'], row['scaling'],
                                 row['dim_reduction'],
                                 row.get('dr_params_str', ''),
                                 row['params_str'], row['n_clusters'],
-                                row['n_noise'], row['runtime_s'],
-                                n_particles, n_features, seed, rank_by]
+                                row['n_noise'], row.get('cluster_sizes', ''),
+                                row.get('largest_cluster_frac', ''),
+                                row['runtime_s'],
+                                n_particles, n_features, truth_counts, seed,
+                                rank_by]
                                + [row.get(m, '') for m in metric_cols])
                 for row in failures:
                     w.writerow(['', 'failed', row.get('reason', ''),
                                 row.get('algorithm', ''), row.get('data_type', ''),
                                 row.get('scaling', ''), row.get('dim_reduction', ''),
                                 row.get('dr_params_str', ''),
-                                row.get('params_str', ''), '', '', '',
-                                n_particles, n_features, seed, rank_by]
+                                row.get('params_str', ''), '', '', '', '', '',
+                                n_particles, n_features, truth_counts, seed,
+                                rank_by]
                                + ['' for _ in metric_cols])
             QMessageBox.information(
                 self, "Exported",
