@@ -451,6 +451,8 @@ ALGO_PARAM_SPECS = {
 
 ALGORITHMS = list(ALGO_PARAM_SPECS.keys())
 
+SWEEP_SEED = 42
+
 DATA_TYPES = list(DATA_KEY_MAP.keys())
 SCALINGS = ['None', 'Robust Z-score', 'CLR', 'ILR']
 DIM_REDUCTIONS = ['None', 'PCA', 't-SNE'] + (['UMAP'] if _UMAP_OK else [])
@@ -1060,6 +1062,20 @@ def metric_undefined(name, params, data):
     * ``braycurtis`` is a ratio whose denominator is the summed magnitude of
       both rows, so a pair of all-zero rows gives 0/0.
 
+    A fourth case is about the sign of the data rather than degenerate rows.
+    ``braycurtis`` and ``canberra`` are abundance measures: both were defined
+    for non-negative compositions, and both divide a sum of absolute
+    differences by a sum that is only guaranteed positive when the inputs are.
+    On signed input the denominator can approach zero from either side or
+    cancel outright, so the distance is unbounded, can fall outside its nominal
+    range, and orders points by an artefact of the cancellation. Raw counts,
+    masses and percentages are non-negative, so the pair is well defined there
+    — but every dimensionality reduction offered here centres its output, and
+    the t-SNE and UMAP embeddings are signed by construction. Those fits used
+    to run and score, producing plausible-looking numbers with nothing behind
+    them, which is exactly the failure this function exists to prevent, so a
+    negative entry anywhere in the matrix now rules the metric out.
+
     All-zero and constant rows are ordinary here rather than a sign of bad
     data — a particle with no calibrated mass in a mass-based data type, a
     percentage row whose total is zero, a perfectly balanced composition under
@@ -1078,6 +1094,10 @@ def metric_undefined(name, params, data):
         bool: True when the configuration must be skipped.
     """
     metric = effective_metric(name, params)
+    if metric in ('braycurtis', 'canberra'):
+        arr = np.asarray(data)
+        if arr.size and np.nanmin(arr) < 0:
+            return True
     if metric in ('cosine', 'braycurtis'):
         return zero_row_count(data) > 0
     if metric == 'correlation':
@@ -1308,13 +1328,27 @@ def build_param_grid(name, selections):
     carry a list of selected options.  The grid is the Cartesian product of all
     those lists.
 
+    Ward linkage is the one place where the product overcounts. Ward minimises
+    the increase in within-cluster variance, which is defined only against
+    squared Euclidean distance, so :func:`effective_metric` already reports
+    ``'euclidean'`` for it whatever the user selected. Left alone, the Cartesian
+    product would still emit one combination per offered metric, and every one
+    of them would fit the identical model and land on the leaderboard as a
+    separate row. That is wasted time during the sweep and, worse, a trap when
+    reading the results: seven identical scores across seven metric labels look
+    like evidence that Ward is insensitive to the metric, when in fact the
+    parameter was never in play. Ward combinations are therefore collapsed onto
+    ``metric='euclidean'`` and de-duplicated here, so one Ward configuration
+    yields exactly one fit. Every other linkage keeps the full metric list.
+
     Args:
         name (str): Algorithm key.
         selections (dict): ``{param_name: [values...]}``; missing parameters use
             their spec default list.
 
     Returns:
-        list[dict]: One parameter dict per combination.
+        list[dict]: One parameter dict per combination, with redundant Ward
+            metric variants removed.
     """
     spec = ALGO_PARAM_SPECS[name]['params']
     keys, value_lists = [], []
@@ -1324,7 +1358,19 @@ def build_param_grid(name, selections):
             vals = pspec['default']
         keys.append(pname)
         value_lists.append(list(vals))
-    return [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
+    grid = [dict(zip(keys, combo)) for combo in itertools.product(*value_lists)]
+    if name == 'Hierarchical':
+        seen, deduped = set(), []
+        for params in grid:
+            if params.get('linkage') == 'ward':
+                params = dict(params, metric='euclidean')
+            sig = tuple(sorted(params.items()))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            deduped.append(params)
+        grid = deduped
+    return grid
 
 
 def build_dr_param_grid(name, selections):
@@ -1488,11 +1534,27 @@ def run_sweep(particle_data, elements, components, *,
 
     Returns:
         dict: ``{'results', 'truth', 'completed', 'total', 'cancelled',
-            'failures', 'attempts'}`` and an optional ``'error'`` string.
-            ``'failures'`` lists every configuration that produced no usable
-            partition (with a ``'reason'``), and ``'attempts'`` maps each
-            algorithm to the number of fits attempted, so silent wipe-outs are
-            recoverable via :func:`summarize_sweep_failures`.
+            'failures', 'attempts', 'n_particles', 'n_features', 'seed'}`` and
+            an optional ``'error'`` string. ``'failures'`` lists every
+            configuration that produced no usable partition, each carrying a
+            ``'reason'`` and the ``'params_str'`` identifying which fit it was,
+            so a failure can be matched back to the grid cell it came from
+            rather than only counted; ``'attempts'`` maps each algorithm to the
+            number of fits attempted, so silent wipe-outs are recoverable via
+            :func:`summarize_sweep_failures`.
+
+            ``'n_particles'``, ``'n_features'`` and ``'seed'`` describe the run
+            rather than any single fit, and exist so an exported sweep can be
+            interpreted without the session that produced it. Dataset size is
+            needed because a score compared across files is otherwise
+            confounded: when the number of particles changes from one sweep to
+            the next, a trend read as "harder with more classes" may equally be
+            "harder with more points", and nothing in the per-fit rows
+            distinguishes the two. The seed is recorded because every
+            stochastic estimator here is constructed with a fixed
+            ``random_state``, which makes the sweep reproducible — a fact that
+            is invisible in the exported parameter strings and therefore worth
+            stating explicitly.
     """
     pre = Preprocessor(particle_data, elements, filter_zeros=filter_zeros,
                        min_type_count=min_type_count)
@@ -1542,10 +1604,11 @@ def run_sweep(particle_data, elements, components, *,
                 n_grid = len(build_param_grid(a, s))
                 done += n_grid
                 attempts[a] += n_grid
-                for _ in range(n_grid):
+                for gp in build_param_grid(a, s):
                     failures.append({'algorithm': a, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
                                      'dr_params_str': drstr,
+                                     'params_str': _params_str(a, gp),
                                      'reason': 'error'})
             if progress_cb:
                 progress_cb(done, total,
@@ -1563,6 +1626,7 @@ def run_sweep(particle_data, elements, components, *,
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
                                      'dr_params_str': drstr,
+                                     'params_str': _params_str(algo, params),
                                      'reason': 'metric_undefined'})
                     if progress_cb:
                         pstr = _params_str(algo, params)
@@ -1585,6 +1649,7 @@ def run_sweep(particle_data, elements, components, *,
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
                                      'dr_params_str': drstr,
+                                     'params_str': _params_str(algo, params),
                                      'reason': 'no_labels'})
                     continue
                 labels = np.asarray(labels)
@@ -1595,6 +1660,7 @@ def run_sweep(particle_data, elements, components, *,
                     failures.append({'algorithm': algo, 'data_type': dt,
                                      'scaling': sc, 'dim_reduction': dr,
                                      'dr_params_str': drstr,
+                                     'params_str': _params_str(algo, params),
                                      'reason': 'out_of_range'})
                     continue
 
@@ -1639,7 +1705,10 @@ def run_sweep(particle_data, elements, components, *,
 
     return {'results': results, 'truth': truth, 'completed': done,
             'total': total, 'cancelled': cancelled,
-            'failures': failures, 'attempts': attempts}
+            'failures': failures, 'attempts': attempts,
+            'n_particles': int(len(truth_labels)),
+            'n_features': int(len(elements)),
+            'seed': SWEEP_SEED}
 
 
 def rank_results(results, metric=PRIMARY_EXTERNAL_METRIC):
@@ -2616,7 +2685,9 @@ if _QT_OK:
             krow = QHBoxLayout()
             krow.addWidget(QLabel("from"))
             self.min_k = QSpinBox()
-            self.min_k.setRange(2, 100)
+            # 1 is allowed: a single-cluster partition is total merging, which
+            # is a result about the algorithm rather than a failed fit.
+            self.min_k.setRange(1, 100)
             self.min_k.setValue(2)
             self.max_k = QSpinBox()
             self.max_k.setRange(2, 100000)
@@ -3388,7 +3459,42 @@ if _QT_OK:
             QMessageBox.information(self, "Applied", msg)
 
         def _export_csv(self):
-            """Export the ranked leaderboard to a CSV file."""
+            """Write every attempted fit to a CSV file, failures included.
+
+            The leaderboard holds only the fits that produced a usable
+            partition. Exporting just those loses the distinction between a
+            configuration that was never scheduled and one that was scheduled,
+            ran, and failed — both simply have no row. That gap biases any
+            average computed downstream, because the fits that die are rarely a
+            random sample of the grid: a covariance type that goes singular, or
+            a metric that is undefined on an embedding, drops out precisely
+            where it performs worst, and the surviving mean then flatters it.
+
+            Every attempted fit is therefore written. Successes carry
+            ``status='ok'`` with their cluster counts, runtime and metric
+            columns; failures carry ``status='failed'``, the recorded
+            ``reason`` (``error``, ``no_labels``, ``out_of_range`` or
+            ``metric_undefined``), their identifying parameter string, and
+            empty metric cells. Reading the file back, the denominator of any
+            per-algorithm summary is recoverable, and so is the question of why
+            a configuration is absent.
+
+            Four run-level columns are repeated on every row: ``n_particles``,
+            ``n_features``, ``seed`` and ``rank_by``. The first three make the
+            file self-describing, since a sweep is usually analysed later and
+            alongside others. ``rank_by`` names the metric the leaderboard was
+            sorted by, which the ``rank`` column alone does not reveal — two
+            files exported under different dropdown selections carry ranks that
+            are not comparable, and without the column that difference is
+            invisible.
+
+            Note that :func:`compact_payload` rolls the per-configuration
+            failure list into a summary before a project is saved, so the
+            failure rows are available when exporting from a sweep that just
+            finished, but not from one restored out of a project file. The
+            confirmation message reports both counts so the difference is
+            apparent at the point of export.
+            """
             if not self._last or not self._last.get('results'):
                 return
             path, _ = QFileDialog.getSaveFileName(
@@ -3396,24 +3502,41 @@ if _QT_OK:
             if not path:
                 return
             import csv
-            results = rank_results(self._last['results'],
-                                   self.rank_combo.currentText())
+            rank_by = self.rank_combo.currentText()
+            results = rank_results(self._last['results'], rank_by)
+            failures = self._last.get('failures', [])
             metric_cols = ([m for m in EXTERNAL_METRICS if m in results[0]] +
                            [m for m in METRIC_REGISTRY if m in results[0]])
+            n_particles = self._last.get('n_particles', '')
+            n_features = self._last.get('n_features', '')
+            seed = self._last.get('seed', SWEEP_SEED)
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
-                w.writerow(['rank', 'algorithm', 'data_type', 'scaling',
-                            'dim_reduction', 'dr_params_str', 'params',
-                            'n_clusters', 'n_noise',
-                            'runtime_s'] + metric_cols)
+                w.writerow(['rank', 'status', 'reason', 'algorithm', 'data_type',
+                            'scaling', 'dim_reduction', 'dr_params_str', 'params',
+                            'n_clusters', 'n_noise', 'runtime_s',
+                            'n_particles', 'n_features', 'seed', 'rank_by']
+                           + metric_cols)
                 for i, row in enumerate(results):
-                    w.writerow([i + 1, row['algorithm'], row['data_type'],
-                                row['scaling'], row['dim_reduction'],
+                    w.writerow([i + 1, 'ok', '', row['algorithm'],
+                                row['data_type'], row['scaling'],
+                                row['dim_reduction'],
                                 row.get('dr_params_str', ''),
                                 row['params_str'], row['n_clusters'],
-                                row['n_noise'], row['runtime_s']]
+                                row['n_noise'], row['runtime_s'],
+                                n_particles, n_features, seed, rank_by]
                                + [row.get(m, '') for m in metric_cols])
-            QMessageBox.information(self, "Exported", f"Saved to {path}")
+                for row in failures:
+                    w.writerow(['', 'failed', row.get('reason', ''),
+                                row.get('algorithm', ''), row.get('data_type', ''),
+                                row.get('scaling', ''), row.get('dim_reduction', ''),
+                                row.get('dr_params_str', ''),
+                                row.get('params_str', ''), '', '', '',
+                                n_particles, n_features, seed, rank_by]
+                               + ['' for _ in metric_cols])
+            QMessageBox.information(
+                self, "Exported",
+                f"Saved to {path}\n{len(results)} fits, {len(failures)} failures.")
 
         def _collect_state(self):
             """Return a serialisable snapshot of setup and results.
