@@ -50,15 +50,22 @@ project-wide constraint (``.claude/SESSION_CONTEXT.md`` §2 /
 | `_ADDITIVE_KEYS` | `('elements', 'element_mass_fg', 'element_moles_fmol')` |
 | `_PERCENTAGE_KEYS` | `('mass_percentages', 'mole_percentages')` |
 | `_MFC_DEPENDENT_KEYS` | `('particle_mass_fg', 'particle_moles_fmol', 'mass_fg', 'm…` |
+| `_RELABELED_KEYS` | `_ADDITIVE_KEYS + _PERCENTAGE_KEYS + _MFC_DEPENDENT_KEYS` |
+| `RAW_KEY` | `'_classifier_raw'` |
+| `BUCKET_KEY` | `'_classifier_bucket'` |
+| `SRC_INDEX_KEY` | `'_classifier_src_index'` |
+| `MATCH_ISOTOPES_KEY` | `'_classifier_match_isotopes'` |
 
 ## Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `_raw_composition_snapshot` | `(particle)` | Capture references to a particle's pre-relabel composition dicts. |
 | `group_pooling_status` | `(definitions)` | Classify every group by how many definitions feed into it. |
 | `multi_definition_groups` | `(definitions)` | List group names backed by 2+ definitions (design's ambiguity case). |
 | `_bucket_label_and_color` | `(d, groups)` | Resolve one matched definition's output label and color. |
 | `suggested_label_colors` | `(definitions, groups, unmatched_mode, unclassified_color)` | Build the ``{label: hex}`` map for every synthetic label this node |
+| `build_bucket_registry` | `(definitions, groups, unmatched_mode, unclassified_color)` | Describe every bucket label this configuration can emit. |
 | `_parse_definitions` | `(definitions)` | Parse every definition's expression exactly once. |
 | `classify_particle` | `(particle, definitions, overlap_mode, parsed=None)` | Decide which definition(s) match one particle. |
 | `count_matches_per_definition` | `(particles, definitions, overlap_mode)` | Effective per-definition particle-match counts for one sample. |

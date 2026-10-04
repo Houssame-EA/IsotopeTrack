@@ -125,27 +125,55 @@ def _sample_concentration_meta(window, sample_name):
         return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
 
 
-def _combine_concentration_meta(metas):
+def _combine_concentration_meta(metas, dilution_resolution=None):
     """
     Combine per member concentration metadata into a single entry.
 
-    Volumes add together, the dilution factor is taken from the first member,
-    and transport availability requires every member to provide it.
+    Volumes add together, transport availability requires every member to
+    provide it. The dilution factor is taken from the first member UNLESS
+    ``dilution_resolution`` is given (see
+    ``tools.particle_filter.resolve_dilution_conflict``), in which case that
+    already-made decision is used instead -- this function never itself
+    detects a mismatch or prompts; that must already have happened once at
+    Accept/OK time, with the result passed in here on every recompute. If
+    the resolution no longer matches an actual conflict among the CURRENT
+    members (e.g. the user fixed a dilution factor elsewhere since), it's
+    treated as stale and ignored in favor of normal first-member behavior.
 
     Args:
         metas (list): List of per member metadata dicts.
+        dilution_resolution (dict | None): A resolution dict from
+            resolve_dilution_conflict, or None when no mismatch resolution
+            applies.
 
     Returns:
-        dict: Combined metadata with volume_ml, dilution_factor and te_available.
+        dict: Combined metadata with volume_ml, dilution_factor and
+            te_available (plus dilution_mismatch/_choice/_source_label/
+            _conflict_values when a resolution actually applies).
     """
+    from tools.particle_filter import dilution_factors_conflict
     metas = [m for m in metas if m]
     if not metas:
         return {'volume_ml': 0.0, 'dilution_factor': 1.0, 'te_available': False}
-    return {
+    if dilution_resolution is not None:
+        members = [(str(i), m) for i, m in enumerate(metas)]
+        if not dilution_factors_conflict(members):
+            dilution_resolution = None
+    dilution_factor = (dilution_resolution['dilution_factor']
+                       if dilution_resolution is not None
+                       else metas[0].get('dilution_factor', 1.0))
+    result = {
         'volume_ml': sum(m.get('volume_ml', 0.0) for m in metas),
-        'dilution_factor': metas[0].get('dilution_factor', 1.0),
+        'dilution_factor': dilution_factor,
         'te_available': all(m.get('te_available', False) for m in metas),
     }
+    if dilution_resolution is not None:
+        result['dilution_mismatch'] = True
+        result['dilution_choice'] = dilution_resolution['choice']
+        result['dilution_source_label'] = dilution_resolution['source_label']
+        result['dilution_conflict_values'] = \
+            dilution_resolution['conflict_values']
+    return result
 
 
 class DS:
@@ -1641,6 +1669,12 @@ class SampleSelectorNode(WorkflowNode):
         self.selected_isotopes = []
         self.sum_replicates = False
         self.replicate_samples = []
+        # How a dilution-factor mismatch among self.replicate_samples was
+        # resolved (see tools.particle_filter.resolve_dilution_conflict),
+        # made once at Accept/OK time in configure() and reused here on
+        # every recompute rather than re-prompted. None when summing is off
+        # or its members don't conflict.
+        self.dilution_resolution = None
         self.input_data = None
         self.batch_samples = None
         self.batch_particle_data = None
@@ -1684,7 +1718,7 @@ class SampleSelectorNode(WorkflowNode):
             metas = [(self.batch_concentration_meta or {}).get(m) for m in members]
         else:
             metas = [_sample_concentration_meta(self.parent_window, m) for m in members]
-        conc_meta = _combine_concentration_meta(metas)
+        conc_meta = _combine_concentration_meta(metas, self.dilution_resolution)
         return {
             'type': 'sample_data', 'sample_name': name,
             'data_types': all_dt, 'data': sd,
@@ -1753,6 +1787,25 @@ class SampleSelectorNode(WorkflowNode):
             sample, isotopes, sr = dlg.get_selection()
             if sample:
                 if sr and isinstance(sample, list):
+                    if len(sample) >= 2:
+                        from tools.particle_filter import (
+                            resolve_dilution_conflict)
+                        if self.batch_particle_data is not None:
+                            members = [
+                                (s, (self.batch_concentration_meta or {}).get(s))
+                                for s in sample]
+                        else:
+                            members = [
+                                (s, _sample_concentration_meta(parent_window, s))
+                                for s in sample]
+                        res = resolve_dilution_conflict(
+                            parent_window, f"Summed: {', '.join(sample)}",
+                            members)
+                        if res is False:
+                            return False
+                        self.dilution_resolution = res
+                    else:
+                        self.dilution_resolution = None
                     self.replicate_samples = sample
                     self.selected_sample = sample[0] if sample else None
                     self.sum_replicates = True
@@ -1760,6 +1813,7 @@ class SampleSelectorNode(WorkflowNode):
                     self.selected_sample = sample
                     self.replicate_samples = []
                     self.sum_replicates = False
+                    self.dilution_resolution = None
                 self.selected_isotopes = isotopes
                 self.configuration_changed.emit()
                 ual = _ual()
@@ -1786,6 +1840,12 @@ class MultipleSampleSelectorNode(WorkflowNode):
         self.sample_config = {}
         self.selected_isotopes = []
         self.sum_replicates = False
+        # {sum_group_name: resolution_dict} -- how a dilution-factor
+        # mismatch among that group's members was resolved (see
+        # tools.particle_filter.resolve_dilution_conflict), made once at
+        # Accept/OK time in configure() and reused here on every recompute
+        # rather than re-prompted.
+        self.dilution_resolutions = {}
         self.input_data = None
         self.batch_samples = None
         self.batch_particle_data = None
@@ -1877,7 +1937,8 @@ class MultipleSampleSelectorNode(WorkflowNode):
             for s in included:
                 name_members.setdefault(s, []).append(s)
         concentration_meta = {
-            nm: _combine_concentration_meta([conc_src(m) for m in mem])
+            nm: _combine_concentration_meta(
+                [conc_src(m) for m in mem], self.dilution_resolutions.get(nm))
             for nm, mem in name_members.items()
         }
 
@@ -1952,6 +2013,32 @@ class MultipleSampleSelectorNode(WorkflowNode):
                 return False
             sel, iso, cfg = dlg.get_selection()
             if sel:
+                groups = {}
+                for s in sel:
+                    g = (cfg.get(s, {}).get('sum_group') or '').strip()
+                    if g:
+                        groups.setdefault(g, []).append(s)
+                groups = {g: names for g, names in groups.items()
+                         if len(names) >= 2}
+                new_resolutions = {}
+                if groups:
+                    from tools.particle_filter import (
+                        resolve_dilution_conflict)
+                    if self.batch_particle_data is not None:
+                        def conc_src(m):
+                            return (self.batch_concentration_meta or {}).get(m)
+                    else:
+                        def conc_src(m):
+                            return _sample_concentration_meta(parent_window, m)
+                    for gname, names in groups.items():
+                        members = [(n, conc_src(n)) for n in names]
+                        res = resolve_dilution_conflict(
+                            parent_window, gname, members)
+                        if res is False:
+                            return False
+                        if res is not None:
+                            new_resolutions[gname] = res
+                self.dilution_resolutions = new_resolutions
                 self.selected_samples = sel
                 self.selected_isotopes = iso
                 self.sample_config = cfg
@@ -4620,7 +4707,23 @@ class EnhancedCanvasScene(QGraphicsScene):
         to all its sinks, instead of add_link's per-link recompute. Ordered
         so a node is processed after the nodes feeding it, so each level's
         input is populated before it computes.
+
+        Runs with ``_suppress_data_flow`` set for its whole duration. The
+        ``process_data`` calls below make each node emit
+        ``configuration_changed``, and nodes that auto-forward on that signal
+        (see ``ParticleClassifierNodeItem._schedule_downstream_push``) would
+        otherwise queue a second, redundant push of the chain this pass is
+        already walking in topological order.
         """
+        prev_suppress = self._suppress_data_flow
+        self._suppress_data_flow = True
+        try:
+            self._flush_data_flow_inner()
+        finally:
+            self._suppress_data_flow = prev_suppress
+
+    def _flush_data_flow_inner(self):
+        """The topological push itself; see :meth:`flush_data_flow`."""
         # Kahn topological order over the workflow graph.
         nodes = list(self.workflow_nodes)
         indeg = {n: 0 for n in nodes}
@@ -5138,12 +5241,18 @@ def validate_classifier_link(src_node, snk_node):
 
     Design §2: upstream limited to Particle Filter / Single Sample /
     Multiple Sample; downstream limited to Visualization-category nodes,
-    excluding AI Data Assistant (permanently, unrelated reason) and the
-    work-in-progress set in ``WIP_EXCLUDED_DOWNSTREAM_TYPES`` (Clustering,
-    Single/Multiple, Correlation Matrix, Network, Molar Ratio,
-    Isotopic Ratio, Ternary Plot). Only fires when one endpoint of the link
-    actually is a Particle Classifier node — every other link pair in the
-    app is unaffected.
+    excluding only AI Data Assistant (permanently, unrelated reason --
+    feeding classifier-relabeled particles into a general-purpose LLM
+    assistant isn't a supported use case). ``WIP_EXCLUDED_DOWNSTREAM_TYPES``
+    was emptied 2026-08-24 (see ``tools/particle_classifier_node.py`` and
+    ``.claude/aug24.md``'s "Classifier -> viz plotting correctness"
+    section) -- connectivity is unblocked for every Visualization node even
+    though several of them aren't yet scientifically meaningful on
+    classifier output; the ``snk_type in WIP_EXCLUDED_DOWNSTREAM_TYPES``
+    branch below stays in place as dead code for whenever a specific type
+    needs re-excluding. Only fires when one endpoint of the link actually
+    is a Particle Classifier node — every other link pair in the app is
+    unaffected.
 
     Args:
         src_node: The link's source ``WorkflowNode``.

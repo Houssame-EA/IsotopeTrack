@@ -1966,7 +1966,8 @@ class HistogramSettingsDialog(QDialog):
 
     def __init__(self, config, is_multi, sample_names, parent=None,
                  available_elements=None, lock_data_type=False,
-                 data_type_lock_message="", te_available=False):
+                 data_type_lock_message="", te_available=False,
+                 input_data=None):
         """
         Preserved behavior:
             Parent histogram can still fully change data type. The lock is used
@@ -1983,6 +1984,8 @@ class HistogramSettingsDialog(QDialog):
         self._lock_data_type = bool(lock_data_type)
         self._data_type_lock_message = data_type_lock_message or ""
         self._te_available = bool(te_available)
+        self._input_data = input_data
+        self._classifier_group = None
         self._build_ui()
 
     def _build_ui(self):
@@ -1994,6 +1997,12 @@ class HistogramSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        from results.shared_plot_utils import ClassifierViewGroup
+        from results import classifier_view as cv
+        self._classifier_group = ClassifierViewGroup(
+            self._cfg, self._input_data, cv.ARITY_PER_KEY)
+        layout.addWidget(self._classifier_group.build())
 
         if self._multi:
             g = QGroupBox("Multiple Sample Display")
@@ -2335,6 +2344,8 @@ class HistogramSettingsDialog(QDialog):
             quantity/format controls normally.
         """
         out = dict(self._cfg)
+        if self._classifier_group is not None:
+            out.update(self._classifier_group.collect())
         if self._lock_data_type:
             out['data_type_display'] = self._cfg.get('data_type_display', 'Counts')
         else:
@@ -2689,6 +2700,22 @@ class HistogramDisplayDialog(QDialog):
         self._refresh()
         self.node.configuration_changed.connect(self._refresh)
 
+    def _effective_is_multi(self):
+        """Whether to render through the multi-panel machinery.
+
+        Currently equivalent to the plain upstream check: Histogram offers
+        only GROUPS/OFF (see ``classifier_view._ROLES_BY_ARITY``), neither of
+        which re-partitions the data, so nothing but a genuinely multi-sample
+        stream needs the multi-panel path. Kept as its own method because the
+        deferred PANELS/COLORS feature (`.claude/aug24.md` improvements list)
+        would make this diverge again, and because several call sites
+        (`_get_hist_display_mode`, `_update_stats`, `_download_figure`) must
+        agree on one answer -- that they didn't is exactly what made the
+        earlier bucket-faceted build silently mis-shape the stats line and
+        CSV export.
+        """
+        return bool(_is_multi(self.node.input_data))
+
     def _build_ui(self):
         """
         Build histogram canvas, stats footer, and standardized bottom buttons.
@@ -2936,7 +2963,7 @@ class HistogramDisplayDialog(QDialog):
             Uses the existing mode normalization and does not change scientific
             display-mode semantics.
         """
-        if _is_multi(self.node.input_data):
+        if self._effective_is_multi():
             return _normalize_hist_display_mode(
                 self.node.config.get('display_mode', HIST_DISPLAY_MODES[0]))
         return 'single'
@@ -3167,16 +3194,26 @@ class HistogramDisplayDialog(QDialog):
         self._refresh()
 
     def _get_available_elements(self):
-        """Get raw element names from input (before grouping)."""
+        """Get raw element names from input (before grouping).
+
+        Reads through the classifier role/scope so OFF genuinely shows the
+        real isotope vocabulary here too (element-color pickers, legend
+        toggles), and a TOTAL-PARTICLE scope's wider isotope set is
+        reflected here too -- not just in the plotted data.
+        """
         try:
             data = self.node.input_data
             if not data:
                 return []
             dt = self.node.config.get('data_type_display', 'Counts')
             dk = HIST_DATA_KEY_MAP.get(dt, 'elements')
+            from results import classifier_view as cv
+            role = self.node.classifier_role()
+            scope = self.node.classifier_scope()
             elems = set()
             for p in data.get('particle_data', []):
-                elems.update(p.get(dk, {}).keys())
+                elems.update(label for label, _val in
+                            cv.composition_items_for_role(p, dk, role, scope))
             return sorted(elems)
         except Exception:
             _itk_log.exception("Handled exception in _get_available_elements")
@@ -3198,7 +3235,8 @@ class HistogramDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
             available_elements=self._get_available_elements(),
-            te_available=_meta_te_available(self.node.input_data))
+            te_available=_meta_te_available(self.node.input_data),
+            input_data=self.node.input_data)
         if title_override:
             dlg.setWindowTitle(title_override)
         dlg.preview_requested.connect(lambda cfg: (
@@ -3401,7 +3439,7 @@ class HistogramDisplayDialog(QDialog):
                 self.stats_label.setText("")
                 return
 
-            if _is_multi(self.node.input_data):
+            if self._effective_is_multi():
                 mode = _normalize_hist_display_mode(
                     cfg.get('display_mode', HIST_DISPLAY_MODES[0]))
                 if mode == 'Individual Subplots':
@@ -3694,7 +3732,7 @@ class HistogramDisplayDialog(QDialog):
             if names:
                 group_info = f"  \u00b7  Groups: {', '.join(names)}"
 
-        if _is_multi(self.node.input_data):
+        if self._effective_is_multi():
             total = sum(
                 sum(len(v) for v in sd.values())
                 for sd in plot_data.values())
@@ -4262,7 +4300,8 @@ class HistogramPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 
@@ -4283,6 +4322,26 @@ class HistogramPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The effective classifier presentation role for this render.
+
+        Resolved fresh every call (never cached) -- see
+        ``classifier_view.effective_role``'s docstring for why: a saved
+        project restores links with connection rules suspended, the user can
+        change the role after connecting, and upstream config can change
+        underneath a configured downstream node.
+        """
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
+
+    def classifier_scope(self):
+        """The DEFINITION-or-TOTAL-PARTICLE aggregation scope in force for
+        this render (see ``results.classifier_view``'s scope-axis docs).
+        Only changes anything under GROUPS role; harmless to resolve and
+        pass through unconditionally otherwise."""
+        from results import classifier_view as cv
+        return cv.effective_scope(self.config, self.input_data)
+
     def extract_plot_data(self):
         """Extract plottable data, applying element groups when active.
 
@@ -4290,6 +4349,30 @@ class HistogramPlotNode(QObject):
         particle has Fe=10fg, Si=5fg, Ti=3fg and group "FeSiTi"
         includes [Fe, Si, Ti], that particle contributes 18fg to
         the "FeSiTi" histogram. Ungrouped elements stay separate.
+
+        Classifier role (§ ``results.classifier_view``): GROUPS (default)
+        reads the classifier's collapsed bucket-labelled composition exactly
+        as before -- zero behavior change. OFF reads each particle's REAL
+        isotope composition instead, so the histogram renders exactly as if
+        no classifier were upstream at all. Those are the only two roles this
+        arity offers; PANELS/COLORS are a deferred future feature (see
+        ``.claude/aug24.md``'s improvements list), and ``effective_role``
+        cannot return them here.
+
+        Aggregation scope, GROUPS only (§ ``results.classifier_view``'s
+        SCOPE_* docs): the historical/default SCOPE_DEFINITION counts only
+        the isotopes a particle's matched definition names -- e.g. a
+        Smelter particle triggered by 60Ni contributes only its 60Ni value,
+        even carrying other isotopes the "Smelter" expression never
+        mentioned. SCOPE_TOTAL_PARTICLE instead counts every isotope a
+        qualifying particle actually carries. Routed through
+        ``classifier_view.composition_items_for_role`` (shared with box
+        plot), which also fixes a previously-unnoticed gap: Element/Particle
+        Diameter data types are never bucket-collapsed by the classifier at
+        all (no principled way to sum a diameter across isotopes), so this
+        extraction used to silently show real ungrouped isotopes under
+        GROUPS for those two data types specifically -- the same "diameter
+        never respects GROUPS" bug box plot had, just never fixed here.
         """
         if not self.input_data:
             return None
@@ -4301,12 +4384,15 @@ class HistogramPlotNode(QObject):
         groups = self.config.get('element_groups', [])
         use_groups = bool(groups) and _can_sum(self.config)
 
+        role = self.classifier_role()
+        scope = self.classifier_scope()
+
         if itype == 'sample_data':
             if use_groups:
                 particles = self.input_data.get('particle_data', [])
                 out = _apply_element_groups(particles, dk, groups)
                 return out or None
-            return self._extract_single(dk)
+            return self._extract_single(dk, role, scope)
 
         elif itype == 'multiple_sample_data':
             if use_groups:
@@ -4315,18 +4401,18 @@ class HistogramPlotNode(QObject):
                 out = _apply_element_groups_multi(
                     particles, names, dk, groups)
                 return out or None
-            return self._extract_multi(dk)
+            return self._extract_multi(dk, role, scope)
 
         return None
 
-    def _extract_single(self, dk):
+    def _extract_single(self, dk, role, scope):
         particles = self.input_data.get('particle_data')
         if not particles:
             return None
+        from results import classifier_view as cv
         out = {}
         for p in particles:
-            d = p.get(dk, {})
-            for el, val in d.items():
+            for el, val in cv.composition_items_for_role(p, dk, role, scope):
                 if dk == 'elements':
                     if val > 0:
                         out.setdefault(el, []).append(val)
@@ -4335,18 +4421,18 @@ class HistogramPlotNode(QObject):
                         out.setdefault(el, []).append(val)
         return out or None
 
-    def _extract_multi(self, dk):
+    def _extract_multi(self, dk, role, scope):
         particles = self.input_data.get('particle_data', [])
         names = self.input_data.get('sample_names', [])
         if not particles:
             return None
+        from results import classifier_view as cv
         result = {sn: {} for sn in names}
         for p in particles:
             src = p.get('source_sample')
             if src not in result:
                 continue
-            d = p.get(dk, {})
-            for el, val in d.items():
+            for el, val in cv.composition_items_for_role(p, dk, role, scope):
                 if dk == 'elements':
                     if val > 0:
                         result[src].setdefault(el, []).append(val)
@@ -4361,7 +4447,7 @@ class BarChartSettingsDialog(QDialog):
     preview_requested = Signal(dict)
 
     def __init__(self, config, is_multi, sample_names, parent=None, scope='all',
-                 te_available=False, available_elements=None):
+                 te_available=False, available_elements=None, input_data=None):
         """
         Initialize bar-chart settings dialog with optional scope filtering.
 
@@ -4392,6 +4478,8 @@ class BarChartSettingsDialog(QDialog):
         self._scope = scope
         self._te_available = bool(te_available)
         self._available_elements = list(available_elements or [])
+        self._input_data = input_data
+        self._classifier_group = None
 
         self.display_mode = None
         self.show_values = None
@@ -4437,6 +4525,36 @@ class BarChartSettingsDialog(QDialog):
         layout.setSpacing(8)
         scroll.setWidget(container)
         outer.addWidget(scroll)
+
+        if self._scope in ('all', 'quantities'):
+            from results.shared_plot_utils import ClassifierViewGroup
+            from results import classifier_view as cv
+            self._classifier_group = ClassifierViewGroup(
+                self._cfg, self._input_data, cv.ARITY_PER_KEY)
+            layout.addWidget(self._classifier_group.build())
+
+            if cv.is_classifier_stream(self._input_data):
+                if cv.is_double_count(self._input_data):
+                    note = QLabel(
+                        "Note: the classifier's overlap mode is \"double "
+                        "count\" — a particle matching more than one group "
+                        "is counted once per group it matches, so bar "
+                        "heights can sum to MORE than the total particle "
+                        "count. This reflects real group membership, not a "
+                        "miscount.")
+                    note.setWordWrap(True)
+                    note.setStyleSheet("color:#B45309; font-size:11px;")
+                    layout.addWidget(note)
+
+                mass_note = QLabel(
+                    "Note: bars for a classifier group are ordered by the "
+                    "MEAN mass of the real isotopes matched within that "
+                    "group's particles (not the group name itself, which "
+                    "has no mass) — so groups sort alongside isotopes of "
+                    "similar mass rather than trailing at the end.")
+                mass_note.setWordWrap(True)
+                mass_note.setStyleSheet("color:#94A3B8; font-size:11px;")
+                layout.addWidget(mass_note)
 
         if self._multi and self._scope in ('all', 'quantities'):
             g = QGroupBox("Multiple Sample Display")
@@ -4839,6 +4957,8 @@ class BarChartSettingsDialog(QDialog):
             Prevents scope-related missing-widget errors and preserves untouched keys.
         """
         out = dict(self._cfg)
+        if self._classifier_group is not None:
+            out.update(self._classifier_group.collect())
         if self.show_values is not None:
             out['show_values'] = self.show_values.isChecked()
         if self.sort_bars is not None:
@@ -5341,9 +5461,23 @@ def _draw_single_histogram(
     return sorted_data
 
 
-def _sort_elements_for_display(elements, counts, sort_option):
-    """Sort elements by user preference."""
-    mass_sorted = sort_elements_by_mass(elements)
+def _sort_elements_for_display(elements, counts, sort_option, input_data=None):
+    """Sort elements by user preference.
+
+    Args:
+        input_data (dict | None): The node's upstream data. When given, mass
+            sorting goes through ``classifier_view.sort_labels_by_mass``
+            instead of the plain isotope-only sorter, so classifier bucket
+            labels sort by the mean mass of their real matched isotopes
+            rather than tying at "no parseable mass" (see that function's
+            docstring). Identical result to the plain sorter on
+            non-classifier data.
+    """
+    if input_data is not None:
+        from results import classifier_view as cv
+        mass_sorted = cv.sort_labels_by_mass(input_data, elements)
+    else:
+        mass_sorted = sort_elements_by_mass(elements)
     if sort_option == 'No Sorting':
         ec = dict(zip(elements, counts))
         return mass_sorted, [ec[e] for e in mass_sorted]
@@ -5361,7 +5495,8 @@ def _sort_elements_for_display(elements, counts, sort_option):
 
 
 def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
-                            show_y_label=True, y_scale=1.0, per_ml=False):
+                            show_y_label=True, y_scale=1.0, per_ml=False,
+                            input_data=None):
     """Draw one element bar chart and tag element-colored bars for sync hooks.
     Args:
         plot_item (Any): The plot item.
@@ -5371,6 +5506,8 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
         show_y_label (Any): The show y label.
         y_scale (float): Multiplier converting counts to particles per mL.
         per_ml (bool): Whether values are rendered as a concentration.
+        input_data (dict | None): The node's upstream data, threaded through
+            to mass-aware sorting (see ``_sort_elements_for_display``).
 
     Preserved behavior:
         Scientific counts, ordering rules, and value scaling are unchanged.
@@ -5389,7 +5526,7 @@ def _draw_single_bar_chart(plot_item, element_counts, cfg, single_color=None,
 
     elems = list(element_counts.keys())
     counts = [element_counts[e] * y_scale for e in elems]
-    elems, counts = _sort_elements_for_display(elems, counts, sort_opt)
+    elems, counts = _sort_elements_for_display(elems, counts, sort_opt, input_data)
 
     original_counts = list(counts)
     if log_y:
@@ -5445,6 +5582,7 @@ class ElementBarChartDisplayDialog(QDialog):
         self.node = bar_node
         self.parent_window = parent_window
         self._hidden_bar_samples = set()
+        self._hidden_bar_elements = set()
         self._bar_subplot_contexts = {}
         self.setWindowTitle("Element Particle Count Bar Chart")
         self.setMinimumSize(1000, 700)
@@ -5615,6 +5753,26 @@ class ElementBarChartDisplayDialog(QDialog):
             self._hidden_bar_samples.add(raw_sample_key)
         self._refresh()
 
+    def _toggle_bar_element_visibility(self, raw_element_key):
+        """Toggle one raw element/bucket's visibility in By Sample (Element Colors) mode.
+
+        Args:
+            raw_element_key (str): Canonical raw element or classifier-bucket
+                key represented by the clicked legend row.
+
+        Preserved behavior:
+            This updates only render-layer visibility state for the current
+            Element Bar Chart dialog. Scientific data extraction, counts, and
+            grouping semantics remain unchanged.
+        """
+        if not raw_element_key:
+            return
+        if raw_element_key in self._hidden_bar_elements:
+            self._hidden_bar_elements.remove(raw_element_key)
+        else:
+            self._hidden_bar_elements.add(raw_element_key)
+        self._refresh()
+
     @staticmethod
     def _no_visible_samples_message():
         """Return the standard empty-state message for fully hidden samples.
@@ -5625,19 +5783,31 @@ class ElementBarChartDisplayDialog(QDialog):
         """
         return "No visible samples. Use the legend to show at least one sample."
 
-    def _add_no_visible_samples_message(self, plot_item):
-        """Render the standard no-visible-samples message on one plot item.
+    @staticmethod
+    def _no_visible_elements_message():
+        """Return the standard empty-state message for fully hidden elements.
+
+        Returns:
+            str: User-visible guidance shown when no elements remain visible
+                in By Sample (Element Colors) mode.
+        """
+        return "No visible elements. Use the legend to show at least one element."
+
+    def _add_no_visible_samples_message(self, plot_item, message=None):
+        """Render a no-visible-items empty-state message on one plot item.
 
         Args:
             plot_item (Any): Target ``pg.PlotItem`` receiving the empty-state
                 message.
+            message (str | None): Override text; defaults to the
+                no-visible-samples message.
 
         Preserved behavior:
             This is informational UI only and does not change scientific data,
             bar heights, or extraction behavior.
         """
         ti = pg.TextItem(
-            self._no_visible_samples_message(),
+            message or self._no_visible_samples_message(),
             anchor=(0.5, 0.5),
             color='#9CA3AF')
         plot_item.addItem(ti, ignoreBounds=True)
@@ -5661,7 +5831,8 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self,
             te_available=_meta_te_available(self.node.input_data),
-            available_elements=self._get_available_bar_elements())
+            available_elements=self._get_available_bar_elements(),
+            input_data=self.node.input_data)
         if dlg.exec() == QDialog.Accepted:
             self.node.config.update(dlg.collect())
             self._refresh()
@@ -5700,7 +5871,8 @@ class ElementBarChartDisplayDialog(QDialog):
             self.node.config, _is_multi(self.node.input_data),
             _sample_names(self.node.input_data), self, scope='quantities',
             te_available=_meta_te_available(self.node.input_data),
-            available_elements=self._get_available_bar_elements())
+            available_elements=self._get_available_bar_elements(),
+            input_data=self.node.input_data)
         dlg.preview_requested.connect(lambda cfg: (
             self.node.config.update(cfg), self._refresh(),
             warn_if_values_swallowed(
@@ -5729,12 +5901,13 @@ class ElementBarChartDisplayDialog(QDialog):
         plot_data = self.node.extract_plot_data()
         if not plot_data:
             return []
+        from results import classifier_view as cv
         if _is_multi(self.node.input_data):
             keys = set()
             for sample_data in plot_data.values():
                 keys.update(sample_data.keys())
-            return sort_elements_by_mass(list(keys))
-        return sort_elements_by_mass(list(plot_data.keys()))
+            return cv.sort_labels_by_mass(self.node.input_data, list(keys))
+        return cv.sort_labels_by_mass(self.node.input_data, list(plot_data.keys()))
 
     def _open_plot_settings(self, title_override=None, show_apply=True):
         """
@@ -6114,7 +6287,12 @@ class ElementBarChartDisplayDialog(QDialog):
             active_mode = cfg.get('display_mode', BAR_DISPLAY_MODES[0])
             hidden_samples = (
                 set(self._hidden_bar_samples)
-                if active_mode in ('Grouped Bars', 'Stacked Bars')
+                if active_mode in ('Grouped Bars (Side by Side)', 'Stacked Bars')
+                else set()
+            )
+            hidden_elements = (
+                set(self._hidden_bar_elements)
+                if active_mode == 'By Sample (Element Colors)'
                 else set()
             )
 
@@ -6126,6 +6304,8 @@ class ElementBarChartDisplayDialog(QDialog):
                             continue
                         dname = get_display_name(sn, cfg)
                         for elem, count in sd.items():
+                            if elem in hidden_elements:
+                                continue
                             rows.append({'Sample': dname, 'Element': elem, 'Particle Count': count})
                 else:
                     for elem, count in plot_data.items():
@@ -6254,7 +6434,8 @@ class ElementBarChartDisplayDialog(QDialog):
                 def _draw(pi, is_top, is_bottom):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, plot_data, cfg,
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6300,7 +6481,8 @@ class ElementBarChartDisplayDialog(QDialog):
                           y_scale=y_scale):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, sd, cfg, single_color=color,
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6338,7 +6520,8 @@ class ElementBarChartDisplayDialog(QDialog):
                     """Draw one stacked broken-axis panel (see _render_broken_or_plain)."""
                     _draw_single_bar_chart(pi, sd, cfg, single_color=color,
                                            show_y_label=(idx == 0),
-                                           y_scale=y_scale, per_ml=per_ml)
+                                           y_scale=y_scale, per_ml=per_ml,
+                                           input_data=self.node.input_data)
 
                 panels = _render_broken_or_plain(
                     self.pw, cuts, _draw,
@@ -6365,7 +6548,8 @@ class ElementBarChartDisplayDialog(QDialog):
         all_elems = set()
         for sd in plot_data.values():
             all_elems.update(sd.keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems))
 
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
@@ -6484,7 +6668,8 @@ class ElementBarChartDisplayDialog(QDialog):
         all_elems = set()
         for sd in plot_data.values():
             all_elems.update(sd.keys())
-        all_elems = sort_elements_by_mass(list(all_elems))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems))
 
         min_count = cfg.get('min_particle_count', 0)
         if min_count > 0:
@@ -6617,7 +6802,8 @@ class ElementBarChartDisplayDialog(QDialog):
             all_elems_set = {
                 e for e in all_elems_set
                 if sum(plot_data[s].get(e, 0) for s in samples) >= min_count}
-        all_elems = sort_elements_by_mass(list(all_elems_set))
+        from results import classifier_view as cv
+        all_elems = cv.sort_labels_by_mass(self.node.input_data, list(all_elems_set))
 
         if sort_opt != 'No Sorting' and samples:
             totals = [(e, sum(plot_data[s].get(e, 0) for s in samples))
@@ -6631,8 +6817,9 @@ class ElementBarChartDisplayDialog(QDialog):
             all_elems = [e for e, _ in totals]
 
         x = np.arange(len(samples), dtype=float)
-        n_elems = max(len(all_elems), 1)
-        bar_w = 0.8 / n_elems
+        visible_elems = [e for e in all_elems if e not in self._hidden_bar_elements]
+        n_visible_elems = len(visible_elems)
+        bar_w = 0.8 / max(n_visible_elems, 1)
         per_ml = _per_ml_active(cfg, self.node.input_data)
         cuts = _get_broken_cuts(cfg)
 
@@ -6645,9 +6832,33 @@ class ElementBarChartDisplayDialog(QDialog):
                 pi.legend = legend
 
             global_max = 0.0
+            visible_index = 0
             for j, elem in enumerate(all_elems):
+                elem_hidden = elem in self._hidden_bar_elements
                 color = _get_element_color(elem, j, cfg)
                 label = _fmt_elem(elem, cfg)
+                co = QColor(color)
+
+                if legend is not None:
+                    alpha = 55 if elem_hidden else 215
+                    swatch = _ClickableLegendSwatch(
+                        x=[0], height=[0], width=0,
+                        brush=pg.mkBrush(co.red(), co.green(), co.blue(), alpha),
+                        raw_key=elem,
+                        toggle_callback=self._toggle_bar_element_visibility,
+                    )
+                    _tag_element_color_item(swatch, elem, label)
+                    legend_label = label + (" (hidden)" if elem_hidden else "")
+                    legend.addItem(swatch, legend_label)
+                    _attach_bar_chart_legend_toggle(
+                        legend,
+                        raw_key=elem,
+                        toggle_callback=self._toggle_bar_element_visibility,
+                    )
+
+                if elem_hidden:
+                    continue
+
                 heights = [plot_data[s].get(elem, 0) *
                            (_pml_factor(self.node.input_data, s) if per_ml else 1.0)
                            for s in samples]
@@ -6658,8 +6869,8 @@ class ElementBarChartDisplayDialog(QDialog):
                 if cur_max > global_max:
                     global_max = cur_max
 
-                offsets = x + (j - n_elems / 2 + 0.5) * bar_w
-                co = QColor(color)
+                offsets = x + (visible_index - n_visible_elems / 2 + 0.5) * bar_w
+                visible_index += 1
                 bar = pg.BarGraphItem(
                     x=offsets, height=heights, width=bar_w,
                     brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215),
@@ -6667,12 +6878,6 @@ class ElementBarChartDisplayDialog(QDialog):
                 bar.opts['_trace_name'] = label
                 _tag_element_color_item(bar, elem, label)
                 pi.addItem(bar)
-
-                if legend is not None:
-                    swatch = pg.BarGraphItem(x=[0], height=[0], width=0,
-                                             brush=pg.mkBrush(co.red(), co.green(), co.blue(), 215))
-                    _tag_element_color_item(swatch, elem, label)
-                    legend.addItem(swatch, label)
 
                 if show_vals:
                     for xp, h, o in zip(offsets, heights, orig):
@@ -6683,6 +6888,10 @@ class ElementBarChartDisplayDialog(QDialog):
                                              max(fc.get('size', 18) - 5, 6)))
                             pi.addItem(ti)
                             ti.setPos(xp, h + global_max * 0.02)
+
+            if not visible_elems and is_top:
+                self._add_no_visible_samples_message(
+                    pi, message=self._no_visible_elements_message())
 
             ax_bottom = pi.getAxis('bottom')
             ticks = [(float(i), get_display_name(s, cfg))
@@ -6759,7 +6968,8 @@ class ElementBarChartPlotNode(QObject):
         self._has_output = False
         self.input_channels = ["input"]
         self.output_channels = []
-        self.config = dict(self.DEFAULT_CONFIG)
+        from results.shared_plot_utils import deep_copy_config
+        self.config = deep_copy_config(self.DEFAULT_CONFIG)
         self.input_data = None
         self.plot_widget = None
 
@@ -6780,12 +6990,35 @@ class ElementBarChartPlotNode(QObject):
         self.input_data = input_data
         self.configuration_changed.emit()
 
+    def classifier_role(self):
+        """The effective classifier presentation role for this render.
+
+        Resolved fresh every call, never cached -- see
+        ``classifier_view.effective_role``'s docstring for why (saved
+        projects, roles changed mid-session, upstream config changes).
+        """
+        from results import classifier_view as cv
+        return cv.effective_role(self.config, self.input_data, cv.ARITY_PER_KEY)
+
     def extract_plot_data(self):
-        """Extract element particle counts from input."""
+        """Extract element particle counts from input.
+
+        Classifier role: GROUPS (default) counts the classifier's collapsed
+        bucket labels exactly as before -- zero behavior change. OFF counts
+        each particle's REAL isotopes instead, via
+        ``classifier_view.composition(..., collapsed=False)``, so the chart
+        renders exactly as if no classifier were upstream. Only these two
+        roles exist for this arity (per-key-independent) -- see
+        ``.claude/aug24.md``'s improvements list for why PANELS/COLORS are
+        deliberately not offered here.
+        """
         if not self.input_data:
             return None
 
         itype = self.input_data.get('type')
+
+        from results import classifier_view as cv
+        collapsed = self.classifier_role() != cv.ROLE_OFF
 
         if itype == 'sample_data':
             particles = self.input_data.get('particle_data')
@@ -6793,7 +7026,7 @@ class ElementBarChartPlotNode(QObject):
                 return None
             counts = {}
             for p in particles:
-                for el, val in p.get('elements', {}).items():
+                for el, val in cv.composition(p, 'elements', collapsed=collapsed).items():
                     if val > 0:
                         counts[el] = counts.get(el, 0) + 1
             return counts or None
@@ -6808,7 +7041,7 @@ class ElementBarChartPlotNode(QObject):
                 src = p.get('source_sample')
                 if src not in result:
                     continue
-                for el, val in p.get('elements', {}).items():
+                for el, val in cv.composition(p, 'elements', collapsed=collapsed).items():
                     if val > 0:
                         result[src][el] = result[src].get(el, 0) + 1
             return {k: v for k, v in result.items() if v} or None

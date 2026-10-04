@@ -51,7 +51,7 @@ config swapped in; everything else delegates to the real node.
 | `_with_view_config` | `(self, func)` | Wrap a node method so it runs against this view's config. |
 | `extract_plot_data` | `(self, *args, **kwargs)` | Run the node's extraction with this view's config swapped in. |
 | `new_figure` | `(self)` | Spawn another independent figure for the same node. |
-| `__getattr__` | `(self, name)` | Delegate to the node, applying this view's config to extractions. |
+| `__getattr__` | `(self, name)` | Delegate to the node, applying this view's config where it matters. |
 
 ### `MplDraggableCanvas` *(extends `_FigureCanvasBase`)*
 
@@ -163,6 +163,41 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `_pick_color` | `(self)` |  |
 | `collect` | `(self) → dict` |  |
 
+### `ClassifierViewGroup`
+
+Reusable "how should classifier groups be shown" QGroupBox builder.
+
+Same contract as :class:`FontSettingsGroup` -- ``__init__(config)``,
+``build()``, ``collect()`` -- so it drops into any settings dialog the
+same way, and its collected key merges straight into ``node.config``
+(which is what actually gets persisted; a new node *attribute* would be
+silently dropped by the save layer's attribute allow-list).
+
+The group hides itself entirely when the upstream isn't a classifier
+stream, so nodes can embed it unconditionally without showing a control
+that has nothing to act on.
+
+Args:
+    config (dict): The viz node's config.
+    input_data (dict | None): The node's current upstream data.
+    arity (str): The node's arity class -- one of
+        ``classifier_view.ARITY_PER_KEY`` / ``ARITY_KEY_SET`` /
+        ``ARITY_MULTI_KEY``. Determines which roles are offered.
+    disabled_roles (dict | None): ``{role: reason}`` for roles that are
+        valid for this arity in general but not usable right now for a
+        node-specific reason (e.g. a role's rendering isn't wired up for
+        this node yet, or needs a stream shape this node's current
+        upstream doesn't have). Disabled entries stay visible -- with the
+        reason appended to the label and as a tooltip -- rather than
+        disappearing, so the user can see *why* an option is missing
+        instead of wondering where it went.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, config: dict, input_data: dict \| None, arity: str, disabled_rol` |  |
+| `build` | `(self, on_change=None)` |  |
+| `collect` | `(self) → dict` | Return the config delta, or ``{}`` when the group didn't apply. |
+
 ### `LegendGroup`
 
 Reusable legend settings QGroupBox builder.
@@ -196,13 +231,15 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `compute_global_bin_edges_fixed_geo` | `(all_values_list, bin_width, log_x=False, bin_mode='geometric')` | Compute shared bin edges from multiple value arrays. |
 | `compute_bin_edges_width_geo` | `(values, bin_width, log_x=True, bin_mode='geometric')` | Compute bin edges anchored to clean grid boundaries. |
 | `compute_global_bin_edges_width_geo` | `(all_values_list, bin_width, log_x=True, bin_mode='geometric')` | Compute shared bin edges from multiple per-sample arrays. |
-| `_deep_copy_config` | `(cfg)` | Return a fully independent copy of a config dict. |
+| `deep_copy_config` | `(cfg)` | Return a fully independent copy of a config dict. |
 | `_figure_alive` | `(dlg)` | Return True if the dialog's underlying C++ object still exists. |
 | `capture_figure_thumbnail` | `(node, dlg)` | Grab a small snapshot of the figure's plot for the node hover preview. |
 | `_connect_thumb_refresh` | `(node, dlg)` | Re-capture the thumbnail (debounced) whenever the figure changes. |
+| `maybe_warn_classifier_wip` | `(node, parent=None)` | Tell the user once that this node ignores an attached classifier. |
 | `show_persistent_figure` | `(node, factory, _parent_window=None)` | Open a node's figure, reusing one window and hiding (not killing) it. |
 | `prime_figure_thumbnail` | `(node, factory)` | Build a figure off-screen once so its hover thumbnail exists before the |
 | `_finish_prime` | `(node, dlg)` | Capture the primed thumbnail, then keep the window hidden + ready. |
+| `view_config_method` | `(func)` | Mark a node method as config-derived, so a per-figure view computes it |
 | `_connect_view_thumb_refresh` | `(view, dlg)` |  |
 | `capture_view_thumbnail` | `(view)` | Grab a thumbnail for one figure view (and mirror to the node). |
 | `_open_view` | `(view)` | Show a figure view's window, creating it on first open. |
@@ -248,13 +285,14 @@ Call .build() to get the QGroupBox, then .collect() to read current values.
 | `make_viridis_colormap` | `()` | Create a viridis-like PyQtGraph ColorMap. |
 | `conc_meta_available` | `(input_data) → bool` | Report whether any sample in the input carries a usable transport rate. |
 | `per_ml_factor` | `(input_data, sample_name) → float` | Return the multiplier that converts a particle count to particles per mL. |
+| `dilution_unavailable_for` | `(input_data, sample_name) → bool` | Whether a sample's particles/mL was explicitly disabled due to a |
 | `single_sample_name` | `(input_data)` | Return the sample name for single-sample input data. |
 | `count_to_per_ml` | `(count, input_data, sample_name) → float` | Convert a particle count to particles per mL for a given sample. |
 | `per_ml_active` | `(cfg, input_data) → bool` | Report whether the particles-per-mL unit should be used for drawing. |
-| `format_per_ml` | `(value, renderer: Renderer=Renderer.HTML, config: dict \| None=None) → ` | Format a particles-per-mL value as a mantissa times ten-to-a-power. |
+| `format_per_ml` | `(value, renderer: Renderer=Renderer.HTML, config: dict \| None=None, un` | Format a particles-per-mL value as a mantissa times ten-to-a-power. |
 | `apply_sci_y_axis` | `(plot_item, config: dict \| None=None)` | Render the left axis tick labels of a pyqtgraph plot as ten-to-a-power. |
 | `per_ml_unit_label` | `(per_ml: bool, base: str='Particle Count') → str` | Return the appropriate y-axis label for the active unit. |
-| `build_element_matrix` | `(particles: list, data_key: str) → pd.DataFrame \| None` | Build a particles × elements DataFrame from a list of particle dicts. |
+| `build_element_matrix` | `(particles: list, data_key: str, raw: bool=False, dedupe: bool=False) ` | Build a particles × elements DataFrame from a list of particle dicts. |
 | `compute_correlation_matrix` | `(df: pd.DataFrame, min_nonzero: int=10) → pd.DataFrame` | Compute pairwise Pearson correlation for all element columns. |
 | `find_top_correlations` | `(df: pd.DataFrame, n_top: int=10, min_nonzero: int=10) → list[dict]` | Find the top-N strongest correlations (by \|r\|) among all element pairs. |
 | `create_single_color_scatter` | `(plot_item, x, y, config, color='#3B82F6')` | Add a uniform-color scatter to plot_item. Returns the ScatterPlotItem. |
