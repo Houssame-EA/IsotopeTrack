@@ -1,0 +1,284 @@
+"""The Figure Builder figure description ("spec"): defaults, panels and layouts.
+
+A spec is plain JSON-serialisable data::
+
+    {
+        'data_type': 'Counts',
+        'variables': [{'name': 'ratio', 'expr': 'Fe/Cu'}, ...],
+        'figure': {'width': 8.0, 'height': 6.0, 'palette': 'Default', ...},
+        'panels': [panel, ...],
+    }
+
+Each panel owns a rectangle on the page (fractions of the figure, origin
+top-left, exactly as the user drew it), a ``kind`` and that kind's options.
+"""
+
+from __future__ import annotations
+
+import copy
+import string
+import uuid
+
+from results.figure_builder.core.styles import PALETTES, TEMPLATES
+
+
+PALETTE = PALETTES['Default']
+"""The default categorical palette."""
+
+
+OTHER_COLOR = '#9a9a9a'
+
+
+PANEL_KINDS = {
+    'scatter': 'Scatter (X vs Y)',
+    'line': 'Line / trend (binned)',
+    'density': 'Density map (2-D histogram)',
+    'pairs': 'Scatter matrix (pair plot)',
+    'histogram': 'Histogram',
+    'box': 'Box plot',
+    'violin': 'Violin plot',
+    'bar': 'Bar chart',
+    'pie': 'Pie / donut',
+    'composition': 'Composition (100% bars)',
+    'combinations': 'Element combinations',
+    'corr_matrix': 'Correlation matrix',
+    'heatmap': 'Heatmap',
+    'cooccurrence': 'Co-occurrence matrix',
+    'ternary': 'Ternary',
+    'text': 'Text / annotation',
+    'code': 'Python code',
+}
+"""Panel kinds and their display names."""
+
+
+GROUP_MODES = {
+    'none': 'No grouping',
+    'sample': 'By sample',
+    'class': 'By classifier class',
+    'rules': 'By my rules',
+}
+
+
+FIGURE_DEFAULTS = {
+    'width': 8.0,
+    'height': 6.0,
+    'dpi': 300,
+    'font_family': 'DejaVu Sans',
+    'font_size': 11,
+    'title_size': 0,
+    'label_size': 0,
+    'tick_size': 0,
+    'axes_linewidth': 0.8,
+    'title': '',
+    'panel_letters': True,
+    'letter_style': 'a',
+    'letter_size': 0,
+    'label_style': 'isotope',
+    'background': '#ffffff',
+    'palette': 'Default',
+    'text_styles': {},
+}
+
+
+PANEL_DEFAULTS = {
+    'id': '',
+    'rect': [0.0, 0.0, 1.0, 1.0],
+    'kind': 'scatter',
+    'data_type': '',
+    'title': '',
+    'isotopes': '',
+    'cbar_label': '',
+    'a_label': '',
+    'b_label': '',
+    'c_label': '',
+    'text_styles': {},
+    'item_labels': {},
+    'corr_method': 'pearson',
+    'log_values': False,
+    'triangle': 'full',
+    'annotate': True,
+    'show_sig': False,
+    'min_n': 10,
+    'div_cmap': 'RdBu_r',
+    'heat_rows': 'groups',
+    'heat_value': 'mean',
+    'heat_norm': 'none',
+    'log_color': False,
+    'transpose': False,
+    'max_rows': 2000,
+    'cooc_mode': 'joint',
+    'top_n': 15,
+    'as_percent': True,
+    'combo_filter': 'all',
+    'comp_mode': 'mean_fraction',
+    'pairs_upper': 'r',
+    'x': '',
+    'y': '',
+    'y2': '',
+    'value': '',
+    'a': '',
+    'b': '',
+    'c': '',
+    'x_label': '',
+    'y_label': '',
+    'y2_label': '',
+    'log_x': False,
+    'log_y': False,
+    'log_y2': False,
+    'x_min': '',
+    'x_max': '',
+    'y_min': '',
+    'y_max': '',
+    'filter': '',
+    'drop_zeros': True,
+    'group_by': 'none',
+    'rules': [],
+    'show_other': True,
+    'other_label': 'Other',
+    'group_colors': {},
+    'group_labels': {},
+    'hidden_groups': [],
+    'group_order': [],
+    'show_n': True,
+    'color': PALETTE[0],
+    'y2_color': PALETTE[1],
+    'color_by': '',
+    'size_by': '',
+    'colormap': 'viridis',
+    'reverse_cmap': False,
+    'marker': 'o',
+    'marker_size': 12.0,
+    'edge_color': '#ffffff',
+    'edge_width': 0.0,
+    'alpha': 0.7,
+    'line_width': 1.6,
+    'line_style': '-',
+    'bins': 40,
+    'hist_style': 'filled',
+    'density': False,
+    'cumulative': False,
+    'kde': False,
+    'show_points': False,
+    'notch': False,
+    'show_mean': False,
+    'agg': 'mean',
+    'error': 'sd',
+    'band': 'sem',
+    'horizontal': False,
+    'stacked': False,
+    'pie_mode': 'groups',
+    'donut': False,
+    'show_fit': False,
+    'show_r': False,
+    'hlines': '',
+    'vlines': '',
+    'diagonal': False,
+    'series': [],
+    'annotations': [],
+    'test': 'none',
+    'pairs': 'all',
+    'correction': 'none',
+    'p_format': 'stars',
+    'hide_ns': False,
+    'legend': True,
+    'legend_loc': 'best',
+    'legend_cols': 1,
+    'legend_title': '',
+    'legend_size': 'small',
+    'grid': False,
+    'frame': 'open',
+    'tick_dir': 'out',
+    'minor_ticks': False,
+    'sci_x': False,
+    'sci_y': False,
+    'aspect_equal': False,
+    'xtick_rotation': 0,
+    'panel_bg': '#ffffff',
+    'text': '',
+    'text_size': 0,
+    'code': '',
+}
+
+
+CODE_EXAMPLE = (
+    "ax.scatter(df['total'], df[labels[0]], s=6, color=color(0))\n"
+    "ax.set_xscale('log')\n"
+    "ax.set_xlabel('Total')\n"
+)
+
+
+def new_panel_id() -> str:
+    """Return a short unique panel id."""
+    return uuid.uuid4().hex[:8]
+
+
+def make_panel(**overrides) -> dict:
+    """Return a full panel dict with defaults, overridden by ``overrides``."""
+    panel = copy.deepcopy(PANEL_DEFAULTS)
+    panel['id'] = new_panel_id()
+    panel.update(copy.deepcopy(overrides))
+    return panel
+
+
+def default_spec() -> dict:
+    """Return the spec a new Figure Builder node starts with."""
+    return {
+        'data_type': 'Counts',
+        'variables': [],
+        'figure': copy.deepcopy(FIGURE_DEFAULTS),
+        'panels': [make_panel(rect=[0.0, 0.0, 1.0, 1.0], kind='scatter')],
+    }
+
+
+def normalise_spec(spec: dict | None) -> dict:
+    """Return a full copy of ``spec`` with every missing key filled in."""
+    out = default_spec() if not isinstance(spec, dict) else copy.deepcopy(spec)
+    out.setdefault('data_type', 'Counts')
+    out['variables'] = [dict(v) for v in (out.get('variables') or []) if isinstance(v, dict)]
+    fig = copy.deepcopy(FIGURE_DEFAULTS)
+    fig.update(out.get('figure') or {})
+    out['figure'] = fig
+    panels = []
+    for p in out.get('panels') or []:
+        full = copy.deepcopy(PANEL_DEFAULTS)
+        full.update(p)
+        if not full.get('id'):
+            full['id'] = new_panel_id()
+        panels.append(full)
+    out['panels'] = panels
+    return out
+
+
+def strip_spec(spec: dict) -> dict:
+    """Return ``spec`` without values equal to their defaults (compact designs)."""
+    spec = normalise_spec(spec)
+    fig = {k: v for k, v in spec['figure'].items() if FIGURE_DEFAULTS.get(k) != v}
+    panels = []
+    for p in spec['panels']:
+        panels.append({k: v for k, v in p.items()
+                       if k in ('id', 'rect', 'kind') or PANEL_DEFAULTS.get(k) != v})
+    return {'data_type': spec['data_type'], 'variables': spec['variables'],
+            'figure': fig, 'panels': panels}
+
+
+def apply_template(spec: dict, name: str) -> dict:
+    """Re-lay the spec's panels onto a template, keeping their settings in order."""
+    rects = TEMPLATES[name]
+    panels = list(spec.get('panels') or [])
+    out = []
+    for i, rect in enumerate(rects):
+        if i < len(panels):
+            p = dict(panels[i])
+            p['rect'] = list(rect)
+        else:
+            p = make_panel(rect=list(rect))
+        out.append(p)
+    spec = dict(spec)
+    spec['panels'] = out
+    return spec
+
+
+def panel_letter(index: int, style: str) -> str:
+    """Return the panel letter for ``index`` in ``style`` (a, A, (a), a))."""
+    ch = string.ascii_lowercase[index % 26]
+    return {'A': ch.upper(), '(a)': f'({ch})', 'a)': f'{ch})', '(A)': f'({ch.upper()})'}.get(style, ch)

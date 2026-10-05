@@ -12,24 +12,29 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox,
-    QLabel, QLineEdit, QPlainTextEdit, QScrollArea, QSpinBox, QTabWidget,
-    QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QScrollArea, QSpinBox,
+    QTabWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from results.figure_builder import engine as E
-from results.figure_builder import styles as S
-from results.figure_builder.expressions import split_list, validate
-from results.figure_builder.widgets import (
-    ChipBar, ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
+from results.figure_builder.core import engine as E
+from results.figure_builder.core import styles as S
+from results.figure_builder.core.expressions import (
+    DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
+from results.figure_builder.ui.widgets import (
+    ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
 
 PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density'}
 XY = {'scatter', 'density'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
+MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
+ITEMS = MATRIX | {'composition', 'combinations', 'pairs'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar'}
-GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code'}
+GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code'} | ITEMS
 ALL = set(E.PANEL_KINDS)
-MARKED = {'scatter', 'ternary', 'line'}
+MARKED = {'scatter', 'ternary', 'line', 'pairs'}
+LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density'} - MATRIX
+RENAMEABLE = ITEMS | {'bar', 'pie'}
 
 AGG = {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'count': 'Particle count'}
 
@@ -60,26 +65,51 @@ ANNOTATION_COLUMNS = [
     ('size', 'Size', 'float', (4, 48, 1), 58),
     ('color', 'Colour', 'color', None, 58),
     ('bold', 'Bold', 'check', None, 40),
+    ('italic', 'Italic', 'check', None, 40),
     ('box', 'Box', 'check', None, 40),
 ]
 
 FIELDS = [
     ('Data', 'Chart', 'kind', 'Chart type', 'combo', ALL, E.PANEL_KINDS),
+    ('Data', 'Chart', 'data_type', 'Quantity (unit)', 'combo', ALL - {'text'},
+     {'': 'Figure default', **{k: k for k in DATA_TYPES}}),
     ('Data', 'Chart', 'title', 'Panel title', 'text', ALL, 'optional'),
     ('Data', 'What to plot', 'x', 'X', 'expr', XLINE, 'e.g. Fe   or   log(Ag)'),
     ('Data', 'What to plot', 'y', 'Y', 'expr', XLINE, 'e.g. Fe/Cu'),
     ('Data', 'What to plot', 'y2', 'Right Y axis', 'expr', {'scatter'}, 'optional, e.g. mass:Fe'),
     ('Data', 'What to plot', 'value', 'Value', 'expr', {'histogram', 'box', 'violin', 'bar', 'pie'}, 'e.g. mass:Ag'),
+    ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
     ('Data', 'What to plot', 'a', 'Top corner (A)', 'expr', {'ternary'}, 'e.g. Ag'),
     ('Data', 'What to plot', 'b', 'Left corner (B)', 'expr', {'ternary'}, 'e.g. Au'),
     ('Data', 'What to plot', 'c', 'Right corner (C)', 'expr', {'ternary'}, 'e.g. Cu'),
     ('Data', 'What to plot', 'agg', 'Summarise as', 'combo', {'bar', 'line'}, AGG),
     ('Data', 'What to plot', 'pie_mode', 'Slices are', 'combo', {'pie'},
      {'groups': 'Particle count per group', 'values': 'Share of the Value list'}),
-    ('Data', 'Which particles', 'filter', 'Only particles where', 'mask', ALL - {'text'},
+    ('Data', 'What to plot', 'heat_rows', 'Rows', 'combo', {'heatmap'},
+     {'groups': 'Groups (samples, classes, rules)', 'combinations': 'Element combinations',
+      'particles': 'Individual particles'}),
+    ('Data', 'What to plot', 'heat_value', 'Cell value', 'combo', {'heatmap'},
+     {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'detect': 'Detected in (% of particles)',
+      'count': 'Particles detected'}),
+    ('Data', 'What to plot', 'corr_method', 'Correlation', 'combo', {'corr_matrix', 'pairs'},
+     {'pearson': 'Pearson', 'spearman': 'Spearman (rank)', 'kendall': 'Kendall'}),
+    ('Data', 'What to plot', 'log_values', 'Log-transform values first', 'check', {'corr_matrix', 'pairs'}, None),
+    ('Data', 'What to plot', 'min_n', 'Min. particles per pair', 'int', {'corr_matrix'}, (3, 1000000)),
+    ('Data', 'What to plot', 'cooc_mode', 'Cell value', 'combo', {'cooccurrence'},
+     {'joint': '% of particles with both', 'conditional': '% of row particles with column',
+      'count': 'Number of particles'}),
+    ('Data', 'What to plot', 'comp_mode', 'Share computed as', 'combo', {'composition'},
+     {'mean_fraction': "Mean of each particle's share", 'total': 'Share of the summed amounts'}),
+    ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', {'combinations'},
+     {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
+    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', {'combinations', 'heatmap'}, (1, 500)),
+    ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
+    ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
+     {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
+    ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
      'e.g. Ag > 0 and Au > 0'),
-    ('Data', 'Which particles', 'drop_zeros', 'Hide zero values (not detected)', 'check',
-     XLINE | {'histogram', 'box', 'violin', 'bar'}, None),
+    ('Data', 'Which particles', 'drop_zeros', 'Hide zero values', 'check',
+     XLINE | {'histogram', 'box', 'violin', 'bar', 'corr_matrix', 'heatmap', 'pairs'}, None),
     ('Data', 'Extra series on this plot', 'series', '', 'series', {'scatter'}, None),
     ('Data', 'Text', 'text', '', 'longtext', {'text'}, None),
     ('Data', 'Text', 'text_size', 'Text size (0 = auto)', 'float', {'text'}, (0, 72, 1)),
@@ -87,46 +117,66 @@ FIELDS = [
     ('Groups', 'Grouping', 'group_by', 'Group / colour by', 'combo', GROUPING, E.GROUP_MODES),
     ('Groups', 'Grouping', 'color', 'Colour', 'color', PLOTS | {'ternary'}, None),
     ('Groups', 'Rules (first match wins)', 'rules', '', 'rules', set(), None),
-    ('Groups', 'Rules (first match wins)', 'show_other', 'Show particles matching no rule', 'check', set(), None),
+    ('Groups', 'Rules (first match wins)', 'show_other', 'Show the rest', 'check', set(), None),
     ('Groups', 'Rules (first match wins)', 'other_label', 'Name for the rest', 'text', set(), None),
     ('Groups', 'Show, rename, recolour, reorder', 'groups', '', 'groups', set(), None),
-    ('Groups', 'Show, rename, recolour, reorder', 'show_n', 'Show particle counts (n=…)', 'check',
-     GROUPING - {'code', 'pie'}, None),
-    ('Style', 'Markers', 'marker', 'Shape', 'combo', MARKED, S.MARKERS),
+    ('Groups', 'Show, rename, recolour, reorder', 'show_n', 'Show counts (n=…)', 'check',
+     GROUPING - {'code', 'pie'} - MATRIX, None),
+    ('Style', 'Markers', 'marker', 'Shape', 'combo', MARKED - {'pairs'}, S.MARKERS),
     ('Style', 'Markers', 'marker_size', 'Size', 'float', MARKED, (1, 400, 1)),
-    ('Style', 'Markers', 'alpha', 'Opacity', 'float', {'scatter', 'ternary'}, (0.05, 1, 0.05)),
+    ('Style', 'Markers', 'alpha', 'Opacity', 'float', {'scatter', 'ternary', 'pairs'}, (0.05, 1, 0.05)),
     ('Style', 'Markers', 'edge_color', 'Outline colour', 'color', {'scatter', 'ternary', 'bar', 'pie'}, None),
     ('Style', 'Markers', 'edge_width', 'Outline width', 'float', {'scatter', 'ternary', 'bar', 'pie'}, (0, 6, 0.2)),
     ('Style', 'Markers', 'size_by', 'Size by value', 'expr', {'scatter'}, 'optional, e.g. total'),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter'}, 'optional, e.g. total'),
-    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density'},
+    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density', 'heatmap', 'cooccurrence'},
      {k: k for k in S.COLORMAPS}),
-    ('Style', 'Colour scale', 'reverse_cmap', 'Reverse colour map', 'check', {'scatter', 'density'}, None),
+    ('Style', 'Colour scale', 'div_cmap', 'Colour map', 'combo', {'corr_matrix'},
+     {k: k for k in ('RdBu_r', 'coolwarm', 'bwr', 'seismic', 'PiYG', 'PRGn', 'BrBG', 'RdYlBu_r')}),
+    ('Style', 'Colour scale', 'reverse_cmap', 'Reverse colour map', 'check',
+     {'scatter', 'density'} | MATRIX, None),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
     ('Style', 'Lines', 'line_width', 'Line width', 'float', {'scatter', 'line', 'histogram'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
+    ('Style', 'Chart options', 'annotate', 'Show values', 'check',
+     MATRIX | {'composition', 'combinations'}, None),
+    ('Style', 'Chart options', 'show_sig', 'Significance stars', 'check', {'corr_matrix'}, None),
+    ('Style', 'Chart options', 'triangle', 'Show', 'combo', {'corr_matrix', 'cooccurrence'},
+     {'full': 'Full matrix', 'lower': 'Lower triangle', 'upper': 'Upper triangle'}),
+    ('Style', 'Chart options', 'heat_norm', 'Normalise', 'combo', {'heatmap'},
+     {'none': 'No', 'row': 'Each row to its max', 'column': 'Each column to its max',
+      'zscore': 'z-score per column'}),
+    ('Style', 'Chart options', 'log_color', 'Log colour scale', 'check', {'heatmap'}, None),
+    ('Style', 'Chart options', 'transpose', 'Swap rows and columns', 'check', {'heatmap'}, None),
+    ('Style', 'Chart options', 'max_rows', 'Max particles shown', 'int', {'heatmap'}, (10, 1000000)),
     ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line'}, (2, 500)),
     ('Style', 'Chart options', 'hist_style', 'Bars', 'combo', {'histogram'},
      {'filled': 'Filled', 'step': 'Outline'}),
-    ('Style', 'Chart options', 'density', 'Normalise (density / fraction)', 'check', {'histogram'}, None),
-    ('Style', 'Chart options', 'kde', 'Smooth density curve (KDE)', 'check', {'histogram'}, None),
+    ('Style', 'Chart options', 'density', 'Normalise (density)', 'check', {'histogram'}, None),
+    ('Style', 'Chart options', 'kde', 'Smooth curve (KDE)', 'check', {'histogram'}, None),
     ('Style', 'Chart options', 'cumulative', 'Cumulative', 'check', {'histogram'}, None),
     ('Style', 'Chart options', 'band', 'Shaded band', 'combo', {'line'},
      {'sem': 'Standard error', 'sd': 'Standard deviation', 'iqr': 'Interquartile range', 'none': 'None'}),
-    ('Style', 'Chart options', 'show_points', 'Show points / markers', 'check', DIST | {'line'}, None),
+    ('Style', 'Chart options', 'show_points', 'Show points', 'check', DIST | {'line'}, None),
     ('Style', 'Chart options', 'notch', 'Notched boxes', 'check', {'box'}, None),
     ('Style', 'Chart options', 'show_mean', 'Mark the mean', 'check', DIST, None),
     ('Style', 'Chart options', 'error', 'Error bars', 'combo', {'bar'},
      {'sd': 'Standard deviation', 'sem': 'Standard error', 'ci95': '95% CI', 'none': 'None'}),
-    ('Style', 'Chart options', 'horizontal', 'Horizontal bars', 'check', {'bar'}, None),
+    ('Style', 'Chart options', 'horizontal', 'Horizontal', 'check', {'bar', 'combinations', 'composition'}, None),
     ('Style', 'Chart options', 'stacked', 'Stack the values', 'check', {'bar'}, None),
     ('Style', 'Chart options', 'donut', 'Donut', 'check', {'pie'}, None),
-    ('Style', 'Background', 'panel_bg', 'Panel background', 'color', PLOTS | {'ternary', 'text', 'code'}, None),
-    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'histogram'}, 'automatic'),
-    ('Axes', 'Labels', 'y_label', 'Y label', 'text', PLOTS, 'automatic'),
+    ('Style', 'Background', 'panel_bg', 'Panel background', 'color', ALL - {'pairs'}, None),
+    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'histogram', 'heatmap', 'combinations', 'composition'}, 'automatic'),
+    ('Axes', 'Labels', 'y_label', 'Y label', 'text', PLOTS | {'heatmap', 'combinations', 'composition'}, 'automatic'),
     ('Axes', 'Labels', 'y2_label', 'Right Y label', 'text', {'scatter'}, 'automatic'),
+    ('Axes', 'Labels', 'a_label', 'Top corner', 'text', {'ternary'}, 'automatic'),
+    ('Axes', 'Labels', 'b_label', 'Left corner', 'text', {'ternary'}, 'automatic'),
+    ('Axes', 'Labels', 'c_label', 'Right corner', 'text', {'ternary'}, 'automatic'),
+    ('Axes', 'Labels', 'cbar_label', 'Colour bar label', 'text', {'scatter', 'density'} | MATRIX, 'automatic'),
+    ('Axes', 'Labels', 'styles_button', '', 'button', ALL, 'Text styles: bold, italic, size, colour…'),
+    ('Axes', 'Labels', 'rename_button', '', 'button', RENAMEABLE, 'Rename isotopes / items…'),
     ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram'}, None),
-    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS, None),
+    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS | {'combinations'}, None),
     ('Axes', 'Scale', 'log_y2', 'Log right Y', 'check', {'scatter'}, None),
     ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram'}, 'auto'),
     ('Axes', 'Range', 'x_max', 'X to', 'text', XLINE | {'histogram'}, 'auto'),
@@ -137,30 +187,29 @@ FIELDS = [
     ('Axes', 'Ticks and frame', 'tick_dir', 'Ticks', 'combo', PLOTS,
      {'out': 'Outside', 'in': 'Inside', 'inout': 'Crossing'}),
     ('Axes', 'Ticks and frame', 'minor_ticks', 'Minor ticks', 'check', PLOTS, None),
-    ('Axes', 'Ticks and frame', 'sci_x', 'Scientific notation X', 'check', XLINE | {'histogram'}, None),
-    ('Axes', 'Ticks and frame', 'sci_y', 'Scientific notation Y', 'check', PLOTS, None),
-    ('Axes', 'Ticks and frame', 'xtick_rotation', 'Rotate X labels (°)', 'int', PLOTS, (-90, 90)),
-    ('Axes', 'Ticks and frame', 'grid', 'Grid', 'check', PLOTS | {'ternary'}, None),
+    ('Axes', 'Ticks and frame', 'sci_x', 'Scientific X', 'check', XLINE | {'histogram'}, None),
+    ('Axes', 'Ticks and frame', 'sci_y', 'Scientific Y', 'check', PLOTS, None),
+    ('Axes', 'Ticks and frame', 'xtick_rotation', 'Rotate X labels (°)', 'int',
+     PLOTS | MATRIX | {'combinations'}, (-90, 90)),
+    ('Axes', 'Ticks and frame', 'grid', 'Grid', 'check', PLOTS | {'ternary', 'combinations'}, None),
     ('Axes', 'Ticks and frame', 'aspect_equal', 'Equal X/Y scale', 'check', XY, None),
     ('Axes', 'Guide lines', 'hlines', 'Horizontal lines at', 'text', PLOTS, 'e.g. 1, 10'),
     ('Axes', 'Guide lines', 'vlines', 'Vertical lines at', 'text', XLINE | {'histogram'}, 'e.g. 100'),
     ('Axes', 'Guide lines', 'diagonal', 'y = x line', 'check', {'scatter'}, None),
-    ('Axes', 'Legend', 'legend', 'Show legend', 'check', ALL - {'text', 'code', 'box', 'violin', 'density'}, None),
-    ('Axes', 'Legend', 'legend_loc', 'Position', 'combo', ALL - {'text', 'code', 'box', 'violin', 'density'},
-     S.LEGEND_LOCATIONS),
-    ('Axes', 'Legend', 'legend_cols', 'Columns', 'int', ALL - {'text', 'code', 'box', 'violin', 'density'}, (1, 8)),
-    ('Axes', 'Legend', 'legend_title', 'Title', 'text', ALL - {'text', 'code', 'box', 'violin', 'density'}, 'optional'),
-    ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', ALL - {'text', 'code', 'box', 'violin', 'density'},
-     S.FONT_SIZES),
+    ('Axes', 'Legend', 'legend', 'Show legend', 'check', LEGENDED, None),
+    ('Axes', 'Legend', 'legend_loc', 'Position', 'combo', LEGENDED, S.LEGEND_LOCATIONS),
+    ('Axes', 'Legend', 'legend_cols', 'Columns', 'int', LEGENDED, (1, 8)),
+    ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
+    ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
-    ('Stats', 'Fit', 'show_r', 'Show r and R² on the plot', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
     ('Stats', 'Compare groups', 'test', 'Test', 'combo', TESTABLE, E.STAT_TESTS),
     ('Stats', 'Compare groups', 'pairs', 'Pairs', 'combo', set(),
      {'all': 'Every pair', 'first': 'Each group vs the first'}),
     ('Stats', 'Compare groups', 'correction', 'Multiple comparisons', 'combo', set(), E.CORRECTIONS),
     ('Stats', 'Compare groups', 'p_format', 'Show p as', 'combo', set(),
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
-    ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant brackets', 'check', set(), None),
+    ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
     ('Notes', 'Text and arrows on this panel', 'annotations', '', 'annotations',
      ALL - {'text'}, None),
 ]
@@ -181,7 +230,15 @@ TAB_HINTS = {
               'Untick a group to hide it, type a legend name to rename it.',
 }
 
-SPECIAL_CHIPS = ('total', 'n_elements', 'sample', 'class', 'time', 'log(', 'mass:', 'moles:', 'd:')
+SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time')
+FUNCTION_SNIPPETS = ('log()', 'ln()', 'sqrt()', 'abs()', 'percentile(, 90)', 'median()', 'mean()',
+                     'where(, , nan)')
+
+EDITOR_STYLE = """
+QGroupBox { font-weight: 600; margin-top: 12px; padding: 6px 4px 2px 4px; }
+QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 2px; }
+QTabBar::tab { padding: 4px 9px; }
+"""
 
 
 class PanelEditor(QWidget):
@@ -194,6 +251,8 @@ class PanelEditor(QWidget):
 
     changed = Signal()
     kind_changed = Signal()
+    styles_requested = Signal()
+    rename_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -218,14 +277,19 @@ class PanelEditor(QWidget):
         self.error.setStyleSheet('color: #b42318; font-weight: 600; padding: 2px 4px;')
         self.error.hide()
         root.addWidget(self.error)
-        self.chips = ChipBar()
-        self.chips.insert.connect(self._insert_chip)
-        self.chips_label = QLabel('Click to insert into the last expression box:')
-        self.chips_label.setStyleSheet('color: #6b7280; font-size: 11px;')
-        root.addWidget(self.chips_label)
-        root.addWidget(self.chips)
+        self.setStyleSheet(EDITOR_STYLE)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.setUsesScrollButtons(True)
+        self.insert_btn = QToolButton()
+        self.insert_btn.setText('Insert ▾')
+        self.insert_btn.setToolTip('Insert an isotope, quantity, variable or function into the '
+                                   'last expression box you used')
+        self.insert_btn.setPopupMode(QToolButton.InstantPopup)
+        self.insert_btn.setAutoRaise(True)
+        self.insert_menu = QMenu(self.insert_btn)
+        self.insert_btn.setMenu(self.insert_menu)
+        self.tabs.setCornerWidget(self.insert_btn, Qt.TopRightCorner)
         root.addWidget(self.tabs, 1)
         for tab, section, key, label, kind, _kinds, opts in FIELDS:
             if tab not in self.tab_pages:
@@ -234,8 +298,8 @@ class PanelEditor(QWidget):
                 scroll.setFrameShape(QFrame.NoFrame)
                 page = QWidget()
                 lay = QVBoxLayout(page)
-                lay.setContentsMargins(4, 6, 4, 6)
-                lay.setSpacing(8)
+                lay.setContentsMargins(2, 4, 2, 4)
+                lay.setSpacing(4)
                 if tab in TAB_HINTS:
                     hint = QLabel(TAB_HINTS[tab])
                     hint.setWordWrap(True)
@@ -249,13 +313,15 @@ class PanelEditor(QWidget):
                 form = QFormLayout(box)
                 form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
                 form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                form.setVerticalSpacing(6)
+                form.setVerticalSpacing(4)
+                form.setHorizontalSpacing(8)
+                form.setContentsMargins(6, 4, 6, 4)
                 self.sections[(tab, section)] = (box, form)
                 self.tab_pages[tab][1].addWidget(box)
             box, form = self.sections[(tab, section)]
             w = self._make(key, kind, opts)
             self.widgets[key] = (kind, w)
-            if kind in ('rules', 'series', 'annotations', 'groups', 'code', 'longtext'):
+            if kind in ('rules', 'series', 'annotations', 'groups', 'code', 'longtext', 'button'):
                 form.addRow(w)
                 self.rows[key] = (None, w)
             else:
@@ -264,8 +330,6 @@ class PanelEditor(QWidget):
         for _scroll, lay in self.tab_pages.values():
             lay.addStretch()
         self.tabs.hide()
-        self.chips.hide()
-        self.chips_label.hide()
 
     def _make(self, key, kind, opts):
         """Create the widget for one field and wire it to the panel."""
@@ -323,6 +387,9 @@ class PanelEditor(QWidget):
         elif kind == 'groups':
             w = GroupsTable()
             w.changed.connect(self._groups_changed)
+        elif kind == 'button':
+            w = QPushButton(opts)
+            w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
         elif kind == 'longtext':
             w = QPlainTextEdit()
             w.setMinimumHeight(120)
@@ -341,6 +408,37 @@ class PanelEditor(QWidget):
 
     def _remember_expr(self, w):
         self._last_expr = w
+
+    def _build_insert_menu(self, table):
+        m = self.insert_menu
+        m.clear()
+        if table is None:
+            return
+        aliases = table.symbol_aliases()
+        iso_names = list(aliases) or list(table.labels)
+        iso = m.addMenu('Isotope')
+        for name in iso_names:
+            iso.addAction(name, lambda n=name: self._insert_chip(n))
+        if aliases:
+            full = m.addMenu('Isotope (full label)')
+            for lab in table.labels:
+                full.addAction(lab, lambda n=lab: self._insert_chip(n))
+        for prefix, (_key, human, unit) in QUANTITY_PREFIXES.items():
+            if prefix == table.default_prefix:
+                continue
+            sub = m.addMenu(f'{(human or prefix).capitalize()} ({unit})')
+            for name in iso_names:
+                sub.addAction(f'{prefix}:{name}', lambda n=f'{prefix}:{name}': self._insert_chip(n))
+        if table.variables:
+            var = m.addMenu('My variables')
+            for name in table.variables:
+                var.addAction(name, lambda n=name: self._insert_chip(n))
+        special = m.addMenu('Built-in values')
+        for name in SPECIAL_NAMES:
+            special.addAction(name, lambda n=name: self._insert_chip(n))
+        funcs = m.addMenu('Functions')
+        for name in FUNCTION_SNIPPETS:
+            funcs.addAction(name, lambda n=name: self._insert_chip(n))
 
     def _insert_chip(self, text):
         target = self._last_expr
@@ -366,10 +464,7 @@ class PanelEditor(QWidget):
                 w.set_names(hints)
             if isinstance(w, RowTable):
                 w.set_table_source(table)
-        if table is not None:
-            aliases = table.symbol_aliases()
-            iso = [s for s in aliases] or list(table.labels)
-            self.chips.set_names(iso, list(table.variables), SPECIAL_CHIPS)
+        self._build_insert_menu(table)
         self._check_expressions()
         self.refresh_groups()
 
@@ -378,8 +473,6 @@ class PanelEditor(QWidget):
         self.panel = panel
         self.empty.setVisible(panel is None)
         self.tabs.setVisible(panel is not None)
-        self.chips.setVisible(panel is not None)
-        self.chips_label.setVisible(panel is not None)
         if panel is None:
             self.error.hide()
             return
@@ -400,7 +493,7 @@ class PanelEditor(QWidget):
                 w.set_color(v)
             elif kind in ('rules', 'series', 'annotations'):
                 w.set_rows(v)
-            elif kind == 'groups':
+            elif kind in ('groups', 'button'):
                 pass
             else:
                 if w.toPlainText() != (v or ''):
@@ -438,7 +531,7 @@ class PanelEditor(QWidget):
         if self._loading or self.panel is None:
             return
         self.panel[key] = value
-        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y'):
+        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
                 self._loading = True
@@ -482,6 +575,12 @@ class PanelEditor(QWidget):
             return p.get('pie_mode') == 'values'
         if key == 'agg' and kind == 'line':
             return bool((p.get('y') or '').strip())
+        if key == 'max_rows':
+            return kind == 'heatmap' and p.get('heat_rows') == 'particles'
+        if key == 'top_n' and kind == 'heatmap':
+            return p.get('heat_rows') == 'combinations'
+        if key == 'heat_value':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles'
         return kind in kinds
 
     def _update_visibility(self):
@@ -516,9 +615,10 @@ class PanelEditor(QWidget):
             text = w.text().strip()
             msg = None
             if text and self.table is not None and len(self.table):
-                if key == 'value' and self.panel.get('kind') in ('bar', 'pie'):
+                tbl = self.table.view(self.panel.get('data_type'))
+                if key == 'isotopes' or (key == 'value' and self.panel.get('kind') in ('bar', 'pie')):
                     for part in split_list(text):
-                        msg = validate(part, self.table) or msg
+                        msg = validate(part, tbl) or msg
                 else:
-                    msg = validate(text, self.table)
+                    msg = validate(text, tbl)
             w.mark(msg)

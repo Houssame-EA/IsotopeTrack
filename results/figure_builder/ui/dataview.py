@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from results.figure_builder.expressions import ExpressionError, ParticleTable, evaluate
+from results.figure_builder.core.expressions import ExpressionError, ParticleTable, evaluate
 
 
 class FrameModel(QAbstractTableModel):
@@ -118,7 +118,7 @@ class DataExplorer(QWidget):
         self.mode.currentIndexChanged.connect(self.refresh)
         row.addWidget(self.mode)
         row.addWidget(QLabel('where'))
-        from results.figure_builder.widgets import ExpressionEdit
+        from results.figure_builder.ui.widgets import ExpressionEdit
         self.where = ExpressionEdit()
         self.where.setPlaceholderText('optional, e.g. Fe > 0 and sample == "Blank"')
         self.where.returnPressed.connect(self.refresh)

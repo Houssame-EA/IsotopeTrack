@@ -200,6 +200,27 @@ class ParticleTable:
     def __len__(self) -> int:
         return len(self.particles)
 
+    def view(self, data_type: str | None) -> 'ParticleTable':
+        """The same particles read in another default quantity.
+
+        Views share the column cache and variables with this table, so a
+        panel using mass while the rest of the figure uses counts costs
+        nothing extra beyond its own columns.
+
+        Args:
+            data_type: A :data:`DATA_TYPES` key or a quantity prefix; empty
+                or unknown returns this table itself.
+        """
+        if not data_type:
+            return self
+        prefix = DATA_TYPES.get(data_type, data_type if data_type in QUANTITY_PREFIXES else None)
+        if prefix is None or prefix == self.default_prefix:
+            return self
+        import copy as _copy
+        other = _copy.copy(self)
+        other.default_prefix = prefix
+        return other
+
     def set_variables(self, variables) -> dict:
         """Install user-defined variables and return ``{name: error}`` for bad ones.
 
@@ -211,8 +232,8 @@ class ParticleTable:
         """
         items = variables.items() if isinstance(variables, dict) else (
             (v.get('name', ''), v.get('expr', '')) for v in (variables or []))
-        for name in list(self.variables):
-            self._cache.pop(('var', name), None)
+        for key in [k for k in self._cache if isinstance(k, tuple) and k and k[0] == 'var']:
+            self._cache.pop(key, None)
         self.variables = {}
         problems = {}
         reserved = set(self.labels) | set(SPECIAL_NAMES) | set(FUNCTIONS) | set(CONSTANTS)
@@ -258,10 +279,12 @@ class ParticleTable:
 
     def column(self, name: str) -> np.ndarray:
         """Return a column by its canonical name (see :meth:`names`)."""
-        if name in self._cache:
+        if name != 'total' and name in self._cache:
             return self._cache[name]
+        if name == 'total' and ('total', self.default_prefix) in self._cache:
+            return self._cache[('total', self.default_prefix)]
         if name in self.variables:
-            key = ('var', name)
+            key = ('var', name, self.default_prefix)
             if key not in self._cache:
                 if name in self._busy:
                     raise ExpressionError(f"Variable '{name}' refers to itself")
@@ -299,7 +322,7 @@ class ParticleTable:
             return self._quantity(prefix, self.resolve_label(lab))
         else:
             return self._quantity(self.default_prefix, self.resolve_label(name))
-        self._cache[name] = col
+        self._cache[('total', self.default_prefix) if name == 'total' else name] = col
         return col
 
     def symbol_aliases(self) -> dict[str, str]:
@@ -603,7 +626,12 @@ def _format_label(label: str, style: str) -> str:
     return rf'$^{{{mass}}}$' + sym
 
 
-def pretty(expr: str, table: ParticleTable, style: str = 'isotope') -> str:
+def plain(text: str) -> str:
+    """Strip matplotlib mathtext from a label for plain-text reports."""
+    return re.sub(r'\$\^\{(\d+)\}\$', r'\1', text or '').replace('$', '')
+
+
+def pretty(expr: str, table: ParticleTable, style: str = 'isotope', with_unit: bool = True) -> str:
     """Turn an expression into a readable axis or legend title.
 
     A single column gets its quantity and unit (``$^{56}$Fe mass (fg)``);
@@ -639,6 +667,6 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope') -> str:
         return out
 
     if single:
-        return render(mapping[code.strip()], True)
+        return render(mapping[code.strip()], with_unit)
     out = re.sub(r'_v\d+', lambda m: render(mapping[m.group(0)], False), code)
     return out.replace('**', '^').replace('*', '×')

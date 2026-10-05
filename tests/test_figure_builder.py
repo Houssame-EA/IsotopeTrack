@@ -9,8 +9,8 @@ import pytest
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from results.figure_builder import engine as E
-from results.figure_builder.expressions import (
+from results.figure_builder.core import engine as E
+from results.figure_builder.core.expressions import (
     ExpressionError, ParticleTable, evaluate, pretty, split_list)
 
 
@@ -252,7 +252,7 @@ def test_group_overrides(table):
 
 
 def test_palette_drives_group_colours(table):
-    from results.figure_builder import styles as S
+    from results.figure_builder.core import styles as S
     spec = E.default_spec()
     spec['figure']['palette'] = 'Tableau'
     spec['panels'] = [E.make_panel(kind='box', value='Ag', group_by='sample')]
@@ -311,7 +311,7 @@ def test_outside_legend_fits_inside_panel(table, name):
 
 
 def test_style_presets_and_strip():
-    from results.figure_builder import styles as S
+    from results.figure_builder.core import styles as S
     spec = E.apply_template(E.default_spec(), '2 × 2')
     for name in S.STYLE_PRESETS:
         styled = S.apply_style_preset(spec, name)
@@ -325,7 +325,7 @@ def test_style_presets_and_strip():
 
 
 def test_summary_frame(table):
-    from results.figure_builder.dataview import summary_frame
+    from results.figure_builder.ui.dataview import summary_frame
     df = summary_frame(table, 'sample')
     row = df[(df['group'] == 'Blank') & (df['column'] == '197Au')].iloc[0]
     assert row['particles'] == 200 and row['detected'] == 100
@@ -335,7 +335,7 @@ def test_summary_frame(table):
 def dialog(monkeypatch):
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
-    from results.figure_builder import dialog as D
+    from results.figure_builder.ui import dialog as D
     monkeypatch.setattr(D, 'SETTINGS', ('IsotopeTrackTests', 'FigureBuilderTests'))
     node = D.FigureBuilderNode()
     node.process_data(make_input(classifier=True))
@@ -393,3 +393,145 @@ def test_dialog_variables_tab(dialog):
     dialog.spec['panels'][0]['y'] = 'agfe'
     dialog._render()
     assert dialog._last_report.errors == {}
+
+
+@pytest.mark.parametrize('panel', [
+    dict(kind='corr_matrix', log_values=True, show_sig=True, triangle='lower', corr_method='spearman'),
+    dict(kind='corr_matrix', isotopes='Ag, Fe, Ag/Fe', corr_method='kendall', annotate=False),
+    dict(kind='heatmap', group_by='sample', heat_value='detect'),
+    dict(kind='heatmap', group_by='class', heat_value='median', heat_norm='zscore', transpose=True),
+    dict(kind='heatmap', heat_rows='combinations', top_n=5, log_color=True),
+    dict(kind='heatmap', heat_rows='particles', max_rows=50),
+    dict(kind='cooccurrence', cooc_mode='conditional', triangle='upper'),
+    dict(kind='cooccurrence', cooc_mode='count'),
+    dict(kind='combinations', group_by='sample', horizontal=True, combo_filter='multi'),
+    dict(kind='combinations', as_percent=False, top_n=3),
+    dict(kind='composition', group_by='sample', comp_mode='total', horizontal=True),
+    dict(kind='composition', group_by='class', isotopes='mass:Ag, mass:Au',
+         item_labels={'mass:Ag': 'Silver'}),
+    dict(kind='pairs', isotopes='Ag, Au, Fe', log_values=True, group_by='sample'),
+    dict(kind='pairs', isotopes='Ag, Fe', pairs_upper='scatter'),
+])
+def test_new_chart_kinds_render(table, panel):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(**panel)]
+    report = _render(spec, table)
+    assert report.errors == {}
+    assert report.counts[spec['panels'][0]['id']] > 0
+
+
+def test_corr_matrix_values(table):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(kind='corr_matrix', isotopes='Ag, total')]
+    report = _render(spec, table)
+    assert any('107Ag vs total' in s for s in report.stats)
+    assert not any('$' in s for s in report.stats)
+
+
+def test_per_panel_quantity(table):
+    spec = E.default_spec()
+    counts = E.make_panel(rect=[0, 0, 0.5, 1], kind='scatter', x='Ag', y='Fe')
+    mass = E.make_panel(rect=[0.5, 0, 0.5, 1], kind='scatter', x='Ag', y='Fe',
+                        data_type='Element Mass (fg)')
+    spec['panels'] = [counts, mass]
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    assert report.errors == {}
+    a1 = report.artists[counts['id']]['ax']
+    a2 = report.artists[mass['id']]['ax']
+    assert 'counts' in a1.get_xlabel() and 'mass (fg)' in a2.get_xlabel()
+    assert a2.get_xlim()[1] < a1.get_xlim()[1]
+
+
+def test_text_styles_figure_and_panel(table):
+    spec = E.default_spec()
+    spec['figure']['title'] = 'Main'
+    spec['figure']['text_styles'] = {'ticks': {'bold': True, 'size': 7},
+                                     'figure_title': {'italic': True}}
+    panel = E.make_panel(kind='scatter', x='Ag', y='Fe', title='T',
+                         text_styles={'x_label': {'italic': True, 'color': '#ff0000', 'size': 15},
+                                      'title': {'bold': False}})
+    spec['panels'] = [panel]
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    canvas.draw()
+    ax = report.artists[panel['id']]['ax']
+    assert ax.xaxis.label.get_style() == 'italic'
+    assert ax.xaxis.label.get_color() == '#ff0000'
+    assert ax.xaxis.label.get_fontsize() == 15
+    assert ax.title.get_weight() == 'normal'
+    assert ax.yaxis.label.get_style() == 'normal'
+    labels = ax.get_xticklabels()
+    assert labels and all(t.get_weight() == 'bold' and t.get_fontsize() == 7 for t in labels)
+    assert fig._suptitle.get_style() == 'italic'
+
+
+def test_ternary_corner_labels_and_styles(table):
+    spec = E.default_spec()
+    panel = E.make_panel(kind='ternary', a='Ag', b='Au', c='Fe', drop_zeros=False,
+                         a_label='Silver', text_styles={'corner_labels': {'bold': True}})
+    spec['panels'] = [panel]
+    report = _render(spec, table)
+    ax = report.artists[panel['id']]['ax']
+    assert ax.taxis.label.get_text() == 'Silver'
+    assert ax.taxis.label.get_weight() == 'bold'
+    assert ax.laxis.label.get_weight() == 'bold'
+
+
+def test_hits_find_labels(dialog):
+    from results.figure_builder.ui import interact
+    dialog.apply_layout('Side by side')
+    p0, p1 = dialog.spec['panels']
+    dialog.set_panel_kind(p1, 'ternary')
+    p0['title'] = 'Left'
+    dialog._render()
+    elements = {(h.panel_id, h.element) for h in dialog._hits}
+    for el in ('title', 'x_label', 'y_label', 'plot', 'ticks_x'):
+        assert (p0['id'], el) in elements
+    for el in ('corner_a', 'corner_b', 'corner_c'):
+        assert (p1['id'], el) in elements
+    yl = next(h for h in dialog._hits if h.panel_id == p0['id'] and h.element == 'y_label')
+    cx, cy = (yl.box[0] + yl.box[2]) / 2, (yl.box[1] + yl.box[3]) / 2
+    assert interact.hit_at(dialog._hits, cx, cy).element == 'y_label'
+
+
+def test_double_click_renames_and_menus(dialog, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    from results.figure_builder.ui import interact
+    p0 = dialog.spec['panels'][0]
+    dialog._render()
+    xl = next(h for h in dialog._hits if h.panel_id == p0['id'] and h.element == 'x_label')
+    monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('Silver signal', True)))
+    dialog._on_preview_double((xl.box[0] + xl.box[2]) / 2, (xl.box[1] + xl.box[3]) / 2)
+    assert p0['x_label'] == 'Silver signal'
+    menu = interact.build_menu(dialog, xl, 0.5, 0.9)
+    texts = [a.text() for a in menu.actions()]
+    assert 'Bold' in texts and 'Italic' in texts
+    next(a for a in menu.actions() if a.text() == 'Italic').trigger()
+    assert p0['text_styles']['x_label']['italic'] is True
+    plot = next(h for h in dialog._hits if h.panel_id == p0['id'] and h.element == 'plot')
+    pm = interact.build_menu(dialog, plot, 0.5, 0.5)
+    names = [a.text() for a in pm.actions()]
+    for wanted in ('Chart type', 'Quantity (unit)', 'Log X', 'Add', 'Delete panel'):
+        assert wanted in names
+    quantity = next(a for a in pm.actions() if a.text() == 'Quantity (unit)').menu()
+    next(a for a in quantity.actions() if a.text() == 'Element Mass (fg)').trigger()
+    assert p0['data_type'] == 'Element Mass (fg)'
+    page = interact.build_menu(dialog, None, 0.5, 0.5)
+    add = next(a for a in page.actions() if a.text() == 'Add panel here').menu()
+    before = len(dialog.spec['panels'])
+    next(a for a in add.actions() if a.text() == 'Correlation matrix').trigger()
+    assert len(dialog.spec['panels']) == before + 1
+    assert dialog.spec['panels'][-1]['kind'] == 'corr_matrix'
+    dialog._render()
+    assert dialog._last_report.errors == {}
+
+
+def test_sidebar_toggle(dialog):
+    dialog._toggle_sidebar(False)
+    assert not dialog.left_panel.isVisible()
+    dialog.show_editor_tab('Groups')
+    assert dialog.left_panel.isVisible()
+    assert dialog.editor.tabs.tabText(dialog.editor.tabs.currentIndex()) == 'Groups'

@@ -6,24 +6,22 @@
 * :class:`RowTable` — small spreadsheet of dicts (rules, overlay series,
   annotations, variables) with typed columns.
 * :class:`GroupsTable` — show/hide, rename, recolour and reorder groups.
-* :class:`ChipBar` — clickable isotope / variable chips that insert their
-  name into the last focused expression box.
 """
 
 from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QPoint, QRect, QSize, QStringListModel, Qt, Signal
+from PySide6.QtCore import QStringListModel, Qt, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QCompleter, QDoubleSpinBox,
-    QHBoxLayout, QHeaderView, QLayout, QLineEdit, QPushButton, QSizePolicy,
-    QStyledItemDelegate, QTableWidget, QTableWidgetItem, QToolButton,
+    QHBoxLayout, QHeaderView, QLineEdit, QPushButton,
+    QStyledItemDelegate, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
-from results.figure_builder.expressions import validate
+from results.figure_builder.core.expressions import validate
 
 
 def mono_font() -> QFont:
@@ -503,100 +501,3 @@ class GroupsTable(QWidget):
         for k in ('group_labels', 'group_colors'):
             self.panel[k] = {}
         self.changed.emit()
-
-
-class FlowLayout(QLayout):
-    """Layout that wraps its items onto new lines, like words in a paragraph."""
-
-    def __init__(self, parent=None, spacing=4):
-        super().__init__(parent)
-        self._items = []
-        self._spacing = spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, i):
-        return self._items[i] if 0 <= i < len(self._items) else None
-
-    def takeAt(self, i):
-        return self._items.pop(i) if 0 <= i < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientations(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, width, 0), True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        return size
-
-    def _do_layout(self, rect, test):
-        x, y, line = rect.x(), rect.y(), 0
-        for item in self._items:
-            w = item.sizeHint().width()
-            h = item.sizeHint().height()
-            if x + w > rect.right() and line > 0:
-                x = rect.x()
-                y += line + self._spacing
-                line = 0
-            if not test:
-                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
-            x += w + self._spacing
-            line = max(line, h)
-        return y + line - rect.y()
-
-
-class ChipBar(QWidget):
-    """Clickable chips for isotopes, variables and helpers.
-
-    Signals:
-        insert(str): the text of the clicked chip.
-    """
-
-    insert = Signal(str)
-
-    CHIP_STYLE = ('QToolButton {{ border: 1px solid {b}; border-radius: 9px; padding: 1px 8px;'
-                  ' background: {bg}; color: {fg}; font-size: 11px; }}'
-                  ' QToolButton:hover {{ border-color: #2a78d6; }}')
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.flow = FlowLayout(self, spacing=4)
-        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-
-    def set_names(self, isotopes, variables, extras=()):
-        """Rebuild the chips."""
-        while self.flow.count():
-            item = self.flow.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        for names, bg, fg, b in ((isotopes, '#e8f0fb', '#1c4f95', '#b7d3f6'),
-                                 (variables, '#e9f7f0', '#0f6b48', '#a8dfc4'),
-                                 (extras, '#f3f4f6', '#374151', '#d1d5db')):
-            for name in names:
-                btn = QToolButton()
-                btn.setText(name)
-                btn.setCursor(Qt.PointingHandCursor)
-                btn.setStyleSheet(self.CHIP_STYLE.format(b=b, bg=bg, fg=fg))
-                btn.setToolTip(f'Insert {name} into the last expression box')
-                btn.clicked.connect(lambda _=False, n=name: self.insert.emit(n))
-                self.flow.addWidget(btn)
-        self.updateGeometry()

@@ -5,6 +5,6 @@ expressions (``Fe``, ``Fe/Cu``, ``mass:Ag``), colour particles by your own
 rules, add a right-hand axis or statistics, and export the result.
 """
 
-from results.figure_builder.dialog import FigureBuilderDialog, FigureBuilderNode
+from results.figure_builder.ui.dialog import FigureBuilderDialog, FigureBuilderNode
 
 __all__ = ['FigureBuilderDialog', 'FigureBuilderNode']

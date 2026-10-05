@@ -12,7 +12,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen, QBrush
 from PySide6.QtWidgets import QMenu, QSizePolicy, QWidget
 
-from results.figure_builder import engine as E
+from results.figure_builder.core import engine as E
 
 _SNAP = 1.0 / 48.0
 _MIN = 0.06
@@ -21,6 +21,8 @@ _HANDLE = 10.0
 KIND_GLYPHS = {
     'scatter': '⁘', 'line': '⟋', 'histogram': '▁▃▆', 'box': '⊟', 'violin': '◊', 'bar': '▌▌',
     'pie': '◔', 'density': '▦', 'ternary': '△', 'text': 'T', 'code': '</>',
+    'corr_matrix': '▚', 'heatmap': '▦', 'cooccurrence': '◫', 'combinations': '☰',
+    'composition': '▤', 'pairs': '⊞',
 }
 
 

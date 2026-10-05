@@ -19,8 +19,9 @@ import time
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
-from PySide6.QtCore import QObject, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QObject, QPoint, QRectF, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap, QShortcut)
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFileDialog, QFontComboBox, QFormLayout, QFrame,
@@ -29,13 +30,14 @@ from PySide6.QtWidgets import (
     QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
 
-from results.figure_builder import engine as E
-from results.figure_builder import styles as S
-from results.figure_builder.dataview import DataExplorer
-from results.figure_builder.editor import PanelEditor
-from results.figure_builder.expressions import DATA_TYPES, ParticleTable
-from results.figure_builder.sketch import LayoutSketch
-from results.figure_builder.widgets import ColorButton, RowTable
+from results.figure_builder.core import engine as E
+from results.figure_builder.core import styles as S
+from results.figure_builder.ui.dataview import DataExplorer
+from results.figure_builder.ui import interact
+from results.figure_builder.ui.editor import PanelEditor
+from results.figure_builder.core.expressions import DATA_TYPES, ParticleTable
+from results.figure_builder.ui.sketch import LayoutSketch
+from results.figure_builder.ui.widgets import ColorButton, RowTable
 
 import logging
 
@@ -311,30 +313,41 @@ class FigureSettingsDialog(QDialog):
 
 
 class PreviewLabel(QLabel):
-    """Shows the rendered figure scaled to fit; clicking reports figure coordinates.
+    """Shows the rendered figure scaled to fit and reports where the user clicks.
+
+    Coordinates are figure fractions with the origin at the top-left.
 
     Signals:
         resized(): the widget changed size.
-        clicked(float, float): figure fractions (origin top-left) of a click.
+        clicked(float, float): left click.
+        double_clicked(float, float): double click.
+        context_requested(float, float, QPoint): right click, with the global position.
     """
 
     resized = Signal()
     clicked = Signal(float, float)
+    double_clicked = Signal(float, float)
+    context_requested = Signal(float, float, QPoint)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setCursor(Qt.PointingHandCursor)
-        self.setToolTip('Click a panel to edit it')
+        self.setToolTip('Click to select · double-click text to rename it · right-click for options')
         self._pixmap = None
         self._shown = None
+        self._selection = None
 
     def set_figure_pixmap(self, pm: QPixmap):
         """Store and display a freshly rendered pixmap."""
         self._pixmap = pm
         self._rescale()
+
+    def set_selection(self, rect):
+        """Outline ``rect`` (figure fractions, top-left origin), or nothing when None."""
+        self._selection = rect
+        self.update()
 
     def _rescale(self):
         if self._pixmap is None:
@@ -346,22 +359,56 @@ class PreviewLabel(QLabel):
         self._shown = pm
         self.setPixmap(pm)
 
+    def _geometry(self):
+        if self._shown is None:
+            return None
+        dpr = self._shown.devicePixelRatio()
+        w, h = self._shown.width() / dpr, self._shown.height() / dpr
+        return (self.width() - w) / 2, (self.height() - h) / 2, w, h
+
+    def _to_fraction(self, pos):
+        g = self._geometry()
+        if g is None:
+            return None
+        x0, y0, w, h = g
+        fx = (pos.x() - x0) / max(1.0, w)
+        fy = (pos.y() - y0) / max(1.0, h)
+        if 0 <= fx <= 1 and 0 <= fy <= 1:
+            return fx, fy
+        return None
+
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._rescale()
         self.resized.emit()
 
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        g = self._geometry()
+        if g is None or not self._selection:
+            return
+        x0, y0, w, h = g
+        x, y, rw, rh = self._selection
+        qp = QPainter(self)
+        pen = QPen(QColor('#2a78d6'), 1.6, Qt.DashLine)
+        qp.setPen(pen)
+        qp.setBrush(Qt.NoBrush)
+        qp.drawRect(QRectF(x0 + x * w + 1, y0 + y * h + 1, rw * w - 2, rh * h - 2))
+        qp.end()
+
     def mousePressEvent(self, ev):
-        if self._shown is None or ev.button() != Qt.LeftButton:
+        pt = self._to_fraction(ev.position())
+        if pt is None:
             return super().mousePressEvent(ev)
-        dpr = self._shown.devicePixelRatio()
-        w, h = self._shown.width() / dpr, self._shown.height() / dpr
-        x0 = (self.width() - w) / 2
-        y0 = (self.height() - h) / 2
-        fx = (ev.position().x() - x0) / max(1.0, w)
-        fy = (ev.position().y() - y0) / max(1.0, h)
-        if 0 <= fx <= 1 and 0 <= fy <= 1:
-            self.clicked.emit(fx, fy)
+        if ev.button() == Qt.LeftButton:
+            self.clicked.emit(*pt)
+        elif ev.button() == Qt.RightButton:
+            self.context_requested.emit(pt[0], pt[1], ev.globalPosition().toPoint())
+
+    def mouseDoubleClickEvent(self, ev):
+        pt = self._to_fraction(ev.position())
+        if pt is not None and ev.button() == Qt.LeftButton:
+            self.double_clicked.emit(*pt)
 
 
 def render_to_pixmap(spec: dict, table: ParticleTable, dpi: float):
@@ -393,6 +440,8 @@ class FigureBuilderDialog(QDialog):
         self.spec = node.config
         self.table = node.build_table()
         self._last_report = E.RenderReport()
+        self.last_fig = None
+        self._hits = []
         self._history: list[str] = []
         self._hindex = -1
         self._restoring = False
@@ -435,6 +484,12 @@ class FigureBuilderDialog(QDialog):
         root.setSpacing(6)
         bar = QHBoxLayout()
         bar.setSpacing(2)
+        self.sidebar_btn = self._tool('', 'fa6s.table-columns', 'Show or hide the settings sidebar',
+                                      self._toggle_sidebar)
+        self.sidebar_btn.setCheckable(True)
+        self.sidebar_btn.setChecked(True)
+        bar.addWidget(self.sidebar_btn)
+        bar.addWidget(self._sep())
         self.undo_btn = self._tool('', 'fa6s.rotate-left', 'Undo (Ctrl+Z)', self.undo)
         self.redo_btn = self._tool('', 'fa6s.rotate-right', 'Redo (Ctrl+Shift+Z)', self.redo)
         bar.addWidget(self.undo_btn)
@@ -455,6 +510,8 @@ class FigureBuilderDialog(QDialog):
         bar.addWidget(self._sep())
         bar.addWidget(self._tool('Figure', 'fa6s.sliders', 'Size, fonts, palette, panel letters',
                                  self._figure_settings))
+        bar.addWidget(self._tool('Text', 'fa6s.font', 'Bold, italic, size and colour of every text '
+                                 'in the whole figure', self._figure_text_styles))
         style_menu = QMenu(self)
         for name in S.STYLE_PRESETS:
             style_menu.addAction(name, lambda n=name: self._apply_style(n))
@@ -475,7 +532,7 @@ class FigureBuilderDialog(QDialog):
         bar.addWidget(self._tool('Help', 'fa6s.circle-question', 'How to write expressions and more',
                                  self._help))
         bar.addSpacing(12)
-        bar.addWidget(QLabel('Quantity'))
+        bar.addWidget(QLabel('Default quantity'))
         self.data_type = QComboBox()
         for k in DATA_TYPES:
             self.data_type.addItem(k, k)
@@ -507,14 +564,11 @@ class FigureBuilderDialog(QDialog):
         tl = QVBoxLayout(top)
         tl.setContentsMargins(0, 0, 0, 0)
         tl.setSpacing(2)
-        hint = QLabel('Drag to draw a panel · Shift-drag for insets · drag to move · corner to resize · '
-                      'arrows nudge · right-click for more')
-        hint.setWordWrap(True)
-        hint.setStyleSheet('color: #6b7280; font-size: 11px;')
-        tl.addWidget(hint)
         self.sketch = LayoutSketch(self.spec)
+        self.sketch.setToolTip('Drag to draw a panel · Shift-drag for insets · drag to move · '
+                               'corner to resize · arrows nudge · right-click for more')
         self.sketch.panel_factory = self._new_panel
-        self.sketch.setMinimumHeight(170)
+        self.sketch.setMinimumHeight(110)
         self.sketch.selection_changed.connect(self._on_select)
         self.sketch.layout_changed.connect(self._on_layout)
         self.sketch.kind_requested.connect(self._on_kind_requested)
@@ -524,11 +578,15 @@ class FigureBuilderDialog(QDialog):
         self.editor.set_table(self.table, S.palette_colors(self.spec['figure'].get('palette')))
         self.editor.changed.connect(self._schedule)
         self.editor.kind_changed.connect(self._on_editor_kind)
+        self.editor.styles_requested.connect(self._panel_text_styles)
+        self.editor.rename_requested.connect(
+            lambda: self.after_edit(interact.rename_items(self, self.editor.panel)) if self.editor.panel else None)
         left.addWidget(self.editor)
-        left.setStretchFactor(0, 2)
+        left.setStretchFactor(0, 1)
         left.setStretchFactor(1, 5)
-        left.setSizes([240, 560])
-        left.setMinimumWidth(430)
+        left.setSizes([150, 620])
+        left.setMinimumWidth(300)
+        self.left_panel = left
         split.addWidget(left)
 
         right = QSplitter(Qt.Vertical)
@@ -541,6 +599,8 @@ class FigureBuilderDialog(QDialog):
         self.preview = PreviewLabel()
         self.preview.resized.connect(self._schedule)
         self.preview.clicked.connect(self._on_preview_click)
+        self.preview.double_clicked.connect(self._on_preview_double)
+        self.preview.context_requested.connect(self._on_preview_context)
         self.plot_widget = self.preview
         fl.addWidget(self.preview)
         right.addWidget(frame)
@@ -582,11 +642,11 @@ class FigureBuilderDialog(QDialog):
         right.addWidget(self.bottom)
         right.setStretchFactor(0, 5)
         right.setStretchFactor(1, 2)
-        right.setSizes([620, 220])
+        right.setSizes([720, 150])
         split.addWidget(right)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
-        split.setSizes([470, 950])
+        split.setSizes([360, 1060])
         root.addWidget(split, 1)
 
     def _shortcuts(self):
@@ -612,11 +672,18 @@ class FigureBuilderDialog(QDialog):
         """Create a panel for the sketch, already pointing at real isotopes."""
         return fill_panel_defaults(E.make_panel(**kwargs), self.table)
 
-    def add_panel(self, kind: str):
-        """Add a new panel of ``kind`` in the middle of the page and select it."""
+    def add_panel(self, kind: str, at=None):
+        """Add a new panel of ``kind`` (centred on ``at`` when given) and select it."""
         n = len(self.spec['panels'])
         off = 0.04 * (n % 5)
-        panel = self._new_panel(kind=kind, rect=[0.25 + off, 0.25 + off, 0.5, 0.5])
+        if at is not None:
+            w = h = 0.4
+            x = min(1 - w, max(0.0, at[0] - w / 2))
+            y = min(1 - h, max(0.0, at[1] - h / 2))
+            rect = [round(x, 4), round(y, 4), w, h]
+        else:
+            rect = [0.25 + off, 0.25 + off, 0.5, 0.5]
+        panel = self._kind_defaults(self._new_panel(kind=kind, rect=rect))
         if not self.spec['panels']:
             panel['rect'] = [0.0, 0.0, 1.0, 1.0]
         self.spec['panels'].append(panel)
@@ -624,9 +691,20 @@ class FigureBuilderDialog(QDialog):
         self.sketch.select(panel['id'])
         self._on_layout()
 
+    def _kind_defaults(self, panel):
+        """Settings that suit a chart type the moment it is chosen."""
+        if panel is None:
+            return panel
+        kind = panel.get('kind')
+        if kind == 'combinations':
+            panel['horizontal'] = True
+        if kind == 'pairs' and not (panel.get('isotopes') or '').strip() and len(self.table.labels) > 4:
+            panel['isotopes'] = ', '.join(self.table.labels[:4])
+        return fill_panel_defaults(panel, self.table)
+
     def _on_editor_kind(self):
         panel = self.editor.panel
-        fill_panel_defaults(panel, self.table)
+        self._kind_defaults(panel)
         self.editor.set_panel(panel)
         self.sketch.update()
         self._schedule()
@@ -635,13 +713,120 @@ class FigureBuilderDialog(QDialog):
         panel = self._panel(pid)
         self.editor.set_panel(panel)
         self.editor.show_error(self._last_report.errors.get(pid) if panel else None)
+        self.preview.set_selection(panel['rect'] if panel else None)
+
+    def _hit(self, fx, fy):
+        hit = interact.hit_at(self._hits, fx, fy)
+        if hit is None:
+            for p in reversed(self.spec['panels']):
+                x, y, w, h = p['rect']
+                if x <= fx <= x + w and y <= fy <= y + h:
+                    return interact.Hit((x, y, x + w, y + h), p['id'], 'panel')
+        return hit
 
     def _on_preview_click(self, fx, fy):
-        for p in reversed(self.spec['panels']):
-            x, y, w, h = p['rect']
-            if x <= fx <= x + w and y <= fy <= y + h:
-                self.sketch.select(p['id'])
+        hit = self._hit(fx, fy)
+        if hit is not None and hit.panel_id:
+            self.sketch.select(hit.panel_id)
+
+    def _on_preview_double(self, fx, fy):
+        hit = self._hit(fx, fy)
+        if hit is None:
+            return
+        if hit.panel_id:
+            self.sketch.select(hit.panel_id)
+        if hit.element in ('plot', 'panel'):
+            self.show_editor_tab('Data')
+            return
+        self.after_edit(interact.edit_text(self, hit))
+
+    def _on_preview_context(self, fx, fy, global_pos):
+        hit = self._hit(fx, fy)
+        if hit is not None and hit.panel_id:
+            self.sketch.select(hit.panel_id)
+        menu = interact.build_menu(self, hit, fx, fy)
+        menu.exec(global_pos)
+
+    @property
+    def last_report(self):
+        """Report of the most recent render."""
+        return self._last_report
+
+    def panel_by_id(self, pid):
+        """The panel dict with id ``pid`` (or None)."""
+        return self._panel(pid)
+
+    def after_edit(self, changed=True):
+        """Refresh the editor and redraw after an edit made from the preview."""
+        if not changed:
+            return
+        self.sketch.update()
+        self._on_select(self.sketch.selected)
+        self._schedule()
+
+    def show_editor_tab(self, name: str):
+        """Open the sidebar on the named tab (Data, Groups, Style, Axes, Stats, Notes)."""
+        if not self.left_panel.isVisible():
+            self._toggle_sidebar(True)
+        tabs = self.editor.tabs
+        for i in range(tabs.count()):
+            if tabs.tabText(i) == name and tabs.isTabVisible(i):
+                tabs.setCurrentIndex(i)
                 return
+
+    def set_panel_kind(self, panel, kind: str):
+        """Change a panel's chart type and fill sensible defaults."""
+        self._on_kind_requested(panel['id'], kind)
+
+    def duplicate_panel(self, panel):
+        """Copy a panel, slightly offset, and select the copy."""
+        self.sketch.select(panel['id'])
+        self.sketch.duplicate_selected()
+
+    def restack_panel(self, panel, front: bool):
+        """Draw a panel above (or below) all the others."""
+        others = [p for p in self.spec['panels'] if p['id'] != panel['id']]
+        self.spec['panels'] = others + [panel] if front else [panel] + others
+        self.sketch.set_spec(self.spec)
+        self.after_edit(True)
+
+    def delete_panel(self, panel):
+        """Remove a panel."""
+        self.spec['panels'] = [p for p in self.spec['panels'] if p['id'] != panel['id']]
+        self.sketch.set_spec(self.spec)
+        self.sketch.select(self.spec['panels'][0]['id'] if self.spec['panels'] else '')
+        self.after_edit(True)
+
+    def apply_layout(self, name: str):
+        """Re-lay the panels onto a ready-made layout."""
+        self._apply_template(name)
+
+    def apply_style(self, name: str):
+        """Apply a style preset to the whole figure."""
+        self._apply_style(name)
+
+    def open_figure_settings(self):
+        """Open the figure settings dialog."""
+        self._figure_settings()
+
+    def _toggle_sidebar(self, checked=None):
+        show = (not self.left_panel.isVisible()) if checked is None else bool(checked)
+        self.left_panel.setVisible(show)
+        self.sidebar_btn.setChecked(show)
+        self._schedule()
+
+    def _panel_text_styles(self):
+        from results.figure_builder.core import textstyle as T
+        panel = self.editor.panel
+        if panel is None:
+            return
+        elements = T.KIND_ELEMENTS.get(panel['kind'], list(T.PANEL_ELEMENTS))
+        self.after_edit(interact.style_dialog(self, panel, elements, 'Text styles — this panel'))
+
+    def _figure_text_styles(self):
+        from results.figure_builder.core import textstyle as T
+        self.after_edit(interact.style_dialog(self, None, list(T.ALL_ELEMENTS),
+                                              'Text styles — whole figure'))
 
     def _on_layout(self):
         self._on_select(self.sketch.selected)
@@ -654,7 +839,7 @@ class FigureBuilderDialog(QDialog):
         panel['kind'] = kind
         if kind == 'code' and not (panel.get('code') or '').strip():
             panel['code'] = E.CODE_EXAMPLE
-        fill_panel_defaults(panel, self.table)
+        self._kind_defaults(panel)
         self._on_select(pid)
         self.sketch.update()
         self._schedule()
@@ -882,14 +1067,22 @@ class FigureBuilderDialog(QDialog):
     def _render(self):
         t0 = time.perf_counter()
         try:
-            pm, report, _fig = render_to_pixmap(self.spec, self.table, self._preview_dpi())
+            pm, report, fig = render_to_pixmap(self.spec, self.table, self._preview_dpi())
         except Exception as exc:
             _log.exception('Figure Builder render failed')
             self.status.setText(f'Render failed: {exc}')
             return
         ms = (time.perf_counter() - t0) * 1000
         self._last_report = report
+        self.last_fig = fig
+        try:
+            self._hits = interact.collect_hits(fig, report, self.spec)
+        except Exception:
+            _log.exception('Figure Builder hit map failed')
+            self._hits = []
         self.preview.set_figure_pixmap(pm)
+        sel = self._panel(self.sketch.selected)
+        self.preview.set_selection(sel['rect'] if sel else None)
         self.sketch.errors = dict(report.errors)
         self.sketch.update()
         self.editor.show_error(report.errors.get(self.sketch.selected))
