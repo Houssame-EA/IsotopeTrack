@@ -16,7 +16,8 @@ import logging
 
 from results.figure_builder.charts import DRAWERS
 from results.figure_builder.core.common import (
-    Group, RenderReport, annotate, candidate_groups, fit_outside_legend, resolve_groups)
+    Group, RenderReport, annotate, candidate_groups, fit_decorations, fit_outside_legend,
+    resolve_groups)
 from results.figure_builder.core.expressions import ExpressionError, ParticleTable
 from results.figure_builder.core.spec import (
     CODE_EXAMPLE, FIGURE_DEFAULTS, GROUP_MODES, OTHER_COLOR, PALETTE, PANEL_DEFAULTS,
@@ -25,7 +26,7 @@ from results.figure_builder.core.spec import (
 from results.figure_builder.core.stats import (
     CORRECTIONS, PAIRWISE_TESTS, STAT_TESTS, correct, p_text, run_tests)
 from results.figure_builder.core.styles import (
-    PALETTES, STYLE_PRESETS, TEMPLATES, apply_style_preset, palette_colors)
+    PALETTES, STYLE_PRESETS, TEMPLATES, apply_style_preset, font_stack, palette_colors)
 from results.figure_builder.core import textstyle
 
 __all__ = [
@@ -136,10 +137,12 @@ def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
     style = figcfg.get('label_style', 'isotope')
     pal = palette_colors(figcfg.get('palette'))
     ensure_ternary_projection()
-    fs = float(figcfg.get('font_size') or 11)
+    fs = float(figcfg.get('font_size') or 12)
+    fonts, math_set = font_stack(figcfg.get('font_family'))
     lw = float(figcfg.get('axes_linewidth') or 0.8)
     rc = {
-        'font.family': [figcfg.get('font_family') or 'DejaVu Sans', 'DejaVu Sans'],
+        'font.family': fonts,
+        'mathtext.fontset': math_set,
         'font.size': fs,
         'axes.titlesize': float(figcfg.get('title_size') or fs * 1.05),
         'axes.labelsize': float(figcfg.get('label_size') or fs),
@@ -153,6 +156,16 @@ def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
         'xtick.minor.width': lw * 0.7,
         'ytick.minor.width': lw * 0.7,
         'legend.frameon': False,
+        'xtick.major.size': 4.5,
+        'ytick.major.size': 4.5,
+        'xtick.minor.size': 2.5,
+        'ytick.minor.size': 2.5,
+        'xtick.major.pad': 4,
+        'ytick.major.pad': 4,
+        'axes.labelpad': 6,
+        'axes.titlepad': 8,
+        'savefig.facecolor': bg,
+        'lines.solid_capstyle': 'round',
     }
     font_log = logging.getLogger('matplotlib.font_manager')
     previous = font_log.level
@@ -194,6 +207,8 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
         annotate(ax, panel)
         textstyle.apply_panel(report.artists[panel['id']], panel, figcfg)
         fit_outside_legend(fig, ax, rect)
+        if kind not in ('text', 'code'):
+            fit_decorations(fig, report.artists[panel['id']], rect)
     except Exception as exc:
         report.errors[panel['id']] = str(exc)
         ax.cla()

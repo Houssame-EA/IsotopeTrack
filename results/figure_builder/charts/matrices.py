@@ -52,7 +52,8 @@ def _colorbar(fig, ax, img, panel, report, label):
     """Attach a colour bar to ``ax`` and record it for text styling."""
     cb = fig.colorbar(img, ax=ax, pad=0.02, fraction=0.05)
     cb.ax.set_zorder(ax.get_zorder())
-    cb.outline.set_visible(False)
+    cb.outline.set_linewidth(0.6)
+    cb.ax.tick_params(direction='out', length=3, width=0.6)
     cb.set_label(panel.get('cbar_label') or label)
     handles(report, panel)['cbar'] = cb
     return cb
@@ -127,6 +128,8 @@ def draw_corr_matrix(fig, ax, panel, table, report, style):
                     interpolation='nearest')
     names = [item_label(panel, e, table, style, short=True) for e in exprs]
     _matrix_ticks(ax, panel, names, names)
+    handles(report, panel)['matrix'] = {'values': data, 'rows': names, 'cols': names,
+                                         'label': METHOD_NAMES.get(method, 'r'), 'n': N, 'p': P}
     if panel.get('annotate', True) and k <= 20:
         for i in range(k):
             for j in range(k):
@@ -262,6 +265,8 @@ def draw_heatmap(fig, ax, panel, table, report, style):
         norm = mcolors.LogNorm(vmin=finite[finite > 0].min(), vmax=finite.max())
     img = ax.imshow(np.ma.masked_invalid(M), cmap=cmap, aspect='auto', interpolation='nearest',
                     norm=norm)
+    handles(report, panel)['matrix'] = {'values': M, 'rows': list(rows), 'cols': list(cols),
+                                         'label': label}
     if rows_mode == 'particles':
         rot = float(panel.get('xtick_rotation') or 45)
         if transpose:
@@ -335,6 +340,7 @@ def draw_cooccurrence(fig, ax, panel, table, report, style):
     img = ax.imshow(np.ma.masked_invalid(data), cmap=cmap, aspect='auto', interpolation='nearest')
     names = [item_label(panel, e, table, style, short=True) for e in exprs]
     _matrix_ticks(ax, panel, names, names)
+    handles(report, panel)['matrix'] = {'values': data, 'rows': names, 'cols': names, 'label': label}
     finite = data[np.isfinite(data)]
     if panel.get('annotate', True) and k <= 20 and finite.size:
         vmin, vmax = float(finite.min()), float(finite.max())

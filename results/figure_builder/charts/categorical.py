@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, item_exprs, item_label, legend_kwargs, panel_palette, resolve_groups,
+    add_legend, handles, item_exprs, item_label, legend_kwargs, panel_palette, resolve_groups,
     style_axes)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty, split_list
 from results.figure_builder.core.stats import draw_brackets, run_tests
@@ -78,6 +78,9 @@ def draw_bar(fig, ax, panel, table, report, style):
         if stacked:
             bottoms = bottoms + np.nan_to_num(heights)
     names = [g.label for g in groups]
+    handles(report, panel)['categories'] = {
+        'axis': 'y' if horizontal else 'x', 'positions': list(positions),
+        'items': [(g.label, v) for g, v in zip(groups, per_group_values)]}
     if horizontal:
         ax.set_yticks(positions)
         ax.set_yticklabels(names)
@@ -132,9 +135,7 @@ def draw_pie(fig, ax, panel, table, report, style):
     sizes = [sizes[i] for i in keep]
     labels = [labels[i] for i in keep]
     colors = [colors[i] for i in keep]
-    edge = panel.get('edge_color') or 'white'
-    lw = float(panel.get('edge_width') or 0) or 2
-    wedge = {'edgecolor': edge, 'linewidth': lw}
+    wedge = {'edgecolor': 'white', 'linewidth': max(1.5, float(panel.get('edge_width') or 0))}
     if panel.get('donut'):
         wedge['width'] = 0.42
     wedges, _t, autotexts = ax.pie(
@@ -142,6 +143,9 @@ def draw_pie(fig, ax, panel, table, report, style):
         startangle=90, counterclock=False, wedgeprops=wedge,
         pctdistance=0.79 if panel.get('donut') else 0.62, textprops={'fontsize': 'small'})
     from matplotlib import patheffects
+    total_size = float(sum(sizes))
+    handles(report, panel)['wedges'] = [(w, lab, sz, 100 * sz / total_size)
+                                        for w, lab, sz in zip(wedges, labels, sizes)]
     for t in autotexts:
         t._fb_cell = True
         t.set_color('#1f2937')
@@ -152,8 +156,11 @@ def draw_pie(fig, ax, panel, table, report, style):
         ax.set_title(panel['title'])
     if panel.get('legend', True):
         total = float(sum(sizes))
-        ax.legend(wedges, [f'{lab} ({100 * s / total:.1f}%)' for lab, s in zip(labels, sizes)],
-                  handlelength=1.0, **legend_kwargs(panel, len(labels), 'below'))
+        kw = legend_kwargs(panel, len(labels), 'below')
+        custom = kw.pop('_custom', False)
+        leg = ax.legend(wedges, [f'{lab} ({100 * s / total:.1f}%)' for lab, s in zip(labels, sizes)],
+                        handlelength=1.0, **kw)
+        leg._fb_custom = custom
 
 
 def draw_combinations(fig, ax, panel, table, report, style):

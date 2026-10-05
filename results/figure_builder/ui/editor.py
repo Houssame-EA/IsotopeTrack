@@ -234,11 +234,6 @@ SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time')
 FUNCTION_SNIPPETS = ('log()', 'ln()', 'sqrt()', 'abs()', 'percentile(, 90)', 'median()', 'mean()',
                      'where(, , nan)')
 
-EDITOR_STYLE = """
-QGroupBox { font-weight: 600; margin-top: 12px; padding: 6px 4px 2px 4px; }
-QGroupBox::title { subcontrol-origin: margin; left: 6px; padding: 0 2px; }
-QTabBar::tab { padding: 4px 9px; }
-"""
 
 
 class PanelEditor(QWidget):
@@ -270,14 +265,13 @@ class PanelEditor(QWidget):
         root.setSpacing(4)
         self.empty = QLabel('Select a panel on the page, or drag on the page to draw a new one.')
         self.empty.setWordWrap(True)
-        self.empty.setStyleSheet('color: #6b7280; padding: 12px;')
+        self.empty.setObjectName('fbEmpty')
         root.addWidget(self.empty)
         self.error = QLabel('')
         self.error.setWordWrap(True)
-        self.error.setStyleSheet('color: #b42318; font-weight: 600; padding: 2px 4px;')
+        self.error.setObjectName('fbError')
         self.error.hide()
         root.addWidget(self.error)
-        self.setStyleSheet(EDITOR_STYLE)
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.tabs.setUsesScrollButtons(True)
@@ -303,7 +297,7 @@ class PanelEditor(QWidget):
                 if tab in TAB_HINTS:
                     hint = QLabel(TAB_HINTS[tab])
                     hint.setWordWrap(True)
-                    hint.setStyleSheet('color: #6b7280; font-size: 11px;')
+                    hint.setObjectName('fbHint')
                     lay.addWidget(hint)
                 scroll.setWidget(page)
                 self.tabs.addTab(scroll, tab)

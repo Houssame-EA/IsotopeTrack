@@ -39,6 +39,9 @@ def draw_scatter(fig, ax, panel, table, report, style):
         if not m.any():
             continue
         total += int(m.sum())
+        hover = handles(report, panel).setdefault('points', [])
+        hover.append({'x': x[m], 'y': y[m], 'index': np.flatnonzero(m), 'group': g.label,
+                      'color': g.color})
         s = sizes[m] if sizes is not None else size
         if cvals is not None:
             mappable = ax.scatter(x[m], y[m], c=cvals[m], cmap=cmap_name(panel), s=s, alpha=alpha,
@@ -56,7 +59,8 @@ def draw_scatter(fig, ax, panel, table, report, style):
         handles(report, panel)['cbar'] = cb
         cb.ax.set_zorder(ax.get_zorder())
         cb.set_label(panel.get('cbar_label') or pretty(panel['color_by'], table, style))
-        cb.outline.set_visible(False)
+        cb.outline.set_linewidth(0.6)
+        cb.ax.tick_params(direction='out', length=3, width=0.6)
     if panel.get('diagonal'):
         lo = max(ax.get_xlim()[0], ax.get_ylim()[0])
         hi = min(ax.get_xlim()[1], ax.get_ylim()[1])
@@ -85,6 +89,10 @@ def draw_scatter(fig, ax, panel, table, report, style):
         for side in ('top', 'left', 'bottom'):
             ax2.spines[side].set_visible(False)
     report.counts[panel['id']] = total
+    hd = handles(report, panel)
+    hd['x_name'] = panel['x']
+    hd['y_name'] = panel['y']
+    hd['table'] = table
     style_axes(ax, panel, table, style, panel['x'], panel['y'])
     add_legend(ax, panel, [extra] if extra is not None else None)
 
@@ -137,9 +145,12 @@ def draw_fit(ax, x, y, g, panel, report, log_x, log_y):
     if panel.get('show_fit'):
         xs = np.linspace(fx.min(), fx.max(), 100)
         ys = res.intercept + res.slope * xs
+        from matplotlib import patheffects
         ax.plot(10 ** xs if log_x else xs, 10 ** ys if log_y else ys,
-                color=g.color, lw=float(panel.get('line_width') or 1.6),
-                ls=panel.get('line_style') or '-', zorder=3)
+                color=g.color, lw=float(panel.get('line_width') or 1.6) + 0.4,
+                ls=panel.get('line_style') or '-', zorder=5,
+                path_effects=[patheffects.withStroke(linewidth=float(panel.get('line_width') or 1.6) + 2.6,
+                                                     foreground='white')])
     if panel.get('show_r'):
         existing = sum(1 for t in ax.texts if getattr(t, '_fb_r', False))
         t = ax.text(0.03, 0.97 - existing * 0.07,
@@ -236,6 +247,7 @@ def draw_density(fig, ax, panel, table, report, style):
     handles(report, panel)['cbar'] = cb
     cb.ax.set_zorder(ax.get_zorder())
     cb.set_label(panel.get('cbar_label') or 'Particles per bin')
-    cb.outline.set_visible(False)
+    cb.outline.set_linewidth(0.6)
+    cb.ax.tick_params(direction='out', length=3, width=0.6)
     report.counts[panel['id']] = int(m.sum())
     style_axes(ax, panel, table, style, panel['x'], panel['y'])

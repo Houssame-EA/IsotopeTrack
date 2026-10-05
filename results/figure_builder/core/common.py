@@ -189,9 +189,20 @@ def legend_kwargs(panel, n_items: int, default_loc: str | None = None) -> dict:
     if loc == 'best' and default_loc:
         loc = default_loc
     cols = max(1, int(panel.get('legend_cols') or 1))
-    kw = {'frameon': False, 'fontsize': panel.get('legend_size') or 'small', 'ncol': cols}
+    framed = bool(panel.get('legend_frame', True)) and loc not in ('outside right', 'below', 'above', 'ternary')
+    kw = {'frameon': framed, 'fontsize': panel.get('legend_size') or 'small', 'ncol': cols}
+    if framed:
+        kw.update(framealpha=0.88, facecolor='white', edgecolor='#d0d5dd', fancybox=True,
+                  borderpad=0.5, handletextpad=0.5)
     if panel.get('legend_title'):
         kw['title'] = panel['legend_title']
+    xy = panel.get('legend_xy') or []
+    if loc == 'custom' and len(xy) == 2:
+        kw.update(loc='upper left', bbox_to_anchor=(float(xy[0]), float(xy[1])), borderaxespad=0)
+        kw['_custom'] = True
+        return kw
+    if loc == 'custom':
+        loc = 'best'
     if loc == 'outside right':
         kw.update(loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
     elif loc == 'below':
@@ -201,7 +212,8 @@ def legend_kwargs(panel, n_items: int, default_loc: str | None = None) -> dict:
         kw.update(loc='lower center', bbox_to_anchor=(0.5, 1.02),
                   ncol=max(cols, min(4, n_items)))
     elif loc == 'ternary':
-        kw.update(loc='upper left', bbox_to_anchor=(-0.08, 1.12))
+        kw.update(loc='upper center', bbox_to_anchor=(0.5, -0.3),
+                  ncol=max(cols, min(3, n_items)))
     else:
         kw['loc'] = loc
     return kw
@@ -217,7 +229,10 @@ def add_legend(ax, panel, extra=None, default_loc=None, min_items=2):
             h.append(x)
             labels.append(x.get_label())
     if len(h) >= min_items:
-        ax.legend(h, labels, markerscale=1.4, **legend_kwargs(panel, len(h), default_loc))
+        kw = legend_kwargs(panel, len(h), default_loc)
+        custom = kw.pop('_custom', False)
+        leg = ax.legend(h, labels, markerscale=1.4, **kw)
+        leg._fb_custom = custom
 
 
 def style_axes(ax, panel, table, style, x_default='', y_default='', swap=False):
@@ -243,7 +258,7 @@ def style_axes(ax, panel, table, style, x_default='', y_default='', swap=False):
     for v in numbers(panel.get('vlines')):
         ax.axvline(v, color='#555555', lw=1, ls='--', zorder=1)
     if panel.get('grid'):
-        ax.grid(True, which='major', color='#e5e5e5', lw=0.6, zorder=0)
+        ax.grid(True, which='major', color='#d9dde3', lw=0.6, ls=(0, (4, 3)), zorder=0)
         ax.set_axisbelow(True)
     frame = panel.get('frame', 'open')
     keep_right = bool(panel.get('y2')) and panel.get('kind') == 'scatter'
@@ -339,8 +354,12 @@ def value_groups(panel, table):
     return out
 
 
-def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original):
-    """Shrink ``ax`` (and its partners) until ``leg`` fits inside ``rect``; True on success."""
+def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original, allow_width=True):
+    """Shrink ``ax`` (and its partners) until ``leg`` fits inside ``rect``; True on success.
+
+    ``allow_width=False`` is used for legends above or below the plot: those
+    cannot be fixed by narrowing the plot, only by fewer columns.
+    """
     right = rect[0] + rect[2]
     bottom, top = 1 - rect[1] - rect[3], 1 - rect[1]
     for _ in range(5):
@@ -351,6 +370,8 @@ def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original):
         dy_high = max(0.0, box.y1 - (top - 0.005))
         if dx <= 1e-4 and dy_low <= 1e-4 and dy_high <= 1e-4:
             return True
+        if dx > 1e-4 and not allow_width:
+            return False
         w = pos.width - dx
         y0, h = pos.y0, pos.height
         if dy_low > 1e-4:
@@ -358,7 +379,7 @@ def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original):
             h -= dy_low
         if dy_high > 1e-4:
             h -= dy_high
-        if w < 0.4 * original.width or h < 0.4 * original.height:
+        if w < 0.55 * original.width or h < 0.5 * original.height:
             return False
         for a in [ax] + partners:
             a.set_position([pos.x0, y0, w, h])
@@ -373,7 +394,7 @@ def fit_outside_legend(fig, ax, rect):
     inside the plot.
     """
     leg = ax.get_legend()
-    if leg is None or leg.get_bbox_to_anchor() is None:
+    if leg is None or leg.get_bbox_to_anchor() is None or getattr(leg, '_fb_custom', False):
         return
     canvas = fig.canvas
     if not hasattr(canvas, 'get_renderer'):
@@ -393,15 +414,34 @@ def fit_outside_legend(fig, ax, rect):
     size = leg.get_texts()[0].get_fontsize() if labels else None
     anchor = leg.get_bbox_to_anchor().transformed(ax.transAxes.inverted())
     was_right = anchor.x0 > 0.9
+    vertical = anchor.y0 < 0 or anchor.y0 > 1
+    if vertical and not was_right:
+        loc = leg._loc
+        ncols = getattr(leg, '_ncols', 1)
+        bbox = (anchor.x0, anchor.y0)
+        leg.remove()
+        for n in range(max(1, ncols - 1), 0, -1):
+            trial = ax.legend(handles, labels, loc=loc, bbox_to_anchor=bbox, ncol=n,
+                              frameon=False, fontsize=size, title=title)
+            if _shrink_for_legend(fig, ax, trial, rect, renderer, partners, original,
+                                  allow_width=False):
+                return
+            for a in [ax] + partners:
+                a.set_position(original)
+            trial.remove()
+        ax.legend(handles, labels, loc='best', frameon=False, fontsize=size, title=title)
+        return
     leg.remove()
     if was_right:
-        below = ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.14),
-                          ncol=min(3, max(1, len(labels))), frameon=False, fontsize=size, title=title)
-        if _shrink_for_legend(fig, ax, below, rect, renderer, partners, original):
-            return
-        for a in [ax] + partners:
-            a.set_position(original)
-        below.remove()
+        for n in range(min(3, max(1, len(labels))), 0, -1):
+            below = ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.14),
+                              ncol=n, frameon=False, fontsize=size, title=title)
+            if _shrink_for_legend(fig, ax, below, rect, renderer, partners, original,
+                                  allow_width=False):
+                return
+            for a in [ax] + partners:
+                a.set_position(original)
+            below.remove()
     ax.legend(handles, labels, loc='best', frameon=False, fontsize=size, title=title)
 
 
@@ -434,3 +474,84 @@ def handles(report, panel: dict) -> dict:
     """The artist record of ``panel`` in ``report`` (created on demand)."""
     return report.artists.setdefault(panel['id'], {})
 
+
+
+def fit_decorations(fig, handles_: dict, rect, pad: float = 0.008):
+    """Shrink a panel's plot so every label, tick, legend and colour bar stays in its rectangle.
+
+    All axes belonging to the panel (main, right axis, colour bar, pair-plot
+    cells) are scaled together, so their relative layout is kept.
+
+    Args:
+        fig: The figure (already drawn once is not required).
+        handles_: The panel's artist record (``ax``, ``ax2``, ``cbar``, ``extra_axes``).
+        rect: The panel rectangle ``[x, y, w, h]`` (figure fractions, top-left origin).
+        pad: Breathing room kept inside the rectangle, in figure fractions.
+    """
+    ax = handles_.get('ax')
+    if ax is None:
+        return
+    group = [ax]
+    if handles_.get('ax2') is not None:
+        group.append(handles_['ax2'])
+    if handles_.get('cbar') is not None:
+        group.append(handles_['cbar'].ax)
+    group.extend(handles_.get('extra_axes') or [])
+    visible = [a for a in group if a.get_visible()]
+    if not visible:
+        return
+    canvas = fig.canvas
+    if not hasattr(canvas, 'get_renderer'):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        canvas = FigureCanvasAgg(fig)
+    renderer = canvas.get_renderer()
+    left, right = rect[0] + pad, rect[0] + rect[2] - pad
+    bottom, top = 1 - rect[1] - rect[3] + pad, 1 - rect[1] - pad
+    inv = fig.transFigure.inverted()
+    legends = [a.get_legend() for a in visible if a.get_legend() is not None]
+    for leg in legends:
+        leg.set_in_layout(False)
+    try:
+        _fit_group(visible, renderer, inv, left, right, bottom, top)
+    finally:
+        for leg in legends:
+            leg.set_in_layout(True)
+
+
+def _fit_group(visible, renderer, inv, left, right, bottom, top):
+    """Scale a group of axes until their tight boxes fit inside the given bounds."""
+    for _ in range(3):
+        boxes = []
+        for a in visible:
+            try:
+                tb = a.get_tightbbox(renderer)
+            except Exception:
+                tb = None
+            if tb is not None and tb.width > 0:
+                boxes.append(tb.transformed(inv))
+        if not boxes:
+            return
+        x0 = min(b.x0 for b in boxes)
+        x1 = max(b.x1 for b in boxes)
+        y0 = min(b.y0 for b in boxes)
+        y1 = max(b.y1 for b in boxes)
+        over_l = max(0.0, left - x0)
+        over_r = max(0.0, x1 - right)
+        over_b = max(0.0, bottom - y0)
+        over_t = max(0.0, y1 - top)
+        if max(over_l, over_r, over_b, over_t) < 1e-3:
+            return
+        positions = [a.get_position() for a in visible]
+        gx0 = min(p.x0 for p in positions)
+        gx1 = max(p.x1 for p in positions)
+        gy0 = min(p.y0 for p in positions)
+        gy1 = max(p.y1 for p in positions)
+        nx0, nx1 = gx0 + over_l, gx1 - over_r
+        ny0, ny1 = gy0 + over_b, gy1 - over_t
+        if nx1 - nx0 < 0.25 * (gx1 - gx0) or ny1 - ny0 < 0.25 * (gy1 - gy0):
+            return
+        sx = (nx1 - nx0) / max(1e-9, gx1 - gx0)
+        sy = (ny1 - ny0) / max(1e-9, gy1 - gy0)
+        for a, p in zip(visible, positions):
+            a.set_position([nx0 + (p.x0 - gx0) * sx, ny0 + (p.y0 - gy0) * sy,
+                            p.width * sx, p.height * sy])

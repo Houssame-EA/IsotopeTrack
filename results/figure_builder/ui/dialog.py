@@ -27,13 +27,13 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox, QFileDialog, QFontComboBox, QFormLayout, QFrame,
     QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMenu, QMessageBox,
     QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QSplitter, QTabWidget,
-    QTextBrowser, QToolButton, QVBoxLayout, QWidget,
+    QTextBrowser, QToolButton, QToolTip, QVBoxLayout, QWidget,
 )
 
 from results.figure_builder.core import engine as E
 from results.figure_builder.core import styles as S
 from results.figure_builder.ui.dataview import DataExplorer
-from results.figure_builder.ui import interact
+from results.figure_builder.ui import direct, interact, look
 from results.figure_builder.ui.editor import PanelEditor
 from results.figure_builder.core.expressions import DATA_TYPES, ParticleTable
 from results.figure_builder.ui.sketch import LayoutSketch
@@ -98,6 +98,34 @@ class FigureBuilderNode(QObject):
         table = ParticleTable.from_input(self.input_data, self.config.get('data_type', 'Counts'))
         table.set_variables(self.config.get('variables'))
         return table
+
+    @property
+    def _figure_thumbnail(self):
+        """Hover preview for the canvas, rendered straight from the design.
+
+        The canvas shows this when the mouse rests on the node, even before the
+        Figure Builder window was ever opened. It is re-rendered only when the
+        design or the incoming data changed.
+        """
+        try:
+            key = (id(self.input_data), json.dumps(self.config, sort_keys=True, default=str))
+        except Exception:
+            key = None
+        if key is not None and key == getattr(self, '_thumb_key', None):
+            return self._thumb
+        try:
+            width = float(self.config.get('figure', {}).get('width') or 8)
+            pm, _report, _fig = render_to_pixmap(self.config, self.build_table(), 420.0 / width)
+        except Exception:
+            _log.exception('Figure Builder thumbnail failed')
+            return None
+        self._thumb = pm
+        self._thumb_key = key
+        return pm
+
+    @_figure_thumbnail.setter
+    def _figure_thumbnail(self, _value):
+        """Ignore window snapshots: the design is rendered directly instead."""
 
 
 def fill_panel_defaults(panel: dict | None, table: ParticleTable) -> dict | None:
@@ -313,31 +341,41 @@ class FigureSettingsDialog(QDialog):
 
 
 class PreviewLabel(QLabel):
-    """Shows the rendered figure scaled to fit and reports where the user clicks.
+    """Shows the rendered figure scaled to fit and turns mouse input into figure gestures.
 
     Coordinates are figure fractions with the origin at the top-left.
+    ``drag_resolver(fx, fy)`` (set by the window) says what a drag starting at a
+    point does: it returns ``(mode, box)`` or None.
 
     Signals:
         resized(): the widget changed size.
-        clicked(float, float): left click.
+        clicked(float, float): left click (no drag).
         double_clicked(float, float): double click.
         context_requested(float, float, QPoint): right click, with the global position.
+        hovered(float, float, QPoint): mouse moved without a button (fx < 0 when it left).
+        drag_finished(str, float, float, float, float): mode, start and end of a drag.
     """
 
     resized = Signal()
     clicked = Signal(float, float)
     double_clicked = Signal(float, float)
     context_requested = Signal(float, float, QPoint)
+    hovered = Signal(float, float, QPoint)
+    drag_finished = Signal(str, float, float, float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(320, 240)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setToolTip('Click to select · double-click text to rename it · right-click for options')
+        self.setMouseTracking(True)
         self._pixmap = None
         self._shown = None
         self._selection = None
+        self._press = None
+        self._drag = None
+        self._current = None
+        self.drag_resolver = None
 
     def set_figure_pixmap(self, pm: QPixmap):
         """Store and display a freshly rendered pixmap."""
@@ -366,16 +404,22 @@ class PreviewLabel(QLabel):
         w, h = self._shown.width() / dpr, self._shown.height() / dpr
         return (self.width() - w) / 2, (self.height() - h) / 2, w, h
 
-    def _to_fraction(self, pos):
+    def _to_fraction(self, pos, clamp=False):
         g = self._geometry()
         if g is None:
             return None
         x0, y0, w, h = g
         fx = (pos.x() - x0) / max(1.0, w)
         fy = (pos.y() - y0) / max(1.0, h)
+        if clamp:
+            return min(1.0, max(0.0, fx)), min(1.0, max(0.0, fy))
         if 0 <= fx <= 1 and 0 <= fy <= 1:
             return fx, fy
         return None
+
+    def _frac_rect(self, box):
+        x0, y0, w, h = self._geometry()
+        return QRectF(x0 + box[0] * w, y0 + box[1] * h, (box[2] - box[0]) * w, (box[3] - box[1]) * h)
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -385,15 +429,31 @@ class PreviewLabel(QLabel):
     def paintEvent(self, ev):
         super().paintEvent(ev)
         g = self._geometry()
-        if g is None or not self._selection:
+        if g is None:
             return
         x0, y0, w, h = g
-        x, y, rw, rh = self._selection
+        accent = QColor(look.palette().accent)
         qp = QPainter(self)
-        pen = QPen(QColor('#2a78d6'), 1.6, Qt.DashLine)
-        qp.setPen(pen)
-        qp.setBrush(Qt.NoBrush)
-        qp.drawRect(QRectF(x0 + x * w + 1, y0 + y * h + 1, rw * w - 2, rh * h - 2))
+        qp.setRenderHint(QPainter.Antialiasing)
+        if self._selection and self._drag is None:
+            x, y, rw, rh = self._selection
+            qp.setPen(QPen(accent, 1.4, Qt.DashLine))
+            qp.setBrush(Qt.NoBrush)
+            qp.drawRect(QRectF(x0 + x * w + 1, y0 + y * h + 1, rw * w - 2, rh * h - 2))
+        if self._drag is not None and self._current is not None:
+            mode, box = self._drag
+            (sx, sy), (cx, cy) = self._press, self._current
+            fill = QColor(accent)
+            fill.setAlpha(40)
+            qp.setPen(QPen(accent, 1.6, Qt.DashLine))
+            qp.setBrush(fill)
+            if mode == 'zoom':
+                qp.drawRect(self._frac_rect((min(sx, cx), min(sy, cy), max(sx, cx), max(sy, cy))))
+            elif mode == 'resize':
+                qp.drawRect(self._frac_rect((box[0], box[1], max(box[0] + 0.05, cx), max(box[1] + 0.05, cy))))
+            elif box is not None:
+                dx, dy = cx - sx, cy - sy
+                qp.drawRect(self._frac_rect((box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)))
         qp.end()
 
     def mousePressEvent(self, ev):
@@ -401,14 +461,57 @@ class PreviewLabel(QLabel):
         if pt is None:
             return super().mousePressEvent(ev)
         if ev.button() == Qt.LeftButton:
-            self.clicked.emit(*pt)
+            self._press = pt
+            self._current = pt
+            self._drag = None
+            self._pending = self.drag_resolver(*pt) if self.drag_resolver else None
         elif ev.button() == Qt.RightButton:
             self.context_requested.emit(pt[0], pt[1], ev.globalPosition().toPoint())
+
+    def mouseMoveEvent(self, ev):
+        if self._press is not None and ev.buttons() & Qt.LeftButton:
+            pt = self._to_fraction(ev.position(), clamp=True)
+            self._current = pt
+            g = self._geometry()
+            moved = g is not None and (abs(pt[0] - self._press[0]) * g[2] > 4
+                                       or abs(pt[1] - self._press[1]) * g[3] > 4)
+            if self._drag is None and moved and getattr(self, '_pending', None):
+                self._drag = self._pending
+                self.setCursor(Qt.ClosedHandCursor if self._drag[0] in ('legend', 'note', 'move')
+                               else Qt.CrossCursor)
+            if self._drag is not None:
+                self.update()
+            return
+        pt = self._to_fraction(ev.position())
+        if pt is None:
+            self.hovered.emit(-1.0, -1.0, ev.globalPosition().toPoint())
+        else:
+            self.hovered.emit(pt[0], pt[1], ev.globalPosition().toPoint())
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() != Qt.LeftButton or self._press is None:
+            return super().mouseReleaseEvent(ev)
+        start = self._press
+        end = self._to_fraction(ev.position(), clamp=True) or start
+        drag = self._drag
+        self._press = None
+        self._drag = None
+        self._pending = None
+        self.unsetCursor()
+        self.update()
+        if drag is not None:
+            self.drag_finished.emit(drag[0], start[0], start[1], end[0], end[1])
+        else:
+            self.clicked.emit(*start)
 
     def mouseDoubleClickEvent(self, ev):
         pt = self._to_fraction(ev.position())
         if pt is not None and ev.button() == Qt.LeftButton:
             self.double_clicked.emit(*pt)
+
+    def leaveEvent(self, ev):
+        super().leaveEvent(ev)
+        self.hovered.emit(-1.0, -1.0, QPoint())
 
 
 def render_to_pixmap(spec: dict, table: ParticleTable, dpi: float):
@@ -449,7 +552,10 @@ class FigureBuilderDialog(QDialog):
         self._timer.setSingleShot(True)
         self._timer.setInterval(220)
         self._timer.timeout.connect(self._render)
+        self._icon_buttons = []
         self._build_ui()
+        self._apply_theme()
+        look.connect(self._apply_theme)
         self._shortcuts()
         self.node.configuration_changed.connect(self._on_node_data)
         first = self.spec['panels'][0]['id'] if self.spec['panels'] else ''
@@ -462,7 +568,8 @@ class FigureBuilderDialog(QDialog):
         b = QToolButton()
         b.setText(text)
         b.setToolTip(tip)
-        b.setIcon(_icon(icon))
+        b.setIcon(_icon(icon, look.icon_color()))
+        self._icon_buttons.append((b, icon))
         b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         b.setAutoRaise(True)
         if menu is not None:
@@ -474,15 +581,33 @@ class FigureBuilderDialog(QDialog):
 
     def _sep(self):
         line = QFrame()
+        line.setObjectName('fbSep')
         line.setFrameShape(QFrame.VLine)
-        line.setStyleSheet('color: #d1d5db;')
         return line
+
+    def _apply_theme(self):
+        """Restyle the window and its icons for the current application theme."""
+        self.setStyleSheet(look.window_qss())
+        color = look.icon_color()
+        for button, name in getattr(self, '_icon_buttons', []):
+            try:
+                button.setIcon(_icon(name, color))
+            except RuntimeError:
+                pass
+        if hasattr(self, 'export_btn'):
+            self.export_btn.setIcon(_icon('fa6s.file-export', look.palette().text_inverse))
+        if hasattr(self, 'sketch'):
+            self.sketch.update()
+            self.preview.update()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 6, 8, 8)
+        root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
-        bar = QHBoxLayout()
+        toolbar = QFrame()
+        toolbar.setObjectName('fbToolbar')
+        bar = QHBoxLayout(toolbar)
+        bar.setContentsMargins(6, 4, 6, 4)
         bar.setSpacing(2)
         self.sidebar_btn = self._tool('', 'fa6s.table-columns', 'Show or hide the settings sidebar',
                                       self._toggle_sidebar)
@@ -544,17 +669,15 @@ class FigureBuilderDialog(QDialog):
         self.status = QLabel('')
         self.status.setMinimumWidth(260)
         self.status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.status.setStyleSheet('color: #6b7280;')
-        bar.addWidget(self.status)
+        self.status.setObjectName('fbStatus')
         bar.addWidget(self._tool('Copy', 'fa6s.copy', 'Copy the figure as an image (Ctrl+Shift+C)',
                                  self._copy))
-        export = QPushButton(_icon('fa6s.file-export', '#ffffff'), ' Export figure…')
-        export.setStyleSheet('QPushButton { background: #2a78d6; color: white; border: none;'
-                             ' border-radius: 6px; padding: 6px 12px; font-weight: 600; }'
-                             ' QPushButton:hover { background: #256abf; }')
+        export = QPushButton(_icon('fa6s.file-export', look.palette().text_inverse), ' Export figure…')
+        export.setObjectName('fbPrimary')
         export.clicked.connect(self._export)
+        self.export_btn = export
         bar.addWidget(export)
-        root.addLayout(bar)
+        root.addWidget(toolbar)
 
         split = QSplitter(Qt.Horizontal)
         split.setChildrenCollapsible(False)
@@ -593,7 +716,7 @@ class FigureBuilderDialog(QDialog):
         right.setChildrenCollapsible(False)
         frame = QFrame()
         frame.setObjectName('fbPreview')
-        frame.setStyleSheet('QFrame#fbPreview { background: #e5e7eb; border-radius: 8px; }')
+
         fl = QVBoxLayout(frame)
         fl.setContentsMargins(10, 10, 10, 10)
         self.preview = PreviewLabel()
@@ -601,11 +724,15 @@ class FigureBuilderDialog(QDialog):
         self.preview.clicked.connect(self._on_preview_click)
         self.preview.double_clicked.connect(self._on_preview_double)
         self.preview.context_requested.connect(self._on_preview_context)
+        self.preview.hovered.connect(self._on_hover)
+        self.preview.drag_finished.connect(self._on_drag_finished)
+        self.preview.drag_resolver = self._drag_resolver
         self.plot_widget = self.preview
         fl.addWidget(self.preview)
         right.addWidget(frame)
         self.bottom = QTabWidget()
         self.bottom.setDocumentMode(True)
+        self.bottom.setCornerWidget(self.status, Qt.TopRightCorner)
         stats_page = QWidget()
         sl = QVBoxLayout(stats_page)
         sl.setContentsMargins(0, 4, 0, 0)
@@ -623,7 +750,7 @@ class FigureBuilderDialog(QDialog):
         tip = QLabel('Define your own per-particle values once and use them anywhere, '
                      'e.g. ratio = Fe/Cu or pctAg = 100*Ag/total.')
         tip.setWordWrap(True)
-        tip.setStyleSheet('color: #6b7280; font-size: 11px;')
+        tip.setObjectName('fbHint')
         vl.addWidget(tip)
         self.var_table = RowTable([('name', 'Name', 'text', None, 120),
                                    ('expr', 'Expression', 'expr', None, 0)],
@@ -635,7 +762,7 @@ class FigureBuilderDialog(QDialog):
         vl.addWidget(self.var_table)
         self.var_status = QLabel('')
         self.var_status.setWordWrap(True)
-        self.var_status.setStyleSheet('color: #b42318;')
+        self.var_status.setObjectName('fbError')
         vl.addWidget(self.var_status)
         vl.addStretch()
         self.bottom.addTab(var_page, 'Variables')
@@ -746,6 +873,61 @@ class FigureBuilderDialog(QDialog):
             self.sketch.select(hit.panel_id)
         menu = interact.build_menu(self, hit, fx, fy)
         menu.exec(global_pos)
+
+    def _drag_resolver(self, fx, fy):
+        for p in reversed(self.spec['panels']):
+            x, y, w, h = p['rect']
+            if abs(fx - (x + w)) <= direct.CORNER and abs(fy - (y + h)) <= direct.CORNER:
+                self._drag_hit = interact.Hit((x, y, x + w, y + h), p['id'], 'panel')
+                return 'resize', (x, y, x + w, y + h)
+        hit = self._hit(fx, fy)
+        self._drag_hit = hit
+        return direct.drag_mode(self, hit, fx, fy)
+
+    def _on_drag_finished(self, mode, sx, sy, ex, ey):
+        hit = getattr(self, '_drag_hit', None)
+        if hit is None:
+            return
+        if hit.panel_id:
+            self.sketch.select(hit.panel_id)
+        changed = direct.apply_drag(self, hit, mode, (sx, sy), (ex, ey))
+        self.after_edit(changed)
+        if changed and mode == 'zoom':
+            self.status.setText('Zoomed — right-click the panel and choose “Reset zoom” to go back')
+
+    _CURSORS = {
+        'plot': Qt.CrossCursor, 'legend': Qt.OpenHandCursor, 'annotation': Qt.OpenHandCursor,
+        'panel': Qt.SizeAllCursor,
+    }
+
+    def _on_hover(self, fx, fy, global_pos):
+        if fx < 0:
+            QToolTip.hideText()
+            self.preview.unsetCursor()
+            return
+        hit = self._hit(fx, fy)
+        if hit is None:
+            QToolTip.hideText()
+            self.preview.unsetCursor()
+            return
+        panel = self._panel(hit.panel_id) if hit.panel_id else None
+        cursor = self._CURSORS.get(hit.element, Qt.PointingHandCursor)
+        if panel is not None:
+            x, y, w, h = panel['rect']
+            if abs(fx - (x + w)) <= direct.CORNER and abs(fy - (y + h)) <= direct.CORNER:
+                cursor = Qt.SizeFDiagCursor
+            elif hit.element == 'plot' and panel.get('kind') not in direct.ZOOM_Y:
+                cursor = Qt.SizeAllCursor
+        self.preview.setCursor(cursor)
+        try:
+            text = direct.readout(self, hit, fx, fy)
+        except Exception:
+            _log.exception('Figure Builder hover read-out failed')
+            text = ''
+        if text:
+            QToolTip.showText(global_pos + QPoint(16, 14), text, self.preview)
+        else:
+            QToolTip.hideText()
 
     @property
     def last_report(self):

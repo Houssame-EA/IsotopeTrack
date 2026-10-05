@@ -125,7 +125,7 @@ class DataExplorer(QWidget):
         self.where.editingFinished.connect(self.refresh)
         row.addWidget(self.where, 1)
         self.info = QLabel('')
-        self.info.setStyleSheet('color: #6b7280;')
+        self.info.setObjectName('fbHint')
         row.addWidget(self.info)
         export = QPushButton('Export CSV…')
         export.clicked.connect(self._export)

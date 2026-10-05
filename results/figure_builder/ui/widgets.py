@@ -24,6 +24,11 @@ from PySide6.QtWidgets import (
 from results.figure_builder.core.expressions import validate
 
 
+def _danger() -> str:
+    from results.figure_builder.ui.look import danger
+    return danger()
+
+
 def mono_font() -> QFont:
     """A monospace font for expressions and code."""
     f = QFont('Menlo')
@@ -99,8 +104,9 @@ class ExpressionEdit(QLineEdit):
 
     def mark(self, message: str | None):
         """Show ``message`` as an error (red border + tooltip), or clear it."""
-        self.setStyleSheet('QLineEdit { border: 1.5px solid #b42318; border-radius: 4px; }'
-                           if message else '')
+        self.setProperty('invalid', bool(message))
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.setToolTip(message or '')
 
 
@@ -365,7 +371,7 @@ class RowTable(QWidget):
                 src = self._table_source
                 if src is not None and len(src) and item.text().strip():
                     msg = validate(item.text(), src)
-                item.setForeground(QColor('#b42318') if msg else QColor())
+                item.setForeground(QColor(_danger()) if msg else QColor())
                 item.setToolTip(msg or '')
         self._loading = was
 

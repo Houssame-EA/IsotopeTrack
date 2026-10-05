@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 
 PALETTES: dict[str, list[str]] = {
+    'IsotopeTrack': ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6',
+                     '#06B6D4', '#F97316', '#84CC16', '#EC4899', '#6366F1'],
     'Default': ['#2a78d6', '#eb6834', '#1baf7a', '#eda100',
                 '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
     'Colorblind (Okabe-Ito)': ['#0072B2', '#E69F00', '#009E73', '#CC79A7',
@@ -37,6 +39,7 @@ LEGEND_LOCATIONS = {
     'best': 'Best inside', 'upper right': 'Upper right', 'upper left': 'Upper left',
     'lower left': 'Lower left', 'lower right': 'Lower right', 'center right': 'Center right',
     'outside right': 'Outside, right', 'below': 'Below the plot', 'above': 'Above the plot',
+    'custom': 'Where I dragged it',
 }
 
 FONT_SIZES = {'xx-small': 'XX-small', 'x-small': 'X-small', 'small': 'Small',
@@ -72,6 +75,13 @@ SIZE_PRESETS = {
 }
 
 STYLE_PRESETS: dict[str, dict] = {
+    'IsotopeTrack (app style)': {
+        'figure': {'font_family': 'Times New Roman', 'font_size': 12, 'axes_linewidth': 1.0,
+                   'palette': 'IsotopeTrack'},
+        'panel': {'frame': 'box', 'tick_dir': 'out', 'minor_ticks': True, 'grid': False,
+                  'edge_color': '#1f2937', 'edge_width': 0.4, 'marker_size': 16.0,
+                  'legend_frame': True, 'legend_size': 'small'},
+    },
     'Publication': {
         'figure': {'font_size': 9, 'font_family': 'Arial', 'axes_linewidth': 0.8,
                    'palette': 'Default'},
@@ -115,5 +125,43 @@ def apply_style_preset(spec: dict, name: str) -> dict:
 
 
 def palette_colors(name: str | None) -> list[str]:
-    """Colours of a named palette (Default when unknown)."""
-    return list(PALETTES.get(name or 'Default', PALETTES['Default']))
+    """Colours of a named palette (the app palette when unknown)."""
+    return list(PALETTES.get(name or 'IsotopeTrack', PALETTES['IsotopeTrack']))
+
+
+SERIF_FAMILIES = {'Times New Roman', 'Times', 'Georgia', 'Palatino', 'Garamond', 'Book Antiqua',
+                  'Liberation Serif', 'DejaVu Serif', 'Nimbus Roman', 'STIXGeneral', 'Cambria'}
+
+
+def font_stack(family: str | None) -> tuple[list[str], str]:
+    """Font fallback list and matching mathtext set for a chosen family.
+
+    Isotope labels use mathtext superscripts, so serif figures use the STIX
+    (Times-like) math font and sans-serif figures the DejaVu Sans one.
+    """
+    family = family or 'Times New Roman'
+    if family in SERIF_FAMILIES or 'serif' in family.lower() and 'sans' not in family.lower():
+        stack = [family, 'Times New Roman', 'Times', 'Liberation Serif', 'Nimbus Roman',
+                 'STIXGeneral', 'DejaVu Serif']
+        math = 'stix'
+    else:
+        stack = [family, 'Arial', 'Helvetica', 'Liberation Sans', 'DejaVu Sans']
+        math = 'dejavusans'
+    available = installed_fonts()
+    kept = [f for f in dict.fromkeys(stack) if f in available]
+    return (kept or ['DejaVu Sans']), math
+
+
+_INSTALLED: set | None = None
+
+
+def installed_fonts() -> set:
+    """Font family names matplotlib can use on this computer (cached)."""
+    global _INSTALLED
+    if _INSTALLED is None:
+        try:
+            from matplotlib import font_manager
+            _INSTALLED = {f.name for f in font_manager.fontManager.ttflist}
+        except Exception:
+            _INSTALLED = {'DejaVu Sans', 'DejaVu Serif'}
+    return _INSTALLED

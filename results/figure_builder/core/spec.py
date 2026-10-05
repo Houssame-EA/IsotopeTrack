@@ -5,7 +5,7 @@ A spec is plain JSON-serialisable data::
     {
         'data_type': 'Counts',
         'variables': [{'name': 'ratio', 'expr': 'Fe/Cu'}, ...],
-        'figure': {'width': 8.0, 'height': 6.0, 'palette': 'Default', ...},
+        'figure': {'width': 8.0, 'height': 6.0, 'palette': 'IsotopeTrack', ...},
         'panels': [panel, ...],
     }
 
@@ -22,7 +22,7 @@ import uuid
 from results.figure_builder.core.styles import PALETTES, TEMPLATES
 
 
-PALETTE = PALETTES['Default']
+PALETTE = PALETTES['IsotopeTrack']
 """The default categorical palette."""
 
 
@@ -63,19 +63,19 @@ FIGURE_DEFAULTS = {
     'width': 8.0,
     'height': 6.0,
     'dpi': 300,
-    'font_family': 'DejaVu Sans',
-    'font_size': 11,
+    'font_family': 'Times New Roman',
+    'font_size': 12,
     'title_size': 0,
     'label_size': 0,
     'tick_size': 0,
-    'axes_linewidth': 0.8,
+    'axes_linewidth': 1.0,
     'title': '',
     'panel_letters': True,
     'letter_style': 'a',
     'letter_size': 0,
     'label_style': 'isotope',
     'background': '#ffffff',
-    'palette': 'Default',
+    'palette': 'IsotopeTrack',
     'text_styles': {},
 }
 
@@ -147,10 +147,10 @@ PANEL_DEFAULTS = {
     'colormap': 'viridis',
     'reverse_cmap': False,
     'marker': 'o',
-    'marker_size': 12.0,
-    'edge_color': '#ffffff',
-    'edge_width': 0.0,
-    'alpha': 0.7,
+    'marker_size': 16.0,
+    'edge_color': '#1f2937',
+    'edge_width': 0.4,
+    'alpha': 0.75,
     'line_width': 1.6,
     'line_style': '-',
     'bins': 40,
@@ -185,10 +185,12 @@ PANEL_DEFAULTS = {
     'legend_cols': 1,
     'legend_title': '',
     'legend_size': 'small',
+    'legend_frame': True,
+    'legend_xy': [],
     'grid': False,
-    'frame': 'open',
+    'frame': 'box',
     'tick_dir': 'out',
-    'minor_ticks': False,
+    'minor_ticks': True,
     'sci_x': False,
     'sci_y': False,
     'aspect_equal': False,

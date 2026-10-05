@@ -209,7 +209,7 @@ class TextStyleDialog(QDialog):
         info = QLabel('Size 0 = automatic. Bold / Italic: tick = on, empty = off, '
                       'filled square = keep the default. Right-click a colour to reset it.')
         info.setWordWrap(True)
-        info.setStyleSheet('color: #6b7280; font-size: 11px;')
+        info.setObjectName('fbHint')
         lay.addWidget(info)
         self.table = QTableWidget(len(elements), 6)
         self.table.setHorizontalHeaderLabels(['Text', 'Size', 'Bold', 'Italic', 'Colour', 'Font'])
@@ -288,7 +288,7 @@ class ItemLabelsDialog(QDialog):
         self.setWindowTitle('Rename items')
         lay = QVBoxLayout(self)
         tip = QLabel('Leave a name empty to use the automatic one.')
-        tip.setStyleSheet('color: #6b7280; font-size: 11px;')
+        tip.setObjectName('fbHint')
         lay.addWidget(tip)
         self.table = QTableWidget(len(items), 2)
         self.table.setHorizontalHeaderLabels(['Item', 'Show as'])
@@ -576,6 +576,9 @@ def _panel_menu(win, menu, panel, fx, fy):
     if kind in XYISH or kind == 'combinations':
         _add(menu, 'Log Y', lambda: (panel.update(log_y=not panel.get('log_y')), win.after_edit(True)),
              checked=panel.get('log_y'))
+    if any(panel.get(k) for k in ('x_min', 'x_max', 'y_min', 'y_max')):
+        from results.figure_builder.ui.direct import reset_zoom
+        _add(menu, 'Reset zoom', lambda: win.after_edit(reset_zoom(panel)))
     if kind in ('scatter', 'density'):
         def swap():
             panel['x'], panel['y'] = panel.get('y', ''), panel.get('x', '')

@@ -369,7 +369,7 @@ def test_dialog_designs_round_trip(dialog):
     designs['mine'] = E.strip_spec(dialog.spec)
     dialog._store_designs(designs)
     dialog._load_spec(E.default_spec())
-    assert dialog.spec['figure']['font_size'] == 11
+    assert dialog.spec['figure']['font_size'] == 12
     dialog.apply_design(dialog.saved_designs()['mine'])
     assert dialog.spec['figure']['font_size'] == 16
     assert dialog.spec['variables'] == [{'name': 'r', 'expr': 'Ag/Fe'}]
@@ -535,3 +535,123 @@ def test_sidebar_toggle(dialog):
     dialog.show_editor_tab('Groups')
     assert dialog.left_panel.isVisible()
     assert dialog.editor.tabs.tabText(dialog.editor.tabs.currentIndex()) == 'Groups'
+
+
+def test_node_thumbnail_without_window():
+    from results.figure_builder import FigureBuilderNode
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    node = FigureBuilderNode()
+    node.process_data(make_input())
+    pm = node._figure_thumbnail
+    assert pm is not None and not pm.isNull() and pm.width() == 420
+    assert node._figure_thumbnail is pm
+    node._figure_thumbnail = None
+    assert node._figure_thumbnail is pm
+    node.config['panels'][0]['kind'] = 'histogram'
+    node.config['panels'][0]['value'] = 'Ag'
+    assert node._figure_thumbnail is not pm
+
+
+def test_decorations_stay_inside_panels(table):
+    spec = E.apply_template(E.default_spec(), '2 × 2')
+    for p, kind in zip(spec['panels'], ('scatter', 'corr_matrix', 'box', 'ternary')):
+        p.update(kind=kind, x='Ag', y='Fe', value='Ag', a='Ag', b='Au', c='Fe', log_x=True,
+                 log_y=True, x_min='40', x_max='70', group_by='sample', drop_zeros=False,
+                 y_label='A rather long label for the vertical axis')
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    canvas.draw()
+    renderer = canvas.get_renderer()
+    for p in spec['panels']:
+        ax = report.artists[p['id']]['ax']
+        tb = ax.get_tightbbox(renderer).transformed(fig.transFigure.inverted())
+        x, y, w, h = p['rect']
+        assert tb.x0 >= x - 0.01 and tb.x1 <= x + w + 0.01
+        assert tb.y0 >= 1 - y - h - 0.01 and tb.y1 <= 1 - y + 0.01
+
+
+def test_hover_readouts(dialog):
+    from results.figure_builder.ui import direct
+    dialog.apply_layout('2 × 2')
+    p0, p1, p2, p3 = dialog.spec['panels']
+    dialog.set_panel_kind(p1, 'corr_matrix')
+    dialog.set_panel_kind(p2, 'box')
+    p2['group_by'] = 'sample'
+    dialog.set_panel_kind(p3, 'histogram')
+    dialog._render()
+    fig = dialog.last_fig
+
+    def frac(ax, x, y):
+        fx, fy = fig.transFigure.inverted().transform(ax.transData.transform((x, y)))
+        return fx, 1 - fy
+
+    hd = dialog.last_report.artists[p0['id']]
+    layer = hd['points'][0]
+    fx, fy = frac(hd['ax'], layer['x'][0], layer['y'][0])
+    text = direct.readout(dialog, dialog._hit(fx, fy), fx, fy)
+    assert text.startswith('Particle #') and 'sample:' in text
+    fx, fy = frac(dialog.last_report.artists[p1['id']]['ax'], 0, 1)
+    assert 'Pearson r' in direct.readout(dialog, dialog._hit(fx, fy), fx, fy)
+    fx, fy = frac(dialog.last_report.artists[p2['id']]['ax'], 2, 80)
+    assert 'Ag NP' in direct.readout(dialog, dialog._hit(fx, fy), fx, fy)
+    ax3 = dialog.last_report.artists[p3['id']]['ax']
+    fx, fy = frac(ax3, sum(ax3.get_xlim()) / 2, sum(ax3.get_ylim()) / 2)
+    assert 'particles in' in direct.readout(dialog, dialog._hit(fx, fy), fx, fy)
+
+
+def test_drags_move_legend_zoom_and_panels(dialog):
+    p0 = dialog.spec['panels'][0]
+    p0['group_by'] = 'sample'
+    p0['annotations'] = [{'text': 'note', 'x': '0.1', 'y': '0.9', 'coords': 'axes'}]
+    dialog._render()
+    leg = next(h for h in dialog._hits if h.element == 'legend')
+    cx, cy = (leg.box[0] + leg.box[2]) / 2, (leg.box[1] + leg.box[3]) / 2
+    assert dialog._drag_resolver(cx, cy)[0] == 'legend'
+    dialog._on_drag_finished('legend', cx, cy, cx - 0.2, cy + 0.2)
+    assert p0['legend_loc'] == 'custom' and len(p0['legend_xy']) == 2
+    note = next(h for h in dialog._hits if h.element == 'annotation')
+    nx, ny = (note.box[0] + note.box[2]) / 2, (note.box[1] + note.box[3]) / 2
+    assert dialog._drag_resolver(nx, ny)[0] == 'note'
+    dialog._on_drag_finished('note', nx, ny, nx + 0.1, ny + 0.1)
+    assert float(p0['annotations'][0]['x']) > 0.15
+    dialog._render()
+    plot = next(h for h in dialog._hits if h.element == 'plot')
+    sx, sy = plot.box[0] + 0.02, plot.box[1] + 0.02
+    ex, ey = plot.box[2] - 0.05, plot.box[3] - 0.05
+    assert dialog._drag_resolver(sx, sy)[0] == 'zoom'
+    dialog._on_drag_finished('zoom', sx, sy, ex, ey)
+    assert p0['x_min'] and p0['y_max']
+    from results.figure_builder.ui import interact
+    menu = interact.build_menu(dialog, plot, 0.5, 0.5)
+    next(a for a in menu.actions() if a.text() == 'Reset zoom').trigger()
+    assert not p0['x_min'] and not p0['y_max']
+    dialog.apply_layout('Side by side')
+    right = dialog.spec['panels'][1]
+    x, y, w, h = right['rect']
+    assert dialog._drag_resolver(x + w - 0.005, y + h - 0.005)[0] == 'resize'
+    dialog._on_drag_finished('resize', x + w, y + h, x + w - 0.2, y + h - 0.3)
+    assert right['rect'][2] < w and right['rect'][3] < h
+    dialog._render()
+    margin = next(h for h in dialog._hits if h.panel_id == right['id'] and h.element == 'panel')
+    dialog._drag_hit = margin
+    dialog._on_drag_finished('move', x + 0.01, y + 0.01, x - 0.09, y + 0.11)
+    assert right['rect'][0] < x and right['rect'][1] > y
+    dialog._render()
+    assert dialog.last_report.errors == {}
+
+
+def test_window_uses_app_theme(dialog):
+    from results.figure_builder.ui import look
+    p = look.palette()
+    assert p.accent.lower() in dialog.styleSheet().lower()
+    assert dialog.export_btn.objectName() == 'fbPrimary'
+
+
+def test_app_style_is_default():
+    spec = E.default_spec()
+    assert spec['figure']['palette'] == 'IsotopeTrack'
+    assert spec['figure']['font_family'] == 'Times New Roman'
+    assert spec['panels'][0]['frame'] == 'box' and spec['panels'][0]['minor_ticks']
+    assert 'IsotopeTrack (app style)' in E.STYLE_PRESETS

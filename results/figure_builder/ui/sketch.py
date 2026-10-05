@@ -34,12 +34,12 @@ def _theme_colors():
         return {
             'bg': p.bg_tertiary, 'paper': '#ffffff', 'grid': '#e6e9ef',
             'accent': p.accent, 'text': '#1f2937', 'muted': '#6b7280',
-            'border': p.border_strong,
+            'border': p.border_strong, 'danger': p.danger,
         }
     except Exception:
         return {'bg': '#eef1f5', 'paper': '#ffffff', 'grid': '#e6e9ef',
                 'accent': '#2a78d6', 'text': '#1f2937', 'muted': '#6b7280',
-                'border': '#9aa4b2'}
+                'border': '#9aa4b2', 'danger': '#d32f2f'}
 
 
 def _snap(v: float) -> float:
@@ -157,7 +157,7 @@ class LayoutSketch(QWidget):
             accent = QColor(c['accent'])
             fill = QColor(accent)
             fill.setAlpha(46 if sel else 22)
-            edge = QColor('#b42318') if err else (accent if sel else QColor(c['border']))
+            edge = QColor(c['danger']) if err else (accent if sel else QColor(c['border']))
             qp.setBrush(QBrush(QColor('#ffffff')))
             qp.setPen(Qt.NoPen)
             qp.drawRoundedRect(r, 6, 6)
