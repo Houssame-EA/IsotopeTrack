@@ -7,6 +7,8 @@ import numpy as np
 from results.figure_builder.core.common import (
     add_colorbar, add_legend, bin_edges, cmap_name, edge_kwargs, finite_mask, handles, label_n,
     marker_sizes, nonzero_mask, panel_palette, resolve_groups, style_axes)
+from results.figure_builder.charts.overlays import (
+    add_marginals, add_zoom_inset, draw_group_shapes, draw_trends, fit_band)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty
 from results.figure_builder.core.spec import PALETTE
 
@@ -32,6 +34,7 @@ def draw_scatter(fig, ax, panel, table, report, style):
     total = 0
     mappable = None
     nz = nonzero_mask(panel, x, y)
+    drawn = []
     norm = None
     if cvals is not None:
         from matplotlib.colors import LogNorm, Normalize
@@ -50,6 +53,7 @@ def draw_scatter(fig, ax, panel, table, report, style):
         if not m.any():
             continue
         total += int(m.sum())
+        drawn.append((g, x[m], y[m]))
         hover = handles(report, panel).setdefault('points', [])
         hover.append({'x': x[m], 'y': y[m], 'index': np.flatnonzero(m), 'group': g.label,
                       'color': g.color})
@@ -65,6 +69,8 @@ def draw_scatter(fig, ax, panel, table, report, style):
         if panel.get('show_fit') or panel.get('show_r'):
             draw_fit(ax, x[m], y[m], g, panel, report, log_x, log_y)
     draw_series(ax, panel, table, style, log_x, log_y)
+    draw_group_shapes(ax, panel, drawn, log_x, log_y)
+    draw_trends(ax, panel, drawn, log_x, log_y)
     if panel.get('diagonal'):
         lo = max(ax.get_xlim()[0], ax.get_ylim()[0])
         hi = min(ax.get_xlim()[1], ax.get_ylim()[1])
@@ -101,6 +107,8 @@ def draw_scatter(fig, ax, panel, table, report, style):
     hd['table'] = table
     style_axes(ax, panel, table, style, panel['x'], panel['y'])
     add_legend(ax, panel, [extra] if extra is not None else None)
+    add_marginals(fig, ax, panel, drawn, log_x, log_y, report)
+    add_zoom_inset(ax, panel, report)
 
 
 def draw_series(ax, panel, table, style, log_x, log_y):
@@ -148,6 +156,8 @@ def draw_fit(ax, x, y, g, panel, report, log_x, log_y):
         f'Pearson r = {res.rvalue:.3f} (R² = {res.rvalue ** 2:.3f}, p = {res.pvalue:.3g}), '
         f'Spearman ρ = {rho:.3f}, n = {x.size}'
         + (' [fit in log space]' if (log_x or log_y) else ''))
+    if panel.get('show_fit') and panel.get('fit_band'):
+        fit_band(ax, fx, fy, res, g.color, log_x, log_y)
     if panel.get('show_fit'):
         xs = np.linspace(fx.min(), fx.max(), 100)
         ys = res.intercept + res.slope * xs

@@ -877,3 +877,168 @@ def test_colour_bar_drag_and_menu(dialog):
     assert p0['cbar_width'] > 0.14
     dialog._render()
     assert dialog.last_report.errors == {}
+
+
+NEW_KINDS = [
+    dict(kind='upset'),
+    dict(kind='upset', group_by='sample', combo_filter='multi', as_percent=True),
+    dict(kind='qq', value='Ag', group_by='sample'),
+    dict(kind='qq', value='Ag', qq_dist='normal'),
+    dict(kind='ecdf', value='Ag', group_by='sample', log_x=True),
+    dict(kind='lollipop'),
+    dict(kind='lollipop', group_by='sample', lolli_stat='detect', lolli_vertical=True),
+    dict(kind='lollipop', group_by='class', lolli_stat='mean', log_y=True),
+    dict(kind='timeline', group_by='sample'),
+    dict(kind='timeline', time_mode='cumulative', value='Au'),
+    dict(kind='timeline', time_mode='signal', value='Ag', log_y=True),
+    dict(kind='waffle', group_by='sample'),
+    dict(kind='waffle', share_mode='combinations', top_n=3),
+    dict(kind='treemap', group_by='class'),
+    dict(kind='treemap', share_mode='combinations', legend=True),
+]
+
+
+@pytest.mark.parametrize('panel', NEW_KINDS, ids=lambda p: '-'.join(str(v) for v in p.values()))
+def test_newest_chart_kinds_render(table, panel):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(**panel)]
+    fig, report = _draw(E.normalise_spec(spec), table)
+    assert report.errors == {}
+    assert report.counts[spec['panels'][0]['id']] > 0
+
+
+def test_upset_matrix_and_hover_info(table):
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='upset')]})
+    fig, report = _draw(spec, table)
+    hd = report.artists[spec['panels'][0]['id']]
+    mat = hd['extra_axes'][0]
+    assert [t.get_text().split(' ')[0] for t in mat.get_yticklabels()][:1]
+    assert mat.get_position().y1 <= hd['ax'].get_position().y0 + 1e-6
+    assert len(hd['bar_info']['texts']) == len(hd['bar_info']['positions']) >= 2
+
+
+def test_waffle_uses_every_square(table):
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='waffle', group_by='sample',
+                                                     waffle_cols=12, waffle_rows=5)]})
+    fig, report = _draw(spec, table)
+    wedges = report.artists[spec['panels'][0]['id']]['wedges']
+    assert len(wedges) == 60
+    assert {w[1] for w in wedges} == {'Blank', 'Ag NP', 'AgAu'}
+
+
+def test_squarify_fills_the_area():
+    from results.figure_builder.charts.more import squarify
+    rects = squarify([50, 25, 15, 10], 0, 0, 4, 3)
+    assert len(rects) == 4
+    assert abs(sum(w * h for _x, _y, w, h in rects) - 12) < 1e-9
+    for x, y, w, h in rects:
+        assert x >= -1e-9 and y >= -1e-9 and x + w <= 4 + 1e-9 and y + h <= 3 + 1e-9
+
+
+def test_qq_reports_shapiro(table):
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='qq', value='Ag')]})
+    _fig, report = _draw(spec, table)
+    assert any('Shapiro' in line for line in report.stats)
+
+
+@pytest.mark.parametrize('extra', [
+    dict(ellipse='2sd'), dict(ellipse='1sd', log_x=True, log_y=True), dict(hull=True),
+    dict(trend='median'), dict(trend='mean', log_x=True), dict(show_fit=True, fit_band=True),
+    dict(marginals='hist'), dict(marginals='kde', log_x=True), dict(marginals='box'),
+    dict(inset_zoom='40, 80, 10, 25', inset_loc='lower right'),
+], ids=lambda d: '-'.join(f'{k}={v}' for k, v in d.items()))
+def test_scatter_extras(table, extra):
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='scatter', x='Ag', y='Fe', group_by='sample',
+                                                     **extra)]})
+    fig, report = _draw(spec, table)
+    assert report.errors == {}
+    hd = report.artists[spec['panels'][0]['id']]
+    if extra.get('marginals'):
+        assert 'marg_top' in hd and 'marg_right' in hd
+        assert hd['marg_top'].get_position().y0 > hd['ax'].get_position().y1
+        assert hd['marg_right'].get_position().x0 > hd['ax'].get_position().x1
+    if extra.get('inset_zoom'):
+        ins = hd['inset']
+        assert ins.get_xlim() == (40.0, 80.0)
+
+
+def test_marginals_and_colour_bar_do_not_overlap(table):
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='scatter', x='Ag', y='Fe', color_by='total',
+                                                     marginals='hist')]})
+    fig, report = _draw(spec, table)
+    hd = report.artists[spec['panels'][0]['id']]
+    assert hd['cbar'].ax.get_position().x0 > hd['marg_right'].get_position().x1
+
+
+def test_dark_and_hand_drawn_presets(table):
+    from results.figure_builder.core import styles as S
+    spec = E.normalise_spec({'panels': [E.make_panel(kind='strip', value='Ag', group_by='sample')]})
+    dark = S.apply_style_preset(spec, 'Dark (slides)')
+    fig, report = _draw(dark, table)
+    assert report.errors == {}
+    ax = report.artists[dark['panels'][0]['id']]['ax']
+    from matplotlib.colors import to_hex
+    assert to_hex(ax.xaxis.label.get_color()) == '#e2e8f0'
+    assert to_hex(fig.get_facecolor()) == '#0f172a'
+    back = S.apply_style_preset(dark, 'IsotopeTrack (app style)')
+    assert back['figure']['ink'] == '' and back['figure']['background'] == '#ffffff'
+    sketch = S.apply_style_preset(spec, 'Hand-drawn')
+    fig, report = _draw(sketch, table)
+    assert report.errors == {}
+    ax = report.artists[sketch['panels'][0]['id']]['ax']
+    assert any(c.get_sketch_params() for c in ax.collections)
+
+
+def test_gallery_renders_thumbnails(dialog):
+    from PySide6.QtCore import Qt
+    from results.figure_builder.ui.dialog import render_to_pixmap
+    from results.figure_builder.ui.gallery import ChartGallery
+    g = ChartGallery(dialog.spec, dialog.table, render_to_pixmap, dialog._kind_defaults, True, dialog)
+    assert set(g.items) == set(E.PANEL_KINDS) - {'text', 'code'}
+    for kind in ('upset', 'treemap', 'qq'):
+        _pix, report, _fig = render_to_pixmap(g.thumbnail_spec(kind), dialog.table, 40)
+        assert report.errors == {}, kind
+    g._timer.stop()
+    while g._queue[:3]:
+        g._render_next()
+        if len(g._queue) < len(g.items) - 3:
+            break
+    g.search.setText('ternary')
+    assert not g.items['ternary'].isHidden() and g.items['scatter'].isHidden()
+    picked = []
+    g.chosen.connect(lambda k, r: picked.append((k, r)))
+    g.list.setCurrentItem(g.items['ternary'])
+    g._use(False)
+    assert picked == [('ternary', False)]
+    before = len(dialog.spec['panels'])
+    dialog.add_panel('waffle')
+    assert len(dialog.spec['panels']) == before + 1
+    assert g.items['ternary'].data(Qt.UserRole) == 'ternary'
+
+
+def test_surprise_me_is_undoable(dialog):
+    dialog._render()
+    before = json.dumps(dialog.spec, sort_keys=True, default=str)
+    preset, palette = dialog.surprise(seed=4)
+    dialog._render()
+    assert dialog.spec['figure']['palette'] == palette
+    assert json.dumps(dialog.spec, sort_keys=True, default=str) != before
+    assert dialog.last_report.errors == {}
+    dialog.undo()
+    assert json.dumps(dialog.spec, sort_keys=True, default=str) == before
+
+
+def test_scatter_extras_menu(dialog):
+    from results.figure_builder.ui import interact
+    p0 = dialog.spec['panels'][0]
+    p0['kind'] = 'scatter'
+    dialog._render()
+    plot = next(h for h in dialog._hits if h.element == 'plot')
+    menu = interact.build_menu(dialog, plot, 0.5, 0.5)
+    extras = next(a for a in menu.actions() if a.text() == 'Extras').menu()
+    next(a for a in extras.actions() if a.text() == 'Histograms along the edges').trigger()
+    assert p0['marginals'] == 'hist'
+    next(a for a in extras.actions() if a.text() == '95% ellipse around each group').trigger()
+    assert p0['ellipse'] == '2sd'
+    dialog._render()
+    assert dialog.last_report.errors == {}

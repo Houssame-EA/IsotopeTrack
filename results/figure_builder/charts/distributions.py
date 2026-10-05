@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, bin_edges, draw_summary_box, handles, label_n, style_axes, value_groups)
+    add_legend, bin_edges, draw_summary_box, handles, ink, label_n, style_axes, value_groups)
 from results.figure_builder.core.expressions import ExpressionError
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -159,8 +159,8 @@ def draw_distribution(fig, ax, panel, table, report, style):
             body.set_alpha(0.6)
         for pos, v in zip(positions, plot_data):
             q1, med, q3 = np.percentile(v, [25, 50, 75])
-            ax.vlines(pos, q1, q3, color='#1f2937', lw=5, zorder=3, capstyle='butt')
-            ax.scatter([pos], [med], s=18, color='white', edgecolors='#1f2937', linewidths=0.8,
+            ax.vlines(pos, q1, q3, color=ink('#1f2937'), lw=5, zorder=3, capstyle='butt')
+            ax.scatter([pos], [med], s=18, color='white', edgecolors=ink('#1f2937'), linewidths=0.8,
                        zorder=4)
         if panel.get('show_mean'):
             ax.scatter(positions, [np.mean(v) for v in plot_data], marker='s', s=26,
@@ -173,9 +173,9 @@ def draw_distribution(fig, ax, panel, table, report, style):
         bp = ax.boxplot(data, positions=positions, widths=0.58, patch_artist=True,
                         notch=bool(panel.get('notch')), showmeans=bool(panel.get('show_mean')),
                         showfliers=not panel.get('show_points'),
-                        medianprops={'color': '#111827', 'lw': 1.8},
-                        whiskerprops={'color': '#374151', 'lw': 1.1},
-                        capprops={'color': '#374151', 'lw': 1.1},
+                        medianprops={'color': ink('#111827'), 'lw': 1.8},
+                        whiskerprops={'color': ink('#374151'), 'lw': 1.1},
+                        capprops={'color': ink('#374151'), 'lw': 1.1},
                         meanprops={'marker': 's', 'markerfacecolor': 'white',
                                    'markeredgecolor': '#1d4ed8', 'markersize': 6,
                                    'markeredgewidth': 1.2},

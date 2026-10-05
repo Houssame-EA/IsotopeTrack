@@ -51,6 +51,13 @@ KIND_ELEMENTS = {
     'contour': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
     'radar': ['title', 'ticks', 'legend'],
     'parallel': ['title', 'y_label', 'ticks', 'legend'],
+    'ecdf': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'qq': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'upset': ['title', 'y_label', 'ticks', 'legend', 'cells'],
+    'lollipop': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
+    'waffle': ['title', 'legend'],
+    'treemap': ['title', 'legend', 'cells'],
+    'timeline': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
     'text': ['title'],
     'code': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
 }

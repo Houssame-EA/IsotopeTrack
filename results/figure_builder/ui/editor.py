@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from results.figure_builder.core import engine as E
+from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
+from results.figure_builder.charts.overlays import ELLIPSES, INSET_LOCS, MARGINALS, TRENDS
 from results.figure_builder.core import styles as S
 from results.figure_builder.core.common import HATCHES, SHAPE_TYPES, TICK_FORMATS
 from results.figure_builder.core.expressions import (
@@ -24,20 +26,24 @@ from results.figure_builder.core.expressions import (
 from results.figure_builder.ui.widgets import (
     ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
 
-PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip'}
+PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip',
+         'ecdf', 'qq', 'timeline', 'lollipop'}
 XY = {'scatter', 'density', 'hexbin', 'contour'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
-VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline'}
+VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'qq', 'timeline'}
 SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
 CBAR = {'scatter', 'density', 'hexbin'} | MATRIX
-ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel'}
+ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel', 'upset', 'lollipop',
+                  'waffle', 'treemap'}
+COMBOS = {'combinations', 'upset', 'waffle', 'treemap'}
+SHARES = {'waffle', 'treemap'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
 GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
-            'strip', 'ridgeline', 'contour', 'hexbin'} | ITEMS
+            'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'qq', 'timeline'} | ITEMS
 ALL = set(E.PANEL_KINDS)
-MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip'}
+MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip', 'qq', 'timeline', 'lollipop'}
 LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density', 'hexbin', 'strip', 'ridgeline'} - MATRIX
 SHAPED = set(E.SHAPE_KINDS)
 TICKED = PLOTS | {'ridgeline', 'parallel', 'combinations', 'composition'}
@@ -123,10 +129,15 @@ FIELDS = [
       'count': 'Number of particles'}),
     ('Data', 'What to plot', 'comp_mode', 'Share computed as', 'combo', {'composition'},
      {'mean_fraction': "Mean of each particle's share", 'total': 'Share of the summed amounts'}),
-    ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', {'combinations'},
+    ('Data', 'What to plot', 'qq_dist', 'Compare with', 'combo', {'qq'},
+     {'lognormal': 'Log-normal distribution', 'normal': 'Normal distribution'}),
+    ('Data', 'What to plot', 'lolli_stat', 'Each isotope shows', 'combo', {'lollipop'}, LOLLI_STATS),
+    ('Data', 'What to plot', 'time_mode', 'Show', 'combo', {'timeline'}, TIME_MODES),
+    ('Data', 'What to plot', 'share_mode', 'Share out', 'combo', SHARES, SHARE_MODES),
+    ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', COMBOS,
      {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
-    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', {'combinations', 'heatmap'}, (1, 500)),
-    ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
+    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap'}, (1, 500)),
+    ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations', 'upset'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
     ('Data', 'What to plot', 'radar_mode', 'Spokes show', 'combo', {'radar'},
@@ -157,6 +168,11 @@ FIELDS = [
     ('Style', 'Markers', 'edge_color', 'Outline colour', 'color', {'scatter', 'ternary', 'bar', 'pie'}, None),
     ('Style', 'Markers', 'edge_width', 'Outline width', 'float', {'scatter', 'ternary', 'bar', 'pie'}, (0, 6, 0.2)),
     ('Style', 'Markers', 'size_by', 'Size by value', 'expr', {'scatter'}, 'optional, e.g. total'),
+    ('Style', 'Around the groups', 'ellipse', 'Ellipse', 'combo', {'scatter'}, ELLIPSES),
+    ('Style', 'Around the groups', 'hull', 'Outline (convex hull)', 'check', {'scatter'}, None),
+    ('Style', 'Around the groups', 'trend', 'Trend curve', 'combo', {'scatter'}, TRENDS),
+    ('Style', 'Around the groups', 'trend_bins', 'Trend points', 'int', {'scatter'}, (4, 60)),
+    ('Style', 'Around the groups', 'marginals', 'Along the edges', 'combo', {'scatter'}, MARGINALS),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter'}, 'optional, e.g. total'),
     ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin'},
      {k: k for k in S.COLORMAPS}),
@@ -170,10 +186,15 @@ FIELDS = [
     ('Style', 'Colour bar', 'cbar_pad', 'Gap from the plot (inches)', 'float', CBAR, (0, 2, 0.02)),
     ('Style', 'Colour bar', 'cbar_log', 'Log colour scale', 'check', {'scatter'}, None),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
-    ('Style', 'Lines', 'line_width', 'Line width', 'float', {'scatter', 'line', 'histogram', 'radar'}, (0.2, 8, 0.2)),
+    ('Style', 'Lines', 'line_width', 'Line width', 'float',
+     {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
     ('Style', 'Chart options', 'annotate', 'Show values', 'check',
-     MATRIX | {'composition', 'combinations'}, None),
+     MATRIX | {'composition', 'combinations', 'upset', 'lollipop'}, None),
+    ('Style', 'Chart options', 'lolli_vertical', 'Vertical', 'check', {'lollipop'}, None),
+    ('Style', 'Chart options', 'lolli_sort', 'Sort by value', 'check', {'lollipop'}, None),
+    ('Style', 'Chart options', 'waffle_cols', 'Squares across', 'int', {'waffle'}, (5, 40)),
+    ('Style', 'Chart options', 'waffle_rows', 'Squares down', 'int', {'waffle'}, (2, 40)),
     ('Style', 'Chart options', 'show_sig', 'Significance stars', 'check', {'corr_matrix'}, None),
     ('Style', 'Chart options', 'triangle', 'Show', 'combo', {'corr_matrix', 'cooccurrence'},
      {'full': 'Full matrix', 'lower': 'Lower triangle', 'upper': 'Upper triangle'}),
@@ -183,7 +204,8 @@ FIELDS = [
     ('Style', 'Chart options', 'log_color', 'Log colour scale', 'check', {'heatmap', 'hexbin'}, None),
     ('Style', 'Chart options', 'transpose', 'Swap rows and columns', 'check', {'heatmap'}, None),
     ('Style', 'Chart options', 'max_rows', 'Max particles shown', 'int', {'heatmap'}, (10, 1000000)),
-    ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line', 'hexbin'}, (2, 500)),
+    ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line', 'hexbin', 'timeline'},
+     (2, 500)),
     ('Style', 'Chart options', 'strip_summary', 'Show', 'combo', {'strip'},
      {'mean_sd': 'Mean ± SD (geometric on a log axis)', 'median_iqr': 'Median and IQR',
       'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
@@ -226,8 +248,8 @@ FIELDS = [
     ('Axes', 'Labels', 'cbar_label', 'Colour bar label', 'text', {'scatter', 'density', 'hexbin'} | MATRIX, 'automatic'),
     ('Axes', 'Labels', 'styles_button', '', 'button', ALL, 'Text styles: bold, italic, size, colour…'),
     ('Axes', 'Labels', 'rename_button', '', 'button', RENAMEABLE, 'Rename isotopes / items…'),
-    ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram', 'ridgeline'}, None),
-    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS | {'combinations'}, None),
+    ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram', 'ridgeline', 'ecdf'}, None),
+    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS - {'qq', 'ecdf'} | {'combinations', 'upset'}, None),
     ('Axes', 'Scale', 'log_y2', 'Log right Y', 'check', {'scatter'}, None),
     ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram'}, 'auto'),
     ('Axes', 'Range', 'x_max', 'X to', 'text', XLINE | {'histogram'}, 'auto'),
@@ -265,7 +287,11 @@ FIELDS = [
     ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
     ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
+    ('Axes', 'Zoom inset', 'inset_zoom', 'Zoom on', 'text', {'scatter'}, 'x from, x to, y from, y to'),
+    ('Axes', 'Zoom inset', 'inset_loc', 'Inset position', 'combo', {'scatter'}, INSET_LOCS),
+    ('Axes', 'Zoom inset', 'inset_size', 'Inset size', 'float', {'scatter'}, (0.15, 0.7, 0.05)),
     ('Stats', 'Compare groups', 'test', 'Test', 'combo', TESTABLE, E.STAT_TESTS),
     ('Stats', 'Compare groups', 'pairs', 'Pairs', 'combo', set(),
      {'all': 'Every pair', 'first': 'Each group vs the first'}),
@@ -284,6 +310,8 @@ LABELS = {
     ('y', 'line'): 'Y (blank = count)',
     ('value', 'bar'): 'Values (comma separated)',
     ('value', 'pie'): 'Values (comma separated)',
+    ('value', 'timeline'): 'Value (optional)',
+    ('isotopes', 'lollipop'): 'Isotopes (rows)',
 }
 
 TAB_HINTS = {
@@ -642,6 +670,12 @@ class PanelEditor(QWidget):
             return bool((p.get('y') or '').strip())
         if key.startswith('cbar_') and key != 'cbar_label' and kind == 'scatter':
             return bool((p.get('color_by') or '').strip())
+        if kind in SHARES and key in ('isotopes', 'top_n', 'combo_filter'):
+            return p.get('share_mode') == 'combinations'
+        if key == 'trend_bins':
+            return kind == 'scatter' and p.get('trend', 'none') != 'none'
+        if key == 'fit_band':
+            return kind == 'scatter' and bool(p.get('show_fit'))
         if key == 'max_rows':
             return kind == 'heatmap' and p.get('heat_rows') == 'particles'
         if key == 'top_n' and kind == 'heatmap':

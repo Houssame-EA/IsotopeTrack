@@ -644,6 +644,19 @@ def _panel_menu(win, menu, panel, fx, fy):
     if kind == 'scatter':
         _add(menu, 'Fit line', lambda: (panel.update(show_fit=not panel.get('show_fit')), win.after_edit(True)),
              checked=panel.get('show_fit'))
+        extras = _submenu(menu, 'Extras')
+        for key, value, label in (('ellipse', '2sd', '95% ellipse around each group'),
+                                  ('ellipse', '1sd', '68% ellipse around each group'),
+                                  ('trend', 'median', 'Running median curve'),
+                                  ('marginals', 'hist', 'Histograms along the edges'),
+                                  ('marginals', 'kde', 'Smooth curves along the edges'),
+                                  ('marginals', 'box', 'Box plots along the edges')):
+            on = panel.get(key) == value
+            _add(extras, label, lambda k=key, v=value, o=on: (panel.update({k: 'none' if o else v}),
+                                                               win.after_edit(True)), checked=on)
+        _add(extras, 'Outline each group (hull)',
+             lambda: (panel.update(hull=not panel.get('hull')), win.after_edit(True)), checked=panel.get('hull'))
+        _add(extras, 'Zoom inset…', lambda: win.show_editor_tab('Axes'))
     if kind in ('corr_matrix', 'pairs'):
         method = _submenu(menu, 'Correlation')
         for key, label in (('pearson', 'Pearson'), ('spearman', 'Spearman'), ('kendall', 'Kendall')):
@@ -785,6 +798,8 @@ def _page_menu(win, menu, fx, fy, hit):
     add = _submenu(menu, 'Add panel here')
     for key, label in E.PANEL_KINDS.items():
         _add(add, label, lambda k=key: win.add_panel(k, at=(fx, fy)))
+    _add(menu, 'Chart gallery…', win.open_gallery)
+    _add(menu, 'Surprise me', win.surprise)
     layouts = _submenu(menu, 'Layouts')
     for name in S.TEMPLATES:
         _add(layouts, name, lambda n=name: win.apply_layout(n))

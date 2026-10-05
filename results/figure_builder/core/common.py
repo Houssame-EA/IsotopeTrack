@@ -73,6 +73,13 @@ def numbers(text) -> list[float]:
     return out
 
 
+def ink(default: str = '#111827') -> str:
+    """Colour for dark details (medians, dots, value labels) that follows the figure's text colour."""
+    from matplotlib import rcParams
+    c = str(rcParams.get('text.color', 'black')).lower()
+    return default if c in ('black', 'k', '#000000', '#000') else rcParams['text.color']
+
+
 def panel_palette(panel) -> list[str]:
     """The palette injected into ``panel`` by :func:`render`."""
     return panel.get('_palette') or PALETTE
@@ -912,7 +919,8 @@ def place_colorbar(fig, panel, handles_):
     cb.ax.set_axes_locator(None)
     cb.ax.set_in_layout(False)
     try:
-        bounds = _cbar_bounds(fig, ax, ax2, panel, renderer, loc, orient, pos,
+        beside = [a for a in (ax2, handles_.get('marg_right')) if a is not None]
+        bounds = _cbar_bounds(fig, ax, (beside, handles_.get('marg_top')), panel, renderer, loc, orient, pos,
                               (fw, fh, ax_w_in, ax_h_in, thick_in, pad_in, length, inside))
     finally:
         cb.ax.set_in_layout(True)
@@ -920,17 +928,22 @@ def place_colorbar(fig, panel, handles_):
     cb.ax.patch.set_alpha(0.0 if inside else 1.0)
 
 
-def _cbar_bounds(fig, ax, ax2, panel, renderer, loc, orient, pos, sizes):
-    """Inset bounds ``[x0, y0, w, h]`` (axes fraction) of a colour bar."""
+def _cbar_bounds(fig, ax, neighbours, panel, renderer, loc, orient, pos, sizes):
+    """Inset bounds ``[x0, y0, w, h]`` (axes fraction) of a colour bar.
+
+    ``neighbours`` is ``(axes to the right, axes above)``: a right-hand axis
+    or marginal plots the bar has to clear.
+    """
     fw, fh, ax_w_in, ax_h_in, thick_in, pad_in, length, inside = sizes
+    beside, above = neighbours
     if orient == 'vertical':
         w = thick_in / ax_w_in
         h = length
         y0 = (1 - h) / 2
         if loc == 'right':
             extra = 0.0
-            if ax2 is not None:
-                ext = _decoration_extent(fig, [ax2], renderer)
+            if beside:
+                ext = _decoration_extent(fig, beside, renderer)
                 if ext is not None:
                     extra = max(0.0, (ext.x1 - pos.x1) * fw)
             x0 = 1 + (pad_in + extra) / ax_w_in
@@ -950,7 +963,12 @@ def _cbar_bounds(fig, ax, ax2, panel, renderer, loc, orient, pos, sizes):
         w = length
         x0 = (1 - w) / 2
         if loc == 'top':
-            y0 = 1 + pad_in / ax_h_in
+            extra = 0.0
+            if above is not None:
+                ext = _decoration_extent(fig, [above], renderer)
+                if ext is not None:
+                    extra = max(0.0, (ext.y1 - pos.y1) * fh)
+            y0 = 1 + (pad_in + extra) / ax_h_in
         elif loc == 'bottom':
             ext = _decoration_extent(fig, [ax], renderer)
             extra = max(0.0, (pos.y0 - ext.y0) * fh) if ext is not None else 0.5

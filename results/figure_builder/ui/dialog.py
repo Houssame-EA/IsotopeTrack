@@ -140,7 +140,7 @@ def fill_panel_defaults(panel: dict | None, table: ParticleTable) -> dict | None
         panel['y'] = panel.get('y') or second
     elif kind == 'line':
         panel['x'] = panel.get('x') or 'time'
-    elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'):
+    elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline', 'ecdf', 'qq'):
         panel['value'] = panel.get('value') or labs[0]
     elif kind == 'pie' and panel.get('pie_mode') == 'values':
         panel['value'] = panel.get('value') or ', '.join(labs[:6])
@@ -185,6 +185,13 @@ Samples, classes and rules can all be hidden, renamed, recoloured and reordered.
 <p>Box, violin, bar and histogram panels compare their groups with a t-test, Mann-Whitney, KS,
 ANOVA or Kruskal-Wallis (with Holm or Bonferroni correction). Results are listed in the
 <b>Statistics</b> tab and drawn as brackets. Scatter panels can show a fit line with r and R².</p>
+<h3>More ways to play</h3>
+<p><b>Gallery</b> shows every chart type drawn with your own particles: double-click one to add it.
+<b>Surprise me</b> tries a random look (Ctrl+Z goes back). Scatter panels can draw ellipses or
+outlines around each group, a running median, histograms along the edges and a zoom inset
+(right-click the plot ▸ Extras). New charts: UpSet, Q-Q, ECDF, lollipop / dumbbell, waffle, treemap and
+a particle timeline. <b>Figure</b> settings have a text-and-axes colour (for dark slides) and a
+hand-drawn mode.</p>
 <h3>Designs</h3>
 <p><b>Designs ▸ Save current design</b> stores the whole figure (layout, styles, variables) so you can
 apply it to another sample in one click, or export it to a file to share.</p>
@@ -303,6 +310,12 @@ class FigureSettingsDialog(QDialog):
         form.addRow('Isotope labels', self.label_style)
         self.bg = ColorButton(self.cfg.get('background') or '#ffffff')
         form.addRow('Background', self.bg)
+        self.ink = ColorButton(self.cfg.get('ink') or '', allow_none=True)
+        self.ink.setToolTip('Colour of all text, axes and ticks (empty = black)')
+        form.addRow('Text and axes colour', self.ink)
+        self.sketchy = QCheckBox('Hand-drawn lines (wobbly, for fun)')
+        self.sketchy.setChecked(bool(self.cfg.get('sketchy')))
+        form.addRow('', self.sketchy)
         self.dpi = QSpinBox()
         self.dpi.setRange(72, 1200)
         self.dpi.setValue(int(self.cfg.get('dpi') or 300))
@@ -336,7 +349,8 @@ class FigureSettingsDialog(QDialog):
                    letter_style=self.letter_style.currentData(),
                    letter_size=self.letter_size.value(),
                    label_style=self.label_style.currentData(),
-                   background=self.bg.color() or '#ffffff', dpi=self.dpi.value())
+                   background=self.bg.color() or '#ffffff', dpi=self.dpi.value(),
+                   ink=self.ink.color() or '', sketchy=self.sketchy.isChecked())
         return out
 
 
@@ -634,6 +648,8 @@ class FigureBuilderDialog(QDialog):
             add_menu.addAction(label, lambda k=key: self.add_panel(k))
         bar.addWidget(self._tool('Add panel', 'fa6s.square-plus', 'Add a panel of a given type',
                                  menu=add_menu))
+        bar.addWidget(self._tool('Gallery', 'fa6s.images', 'See every chart type drawn with your data '
+                                 'and pick one', self.open_gallery))
         layout_menu = QMenu(self)
         for name in S.TEMPLATES:
             layout_menu.addAction(name, lambda n=name: self._apply_template(n))
@@ -644,7 +660,7 @@ class FigureBuilderDialog(QDialog):
         bar.addWidget(self._sep())
         bar.addWidget(self._tool('Figure', 'fa6s.sliders', 'Size, fonts, palette, panel letters',
                                  self._figure_settings))
-        bar.addWidget(self._tool('Text', 'fa6s.font', 'Bold, italic, size and colour of every text '
+        bar.addWidget(self._tool('', 'fa6s.font', 'Text styles: bold, italic, size and colour of every text '
                                  'in the whole figure', self._figure_text_styles))
         style_menu = QMenu(self)
         for name in S.STYLE_PRESETS:
@@ -657,16 +673,18 @@ class FigureBuilderDialog(QDialog):
             act.triggered.connect(lambda _=False, n=name: self._set_palette(n))
         bar.addWidget(self._tool('Colours', 'fa6s.palette', 'Colour palette for groups',
                                  menu=self.palette_menu))
+        bar.addWidget(self._tool('', 'fa6s.dice', 'Surprise me: try a random look (Ctrl+Z brings the old '
+                                 'one back)', self.surprise))
         bar.addWidget(self._sep())
         self.designs_menu = QMenu(self)
         self.designs_menu.aboutToShow.connect(self._fill_designs_menu)
-        bar.addWidget(self._tool('Designs', 'fa6s.bookmark',
-                                 'Save this figure design and reuse it on other data',
+        bar.addWidget(self._tool('', 'fa6s.bookmark',
+                                 'Designs: save this figure design and reuse it on other data',
                                  menu=self.designs_menu))
-        bar.addWidget(self._tool('Help', 'fa6s.circle-question', 'How to write expressions and more',
+        bar.addWidget(self._tool('', 'fa6s.circle-question', 'How to write expressions and more',
                                  self._help))
         bar.addSpacing(12)
-        bar.addWidget(QLabel('Default quantity'))
+        bar.addWidget(QLabel('Quantity'))
         self.data_type = QComboBox()
         for k in DATA_TYPES:
             self.data_type.addItem(k, k)
@@ -679,7 +697,7 @@ class FigureBuilderDialog(QDialog):
         self.status.setMinimumWidth(260)
         self.status.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.status.setObjectName('fbStatus')
-        bar.addWidget(self._tool('Copy', 'fa6s.copy', 'Copy the figure as an image (Ctrl+Shift+C)',
+        bar.addWidget(self._tool('', 'fa6s.copy', 'Copy the figure as an image (Ctrl+Shift+C)',
                                  self._copy))
         export = QPushButton(_icon('fa6s.file-export', look.palette().text_inverse), ' Export figure…')
         export.setObjectName('fbPrimary')
@@ -834,6 +852,11 @@ class FigureBuilderDialog(QDialog):
         kind = panel.get('kind')
         if kind == 'combinations':
             panel['horizontal'] = True
+        if kind == 'treemap':
+            panel['legend'] = False
+        if kind == 'timeline' and panel.get('group_by', 'none') == 'none' and len(self.table) \
+                and len(set(self.table.column('sample'))) > 1:
+            panel['group_by'] = 'sample'
         if kind == 'pairs' and not (panel.get('isotopes') or '').strip() and len(self.table.labels) > 4:
             panel['isotopes'] = ', '.join(self.table.labels[:4])
         return fill_panel_defaults(panel, self.table)
@@ -1099,6 +1122,47 @@ class FigureBuilderDialog(QDialog):
     def _apply_style(self, name):
         self._load_spec(S.apply_style_preset(self.spec, name))
 
+    def open_gallery(self):
+        """Show every chart type drawn with the current data and add or switch to the one picked."""
+        from results.figure_builder.ui.gallery import ChartGallery
+        selected = self._panel(self.sketch.selected) if self.sketch.selected else None
+        gallery = ChartGallery(self.spec, self.table, render_to_pixmap, self._kind_defaults,
+                               selected is not None, self)
+        gallery.setStyleSheet(look.window_qss())
+
+        def use(kind, replace):
+            if replace and selected is not None:
+                self.set_panel_kind(selected, kind)
+            else:
+                self.add_panel(kind)
+        gallery.chosen.connect(use)
+        gallery.exec()
+
+    def surprise(self, seed=None):
+        """Apply a random style, palette and colour map; undo brings the previous look back."""
+        import random
+        rng = random.Random(seed)
+        figure = self.spec['figure']
+        presets = [n for n in S.STYLE_PRESETS if n not in ('Grayscale print', 'Colorblind safe')]
+        preset = rng.choice(presets)
+        spec = S.apply_style_preset(self.spec, preset)
+        dark = bool(spec['figure'].get('ink'))
+        palettes = [n for n in S.PALETTES if n != figure.get('palette') and n != 'Grayscale'
+                    and (dark or n != 'Neon (for dark)')]
+        palette = rng.choice(palettes)
+        cmap = rng.choice(['viridis', 'magma', 'plasma', 'cividis', 'turbo', 'YlOrRd', 'Spectral'])
+        marker = rng.choice(['o', 'o', 's', 'D', '^', 'h'])
+        spec['figure']['palette'] = palette
+        for p in spec['panels']:
+            p['group_colors'] = {}
+            p['colormap'] = cmap
+            p['marker'] = marker
+            if p.get('group_by', 'none') == 'none':
+                p['color'] = S.palette_colors(palette)[0]
+        self._status_note = f'Surprise! {preset} · {palette} colours — Ctrl+Z to go back'
+        self._load_spec(spec)
+        return preset, palette
+
     def _set_palette(self, name):
         self.spec['figure']['palette'] = name
         for p in self.spec['panels']:
@@ -1290,6 +1354,10 @@ class FigureBuilderDialog(QDialog):
         bad = len(report.errors)
         self.status.setText(f'{n:,} particles · {len(self.spec["panels"])} panel(s)'
                             + (f' · ⚠ {bad} need attention' if bad else '') + f' · {ms:.0f} ms')
+        note = getattr(self, '_status_note', '')
+        if note:
+            self.status.setText(note)
+            self._status_note = ''
         if not self._restoring:
             self._push_history()
 

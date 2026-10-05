@@ -7,8 +7,8 @@ import warnings
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_colorbar, add_legend, base_mask, cmap_name, draw_summary_box, finite_mask, handles, item_exprs,
-    item_label, label_n, nonzero_mask, resolve_groups, style_axes, value_groups)
+    add_colorbar, add_legend, base_mask, cmap_name, draw_summary_box, finite_mask, handles, ink,
+    item_exprs, item_label, label_n, nonzero_mask, resolve_groups, style_axes, value_groups)
 from results.figure_builder.core.expressions import ExpressionError, evaluate
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -69,8 +69,8 @@ def draw_strip(fig, ax, panel, table, report, style):
                 gm = 10 ** np.mean(t)
                 gsd = 10 ** (np.std(t, ddof=1) if t.size > 1 else 0.0)
                 centre, lo, hi = gm, gm / gsd, gm * gsd
-        ax.vlines(pos, lo, hi, color='#111827', lw=1.6, zorder=4)
-        ax.hlines(centre, pos - width * 0.7, pos + width * 0.7, color='#111827', lw=2.2, zorder=4)
+        ax.vlines(pos, lo, hi, color=ink('#111827'), lw=1.6, zorder=4)
+        ax.hlines(centre, pos - width * 0.7, pos + width * 0.7, color=ink('#111827'), lw=2.2, zorder=4)
     ax.set_xticks(positions)
     ax.set_xticklabels([f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label
                         for g, v in groups])
@@ -117,7 +117,7 @@ def draw_ridgeline(fig, ax, panel, table, report, style):
             med = np.median(t)
             mx = 10 ** med if log else med
             hmed = np.interp(med, grid, dens) * step * (1 + overlap)
-            ax.plot([mx, mx], [base, base + hmed], color='#111827', lw=1.2, zorder=z + 0.006)
+            ax.plot([mx, mx], [base, base + hmed], color=ink('#111827'), lw=1.2, zorder=z + 0.006)
     if log:
         ax.set_xscale('log')
     ax.set_yticks([(n - 1 - k) * step + 0.25 for k in range(n)])

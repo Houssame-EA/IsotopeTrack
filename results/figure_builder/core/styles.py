@@ -19,6 +19,20 @@ PALETTES: dict[str, list[str]] = {
              '#66A61E', '#E6AB02', '#A6761D', '#666666'],
     'Pastel': ['#8DA0CB', '#FC8D62', '#66C2A5', '#E78AC3',
                '#A6D854', '#FFD92F', '#E5C494', '#B3B3B3'],
+    'NPG': ['#E64B35', '#4DBBD5', '#00A087', '#3C5488', '#F39B7F',
+            '#8491B4', '#91D1C2', '#DC0000', '#7E6148', '#B09C85'],
+    'AAAS': ['#3B4992', '#EE0000', '#008B45', '#631879', '#008280',
+             '#BB0021', '#5F559B', '#A20056', '#808180', '#1B1919'],
+    'Lancet': ['#00468B', '#ED0000', '#42B540', '#0099B4', '#925E9F',
+               '#FDAF91', '#AD002A', '#ADB6B6', '#1B1919'],
+    'Sunset': ['#F94144', '#F3722C', '#F8961E', '#F9C74F', '#90BE6D',
+               '#43AA8B', '#577590', '#277DA1'],
+    'Ocean': ['#03045E', '#0077B6', '#00B4D8', '#48CAE4', '#2A9D8F',
+              '#264653', '#90E0EF', '#023E8A'],
+    'Earth': ['#7F5539', '#B08968', '#606C38', '#283618', '#DDA15E',
+              '#BC6C25', '#9C6644', '#A3B18A'],
+    'Neon (for dark)': ['#22D3EE', '#F472B6', '#A3E635', '#FACC15', '#C084FC',
+                        '#FB923C', '#34D399', '#60A5FA'],
     'Grayscale': ['#000000', '#6b6b6b', '#a8a8a8', '#d0d0d0',
                   '#3a3a3a', '#8a8a8a', '#bdbdbd', '#e2e2e2'],
 }
@@ -106,6 +120,30 @@ STYLE_PRESETS: dict[str, dict] = {
         'figure': {'palette': 'Colorblind (Okabe-Ito)'},
         'panel': {},
     },
+    'Journal (clean)': {
+        'figure': {'font_size': 8, 'font_family': 'Arial', 'axes_linewidth': 0.7, 'palette': 'NPG'},
+        'panel': {'frame': 'open', 'tick_dir': 'out', 'minor_ticks': False, 'grid': False,
+                  'marker_size': 7.0, 'edge_width': 0.0, 'line_width': 1.0, 'legend_frame': False,
+                  'legend_size': 'x-small'},
+    },
+    'Poster (big and bold)': {
+        'figure': {'font_size': 20, 'font_family': 'Arial', 'axes_linewidth': 2.0, 'palette': 'Sunset'},
+        'panel': {'frame': 'open', 'tick_dir': 'out', 'minor_ticks': False, 'grid': True,
+                  'marker_size': 40.0, 'line_width': 3.2, 'edge_width': 0.6, 'legend_size': 'medium'},
+    },
+    'Dark (slides)': {
+        'figure': {'background': '#0f172a', 'ink': '#e2e8f0', 'font_family': 'Arial', 'font_size': 14,
+                   'palette': 'Neon (for dark)', 'axes_linewidth': 1.0},
+        'panel': {'panel_bg': '#0f172a', 'grid': True, 'grid_color': '#334155', 'frame': 'open',
+                  'edge_color': '#0f172a', 'edge_width': 0.3, 'legend_frame': False, 'minor_ticks': False,
+                  'colormap': 'plasma'},
+    },
+    'Hand-drawn': {
+        'figure': {'sketchy': True, 'font_family': 'Comic Sans MS', 'font_size': 13, 'axes_linewidth': 1.4,
+                   'palette': 'Pastel'},
+        'panel': {'frame': 'open', 'minor_ticks': False, 'grid': False, 'edge_color': '#333333',
+                  'edge_width': 0.8, 'marker_size': 26.0, 'line_width': 2.0},
+    },
     'Grayscale print': {
         'figure': {'palette': 'Grayscale'},
         'panel': {'colormap': 'Greys'},
@@ -118,10 +156,23 @@ def apply_style_preset(spec: dict, name: str) -> dict:
     """Return a copy of ``spec`` with the named style preset applied."""
     preset = STYLE_PRESETS[name]
     out = copy.deepcopy(spec)
-    out.setdefault('figure', {}).update(copy.deepcopy(preset['figure']))
+    fig = out.setdefault('figure', {})
+    fig.update(copy.deepcopy(PRESET_RESET['figure']))
+    fig.update(copy.deepcopy(preset['figure']))
+    first = palette_colors(fig.get('palette'))[0]
     for panel in out.get('panels', []):
+        panel.update(copy.deepcopy(PRESET_RESET['panel']))
         panel.update(copy.deepcopy(preset['panel']))
+        if 'palette' in preset['figure'] and panel.get('group_by', 'none') == 'none':
+            panel['color'] = first
     return out
+
+
+PRESET_RESET = {
+    'figure': {'background': '#ffffff', 'ink': '', 'sketchy': False},
+    'panel': {'panel_bg': '#ffffff', 'grid_color': '#d9dde3'},
+}
+"""Settings every preset starts from, so a dark or hand-drawn look never sticks."""
 
 
 def palette_colors(name: str | None) -> list[str]:

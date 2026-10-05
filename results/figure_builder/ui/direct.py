@@ -128,6 +128,14 @@ def readout(win, hit, fx, fy) -> str:
         x, y = ax.transData.inverted().transform(disp)
     except Exception:
         return ''
+    info = hd.get('bar_info')
+    if info:
+        coord = x if info['axis'] == 'x' else y
+        pos = np.asarray(info['positions'], dtype=float)
+        if pos.size:
+            k = int(np.argmin(np.abs(pos - coord)))
+            if abs(pos[k] - coord) <= 0.5:
+                return plain(info['texts'][k])
     cats = hd.get('categories')
     if cats:
         coord = x if cats['axis'] == 'x' else y
