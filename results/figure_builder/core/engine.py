@@ -20,7 +20,7 @@ from results.figure_builder.core.common import (
     fit_outside_legend, merge_legend, place_colorbar, resolve_groups)
 
 SHAPE_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
-               'strip', 'bar', 'combinations', 'composition', 'ridgeline', 'code', 'ecdf', 'qq',
+               'strip', 'bar', 'combinations', 'composition', 'ridgeline', 'code', 'ecdf',
                'lollipop', 'timeline'}
 """Panel kinds that can carry grey areas and reference lines."""
 from results.figure_builder.core.expressions import ExpressionError, ParticleTable
@@ -54,7 +54,7 @@ def _inner_rect(rect, fig_w, fig_h, panel):
     has_y2 = kind == 'scatter' and bool((panel.get('y2') or '').strip())
     has_cbar = kind in ('density', 'hexbin') or (kind == 'scatter' and bool((panel.get('color_by') or '').strip()))
     x, y, w, h = rect
-    if kind in ('pie', 'waffle'):
+    if kind == 'pie':
         ml, mr, mb, mt = 0.15, 0.15, 0.6, 0.35 if has_title else 0.15
     elif kind == 'treemap':
         ml, mr, mb, mt = 0.1, 0.1, 0.55 if panel.get('legend') else 0.1, 0.35 if has_title else 0.1
@@ -95,8 +95,6 @@ def _inner_rect(rect, fig_w, fig_h, panel):
             mr += 0.75
         if kind == 'composition':
             mb += 0.15
-        if kind == 'upset':
-            ml += 0.45
         if kind == 'lollipop' and not panel.get('lolli_vertical'):
             ml += 0.3
         if kind == 'pairs':
@@ -106,7 +104,7 @@ def _inner_rect(rect, fig_w, fig_h, panel):
         loc = panel.get('legend_loc')
         if loc == 'outside right':
             mr += 1.5
-        elif loc == 'below' and kind not in ('pie', 'waffle', 'treemap'):
+        elif loc == 'below' and kind not in ('pie', 'treemap'):
             mb += 0.55
         elif loc == 'above':
             mt += 0.45

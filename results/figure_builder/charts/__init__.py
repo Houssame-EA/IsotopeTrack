@@ -13,7 +13,7 @@ from results.figure_builder.charts.distributions import draw_distribution, draw_
 from results.figure_builder.charts.extra import (
     draw_contour, draw_hexbin, draw_parallel, draw_radar, draw_ridgeline, draw_strip)
 from results.figure_builder.charts.more import (
-    draw_ecdf, draw_lollipop, draw_qq, draw_timeline, draw_treemap, draw_upset, draw_waffle)
+    draw_ecdf, draw_lollipop, draw_timeline, draw_treemap)
 from results.figure_builder.charts.special import draw_code, draw_ternary, draw_text
 from results.figure_builder.charts.xy import draw_density, draw_line, draw_scatter
 
@@ -40,10 +40,7 @@ DRAWERS = {
     'radar': draw_radar,
     'parallel': draw_parallel,
     'ecdf': draw_ecdf,
-    'qq': draw_qq,
-    'upset': draw_upset,
     'lollipop': draw_lollipop,
-    'waffle': draw_waffle,
     'treemap': draw_treemap,
     'timeline': draw_timeline,
     'text': draw_text,

@@ -23,8 +23,8 @@ KIND_GLYPHS = {
     'pie': '◔', 'density': '▦', 'ternary': '△', 'text': 'T', 'code': '</>',
     'corr_matrix': '▚', 'heatmap': '▦', 'cooccurrence': '◫', 'combinations': '☰',
     'composition': '▤', 'pairs': '⊞', 'strip': '⁞', 'ridgeline': '≋', 'hexbin': '⬢',
-    'contour': '◎', 'radar': '✳', 'parallel': '⫴', 'ecdf': '⌐', 'qq': '⋰', 'upset': '⁝▌',
-    'lollipop': '⊸', 'waffle': '▩', 'treemap': '▣', 'timeline': '⏱',
+    'contour': '◎', 'radar': '✳', 'parallel': '⫴', 'ecdf': '⌐',
+    'lollipop': '⊸', 'treemap': '▣', 'timeline': '⏱',
 }
 
 

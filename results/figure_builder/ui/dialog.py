@@ -140,7 +140,7 @@ def fill_panel_defaults(panel: dict | None, table: ParticleTable) -> dict | None
         panel['y'] = panel.get('y') or second
     elif kind == 'line':
         panel['x'] = panel.get('x') or 'time'
-    elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline', 'ecdf', 'qq'):
+    elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline', 'ecdf'):
         panel['value'] = panel.get('value') or labs[0]
     elif kind == 'pie' and panel.get('pie_mode') == 'values':
         panel['value'] = panel.get('value') or ', '.join(labs[:6])
@@ -189,8 +189,8 @@ ANOVA or Kruskal-Wallis (with Holm or Bonferroni correction). Results are listed
 <p><b>Gallery</b> shows every chart type drawn with your own particles: double-click one to add it.
 <b>Surprise me</b> tries a random look (Ctrl+Z goes back). Scatter panels can draw ellipses or
 outlines around each group, a running median, histograms along the edges and a zoom inset
-(right-click the plot ▸ Extras). New charts: UpSet, Q-Q, ECDF, lollipop / dumbbell, waffle, treemap and
-a particle timeline. <b>Figure</b> settings have a text-and-axes colour (for dark slides) and a
+(right-click the plot ▸ Extras). New charts: ECDF, lollipop / dumbbell, treemap and a particle
+timeline. <b>Figure</b> settings have a text-and-axes colour (for dark slides) and a
 hand-drawn mode.</p>
 <h3>Designs</h3>
 <p><b>Designs ▸ Save current design</b> stores the whole figure (layout, styles, variables) so you can

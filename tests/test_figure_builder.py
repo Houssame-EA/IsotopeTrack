@@ -880,10 +880,6 @@ def test_colour_bar_drag_and_menu(dialog):
 
 
 NEW_KINDS = [
-    dict(kind='upset'),
-    dict(kind='upset', group_by='sample', combo_filter='multi', as_percent=True),
-    dict(kind='qq', value='Ag', group_by='sample'),
-    dict(kind='qq', value='Ag', qq_dist='normal'),
     dict(kind='ecdf', value='Ag', group_by='sample', log_x=True),
     dict(kind='lollipop'),
     dict(kind='lollipop', group_by='sample', lolli_stat='detect', lolli_vertical=True),
@@ -891,8 +887,6 @@ NEW_KINDS = [
     dict(kind='timeline', group_by='sample'),
     dict(kind='timeline', time_mode='cumulative', value='Au'),
     dict(kind='timeline', time_mode='signal', value='Ag', log_y=True),
-    dict(kind='waffle', group_by='sample'),
-    dict(kind='waffle', share_mode='combinations', top_n=3),
     dict(kind='treemap', group_by='class'),
     dict(kind='treemap', share_mode='combinations', legend=True),
 ]
@@ -907,25 +901,6 @@ def test_newest_chart_kinds_render(table, panel):
     assert report.counts[spec['panels'][0]['id']] > 0
 
 
-def test_upset_matrix_and_hover_info(table):
-    spec = E.normalise_spec({'panels': [E.make_panel(kind='upset')]})
-    fig, report = _draw(spec, table)
-    hd = report.artists[spec['panels'][0]['id']]
-    mat = hd['extra_axes'][0]
-    assert [t.get_text().split(' ')[0] for t in mat.get_yticklabels()][:1]
-    assert mat.get_position().y1 <= hd['ax'].get_position().y0 + 1e-6
-    assert len(hd['bar_info']['texts']) == len(hd['bar_info']['positions']) >= 2
-
-
-def test_waffle_uses_every_square(table):
-    spec = E.normalise_spec({'panels': [E.make_panel(kind='waffle', group_by='sample',
-                                                     waffle_cols=12, waffle_rows=5)]})
-    fig, report = _draw(spec, table)
-    wedges = report.artists[spec['panels'][0]['id']]['wedges']
-    assert len(wedges) == 60
-    assert {w[1] for w in wedges} == {'Blank', 'Ag NP', 'AgAu'}
-
-
 def test_squarify_fills_the_area():
     from results.figure_builder.charts.more import squarify
     rects = squarify([50, 25, 15, 10], 0, 0, 4, 3)
@@ -933,12 +908,6 @@ def test_squarify_fills_the_area():
     assert abs(sum(w * h for _x, _y, w, h in rects) - 12) < 1e-9
     for x, y, w, h in rects:
         assert x >= -1e-9 and y >= -1e-9 and x + w <= 4 + 1e-9 and y + h <= 3 + 1e-9
-
-
-def test_qq_reports_shapiro(table):
-    spec = E.normalise_spec({'panels': [E.make_panel(kind='qq', value='Ag')]})
-    _fig, report = _draw(spec, table)
-    assert any('Shapiro' in line for line in report.stats)
 
 
 @pytest.mark.parametrize('extra', [
@@ -995,7 +964,7 @@ def test_gallery_renders_thumbnails(dialog):
     from results.figure_builder.ui.gallery import ChartGallery
     g = ChartGallery(dialog.spec, dialog.table, render_to_pixmap, dialog._kind_defaults, True, dialog)
     assert set(g.items) == set(E.PANEL_KINDS) - {'text', 'code'}
-    for kind in ('upset', 'treemap', 'qq'):
+    for kind in ('lollipop', 'treemap', 'ecdf'):
         _pix, report, _fig = render_to_pixmap(g.thumbnail_spec(kind), dialog.table, 40)
         assert report.errors == {}, kind
     g._timer.stop()
@@ -1011,7 +980,7 @@ def test_gallery_renders_thumbnails(dialog):
     g._use(False)
     assert picked == [('ternary', False)]
     before = len(dialog.spec['panels'])
-    dialog.add_panel('waffle')
+    dialog.add_panel('treemap')
     assert len(dialog.spec['panels']) == before + 1
     assert g.items['ternary'].data(Qt.UserRole) == 'ternary'
 

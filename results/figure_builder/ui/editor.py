@@ -27,23 +27,22 @@ from results.figure_builder.ui.widgets import (
     ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
 
 PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip',
-         'ecdf', 'qq', 'timeline', 'lollipop'}
+         'ecdf', 'timeline', 'lollipop'}
 XY = {'scatter', 'density', 'hexbin', 'contour'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
-VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'qq', 'timeline'}
+VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'timeline'}
 SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
 CBAR = {'scatter', 'density', 'hexbin'} | MATRIX
-ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel', 'upset', 'lollipop',
-                  'waffle', 'treemap'}
-COMBOS = {'combinations', 'upset', 'waffle', 'treemap'}
-SHARES = {'waffle', 'treemap'}
+ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel', 'lollipop', 'treemap'}
+COMBOS = {'combinations', 'treemap'}
+SHARES = {'treemap'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
 GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
-            'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'qq', 'timeline'} | ITEMS
+            'strip', 'ridgeline', 'contour', 'hexbin', 'ecdf', 'timeline'} | ITEMS
 ALL = set(E.PANEL_KINDS)
-MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip', 'qq', 'timeline', 'lollipop'}
+MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip', 'timeline', 'lollipop'}
 LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density', 'hexbin', 'strip', 'ridgeline'} - MATRIX
 SHAPED = set(E.SHAPE_KINDS)
 TICKED = PLOTS | {'ridgeline', 'parallel', 'combinations', 'composition'}
@@ -129,15 +128,13 @@ FIELDS = [
       'count': 'Number of particles'}),
     ('Data', 'What to plot', 'comp_mode', 'Share computed as', 'combo', {'composition'},
      {'mean_fraction': "Mean of each particle's share", 'total': 'Share of the summed amounts'}),
-    ('Data', 'What to plot', 'qq_dist', 'Compare with', 'combo', {'qq'},
-     {'lognormal': 'Log-normal distribution', 'normal': 'Normal distribution'}),
     ('Data', 'What to plot', 'lolli_stat', 'Each isotope shows', 'combo', {'lollipop'}, LOLLI_STATS),
     ('Data', 'What to plot', 'time_mode', 'Show', 'combo', {'timeline'}, TIME_MODES),
     ('Data', 'What to plot', 'share_mode', 'Share out', 'combo', SHARES, SHARE_MODES),
     ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', COMBOS,
      {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
     ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap'}, (1, 500)),
-    ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations', 'upset'}, None),
+    ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
     ('Data', 'What to plot', 'radar_mode', 'Spokes show', 'combo', {'radar'},
@@ -190,11 +187,9 @@ FIELDS = [
      {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
     ('Style', 'Chart options', 'annotate', 'Show values', 'check',
-     MATRIX | {'composition', 'combinations', 'upset', 'lollipop'}, None),
+     MATRIX | {'composition', 'combinations', 'lollipop'}, None),
     ('Style', 'Chart options', 'lolli_vertical', 'Vertical', 'check', {'lollipop'}, None),
     ('Style', 'Chart options', 'lolli_sort', 'Sort by value', 'check', {'lollipop'}, None),
-    ('Style', 'Chart options', 'waffle_cols', 'Squares across', 'int', {'waffle'}, (5, 40)),
-    ('Style', 'Chart options', 'waffle_rows', 'Squares down', 'int', {'waffle'}, (2, 40)),
     ('Style', 'Chart options', 'show_sig', 'Significance stars', 'check', {'corr_matrix'}, None),
     ('Style', 'Chart options', 'triangle', 'Show', 'combo', {'corr_matrix', 'cooccurrence'},
      {'full': 'Full matrix', 'lower': 'Lower triangle', 'upper': 'Upper triangle'}),
@@ -249,7 +244,7 @@ FIELDS = [
     ('Axes', 'Labels', 'styles_button', '', 'button', ALL, 'Text styles: bold, italic, size, colour…'),
     ('Axes', 'Labels', 'rename_button', '', 'button', RENAMEABLE, 'Rename isotopes / items…'),
     ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram', 'ridgeline', 'ecdf'}, None),
-    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS - {'qq', 'ecdf'} | {'combinations', 'upset'}, None),
+    ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS - {'ecdf'} | {'combinations'}, None),
     ('Axes', 'Scale', 'log_y2', 'Log right Y', 'check', {'scatter'}, None),
     ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram'}, 'auto'),
     ('Axes', 'Range', 'x_max', 'X to', 'text', XLINE | {'histogram'}, 'auto'),

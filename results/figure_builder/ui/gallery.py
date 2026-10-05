@@ -16,8 +16,8 @@ THUMB = QSize(232, 174)
 
 GALLERY_GROUPS = {
     'Particles X vs Y': ['scatter', 'density', 'hexbin', 'contour', 'line', 'pairs'],
-    'Distributions': ['histogram', 'ecdf', 'qq', 'box', 'violin', 'strip', 'ridgeline'],
-    'Composition': ['combinations', 'upset', 'composition', 'pie', 'waffle', 'treemap', 'radar',
+    'Distributions': ['histogram', 'ecdf', 'box', 'violin', 'strip', 'ridgeline'],
+    'Composition': ['combinations', 'composition', 'pie', 'treemap', 'radar',
                     'ternary', 'lollipop', 'bar'],
     'Matrices and more': ['corr_matrix', 'cooccurrence', 'heatmap', 'parallel', 'timeline'],
 }
