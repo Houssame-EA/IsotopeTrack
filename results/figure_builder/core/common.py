@@ -258,7 +258,13 @@ def style_axes(ax, panel, table, style, x_default='', y_default='', swap=False):
     for v in numbers(panel.get('vlines')):
         ax.axvline(v, color='#555555', lw=1, ls='--', zorder=1)
     if panel.get('grid'):
-        ax.grid(True, which='major', color='#d9dde3', lw=0.6, ls=(0, (4, 3)), zorder=0)
+        which_axis = panel.get('grid_axis') or 'both'
+        gcol = panel.get('grid_color') or '#d9dde3'
+        ax.grid(True, which='major', axis=which_axis, color=gcol, lw=0.6, ls=(0, (4, 3)), zorder=0)
+        if panel.get('grid_minor'):
+            ax.minorticks_on()
+            ax.grid(True, which='minor', axis=which_axis, color=gcol, lw=0.35, ls=':', alpha=0.8,
+                    zorder=0)
         ax.set_axisbelow(True)
     frame = panel.get('frame', 'open')
     keep_right = bool(panel.get('y2')) and panel.get('kind') == 'scatter'
@@ -285,6 +291,93 @@ def style_axes(ax, panel, table, style, x_default='', y_default='', swap=False):
             t.set_ha('right' if 0 < rot < 90 else 'center')
     if panel.get('aspect_equal'):
         ax.set_aspect('equal', adjustable='datalim')
+    apply_axis_controls(ax, panel)
+
+
+TICK_FORMATS = {
+    'auto': 'Automatic',
+    'plain': 'Plain numbers (100, 1000)',
+    'sci': 'Scientific (1×10³)',
+    'power': 'Powers of ten (10³)',
+    'int': 'Whole numbers',
+    '1dp': 'One decimal',
+    '2dp': 'Two decimals',
+    'percent': 'Percent (adds %)',
+    'thousands': 'Thousands separator (1,000)',
+}
+"""Tick label formats offered for each axis."""
+
+
+def _formatter(fmt: str):
+    """A matplotlib tick formatter for one of :data:`TICK_FORMATS` (None = automatic)."""
+    from matplotlib import ticker
+    if fmt == 'plain':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:g}' if abs(v) < 1e6 else f'{v:.0f}')
+    if fmt == 'sci':
+        def sci(v, _p):
+            if v == 0:
+                return '0'
+            exp = int(np.floor(np.log10(abs(v))))
+            mant = v / 10 ** exp
+            return f'${mant:g}\\times10^{{{exp}}}$' if abs(mant - 1) > 1e-9 else f'$10^{{{exp}}}$'
+        return ticker.FuncFormatter(sci)
+    if fmt == 'power':
+        return ticker.LogFormatterMathtext()
+    if fmt == 'int':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:.0f}')
+    if fmt == '1dp':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:.1f}')
+    if fmt == '2dp':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:.2f}')
+    if fmt == 'percent':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:g}%')
+    if fmt == 'thousands':
+        return ticker.FuncFormatter(lambda v, _p: f'{v:,.0f}')
+    return None
+
+
+def _set_ticks(axis, text, scale):
+    """Tick spacing (a single number) or exact tick values (a comma list)."""
+    from matplotlib import ticker
+    text = str(text or '').strip()
+    if not text:
+        return
+    values = numbers(text)
+    if not values:
+        return
+    if len(values) > 1 or ',' in text or ';' in text:
+        axis.set_major_locator(ticker.FixedLocator(values))
+        return
+    step = values[0]
+    if step <= 0:
+        return
+    if scale == 'log':
+        axis.set_major_locator(ticker.LogLocator(base=step if step > 1 else 10))
+    else:
+        axis.set_major_locator(ticker.MultipleLocator(step))
+
+
+def apply_axis_controls(ax, panel):
+    """Tick spacing, tick formats, reversed axes and axis colour of one panel."""
+    from matplotlib import ticker
+    _set_ticks(ax.xaxis, panel.get('x_ticks'), ax.get_xscale())
+    _set_ticks(ax.yaxis, panel.get('y_ticks'), ax.get_yscale())
+    for axis, key in ((ax.xaxis, 'x_format'), (ax.yaxis, 'y_format')):
+        fmt = _formatter(panel.get(key) or 'auto')
+        if fmt is not None:
+            axis.set_major_formatter(fmt)
+            axis.set_minor_formatter(ticker.NullFormatter())
+    if panel.get('invert_x') and not ax.xaxis_inverted():
+        ax.invert_xaxis()
+    if panel.get('invert_y') and not ax.yaxis_inverted():
+        ax.invert_yaxis()
+    color = panel.get('axis_color')
+    if color:
+        for spine in ax.spines.values():
+            spine.set_color(color)
+        ax.tick_params(which='both', colors=color)
+        ax.xaxis.label.set_color(color)
+        ax.yaxis.label.set_color(color)
 
 
 def annotate(ax, panel):
@@ -555,3 +648,137 @@ def _fit_group(visible, renderer, inv, left, right, bottom, top):
         for a, p in zip(visible, positions):
             a.set_position([nx0 + (p.x0 - gx0) * sx, ny0 + (p.y0 - gy0) * sy,
                             p.width * sx, p.height * sy])
+
+
+SHAPE_TYPES = {
+    'xband': 'Shaded X range (vertical band)',
+    'yband': 'Shaded Y range (horizontal band)',
+    'box': 'Shaded rectangle',
+    'vline': 'Vertical line',
+    'hline': 'Horizontal line',
+    'line': 'Line y = slope × x + intercept',
+}
+"""Kinds of shapes a panel can carry."""
+
+HATCHES = {'': 'None', '//': 'Diagonal', '\\\\': 'Back-diagonal', 'xx': 'Cross', '..': 'Dots',
+           '--': 'Horizontal', '||': 'Vertical'}
+
+
+def draw_shapes(ax, panel):
+    """Draw the panel's grey areas, rectangles and reference lines.
+
+    Empty bounds run to the edge of the plot. Shapes are drawn behind the
+    data unless their layer is "front"; labelled shapes join the legend.
+    The visible range is kept as it was before the shapes were added.
+
+    Returns:
+        list: Legend handles of labelled shapes.
+    """
+    shapes = panel.get('shapes') or []
+    if not shapes or getattr(ax, 'name', '') in ('ternary', 'polar'):
+        return []
+    from matplotlib.patches import Rectangle
+    xlim, ylim = ax.get_xlim(), ax.get_ylim()
+    handles_out = []
+    for sh in shapes:
+        kind = sh.get('type') or 'xband'
+        color = sh.get('color') or '#9ca3af'
+        alpha = float_or_none(sh.get('alpha'))
+        alpha = 0.25 if alpha is None else max(0.0, min(1.0, alpha))
+        z = 6 if sh.get('layer') == 'front' else 0.6
+        label = (sh.get('label') or '').strip() or None
+        hatch = sh.get('hatch') or None
+        lw = float_or_none(sh.get('width')) or 1.2
+        ls = sh.get('style') or '-'
+        x1, x2 = float_or_none(sh.get('x1')), float_or_none(sh.get('x2'))
+        y1, y2 = float_or_none(sh.get('y1')), float_or_none(sh.get('y2'))
+        lo_x, hi_x = sorted(xlim)
+        lo_y, hi_y = sorted(ylim)
+        artist = None
+        if kind == 'xband':
+            a, b = (lo_x if x1 is None else x1), (hi_x if x2 is None else x2)
+            artist = ax.axvspan(min(a, b), max(a, b), color=color, alpha=alpha, zorder=z, lw=0,
+                                hatch=hatch, label=label)
+        elif kind == 'yband':
+            a, b = (lo_y if y1 is None else y1), (hi_y if y2 is None else y2)
+            artist = ax.axhspan(min(a, b), max(a, b), color=color, alpha=alpha, zorder=z, lw=0,
+                                hatch=hatch, label=label)
+        elif kind == 'box':
+            a, b = (lo_x if x1 is None else x1), (hi_x if x2 is None else x2)
+            c, d = (lo_y if y1 is None else y1), (hi_y if y2 is None else y2)
+            artist = Rectangle((min(a, b), min(c, d)), abs(b - a), abs(d - c), facecolor=color,
+                               alpha=alpha, zorder=z, hatch=hatch, label=label,
+                               edgecolor=color if hatch else 'none', lw=0.8 if hatch else 0)
+            ax.add_patch(artist)
+        elif kind == 'vline' and x1 is not None:
+            artist = ax.axvline(x1, color=color, lw=lw, ls=ls, zorder=z, label=label,
+                                alpha=max(alpha, 0.6))
+        elif kind == 'hline' and y1 is not None:
+            artist = ax.axhline(y1, color=color, lw=lw, ls=ls, zorder=z, label=label,
+                                alpha=max(alpha, 0.6))
+        elif kind == 'line':
+            slope = float_or_none(sh.get('slope'))
+            icpt = float_or_none(sh.get('intercept')) or 0.0
+            slope = 1.0 if slope is None else slope
+            if ax.get_xscale() == 'log':
+                xs = np.logspace(np.log10(max(lo_x, 1e-300)), np.log10(hi_x), 200)
+            else:
+                xs = np.linspace(lo_x, hi_x, 200)
+            artist, = ax.plot(xs, slope * xs + icpt, color=color, lw=lw, ls=ls, zorder=z,
+                              label=label, alpha=max(alpha, 0.6))
+        if artist is not None and label:
+            handles_out.append(artist)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    return handles_out
+
+
+def merge_legend(ax, panel, extra_handles):
+    """Rebuild a panel's legend so it also lists ``extra_handles``."""
+    if not extra_handles or not panel.get('legend', True):
+        return
+    leg = ax.get_legend()
+    handles_, labels = [], []
+    if leg is not None:
+        handles_ = list(getattr(leg, 'legend_handles', None) or getattr(leg, 'legendHandles', []))
+        labels = [t.get_text() for t in leg.get_texts()]
+        leg.remove()
+    handles_ += list(extra_handles)
+    labels += [h.get_label() for h in extra_handles]
+    kw = legend_kwargs(panel, len(handles_))
+    custom = kw.pop('_custom', False)
+    new = ax.legend(handles_, labels, **kw)
+    new._fb_custom = custom
+
+
+def summary_text(items) -> str:
+    """Multi-line n / mean ± SD / median summary of named value arrays."""
+    lines = []
+    for label, v in items:
+        v = np.asarray(v, dtype=float)
+        v = v[np.isfinite(v)]
+        if v.size == 0:
+            continue
+        sd = np.std(v, ddof=1) if v.size > 1 else 0.0
+        lines.append(f'{label}: n = {v.size:,}, mean = {np.mean(v):.3g} ± {sd:.2g}, '
+                     f'median = {np.median(v):.3g}')
+    return '\n'.join(lines)
+
+
+def draw_summary_box(ax, panel, items):
+    """Put a small statistics box inside the plot when the panel asks for one."""
+    if not panel.get('summary_box') or not items:
+        return
+    text = summary_text(items)
+    if not text:
+        return
+    loc = panel.get('summary_loc') or 'upper right'
+    pos = {'upper right': (0.98, 0.98, 'right', 'top'), 'upper left': (0.02, 0.98, 'left', 'top'),
+           'lower right': (0.98, 0.02, 'right', 'bottom'),
+           'lower left': (0.02, 0.02, 'left', 'bottom')}.get(loc, (0.98, 0.98, 'right', 'top'))
+    t = ax.text(pos[0], pos[1], text, transform=ax.transAxes, ha=pos[2], va=pos[3],
+                fontsize='x-small', zorder=20, linespacing=1.4,
+                bbox={'boxstyle': 'round,pad=0.4', 'fc': 'white', 'ec': '#d0d5dd', 'lw': 0.6,
+                      'alpha': 0.92})
+    t._fb_cell = True
+

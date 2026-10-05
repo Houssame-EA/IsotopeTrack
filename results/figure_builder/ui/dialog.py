@@ -135,12 +135,12 @@ def fill_panel_defaults(panel: dict | None, table: ParticleTable) -> dict | None
         return panel
     second = labs[1] if len(labs) > 1 else labs[0]
     kind = panel.get('kind')
-    if kind in ('scatter', 'density'):
+    if kind in ('scatter', 'density', 'hexbin', 'contour'):
         panel['x'] = panel.get('x') or labs[0]
         panel['y'] = panel.get('y') or second
     elif kind == 'line':
         panel['x'] = panel.get('x') or 'time'
-    elif kind in ('histogram', 'box', 'violin', 'bar'):
+    elif kind in ('histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'):
         panel['value'] = panel.get('value') or labs[0]
     elif kind == 'pie' and panel.get('pie_mode') == 'values':
         panel['value'] = panel.get('value') or ', '.join(labs[:6])
@@ -449,6 +449,12 @@ class PreviewLabel(QLabel):
             qp.setBrush(fill)
             if mode == 'zoom':
                 qp.drawRect(self._frac_rect((min(sx, cx), min(sy, cy), max(sx, cx), max(sy, cy))))
+            elif mode == 'shade_x' and box is not None:
+                qp.setBrush(QColor(156, 163, 175, 90))
+                qp.drawRect(self._frac_rect((min(sx, cx), box[1], max(sx, cx), box[3])))
+            elif mode == 'shade_y' and box is not None:
+                qp.setBrush(QColor(156, 163, 175, 90))
+                qp.drawRect(self._frac_rect((box[0], min(sy, cy), box[2], max(sy, cy))))
             elif mode == 'resize':
                 qp.drawRect(self._frac_rect((box[0], box[1], max(box[0] + 0.05, cx), max(box[1] + 0.05, cy))))
             elif box is not None:
@@ -464,7 +470,10 @@ class PreviewLabel(QLabel):
             self._press = pt
             self._current = pt
             self._drag = None
-            self._pending = self.drag_resolver(*pt) if self.drag_resolver else None
+            mods = ev.modifiers()
+            flags = {'shift': bool(mods & Qt.ShiftModifier),
+                     'ctrl': bool(mods & (Qt.ControlModifier | Qt.MetaModifier))}
+            self._pending = self.drag_resolver(pt[0], pt[1], flags) if self.drag_resolver else None
         elif ev.button() == Qt.RightButton:
             self.context_requested.emit(pt[0], pt[1], ev.globalPosition().toPoint())
 
@@ -874,7 +883,7 @@ class FigureBuilderDialog(QDialog):
         menu = interact.build_menu(self, hit, fx, fy)
         menu.exec(global_pos)
 
-    def _drag_resolver(self, fx, fy):
+    def _drag_resolver(self, fx, fy, modifiers=None):
         for p in reversed(self.spec['panels']):
             x, y, w, h = p['rect']
             if abs(fx - (x + w)) <= direct.CORNER and abs(fy - (y + h)) <= direct.CORNER:
@@ -882,7 +891,7 @@ class FigureBuilderDialog(QDialog):
                 return 'resize', (x, y, x + w, y + h)
         hit = self._hit(fx, fy)
         self._drag_hit = hit
-        return direct.drag_mode(self, hit, fx, fy)
+        return direct.drag_mode(self, hit, fx, fy, modifiers)
 
     def _on_drag_finished(self, mode, sx, sy, ex, ey):
         hit = getattr(self, '_drag_hit', None)
@@ -894,6 +903,8 @@ class FigureBuilderDialog(QDialog):
         self.after_edit(changed)
         if changed and mode == 'zoom':
             self.status.setText('Zoomed — right-click the panel and choose “Reset zoom” to go back')
+        elif changed and mode.startswith('shade'):
+            self.status.setText('Grey area added — edit or remove it in the Shapes tab or by right-click')
 
     _CURSORS = {
         'plot': Qt.CrossCursor, 'legend': Qt.OpenHandCursor, 'annotation': Qt.OpenHandCursor,

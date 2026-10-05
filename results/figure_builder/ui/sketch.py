@@ -22,7 +22,8 @@ KIND_GLYPHS = {
     'scatter': '⁘', 'line': '⟋', 'histogram': '▁▃▆', 'box': '⊟', 'violin': '◊', 'bar': '▌▌',
     'pie': '◔', 'density': '▦', 'ternary': '△', 'text': 'T', 'code': '</>',
     'corr_matrix': '▚', 'heatmap': '▦', 'cooccurrence': '◫', 'combinations': '☰',
-    'composition': '▤', 'pairs': '⊞',
+    'composition': '▤', 'pairs': '⊞', 'strip': '⁞', 'ridgeline': '≋', 'hexbin': '⬢',
+    'contour': '◎', 'radar': '✳', 'parallel': '⫴',
 }
 
 

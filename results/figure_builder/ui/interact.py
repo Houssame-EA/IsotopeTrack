@@ -29,7 +29,8 @@ from results.figure_builder.core import textstyle as T
 from results.figure_builder.core.expressions import DATA_TYPES, plain
 from results.figure_builder.ui.widgets import ColorButton
 
-XYISH = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar'}
+XYISH = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar', 'hexbin', 'contour',
+         'strip'}
 RENAMEABLE = {'corr_matrix', 'heatmap', 'cooccurrence', 'composition', 'pairs', 'bar', 'pie',
               'combinations'}
 
@@ -570,7 +571,7 @@ def _panel_menu(win, menu, panel, fx, fy):
                                           win.show_editor_tab('Groups') if k == 'rules' else None),
              checked=panel.get('group_by', 'none') == key)
     menu.addSeparator()
-    if kind in ('scatter', 'line', 'density', 'histogram'):
+    if kind in ('scatter', 'line', 'density', 'histogram', 'hexbin', 'contour', 'ridgeline'):
         _add(menu, 'Log X', lambda: (panel.update(log_x=not panel.get('log_x')), win.after_edit(True)),
              checked=panel.get('log_x'))
     if kind in XYISH or kind == 'combinations':
@@ -638,6 +639,9 @@ def _panel_menu(win, menu, panel, fx, fy):
             _add(add, f'Vertical line at x = {data[0]:.3g}',
                  lambda: (panel.update(vlines=', '.join(filter(None, [panel.get('vlines', ''), f'{data[0]:.4g}']))),
                           win.after_edit(True)))
+    if kind in SHAPEABLE:
+        add.addSeparator()
+        _shape_items(win, add, panel, data)
     menu.addSeparator()
     _add(menu, 'Text styles of this panel…',
          lambda: win.after_edit(style_dialog(win, panel, T.KIND_ELEMENTS.get(kind, list(T.PANEL_ELEMENTS)),
@@ -648,6 +652,74 @@ def _panel_menu(win, menu, panel, fx, fy):
     _add(menu, 'Bring to front', lambda: win.restack_panel(panel, True))
     _add(menu, 'Send to back', lambda: win.restack_panel(panel, False))
     _add(menu, 'Delete panel', lambda: win.delete_panel(panel))
+
+
+SHAPEABLE = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
+             'strip', 'bar', 'combinations', 'composition', 'ridgeline'}
+
+
+def _add_shape(win, panel, **shape):
+    base = {'type': 'xband', 'color': '#9ca3af', 'alpha': 0.3, 'hatch': '', 'style': '--',
+            'layer': 'back', 'label': ''}
+    base.update(shape)
+    panel['shapes'] = list(panel.get('shapes') or []) + [base]
+    win.after_edit(True)
+
+
+def _ask_range(win, title, suggestion):
+    text, ok = QInputDialog.getText(win, title, 'From, to (leave one empty to run to the edge):',
+                                    text=suggestion)
+    if not ok:
+        return None
+    parts = [p.strip() for p in text.replace(';', ',').split(',')]
+    parts += [''] * (2 - len(parts))
+    return parts[0], parts[1]
+
+
+def _shape_items(win, menu, panel, data):
+    """Right-click entries that add grey areas and reference lines to a panel."""
+    hd = win.last_report.artists.get(panel['id']) or {}
+    ax = hd.get('ax')
+    xs = ys = ('', '')
+    if ax is not None:
+        x0, x1 = sorted(ax.get_xlim())
+        y0, y1 = sorted(ax.get_ylim())
+        if data is not None:
+            cx, cy = data
+            if ax.get_xscale() == 'log' and cx > 0:
+                xs = (f'{cx / 1.5:.4g}', f'{cx * 1.5:.4g}')
+            else:
+                w = (x1 - x0) * 0.1
+                xs = (f'{cx - w:.4g}', f'{cx + w:.4g}')
+            if ax.get_yscale() == 'log' and cy > 0:
+                ys = (f'{cy / 1.5:.4g}', f'{cy * 1.5:.4g}')
+            else:
+                h = (y1 - y0) * 0.1
+                ys = (f'{cy - h:.4g}', f'{cy + h:.4g}')
+
+    def x_band():
+        r = _ask_range(win, 'Grey area over an X range', f'{xs[0]}, {xs[1]}')
+        if r:
+            _add_shape(win, panel, type='xband', x1=r[0], x2=r[1])
+
+    def y_band():
+        r = _ask_range(win, 'Grey area over a Y range', f'{ys[0]}, {ys[1]}')
+        if r:
+            _add_shape(win, panel, type='yband', y1=r[0], y2=r[1])
+    _add(menu, 'Grey area over an X range…', x_band)
+    _add(menu, 'Grey area over a Y range…', y_band)
+    if data is not None:
+        _add(menu, f'Grey area left of x = {data[0]:.3g}',
+             lambda: _add_shape(win, panel, type='xband', x1='', x2=f'{data[0]:.6g}'))
+        _add(menu, f'Grey area below y = {data[1]:.3g}',
+             lambda: _add_shape(win, panel, type='yband', y1='', y2=f'{data[1]:.6g}'))
+    if panel.get('kind') in ('scatter', 'density', 'hexbin', 'contour'):
+        _add(menu, 'Line y = x', lambda: _add_shape(win, panel, type='line', slope='1', intercept='0',
+                                                    color='#374151', alpha=0.8, style='--'))
+    _add(menu, 'All grey areas and lines…', lambda: win.show_editor_tab('Shapes'))
+    if panel.get('shapes'):
+        _add(menu, 'Remove all grey areas and lines',
+             lambda: (panel.update(shapes=[]), win.after_edit(True)))
 
 
 def _page_menu(win, menu, fx, fy, hit):

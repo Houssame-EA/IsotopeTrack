@@ -18,22 +18,28 @@ from PySide6.QtWidgets import (
 
 from results.figure_builder.core import engine as E
 from results.figure_builder.core import styles as S
+from results.figure_builder.core.common import HATCHES, SHAPE_TYPES, TICK_FORMATS
 from results.figure_builder.core.expressions import (
     DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
 from results.figure_builder.ui.widgets import (
     ColorButton, ExpressionEdit, GroupsTable, RowTable, mono_font)
 
-PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density'}
-XY = {'scatter', 'density'}
+PLOTS = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'density', 'hexbin', 'contour', 'strip'}
+XY = {'scatter', 'density', 'hexbin', 'contour'}
 XLINE = XY | {'line'}
 DIST = {'box', 'violin'}
+VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline'}
+SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
-ITEMS = MATRIX | {'composition', 'combinations', 'pairs'}
-TESTABLE = {'histogram', 'box', 'violin', 'bar'}
-GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code'} | ITEMS
+ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel'}
+TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
+GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
+            'strip', 'ridgeline', 'contour', 'hexbin'} | ITEMS
 ALL = set(E.PANEL_KINDS)
-MARKED = {'scatter', 'ternary', 'line', 'pairs'}
-LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density'} - MATRIX
+MARKED = {'scatter', 'ternary', 'line', 'pairs', 'strip'}
+LEGENDED = ALL - {'text', 'code', 'box', 'violin', 'density', 'hexbin', 'strip', 'ridgeline'} - MATRIX
+SHAPED = set(E.SHAPE_KINDS)
+TICKED = PLOTS | {'ridgeline', 'parallel', 'combinations', 'composition'}
 RENAMEABLE = ITEMS | {'bar', 'pie'}
 
 AGG = {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'count': 'Particle count'}
@@ -53,6 +59,22 @@ SERIES_COLUMNS = [
     ('marker', 'Marker', 'combo', S.MARKERS, 90),
     ('size', 'Size', 'float', (1, 300, 2), 64),
     ('color', 'Colour', 'color', None, 58),
+]
+
+SHAPE_COLUMNS = [
+    ('type', 'Shape', 'combo', SHAPE_TYPES, 150),
+    ('x1', 'From x', 'text', None, 64),
+    ('x2', 'To x', 'text', None, 64),
+    ('y1', 'From y', 'text', None, 64),
+    ('y2', 'To y', 'text', None, 64),
+    ('slope', 'Slope', 'text', None, 56),
+    ('intercept', 'Intercept', 'text', None, 64),
+    ('label', 'Legend label', 'text', None, 0),
+    ('color', 'Colour', 'color', None, 58),
+    ('alpha', 'Opacity', 'float', (0, 1, 0.05), 64),
+    ('hatch', 'Hatch', 'combo', HATCHES, 90),
+    ('style', 'Line', 'combo', S.LINE_STYLES, 80),
+    ('layer', 'Layer', 'combo', {'back': 'Behind data', 'front': 'In front'}, 100),
 ]
 
 ANNOTATION_COLUMNS = [
@@ -77,7 +99,7 @@ FIELDS = [
     ('Data', 'What to plot', 'x', 'X', 'expr', XLINE, 'e.g. Fe   or   log(Ag)'),
     ('Data', 'What to plot', 'y', 'Y', 'expr', XLINE, 'e.g. Fe/Cu'),
     ('Data', 'What to plot', 'y2', 'Right Y axis', 'expr', {'scatter'}, 'optional, e.g. mass:Fe'),
-    ('Data', 'What to plot', 'value', 'Value', 'expr', {'histogram', 'box', 'violin', 'bar', 'pie'}, 'e.g. mass:Ag'),
+    ('Data', 'What to plot', 'value', 'Value', 'expr', VALUED, 'e.g. mass:Ag'),
     ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
     ('Data', 'What to plot', 'a', 'Top corner (A)', 'expr', {'ternary'}, 'e.g. Ag'),
     ('Data', 'What to plot', 'b', 'Left corner (B)', 'expr', {'ternary'}, 'e.g. Au'),
@@ -106,10 +128,16 @@ FIELDS = [
     ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
+    ('Data', 'What to plot', 'radar_mode', 'Spokes show', 'combo', {'radar'},
+     {'share': 'Mean share of each isotope (%)', 'detect': 'Detected in (% of particles)',
+      'mean': 'Mean value (scaled to the largest group)'}),
+    ('Data', 'What to plot', 'parallel_scale', 'Axes', 'combo', {'parallel'},
+     {'log': 'Log, scaled 0–1', 'minmax': 'Linear, scaled 0–1', 'raw': 'Raw values'}),
+    ('Data', 'What to plot', 'max_lines', 'Max lines per group', 'int', {'parallel'}, (20, 100000)),
     ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
      'e.g. Ag > 0 and Au > 0'),
     ('Data', 'Which particles', 'drop_zeros', 'Hide zero values', 'check',
-     XLINE | {'histogram', 'box', 'violin', 'bar', 'corr_matrix', 'heatmap', 'pairs'}, None),
+     XLINE | VALUED - {'pie'} | {'corr_matrix', 'heatmap', 'pairs'}, None),
     ('Data', 'Extra series on this plot', 'series', '', 'series', {'scatter'}, None),
     ('Data', 'Text', 'text', '', 'longtext', {'text'}, None),
     ('Data', 'Text', 'text_size', 'Text size (0 = auto)', 'float', {'text'}, (0, 72, 1)),
@@ -124,19 +152,19 @@ FIELDS = [
      GROUPING - {'code', 'pie'} - MATRIX, None),
     ('Style', 'Markers', 'marker', 'Shape', 'combo', MARKED - {'pairs'}, S.MARKERS),
     ('Style', 'Markers', 'marker_size', 'Size', 'float', MARKED, (1, 400, 1)),
-    ('Style', 'Markers', 'alpha', 'Opacity', 'float', {'scatter', 'ternary', 'pairs'}, (0.05, 1, 0.05)),
+    ('Style', 'Markers', 'alpha', 'Opacity', 'float', {'scatter', 'ternary', 'pairs', 'strip', 'parallel'}, (0.05, 1, 0.05)),
     ('Style', 'Markers', 'edge_color', 'Outline colour', 'color', {'scatter', 'ternary', 'bar', 'pie'}, None),
     ('Style', 'Markers', 'edge_width', 'Outline width', 'float', {'scatter', 'ternary', 'bar', 'pie'}, (0, 6, 0.2)),
     ('Style', 'Markers', 'size_by', 'Size by value', 'expr', {'scatter'}, 'optional, e.g. total'),
     ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter'}, 'optional, e.g. total'),
-    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density', 'heatmap', 'cooccurrence'},
+    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin'},
      {k: k for k in S.COLORMAPS}),
     ('Style', 'Colour scale', 'div_cmap', 'Colour map', 'combo', {'corr_matrix'},
      {k: k for k in ('RdBu_r', 'coolwarm', 'bwr', 'seismic', 'PiYG', 'PRGn', 'BrBG', 'RdYlBu_r')}),
     ('Style', 'Colour scale', 'reverse_cmap', 'Reverse colour map', 'check',
-     {'scatter', 'density'} | MATRIX, None),
+     {'scatter', 'density', 'hexbin'} | MATRIX, None),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
-    ('Style', 'Lines', 'line_width', 'Line width', 'float', {'scatter', 'line', 'histogram'}, (0.2, 8, 0.2)),
+    ('Style', 'Lines', 'line_width', 'Line width', 'float', {'scatter', 'line', 'histogram', 'radar'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
     ('Style', 'Chart options', 'annotate', 'Show values', 'check',
      MATRIX | {'composition', 'combinations'}, None),
@@ -146,10 +174,27 @@ FIELDS = [
     ('Style', 'Chart options', 'heat_norm', 'Normalise', 'combo', {'heatmap'},
      {'none': 'No', 'row': 'Each row to its max', 'column': 'Each column to its max',
       'zscore': 'z-score per column'}),
-    ('Style', 'Chart options', 'log_color', 'Log colour scale', 'check', {'heatmap'}, None),
+    ('Style', 'Chart options', 'log_color', 'Log colour scale', 'check', {'heatmap', 'hexbin'}, None),
     ('Style', 'Chart options', 'transpose', 'Swap rows and columns', 'check', {'heatmap'}, None),
     ('Style', 'Chart options', 'max_rows', 'Max particles shown', 'int', {'heatmap'}, (10, 1000000)),
-    ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line'}, (2, 500)),
+    ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line', 'hexbin'}, (2, 500)),
+    ('Style', 'Chart options', 'strip_summary', 'Show', 'combo', {'strip'},
+     {'mean_sd': 'Mean ± SD (geometric on a log axis)', 'median_iqr': 'Median and IQR',
+      'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
+    ('Style', 'Chart options', 'jitter', 'Spread width', 'float', {'strip'}, (0.05, 0.48, 0.05)),
+    ('Style', 'Chart options', 'sina', 'Spread by density (sina)', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'overlap', 'Overlap', 'float', {'ridgeline'}, (0, 2.5, 0.1)),
+    ('Style', 'Chart options', 'levels', 'Contour levels', 'int', {'contour'}, (2, 20)),
+    ('Style', 'Chart options', 'filled', 'Filled contours', 'check', {'contour'}, None),
+    ('Style', 'Chart options', 'radar_fill', 'Fill the shapes', 'check', {'radar'}, None),
+    ('Style', 'Chart options', 'mark_stats', 'Mark', 'combo', {'histogram', 'ridgeline'},
+     {'none': 'Nothing', 'median': 'Median', 'mean': 'Mean', 'both': 'Median and mean'}),
+    ('Style', 'Chart options', 'fit_dist', 'Fit a distribution', 'combo', {'histogram'},
+     {'none': 'None', 'normal': 'Normal', 'lognormal': 'Log-normal'}),
+    ('Style', 'Chart options', 'summary_box', 'Statistics box', 'check', SUMMARISED, None),
+    ('Style', 'Chart options', 'summary_loc', 'Box position', 'combo', SUMMARISED,
+     {'upper right': 'Upper right', 'upper left': 'Upper left', 'lower right': 'Lower right',
+      'lower left': 'Lower left'}),
     ('Style', 'Chart options', 'hist_style', 'Bars', 'combo', {'histogram'},
      {'filled': 'Filled', 'step': 'Outline'}),
     ('Style', 'Chart options', 'density', 'Normalise (density)', 'check', {'histogram'}, None),
@@ -157,7 +202,7 @@ FIELDS = [
     ('Style', 'Chart options', 'cumulative', 'Cumulative', 'check', {'histogram'}, None),
     ('Style', 'Chart options', 'band', 'Shaded band', 'combo', {'line'},
      {'sem': 'Standard error', 'sd': 'Standard deviation', 'iqr': 'Interquartile range', 'none': 'None'}),
-    ('Style', 'Chart options', 'show_points', 'Show points', 'check', DIST | {'line'}, None),
+    ('Style', 'Chart options', 'show_points', 'Show points', 'check', DIST | {'line', 'contour'}, None),
     ('Style', 'Chart options', 'notch', 'Notched boxes', 'check', {'box'}, None),
     ('Style', 'Chart options', 'show_mean', 'Mark the mean', 'check', DIST, None),
     ('Style', 'Chart options', 'error', 'Error bars', 'combo', {'bar'},
@@ -166,16 +211,16 @@ FIELDS = [
     ('Style', 'Chart options', 'stacked', 'Stack the values', 'check', {'bar'}, None),
     ('Style', 'Chart options', 'donut', 'Donut', 'check', {'pie'}, None),
     ('Style', 'Background', 'panel_bg', 'Panel background', 'color', ALL - {'pairs'}, None),
-    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'histogram', 'heatmap', 'combinations', 'composition'}, 'automatic'),
-    ('Axes', 'Labels', 'y_label', 'Y label', 'text', PLOTS | {'heatmap', 'combinations', 'composition'}, 'automatic'),
+    ('Axes', 'Labels', 'x_label', 'X label', 'text', XLINE | {'histogram', 'heatmap', 'combinations', 'composition', 'ridgeline'}, 'automatic'),
+    ('Axes', 'Labels', 'y_label', 'Y label', 'text', PLOTS | {'heatmap', 'combinations', 'composition', 'parallel'}, 'automatic'),
     ('Axes', 'Labels', 'y2_label', 'Right Y label', 'text', {'scatter'}, 'automatic'),
     ('Axes', 'Labels', 'a_label', 'Top corner', 'text', {'ternary'}, 'automatic'),
     ('Axes', 'Labels', 'b_label', 'Left corner', 'text', {'ternary'}, 'automatic'),
     ('Axes', 'Labels', 'c_label', 'Right corner', 'text', {'ternary'}, 'automatic'),
-    ('Axes', 'Labels', 'cbar_label', 'Colour bar label', 'text', {'scatter', 'density'} | MATRIX, 'automatic'),
+    ('Axes', 'Labels', 'cbar_label', 'Colour bar label', 'text', {'scatter', 'density', 'hexbin'} | MATRIX, 'automatic'),
     ('Axes', 'Labels', 'styles_button', '', 'button', ALL, 'Text styles: bold, italic, size, colour…'),
     ('Axes', 'Labels', 'rename_button', '', 'button', RENAMEABLE, 'Rename isotopes / items…'),
-    ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram'}, None),
+    ('Axes', 'Scale', 'log_x', 'Log X', 'check', XLINE | {'histogram', 'ridgeline'}, None),
     ('Axes', 'Scale', 'log_y', 'Log Y', 'check', PLOTS | {'combinations'}, None),
     ('Axes', 'Scale', 'log_y2', 'Log right Y', 'check', {'scatter'}, None),
     ('Axes', 'Range', 'x_min', 'X from', 'text', XLINE | {'histogram'}, 'auto'),
@@ -190,13 +235,25 @@ FIELDS = [
     ('Axes', 'Ticks and frame', 'sci_x', 'Scientific X', 'check', XLINE | {'histogram'}, None),
     ('Axes', 'Ticks and frame', 'sci_y', 'Scientific Y', 'check', PLOTS, None),
     ('Axes', 'Ticks and frame', 'xtick_rotation', 'Rotate X labels (°)', 'int',
-     PLOTS | MATRIX | {'combinations'}, (-90, 90)),
-    ('Axes', 'Ticks and frame', 'grid', 'Grid', 'check', PLOTS | {'ternary', 'combinations'}, None),
+     PLOTS | MATRIX | {'combinations', 'parallel'}, (-90, 90)),
+    ('Axes', 'Ticks and frame', 'x_ticks', 'X ticks', 'text', TICKED, 'step (e.g. 50) or values (1, 10, 100)'),
+    ('Axes', 'Ticks and frame', 'y_ticks', 'Y ticks', 'text', TICKED, 'step or values'),
+    ('Axes', 'Ticks and frame', 'x_format', 'X numbers', 'combo', TICKED, TICK_FORMATS),
+    ('Axes', 'Ticks and frame', 'y_format', 'Y numbers', 'combo', TICKED, TICK_FORMATS),
+    ('Axes', 'Ticks and frame', 'invert_x', 'Reverse X', 'check', TICKED, None),
+    ('Axes', 'Ticks and frame', 'invert_y', 'Reverse Y', 'check', TICKED, None),
+    ('Axes', 'Ticks and frame', 'axis_color', 'Axis colour', 'color', TICKED, None),
+    ('Axes', 'Grid', 'grid', 'Grid', 'check', PLOTS | {'ternary', 'combinations'}, None),
+    ('Axes', 'Grid', 'grid_axis', 'Grid lines on', 'combo', TICKED,
+     {'both': 'X and Y', 'x': 'X only', 'y': 'Y only'}),
+    ('Axes', 'Grid', 'grid_minor', 'Minor grid', 'check', TICKED, None),
+    ('Axes', 'Grid', 'grid_color', 'Grid colour', 'color', TICKED, None),
     ('Axes', 'Ticks and frame', 'aspect_equal', 'Equal X/Y scale', 'check', XY, None),
     ('Axes', 'Guide lines', 'hlines', 'Horizontal lines at', 'text', PLOTS, 'e.g. 1, 10'),
     ('Axes', 'Guide lines', 'vlines', 'Vertical lines at', 'text', XLINE | {'histogram'}, 'e.g. 100'),
     ('Axes', 'Guide lines', 'diagonal', 'y = x line', 'check', {'scatter'}, None),
     ('Axes', 'Legend', 'legend', 'Show legend', 'check', LEGENDED, None),
+    ('Axes', 'Legend', 'legend_frame', 'Frame behind the legend', 'check', LEGENDED, None),
     ('Axes', 'Legend', 'legend_loc', 'Position', 'combo', LEGENDED, S.LEGEND_LOCATIONS),
     ('Axes', 'Legend', 'legend_cols', 'Columns', 'int', LEGENDED, (1, 8)),
     ('Axes', 'Legend', 'legend_title', 'Title', 'text', LEGENDED, 'optional'),
@@ -210,6 +267,7 @@ FIELDS = [
     ('Stats', 'Compare groups', 'p_format', 'Show p as', 'combo', set(),
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
     ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
+    ('Shapes', 'Grey areas, rectangles and lines', 'shapes', '', 'shapes', SHAPED, None),
     ('Notes', 'Text and arrows on this panel', 'annotations', '', 'annotations',
      ALL - {'text'}, None),
 ]
@@ -223,6 +281,8 @@ LABELS = {
 }
 
 TAB_HINTS = {
+    'Shapes': 'Grey areas, rectangles and reference lines. Leave a bound empty to run to the edge '
+              'of the plot. On the figure: Shift-drag shades an X range, Ctrl/⌘-drag a Y range.',
     'Stats': 'Results (test statistics, p-values, fits) are listed under the preview.',
     'Notes': 'x and y from 0 to 1 place text inside the panel; choose “Axis values” to use '
              'your data coordinates. Fill Arrow x/y to point an arrow at something.',
@@ -315,7 +375,7 @@ class PanelEditor(QWidget):
             box, form = self.sections[(tab, section)]
             w = self._make(key, kind, opts)
             self.widgets[key] = (kind, w)
-            if kind in ('rules', 'series', 'annotations', 'groups', 'code', 'longtext', 'button'):
+            if kind in ('rules', 'series', 'annotations', 'shapes', 'groups', 'code', 'longtext', 'button'):
                 form.addRow(w)
                 self.rows[key] = (None, w)
             else:
@@ -373,6 +433,11 @@ class PanelEditor(QWidget):
                                     'filter': '', 'style': 'points', 'marker': 'o', 'size': 14.0,
                                     'color': self.palette[(i + 2) % len(self.palette)]})
             w.changed.connect(lambda ww=w: self._set('series', ww.rows()))
+        elif kind == 'shapes':
+            w = RowTable(SHAPE_COLUMNS, '+ Add grey area or line',
+                         lambda i: {'type': 'xband', 'color': '#9ca3af', 'alpha': 0.25,
+                                    'hatch': '', 'style': '--', 'layer': 'back'})
+            w.changed.connect(lambda ww=w: self._set('shapes', ww.rows()))
         elif kind == 'annotations':
             w = RowTable(ANNOTATION_COLUMNS, '+ Add text',
                          lambda i: {'text': 'Note', 'x': '0.05', 'y': f'{0.92 - 0.08 * i:.2f}',
@@ -485,7 +550,7 @@ class PanelEditor(QWidget):
                 w.setValue(int(v or 0))
             elif kind == 'color':
                 w.set_color(v)
-            elif kind in ('rules', 'series', 'annotations'):
+            elif kind in ('rules', 'series', 'annotations', 'shapes'):
                 w.set_rows(v)
             elif kind in ('groups', 'button'):
                 pass

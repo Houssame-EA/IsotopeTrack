@@ -16,8 +16,12 @@ import logging
 
 from results.figure_builder.charts import DRAWERS
 from results.figure_builder.core.common import (
-    Group, RenderReport, annotate, candidate_groups, fit_decorations, fit_outside_legend,
-    resolve_groups)
+    Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
+    fit_outside_legend, merge_legend, resolve_groups)
+
+SHAPE_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
+               'strip', 'bar', 'combinations', 'composition', 'ridgeline', 'code'}
+"""Panel kinds that can carry grey areas and reference lines."""
 from results.figure_builder.core.expressions import ExpressionError, ParticleTable
 from results.figure_builder.core.spec import (
     CODE_EXAMPLE, FIGURE_DEFAULTS, GROUP_MODES, OTHER_COLOR, PALETTE, PANEL_DEFAULTS,
@@ -47,7 +51,7 @@ def _inner_rect(rect, fig_w, fig_h, panel):
     kind = panel.get('kind', 'scatter')
     has_title = bool(panel.get('title'))
     has_y2 = kind == 'scatter' and bool((panel.get('y2') or '').strip())
-    has_cbar = kind == 'density' or (kind == 'scatter' and bool((panel.get('color_by') or '').strip()))
+    has_cbar = kind in ('density', 'hexbin') or (kind == 'scatter' and bool((panel.get('color_by') or '').strip()))
     x, y, w, h = rect
     if kind == 'pie':
         ml, mr, mb, mt = 0.15, 0.15, 0.6, 0.35 if has_title else 0.15
@@ -55,6 +59,8 @@ def _inner_rect(rect, fig_w, fig_h, panel):
         ml, mr, mb, mt = 0.15, 0.15, 0.15, 0.35 if has_title else 0.15
     elif kind == 'ternary':
         ml, mr, mb, mt = 0.8, 0.8, 0.75, 0.8 if has_title else 0.55
+    elif kind == 'radar':
+        ml, mr, mb, mt = 0.6, 0.6, 0.45, 0.75 if has_title else 0.5
     else:
         ml, mb = 0.75, 0.62
         mr = 0.75 if has_y2 else 0.2
@@ -195,7 +201,7 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
                                  facecolor=bg, edgecolor='none'))
     inner = _inner_rect(rect, fw, fh, panel)
     report.axes[panel['id']] = inner
-    ax = fig.add_axes(inner, projection='ternary' if kind == 'ternary' else None)
+    ax = fig.add_axes(inner, projection={'ternary': 'ternary', 'radar': 'polar'}.get(kind))
     ax.set_zorder(index + 1)
     ax.set_facecolor(panel.get('panel_bg') or '#ffffff')
     report.artists[panel['id']] = {'ax': ax}
@@ -204,6 +210,8 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
         if len(table) == 0 and kind not in ('text', 'code'):
             raise ExpressionError('No particles: connect a sample or filter node')
         DRAWERS.get(kind, DRAWERS['scatter'])(fig, ax, panel, ptable, report, style)
+        if kind in SHAPE_KINDS:
+            merge_legend(ax, panel, draw_shapes(ax, panel))
         annotate(ax, panel)
         textstyle.apply_panel(report.artists[panel['id']], panel, figcfg)
         fit_outside_legend(fig, ax, rect)

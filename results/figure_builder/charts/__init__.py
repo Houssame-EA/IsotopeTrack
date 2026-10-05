@@ -10,6 +10,8 @@ from results.figure_builder.charts.categorical import (
 from results.figure_builder.charts.matrices import (
     draw_cooccurrence, draw_corr_matrix, draw_heatmap, draw_pairs)
 from results.figure_builder.charts.distributions import draw_distribution, draw_histogram
+from results.figure_builder.charts.extra import (
+    draw_contour, draw_hexbin, draw_parallel, draw_radar, draw_ridgeline, draw_strip)
 from results.figure_builder.charts.special import draw_code, draw_ternary, draw_text
 from results.figure_builder.charts.xy import draw_density, draw_line, draw_scatter
 
@@ -29,6 +31,12 @@ DRAWERS = {
     'combinations': draw_combinations,
     'composition': draw_composition,
     'pairs': draw_pairs,
+    'strip': draw_strip,
+    'ridgeline': draw_ridgeline,
+    'hexbin': draw_hexbin,
+    'contour': draw_contour,
+    'radar': draw_radar,
+    'parallel': draw_parallel,
     'text': draw_text,
     'code': draw_code,
 }

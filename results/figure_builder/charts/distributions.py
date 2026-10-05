@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, bin_edges, handles, label_n, style_axes, value_groups)
+    add_legend, bin_edges, draw_summary_box, handles, label_n, style_axes, value_groups)
 from results.figure_builder.core.expressions import ExpressionError
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -73,6 +73,9 @@ def draw_histogram(fig, ax, panel, table, report, style):
                 yk = kde(grid) * scale
                 ax.plot(10 ** grid if log_x else grid, yk, color=g.color,
                         lw=float(panel.get('line_width') or 1.6), ls=panel.get('line_style') or '-')
+        if not cumulative:
+            _fit_curve(ax, g, v, edges, log_x, density, panel, report)
+        _stat_lines(ax, g, v, panel)
     report.counts[panel['id']] = int(allv.size)
     _, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
@@ -84,6 +87,53 @@ def draw_histogram(fig, ax, panel, table, report, style):
     if not panel.get('y_label'):
         ax.set_ylabel(ylabel)
     add_legend(ax, panel)
+    draw_summary_box(ax, panel, [(g.label, v) for g, v in groups])
+
+
+def _stat_lines(ax, g, v, panel):
+    """Dashed lines at a group's median and/or mean."""
+    mode = panel.get('mark_stats', 'none')
+    if mode == 'none' or v.size == 0:
+        return
+    if mode in ('median', 'both'):
+        ax.axvline(np.median(v), color=_darker(g.color), lw=1.4, ls='--', zorder=5)
+    if mode in ('mean', 'both'):
+        ax.axvline(np.mean(v), color=_darker(g.color), lw=1.4, ls=':', zorder=5)
+
+
+def _fit_curve(ax, g, v, edges, log_x, density, panel, report):
+    """Overlay a fitted normal or log-normal distribution and report its parameters."""
+    from scipy import stats
+    kind = panel.get('fit_dist', 'none')
+    if kind == 'none' or v.size < 5:
+        return
+    if kind == 'lognormal':
+        pos = v[v > 0]
+        if pos.size < 5:
+            return
+        logs = np.log(pos)
+        mu, sigma = float(np.mean(logs)), float(np.std(logs, ddof=1))
+        lo, hi = pos.min(), pos.max()
+        xs = np.logspace(np.log10(lo), np.log10(hi), 300) if log_x else np.linspace(lo, hi, 300)
+        pdf = stats.lognorm.pdf(xs, s=sigma, scale=np.exp(mu))
+        report.stats.append(f'{g.label}: log-normal fit, geometric mean = {np.exp(mu):.4g}, '
+                            f'geometric SD = {np.exp(sigma):.3g}, mode = {np.exp(mu - sigma ** 2):.4g}, '
+                            f'n = {pos.size}')
+    else:
+        mu, sd = float(np.mean(v)), float(np.std(v, ddof=1))
+        lo, hi = v.min(), v.max()
+        xs = np.linspace(lo, hi, 300)
+        pdf = stats.norm.pdf(xs, mu, sd)
+        report.stats.append(f'{g.label}: normal fit, mean = {mu:.4g}, SD = {sd:.4g}, n = {v.size}')
+    if density:
+        ys = pdf
+    else:
+        idx = np.clip(np.searchsorted(edges, xs, side='right') - 1, 0, len(edges) - 2)
+        widths = np.diff(edges)[idx]
+        ys = pdf * v.size * widths
+    from matplotlib import patheffects
+    ax.plot(xs, ys, color=_darker(g.color), lw=2.0, zorder=6,
+            path_effects=[patheffects.withStroke(linewidth=4, foreground='white')])
 
 
 def draw_distribution(fig, ax, panel, table, report, style):
@@ -154,3 +204,4 @@ def draw_distribution(fig, ax, panel, table, report, style):
     report.stats.extend(lines)
     style_axes(ax, panel, table, style, '', panel['value'])
     draw_brackets(ax, pairs, positions, panel)
+    draw_summary_box(ax, panel, [(g.label, v) for g, v in groups])

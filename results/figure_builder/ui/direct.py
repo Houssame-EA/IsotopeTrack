@@ -17,8 +17,10 @@ import numpy as np
 
 from results.figure_builder.core.expressions import plain
 
-ZOOM_X = {'scatter', 'line', 'density', 'histogram'}
-ZOOM_Y = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar'}
+ZOOM_X = {'scatter', 'line', 'density', 'histogram', 'hexbin', 'contour', 'ridgeline'}
+ZOOM_Y = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar', 'hexbin', 'contour',
+          'strip'}
+SHADE = ZOOM_X | ZOOM_Y | {'combinations', 'composition'}
 CORNER = 0.025
 SNAP = 1.0 / 96.0
 
@@ -167,17 +169,23 @@ def _element_hint(hit) -> str:
     return 'Double-click to rename · right-click for bold, italic, size, colour'
 
 
-def drag_mode(win, hit, fx, fy):
+def drag_mode(win, hit, fx, fy, modifiers=None):
     """What a drag starting here will do: ``(mode, box)`` or None.
 
     ``box`` is the region drawn as a live outline (figure fractions,
-    top-left origin) for moves and resizes.
+    top-left origin) for moves and resizes. On a plot, Shift-drag shades an
+    X range and Ctrl/⌘-drag shades a Y range instead of zooming.
     """
     if hit is None or not hit.panel_id:
         return None
     panel = win.panel_by_id(hit.panel_id)
     if panel is None:
         return None
+    if hit.element == 'plot' and modifiers and panel.get('kind') in SHADE:
+        if modifiers.get('shift'):
+            return 'shade_x', hit.box
+        if modifiers.get('ctrl'):
+            return 'shade_y', hit.box
     x, y, w, h = panel['rect']
     if abs(fx - (x + w)) <= CORNER and abs(fy - (y + h)) <= CORNER:
         return 'resize', (x, y, x + w, y + h)
@@ -245,6 +253,22 @@ def apply_drag(win, hit, mode, start, end) -> bool:
         else:
             nx, ny = ax.transAxes.inverted().transform(disp)
             note['x'], note['y'] = f'{nx:.3f}', f'{ny:.3f}'
+        return True
+    if mode in ('shade_x', 'shade_y'):
+        inv = ax.transData.inverted()
+        a = inv.transform(_display(fig, sx, sy))
+        b = inv.transform(_display(fig, ex, ey))
+        k = 0 if mode == 'shade_x' else 1
+        if (mode == 'shade_x' and abs(dx) < 0.005) or (mode == 'shade_y' and abs(dy) < 0.005):
+            return False
+        lo, hi = sorted((float(a[k]), float(b[k])))
+        shape = {'type': 'xband' if k == 0 else 'yband', 'color': '#9ca3af', 'alpha': 0.3,
+                 'hatch': '', 'style': '--', 'layer': 'back', 'label': ''}
+        if k == 0:
+            shape.update(x1=f'{lo:.6g}', x2=f'{hi:.6g}')
+        else:
+            shape.update(y1=f'{lo:.6g}', y2=f'{hi:.6g}')
+        panel['shapes'] = list(panel.get('shapes') or []) + [shape]
         return True
     if mode == 'zoom':
         if abs(dx) < 0.01 and abs(dy) < 0.01:

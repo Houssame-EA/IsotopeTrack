@@ -45,6 +45,12 @@ KIND_ELEMENTS = {
     'combinations': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'composition': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'pairs': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'strip': ['title', 'x_label', 'y_label', 'ticks', 'cells'],
+    'ridgeline': ['title', 'x_label', 'ticks', 'cells'],
+    'hexbin': ['title', 'x_label', 'y_label', 'ticks', 'cbar_label'],
+    'contour': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'radar': ['title', 'ticks', 'legend'],
+    'parallel': ['title', 'y_label', 'ticks', 'legend'],
     'text': ['title'],
     'code': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
 }

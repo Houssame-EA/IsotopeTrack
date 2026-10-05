@@ -655,3 +655,112 @@ def test_app_style_is_default():
     assert spec['figure']['font_family'] == 'Times New Roman'
     assert spec['panels'][0]['frame'] == 'box' and spec['panels'][0]['minor_ticks']
     assert 'IsotopeTrack (app style)' in E.STYLE_PRESETS
+
+
+@pytest.mark.parametrize('panel', [
+    dict(kind='strip', value='Ag', log_y=True, group_by='sample', test='welch', summary_box=True),
+    dict(kind='strip', value='Ag', group_by='class', strip_summary='median_iqr', sina=False),
+    dict(kind='strip', value='Ag', strip_summary='mean_ci'),
+    dict(kind='ridgeline', value='Ag', log_x=True, group_by='sample', mark_stats='median', overlap=1.2),
+    dict(kind='hexbin', x='Ag', y='Fe', log_x=True, log_y=True, bins=20),
+    dict(kind='contour', x='Ag', y='Fe', log_x=True, log_y=True, group_by='sample', show_points=True),
+    dict(kind='contour', x='Ag', y='Fe', filled=False, levels=4),
+    dict(kind='radar', group_by='sample'),
+    dict(kind='radar', group_by='class', radar_mode='detect', radar_fill=False),
+    dict(kind='radar', radar_mode='mean', isotopes='Ag, Au, Fe, total'),
+    dict(kind='parallel', group_by='sample', max_lines=50),
+    dict(kind='parallel', parallel_scale='raw'),
+    dict(kind='histogram', value='Ag', log_x=True, group_by='sample', fit_dist='lognormal',
+         mark_stats='both', summary_box=True, summary_loc='lower left'),
+    dict(kind='histogram', value='Ag', fit_dist='normal', density=True),
+    dict(kind='box', value='Ag', group_by='sample', summary_box=True),
+])
+def test_more_chart_kinds_render(table, panel):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(**panel)]
+    report = _render(spec, table)
+    assert report.errors == {}
+    assert report.counts[spec['panels'][0]['id']] > 0
+
+
+def test_lognormal_fit_reported(table):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(kind='histogram', value='Ag', fit_dist='lognormal')]
+    report = _render(spec, table)
+    assert any('geometric mean' in s for s in report.stats)
+
+
+def test_shapes_are_drawn_and_listed(table):
+    spec = E.default_spec()
+    panel = E.make_panel(kind='scatter', x='Ag', y='Fe', group_by='sample', shapes=[
+        {'type': 'xband', 'x1': '', 'x2': '40', 'label': 'Below LOD', 'alpha': 0.3},
+        {'type': 'yband', 'y1': '10', 'y2': '20', 'hatch': '//'},
+        {'type': 'box', 'x1': '100', 'x2': '200', 'y1': '20', 'y2': '60', 'layer': 'front'},
+        {'type': 'hline', 'y1': '30', 'style': ':'},
+        {'type': 'vline', 'x1': '150'},
+        {'type': 'line', 'slope': '0.3', 'intercept': '0', 'label': 'Fe = 0.3 Ag'},
+    ])
+    spec['panels'] = [panel]
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    canvas.draw()
+    assert report.errors == {}
+    ax = report.artists[panel['id']]['ax']
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert 'Below LOD' in labels and 'Fe = 0.3 Ag' in labels
+    assert any(lab.startswith('Blank') for lab in labels)
+    assert ax.get_xlim()[0] < 40
+
+
+def test_axis_controls(table):
+    spec = E.default_spec()
+    panel = E.make_panel(kind='scatter', x='Ag', y='Fe', x_ticks='100', y_ticks='10, 20, 50',
+                         x_format='thousands', y_format='1dp', invert_y=True, grid=True,
+                         grid_axis='y', grid_minor=True, axis_color='#ff0000', legend_frame=False)
+    spec['panels'] = [panel]
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    canvas.draw()
+    ax = report.artists[panel['id']]['ax']
+    assert list(ax.get_yticks()) == [10, 20, 50]
+    assert ax.yaxis_inverted()
+    assert all(t.get_text().endswith('.0') for t in ax.get_yticklabels() if t.get_text())
+    xt = ax.get_xticks()
+    assert np.allclose(np.diff(xt), 100)
+    assert ax.spines['left'].get_edgecolor()[:3] == (1.0, 0.0, 0.0)
+
+
+def test_shift_drag_shades_x_range(dialog):
+    p0 = dialog.spec['panels'][0]
+    dialog._render()
+    plot = next(h for h in dialog._hits if h.element == 'plot')
+    sx, sy = plot.box[0] + 0.05, plot.box[1] + 0.1
+    ex, ey = plot.box[0] + 0.15, plot.box[1] + 0.12
+    mode, _box = dialog._drag_resolver(sx, sy, {'shift': True, 'ctrl': False})
+    assert mode == 'shade_x'
+    dialog._on_drag_finished(mode, sx, sy, ex, ey)
+    assert p0['shapes'][-1]['type'] == 'xband'
+    assert float(p0['shapes'][-1]['x1']) < float(p0['shapes'][-1]['x2'])
+    mode, _box = dialog._drag_resolver(sx, sy, {'shift': False, 'ctrl': True})
+    assert mode == 'shade_y'
+    dialog._on_drag_finished(mode, sx, sy, sx + 0.01, sy + 0.1)
+    assert p0['shapes'][-1]['type'] == 'yband'
+    dialog._render()
+    assert dialog.last_report.errors == {}
+
+
+def test_grey_area_menu(dialog):
+    from results.figure_builder.ui import interact
+    p0 = dialog.spec['panels'][0]
+    dialog._render()
+    plot = next(h for h in dialog._hits if h.element == 'plot')
+    menu = interact.build_menu(dialog, plot, (plot.box[0] + plot.box[2]) / 2,
+                               (plot.box[1] + plot.box[3]) / 2)
+    add = next(a for a in menu.actions() if a.text() == 'Add').menu()
+    item = next(a for a in add.actions() if a.text().startswith('Grey area below y'))
+    item.trigger()
+    assert p0['shapes'][-1]['type'] == 'yband' and p0['shapes'][-1]['y1'] == ''
+    next(a for a in add.actions() if a.text() == 'Line y = x').trigger()
+    assert p0['shapes'][-1]['type'] == 'line'
