@@ -149,7 +149,9 @@ class ParticleTable:
     sample_order: list = field(default_factory=list)
     class_order: list = field(default_factory=list)
     class_colors: dict = field(default_factory=dict)
+    variables: dict = field(default_factory=dict)
     _cache: dict = field(default_factory=dict, repr=False)
+    _busy: set = field(default_factory=set, repr=False)
 
     @classmethod
     def from_input(cls, input_data: dict | None, data_type: str = 'Counts'):
@@ -198,6 +200,45 @@ class ParticleTable:
     def __len__(self) -> int:
         return len(self.particles)
 
+    def set_variables(self, variables) -> dict:
+        """Install user-defined variables and return ``{name: error}`` for bad ones.
+
+        Args:
+            variables: list of ``{'name': str, 'expr': str}`` dicts (or a dict).
+
+        Returns:
+            dict: Problems keyed by variable name; empty when all are valid.
+        """
+        items = variables.items() if isinstance(variables, dict) else (
+            (v.get('name', ''), v.get('expr', '')) for v in (variables or []))
+        for name in list(self.variables):
+            self._cache.pop(('var', name), None)
+        self.variables = {}
+        problems = {}
+        reserved = set(self.labels) | set(SPECIAL_NAMES) | set(FUNCTIONS) | set(CONSTANTS)
+        for name, expr in items:
+            name = (name or '').strip()
+            expr = (expr or '').strip()
+            if not name and not expr:
+                continue
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+                problems[name or '?'] = 'Names must start with a letter and use letters, digits or _'
+                continue
+            if name in reserved or name in self.symbol_aliases():
+                problems[name] = f"'{name}' is already an isotope, function or built-in name"
+                continue
+            if not expr:
+                problems[name] = 'Empty expression'
+                continue
+            self.variables[name] = expr
+        for name in list(self.variables):
+            try:
+                self.column(name)
+            except ExpressionError as exc:
+                problems[name] = str(exc)
+                self.variables.pop(name, None)
+        return problems
+
     def _quantity(self, prefix: str, label: str) -> np.ndarray:
         """Return one quantity column, building it on first use."""
         ck = (prefix, label)
@@ -219,6 +260,17 @@ class ParticleTable:
         """Return a column by its canonical name (see :meth:`names`)."""
         if name in self._cache:
             return self._cache[name]
+        if name in self.variables:
+            key = ('var', name)
+            if key not in self._cache:
+                if name in self._busy:
+                    raise ExpressionError(f"Variable '{name}' refers to itself")
+                self._busy.add(name)
+                try:
+                    self._cache[key] = np.asarray(evaluate(self.variables[name], self))
+                finally:
+                    self._busy.discard(name)
+            return self._cache[key]
         n = len(self.particles)
         if name == 'sample':
             single = getattr(self, '_single_sample', None)
@@ -275,6 +327,7 @@ class ParticleTable:
         for prefix in QUANTITY_PREFIXES:
             out.extend(f'{prefix}:{b}' for b in base)
         out.extend(SPECIAL_NAMES)
+        out.extend(self.variables)
         return out
 
     def samples(self) -> list[str]:
@@ -294,6 +347,11 @@ class ParticleTable:
         import pandas as pd
         data = {lab: self._quantity(self.default_prefix, lab) for lab in self.labels}
         data['total'] = self.column('total')
+        for name in self.variables:
+            try:
+                data[name] = self.column(name)
+            except ExpressionError:
+                pass
         data['sample'] = self.column('sample')
         data['class'] = self.column('class')
         return pd.DataFrame(data)
@@ -559,6 +617,8 @@ def pretty(expr: str, table: ParticleTable, style: str = 'isotope') -> str:
     single = re.fullmatch(r'_v\d+', code.strip())
 
     def render(name: str, with_unit: bool) -> str:
+        if name in table.variables:
+            return name
         if name in SPECIAL_NAMES:
             if name == 'total' and with_unit:
                 q = QUANTITY_PREFIXES[table.default_prefix]

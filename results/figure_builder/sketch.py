@@ -19,7 +19,7 @@ _MIN = 0.06
 _HANDLE = 10.0
 
 KIND_GLYPHS = {
-    'scatter': '⁘', 'histogram': '▁▃▆', 'box': '⊟', 'violin': '◊', 'bar': '▌▌',
+    'scatter': '⁘', 'line': '⟋', 'histogram': '▁▃▆', 'box': '⊟', 'violin': '◊', 'bar': '▌▌',
     'pie': '◔', 'density': '▦', 'ternary': '△', 'text': 'T', 'code': '</>',
 }
 
@@ -273,7 +273,28 @@ class LayoutSketch(QWidget):
         if ev.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.selected:
             self.delete_selected()
             return
+        arrows = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}
+        panel = self._panel(self.selected)
+        if ev.key() in arrows and panel is not None:
+            dx, dy = arrows[ev.key()]
+            x, y, w, h = panel['rect']
+            if ev.modifiers() & Qt.ShiftModifier:
+                w = min(1.0 - x, max(_MIN, w + dx * _SNAP))
+                h = min(1.0 - y, max(_MIN, h + dy * _SNAP))
+            else:
+                x = min(1.0 - w, max(0.0, x + dx * _SNAP))
+                y = min(1.0 - h, max(0.0, y + dy * _SNAP))
+            panel['rect'] = [round(x, 4), round(y, 4), round(w, 4), round(h, 4)]
+            self.update()
+            self.layout_changed.emit()
+            return
         super().keyPressEvent(ev)
+
+    def duplicate_selected(self):
+        """Duplicate the selected panel, slightly offset."""
+        panel = self._panel(self.selected)
+        if panel is not None:
+            self._duplicate(panel)
 
     def delete_selected(self):
         """Remove the selected panel."""

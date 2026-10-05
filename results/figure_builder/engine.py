@@ -4,7 +4,8 @@ A Figure Builder figure is a plain, JSON-serialisable *spec*::
 
     {
         'data_type': 'Counts',
-        'figure': {'width': 8.0, 'height': 6.0, ...},
+        'variables': [{'name': 'ratio', 'expr': 'Fe/Cu'}, ...],
+        'figure': {'width': 8.0, 'height': 6.0, 'palette': 'Default', ...},
         'panels': [panel, ...],
     }
 
@@ -21,7 +22,7 @@ The module has no Qt dependency and is fully testable headless.
 from __future__ import annotations
 
 import copy
-import itertools
+import logging
 import string
 import uuid
 from dataclasses import dataclass, field
@@ -30,15 +31,24 @@ import numpy as np
 
 from results.figure_builder.expressions import (
     ExpressionError, ParticleTable, evaluate, pretty, split_list)
+from results.figure_builder.stats import (
+    CORRECTIONS, PAIRWISE_TESTS, STAT_TESTS, correct, draw_brackets, p_text, run_tests)
+from results.figure_builder.styles import (
+    PALETTES, STYLE_PRESETS, TEMPLATES, apply_style_preset, palette_colors)
 
-PALETTE = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100',
-           '#e87ba4', '#008300', '#4a3aa7', '#e34948']
-"""Categorical colours, assigned in fixed order."""
+__all__ = [
+    'CORRECTIONS', 'PAIRWISE_TESTS', 'STAT_TESTS', 'PALETTES', 'STYLE_PRESETS',
+    'TEMPLATES', 'apply_style_preset', 'correct', 'p_text', 'run_tests',
+]
+
+PALETTE = PALETTES['Default']
+"""The default categorical palette."""
 
 OTHER_COLOR = '#9a9a9a'
 
 PANEL_KINDS = {
     'scatter': 'Scatter (X vs Y)',
+    'line': 'Line / trend (binned)',
     'histogram': 'Histogram',
     'box': 'Box plot',
     'violin': 'Violin plot',
@@ -58,31 +68,23 @@ GROUP_MODES = {
     'rules': 'By my rules',
 }
 
-STAT_TESTS = {
-    'none': 'None',
-    'welch': "Welch's t-test",
-    'student': "Student's t-test (equal variance)",
-    'mannwhitney': 'Mann-Whitney U',
-    'ks': 'Kolmogorov-Smirnov',
-    'anova': 'One-way ANOVA',
-    'kruskal': 'Kruskal-Wallis',
-}
-
-PAIRWISE_TESTS = ('welch', 'student', 'mannwhitney', 'ks')
-
-CORRECTIONS = {'none': 'No correction', 'bonferroni': 'Bonferroni', 'holm': 'Holm'}
-
 FIGURE_DEFAULTS = {
     'width': 8.0,
     'height': 6.0,
     'dpi': 300,
     'font_family': 'DejaVu Sans',
     'font_size': 11,
+    'title_size': 0,
+    'label_size': 0,
+    'tick_size': 0,
+    'axes_linewidth': 0.8,
     'title': '',
     'panel_letters': True,
     'letter_style': 'a',
+    'letter_size': 0,
     'label_style': 'isotope',
     'background': '#ffffff',
+    'palette': 'Default',
 }
 
 PANEL_DEFAULTS = {
@@ -113,18 +115,37 @@ PANEL_DEFAULTS = {
     'rules': [],
     'show_other': True,
     'other_label': 'Other',
+    'group_colors': {},
+    'group_labels': {},
+    'hidden_groups': [],
+    'group_order': [],
+    'show_n': True,
     'color': PALETTE[0],
     'y2_color': PALETTE[1],
     'color_by': '',
+    'size_by': '',
     'colormap': 'viridis',
+    'reverse_cmap': False,
+    'marker': 'o',
     'marker_size': 12.0,
+    'edge_color': '#ffffff',
+    'edge_width': 0.0,
     'alpha': 0.7,
+    'line_width': 1.6,
+    'line_style': '-',
     'bins': 40,
     'hist_style': 'filled',
     'density': False,
+    'cumulative': False,
+    'kde': False,
     'show_points': False,
+    'notch': False,
+    'show_mean': False,
     'agg': 'mean',
     'error': 'sd',
+    'band': 'sem',
+    'horizontal': False,
+    'stacked': False,
     'pie_mode': 'groups',
     'donut': False,
     'show_fit': False,
@@ -132,13 +153,29 @@ PANEL_DEFAULTS = {
     'hlines': '',
     'vlines': '',
     'diagonal': False,
+    'series': [],
+    'annotations': [],
     'test': 'none',
     'pairs': 'all',
     'correction': 'none',
     'p_format': 'stars',
+    'hide_ns': False,
     'legend': True,
+    'legend_loc': 'best',
+    'legend_cols': 1,
+    'legend_title': '',
+    'legend_size': 'small',
     'grid': False,
+    'frame': 'open',
+    'tick_dir': 'out',
+    'minor_ticks': False,
+    'sci_x': False,
+    'sci_y': False,
+    'aspect_equal': False,
+    'xtick_rotation': 0,
+    'panel_bg': '#ffffff',
     'text': '',
+    'text_size': 0,
     'code': '',
 }
 
@@ -151,11 +188,24 @@ CODE_EXAMPLE = (
 
 @dataclass
 class Group:
-    """A named subset of particles drawn with one colour."""
+    """A subset of particles drawn with one colour.
 
-    name: str
+    Attributes:
+        key: Stable identity (sample name, class or rule name).
+        label: What legends and tick labels show (user-renamable).
+        mask: Boolean particle mask.
+        color: Matplotlib colour.
+    """
+
+    key: str
+    label: str
     mask: np.ndarray
     color: str
+
+    @property
+    def name(self) -> str:
+        """Display name (alias of ``label``)."""
+        return self.label
 
 
 @dataclass
@@ -166,11 +216,15 @@ class RenderReport:
         stats: Human-readable statistics lines, one per result.
         errors: ``{panel_id: message}`` for panels that could not be drawn.
         counts: ``{panel_id: number of particles plotted}``.
+        variable_errors: ``{variable: message}`` for invalid variables.
+        axes: ``{panel_id: [left, bottom, width, height]}`` drawn axes boxes.
     """
 
     stats: list = field(default_factory=list)
     errors: dict = field(default_factory=dict)
     counts: dict = field(default_factory=dict)
+    variable_errors: dict = field(default_factory=dict)
+    axes: dict = field(default_factory=dict)
 
 
 def new_panel_id() -> str:
@@ -190,15 +244,17 @@ def default_spec() -> dict:
     """Return the spec a new Figure Builder node starts with."""
     return {
         'data_type': 'Counts',
+        'variables': [],
         'figure': copy.deepcopy(FIGURE_DEFAULTS),
         'panels': [make_panel(rect=[0.0, 0.0, 1.0, 1.0], kind='scatter')],
     }
 
 
 def normalise_spec(spec: dict | None) -> dict:
-    """Fill missing keys so older or hand-edited specs always render."""
+    """Return a full copy of ``spec`` with every missing key filled in."""
     out = default_spec() if not isinstance(spec, dict) else copy.deepcopy(spec)
     out.setdefault('data_type', 'Counts')
+    out['variables'] = [dict(v) for v in (out.get('variables') or []) if isinstance(v, dict)]
     fig = copy.deepcopy(FIGURE_DEFAULTS)
     fig.update(out.get('figure') or {})
     out['figure'] = fig
@@ -213,17 +269,16 @@ def normalise_spec(spec: dict | None) -> dict:
     return out
 
 
-TEMPLATES = {
-    'Single': [[0.0, 0.0, 1.0, 1.0]],
-    'Side by side': [[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 0.5, 1.0]],
-    'Stacked': [[0.0, 0.0, 1.0, 0.5], [0.0, 0.5, 1.0, 0.5]],
-    '2 × 2': [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 0.5, 0.5],
-              [0.0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]],
-    'Main + inset': [[0.0, 0.0, 1.0, 1.0], [0.55, 0.08, 0.38, 0.38]],
-    'Wide + two': [[0.0, 0.0, 1.0, 0.55], [0.0, 0.55, 0.5, 0.45],
-                   [0.5, 0.55, 0.5, 0.45]],
-}
-"""Ready-made layouts, as panel rectangles."""
+def strip_spec(spec: dict) -> dict:
+    """Return ``spec`` without values equal to their defaults (compact designs)."""
+    spec = normalise_spec(spec)
+    fig = {k: v for k, v in spec['figure'].items() if FIGURE_DEFAULTS.get(k) != v}
+    panels = []
+    for p in spec['panels']:
+        panels.append({k: v for k, v in p.items()
+                       if k in ('id', 'rect', 'kind') or PANEL_DEFAULTS.get(k) != v})
+    return {'data_type': spec['data_type'], 'variables': spec['variables'],
+            'figure': fig, 'panels': panels}
 
 
 def apply_template(spec: dict, name: str) -> dict:
@@ -246,7 +301,7 @@ def apply_template(spec: dict, name: str) -> dict:
 def panel_letter(index: int, style: str) -> str:
     """Return the panel letter for ``index`` in ``style`` (a, A, (a), a))."""
     ch = string.ascii_lowercase[index % 26]
-    return {'A': ch.upper(), '(a)': f'({ch})', 'a)': f'{ch})'}.get(style, ch)
+    return {'A': ch.upper(), '(a)': f'({ch})', 'a)': f'{ch})', '(A)': f'({ch.upper()})'}.get(style, ch)
 
 
 def _float_or_none(v):
@@ -269,28 +324,30 @@ def _numbers(text) -> list[float]:
     return out
 
 
-def resolve_groups(panel: dict, table: ParticleTable) -> list[Group]:
-    """Split the particles of ``table`` into the panel's groups.
+def _palette(panel) -> list[str]:
+    """The palette injected into ``panel`` by :func:`render`."""
+    return panel.get('_palette') or PALETTE
 
-    The panel filter is applied first. Rule groups use first-match-wins, so
-    "points below this threshold" and "everything else" never overlap.
-    """
+
+def candidate_groups(panel: dict, table: ParticleTable) -> list[Group]:
+    """Every group the panel's grouping produces, before hiding and reordering."""
     n = len(table)
     base = np.ones(n, dtype=bool)
     if (panel.get('filter') or '').strip():
         base &= evaluate(panel['filter'], table, as_mask=True)
+    pal = _palette(panel)
     mode = panel.get('group_by', 'none')
     groups: list[Group] = []
     if mode == 'sample':
         col = table.column('sample')
         for i, s in enumerate(table.samples()):
-            groups.append(Group(str(s), base & (col == s), PALETTE[i % len(PALETTE)]))
+            groups.append(Group(str(s), str(s), base & (col == s), pal[i % len(pal)]))
     elif mode == 'class':
         col = table.column('class')
         for i, c in enumerate(table.classes()):
             color = table.class_colors.get(c) or (
-                OTHER_COLOR if c == 'Unclassified' else PALETTE[i % len(PALETTE)])
-            groups.append(Group(str(c), base & (col == c), color))
+                OTHER_COLOR if c == 'Unclassified' else pal[i % len(pal)])
+            groups.append(Group(str(c), str(c), base & (col == c), color))
     elif mode == 'rules':
         remaining = base.copy()
         for i, rule in enumerate(panel.get('rules') or []):
@@ -299,17 +356,47 @@ def resolve_groups(panel: dict, table: ParticleTable) -> list[Group]:
                 continue
             m = remaining & evaluate(when, table, as_mask=True)
             remaining &= ~m
-            groups.append(Group(rule.get('name') or when,
-                                m, rule.get('color') or PALETTE[i % len(PALETTE)]))
+            name = rule.get('name') or when
+            groups.append(Group(name, name, m, rule.get('color') or pal[i % len(pal)]))
         if panel.get('show_other', True):
-            groups.append(Group(panel.get('other_label') or 'Other', remaining, OTHER_COLOR))
+            other = panel.get('other_label') or 'Other'
+            groups.append(Group('__other__', other, remaining, OTHER_COLOR))
     else:
-        groups.append(Group('All particles', base, panel.get('color') or PALETTE[0]))
+        groups.append(Group('__all__', 'All particles', base, panel.get('color') or pal[0]))
     return groups
 
 
+def resolve_groups(panel: dict, table: ParticleTable) -> list[Group]:
+    """Split the particles into the panel's groups, applying user overrides.
+
+    The panel filter is applied first. Rule groups use first-match-wins, so
+    "points below this threshold" and "everything else" never overlap.
+    Per-group colours, display names, hidden groups and order chosen in the
+    Groups tab are applied last.
+    """
+    groups = candidate_groups(panel, table)
+    colors = panel.get('group_colors') or {}
+    labels = panel.get('group_labels') or {}
+    hidden = set(panel.get('hidden_groups') or [])
+    order = list(panel.get('group_order') or [])
+    single = panel.get('group_by', 'none') == 'none'
+    out = []
+    for g in groups:
+        if g.key in hidden:
+            continue
+        if g.key in colors and not single:
+            g.color = colors[g.key]
+        if labels.get(g.key):
+            g.label = labels[g.key]
+        out.append(g)
+    if order:
+        rank = {k: i for i, k in enumerate(order)}
+        out.sort(key=lambda g: rank.get(g.key, len(rank)))
+    return out
+
+
 def _finite(*arrays, log_flags=()):
-    """Mask that keeps rows finite in every array (and > 0 where log is set)."""
+    """Mask keeping rows finite in every array (and > 0 where log is set)."""
     mask = np.ones(len(arrays[0]), dtype=bool)
     for i, arr in enumerate(arrays):
         arr = np.asarray(arr, dtype=float)
@@ -328,127 +415,68 @@ def _nonzero(panel, *arrays):
     return mask
 
 
-def _p_text(p: float, fmt: str) -> str:
-    """Format a p-value as stars or a number."""
-    if not np.isfinite(p):
-        return 'n/a'
-    if fmt == 'stars':
-        if p < 1e-4:
-            return '****'
-        if p < 1e-3:
-            return '***'
-        if p < 1e-2:
-            return '**'
-        if p < 0.05:
-            return '*'
-        return 'ns'
-    return f'p = {p:.2g}' if p >= 1e-4 else 'p < 0.0001'
+def _label_n(g: Group, n: int, panel) -> str:
+    """Legend label for a group, with its count when requested."""
+    return f'{g.label} (n={n})' if panel.get('show_n', True) else g.label
 
 
-def _correct(pvals: list[float], method: str) -> list[float]:
-    """Apply a multiple-comparison correction."""
-    p = np.asarray(pvals, dtype=float)
-    m = len(p)
-    if m <= 1 or method == 'none':
-        return list(p)
-    if method == 'bonferroni':
-        return list(np.minimum(p * m, 1.0))
-    order = np.argsort(p)
-    adj = np.empty(m)
-    running = 0.0
-    for rank, idx in enumerate(order):
-        running = max(running, (m - rank) * p[idx])
-        adj[idx] = min(running, 1.0)
-    return list(adj)
+def _cmap(panel) -> str:
+    """Colour map name, reversed when asked."""
+    name = panel.get('colormap') or 'viridis'
+    return f'{name}_r' if panel.get('reverse_cmap') else name
 
 
-def run_tests(samples: list[tuple[str, np.ndarray]], panel: dict):
-    """Run the panel's statistical test over named samples.
+def _edge(panel) -> dict:
+    """Marker edge keyword arguments."""
+    width = float(panel.get('edge_width') or 0)
+    if width <= 0:
+        return {'linewidths': 0}
+    return {'linewidths': width, 'edgecolors': panel.get('edge_color') or '#ffffff'}
 
-    Returns:
-        tuple: ``(pairs, lines)`` where ``pairs`` is a list of
-        ``(i, j, p)`` for pairwise tests (empty for omnibus tests) and
-        ``lines`` are report strings.
-    """
-    from scipy import stats
-    test = panel.get('test', 'none')
-    data = [(n, np.asarray(v, dtype=float)[np.isfinite(v)]) for n, v in samples]
-    data = [(n, v) for n, v in data if v.size >= 2]
-    lines: list[str] = []
-    if test == 'none' or len(data) < 2:
-        if test != 'none':
-            lines.append(f'{STAT_TESTS[test]}: needs at least two groups with 2+ values')
-        return [], lines
-    if test in ('anova', 'kruskal'):
-        fn = stats.f_oneway if test == 'anova' else stats.kruskal
-        res = fn(*[v for _, v in data])
-        name = 'F' if test == 'anova' else 'H'
-        ns = ', '.join(f'{n} (n={v.size})' for n, v in data)
-        lines.append(f'{STAT_TESTS[test]}: {name} = {res.statistic:.3g}, '
-                     f'p = {res.pvalue:.3g} — {ns}')
-        return [(-1, -1, float(res.pvalue))], lines
-    if panel.get('pairs') == 'first':
-        combos = [(0, j) for j in range(1, len(data))]
+
+def _legend_kwargs(panel, n_items: int, default_loc: str | None = None) -> dict:
+    """Matplotlib legend placement keywords for the panel's legend setting."""
+    loc = panel.get('legend_loc') or 'best'
+    if loc == 'best' and default_loc:
+        loc = default_loc
+    cols = max(1, int(panel.get('legend_cols') or 1))
+    kw = {'frameon': False, 'fontsize': panel.get('legend_size') or 'small', 'ncol': cols}
+    if panel.get('legend_title'):
+        kw['title'] = panel['legend_title']
+    if loc == 'outside right':
+        kw.update(loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0)
+    elif loc == 'below':
+        kw.update(loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                  ncol=max(cols, min(4, n_items)))
+    elif loc == 'above':
+        kw.update(loc='lower center', bbox_to_anchor=(0.5, 1.02),
+                  ncol=max(cols, min(4, n_items)))
+    elif loc == 'ternary':
+        kw.update(loc='upper left', bbox_to_anchor=(-0.08, 1.12))
     else:
-        combos = list(itertools.combinations(range(len(data)), 2))
-    raw = []
-    for i, j in combos:
-        a, b = data[i][1], data[j][1]
-        if test == 'welch':
-            res = stats.ttest_ind(a, b, equal_var=False)
-        elif test == 'student':
-            res = stats.ttest_ind(a, b, equal_var=True)
-        elif test == 'mannwhitney':
-            res = stats.mannwhitneyu(a, b, alternative='two-sided')
-        else:
-            res = stats.ks_2samp(a, b)
-        raw.append((i, j, float(res.statistic), float(res.pvalue)))
-    adjusted = _correct([r[3] for r in raw], panel.get('correction', 'none'))
-    pairs = []
-    corr = panel.get('correction', 'none')
-    for (i, j, stat, p), padj in zip(raw, adjusted):
-        extra = f', adjusted ({CORRECTIONS[corr]}) p = {padj:.3g}' if corr != 'none' else ''
-        lines.append(f'{STAT_TESTS[test]}: {data[i][0]} (n={data[i][1].size}) vs '
-                     f'{data[j][0]} (n={data[j][1].size}): statistic = {stat:.3g}, '
-                     f'p = {p:.3g}{extra}')
-        names = [n for n, _ in samples]
-        pairs.append((names.index(data[i][0]), names.index(data[j][0]), padj))
-    return pairs, lines
+        kw['loc'] = loc
+    return kw
 
 
-def _draw_brackets(ax, pairs, positions, panel):
-    """Draw significance brackets above the data, scale-agnostically."""
-    if not pairs:
+def _legend(ax, panel, extra=None, default_loc=None, min_items=2):
+    """Add a legend when the panel has enough labelled series."""
+    if not panel.get('legend', True):
         return
-    fmt = panel.get('p_format', 'stars')
-    if pairs[0][0] == -1:
-        ax.text(0.98, 0.98, _p_text(pairs[0][2], 'p'), transform=ax.transAxes,
-                ha='right', va='top', fontsize='small')
-        return
-    step = 0.075
-    n = len(pairs)
-    reserve = min(0.5, step * n + 0.03)
-    lo, hi = ax.get_ylim()
-    if ax.get_yscale() == 'log' and lo > 0 and hi > 0:
-        llo, lhi = np.log10(lo), np.log10(hi)
-        ax.set_ylim(lo, 10 ** (llo + (lhi - llo) / (1 - reserve)))
-    else:
-        ax.set_ylim(lo, lo + (hi - lo) / (1 - reserve))
-    trans = ax.get_xaxis_transform()
-    ordered = sorted(pairs, key=lambda t: abs(positions[t[1]] - positions[t[0]]))
-    for k, (i, j, p) in enumerate(ordered):
-        y = 1 - reserve + 0.02 + k * step
-        x1, x2 = positions[i], positions[j]
-        ax.plot([x1, x1, x2, x2], [y, y + 0.02, y + 0.02, y], transform=trans,
-                color='#333333', lw=1, clip_on=False)
-        ax.text((x1 + x2) / 2, y + 0.022, _p_text(p, fmt), transform=trans,
-                ha='center', va='bottom', fontsize='small', color='#222222')
+    h, labels = ax.get_legend_handles_labels()
+    for x in extra or []:
+        if x is not None:
+            h.append(x)
+            labels.append(x.get_label())
+    if len(h) >= min_items:
+        ax.legend(h, labels, markerscale=1.4, **_legend_kwargs(panel, len(h), default_loc))
 
 
-def _style_axes(ax, panel, table, style, x_default='', y_default=''):
-    """Apply labels, limits, log scales, guide lines and grid."""
+def _style_axes(ax, panel, table, style, x_default='', y_default='', swap=False):
+    """Apply labels, limits, scales' cosmetics, guide lines, frame and ticks."""
     xl = panel.get('x_label') or (pretty(x_default, table, style) if x_default else '')
     yl = panel.get('y_label') or (pretty(y_default, table, style) if y_default else '')
+    if swap:
+        xl, yl = yl, xl
     if xl:
         ax.set_xlabel(xl)
     if yl:
@@ -466,28 +494,78 @@ def _style_axes(ax, panel, table, style, x_default='', y_default=''):
     for v in _numbers(panel.get('vlines')):
         ax.axvline(v, color='#555555', lw=1, ls='--', zorder=1)
     if panel.get('grid'):
-        ax.grid(True, color='#e5e5e5', lw=0.6, zorder=0)
+        ax.grid(True, which='major', color='#e5e5e5', lw=0.6, zorder=0)
         ax.set_axisbelow(True)
-    for side in ('top', 'right'):
-        if side == 'right' and panel.get('y2') and panel.get('kind') == 'scatter':
+    frame = panel.get('frame', 'open')
+    keep_right = bool(panel.get('y2')) and panel.get('kind') == 'scatter'
+    for side in ('top', 'right', 'left', 'bottom'):
+        if frame == 'box':
+            visible = True
+        elif frame == 'none':
+            visible = False
+        else:
+            visible = side in ('left', 'bottom') or (side == 'right' and keep_right)
+        ax.spines[side].set_visible(visible)
+    if panel.get('minor_ticks'):
+        ax.minorticks_on()
+    ax.tick_params(which='both', direction=panel.get('tick_dir') or 'out',
+                   top=frame == 'box', right=frame == 'box' and not keep_right)
+    for axis, key in (('x', 'sci_x'), ('y', 'sci_y')):
+        scale = ax.get_xscale() if axis == 'x' else ax.get_yscale()
+        if panel.get(key) and scale == 'linear':
+            ax.ticklabel_format(style='sci', axis=axis, scilimits=(0, 0), useMathText=True)
+    rot = float(panel.get('xtick_rotation') or 0)
+    if rot:
+        for t in ax.get_xticklabels():
+            t.set_rotation(rot)
+            t.set_ha('right' if 0 < rot < 90 else 'center')
+    if panel.get('aspect_equal'):
+        ax.set_aspect('equal', adjustable='datalim')
+
+
+def _annotate(ax, panel):
+    """Draw the panel's free text annotations, with optional arrows."""
+    for a in panel.get('annotations') or []:
+        text = a.get('text') or ''
+        if not text.strip():
             continue
-        ax.spines[side].set_visible(False)
+        coords = 'data' if a.get('coords') == 'data' else 'axes fraction'
+        x = _float_or_none(a.get('x'))
+        y = _float_or_none(a.get('y'))
+        if x is None or y is None:
+            continue
+        kw = {'fontsize': _float_or_none(a.get('size')) or 'medium',
+              'color': a.get('color') or '#222222',
+              'fontweight': 'bold' if a.get('bold') else 'normal',
+              'ha': 'left', 'va': 'center', 'zorder': 20}
+        if a.get('box'):
+            kw['bbox'] = {'boxstyle': 'round,pad=0.3', 'fc': 'white', 'ec': '#999999', 'lw': 0.6}
+        ax_, ay_ = _float_or_none(a.get('arrow_x')), _float_or_none(a.get('arrow_y'))
+        if ax_ is not None and ay_ is not None:
+            ax.annotate(text, xy=(ax_, ay_), xytext=(x, y), xycoords=coords,
+                        textcoords=coords, arrowprops={'arrowstyle': '->', 'color': kw['color'],
+                                                       'lw': 1}, **kw)
+        else:
+            ax.annotate(text, xy=(x, y), xycoords=coords, **kw)
 
 
-def _legend(ax, panel, handles=None, **kwargs):
-    """Add a legend when the panel has more than one labelled series."""
-    if not panel.get('legend', True):
-        return
-    h, labels = ax.get_legend_handles_labels()
-    if handles:
-        h = list(h) + [x for x in handles if x is not None]
-        labels = list(labels) + [x.get_label() for x in handles if x is not None]
-    if len(h) > 1:
-        ax.legend(h, labels, frameon=False, fontsize='small', markerscale=1.5, **kwargs)
+def _sizes(panel, table, base: float):
+    """Per-particle marker sizes from ``size_by`` (None when unused)."""
+    expr = (panel.get('size_by') or '').strip()
+    if not expr:
+        return None
+    v = evaluate(expr, table)
+    ok = np.isfinite(v)
+    if not ok.any():
+        return None
+    lo, hi = np.nanpercentile(v[ok], [2, 98])
+    span = hi - lo if hi > lo else 1.0
+    t = np.clip((np.where(ok, v, lo) - lo) / span, 0, 1)
+    return base * 0.25 + t * base * 3.5
 
 
 def _draw_scatter(fig, ax, panel, table, report, style):
-    """Scatter of X against Y, optional right-hand Y2, rules, colour scale and fit."""
+    """Scatter of X against Y with rules, colour/size scales, overlays and a right axis."""
     if not panel.get('x') or not panel.get('y'):
         raise ExpressionError('Set both X and Y expressions')
     x = evaluate(panel['x'], table)
@@ -500,7 +578,10 @@ def _draw_scatter(fig, ax, panel, table, report, style):
     groups = resolve_groups(panel, table)
     cvals = evaluate(panel['color_by'], table) if (panel.get('color_by') or '').strip() else None
     size = float(panel.get('marker_size') or 12)
+    sizes = _sizes(panel, table, size)
     alpha = float(panel.get('alpha') or 0.7)
+    marker = panel.get('marker') or 'o'
+    edge = _edge(panel) if marker not in ('+', 'x', '.') else {}
     total = 0
     mappable = None
     nz = _nonzero(panel, x, y)
@@ -511,18 +592,21 @@ def _draw_scatter(fig, ax, panel, table, report, style):
         if not m.any():
             continue
         total += int(m.sum())
-        label = f'{g.name} (n={int(m.sum())})'
+        s = sizes[m] if sizes is not None else size
         if cvals is not None:
-            mappable = ax.scatter(x[m], y[m], c=cvals[m], cmap=panel.get('colormap') or 'viridis',
-                                  s=size, alpha=alpha, linewidths=0, rasterized=True,
-                                  label=label if len(groups) > 1 else None)
+            mappable = ax.scatter(x[m], y[m], c=cvals[m], cmap=_cmap(panel), s=s, alpha=alpha,
+                                  marker=marker, rasterized=True,
+                                  label=_label_n(g, int(m.sum()), panel) if len(groups) > 1 else None,
+                                  **edge)
         else:
-            ax.scatter(x[m], y[m], color=g.color, s=size, alpha=alpha, linewidths=0,
-                       rasterized=True, label=label)
+            ax.scatter(x[m], y[m], color=g.color, s=s, alpha=alpha, marker=marker,
+                       rasterized=True, label=_label_n(g, int(m.sum()), panel), **edge)
         if panel.get('show_fit') or panel.get('show_r'):
             _fit(ax, x[m], y[m], g, panel, report, log_x, log_y)
+    _draw_series(ax, panel, table, style, log_x, log_y)
     if mappable is not None:
         cb = fig.colorbar(mappable, ax=ax, pad=0.02, fraction=0.05)
+        cb.ax.set_zorder(ax.get_zorder())
         cb.set_label(pretty(panel['color_by'], table, style))
         cb.outline.set_visible(False)
     if panel.get('diagonal'):
@@ -543,15 +627,48 @@ def _draw_scatter(fig, ax, panel, table, report, style):
         m = base & _nonzero(panel, x, y2) & _finite(x, y2, log_flags=(log_x, panel.get('log_y2')))
         color = panel.get('y2_color') or PALETTE[1]
         extra = ax2.scatter(x[m], y2[m], s=size, facecolors='none', edgecolors=color,
-                            linewidths=0.8, alpha=alpha, rasterized=True,
+                            linewidths=0.8, alpha=alpha, marker=marker if marker not in ('+', 'x', '.') else 'o',
+                            rasterized=True,
                             label=f'{pretty(panel["y2"], table, style)} (right axis)')
         ax2.set_ylabel(panel.get('y2_label') or pretty(panel['y2'], table, style), color=color)
-        ax2.tick_params(axis='y', colors=color)
+        ax2.tick_params(axis='y', colors=color, direction=panel.get('tick_dir') or 'out')
         ax2.spines['right'].set_color(color)
-        ax2.spines['top'].set_visible(False)
+        for side in ('top', 'left', 'bottom'):
+            ax2.spines[side].set_visible(False)
     report.counts[panel['id']] = total
     _style_axes(ax, panel, table, style, panel['x'], panel['y'])
     _legend(ax, panel, [extra] if extra is not None else None)
+
+
+def _draw_series(ax, panel, table, style, log_x, log_y):
+    """Extra X/Y series drawn on top of a scatter panel."""
+    pal = _palette(panel)
+    for i, s in enumerate(panel.get('series') or []):
+        xe, ye = (s.get('x') or '').strip(), (s.get('y') or '').strip()
+        if not xe or not ye:
+            continue
+        x = evaluate(xe, table)
+        y = evaluate(ye, table)
+        m = _nonzero(panel, x, y) & _finite(x, y, log_flags=(log_x, log_y))
+        if (s.get('filter') or '').strip():
+            m &= evaluate(s['filter'], table, as_mask=True)
+        if not m.any():
+            continue
+        color = s.get('color') or pal[(i + 2) % len(pal)]
+        label = s.get('label') or f'{pretty(ye, table, style)} vs {pretty(xe, table, style)}'
+        mode = s.get('style') or 'points'
+        xs, ys = x[m], y[m]
+        if mode in ('line', 'points+line'):
+            order = np.argsort(xs)
+            ax.plot(xs[order], ys[order], color=color, lw=float(panel.get('line_width') or 1.6),
+                    ls=panel.get('line_style') or '-', label=label if mode == 'line' else None,
+                    zorder=4)
+        if mode in ('points', 'points+line'):
+            mk = s.get('marker') or 'o'
+            ax.scatter(xs, ys, color=color, s=float(s.get('size') or panel.get('marker_size') or 12),
+                       marker=mk, alpha=float(panel.get('alpha') or 0.7),
+                       linewidths=1.2 if mk in ('+', 'x', '.') else 0, rasterized=True,
+                       label=f'{label} (n={xs.size})', zorder=4)
 
 
 def _fit(ax, x, y, g, panel, report, log_x, log_y):
@@ -564,7 +681,7 @@ def _fit(ax, x, y, g, panel, report, log_x, log_y):
     res = stats.linregress(fx, fy)
     rho = stats.spearmanr(fx, fy).statistic
     report.stats.append(
-        f'{g.name}: slope = {res.slope:.4g}, intercept = {res.intercept:.4g}, '
+        f'{g.label}: slope = {res.slope:.4g}, intercept = {res.intercept:.4g}, '
         f'Pearson r = {res.rvalue:.3f} (R² = {res.rvalue ** 2:.3f}, p = {res.pvalue:.3g}), '
         f'Spearman ρ = {rho:.3f}, n = {x.size}'
         + (' [fit in log space]' if (log_x or log_y) else ''))
@@ -572,13 +689,86 @@ def _fit(ax, x, y, g, panel, report, log_x, log_y):
         xs = np.linspace(fx.min(), fx.max(), 100)
         ys = res.intercept + res.slope * xs
         ax.plot(10 ** xs if log_x else xs, 10 ** ys if log_y else ys,
-                color=g.color, lw=1.6, zorder=3)
+                color=g.color, lw=float(panel.get('line_width') or 1.6),
+                ls=panel.get('line_style') or '-', zorder=3)
     if panel.get('show_r'):
         existing = sum(1 for t in ax.texts if getattr(t, '_fb_r', False))
-        t = ax.text(0.03, 0.97 - existing * 0.07, f'r = {res.rvalue:.3f}  R² = {res.rvalue ** 2:.3f}',
+        t = ax.text(0.03, 0.97 - existing * 0.07,
+                    f'r = {res.rvalue:.3f}  R² = {res.rvalue ** 2:.3f}',
                     transform=ax.transAxes, ha='left', va='top', color=g.color,
                     fontsize='small')
         t._fb_r = True
+
+
+def _bin_edges(values, bins, log):
+    """Linear or logarithmic bin edges spanning ``values``."""
+    lo, hi = float(np.min(values)), float(np.max(values))
+    if hi <= lo:
+        hi = lo + (abs(lo) * 0.1 or 1.0)
+    if log:
+        return np.logspace(np.log10(lo), np.log10(hi), bins + 1)
+    return np.linspace(lo, hi, bins + 1)
+
+
+def _draw_line(fig, ax, panel, table, report, style):
+    """Binned trend: Y aggregated in bins of X, one line per group with a band."""
+    if not (panel.get('x') or '').strip():
+        raise ExpressionError('Set the X expression (e.g. time)')
+    x = evaluate(panel['x'], table)
+    y_expr = (panel.get('y') or '').strip()
+    y = evaluate(y_expr, table) if y_expr else np.ones(len(table))
+    log_x = bool(panel.get('log_x'))
+    groups = resolve_groups(panel, table)
+    agg = panel.get('agg', 'mean') if y_expr else 'count'
+    nz = _nonzero(panel, x, y) if y_expr else _nonzero(panel, x)
+    ok = nz & _finite(x, y, log_flags=(log_x, False))
+    if ok.sum() < 2:
+        raise ExpressionError('Not enough finite values')
+    bins = max(2, int(panel.get('bins') or 40))
+    edges = _bin_edges(x[ok], bins, log_x)
+    centres = np.sqrt(edges[:-1] * edges[1:]) if log_x else (edges[:-1] + edges[1:]) / 2
+    total = 0
+    for g in groups:
+        m = g.mask & ok
+        if not m.any():
+            continue
+        total += int(m.sum())
+        idx = np.clip(np.digitize(x[m], edges) - 1, 0, bins - 1)
+        vals = y[m]
+        mid, lo, hi = np.full(bins, np.nan), np.full(bins, np.nan), np.full(bins, np.nan)
+        for b in range(bins):
+            v = vals[idx == b]
+            if agg == 'count':
+                mid[b] = v.size
+                continue
+            if v.size == 0:
+                continue
+            mid[b] = {'mean': np.mean, 'median': np.median, 'sum': np.sum}.get(agg, np.mean)(v)
+            band = panel.get('band', 'sem')
+            if v.size > 1 and band != 'none' and agg in ('mean', 'median'):
+                if band == 'iqr':
+                    lo[b], hi[b] = np.percentile(v, [25, 75])
+                else:
+                    sd = np.std(v, ddof=1)
+                    w = sd if band == 'sd' else sd / np.sqrt(v.size)
+                    lo[b], hi[b] = mid[b] - w, mid[b] + w
+        marker = panel.get('marker') if panel.get('show_points') else None
+        ax.plot(centres, mid, color=g.color, lw=float(panel.get('line_width') or 1.6),
+                ls=panel.get('line_style') or '-', marker=marker,
+                ms=np.sqrt(float(panel.get('marker_size') or 12)),
+                label=_label_n(g, int(m.sum()), panel))
+        if np.isfinite(lo).any():
+            ax.fill_between(centres, lo, hi, color=g.color, alpha=0.18, lw=0)
+    if log_x:
+        ax.set_xscale('log')
+    if panel.get('log_y'):
+        ax.set_yscale('log')
+    report.counts[panel['id']] = total
+    ylab = 'Particles per bin' if agg == 'count' else f'{agg.capitalize()} {pretty(y_expr, table, style)}'
+    _style_axes(ax, panel, table, style, panel['x'], '')
+    if not panel.get('y_label'):
+        ax.set_ylabel(ylab)
+    _legend(ax, panel)
 
 
 def _value_groups(panel, table):
@@ -596,30 +786,57 @@ def _value_groups(panel, table):
 
 
 def _draw_histogram(fig, ax, panel, table, report, style):
-    """Overlaid histograms per group with optional log binning and tests."""
+    """Overlaid histograms per group with log binning, KDE, cumulative and tests."""
+    from scipy import stats
     groups = [(g, v) for g, v in _value_groups(panel, table) if v.size]
     if not groups:
         raise ExpressionError('No finite values to plot')
     allv = np.concatenate([v for _, v in groups])
     bins = max(2, int(panel.get('bins') or 40))
-    if panel.get('log_x'):
+    log_x = bool(panel.get('log_x'))
+    edges = _bin_edges(allv, bins, log_x)
+    if log_x:
         ax.set_xscale('log')
-        edges = np.logspace(np.log10(allv.min()), np.log10(allv.max()), bins + 1)
-    else:
-        edges = np.linspace(allv.min(), allv.max(), bins + 1)
     if panel.get('log_y'):
         ax.set_yscale('log')
     filled = panel.get('hist_style', 'filled') == 'filled'
+    density = bool(panel.get('density'))
+    cumulative = bool(panel.get('cumulative'))
     for g, v in groups:
-        ax.hist(v, bins=edges, density=bool(panel.get('density')),
+        if cumulative:
+            xs = np.sort(v)
+            ys = np.arange(1, xs.size + 1, dtype=float)
+            if density:
+                ys /= xs.size
+            ax.step(np.r_[xs[0], xs], np.r_[0.0, ys], where='post', color=g.color,
+                    lw=float(panel.get('line_width') or 1.6), ls=panel.get('line_style') or '-',
+                    label=_label_n(g, v.size, panel))
+            continue
+        ax.hist(v, bins=edges, density=density,
                 histtype='stepfilled' if filled else 'step',
                 alpha=(0.55 if len(groups) > 1 else 0.85) if filled else 1.0,
                 color=g.color, edgecolor=g.color if not filled else 'white',
-                linewidth=1.4 if not filled else 0.4, label=f'{g.name} (n={v.size})')
+                linewidth=float(panel.get('line_width') or 1.4) if not filled else 0.4,
+                label=_label_n(g, v.size, panel))
+        if panel.get('kde') and v.size > 2 and not cumulative:
+            t = np.log10(v) if log_x else v
+            if np.ptp(t) > 0:
+                kde = stats.gaussian_kde(t)
+                grid = np.linspace(t.min(), t.max(), 256)
+                width = (np.log10(edges[1]) - np.log10(edges[0])) if log_x else (edges[1] - edges[0])
+                scale = 1.0 if density and not log_x else v.size * width
+                if density and log_x:
+                    scale = 1.0 / (np.log(10) * 10 ** grid)
+                yk = kde(grid) * scale
+                ax.plot(10 ** grid if log_x else grid, yk, color=g.color,
+                        lw=float(panel.get('line_width') or 1.6), ls=panel.get('line_style') or '-')
     report.counts[panel['id']] = int(allv.size)
-    _, lines = run_tests([(g.name, v) for g, v in groups], panel)
+    _, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
-    ylabel = 'Density' if panel.get('density') else 'Particle count'
+    if cumulative:
+        ylabel = 'Cumulative fraction' if density else 'Cumulative count'
+    else:
+        ylabel = 'Density' if density else 'Particle count'
     _style_axes(ax, panel, table, style, panel['value'], '')
     if not panel.get('y_label'):
         ax.set_ylabel(ylabel)
@@ -627,7 +844,7 @@ def _draw_histogram(fig, ax, panel, table, report, style):
 
 
 def _draw_distribution(fig, ax, panel, table, report, style):
-    """Box or violin plot per group, optional points and significance brackets."""
+    """Box or violin plot per group, optional points, mean, notches and brackets."""
     groups = [(g, v) for g, v in _value_groups(panel, table) if v.size]
     if not groups:
         raise ExpressionError('No finite values to plot')
@@ -647,14 +864,20 @@ def _draw_distribution(fig, ax, panel, table, report, style):
             body.set_edgecolor(g.color)
             body.set_alpha(0.55)
         parts['cmedians'].set_color('#222222')
+        if panel.get('show_mean'):
+            ax.scatter(positions, [np.mean(v) for v in plot_data], marker='D', s=22,
+                       color='white', edgecolors='#222222', zorder=4)
         if log:
             from matplotlib.ticker import FuncFormatter, MaxNLocator
             ax.yaxis.set_major_locator(MaxNLocator(integer=True))
             ax.yaxis.set_major_formatter(FuncFormatter(lambda val, _p: f'$10^{{{val:g}}}$'))
     else:
         bp = ax.boxplot(data, positions=positions, widths=0.6, patch_artist=True,
+                        notch=bool(panel.get('notch')), showmeans=bool(panel.get('show_mean')),
                         showfliers=not panel.get('show_points'),
                         medianprops={'color': '#222222', 'lw': 1.4},
+                        meanprops={'marker': 'D', 'markerfacecolor': 'white',
+                                   'markeredgecolor': '#222222', 'markersize': 5},
                         flierprops={'marker': '.', 'markersize': 3, 'alpha': 0.4})
         for box, (g, _) in zip(bp['boxes'], groups):
             box.set_facecolor(g.color)
@@ -668,31 +891,40 @@ def _draw_distribution(fig, ax, panel, table, report, style):
             ax.scatter(pos + jitter, vv, s=4, color=g.color, alpha=0.35, linewidths=0,
                        rasterized=True, zorder=3)
     ax.set_xticks(positions)
-    ax.set_xticklabels([f'{g.name}\n(n={v.size})' for g, v in groups])
+    ax.set_xticklabels([f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label
+                        for g, v in groups])
     report.counts[panel['id']] = int(sum(v.size for v in data))
-    pairs, lines = run_tests([(g.name, v) for g, v in groups], panel)
+    pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
     _style_axes(ax, panel, table, style, '', panel['value'])
-    _draw_brackets(ax, pairs, positions, panel)
+    draw_brackets(ax, pairs, positions, panel)
 
 
 def _draw_bar(fig, ax, panel, table, report, style):
-    """Grouped bars: one cluster per group, one bar per value expression."""
+    """Grouped, stacked or horizontal bars: clusters per group, bars per value."""
     exprs = split_list(panel.get('value'))
     if not exprs:
         raise ExpressionError('Set one or more Value expressions (comma separated)')
     groups = resolve_groups(panel, table)
+    if not groups:
+        raise ExpressionError('Every group is hidden')
     agg = panel.get('agg', 'mean')
     err = panel.get('error', 'sd')
     log = bool(panel.get('log_y'))
-    width = 0.8 / len(exprs)
+    horizontal = bool(panel.get('horizontal'))
+    stacked = bool(panel.get('stacked')) and len(exprs) > 1
+    pal = _palette(panel)
+    width = 0.8 if stacked else 0.8 / len(exprs)
     positions = np.arange(len(groups), dtype=float)
-    per_group_values = [[] for _ in groups]
+    per_group_values = [np.array([]) for _ in groups]
+    bottoms = np.zeros(len(groups))
     for k, expr in enumerate(exprs):
         v = evaluate(expr, table)
         heights, errs = [], []
         for gi, g in enumerate(groups):
             vals = v[g.mask & np.isfinite(v)]
+            if panel.get('drop_zeros', True) and agg in ('mean', 'median'):
+                vals = vals[vals != 0]
             if k == 0:
                 per_group_values[gi] = vals
             if agg == 'count':
@@ -709,45 +941,60 @@ def _draw_bar(fig, ax, panel, table, report, style):
                 continue
             centre = float(np.median(vals) if agg == 'median' else np.mean(vals))
             heights.append(centre)
-            if err == 'sd':
-                errs.append(float(np.std(vals, ddof=1)) if vals.size > 1 else 0.0)
-            elif err == 'sem':
-                errs.append(float(np.std(vals, ddof=1) / np.sqrt(vals.size)) if vals.size > 1 else 0.0)
-            elif err == 'ci95':
-                errs.append(float(1.96 * np.std(vals, ddof=1) / np.sqrt(vals.size)) if vals.size > 1 else 0.0)
-            else:
-                errs.append(0.0)
-        offs = positions - 0.4 + width * (k + 0.5)
+            sd = float(np.std(vals, ddof=1)) if vals.size > 1 else 0.0
+            errs.append({'sd': sd, 'sem': sd / np.sqrt(vals.size),
+                         'ci95': 1.96 * sd / np.sqrt(vals.size)}.get(err, 0.0))
+        offs = positions if stacked else positions - 0.4 + width * (k + 0.5)
         if len(exprs) == 1:
             colors = [g.color for g in groups]
             label = None
         else:
-            colors = PALETTE[k % len(PALETTE)]
+            colors = pal[k % len(pal)]
             label = pretty(expr, table, style)
-        show_err = agg in ('mean', 'median') and err != 'none'
-        ax.bar(offs, heights, width=width * 0.92, color=colors, label=label,
-               yerr=errs if show_err else None, capsize=3 if show_err else 0,
-               error_kw={'elinewidth': 1, 'ecolor': '#333333'}, zorder=2)
-    if log:
-        ax.set_yscale('log')
-    ax.set_xticks(positions)
-    ax.set_xticklabels([g.name for g in groups])
+        show_err = agg in ('mean', 'median') and err != 'none' and not stacked
+        heights = np.asarray(heights, dtype=float)
+        kw = dict(color=colors, label=label, zorder=2,
+                  edgecolor=panel.get('edge_color') if float(panel.get('edge_width') or 0) > 0 else None,
+                  linewidth=float(panel.get('edge_width') or 0),
+                  error_kw={'elinewidth': 1, 'ecolor': '#333333'},
+                  capsize=3 if show_err else 0)
+        if horizontal:
+            ax.barh(offs, heights, height=width * 0.92, left=bottoms if stacked else None,
+                    xerr=errs if show_err else None, **kw)
+        else:
+            ax.bar(offs, heights, width=width * 0.92, bottom=bottoms if stacked else None,
+                   yerr=errs if show_err else None, **kw)
+        if stacked:
+            bottoms = bottoms + np.nan_to_num(heights)
+    names = [g.label for g in groups]
+    if horizontal:
+        ax.set_yticks(positions)
+        ax.set_yticklabels(names)
+        ax.invert_yaxis()
+        if log:
+            ax.set_xscale('log')
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels(names)
+        if log:
+            ax.set_yscale('log')
     report.counts[panel['id']] = int(sum(v.size for v in per_group_values))
-    ylab = {'count': 'Particle count', 'sum': 'Sum', 'median': 'Median', 'mean': 'Mean'}[agg]
+    vlab = {'count': 'Particle count', 'sum': 'Sum', 'median': 'Median', 'mean': 'Mean'}[agg]
     if len(exprs) == 1 and agg != 'count':
-        ylab = f'{ylab} {pretty(exprs[0], table, style)}'
-    _style_axes(ax, panel, table, style)
+        vlab = f'{vlab} {pretty(exprs[0], table, style)}'
+    _style_axes(ax, panel, table, style, swap=horizontal)
     if not panel.get('y_label'):
-        ax.set_ylabel(ylab)
-    if len(exprs) == 1 and agg in ('mean', 'median'):
-        pairs, lines = run_tests([(g.name, v) for g, v in zip(groups, per_group_values)], panel)
+        (ax.set_xlabel if horizontal else ax.set_ylabel)(vlab)
+    if len(exprs) == 1 and agg in ('mean', 'median') and not horizontal:
+        pairs, lines = run_tests([(g.label, v) for g, v in zip(groups, per_group_values)], panel)
         report.stats.extend(lines)
-        _draw_brackets(ax, pairs, list(positions), panel)
+        draw_brackets(ax, pairs, list(positions), panel)
     _legend(ax, panel)
 
 
 def _draw_pie(fig, ax, panel, table, report, style):
     """Pie or donut of particle counts per group, or of summed values."""
+    pal = _palette(panel)
     if panel.get('pie_mode') == 'values':
         exprs = split_list(panel.get('value'))
         if not exprs:
@@ -760,12 +1007,12 @@ def _draw_pie(fig, ax, panel, table, report, style):
             v = evaluate(expr, table)
             sizes.append(float(np.nansum(np.where(base & np.isfinite(v), v, 0))))
             labels.append(pretty(expr, table, style))
-            colors.append(PALETTE[k % len(PALETTE)])
+            colors.append(pal[k % len(pal)])
         report.counts[panel['id']] = int(base.sum())
     else:
         groups = resolve_groups(panel, table)
         sizes = [float(g.mask.sum()) for g in groups]
-        labels = [g.name for g in groups]
+        labels = [g.label for g in groups]
         colors = [g.color for g in groups]
         report.counts[panel['id']] = int(sum(sizes))
     keep = [i for i, s in enumerate(sizes) if s > 0]
@@ -774,23 +1021,27 @@ def _draw_pie(fig, ax, panel, table, report, style):
     sizes = [sizes[i] for i in keep]
     labels = [labels[i] for i in keep]
     colors = [colors[i] for i in keep]
-    wedge = {'width': 0.42, 'edgecolor': 'white', 'linewidth': 2} if panel.get('donut') \
-        else {'edgecolor': 'white', 'linewidth': 2}
+    edge = panel.get('edge_color') or 'white'
+    lw = float(panel.get('edge_width') or 0) or 2
+    wedge = {'edgecolor': edge, 'linewidth': lw}
+    if panel.get('donut'):
+        wedge['width'] = 0.42
     wedges, _t, autotexts = ax.pie(
         sizes, colors=colors, autopct=lambda pct: f'{pct:.1f}%' if pct >= 3 else '',
         startangle=90, counterclock=False, wedgeprops=wedge,
         pctdistance=0.79 if panel.get('donut') else 0.62, textprops={'fontsize': 'small'})
+    from matplotlib import patheffects
     for t in autotexts:
-        t.set_color('white')
+        t.set_color('#1f2937')
         t.set_fontweight('bold')
+        t.set_path_effects([patheffects.withStroke(linewidth=2.5, foreground='white')])
     ax.set_aspect('equal')
+    if panel.get('title'):
+        ax.set_title(panel['title'])
     if panel.get('legend', True):
         total = float(sum(sizes))
         ax.legend(wedges, [f'{lab} ({100 * s / total:.1f}%)' for lab, s in zip(labels, sizes)],
-                  loc='upper center', bbox_to_anchor=(0.5, 0.0), ncol=min(2, len(labels)),
-                  frameon=False, fontsize='small', handlelength=1.0)
-    if panel.get('title'):
-        ax.set_title(panel['title'])
+                  handlelength=1.0, **_legend_kwargs(panel, len(labels), 'below'))
 
 
 def _draw_density(fig, ax, panel, table, report, style):
@@ -809,17 +1060,14 @@ def _draw_density(fig, ax, panel, table, report, style):
         raise ExpressionError('Not enough finite points')
     xs, ys = x[m], y[m]
     bins = max(4, int(panel.get('bins') or 40))
-    xe = np.logspace(np.log10(xs.min()), np.log10(xs.max()), bins + 1) if log_x \
-        else np.linspace(xs.min(), xs.max(), bins + 1)
-    ye = np.logspace(np.log10(ys.min()), np.log10(ys.max()), bins + 1) if log_y \
-        else np.linspace(ys.min(), ys.max(), bins + 1)
-    _, _, _, img = ax.hist2d(xs, ys, bins=[xe, ye], cmap=panel.get('colormap') or 'viridis',
-                             norm=LogNorm(), rasterized=True)
+    _, _, _, img = ax.hist2d(xs, ys, bins=[_bin_edges(xs, bins, log_x), _bin_edges(ys, bins, log_y)],
+                             cmap=_cmap(panel), norm=LogNorm(), rasterized=True)
     if log_x:
         ax.set_xscale('log')
     if log_y:
         ax.set_yscale('log')
     cb = fig.colorbar(img, ax=ax, pad=0.02, fraction=0.05)
+    cb.ax.set_zorder(ax.get_zorder())
     cb.set_label('Particles per bin')
     cb.outline.set_visible(False)
     report.counts[panel['id']] = int(m.sum())
@@ -834,15 +1082,17 @@ def _draw_ternary(fig, ax, panel, table, report, style):
     s = a + b + c
     groups = resolve_groups(panel, table)
     size = float(panel.get('marker_size') or 12)
+    marker = panel.get('marker') or 'o'
     total = 0
     for g in groups:
         m = g.mask & _finite(a, b, c) & (s > 0)
         if not m.any():
             continue
         total += int(m.sum())
-        ax.scatter(a[m] / s[m], b[m] / s[m], c[m] / s[m], s=size, color=g.color,
-                   alpha=float(panel.get('alpha') or 0.7), linewidths=0,
-                   label=f'{g.name} (n={int(m.sum())})', rasterized=True)
+        ax.scatter(a[m] / s[m], b[m] / s[m], c[m] / s[m], s=size, color=g.color, marker=marker,
+                   alpha=float(panel.get('alpha') or 0.7), rasterized=True,
+                   label=_label_n(g, int(m.sum()), panel),
+                   **(_edge(panel) if marker not in ('+', 'x', '.') else {}))
     ax.set_tlabel(pretty(panel['a'], table, style))
     ax.set_llabel(pretty(panel['b'], table, style))
     ax.set_rlabel(pretty(panel['c'], table, style))
@@ -851,14 +1101,17 @@ def _draw_ternary(fig, ax, panel, table, report, style):
     if panel.get('title'):
         ax.set_title(panel['title'], pad=24)
     report.counts[panel['id']] = total
-    _legend(ax, panel, loc='upper left', bbox_to_anchor=(-0.08, 1.12))
+    _legend(ax, panel, default_loc='ternary')
 
 
 def _draw_text(fig, ax, panel, table, report, style):
     """A free text block, e.g. a caption or a method note."""
     ax.axis('off')
+    size = _float_or_none(panel.get('text_size')) or None
     ax.text(0.02, 0.98, panel.get('text') or '', transform=ax.transAxes,
-            ha='left', va='top', wrap=True)
+            ha='left', va='top', wrap=True, fontsize=size)
+    if panel.get('title'):
+        ax.set_title(panel['title'])
 
 
 def _draw_code(fig, ax, panel, table, report, style):
@@ -870,12 +1123,13 @@ def _draw_code(fig, ax, panel, table, report, style):
         raise ExpressionError('Write some Python in the code box (see the example)')
     df = table.dataframe()
     groups = resolve_groups(panel, table)
+    pal = _palette(panel)
     ns = {
         'ax': ax, 'fig': fig, 'np': np, 'pd': pd, 'stats': stats,
         'df': df, 'labels': list(table.labels),
-        'groups': {g.name: df[g.mask] for g in groups},
-        'group_colors': {g.name: g.color for g in groups},
-        'color': lambda i: PALETTE[int(i) % len(PALETTE)],
+        'groups': {g.label: df[g.mask] for g in groups},
+        'group_colors': {g.label: g.color for g in groups},
+        'color': lambda i: pal[int(i) % len(pal)],
         'col': lambda expr: evaluate(expr, table),
         'report': report.stats.append,
     }
@@ -885,6 +1139,7 @@ def _draw_code(fig, ax, panel, table, report, style):
 
 DRAWERS = {
     'scatter': _draw_scatter,
+    'line': _draw_line,
     'histogram': _draw_histogram,
     'box': _draw_distribution,
     'violin': _draw_distribution,
@@ -897,11 +1152,15 @@ DRAWERS = {
 }
 
 
-def _inner_rect(rect, fig_w, fig_h, kind, has_y2, has_title, has_cbar):
-    """Inset a drawn panel rectangle to leave room for ticks and labels.
+def _inner_rect(rect, fig_w, fig_h, panel):
+    """Inset a drawn panel rectangle to leave room for ticks, labels and legends.
 
     Returns matplotlib ``[left, bottom, width, height]`` in figure fractions.
     """
+    kind = panel.get('kind', 'scatter')
+    has_title = bool(panel.get('title'))
+    has_y2 = kind == 'scatter' and bool((panel.get('y2') or '').strip())
+    has_cbar = kind == 'density' or (kind == 'scatter' and bool((panel.get('color_by') or '').strip()))
     x, y, w, h = rect
     if kind == 'pie':
         ml, mr, mb, mt = 0.15, 0.15, 0.6, 0.35 if has_title else 0.15
@@ -914,6 +1173,20 @@ def _inner_rect(rect, fig_w, fig_h, kind, has_y2, has_title, has_cbar):
         mr = 0.75 if has_y2 else 0.2
         mr += 0.7 if has_cbar else 0.0
         mt = 0.4 if has_title else 0.18
+        if float(panel.get('xtick_rotation') or 0):
+            mb += 0.35
+        if kind in ('box', 'violin') and panel.get('show_n', True):
+            mb += 0.15
+        if kind == 'bar' and panel.get('horizontal'):
+            ml += 0.5
+    if panel.get('legend', True) and kind not in ('text', 'code'):
+        loc = panel.get('legend_loc')
+        if loc == 'outside right':
+            mr += 1.5
+        elif loc == 'below' and kind != 'pie':
+            mb += 0.55
+        elif loc == 'above':
+            mt += 0.45
     left = x + ml / fig_w
     right = x + w - mr / fig_w
     bottom = 1 - (y + h) + mb / fig_h
@@ -927,71 +1200,55 @@ def _inner_rect(rect, fig_w, fig_h, kind, has_y2, has_title, has_cbar):
     return [left, bottom, right - left, top - bottom]
 
 
-def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
-    """Draw ``spec`` onto ``fig`` (which is cleared first).
+def _fit_outside_legend(fig, ax, rect):
+    """Shrink the axes until a legend placed outside them fits in the panel.
 
-    Args:
-        fig: A :class:`matplotlib.figure.Figure`.
-        spec: Figure Builder spec (normalised internally).
-        table: Particle columns from the upstream stream.
-
-    Returns:
-        RenderReport: statistics lines, per-panel errors and counts.
+    When the legend is so wide that the plot would become unreadably small,
+    the legend is moved back inside the plot instead.
     """
-    import matplotlib
-    spec = normalise_spec(spec)
-    figcfg = spec['figure']
-    report = RenderReport()
-    fig.clear()
-    fw, fh = float(figcfg['width']), float(figcfg['height'])
-    fig.set_size_inches(fw, fh, forward=False)
-    fig.set_facecolor(figcfg.get('background') or '#ffffff')
-    style = figcfg.get('label_style', 'isotope')
-    ensure_ternary_projection()
-    rc = {
-        'font.family': [figcfg.get('font_family') or 'DejaVu Sans', 'DejaVu Sans'],
-        'font.size': float(figcfg.get('font_size') or 11),
-        'mathtext.default': 'regular',
-        'axes.titlesize': 'medium',
-        'axes.titleweight': 'bold',
-        'axes.linewidth': 0.8,
-        'legend.frameon': False,
-    }
-    with matplotlib.rc_context(rc):
-        if figcfg.get('title'):
-            fig.suptitle(figcfg['title'], fontweight='bold')
-        for index, panel in enumerate(spec['panels']):
-            kind = panel.get('kind', 'scatter')
-            rect = panel.get('rect') or [0, 0, 1, 1]
-            has_cbar = kind == 'density' or (kind == 'scatter' and bool((panel.get('color_by') or '').strip()))
-            inner = _inner_rect(rect, fw, fh, kind,
-                                kind == 'scatter' and bool((panel.get('y2') or '').strip()),
-                                bool(panel.get('title')), has_cbar)
-            if index:
-                from matplotlib.patches import Rectangle
-                fig.add_artist(Rectangle((rect[0], 1 - rect[1] - rect[3]), rect[2], rect[3],
-                                         transform=fig.transFigure, zorder=index + 0.5,
-                                         facecolor=figcfg.get('background') or '#ffffff',
-                                         edgecolor='none'))
-            ax = fig.add_axes(inner, projection='ternary' if kind == 'ternary' else None)
-            ax.set_zorder(index + 1)
-            ax.set_facecolor('white')
-            try:
-                if len(table) == 0 and kind not in ('text', 'code'):
-                    raise ExpressionError('No particles: connect a sample or filter node')
-                DRAWERS.get(kind, _draw_scatter)(fig, ax, panel, table, report, style)
-            except Exception as exc:
-                report.errors[panel['id']] = str(exc)
-                ax.cla()
-                ax.axis('off')
-                ax.text(0.5, 0.5, f'⚠ {exc}', transform=ax.transAxes, ha='center',
-                        va='center', color='#b42318', wrap=True, fontsize='small')
-            if figcfg.get('panel_letters') and len(spec['panels']) > 1:
-                fig.text(rect[0] + 0.06 / fw, 1 - rect[1] - 0.06 / fh,
-                         panel_letter(index, figcfg.get('letter_style', 'a')),
-                         ha='left', va='top', fontweight='bold',
-                         fontsize=float(figcfg.get('font_size') or 11) + 3, zorder=100)
-    return report
+    leg = ax.get_legend()
+    if leg is None or leg.get_bbox_to_anchor() is None:
+        return
+    canvas = fig.canvas
+    if not hasattr(canvas, 'get_renderer'):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        canvas = FigureCanvasAgg(fig)
+    renderer = canvas.get_renderer()
+    right = rect[0] + rect[2]
+    bottom, top = 1 - rect[1] - rect[3], 1 - rect[1]
+    original = ax.get_position()
+    partners = [o for o in fig.axes if o is not ax and abs(o.get_zorder() - ax.get_zorder()) < 0.5
+                and getattr(o, '_colorbar', None) is None]
+    for _ in range(4):
+        box = leg.get_window_extent(renderer).transformed(fig.transFigure.inverted())
+        pos = ax.get_position()
+        dx = max(0.0, box.x1 - (right - 0.005))
+        dy_low = max(0.0, (bottom + 0.005) - box.y0)
+        dy_high = max(0.0, box.y1 - (top - 0.005))
+        if dx <= 1e-4 and dy_low <= 1e-4 and dy_high <= 1e-4:
+            return
+        w = pos.width - dx
+        y0, h = pos.y0, pos.height
+        if dy_low > 1e-4:
+            y0 += dy_low
+            h -= dy_low
+        if dy_high > 1e-4:
+            h -= dy_high
+        if w < 0.4 * original.width or h < 0.4 * original.height:
+            break
+        for a in [ax] + partners:
+            a.set_position([pos.x0, y0, w, h])
+    else:
+        return
+    for a in [ax] + partners:
+        a.set_position(original)
+    handles = list(getattr(leg, 'legend_handles', None) or getattr(leg, 'legendHandles', []))
+    labels = [t.get_text() for t in leg.get_texts()]
+    title = leg.get_title().get_text()
+    size = leg.get_texts()[0].get_fontsize() if labels else None
+    leg.remove()
+    ax.legend(handles, labels, loc='best', frameon=False, fontsize=size,
+              title=title or None)
 
 
 def ensure_ternary_projection():
@@ -1002,3 +1259,95 @@ def ensure_ternary_projection():
         return True
     except Exception:
         return False
+
+
+def render(fig, spec: dict, table: ParticleTable) -> RenderReport:
+    """Draw ``spec`` onto ``fig`` (which is cleared first).
+
+    Args:
+        fig: A :class:`matplotlib.figure.Figure`.
+        spec: Figure Builder spec (normalised internally, never modified).
+        table: Particle columns from the upstream stream; the spec's
+            variables are installed on it.
+
+    Returns:
+        RenderReport: statistics lines, per-panel errors and counts.
+    """
+    import matplotlib
+    from matplotlib.patches import Rectangle
+    spec = normalise_spec(spec)
+    figcfg = spec['figure']
+    report = RenderReport()
+    report.variable_errors = table.set_variables(spec.get('variables'))
+    fig.clear()
+    fw, fh = float(figcfg['width']), float(figcfg['height'])
+    fig.set_size_inches(fw, fh, forward=False)
+    bg = figcfg.get('background') or '#ffffff'
+    fig.set_facecolor(bg)
+    style = figcfg.get('label_style', 'isotope')
+    pal = palette_colors(figcfg.get('palette'))
+    ensure_ternary_projection()
+    fs = float(figcfg.get('font_size') or 11)
+    lw = float(figcfg.get('axes_linewidth') or 0.8)
+    rc = {
+        'font.family': [figcfg.get('font_family') or 'DejaVu Sans', 'DejaVu Sans'],
+        'font.size': fs,
+        'axes.titlesize': float(figcfg.get('title_size') or fs * 1.05),
+        'axes.labelsize': float(figcfg.get('label_size') or fs),
+        'xtick.labelsize': float(figcfg.get('tick_size') or fs * 0.9),
+        'ytick.labelsize': float(figcfg.get('tick_size') or fs * 0.9),
+        'mathtext.default': 'regular',
+        'axes.titleweight': 'bold',
+        'axes.linewidth': lw,
+        'xtick.major.width': lw,
+        'ytick.major.width': lw,
+        'xtick.minor.width': lw * 0.7,
+        'ytick.minor.width': lw * 0.7,
+        'legend.frameon': False,
+    }
+    font_log = logging.getLogger('matplotlib.font_manager')
+    previous = font_log.level
+    font_log.setLevel(logging.ERROR)
+    try:
+        with matplotlib.rc_context(rc):
+            if figcfg.get('title'):
+                fig.suptitle(figcfg['title'], fontweight='bold')
+            for index, panel in enumerate(spec['panels']):
+                panel['_palette'] = pal
+                _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle)
+    finally:
+        font_log.setLevel(previous)
+    return report
+
+
+def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rectangle):
+    """Draw one panel, catching its errors so the rest of the figure survives."""
+    figcfg = spec['figure']
+    kind = panel.get('kind', 'scatter')
+    rect = panel.get('rect') or [0, 0, 1, 1]
+    if index:
+        fig.add_artist(Rectangle((rect[0], 1 - rect[1] - rect[3]), rect[2], rect[3],
+                                 transform=fig.transFigure, zorder=index + 0.5,
+                                 facecolor=bg, edgecolor='none'))
+    inner = _inner_rect(rect, fw, fh, panel)
+    report.axes[panel['id']] = inner
+    ax = fig.add_axes(inner, projection='ternary' if kind == 'ternary' else None)
+    ax.set_zorder(index + 1)
+    ax.set_facecolor(panel.get('panel_bg') or '#ffffff')
+    try:
+        if len(table) == 0 and kind not in ('text', 'code'):
+            raise ExpressionError('No particles: connect a sample or filter node')
+        DRAWERS.get(kind, _draw_scatter)(fig, ax, panel, table, report, style)
+        _annotate(ax, panel)
+        _fit_outside_legend(fig, ax, rect)
+    except Exception as exc:
+        report.errors[panel['id']] = str(exc)
+        ax.cla()
+        ax.axis('off')
+        ax.text(0.5, 0.5, f'⚠ {exc}', transform=ax.transAxes, ha='center',
+                va='center', color='#b42318', wrap=True, fontsize='small')
+    if figcfg.get('panel_letters') and len(spec['panels']) > 1:
+        size = float(figcfg.get('letter_size') or 0) or float(figcfg.get('font_size') or 11) + 3
+        fig.text(rect[0] + 0.06 / fw, 1 - rect[1] - 0.06 / fh,
+                 panel_letter(index, figcfg.get('letter_style', 'a')),
+                 ha='left', va='top', fontweight='bold', fontsize=size, zorder=100)

@@ -108,9 +108,9 @@ def test_class_groups_use_classifier_colors(table):
 
 
 def test_holm_correction_is_monotone():
-    adj = E._correct([0.01, 0.04, 0.03], 'holm')
+    adj = E.correct([0.01, 0.04, 0.03], 'holm')
     assert adj == pytest.approx([0.03, 0.06, 0.06])
-    assert E._correct([0.2, 0.3], 'bonferroni') == pytest.approx([0.4, 0.6])
+    assert E.correct([0.2, 0.3], 'bonferroni') == pytest.approx([0.4, 0.6])
 
 
 def _render(spec, table):
@@ -218,3 +218,178 @@ def test_dialog_draws_panel_with_mouse():
     assert dlg._last_report.errors == {}
     assert dlg.export_bytes('png', 50)[:4] == b'\x89PNG'
     dlg.close()
+
+
+def test_variables_are_usable_and_validated(table):
+    problems = table.set_variables([
+        {'name': 'agfe', 'expr': 'Ag/Fe'},
+        {'name': 'twice', 'expr': 'agfe * 2'},
+        {'name': 'loop', 'expr': 'loop + 1'},
+        {'name': 'Ag', 'expr': '1'},
+        {'name': '1bad', 'expr': 'Ag'},
+    ])
+    assert set(problems) == {'loop', 'Ag', '1bad'}
+    assert np.allclose(evaluate('twice', table), 2 * evaluate('Ag', table) / evaluate('Fe', table))
+    assert 'agfe' in table.dataframe().columns
+
+
+def test_render_installs_spec_variables(table):
+    spec = E.default_spec()
+    spec['variables'] = [{'name': 'r', 'expr': 'Ag/Fe'}, {'name': 'oops', 'expr': 'Zn'}]
+    spec['panels'] = [E.make_panel(kind='histogram', value='r', log_x=True)]
+    report = _render(spec, table)
+    assert report.errors == {}
+    assert list(report.variable_errors) == ['oops']
+
+
+def test_group_overrides(table):
+    panel = E.make_panel(group_by='sample', hidden_groups=['AgAu'],
+                         group_labels={'Blank': 'Procedural blank'},
+                         group_colors={'Blank': '#000000'}, group_order=['Ag NP', 'Blank'])
+    groups = E.resolve_groups(panel, table)
+    assert [g.label for g in groups] == ['Ag NP', 'Procedural blank']
+    assert groups[1].color == '#000000' and groups[1].key == 'Blank'
+
+
+def test_palette_drives_group_colours(table):
+    from results.figure_builder import styles as S
+    spec = E.default_spec()
+    spec['figure']['palette'] = 'Tableau'
+    spec['panels'] = [E.make_panel(kind='box', value='Ag', group_by='sample')]
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    E.render(fig, spec, table)
+    from matplotlib.colors import to_hex
+    faces = [to_hex(p.get_facecolor(), keep_alpha=False) for p in fig.axes[0].patches]
+    assert faces[:3] == [c.lower() for c in S.PALETTES['Tableau'][:3]]
+
+
+@pytest.mark.parametrize('panel', [
+    dict(kind='line', x='time', y='Ag', group_by='sample', band='sd', show_points=True),
+    dict(kind='line', x='time', bins=20),
+    dict(kind='histogram', value='Ag', log_x=True, kde=True, density=True),
+    dict(kind='histogram', value='Ag', cumulative=True, group_by='sample'),
+    dict(kind='bar', value='Ag, Au', group_by='sample', stacked=True, horizontal=True),
+    dict(kind='bar', value='Ag', group_by='class', horizontal=True, log_y=True),
+    dict(kind='box', value='Ag', group_by='sample', notch=True, show_mean=True, hide_ns=True,
+         test='welch', xtick_rotation=45, show_n=False),
+    dict(kind='violin', value='Ag', group_by='sample', show_mean=True),
+    dict(kind='scatter', x='Ag', y='Fe', size_by='Au', marker='D', edge_width=0.5,
+         frame='box', tick_dir='in', minor_ticks=True, sci_x=True, sci_y=True,
+         legend_loc='outside right', group_by='sample', aspect_equal=True,
+         series=[{'label': 's', 'x': 'Ag', 'y': 'Au', 'filter': 'Au > 0', 'style': 'points+line',
+                  'marker': 'x', 'size': 10}],
+         annotations=[{'text': 'here', 'x': '0.1', 'y': '0.9', 'arrow_x': '0.5',
+                       'arrow_y': '0.5', 'box': True, 'bold': True},
+                      {'text': 'data', 'x': '100', 'y': '50', 'coords': 'data'}]),
+    dict(kind='scatter', x='Ag', y='Fe', legend_loc='below', group_by='class', frame='none'),
+    dict(kind='pie', group_by='sample', legend_loc='outside right', edge_width=1.0),
+    dict(kind='density', x='Ag', y='Fe', reverse_cmap=True, colormap='magma'),
+    dict(kind='text', text='Caption', text_size=14, title='Notes'),
+])
+def test_v2_options_render(table, panel):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(**panel)]
+    report = _render(spec, table)
+    assert report.errors == {}
+
+
+@pytest.mark.parametrize('name', ['Long blank', 'A very long procedural blank name, batch 2026'])
+def test_outside_legend_fits_inside_panel(table, name):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(rect=[0, 0, 0.5, 1], kind='scatter', x='Ag', y='Fe',
+                                   group_by='sample', legend_loc='outside right',
+                                   group_labels={'Blank': name})]
+    fig = Figure()
+    canvas = FigureCanvasAgg(fig)
+    E.render(fig, spec, table)
+    canvas.draw()
+    leg = fig.axes[0].get_legend()
+    box = leg.get_window_extent(canvas.get_renderer()).transformed(fig.transFigure.inverted())
+    assert box.x1 <= 0.5 + 1e-3
+    assert fig.axes[0].get_position().width > 0.15
+
+
+def test_style_presets_and_strip():
+    from results.figure_builder import styles as S
+    spec = E.apply_template(E.default_spec(), '2 × 2')
+    for name in S.STYLE_PRESETS:
+        styled = S.apply_style_preset(spec, name)
+        assert styled['panels'][0]['id'] == spec['panels'][0]['id']
+    pres = S.apply_style_preset(spec, 'Presentation')
+    assert pres['figure']['font_size'] == 16
+    assert all(p['grid'] for p in pres['panels'])
+    small = E.strip_spec(pres)
+    assert 'marker' not in small['panels'][0]
+    assert E.normalise_spec(small)['figure']['font_size'] == 16
+
+
+def test_summary_frame(table):
+    from results.figure_builder.dataview import summary_frame
+    df = summary_frame(table, 'sample')
+    row = df[(df['group'] == 'Blank') & (df['column'] == '197Au')].iloc[0]
+    assert row['particles'] == 200 and row['detected'] == 100
+
+
+@pytest.fixture
+def dialog(monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from results.figure_builder import dialog as D
+    monkeypatch.setattr(D, 'SETTINGS', ('IsotopeTrackTests', 'FigureBuilderTests'))
+    node = D.FigureBuilderNode()
+    node.process_data(make_input(classifier=True))
+    dlg = D.FigureBuilderDialog(node)
+    dlg.resize(1300, 850)
+    dlg.show()
+    yield dlg
+    from PySide6.QtCore import QSettings
+    QSettings('IsotopeTrackTests', 'FigureBuilderTests').clear()
+    dlg.close()
+
+
+def test_dialog_undo_redo_and_add_panel(dialog):
+    dialog._render()
+    before = len(dialog.spec['panels'])
+    dialog.add_panel('histogram')
+    dialog._render()
+    assert len(dialog.spec['panels']) == before + 1
+    assert dialog.spec['panels'][-1]['value'] == '107Ag'
+    dialog.undo()
+    assert len(dialog.spec['panels']) == before
+    assert dialog.node.config is dialog.spec
+    dialog.redo()
+    assert len(dialog.spec['panels']) == before + 1
+
+
+def test_dialog_designs_round_trip(dialog):
+    dialog._apply_style('Presentation')
+    dialog.spec['variables'] = [{'name': 'r', 'expr': 'Ag/Fe'}]
+    designs = dialog.saved_designs()
+    designs['mine'] = E.strip_spec(dialog.spec)
+    dialog._store_designs(designs)
+    dialog._load_spec(E.default_spec())
+    assert dialog.spec['figure']['font_size'] == 11
+    dialog.apply_design(dialog.saved_designs()['mine'])
+    assert dialog.spec['figure']['font_size'] == 16
+    assert dialog.spec['variables'] == [{'name': 'r', 'expr': 'Ag/Fe'}]
+    dialog._render()
+    assert dialog._last_report.errors == {}
+
+
+def test_dialog_preview_click_selects_panel(dialog):
+    dialog._apply_template('Side by side')
+    right = dialog.spec['panels'][1]['id']
+    dialog._on_preview_click(0.8, 0.5)
+    assert dialog.sketch.selected == right
+    assert dialog.editor.panel is dialog.spec['panels'][1]
+
+
+def test_dialog_variables_tab(dialog):
+    dialog.var_table.set_rows([{'name': 'agfe', 'expr': 'Ag/Fe'}])
+    dialog._on_variables()
+    assert dialog.spec['variables'] == [{'name': 'agfe', 'expr': 'Ag/Fe'}]
+    assert 'agfe' in dialog.table.names()
+    dialog.spec['panels'][0]['y'] = 'agfe'
+    dialog._render()
+    assert dialog._last_report.errors == {}
