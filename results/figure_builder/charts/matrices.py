@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    base_mask, bin_edges, cmap_name, finite_mask, handles, item_exprs, item_label,
+    add_colorbar, base_mask, bin_edges, cmap_name, finite_mask, handles, item_exprs, item_label,
     resolve_groups)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, plain, split_symbol
 
@@ -50,13 +50,7 @@ def _matrix_ticks(ax, panel, rows, cols):
 
 def _colorbar(fig, ax, img, panel, report, label):
     """Attach a colour bar to ``ax`` and record it for text styling."""
-    cb = fig.colorbar(img, ax=ax, pad=0.02, fraction=0.05)
-    cb.ax.set_zorder(ax.get_zorder())
-    cb.outline.set_linewidth(0.6)
-    cb.ax.tick_params(direction='out', length=3, width=0.6)
-    cb.set_label(panel.get('cbar_label') or label)
-    handles(report, panel)['cbar'] = cb
-    return cb
+    return add_colorbar(fig, ax, img, panel, report, label)
 
 
 def _stars(p):

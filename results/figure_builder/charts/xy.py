@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, bin_edges, cmap_name, edge_kwargs, finite_mask, handles, label_n,
+    add_colorbar, add_legend, bin_edges, cmap_name, edge_kwargs, finite_mask, handles, label_n,
     marker_sizes, nonzero_mask, panel_palette, resolve_groups, style_axes)
 from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty
 from results.figure_builder.core.spec import PALETTE
@@ -32,6 +32,17 @@ def draw_scatter(fig, ax, panel, table, report, style):
     total = 0
     mappable = None
     nz = nonzero_mask(panel, x, y)
+    norm = None
+    if cvals is not None:
+        from matplotlib.colors import LogNorm, Normalize
+        ok = cvals[np.isfinite(cvals)]
+        if panel.get('cbar_log'):
+            pos = ok[ok > 0]
+            if pos.size:
+                norm = LogNorm(vmin=float(pos.min()), vmax=float(pos.max()))
+                cvals = np.where(cvals > 0, cvals, np.nan)
+        elif ok.size:
+            norm = Normalize(vmin=float(ok.min()), vmax=float(ok.max()))
     for g in groups:
         m = g.mask & nz & finite_mask(x, y, log_flags=(log_x, log_y))
         if cvals is not None:
@@ -44,7 +55,7 @@ def draw_scatter(fig, ax, panel, table, report, style):
                       'color': g.color})
         s = sizes[m] if sizes is not None else size
         if cvals is not None:
-            mappable = ax.scatter(x[m], y[m], c=cvals[m], cmap=cmap_name(panel), s=s, alpha=alpha,
+            mappable = ax.scatter(x[m], y[m], c=cvals[m], cmap=cmap_name(panel), norm=norm, s=s, alpha=alpha,
                                   marker=marker, rasterized=True,
                                   label=label_n(g, int(m.sum()), panel) if len(groups) > 1 else None,
                                   **edge)
@@ -54,13 +65,6 @@ def draw_scatter(fig, ax, panel, table, report, style):
         if panel.get('show_fit') or panel.get('show_r'):
             draw_fit(ax, x[m], y[m], g, panel, report, log_x, log_y)
     draw_series(ax, panel, table, style, log_x, log_y)
-    if mappable is not None:
-        cb = fig.colorbar(mappable, ax=ax, pad=0.02, fraction=0.05)
-        handles(report, panel)['cbar'] = cb
-        cb.ax.set_zorder(ax.get_zorder())
-        cb.set_label(panel.get('cbar_label') or pretty(panel['color_by'], table, style))
-        cb.outline.set_linewidth(0.6)
-        cb.ax.tick_params(direction='out', length=3, width=0.6)
     if panel.get('diagonal'):
         lo = max(ax.get_xlim()[0], ax.get_ylim()[0])
         hi = min(ax.get_xlim()[1], ax.get_ylim()[1])
@@ -88,6 +92,8 @@ def draw_scatter(fig, ax, panel, table, report, style):
         ax2.spines['right'].set_color(color)
         for side in ('top', 'left', 'bottom'):
             ax2.spines[side].set_visible(False)
+    if mappable is not None:
+        add_colorbar(fig, ax, mappable, panel, report, pretty(panel['color_by'], table, style))
     report.counts[panel['id']] = total
     hd = handles(report, panel)
     hd['x_name'] = panel['x']
@@ -243,11 +249,6 @@ def draw_density(fig, ax, panel, table, report, style):
         ax.set_xscale('log')
     if log_y:
         ax.set_yscale('log')
-    cb = fig.colorbar(img, ax=ax, pad=0.02, fraction=0.05)
-    handles(report, panel)['cbar'] = cb
-    cb.ax.set_zorder(ax.get_zorder())
-    cb.set_label(panel.get('cbar_label') or 'Particles per bin')
-    cb.outline.set_linewidth(0.6)
-    cb.ax.tick_params(direction='out', length=3, width=0.6)
+    add_colorbar(fig, ax, img, panel, report, 'Particles per bin')
     report.counts[panel['id']] = int(m.sum())
     style_axes(ax, panel, table, style, panel['x'], panel['y'])

@@ -31,6 +31,7 @@ DIST = {'box', 'violin'}
 VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline'}
 SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
+CBAR = {'scatter', 'density', 'hexbin'} | MATRIX
 ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
 GROUPING = {'scatter', 'line', 'histogram', 'box', 'violin', 'bar', 'pie', 'ternary', 'code',
@@ -163,6 +164,11 @@ FIELDS = [
      {k: k for k in ('RdBu_r', 'coolwarm', 'bwr', 'seismic', 'PiYG', 'PRGn', 'BrBG', 'RdYlBu_r')}),
     ('Style', 'Colour scale', 'reverse_cmap', 'Reverse colour map', 'check',
      {'scatter', 'density', 'hexbin'} | MATRIX, None),
+    ('Style', 'Colour bar', 'cbar_loc', 'Position', 'combo', CBAR, E.CBAR_LOCATIONS),
+    ('Style', 'Colour bar', 'cbar_length', 'Length (0 = auto)', 'float', CBAR, (0, 1, 0.05)),
+    ('Style', 'Colour bar', 'cbar_width', 'Thickness (inches)', 'float', CBAR, (0.04, 1, 0.02)),
+    ('Style', 'Colour bar', 'cbar_pad', 'Gap from the plot (inches)', 'float', CBAR, (0, 2, 0.02)),
+    ('Style', 'Colour bar', 'cbar_log', 'Log colour scale', 'check', {'scatter'}, None),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
     ('Style', 'Lines', 'line_width', 'Line width', 'float', {'scatter', 'line', 'histogram', 'radar'}, (0.2, 8, 0.2)),
     ('Style', 'Lines', 'line_style', 'Line style', 'combo', {'scatter', 'line', 'histogram'}, S.LINE_STYLES),
@@ -634,6 +640,8 @@ class PanelEditor(QWidget):
             return p.get('pie_mode') == 'values'
         if key == 'agg' and kind == 'line':
             return bool((p.get('y') or '').strip())
+        if key.startswith('cbar_') and key != 'cbar_label' and kind == 'scatter':
+            return bool((p.get('color_by') or '').strip())
         if key == 'max_rows':
             return kind == 'heatmap' and p.get('heat_rows') == 'particles'
         if key == 'top_n' and kind == 'heatmap':

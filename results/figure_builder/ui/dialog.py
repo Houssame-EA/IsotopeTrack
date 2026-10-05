@@ -486,7 +486,7 @@ class PreviewLabel(QLabel):
                                        or abs(pt[1] - self._press[1]) * g[3] > 4)
             if self._drag is None and moved and getattr(self, '_pending', None):
                 self._drag = self._pending
-                self.setCursor(Qt.ClosedHandCursor if self._drag[0] in ('legend', 'note', 'move')
+                self.setCursor(Qt.ClosedHandCursor if self._drag[0] in ('legend', 'note', 'move', 'cbar')
                                else Qt.CrossCursor)
             if self._drag is not None:
                 self.update()
@@ -903,11 +903,14 @@ class FigureBuilderDialog(QDialog):
         self.after_edit(changed)
         if changed and mode == 'zoom':
             self.status.setText('Zoomed — right-click the panel and choose “Reset zoom” to go back')
+        elif changed and mode == 'cbar':
+            self.status.setText('Colour bar moved — right-click it to put it back on a side')
         elif changed and mode.startswith('shade'):
             self.status.setText('Grey area added — edit or remove it in the Shapes tab or by right-click')
 
     _CURSORS = {
         'plot': Qt.CrossCursor, 'legend': Qt.OpenHandCursor, 'annotation': Qt.OpenHandCursor,
+        'cbar': Qt.OpenHandCursor,
         'panel': Qt.SizeAllCursor,
     }
 

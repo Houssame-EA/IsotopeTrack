@@ -634,7 +634,10 @@ def _fit_group(visible, renderer, inv, left, right, bottom, top):
         over_t = max(0.0, y1 - top)
         if max(over_l, over_r, over_b, over_t) < 1e-3:
             return
-        positions = [a.get_position() for a in visible]
+        movable = [a for a in visible if a.get_axes_locator() is None]
+        if not movable:
+            return
+        positions = [a.get_position() for a in movable]
         gx0 = min(p.x0 for p in positions)
         gx1 = max(p.x1 for p in positions)
         gy0 = min(p.y0 for p in positions)
@@ -645,7 +648,7 @@ def _fit_group(visible, renderer, inv, left, right, bottom, top):
             return
         sx = (nx1 - nx0) / max(1e-9, gx1 - gx0)
         sy = (ny1 - ny0) / max(1e-9, gy1 - gy0)
-        for a, p in zip(visible, positions):
+        for a, p in zip(movable, positions):
             a.set_position([nx0 + (p.x0 - gx0) * sx, ny0 + (p.y0 - gy0) * sy,
                             p.width * sx, p.height * sy])
 
@@ -782,3 +785,181 @@ def draw_summary_box(ax, panel, items):
                       'alpha': 0.92})
     t._fb_cell = True
 
+
+
+CBAR_LOCATIONS = {
+    'right': 'Right of the plot',
+    'left': 'Left of the plot',
+    'top': 'Above the plot',
+    'bottom': 'Below the plot',
+    'inside right': 'Inside, right',
+    'inside top': 'Inside, top',
+    'custom': 'Where I dragged it',
+}
+"""Where a panel's colour bar can go."""
+
+
+class _CbarLocator:
+    """Keeps a colour bar at fixed axes-fraction bounds of its parent plot."""
+
+    def __init__(self, parent, bounds):
+        self.parent = parent
+        self.bounds = list(bounds)
+
+    def __call__(self, cax, renderer):
+        from matplotlib.transforms import Bbox, TransformedBbox
+        bb = TransformedBbox(Bbox.from_bounds(*self.bounds), self.parent.transAxes)
+        return TransformedBbox(bb, cax.figure.transSubfigure.inverted())
+
+
+def _cbar_orientation(panel) -> str:
+    loc = panel.get('cbar_loc') or 'right'
+    if loc == 'custom':
+        return panel.get('cbar_orient') or 'vertical'
+    return 'horizontal' if loc in ('top', 'bottom', 'inside top') else 'vertical'
+
+
+def _tidy_log_ticks(cb):
+    """Readable 1-2-5 labels on a log colour bar instead of crowded minor labels."""
+    from matplotlib.colors import LogNorm
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+    if not isinstance(cb.norm, LogNorm):
+        return
+    vmin, vmax = cb.norm.vmin, cb.norm.vmax
+    if not vmin or not vmax or vmin <= 0:
+        return
+    axis = cb.ax.xaxis if cb.orientation == 'horizontal' else cb.ax.yaxis
+    if np.log10(vmax / vmin) < 2.5:
+        axis.set_major_locator(LogLocator(subs=(1.0, 2.0, 5.0)))
+        axis.set_major_formatter(FuncFormatter(lambda v, _p: f'{v:g}'))
+    axis.set_minor_formatter(NullFormatter())
+
+
+def _cbar_side(panel, orient) -> str:
+    """Side of the colour bar that carries its ticks and label."""
+    loc = panel.get('cbar_loc') or 'right'
+    side = {'right': 'right', 'left': 'left', 'top': 'top', 'bottom': 'bottom',
+            'inside right': 'left', 'inside top': 'bottom'}.get(loc)
+    if side is None or (orient == 'vertical') != (side in ('left', 'right')):
+        side = 'right' if orient == 'vertical' else 'bottom'
+    return side
+
+
+def add_colorbar(fig, ax, mappable, panel, report, label):
+    """Attach a colour bar that the user can place, resize and drag.
+
+    The bar is an inset of the plot, so it follows the plot when the layout
+    changes; :func:`place_colorbar` puts it at the chosen position, clear of
+    a right-hand axis and of tick labels.
+    """
+    orient = _cbar_orientation(panel)
+    cax = ax.inset_axes([1.02, 0.0, 0.04, 1.0])
+    cb = fig.colorbar(mappable, cax=cax, orientation=orient, ticklocation=_cbar_side(panel, orient))
+    cax.set_zorder(ax.get_zorder() + 0.2)
+    cb.outline.set_linewidth(0.6)
+    cb.ax.tick_params(direction='out', length=3, width=0.6)
+    cb.set_label(panel.get('cbar_label') or label)
+    _tidy_log_ticks(cb)
+    hd = handles(report, panel)
+    hd['cbar'] = cb
+    hd['cbar_orient'] = orient
+    return cb
+
+
+def _decoration_extent(fig, axes, renderer):
+    """Union of the tight boxes of ``axes`` in figure fractions (or None)."""
+    inv = fig.transFigure.inverted()
+    boxes = []
+    for a in axes:
+        if a is None or not a.get_visible():
+            continue
+        try:
+            tb = a.get_tightbbox(renderer)
+        except Exception:
+            tb = None
+        if tb is not None and tb.width > 0:
+            boxes.append(tb.transformed(inv))
+    if not boxes:
+        return None
+    from matplotlib.transforms import Bbox
+    return Bbox.union(boxes)
+
+
+def place_colorbar(fig, panel, handles_):
+    """Put a panel's colour bar where the user wants it, clear of the plot's labels."""
+    cb = handles_.get('cbar')
+    ax = handles_.get('ax')
+    if cb is None or ax is None:
+        return
+    canvas = fig.canvas
+    if not hasattr(canvas, 'get_renderer'):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        canvas = FigureCanvasAgg(fig)
+    renderer = canvas.get_renderer()
+    pos = ax.get_position()
+    fw, fh = fig.get_figwidth(), fig.get_figheight()
+    ax_w_in = max(1e-6, pos.width * fw)
+    ax_h_in = max(1e-6, pos.height * fh)
+    loc = panel.get('cbar_loc') or 'right'
+    orient = handles_.get('cbar_orient') or 'vertical'
+    thick_in = float_or_none(panel.get('cbar_width')) or 0.14
+    pad_in = float_or_none(panel.get('cbar_pad'))
+    pad_in = 0.12 if pad_in is None else max(0.0, pad_in)
+    inside = loc.startswith('inside')
+    length = float_or_none(panel.get('cbar_length'))
+    length = (0.45 if inside else 1.0) if not length else max(0.1, min(1.0, length))
+    ax2 = handles_.get('ax2')
+    cb.ax.set_axes_locator(None)
+    cb.ax.set_in_layout(False)
+    try:
+        bounds = _cbar_bounds(fig, ax, ax2, panel, renderer, loc, orient, pos,
+                              (fw, fh, ax_w_in, ax_h_in, thick_in, pad_in, length, inside))
+    finally:
+        cb.ax.set_in_layout(True)
+    cb.ax.set_axes_locator(_CbarLocator(ax, bounds))
+    cb.ax.patch.set_alpha(0.0 if inside else 1.0)
+
+
+def _cbar_bounds(fig, ax, ax2, panel, renderer, loc, orient, pos, sizes):
+    """Inset bounds ``[x0, y0, w, h]`` (axes fraction) of a colour bar."""
+    fw, fh, ax_w_in, ax_h_in, thick_in, pad_in, length, inside = sizes
+    if orient == 'vertical':
+        w = thick_in / ax_w_in
+        h = length
+        y0 = (1 - h) / 2
+        if loc == 'right':
+            extra = 0.0
+            if ax2 is not None:
+                ext = _decoration_extent(fig, [ax2], renderer)
+                if ext is not None:
+                    extra = max(0.0, (ext.x1 - pos.x1) * fw)
+            x0 = 1 + (pad_in + extra) / ax_w_in
+        elif loc == 'left':
+            ext = _decoration_extent(fig, [ax], renderer)
+            extra = max(0.0, (pos.x0 - ext.x0) * fw) if ext is not None else 0.6
+            x0 = -(pad_in + extra + thick_in) / ax_w_in
+        elif loc == 'inside right':
+            x0 = 1 - (0.12 + thick_in) / ax_w_in
+            y0 = 1 - h - 0.12 / ax_h_in
+        else:
+            xy = panel.get('cbar_xy') or [1.05, 0.0]
+            x0, y0 = float(xy[0]), float(xy[1])
+        bounds = [x0, y0, w, h]
+    else:
+        h = thick_in / ax_h_in
+        w = length
+        x0 = (1 - w) / 2
+        if loc == 'top':
+            y0 = 1 + pad_in / ax_h_in
+        elif loc == 'bottom':
+            ext = _decoration_extent(fig, [ax], renderer)
+            extra = max(0.0, (pos.y0 - ext.y0) * fh) if ext is not None else 0.5
+            y0 = -(pad_in + extra + thick_in) / ax_h_in
+        elif loc == 'inside top':
+            y0 = 1 - (0.12 + thick_in) / ax_h_in
+            x0 = 1 - w - 0.12 / ax_w_in
+        else:
+            xy = panel.get('cbar_xy') or [0.0, 1.05]
+            x0, y0 = float(xy[0]), float(xy[1])
+        bounds = [x0, y0, w, h]
+    return bounds

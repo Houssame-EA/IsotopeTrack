@@ -7,7 +7,7 @@ import warnings
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, base_mask, cmap_name, draw_summary_box, finite_mask, handles, item_exprs,
+    add_colorbar, add_legend, base_mask, cmap_name, draw_summary_box, finite_mask, handles, item_exprs,
     item_label, label_n, nonzero_mask, resolve_groups, style_axes, value_groups)
 from results.figure_builder.core.expressions import ExpressionError, evaluate
 from results.figure_builder.core.stats import draw_brackets, run_tests
@@ -152,12 +152,7 @@ def draw_hexbin(fig, ax, panel, table, report, style):
                    xscale='log' if log_x else 'linear', yscale='log' if log_y else 'linear',
                    norm=LogNorm() if panel.get('log_color', True) else None, linewidths=0.2,
                    edgecolors='face', rasterized=True)
-    cb = fig.colorbar(hb, ax=ax, pad=0.02, fraction=0.05)
-    cb.ax.set_zorder(ax.get_zorder())
-    cb.outline.set_linewidth(0.6)
-    cb.set_label(panel.get('cbar_label') or 'Particles per cell')
-    hd = handles(report, panel)
-    hd['cbar'] = cb
+    add_colorbar(fig, ax, hb, panel, report, 'Particles per cell')
     report.counts[panel['id']] = int(m.sum())
     style_axes(ax, panel, table, style, panel['x'], panel['y'])
 

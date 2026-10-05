@@ -42,7 +42,7 @@ TEXT_FIELDS = {
 
 STYLE_ELEMENT = {
     'corner_a': 'corner_labels', 'corner_b': 'corner_labels', 'corner_c': 'corner_labels',
-    'ticks_x': 'ticks', 'ticks_y': 'ticks',
+    'ticks_x': 'ticks', 'ticks_y': 'ticks', 'cbar': 'ticks',
 }
 """Hit element → text-style element (identity when absent)."""
 
@@ -52,6 +52,7 @@ ELEMENT_NAMES = {
     'ticks_x': 'X tick labels', 'ticks_y': 'Y tick labels', 'corner_a': 'top corner label',
     'corner_b': 'left corner label', 'corner_c': 'right corner label', 'annotation': 'note',
     'figure_title': 'figure title', 'letters': 'panel letter', 'plot': 'plot', 'panel': 'panel',
+    'cbar': 'colour bar',
 }
 
 
@@ -154,6 +155,14 @@ def collect_hits(fig, report, spec) -> list[Hit]:
             if b:
                 hits.append(Hit(b, pid, 'y2_label', text=ax2.yaxis.label.get_text()))
         cb = hd.get('cbar')
+        if cb is not None and cb.ax.get_visible():
+            try:
+                tb = cb.ax.get_tightbbox(renderer)
+            except Exception:
+                tb = None
+            if tb is not None and tb.width > 0:
+                f = tb.transformed(fig.transFigure.inverted())
+                hits.append(Hit((f.x0, 1 - f.y1, f.x1, 1 - f.y0), pid, 'cbar'))
         if cb is not None:
             lab = cb.ax.yaxis.label if cb.ax.yaxis.label.get_text() else cb.ax.xaxis.label
             b = _box(fig, lab, renderer)
@@ -485,8 +494,18 @@ def build_menu(win, hit: Hit | None, fx: float, fy: float) -> QMenu:
     letter = E.panel_letter(win.spec['panels'].index(panel), 'a')
     head = menu.addAction(f'Panel {letter} — {E.PANEL_KINDS.get(panel["kind"], panel["kind"])}')
     head.setEnabled(False)
-    if hit.element not in ('plot', 'panel'):
+    if hit.element == 'cbar':
+        _cbar_menu(win, menu, panel)
+        menu.addSeparator()
+        sub = _submenu(menu, 'Tick labels')
+        _text_menu(win, sub, panel, hit)
+        sub = _submenu(menu, 'Panel')
+        _panel_menu(win, sub, panel, fx, fy)
+    elif hit.element not in ('plot', 'panel'):
         _text_menu(win, menu, panel, hit)
+        if hit.element == 'cbar_label':
+            menu.addSeparator()
+            _cbar_menu(win, _submenu(menu, 'Colour bar'), panel)
         menu.addSeparator()
         sub = _submenu(menu, 'Panel')
         _panel_menu(win, sub, panel, fx, fy)
@@ -538,6 +557,41 @@ def _text_menu(win, menu, panel, hit):
             owner[TEXT_FIELDS[hit.element]] = ''
         win.after_edit(True)
     _add(menu, 'Reset to automatic', reset)
+
+
+def _cbar_menu(win, menu, panel):
+    """Position, size and colours of a panel's colour bar."""
+    def setp(**kw):
+        panel.update(**kw)
+        win.after_edit(True)
+
+    pos = _submenu(menu, 'Colour bar position')
+    for key, label in E.CBAR_LOCATIONS.items():
+        if key == 'custom' and panel.get('cbar_loc') != 'custom':
+            continue
+        _add(pos, label, lambda k=key: setp(cbar_loc=k), checked=(panel.get('cbar_loc') or 'right') == key)
+    size = _submenu(menu, 'Colour bar length')
+    for frac, label in ((0, 'Automatic'), (1.0, 'Full'), (0.75, '3/4'), (0.5, 'Half'), (0.33, 'Third')):
+        _add(size, label, lambda f=frac: setp(cbar_length=f),
+             checked=float(panel.get('cbar_length') or 0) == frac)
+    width = float(panel.get('cbar_width') or 0.14)
+    _add(menu, 'Thicker', lambda: setp(cbar_width=round(min(1.0, width * 1.3), 3)))
+    _add(menu, 'Thinner', lambda: setp(cbar_width=round(max(0.04, width / 1.3), 3)))
+    gap = float(panel.get('cbar_pad') if panel.get('cbar_pad') is not None else 0.12)
+    _add(menu, 'Further from the plot', lambda: setp(cbar_pad=round(min(2.0, gap + 0.08), 3)))
+    _add(menu, 'Closer to the plot', lambda: setp(cbar_pad=round(max(0.0, gap - 0.08), 3)))
+    if panel.get('kind') != 'corr_matrix':
+        cmaps = _submenu(menu, 'Colour map')
+        for name in S.COLORMAPS:
+            _add(cmaps, name, lambda n=name: setp(colormap=n), checked=panel.get('colormap') == name)
+    _add(menu, 'Reverse colours', lambda: setp(reverse_cmap=not panel.get('reverse_cmap')),
+         checked=panel.get('reverse_cmap'))
+    if panel.get('kind') == 'scatter':
+        _add(menu, 'Log colour scale', lambda: setp(cbar_log=not panel.get('cbar_log')),
+             checked=panel.get('cbar_log'))
+    _add(menu, 'Edit colour bar label…', lambda: win.after_edit(edit_text(
+        win, Hit((0, 0, 0, 0), panel['id'], 'cbar_label', text=panel.get('cbar_label') or ''))))
+    _add(menu, 'All colour bar options…', lambda: win.show_editor_tab('Style'))
 
 
 def _legend_menu(win, menu, panel):

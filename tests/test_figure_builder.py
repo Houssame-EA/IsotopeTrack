@@ -764,3 +764,116 @@ def test_grey_area_menu(dialog):
     assert p0['shapes'][-1]['type'] == 'yband' and p0['shapes'][-1]['y1'] == ''
     next(a for a in add.actions() if a.text() == 'Line y = x').trigger()
     assert p0['shapes'][-1]['type'] == 'line'
+
+
+def _cbar_spec(**extra):
+    spec = E.default_spec()
+    spec['panels'] = [E.make_panel(kind='scatter', x='Ag/Fe', y='Au', y2='Fe', color_by='total',
+                                   log_x=True, title='Colour bar', **extra)]
+    return E.normalise_spec(spec)
+
+
+def _draw(spec, table):
+    fig = Figure(figsize=(spec['figure']['width'], spec['figure']['height']))
+    FigureCanvasAgg(fig)
+    report = E.render(fig, spec, table)
+    fig.canvas.draw()
+    return fig, report
+
+
+def _fig_box(fig, artist):
+    renderer = fig.canvas.get_renderer()
+    return artist.get_tightbbox(renderer).transformed(fig.transFigure.inverted())
+
+
+def test_colour_bar_clears_right_axis(table):
+    spec = _cbar_spec()
+    fig, report = _draw(spec, table)
+    assert report.errors == {}
+    hd = report.artists[spec['panels'][0]['id']]
+    renderer = fig.canvas.get_renderer()
+    ax2 = hd['ax2']
+    ticks = [t.get_window_extent(renderer) for t in ax2.get_yticklabels() if t.get_text()]
+    right = max([b.x1 for b in ticks] + [ax2.yaxis.label.get_window_extent(renderer).x1])
+    bar = hd['cbar'].ax.get_window_extent(renderer)
+    assert bar.x0 > right
+    box = _fig_box(fig, hd['cbar'].ax)
+    assert box.x1 <= 1.0 + 1e-3
+
+
+@pytest.mark.parametrize('loc', ['right', 'left', 'top', 'bottom', 'inside right', 'inside top'])
+def test_colour_bar_positions(table, loc):
+    spec = _cbar_spec(cbar_loc=loc)
+    fig, report = _draw(spec, table)
+    assert report.errors == {}
+    hd = report.artists[spec['panels'][0]['id']]
+    bar = hd['cbar'].ax.get_position()
+    plot = hd['ax'].get_position()
+    if loc == 'right':
+        assert bar.x0 > plot.x1
+    elif loc == 'left':
+        assert bar.x1 < plot.x0
+    elif loc == 'top':
+        assert bar.y0 > plot.y1 and bar.width > bar.height
+    elif loc == 'bottom':
+        assert bar.y1 < plot.y0 and bar.width > bar.height
+    else:
+        assert plot.x0 < bar.x0 and bar.x1 < plot.x1 and plot.y0 < bar.y0 and bar.y1 < plot.y1
+    box = _fig_box(fig, hd['cbar'].ax)
+    assert box.x0 >= -1e-3 and box.y0 >= -1e-3 and box.x1 <= 1 + 1e-3 and box.y1 <= 1 + 1e-3
+
+
+def test_colour_bar_size_and_log(table):
+    spec = _cbar_spec(cbar_length=0.5, cbar_width=0.3, cbar_log=True)
+    fig, report = _draw(spec, table)
+    hd = report.artists[spec['panels'][0]['id']]
+    bar, plot = hd['cbar'].ax.get_position(), hd['ax'].get_position()
+    assert abs(bar.height / plot.height - 0.5) < 0.02
+    assert abs(bar.width * spec['figure']['width'] - 0.3) < 0.02
+    from matplotlib.colors import LogNorm
+    assert isinstance(hd['cbar'].norm, LogNorm)
+
+
+@pytest.mark.parametrize('kind', ['density', 'hexbin', 'corr_matrix', 'heatmap', 'cooccurrence'])
+def test_other_colour_bars_move(table, kind):
+    spec = E.default_spec()
+    panel = E.make_panel(kind=kind, x='Ag', y='Fe', cbar_loc='bottom')
+    if kind in ('corr_matrix', 'heatmap', 'cooccurrence'):
+        panel['isotopes'] = 'Ag, Au, Fe'
+    spec['panels'] = [panel]
+    spec = E.normalise_spec(spec)
+    fig, report = _draw(spec, table)
+    assert report.errors == {}
+    hd = report.artists[spec['panels'][0]['id']]
+    bar = hd['cbar'].ax.get_position()
+    assert bar.width > bar.height and bar.y1 < hd['ax'].get_position().y0
+
+
+def test_colour_bar_drag_and_menu(dialog):
+    from results.figure_builder.ui import interact
+    p0 = dialog.spec['panels'][0]
+    p0.update(kind='scatter', x='Ag/Fe', y='Au', y2='Fe', color_by='total')
+    dialog._render()
+    assert dialog.last_report.errors == {}
+    cb = next(h for h in dialog._hits if h.element == 'cbar')
+    cx, cy = (cb.box[0] + cb.box[2]) / 2, cb.box[1] + 0.3 * (cb.box[3] - cb.box[1])
+    hd = dialog.last_report.artists[p0['id']]
+    pos = hd['cbar'].ax.get_position()
+    bx, by = (pos.x0 + pos.x1) / 2, 1 - (pos.y0 + pos.y1) / 2
+    assert interact.hit_at(dialog._hits, bx, by).element == 'cbar'
+    assert dialog._drag_resolver(bx, by)[0] == 'cbar'
+    dialog._drag_hit = cb
+    dialog._on_drag_finished('cbar', cx, cy, cx - 0.15, cy + 0.05)
+    assert p0['cbar_loc'] == 'custom' and len(p0['cbar_xy']) == 2
+    assert p0['cbar_xy'][0] < 1.0
+    dialog._render()
+    assert dialog.last_report.errors == {}
+    cbh = next(h for h in dialog._hits if h.element == 'cbar')
+    menu = interact.build_menu(dialog, cbh, cx, cy)
+    pos = next(a for a in menu.actions() if a.text() == 'Colour bar position').menu()
+    next(a for a in pos.actions() if a.text() == 'Below the plot').trigger()
+    assert p0['cbar_loc'] == 'bottom'
+    next(a for a in menu.actions() if a.text() == 'Thicker').trigger()
+    assert p0['cbar_width'] > 0.14
+    dialog._render()
+    assert dialog.last_report.errors == {}

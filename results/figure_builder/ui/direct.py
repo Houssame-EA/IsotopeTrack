@@ -158,7 +158,7 @@ def readout(win, hit, fx, fy) -> str:
 
 def _element_hint(hit) -> str:
     """Short help shown when hovering a text element or the panel margin."""
-    if hit.element in ('legend', 'annotation'):
+    if hit.element in ('legend', 'annotation', 'cbar'):
         return 'Drag to move · right-click for options'
     if hit.element == 'panel':
         return 'Drag to move this panel · drag its lower-right corner to resize'
@@ -193,6 +193,8 @@ def drag_mode(win, hit, fx, fy, modifiers=None):
         return 'legend', hit.box
     if hit.element == 'annotation':
         return 'note', hit.box
+    if hit.element == 'cbar':
+        return 'cbar', hit.box
     if hit.element == 'plot':
         kind = panel.get('kind')
         if kind in ZOOM_Y:
@@ -240,6 +242,8 @@ def apply_drag(win, hit, mode, start, end) -> bool:
         panel['legend_loc'] = 'custom'
         panel['legend_xy'] = [round(float(ax_x), 4), round(float(ax_y), 4)]
         return True
+    if mode == 'cbar':
+        return move_colorbar(fig, panel, hd, dx, dy)
     if mode == 'note':
         notes = panel.get('annotations') or []
         if not 0 <= hit.index < len(notes):
@@ -296,3 +300,26 @@ def reset_zoom(panel) -> bool:
     for k in ('x_min', 'x_max', 'y_min', 'y_max'):
         panel[k] = ''
     return changed
+
+
+def move_colorbar(fig, panel, hd, dx, dy) -> bool:
+    """Move a panel's colour bar by ``(dx, dy)`` figure fractions (top-left origin).
+
+    The bar switches to the ``custom`` position, stored as its lower-left
+    corner in the plot's axes fractions, and keeps its orientation.
+    """
+    cb = hd.get('cbar')
+    ax = hd.get('ax')
+    if cb is None or ax is None or (abs(dx) < 0.002 and abs(dy) < 0.002):
+        return False
+    pos = cb.ax.get_position()
+    disp = fig.transFigure.transform((pos.x0 + dx, pos.y0 - dy))
+    ax_x, ax_y = ax.transAxes.inverted().transform(disp)
+    panel['cbar_orient'] = hd.get('cbar_orient') or 'vertical'
+    panel['cbar_loc'] = 'custom'
+    panel['cbar_xy'] = [round(float(ax_x), 4), round(float(ax_y), 4)]
+    if not panel.get('cbar_length'):
+        panel['cbar_length'] = round(float(pos.height / ax.get_position().height
+                                           if panel['cbar_orient'] == 'vertical'
+                                           else pos.width / ax.get_position().width), 3)
+    return True

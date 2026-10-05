@@ -16,8 +16,8 @@ import logging
 
 from results.figure_builder.charts import DRAWERS
 from results.figure_builder.core.common import (
-    Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
-    fit_outside_legend, merge_legend, resolve_groups)
+    CBAR_LOCATIONS, Group, RenderReport, annotate, candidate_groups, draw_shapes, fit_decorations,
+    fit_outside_legend, merge_legend, place_colorbar, resolve_groups)
 
 SHAPE_KINDS = {'scatter', 'line', 'density', 'hexbin', 'contour', 'histogram', 'box', 'violin',
                'strip', 'bar', 'combinations', 'composition', 'ridgeline', 'code'}
@@ -34,7 +34,7 @@ from results.figure_builder.core.styles import (
 from results.figure_builder.core import textstyle
 
 __all__ = [
-    'CODE_EXAMPLE', 'CORRECTIONS', 'DRAWERS', 'FIGURE_DEFAULTS', 'GROUP_MODES', 'Group',
+    'CBAR_LOCATIONS', 'CODE_EXAMPLE', 'CORRECTIONS', 'DRAWERS', 'FIGURE_DEFAULTS', 'GROUP_MODES', 'Group',
     'OTHER_COLOR', 'PAIRWISE_TESTS', 'PALETTE', 'PALETTES', 'PANEL_DEFAULTS', 'PANEL_KINDS',
     'RenderReport', 'STAT_TESTS', 'STYLE_PRESETS', 'TEMPLATES', 'apply_style_preset',
     'apply_template', 'candidate_groups', 'correct', 'default_spec', 'make_panel',
@@ -64,8 +64,17 @@ def _inner_rect(rect, fig_w, fig_h, panel):
     else:
         ml, mb = 0.75, 0.62
         mr = 0.75 if has_y2 else 0.2
-        mr += 0.7 if has_cbar else 0.0
+        cbar_loc = panel.get('cbar_loc') or 'right'
         mt = 0.4 if has_title else 0.18
+        if has_cbar:
+            if cbar_loc == 'right':
+                mr += 0.7
+            elif cbar_loc == 'left':
+                ml += 0.7
+            elif cbar_loc == 'top':
+                mt += 0.55
+            elif cbar_loc == 'bottom':
+                mb += 0.55
         if float(panel.get('xtick_rotation') or 0):
             mb += 0.35
         if kind in ('box', 'violin') and panel.get('show_n', True):
@@ -214,9 +223,16 @@ def _render_panel(fig, index, panel, spec, table, report, style, fw, fh, bg, Rec
             merge_legend(ax, panel, draw_shapes(ax, panel))
         annotate(ax, panel)
         textstyle.apply_panel(report.artists[panel['id']], panel, figcfg)
+        hd = report.artists[panel['id']]
+        if hd.get('cbar') is not None:
+            place_colorbar(fig, panel, hd)
         fit_outside_legend(fig, ax, rect)
         if kind not in ('text', 'code'):
-            fit_decorations(fig, report.artists[panel['id']], rect)
+            fit_decorations(fig, hd, rect)
+            if hd.get('cbar') is not None:
+                place_colorbar(fig, panel, hd)
+                fit_decorations(fig, hd, rect)
+                place_colorbar(fig, panel, hd)
     except Exception as exc:
         report.errors[panel['id']] = str(exc)
         ax.cla()
