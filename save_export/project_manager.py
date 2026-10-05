@@ -932,6 +932,7 @@ Terminal=false
                 PieChartPlotNode, ElementCompositionPlotNode, HeatmapPlotNode,
                 IsotopicRatioPlotNode, TrianglePlotNode, ClusteringPlotNode, AIAssistantNode, MolarRatioPlotNode, BoxPlotNode,
                 CorrelationMatrixNode, ConcentrationComparisonNode, NetworkDiagramNode,
+                FigureBuilderNode,
                 ParticleFilterNode,TempPassThroughNode, ParticleClassifierNode,
                 StickyNoteItem,
             )
@@ -988,7 +989,7 @@ Terminal=false
             "correlation_matrix": CorrelationMatrixNode,
             "concentration_comparison": ConcentrationComparisonNode,    
             "network_diagram": NetworkDiagramNode,
-            
+            "figure_builder": FigureBuilderNode,
         }
         
         for node_data in canvas_state.get('workflow_nodes', []):

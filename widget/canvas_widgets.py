@@ -53,6 +53,7 @@ from results.results_concentration import (
 )
 from results.results_network import (
     NetworkDisplayDialog, NetworkDiagramNode)
+from results.figure_builder import FigureBuilderDialog, FigureBuilderNode
 from results.results_periodic import IsotopeChipSelector
 from tools.particle_filter import (
     ParticleFilterNode, build_particle_filter_node_item)
@@ -3860,6 +3861,10 @@ NetworkDiagramNodeItem = _make_viz_icon_node(
     ("#14B8A6", "#0F766E"), "fa6s.diagram-project", "Network",
     NetworkDisplayDialog, multi_figure=True)
 
+FigureBuilderNodeItem = _make_viz_icon_node(
+    ("#2A78D6", "#4A3AA7"), "fa6s.pen-ruler", "Figure Builder",
+    FigureBuilderDialog, multi_figure=False)
+
 
 class AIAssistantNodeItem(NodeItem):
     """AI sparkle icon."""
@@ -4055,6 +4060,7 @@ class NodePalette(QWidget):
             ("Corr. Matrix",      "correlation_matrix",            'fa6s.table-cells',        DS.PINK),
             ("Concentration",     "concentration_comparison",      'fa6s.arrows-left-right',  DS.PURPLE),
             ("Network",           "network_diagram",               'fa6s.diagram-project',    DS.TEAL),
+            ("Figure Builder",    "figure_builder",                'fa6s.pen-ruler',          DS.INDIGO),
         ]:
             b = DraggableNodeButton(txt, ntype, icon, color)
             vg.addWidget(b)
@@ -5196,6 +5202,7 @@ _NODE_FACTORIES = {
     "correlation_matrix":           CorrelationMatrixNode,
     "concentration_comparison":     ConcentrationComparisonNode,
     "network_diagram":              NetworkDiagramNode,
+    "figure_builder":               FigureBuilderNode,
 }
 
 _NODE_ITEM_MAP = {
@@ -5220,6 +5227,7 @@ _NODE_ITEM_MAP = {
     "correlation_matrix":           CorrelationMatrixNodeItem,
     "concentration_comparison":     ConcentrationComparisonNodeItem,
     "network_diagram":              NetworkDiagramNodeItem,
+    "figure_builder":               FigureBuilderNodeItem,
 }
 
 #: Every Visualization-category node type (mirrors the palette's
@@ -5233,6 +5241,7 @@ _VIZ_NODE_TYPES = frozenset({
     "heatmap_plot", "molar_ratio_plot", "isotopic_ratio_plot",
     "triangle_plot", "single_multiple_element_plot", "clustering_plot",
     "correlation_matrix", "concentration_comparison", "network_diagram",
+    "figure_builder",
 })
 
 
