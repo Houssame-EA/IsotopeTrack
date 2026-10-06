@@ -14,6 +14,7 @@ from results.figure_builder.charts.extra import (
     draw_contour, draw_hexbin, draw_parallel, draw_radar, draw_ridgeline, draw_strip)
 from results.figure_builder.charts.more import (
     draw_ecdf, draw_lollipop, draw_timeline, draw_treemap)
+from results.figure_builder.charts.network import draw_network, draw_pca
 from results.figure_builder.charts.special import draw_code, draw_ternary, draw_text
 from results.figure_builder.charts.xy import draw_density, draw_line, draw_scatter
 
@@ -43,6 +44,8 @@ DRAWERS = {
     'lollipop': draw_lollipop,
     'treemap': draw_treemap,
     'timeline': draw_timeline,
+    'network': draw_network,
+    'pca': draw_pca,
     'text': draw_text,
     'code': draw_code,
 }

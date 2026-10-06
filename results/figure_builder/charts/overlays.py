@@ -277,3 +277,67 @@ def add_zoom_inset(ax, panel, report):
     except Exception:
         pass
     handles(report, panel)['inset'] = ins
+
+
+def sd_envelope(ax, fx, fy, res, color, log_x, log_y):
+    """Fit line ± one standard deviation of the residuals (the Correlation node's envelope)."""
+    if fx.size < 3:
+        return
+    sd = float(np.std(fy - (res.intercept + res.slope * fx)))
+    xs = np.linspace(fx.min(), fx.max(), 120)
+    yhat = res.intercept + res.slope * xs
+    ax.plot(_from_space(xs, log_x), _from_space(yhat + sd, log_y), color=color, lw=1.0, ls='--', zorder=4)
+    ax.plot(_from_space(xs, log_x), _from_space(yhat - sd, log_y), color=color, lw=1.0, ls='--', zorder=4)
+
+
+def poisson_band(ax, panel, data, report):
+    """Counting-statistics envelope of a ratio plotted against the denominator's counts.
+
+    For a ratio R of two Poisson counts with denominator counts λ, the
+    expected standard deviation is σ = √(R(1 + R)/λ). The band is
+    R̄ ± k·σ around each group's mean ratio, over the plotted counts.
+    """
+    k = float_or_none(panel.get('poisson_band')) or 0
+    if k <= 0:
+        return
+    for g, x, y in data:
+        ok = np.isfinite(x) & np.isfinite(y) & (x > 0)
+        if ok.sum() < 3:
+            continue
+        r = float(np.mean(y[ok]))
+        lo, hi = float(x[ok].min()), float(x[ok].max())
+        xs = np.logspace(np.log10(max(lo, 1e-9)), np.log10(hi * 1.05), 200) if ax.get_xscale() == 'log' \
+            else np.linspace(lo, hi * 1.05, 200)
+        sigma = np.sqrt(max(r, 0) * (1 + max(r, 0)) / np.maximum(xs, 1.0))
+        upper, lower = r + k * sigma, np.maximum(r - k * sigma, 0)
+        if ax.get_yscale() == 'log':
+            lower = np.maximum(lower, r * 1e-3)
+        ax.fill_between(xs, lower, upper, color=g.color, alpha=0.12, lw=0, zorder=1)
+        ax.plot(xs, upper, color=g.color, lw=1.0, ls='--', zorder=4)
+        ax.plot(xs, lower, color=g.color, lw=1.0, ls='--', zorder=4)
+        inside = np.abs(y[ok] - r) <= k * np.sqrt(max(r, 0) * (1 + max(r, 0)) / np.maximum(x[ok], 1.0))
+        report.stats.append(f'{g.label}: mean ratio {r:.4g}; {100 * inside.mean():.1f}% of particles inside '
+                            f'the ±{k:g}σ counting-statistics band')
+
+
+def natural_line(ax, panel, table, report):
+    """Horizontal line at the natural abundance ratio when Y is a ratio of two isotopes."""
+    if not panel.get('natural_line'):
+        return
+    from results.figure_builder.core.isotopes import natural_ratio, ratio_parts
+    parts = ratio_parts(panel.get('y') or '', table)
+    if parts is None:
+        report.stats.append('Natural ratio: write Y as one isotope divided by another, e.g. 107Ag/109Ag')
+        return
+    value = natural_ratio(*parts)
+    if value is None:
+        report.stats.append(f'Natural ratio: no abundance data for {parts[0]} / {parts[1]}')
+        return
+    from matplotlib import transforms
+    color = panel.get('natural_color') or '#059669'
+    ax.axhline(value, color=color, lw=1.6, ls='-.', zorder=6, label=f'Natural ({value:.4g})')
+    t = ax.text(0.01, value, f' natural {parts[0]}/{parts[1]} = {value:.4g}', color=color,
+                transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+                ha='left', va='bottom', fontsize='x-small', zorder=8)
+    t._fb_cell = True
+    report.stats.append(f'Natural abundance ratio {parts[0]}/{parts[1]} = {value:.5g}')

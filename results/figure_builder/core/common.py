@@ -91,6 +91,9 @@ def candidate_groups(panel: dict, table: ParticleTable) -> list[Group]:
     base = np.ones(n, dtype=bool)
     if (panel.get('filter') or '').strip():
         base &= evaluate(panel['filter'], table, as_mask=True)
+    saturation = float_or_none(panel.get('saturation'))
+    if saturation and saturation > 0 and n:
+        base &= table.column('max_counts') < saturation
     pal = panel_palette(panel)
     mode = panel.get('group_by', 'none')
     groups: list[Group] = []
@@ -440,18 +443,165 @@ def bin_edges(values, bins, log):
     return np.linspace(lo, hi, bins + 1)
 
 
-def value_groups(panel, table):
-    """Evaluate ``value`` and split it by group, dropping non-finite values."""
+def trim_bounds(v, pct):
+    """``(low, high)`` keeping values between the ``100 − pct`` and ``pct`` percentiles, or None."""
+    pct = float_or_none(pct)
+    if not pct or pct >= 100 or pct <= 50 or v.size < 5:
+        return None
+    lo, hi = np.percentile(v, [100 - pct, pct])
+    return float(lo), float(hi)
+
+
+def trim_values(v, pct):
+    """Keep values between the ``100 − pct`` and ``pct`` percentiles (both tails trimmed)."""
+    b = trim_bounds(v, pct)
+    return v if b is None else v[(v >= b[0]) & (v <= b[1])]
+
+
+GROUP_SORTS = {'none': 'As listed', 'median_desc': 'Largest median first',
+               'median_asc': 'Smallest median first', 'count_desc': 'Most particles first',
+               'alpha': 'Alphabetical'}
+"""Automatic orders for groups along a category axis."""
+
+
+def sort_pairs(pairs, how):
+    """Sort ``[(group, values, ...), ...]`` by one of :data:`GROUP_SORTS`."""
+    if how == 'median_desc':
+        return sorted(pairs, key=lambda gv: -np.median(gv[1]) if gv[1].size else np.inf)
+    if how == 'median_asc':
+        return sorted(pairs, key=lambda gv: np.median(gv[1]) if gv[1].size else np.inf)
+    if how == 'count_desc':
+        return sorted(pairs, key=lambda gv: -gv[1].size)
+    if how == 'alpha':
+        return sorted(pairs, key=lambda gv: str(gv[0].label).lower())
+    return list(pairs)
+
+
+def value_groups(panel, table, with_weights=False):
+    """Evaluate ``value`` and split it by group, dropping non-finite values.
+
+    The panel's percentile trim, minimum group size and automatic order are
+    applied here, so every chart built on it behaves the same way. With
+    ``with_weights`` each item is ``(group, values, weights)``, the weights
+    being particles per mL when the panel counts in that unit.
+    """
     if not (panel.get('value') or '').strip():
         raise ExpressionError('Set the Value expression')
     v = evaluate(panel['value'], table)
-    log = panel.get('log_y') if panel.get('kind') in ('box', 'violin', 'bar') else panel.get('log_x')
+    log = panel.get('log_y') if panel.get('kind') in ('box', 'violin', 'bar', 'strip') else panel.get('log_x')
     out = []
     nz = nonzero_mask(panel, v)
+    min_n = int(float_or_none(panel.get('min_count')) or 0)
+    w_all = particle_weights(panel, table) if with_weights else None
     for g in resolve_groups(panel, table):
         m = g.mask & nz & finite_mask(v, log_flags=(log,))
-        out.append((g, v[m]))
-    return out
+        b = trim_bounds(v[m], panel.get('trim_pct'))
+        if b is not None:
+            m &= (v >= b[0]) & (v <= b[1])
+        if min_n and int(m.sum()) < min_n:
+            m = np.zeros_like(m)
+        out.append((g, v[m], w_all[m]) if with_weights else (g, v[m]))
+    return sort_pairs(out, panel.get('sort_groups') or 'none')
+
+
+def particle_weights(panel, table, mask=None):
+    """Weight of each particle when counting: 1, or its particles-per-mL factor."""
+    if panel.get('per_ml') and len(table):
+        w = np.asarray(table.column('per_ml'), dtype=float)
+    else:
+        w = np.ones(len(table), dtype=float)
+    return w if mask is None else w[mask]
+
+
+def compact(v) -> str:
+    """Short form of a large number: 950, 1.2k, 3.4M, 5.6G."""
+    a = abs(float(v))
+    for div, suffix in ((1e9, 'G'), (1e6, 'M'), (1e3, 'k')):
+        if a >= div:
+            return f'{v / div:.2g}{suffix}'
+    return f'{v:.3g}'
+
+
+def count_label(panel, default='Particle count') -> str:
+    """Axis label for counted particles, in particles per mL when asked."""
+    return 'Particles/mL' if panel.get('per_ml') else default
+
+
+BANDS = {'none': 'None', 'sd1': 'Mean ± 1 SD', 'sd2': 'Mean ± 2 SD', 'iqr': 'Median ± IQR (Q1–Q3)',
+         'p5': 'P5 – P95', 'p1': 'P1 – P99'}
+"""Statistical ranges that can be shaded behind a chart."""
+
+
+def band_range(values, kind):
+    """``(low, high, label)`` of a :data:`BANDS` range, or None."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v)]
+    if kind not in BANDS or kind == 'none' or v.size < 2:
+        return None
+    if kind in ('sd1', 'sd2'):
+        k = 1 if kind == 'sd1' else 2
+        m, sd = float(np.mean(v)), float(np.std(v, ddof=1))
+        return m - k * sd, m + k * sd, BANDS[kind]
+    if kind == 'iqr':
+        lo, hi = np.percentile(v, [25, 75])
+    elif kind == 'p5':
+        lo, hi = np.percentile(v, [5, 95])
+    else:
+        lo, hi = np.percentile(v, [1, 99])
+    return float(lo), float(hi), BANDS[kind]
+
+
+def draw_marks(ax, panel, values, vertical: bool):
+    """Shaded statistic band and detection-limit line of a panel.
+
+    Args:
+        values: The plotted values pooled over visible groups (for the band).
+        vertical: True when the values run along X (histograms), so marks
+            are vertical; False when they run along Y (box, bar, strip...).
+    """
+    pooled = np.concatenate([np.asarray(v, dtype=float).ravel() for v in values]) if len(values) else np.array([])
+    band = band_range(pooled, panel.get('stat_band') or 'none')
+    color = panel.get('band_color') or '#9ca3af'
+    from matplotlib import transforms
+    if band is not None:
+        lo, hi, label = band
+        scale = ax.get_xscale() if vertical else ax.get_yscale()
+        if scale == 'log':
+            lo = max(lo, 1e-12)
+        if vertical:
+            ax.axvspan(lo, hi, color=color, alpha=0.22, lw=0, zorder=0.5, label=label)
+        else:
+            ax.axhspan(lo, hi, color=color, alpha=0.22, lw=0, zorder=0.5, label=label)
+    dl = float_or_none(panel.get('dl_value'))
+    if dl is not None:
+        text = (panel.get('dl_label') or '').strip() or f'DL: {dl:g}'
+        dcol = panel.get('dl_color') or '#dc2626'
+        if vertical:
+            ax.axvline(dl, color=dcol, lw=1.4, ls='--', zorder=7)
+            t = ax.text(dl, 0.98, f' {text}', transform=transforms.blended_transform_factory(ax.transData,
+                        ax.transAxes), ha='left', va='top', color=dcol, fontsize='x-small', zorder=8)
+        else:
+            ax.axhline(dl, color=dcol, lw=1.4, ls='--', zorder=7)
+            t = ax.text(0.99, dl, f'{text} ', transform=transforms.blended_transform_factory(ax.transAxes,
+                        ax.transData), ha='right', va='bottom', color=dcol, fontsize='x-small', zorder=8)
+        t._fb_cell = True
+
+
+def edges_by_width(values, width, log):
+    """Bin edges ``width`` apart (in decades on a log axis), aligned to round numbers."""
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v) & ((v > 0) if log else True)]
+    width = float_or_none(width)
+    if not v.size or not width or width <= 0:
+        return None
+    t = np.log10(v) if log else v
+    lo = np.floor(t.min() / width) * width
+    hi = np.ceil(t.max() / width) * width + width
+    n = int(round((hi - lo) / width))
+    if n < 1 or n > 2000:
+        return None
+    edges = lo + width * np.arange(n + 1)
+    return 10 ** edges if log else edges
 
 
 def _shrink_for_legend(fig, ax, leg, rect, renderer, partners, original, allow_width=True):
@@ -738,9 +888,42 @@ def draw_shapes(ax, panel):
                               label=label, alpha=max(alpha, 0.6))
         if artist is not None and label:
             handles_out.append(artist)
+            if sh.get('text'):
+                _shape_text(ax, kind, label, color, (x1, x2, y1, y2), (lo_x, hi_x, lo_y, hi_y))
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
     return handles_out
+
+
+def _shape_text(ax, kind, label, color, bounds, limits):
+    """Write a shape's label on the plot, next to the line or inside the band."""
+    from matplotlib import transforms
+    x1, x2, y1, y2 = bounds
+    lo_x, hi_x, lo_y, hi_y = limits
+    kw = {'color': color, 'fontsize': 'x-small', 'zorder': 8}
+    if kind == 'vline':
+        t = ax.text(x1, 0.98, f' {label}', transform=transforms.blended_transform_factory(ax.transData,
+                    ax.transAxes), ha='left', va='top', **kw)
+    elif kind == 'hline':
+        t = ax.text(0.99, y1, f'{label} ', transform=transforms.blended_transform_factory(ax.transAxes,
+                    ax.transData), ha='right', va='bottom', **kw)
+    elif kind == 'xband':
+        a, b = (lo_x if x1 is None else x1), (hi_x if x2 is None else x2)
+        mid = np.sqrt(a * b) if ax.get_xscale() == 'log' and a > 0 and b > 0 else (a + b) / 2
+        t = ax.text(mid, 0.98, label, transform=transforms.blended_transform_factory(ax.transData,
+                    ax.transAxes), ha='center', va='top', **kw)
+    elif kind == 'yband':
+        a, b = (lo_y if y1 is None else y1), (hi_y if y2 is None else y2)
+        mid = np.sqrt(a * b) if ax.get_yscale() == 'log' and a > 0 and b > 0 else (a + b) / 2
+        t = ax.text(0.01, mid, label, transform=transforms.blended_transform_factory(ax.transAxes,
+                    ax.transData), ha='left', va='center', **kw)
+    elif kind == 'box':
+        t = ax.text(min(x1 if x1 is not None else lo_x, x2 if x2 is not None else hi_x),
+                    max(y1 if y1 is not None else lo_y, y2 if y2 is not None else hi_y), f' {label}',
+                    ha='left', va='top', **kw)
+    else:
+        return
+    t._fb_cell = True
 
 
 def merge_legend(ax, panel, extra_handles):
@@ -860,6 +1043,10 @@ def add_colorbar(fig, ax, mappable, panel, report, label):
     a right-hand axis and of tick labels.
     """
     orient = _cbar_orientation(panel)
+    c_lo, c_hi = float_or_none(panel.get('c_min')), float_or_none(panel.get('c_max'))
+    if (c_lo is not None or c_hi is not None) and hasattr(mappable, 'get_clim'):
+        lo, hi = mappable.get_clim()
+        mappable.set_clim(lo if c_lo is None else c_lo, hi if c_hi is None else c_hi)
     cax = ax.inset_axes([1.02, 0.0, 0.04, 1.0])
     cb = fig.colorbar(mappable, cax=cax, orientation=orient, ticklocation=_cbar_side(panel, orient))
     cax.set_zorder(ax.get_zorder() + 0.2)

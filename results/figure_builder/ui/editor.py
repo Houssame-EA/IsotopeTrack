@@ -17,10 +17,15 @@ from PySide6.QtWidgets import (
 )
 
 from results.figure_builder.core import engine as E
+from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
+from results.figure_builder.charts.distributions import MARKS
+from results.figure_builder.charts.matrices import HEAT_SPREADS, ZERO_HANDLING
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
+from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
+from results.figure_builder.charts.special import TERNARY_FILTERS
 from results.figure_builder.charts.overlays import ELLIPSES, INSET_LOCS, MARGINALS, TRENDS
 from results.figure_builder.core import styles as S
-from results.figure_builder.core.common import HATCHES, SHAPE_TYPES, TICK_FORMATS
+from results.figure_builder.core.common import BANDS, GROUP_SORTS, HATCHES, SHAPE_TYPES, TICK_FORMATS
 from results.figure_builder.core.expressions import (
     DATA_TYPES, QUANTITY_PREFIXES, split_list, validate)
 from results.figure_builder.ui.widgets import (
@@ -34,8 +39,12 @@ DIST = {'box', 'violin'}
 VALUED = {'histogram', 'box', 'violin', 'bar', 'pie', 'strip', 'ridgeline', 'ecdf', 'timeline'}
 SUMMARISED = {'histogram', 'box', 'violin', 'strip', 'ridgeline'}
 MATRIX = {'corr_matrix', 'heatmap', 'cooccurrence'}
-CBAR = {'scatter', 'density', 'hexbin'} | MATRIX
-ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel', 'lollipop', 'treemap'}
+CBAR = {'scatter', 'density', 'hexbin', 'ternary'} | MATRIX
+MARKABLE = {'histogram', 'ecdf', 'ridgeline', 'box', 'violin', 'strip', 'scatter', 'bar'}
+SORTABLE = {'box', 'violin', 'strip', 'ridgeline', 'histogram', 'ecdf'}
+PER_ML = {'histogram', 'bar', 'pie'}
+ITEMS = MATRIX | {'composition', 'combinations', 'pairs', 'radar', 'parallel', 'lollipop', 'treemap',
+                  'network', 'pca', 'pie'}
 COMBOS = {'combinations', 'treemap'}
 SHARES = {'treemap'}
 TESTABLE = {'histogram', 'box', 'violin', 'bar', 'strip', 'ridgeline'}
@@ -81,6 +90,7 @@ SHAPE_COLUMNS = [
     ('hatch', 'Hatch', 'combo', HATCHES, 90),
     ('style', 'Line', 'combo', S.LINE_STYLES, 80),
     ('layer', 'Layer', 'combo', {'back': 'Behind data', 'front': 'In front'}, 100),
+    ('text', 'Write label', 'check', None, 70),
 ]
 
 ANNOTATION_COLUMNS = [
@@ -111,18 +121,29 @@ FIELDS = [
     ('Data', 'What to plot', 'b', 'Left corner (B)', 'expr', {'ternary'}, 'e.g. Au'),
     ('Data', 'What to plot', 'c', 'Right corner (C)', 'expr', {'ternary'}, 'e.g. Cu'),
     ('Data', 'What to plot', 'agg', 'Summarise as', 'combo', {'bar', 'line'}, AGG),
-    ('Data', 'What to plot', 'pie_mode', 'Slices are', 'combo', {'pie'},
-     {'groups': 'Particle count per group', 'values': 'Share of the Value list'}),
+    ('Data', 'What to plot', 'pie_mode', 'Slices are', 'combo', {'pie'}, PIE_MODES),
     ('Data', 'What to plot', 'heat_rows', 'Rows', 'combo', {'heatmap'},
      {'groups': 'Groups (samples, classes, rules)', 'combinations': 'Element combinations',
       'particles': 'Individual particles'}),
     ('Data', 'What to plot', 'heat_value', 'Cell value', 'combo', {'heatmap'},
-     {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'detect': 'Detected in (% of particles)',
-      'count': 'Particles detected'}),
+     {'mean': 'Mean', 'median': 'Median', 'gmean': 'Geometric mean', 'mode': 'Mode', 'sum': 'Sum',
+      'detect': 'Detected in (% of particles)', 'count': 'Particles detected'}),
+    ('Data', 'What to plot', 'heat_sort', 'Rank combinations by', 'combo', {'heatmap'},
+     {'count': 'Number of particles', 'amount': 'Share of the summed amount'}),
+    ('Data', 'What to plot', 'zero_handling', 'Particles in each pair', 'combo', {'corr_matrix'},
+     {'': 'Automatic (hide zero values)', **ZERO_HANDLING}),
+    ('Data', 'What to plot', 'corr_diff', 'Difference of the first two groups (Δr)', 'check',
+     {'corr_matrix'}, None),
+    ('Data', 'What to plot', 'tern_filter', 'Keep particles with', 'combo', {'ternary'}, TERNARY_FILTERS),
+    ('Data', 'What to plot', 'net_r_min', 'Link when |r| ≥', 'float', {'network'}, (0, 1, 0.05)),
+    ('Data', 'What to plot', 'node_size', 'Node size shows', 'combo', {'network'}, NODE_SIZES),
+    ('Data', 'What to plot', 'pca_transform', 'Prepare values', 'combo', {'pca'}, PCA_TRANSFORMS),
+    ('Data', 'What to plot', 'per_ml', 'Count as particles per mL', 'check', PER_ML, None),
     ('Data', 'What to plot', 'corr_method', 'Correlation', 'combo', {'corr_matrix', 'pairs'},
      {'pearson': 'Pearson', 'spearman': 'Spearman (rank)', 'kendall': 'Kendall'}),
-    ('Data', 'What to plot', 'log_values', 'Log-transform values first', 'check', {'corr_matrix', 'pairs'}, None),
-    ('Data', 'What to plot', 'min_n', 'Min. particles per pair', 'int', {'corr_matrix'}, (3, 1000000)),
+    ('Data', 'What to plot', 'log_values', 'Log-transform values first', 'check',
+     {'corr_matrix', 'pairs', 'network'}, None),
+    ('Data', 'What to plot', 'min_n', 'Min. particles per pair', 'int', {'corr_matrix', 'network'}, (3, 1000000)),
     ('Data', 'What to plot', 'cooc_mode', 'Cell value', 'combo', {'cooccurrence'},
      {'joint': '% of particles with both', 'conditional': '% of row particles with column',
       'count': 'Number of particles'}),
@@ -133,7 +154,7 @@ FIELDS = [
     ('Data', 'What to plot', 'share_mode', 'Share out', 'combo', SHARES, SHARE_MODES),
     ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', COMBOS,
      {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
-    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap'}, (1, 500)),
+    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap', 'pie'}, (1, 500)),
     ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
@@ -145,6 +166,12 @@ FIELDS = [
     ('Data', 'What to plot', 'max_lines', 'Max lines per group', 'int', {'parallel'}, (20, 100000)),
     ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
      'e.g. Ag > 0 and Au > 0'),
+    ('Data', 'Which particles', 'saturation', 'Drop saturated particles (counts ≥, 0 = off)', 'float',
+     ALL - {'text', 'code'}, (0, 1e9, 1000)),
+    ('Data', 'Which particles', 'trim_pct', 'Trim outliers: keep up to percentile (0 = off)', 'float',
+     VALUED - {'pie'} | {'scatter'}, (0, 99.9, 0.5)),
+    ('Data', 'Which particles', 'min_count', 'Hide groups / rows with fewer particles than', 'int',
+     SORTABLE | {'bar', 'heatmap'}, (0, 1000000)),
     ('Data', 'Which particles', 'drop_zeros', 'Hide zero values', 'check',
      XLINE | VALUED - {'pie'} | {'corr_matrix', 'heatmap', 'pairs'}, None),
     ('Data', 'Extra series on this plot', 'series', '', 'series', {'scatter'}, None),
@@ -152,7 +179,14 @@ FIELDS = [
     ('Data', 'Text', 'text_size', 'Text size (0 = auto)', 'float', {'text'}, (0, 72, 1)),
     ('Data', 'Python', 'code', '', 'code', {'code'}, None),
     ('Groups', 'Grouping', 'group_by', 'Group / colour by', 'combo', GROUPING, E.GROUP_MODES),
-    ('Groups', 'Grouping', 'color', 'Colour', 'color', PLOTS | {'ternary'}, None),
+    ('Groups', 'Grouping', 'color', 'Colour', 'color', PLOTS | {'ternary', 'network'}, None),
+    ('Groups', 'Grouping', 'sort_groups', 'Order groups', 'combo', SORTABLE, GROUP_SORTS),
+    ('Groups', 'One small plot per group', 'facet', 'Layout', 'combo', ALL - {'text', 'code', 'pairs'},
+     {'none': 'All groups together', 'groups': 'One small plot per group'}),
+    ('Groups', 'One small plot per group', 'facet_cols', 'Columns (0 = auto)', 'int',
+     ALL - {'text', 'code', 'pairs'}, (0, 12)),
+    ('Groups', 'One small plot per group', 'facet_share', 'Same axis ranges', 'check',
+     ALL - {'text', 'code', 'pairs'}, None),
     ('Groups', 'Rules (first match wins)', 'rules', '', 'rules', set(), None),
     ('Groups', 'Rules (first match wins)', 'show_other', 'Show the rest', 'check', set(), None),
     ('Groups', 'Rules (first match wins)', 'other_label', 'Name for the rest', 'text', set(), None),
@@ -170,8 +204,9 @@ FIELDS = [
     ('Style', 'Around the groups', 'trend', 'Trend curve', 'combo', {'scatter'}, TRENDS),
     ('Style', 'Around the groups', 'trend_bins', 'Trend points', 'int', {'scatter'}, (4, 60)),
     ('Style', 'Around the groups', 'marginals', 'Along the edges', 'combo', {'scatter'}, MARGINALS),
-    ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter'}, 'optional, e.g. total'),
-    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo', {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin'},
+    ('Style', 'Colour scale', 'color_by', 'Colour by value', 'expr', {'scatter', 'ternary'}, 'optional, e.g. total'),
+    ('Style', 'Colour scale', 'colormap', 'Colour map', 'combo',
+     {'scatter', 'density', 'heatmap', 'cooccurrence', 'hexbin', 'ternary'},
      {k: k for k in S.COLORMAPS}),
     ('Style', 'Colour scale', 'div_cmap', 'Colour map', 'combo', {'corr_matrix'},
      {k: k for k in ('RdBu_r', 'coolwarm', 'bwr', 'seismic', 'PiYG', 'PRGn', 'BrBG', 'RdYlBu_r')}),
@@ -181,7 +216,9 @@ FIELDS = [
     ('Style', 'Colour bar', 'cbar_length', 'Length (0 = auto)', 'float', CBAR, (0, 1, 0.05)),
     ('Style', 'Colour bar', 'cbar_width', 'Thickness (inches)', 'float', CBAR, (0.04, 1, 0.02)),
     ('Style', 'Colour bar', 'cbar_pad', 'Gap from the plot (inches)', 'float', CBAR, (0, 2, 0.02)),
-    ('Style', 'Colour bar', 'cbar_log', 'Log colour scale', 'check', {'scatter'}, None),
+    ('Style', 'Colour bar', 'cbar_log', 'Log colour scale', 'check', {'scatter', 'ternary'}, None),
+    ('Style', 'Colour bar', 'c_min', 'Colour range from', 'text', CBAR, 'auto'),
+    ('Style', 'Colour bar', 'c_max', 'Colour range to', 'text', CBAR, 'auto'),
     ('Style', 'Colour scale', 'y2_color', 'Right axis colour', 'color', {'scatter'}, None),
     ('Style', 'Lines', 'line_width', 'Line width', 'float',
      {'scatter', 'line', 'histogram', 'radar', 'ecdf', 'lollipop', 'timeline'}, (0.2, 8, 0.2)),
@@ -194,24 +231,55 @@ FIELDS = [
     ('Style', 'Chart options', 'triangle', 'Show', 'combo', {'corr_matrix', 'cooccurrence'},
      {'full': 'Full matrix', 'lower': 'Lower triangle', 'upper': 'Upper triangle'}),
     ('Style', 'Chart options', 'heat_norm', 'Normalise', 'combo', {'heatmap'},
-     {'none': 'No', 'row': 'Each row to its max', 'column': 'Each column to its max',
-      'zscore': 'z-score per column'}),
+     {'none': 'No', 'particle': '% of each particle first', 'row': 'Each row to its max',
+      'column': 'Each column to its max', 'zscore': 'z-score per column'}),
+    ('Style', 'Chart options', 'heat_spread', 'Spread under values', 'combo', {'heatmap'}, HEAT_SPREADS),
+    ('Style', 'Chart options', 'cell_label', 'Cells show', 'combo', {'corr_matrix'},
+     {'r': 'Correlation', 'n': 'Number of particles', 'both': 'Both'}),
+    ('Style', 'Chart options', 'r_threshold', 'Blank cells with |r| below', 'float', {'corr_matrix'},
+     (0, 1, 0.05)),
+    ('Style', 'Chart options', 'tern_mean', 'Mark the mean composition', 'check', {'ternary'}, None),
+    ('Style', 'Chart options', 'pca_loadings', 'Draw isotope arrows (loadings)', 'check', {'pca'}, None),
+    ('Style', 'Chart options', 'edge_pos_color', 'Positive links', 'color', {'network'}, None),
+    ('Style', 'Chart options', 'edge_neg_color', 'Negative links', 'color', {'network'}, None),
     ('Style', 'Chart options', 'log_color', 'Log colour scale', 'check', {'heatmap', 'hexbin'}, None),
     ('Style', 'Chart options', 'transpose', 'Swap rows and columns', 'check', {'heatmap'}, None),
     ('Style', 'Chart options', 'max_rows', 'Max particles shown', 'int', {'heatmap'}, (10, 1000000)),
+    ('Style', 'Chart options', 'bin_mode', 'Bins set by', 'combo', {'histogram'},
+     {'count': 'Number of bins', 'width': 'Bin width (decades on a log axis)'}),
     ('Style', 'Chart options', 'bins', 'Bins', 'int', {'histogram', 'density', 'line', 'hexbin', 'timeline'},
      (2, 500)),
+    ('Style', 'Chart options', 'bin_width', 'Bin width', 'float', {'histogram'}, (0.001, 1e6, 0.05)),
+    ('Style', 'Chart options', 'bar_values', 'Write values on the bars', 'check', {'histogram', 'bar'}, None),
+    ('Style', 'Chart options', 'bar_swap', 'Isotopes on the axis, one bar per group', 'check', {'bar'}, None),
+    ('Style', 'Chart options', 'sort_items', 'Order bars', 'combo', {'bar'}, BAR_SORTS),
+    ('Style', 'Chart options', 'violin_style', 'Violin', 'combo', {'violin'},
+     {'full': 'Full violin', 'half': 'Half violin + box (raincloud)'}),
+    ('Style', 'Chart options', 'bandwidth', 'Smoothing (0 = auto)', 'float', {'violin'}, (0, 5, 0.05)),
+    ('Style', 'Chart options', 'show_outliers', 'Show outliers', 'check', {'box'}, None),
+    ('Style', 'Chart options', 'strip_values', 'Write the summary value', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'pie_labels', 'Slice labels', 'combo', {'pie'}, PIE_LABELS),
+    ('Style', 'Chart options', 'pie_label_pos', 'Labels', 'combo', {'pie'},
+     {'inside': 'Inside the slices', 'outside': 'Outside, with lines'}),
+    ('Style', 'Chart options', 'other_pct', 'Group slices below (%) as Others', 'float', {'pie'}, (0, 50, 0.5)),
+    ('Style', 'Chart options', 'start_angle', 'Start angle (°)', 'float', {'pie'}, (0, 360, 15)),
+    ('Style', 'Chart options', 'pie_explode', 'Gap between slices', 'float', {'pie'}, (0, 0.3, 0.02)),
+    ('Style', 'Chart options', 'donut_text', 'Text in the centre', 'text', {'pie'}, '{n} = particle count'),
     ('Style', 'Chart options', 'strip_summary', 'Show', 'combo', {'strip'},
-     {'mean_sd': 'Mean ± SD (geometric on a log axis)', 'median_iqr': 'Median and IQR',
-      'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
+     {'mean_sd': 'Mean ± SD (geometric on a log axis)', 'gmean': 'Geometric mean × / ÷ GSD',
+      'median_iqr': 'Median and IQR', 'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
     ('Style', 'Chart options', 'jitter', 'Spread width', 'float', {'strip'}, (0.05, 0.48, 0.05)),
     ('Style', 'Chart options', 'sina', 'Spread by density (sina)', 'check', {'strip'}, None),
     ('Style', 'Chart options', 'overlap', 'Overlap', 'float', {'ridgeline'}, (0, 2.5, 0.1)),
     ('Style', 'Chart options', 'levels', 'Contour levels', 'int', {'contour'}, (2, 20)),
     ('Style', 'Chart options', 'filled', 'Filled contours', 'check', {'contour'}, None),
     ('Style', 'Chart options', 'radar_fill', 'Fill the shapes', 'check', {'radar'}, None),
-    ('Style', 'Chart options', 'mark_stats', 'Mark', 'combo', {'histogram', 'ridgeline'},
-     {'none': 'Nothing', 'median': 'Median', 'mean': 'Mean', 'both': 'Median and mean'}),
+    ('Style', 'Chart options', 'mark_stats', 'Mark', 'combo', {'histogram', 'ridgeline'}, MARKS),
+    ('Style', 'Statistics and limits', 'stat_band', 'Shade', 'combo', MARKABLE, BANDS),
+    ('Style', 'Statistics and limits', 'band_color', 'Shade colour', 'color', MARKABLE, None),
+    ('Style', 'Statistics and limits', 'dl_value', 'Detection limit at', 'text', MARKABLE, 'optional'),
+    ('Style', 'Statistics and limits', 'dl_label', 'Detection limit label', 'text', MARKABLE, 'DL: value'),
+    ('Style', 'Statistics and limits', 'dl_color', 'Detection limit colour', 'color', MARKABLE, None),
     ('Style', 'Chart options', 'fit_dist', 'Fit a distribution', 'combo', {'histogram'},
      {'none': 'None', 'normal': 'Normal', 'lognormal': 'Log-normal'}),
     ('Style', 'Chart options', 'summary_box', 'Statistics box', 'check', SUMMARISED, None),
@@ -283,7 +351,12 @@ FIELDS = [
     ('Axes', 'Legend', 'legend_size', 'Text size', 'combo', LEGENDED, S.FONT_SIZES),
     ('Stats', 'Fit', 'show_fit', 'Fit line', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'fit_band', '95% confidence band', 'check', {'scatter'}, None),
+    ('Stats', 'Fit', 'sd_band', 'Fit ± SD of the residuals', 'check', {'scatter'}, None),
     ('Stats', 'Fit', 'show_r', 'Show r and R²', 'check', {'scatter'}, None),
+    ('Stats', 'Isotope ratios', 'poisson_band', 'Counting-statistics band (± kσ, 0 = off)', 'float',
+     {'scatter'}, (0, 5, 0.5)),
+    ('Stats', 'Isotope ratios', 'natural_line', 'Natural abundance ratio line', 'check', {'scatter'}, None),
+    ('Stats', 'Isotope ratios', 'natural_color', 'Line colour', 'color', {'scatter'}, None),
     ('Axes', 'Zoom inset', 'inset_zoom', 'Zoom on', 'text', {'scatter'}, 'x from, x to, y from, y to'),
     ('Axes', 'Zoom inset', 'inset_loc', 'Inset position', 'combo', {'scatter'}, INSET_LOCS),
     ('Axes', 'Zoom inset', 'inset_size', 'Inset size', 'float', {'scatter'}, (0.15, 0.7, 0.05)),
@@ -319,7 +392,7 @@ TAB_HINTS = {
               'Untick a group to hide it, type a legend name to rename it.',
 }
 
-SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time')
+SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time', 'per_ml', 'max_counts')
 FUNCTION_SNIPPETS = ('log()', 'ln()', 'sqrt()', 'abs()', 'percentile(, 90)', 'median()', 'mean()',
                      'where(, , nan)')
 
@@ -619,7 +692,9 @@ class PanelEditor(QWidget):
         if self._loading or self.panel is None:
             return
         self.panel[key] = value
-        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows'):
+        if key in ('kind', 'group_by', 'test', 'pie_mode', 'rules', 'y', 'heat_rows', 'show_fit', 'trend',
+                   'share_mode', 'facet', 'bin_mode', 'donut', 'color_by', 'agg', 'stat_band',
+                   'natural_line', 'dl_value'):
             if key == 'kind' and value == 'code' and not (self.panel.get('code') or '').strip():
                 self.panel['code'] = E.CODE_EXAMPLE
                 self._loading = True
@@ -661,6 +736,39 @@ class PanelEditor(QWidget):
             return kind in kinds and (group == 'none' or not grouped)
         if key == 'value' and kind == 'pie':
             return p.get('pie_mode') == 'values'
+        if kind == 'pie' and key in ('isotopes', 'top_n'):
+            mode = p.get('pie_mode', 'groups')
+            return mode in ('detect', 'combinations', 'single_multi') and (key == 'isotopes' or mode == 'combinations')
+        if key == 'per_ml':
+            if self.table is None or not self.table.has_per_ml():
+                return False
+            if kind == 'bar':
+                return p.get('agg') in ('count', 'detect')
+            if kind == 'pie':
+                return p.get('pie_mode', 'groups') != 'values'
+            return kind in kinds
+        if key in ('facet_cols', 'facet_share'):
+            return kind in kinds and p.get('facet') == 'groups'
+        if key == 'facet':
+            return kind in kinds and group != 'none'
+        if key in ('bins', 'bin_width') and kind == 'histogram':
+            return (p.get('bin_mode') == 'width') == (key == 'bin_width')
+        if key == 'donut_text':
+            return kind == 'pie' and bool(p.get('donut'))
+        if key in ('sd_band',):
+            return kind == 'scatter' and bool(p.get('show_fit'))
+        if key == 'natural_color':
+            return kind == 'scatter' and bool(p.get('natural_line'))
+        if key == 'band_color':
+            return kind in kinds and p.get('stat_band', 'none') != 'none'
+        if key in ('dl_label', 'dl_color'):
+            return kind in kinds and bool(str(p.get('dl_value') or '').strip())
+        if key == 'heat_sort':
+            return kind == 'heatmap' and p.get('heat_rows') == 'combinations'
+        if key == 'heat_spread':
+            return kind == 'heatmap' and p.get('heat_rows') != 'particles'
+        if key in ('c_min', 'c_max') and kind in ('scatter', 'ternary'):
+            return bool((p.get('color_by') or '').strip())
         if key == 'agg' and kind == 'line':
             return bool((p.get('y') or '').strip())
         if key.startswith('cbar_') and key != 'cbar_label' and kind == 'scatter':

@@ -38,7 +38,7 @@ KIND_ELEMENTS = {
     'bar': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
     'pie': ['title', 'legend', 'cells'],
     'density': ['title', 'x_label', 'y_label', 'ticks', 'cbar_label'],
-    'ternary': ['title', 'corner_labels', 'ticks', 'legend'],
+    'ternary': ['title', 'corner_labels', 'ticks', 'legend', 'cbar_label'],
     'corr_matrix': ['title', 'ticks', 'cbar_label', 'cells'],
     'heatmap': ['title', 'x_label', 'y_label', 'ticks', 'cbar_label', 'cells'],
     'cooccurrence': ['title', 'ticks', 'cbar_label', 'cells'],
@@ -55,6 +55,8 @@ KIND_ELEMENTS = {
     'lollipop': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'treemap': ['title', 'legend', 'cells'],
     'timeline': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
+    'network': ['title', 'legend', 'cells'],
+    'pca': ['title', 'x_label', 'y_label', 'ticks', 'legend', 'cells'],
     'text': ['title'],
     'code': ['title', 'x_label', 'y_label', 'ticks', 'legend'],
 }

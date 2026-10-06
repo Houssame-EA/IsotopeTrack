@@ -27,6 +27,7 @@ from results.figure_builder.core import engine as E
 from results.figure_builder.core import styles as S
 from results.figure_builder.core import textstyle as T
 from results.figure_builder.core.expressions import DATA_TYPES, plain
+from results.figure_builder.core.recipes import RECIPES
 from results.figure_builder.ui.widgets import ColorButton
 
 XYISH = {'scatter', 'line', 'density', 'histogram', 'box', 'violin', 'bar', 'hexbin', 'contour',
@@ -641,7 +642,11 @@ def _panel_menu(win, menu, panel, fx, fy):
             panel['x_label'], panel['y_label'] = panel.get('y_label', ''), panel.get('x_label', '')
             win.after_edit(True)
         _add(menu, 'Swap X and Y', swap)
+    turn = _submenu(menu, 'Turn into a node figure')
+    for key, label in RECIPES.items():
+        _add(turn, label, lambda k=key: win.add_recipe(k, replace=panel))
     if kind == 'scatter':
+        _add(menu, 'Find the most correlated pairs…', lambda: win.after_edit(find_pairs(win, panel)))
         _add(menu, 'Fit line', lambda: (panel.update(show_fit=not panel.get('show_fit')), win.after_edit(True)),
              checked=panel.get('show_fit'))
         extras = _submenu(menu, 'Extras')
@@ -798,6 +803,9 @@ def _page_menu(win, menu, fx, fy, hit):
     add = _submenu(menu, 'Add panel here')
     for key, label in E.PANEL_KINDS.items():
         _add(add, label, lambda k=key: win.add_panel(k, at=(fx, fy)))
+    like = _submenu(menu, 'Add a node figure here')
+    for key, label in RECIPES.items():
+        _add(like, label, lambda k=key: win.add_recipe(k, at=(fx, fy)))
     _add(menu, 'Chart gallery…', win.open_gallery)
     _add(menu, 'Surprise me', win.surprise)
     layouts = _submenu(menu, 'Layouts')
@@ -810,3 +818,82 @@ def _page_menu(win, menu, fx, fy, hit):
     _add(menu, 'Text styles of the whole figure…',
          lambda: win.after_edit(style_dialog(win, None, list(T.ALL_ELEMENTS), 'Text styles — whole figure')))
     _add(menu, 'Figure settings…', win.open_figure_settings)
+
+
+def top_correlations(table, log=True, min_n=10, limit=20):
+    """Strongest Pearson correlations between every pair of isotopes.
+
+    Only particles containing both isotopes count, and a pair needs at least
+    ``min_n`` of them (as in the Correlation node's auto-detect).
+
+    Returns:
+        list: ``(r, label_a, label_b, n)`` sorted by |r|, largest first.
+    """
+    import numpy as np
+    labels = list(table.labels)
+    cols = {lab: np.nan_to_num(table.column(lab), nan=0.0) for lab in labels}
+    out = []
+    for i, a in enumerate(labels):
+        for b in labels[i + 1:]:
+            m = (cols[a] > 0) & (cols[b] > 0)
+            n = int(m.sum())
+            if n < min_n:
+                continue
+            x, y = cols[a][m], cols[b][m]
+            if log:
+                x, y = np.log10(x), np.log10(y)
+            if np.ptp(x) == 0 or np.ptp(y) == 0:
+                continue
+            r = float(np.corrcoef(x, y)[0, 1])
+            if np.isfinite(r):
+                out.append((r, a, b, n))
+    out.sort(key=lambda t: -abs(t[0]))
+    return out[:limit]
+
+
+def find_pairs(win, panel) -> bool:
+    """List the most correlated isotope pairs; picking one plots it on this scatter."""
+    table = win.table.view(panel.get('data_type') or win.spec.get('data_type'))
+    pairs = top_correlations(table, log=bool(panel.get('log_x') or panel.get('log_y')))
+    dlg = QDialog(win)
+    dlg.setWindowTitle('Most correlated isotope pairs')
+    dlg.resize(460, 520)
+    lay = QVBoxLayout(dlg)
+    note = QLabel('Pearson r over particles that contain both isotopes (at least 10)'
+                  + (', on log values' if panel.get('log_x') or panel.get('log_y') else '')
+                  + '. Double-click a pair to plot it.')
+    note.setWordWrap(True)
+    note.setObjectName('fbHint')
+    lay.addWidget(note)
+    grid = QTableWidget(len(pairs), 4)
+    grid.setHorizontalHeaderLabels(['X', 'Y', 'r', 'Particles'])
+    grid.verticalHeader().setVisible(False)
+    grid.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    grid.setSelectionBehavior(QAbstractItemView.SelectRows)
+    grid.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+    for row, (r, a, b, n) in enumerate(pairs):
+        for col, text in enumerate((a, b, f'{r:+.3f}', f'{n:,}')):
+            item = QTableWidgetItem(text)
+            if col == 2:
+                strength = abs(r)
+                item.setForeground(Qt.darkGreen if strength > 0.7 else (Qt.darkYellow if strength > 0.4 else Qt.gray))
+            grid.setItem(row, col, item)
+    lay.addWidget(grid, 1)
+    chosen = {}
+
+    def pick(row, _col=0):
+        if 0 <= row < len(pairs):
+            chosen['pair'] = pairs[row][1:3]
+            dlg.accept()
+    grid.cellDoubleClicked.connect(pick)
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    buttons.accepted.connect(lambda: pick(grid.currentRow()))
+    buttons.rejected.connect(dlg.reject)
+    lay.addWidget(buttons)
+    if not pairs:
+        note.setText('No pair of isotopes is found together in at least 10 particles.')
+    if dlg.exec() and chosen.get('pair'):
+        panel['x'], panel['y'] = chosen['pair']
+        panel['x_label'] = panel['y_label'] = ''
+        return True
+    return False

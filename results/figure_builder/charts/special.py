@@ -5,29 +5,86 @@ from __future__ import annotations
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_legend, edge_kwargs, finite_mask, float_or_none, label_n, panel_palette, resolve_groups)
-from results.figure_builder.core.expressions import ExpressionError, evaluate, pretty
+    add_colorbar, add_legend, cmap_name, edge_kwargs, float_or_none, ink, label_n, panel_palette,
+    resolve_groups)
+from results.figure_builder.core.expressions import ExpressionError, evaluate, plain, pretty
+
+
+TERNARY_FILTERS = {'any': 'At least one of the three', 'all': 'All three present',
+                   'exact': 'Exactly these three (nothing else)'}
+"""Which particles a ternary diagram keeps."""
 
 
 def draw_ternary(fig, ax, panel, table, report, style):
-    """Ternary composition plot of three expressions (normalised per particle)."""
+    """Ternary composition plot of three expressions (normalised per particle).
+
+    As in the Ternary node, particles can be required to contain one, all or
+    exactly the three corner elements; points can be coloured by any value;
+    and each group's mean composition can be marked with a star and reported
+    with its spread and the share of the particle the three corners cover.
+    """
     if not all((panel.get(k) or '').strip() for k in 'abc'):
         raise ExpressionError('Set the three corner expressions A, B and C')
-    a, b, c = (evaluate(panel[k], table) for k in 'abc')
+    a, b, c = (np.nan_to_num(evaluate(panel[k], table), nan=0.0) for k in 'abc')
+    a, b, c = np.clip(a, 0, None), np.clip(b, 0, None), np.clip(c, 0, None)
     s = a + b + c
+    mode = panel.get('tern_filter', 'any')
+    present = (a > 0).astype(int) + (b > 0) + (c > 0)
+    keep = s > 0
+    if mode == 'all':
+        keep &= present == 3
+    elif mode == 'exact':
+        keep &= (present == 3) & (table.column('n_elements') == 3)
     groups = resolve_groups(panel, table)
     size = float(panel.get('marker_size') or 12)
     marker = panel.get('marker') or 'o'
+    cvals = evaluate(panel['color_by'], table) if (panel.get('color_by') or '').strip() else None
+    norm = None
+    if cvals is not None:
+        from matplotlib.colors import LogNorm, Normalize
+        ok = cvals[np.isfinite(cvals) & keep]
+        if panel.get('cbar_log') and (ok > 0).any():
+            norm = LogNorm(vmin=float(ok[ok > 0].min()), vmax=float(ok.max()))
+        elif ok.size:
+            norm = Normalize(vmin=float(ok.min()), vmax=float(ok.max()))
     total = 0
+    mappable = None
+    stars = []
+    tot_all = table.column('total') if len(table) else np.zeros(0)
     for g in groups:
-        m = g.mask & finite_mask(a, b, c) & (s > 0)
+        m = g.mask & keep
+        if cvals is not None:
+            m &= np.isfinite(cvals)
         if not m.any():
             continue
         total += int(m.sum())
-        ax.scatter(a[m] / s[m], b[m] / s[m], c[m] / s[m], s=size, color=g.color, marker=marker,
-                   alpha=float(panel.get('alpha') or 0.7), rasterized=True,
-                   label=label_n(g, int(m.sum()), panel),
-                   **(edge_kwargs(panel) if marker not in ('+', 'x', '.') else {}))
+        ta, tb, tc = a[m] / s[m], b[m] / s[m], c[m] / s[m]
+        kw = dict(s=size, marker=marker, alpha=float(panel.get('alpha') or 0.7), rasterized=True,
+                  label=label_n(g, int(m.sum()), panel),
+                  **(edge_kwargs(panel) if marker not in ('+', 'x', '.') else {}))
+        if cvals is not None:
+            mappable = ax.scatter(ta, tb, tc, c=cvals[m], cmap=cmap_name(panel), norm=norm, **kw)
+        else:
+            ax.scatter(ta, tb, tc, color=g.color, **kw)
+        if panel.get('tern_mean'):
+            mean = np.array([ta.mean(), tb.mean(), tc.mean()])
+            sd = np.array([ta.std(ddof=1), tb.std(ddof=1), tc.std(ddof=1)]) if ta.size > 1 else np.zeros(3)
+            stars.append((g, mean))
+            cover = ''
+            if tot_all.size:
+                with np.errstate(all='ignore'):
+                    share = 100 * s[m] / tot_all[m]
+                share = share[np.isfinite(share)]
+                if share.size:
+                    cover = f'; the three cover {np.mean(share):.1f} ± {np.std(share):.1f}% of the particle'
+            names = [panel.get(f'{k}_label') or plain(pretty(panel[k], table, style, with_unit=False))
+                     for k in 'abc']
+            report.stats.append(f'{g.label}: mean composition ' + ', '.join(
+                f'{n} {100 * mu:.1f} ± {100 * sdv:.1f}%' for n, mu, sdv in zip(names, mean, sd))
+                + f' (n = {ta.size}){cover}')
+    for g, mean in stars:
+        ax.scatter([mean[0]], [mean[1]], [mean[2]], marker='*', s=size * 14 + 120, color=g.color,
+                   edgecolors=ink('#111827'), linewidths=1.0, zorder=10)
     ax.set_tlabel(panel.get('a_label') or pretty(panel['a'], table, style))
     ax.set_llabel(panel.get('b_label') or pretty(panel['b'], table, style))
     ax.set_rlabel(panel.get('c_label') or pretty(panel['c'], table, style))
@@ -36,6 +93,10 @@ def draw_ternary(fig, ax, panel, table, report, style):
     if panel.get('title'):
         ax.set_title(panel['title'], pad=24)
     report.counts[panel['id']] = total
+    if total == 0:
+        raise ExpressionError('No particle passes the ternary filter')
+    if mappable is not None:
+        add_colorbar(fig, ax, mappable, panel, report, pretty(panel['color_by'], table, style))
     add_legend(ax, panel, default_loc='ternary')
 
 

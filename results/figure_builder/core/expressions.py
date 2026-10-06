@@ -52,7 +52,7 @@ DATA_TYPES: dict[str, str] = {
 }
 """Default-quantity choices offered in the UI, mapped to their prefix."""
 
-SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time', 'index')
+SPECIAL_NAMES = ('total', 'n_elements', 'sample', 'class', 'time', 'index', 'per_ml', 'max_counts')
 
 UNCLASSIFIED = 'Unclassified'
 
@@ -195,7 +195,13 @@ class ParticleTable:
                     class_colors[lab] = entry['color']
         table = cls(particles, prefix, labels, sample_order, class_order, class_colors)
         table._single_sample = input_data.get('sample_name')
+        meta = input_data.get('concentration_meta')
+        table.concentration_meta = dict(meta) if isinstance(meta, dict) else {}
         return table
+
+    def has_per_ml(self) -> bool:
+        """Whether particles per mL can be computed (dilution and analysed volume are known)."""
+        return bool(len(self)) and bool(np.any(self.column('per_ml') > 0))
 
     def __len__(self) -> int:
         return len(self.particles)
@@ -307,6 +313,19 @@ class ParticleTable:
             col = np.array([_as_float(p.get('start_time')) for p in self.particles])
         elif name == 'index':
             col = np.arange(n, dtype=float)
+        elif name == 'per_ml':
+            meta = getattr(self, 'concentration_meta', None) or {}
+            factors = {}
+            for s in set(self.column('sample').tolist()):
+                entry = meta.get(s) or (next(iter(meta.values())) if len(meta) == 1 else None)
+                vol = _as_float((entry or {}).get('volume_ml'))
+                dil = _as_float((entry or {}).get('dilution_factor', 1.0))
+                factors[s] = dil / vol if (np.isfinite(vol) and vol > 0 and np.isfinite(dil)) else 0.0
+            col = np.array([factors.get(s, 0.0) for s in self.column('sample').tolist()], dtype=float)
+        elif name == 'max_counts':
+            col = np.zeros(n, dtype=float)
+            for lab in self.labels:
+                col = np.maximum(col, self._quantity('counts', lab))
         elif name == 'total':
             col = np.zeros(n, dtype=float)
             for lab in self.labels:

@@ -36,6 +36,7 @@ from results.figure_builder.ui.dataview import DataExplorer
 from results.figure_builder.ui import direct, interact, look
 from results.figure_builder.ui.editor import PanelEditor
 from results.figure_builder.core.expressions import DATA_TYPES, ParticleTable
+from results.figure_builder.core.recipes import RECIPES, recipe_panel
 from results.figure_builder.ui.sketch import LayoutSketch
 from results.figure_builder.ui.widgets import ColorButton, RowTable
 
@@ -166,6 +167,8 @@ Click a panel in the preview to edit it.</p>
 <tr><td><code>total</code></td><td>sum over all isotopes of the particle, e.g. <code>100*Fe/total</code> for a percentage</td></tr>
 <tr><td><code>n_elements</code></td><td>number of detected isotopes in the particle</td></tr>
 <tr><td><code>sample</code>, <code>class</code>, <code>time</code></td><td>sample name, classifier class and particle time, e.g. <code>sample == "Blank"</code></td></tr>
+<tr><td><code>per_ml</code></td><td>particles per mL that one particle stands for (dilution ÷ analysed volume of its sample)</td></tr>
+<tr><td><code>max_counts</code></td><td>the particle's highest isotope signal, e.g. <code>max_counts &lt; 10000</code> to drop saturated particles</td></tr>
 <tr><td><code>log(Fe)</code> <code>ln</code> <code>sqrt</code> <code>abs</code> <code>exp</code></td><td>functions (log is base 10)</td></tr>
 <tr><td><code>median(Fe)</code> <code>mean</code> <code>std</code> <code>percentile(Fe, 90)</code></td><td>one number over all particles, handy for thresholds</td></tr>
 <tr><td><code>Fe &lt; 10</code>, <code>Fe &gt; 0 and Cu &gt; 0</code></td><td>conditions for rules and filters (<code>and</code>, <code>or</code>, <code>not</code>)</td></tr>
@@ -192,6 +195,16 @@ outlines around each group, a running median, histograms along the edges and a z
 (right-click the plot ▸ Extras). New charts: ECDF, lollipop / dumbbell, treemap and a particle
 timeline. <b>Figure</b> settings have a text-and-axes colour (for dark slides) and a
 hand-drawn mode.</p>
+<h3>Everything the result nodes do</h3>
+<p><b>Add panel ▸ Like a node of the app</b> (also in the Gallery and on right-click) recreates the
+Histogram, Bar Chart, Box Plot, Correlation, Pie, Composition, Heatmap, Molar Ratio, Isotope Ratio,
+Ternary, Single/Multiple, Correlation Matrix, Concentration, Network and Clustering figures, ready to change.
+Their options are all here: particles per mL, saturation filter, percentile trim, minimum particles,
+bin width in decades, median / mean / mode lines, shaded SD / IQR / percentile bands, detection-limit
+lines, raincloud violins, detection-frequency bars, “Others” slices, geometric-mean heatmaps with spread,
+zero handling and Δr matrices, the Poisson counting band and natural abundance ratio for isotope ratios,
+ternary filters and mean composition, and <b>Groups ▸ One small plot per group</b> for the nodes'
+individual subplots.</p>
 <h3>Designs</h3>
 <p><b>Designs ▸ Save current design</b> stores the whole figure (layout, styles, variables) so you can
 apply it to another sample in one click, or export it to a file to share.</p>
@@ -646,6 +659,10 @@ class FigureBuilderDialog(QDialog):
         add_menu = QMenu(self)
         for key, label in E.PANEL_KINDS.items():
             add_menu.addAction(label, lambda k=key: self.add_panel(k))
+        add_menu.addSeparator()
+        self._recipe_menu = add_menu.addMenu('Like a node of the app')
+        for key, label in RECIPES.items():
+            self._recipe_menu.addAction(label, lambda k=key: self.add_recipe(k))
         bar.addWidget(self._tool('Add panel', 'fa6s.square-plus', 'Add a panel of a given type',
                                  menu=add_menu))
         bar.addWidget(self._tool('Gallery', 'fa6s.images', 'See every chart type drawn with your data '
@@ -844,6 +861,36 @@ class FigureBuilderDialog(QDialog):
         self.sketch.set_spec(self.spec)
         self.sketch.select(panel['id'])
         self._on_layout()
+
+    def add_recipe(self, key: str, at=None, replace=None):
+        """Add a panel recreating one of the app's nodes (or turn ``replace`` into it)."""
+        if replace is not None:
+            fresh = recipe_panel(key, self.table, rect=list(replace['rect']))
+            keep_id = replace['id']
+            replace.clear()
+            replace.update(fresh)
+            replace['id'] = keep_id
+            self.sketch.set_spec(self.spec)
+            self.sketch.select(keep_id)
+            self._on_select(keep_id)
+            self._schedule()
+            return replace
+        n = len(self.spec['panels'])
+        off = 0.04 * (n % 5)
+        if at is not None:
+            w = h = 0.45
+            rect = [round(min(1 - w, max(0.0, at[0] - w / 2)), 4),
+                    round(min(1 - h, max(0.0, at[1] - h / 2)), 4), w, h]
+        else:
+            rect = [0.25 + off, 0.25 + off, 0.5, 0.5]
+        if not self.spec['panels']:
+            rect = [0.0, 0.0, 1.0, 1.0]
+        panel = recipe_panel(key, self.table, rect=rect)
+        self.spec['panels'].append(panel)
+        self.sketch.set_spec(self.spec)
+        self.sketch.select(panel['id'])
+        self._on_layout()
+        return panel
 
     def _kind_defaults(self, panel):
         """Settings that suit a chart type the moment it is chosen."""
@@ -1131,7 +1178,9 @@ class FigureBuilderDialog(QDialog):
         gallery.setStyleSheet(look.window_qss())
 
         def use(kind, replace):
-            if replace and selected is not None:
+            if kind.startswith('recipe:'):
+                self.add_recipe(kind.split(':', 1)[1], replace=selected if replace else None)
+            elif replace and selected is not None:
                 self.set_panel_kind(selected, kind)
             else:
                 self.add_panel(kind)

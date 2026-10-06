@@ -81,18 +81,99 @@ def draw_corr_matrix(fig, ax, panel, table, report, style):
     values = [evaluate(e, table) for e in exprs]
     method = panel.get('corr_method', 'pearson')
     log = bool(panel.get('log_values'))
-    drop = panel.get('drop_zeros', True)
-    min_n = max(3, int(panel.get('min_n') or 10))
     k = len(exprs)
+    R, P, N = _corr_matrix(values, base, panel)
+    diff_label = None
+    if panel.get('corr_diff'):
+        groups = resolve_groups(panel, table)
+        if len(groups) >= 2:
+            R1, _P1, N1 = _corr_matrix(values, groups[0].mask, panel)
+            R2, _P2, N2 = _corr_matrix(values, groups[1].mask, panel)
+            R, N = R1 - R2, np.minimum(N1, N2)
+            P = np.full_like(R, np.nan)
+            diff_label = f'Δr ({plain(groups[0].label)} − {plain(groups[1].label)})'
+            report.stats.append(f'Difference matrix: {diff_label}')
+    thr = float(panel.get('r_threshold') or 0)
+    if thr > 0:
+        R = np.where(np.abs(R) >= thr, R, np.nan) if diff_label else np.where(
+            (np.abs(R) >= thr) | np.eye(k, dtype=bool), R, np.nan)
+    tri = panel.get('triangle', 'full')
+    show = np.ones((k, k), dtype=bool)
+    if tri == 'lower':
+        show = np.tril(show)
+    elif tri == 'upper':
+        show = np.triu(show)
+    data = np.where(show, R, np.nan)
+    cmap = panel.get('div_cmap') or 'RdBu_r'
+    if panel.get('reverse_cmap'):
+        cmap = cmap[:-2] if cmap.endswith('_r') else f'{cmap}_r'
+    lim = 1.0
+    if diff_label:
+        finite = np.abs(data[np.isfinite(data)])
+        lim = float(max(0.1, finite.max())) if finite.size else 1.0
+    img = ax.imshow(np.ma.masked_invalid(data), cmap=cmap, vmin=-lim, vmax=lim, aspect='auto',
+                    interpolation='nearest')
+    names = [item_label(panel, e, table, style, short=True) for e in exprs]
+    _matrix_ticks(ax, panel, names, names)
+    handles(report, panel)['matrix'] = {'values': data, 'rows': names, 'cols': names,
+                                         'label': METHOD_NAMES.get(method, 'r'), 'n': N, 'p': P}
+    cell = panel.get('cell_label', 'r')
+    if panel.get('annotate', True) and k <= 20:
+        for i in range(k):
+            for j in range(k):
+                if show[i, j] and np.isfinite(R[i, j]):
+                    if cell == 'n':
+                        txt = f'{N[i, j]:,}'
+                    else:
+                        txt = f'{R[i, j]:.2f}'
+                        if panel.get('show_sig') and i != j:
+                            txt += _stars(P[i, j])
+                        if cell == 'both':
+                            txt += f'\nn={N[i, j]:,}'
+                    _cell_text(ax, j, i, txt, R[i, j], -lim, lim, cmap, cell_fontsize(fig, ax, k, k))
+    _colorbar(fig, ax, img, panel, report, diff_label or (METHOD_NAMES.get(method, 'r')
+              + (' (log values)' if log else '')))
+    pairs_all = [abs(R[i, j]) for i in range(k) for j in range(i + 1, k) if np.isfinite(R[i, j])]
+    if pairs_all and not diff_label:
+        report.stats.append(f'Mean |r| = {np.mean(pairs_all):.3f}; '
+                            f'{100 * np.mean(np.asarray(pairs_all) > 0.7):.0f}% of pairs have |r| > 0.7 '
+                            f'({len(pairs_all)} pairs with enough particles)')
+    pairs = [(abs(R[i, j]), names[i], names[j], R[i, j], P[i, j], N[i, j])
+             for i in range(k) for j in range(i + 1, k) if np.isfinite(R[i, j])]
+    pairs.sort(reverse=True)
+    for _a, n1, n2, r, p, n in pairs[:8]:
+        what = 'Δr' if diff_label else METHOD_NAMES.get(method, 'r')
+        ptxt = f'p = {p:.3g}, ' if np.isfinite(p) else ''
+        report.stats.append(f'{what}: {plain(n1)} vs {plain(n2)} = {r:.3f} ({ptxt}n = {n})')
+    report.counts[panel['id']] = int(base.sum())
+
+
+ZERO_HANDLING = {'both': 'Only particles with both isotopes',
+                 'either': 'Particles with at least one of the two',
+                 'all': 'Every particle (absent = 0)'}
+"""Which particles enter each pair of a correlation matrix."""
+
+
+def _corr_matrix(values, base, panel):
+    """``(R, P, N)`` correlation, p-value and particle-count matrices over ``base``."""
+    method = panel.get('corr_method', 'pearson')
+    log = bool(panel.get('log_values'))
+    zero = panel.get('zero_handling') or ('both' if panel.get('drop_zeros', True) else 'all')
+    min_n = max(3, int(panel.get('min_n') or 10))
+    k = len(values)
     R = np.full((k, k), np.nan)
     P = np.full((k, k), np.nan)
     N = np.zeros((k, k), dtype=int)
     for i in range(k):
         for j in range(i, k):
-            a, b = values[i], values[j]
-            m = base & finite_mask(a, b, log_flags=(log, log))
-            if drop:
-                m &= (a != 0) & (b != 0)
+            a, b = np.nan_to_num(values[i], nan=0.0), np.nan_to_num(values[j], nan=0.0)
+            m = base.copy()
+            if zero == 'both':
+                m &= (a > 0) & (b > 0)
+            elif zero == 'either':
+                m &= (a > 0) | (b > 0)
+            if log:
+                m &= (a > 0) & (b > 0)
             n = int(m.sum())
             N[i, j] = N[j, i] = n
             if i == j:
@@ -108,39 +189,7 @@ def draw_corr_matrix(fig, ax, panel, table, report, style):
             r, p = correlation(x, y, method)
             R[i, j] = R[j, i] = r
             P[i, j] = P[j, i] = p
-    tri = panel.get('triangle', 'full')
-    show = np.ones((k, k), dtype=bool)
-    if tri == 'lower':
-        show = np.tril(show)
-    elif tri == 'upper':
-        show = np.triu(show)
-    data = np.where(show, R, np.nan)
-    cmap = panel.get('div_cmap') or 'RdBu_r'
-    if panel.get('reverse_cmap'):
-        cmap = cmap[:-2] if cmap.endswith('_r') else f'{cmap}_r'
-    img = ax.imshow(np.ma.masked_invalid(data), cmap=cmap, vmin=-1, vmax=1, aspect='auto',
-                    interpolation='nearest')
-    names = [item_label(panel, e, table, style, short=True) for e in exprs]
-    _matrix_ticks(ax, panel, names, names)
-    handles(report, panel)['matrix'] = {'values': data, 'rows': names, 'cols': names,
-                                         'label': METHOD_NAMES.get(method, 'r'), 'n': N, 'p': P}
-    if panel.get('annotate', True) and k <= 20:
-        for i in range(k):
-            for j in range(k):
-                if show[i, j] and np.isfinite(R[i, j]):
-                    txt = f'{R[i, j]:.2f}'
-                    if panel.get('show_sig') and i != j:
-                        txt += _stars(P[i, j])
-                    _cell_text(ax, j, i, txt, R[i, j], -1, 1, cmap, cell_fontsize(fig, ax, k, k))
-    _colorbar(fig, ax, img, panel, report, METHOD_NAMES.get(method, 'r')
-              + (' (log values)' if log else ''))
-    pairs = [(abs(R[i, j]), names[i], names[j], R[i, j], P[i, j], N[i, j])
-             for i in range(k) for j in range(i + 1, k) if np.isfinite(R[i, j])]
-    pairs.sort(reverse=True)
-    for _a, n1, n2, r, p, n in pairs[:8]:
-        report.stats.append(f'{METHOD_NAMES.get(method, "r")}: {plain(n1)} vs {plain(n2)} = {r:.3f} '
-                            f'(p = {p:.3g}, n = {n})')
-    report.counts[panel['id']] = int(base.sum())
+    return R, P, N
 
 
 def combination_keys(table, exprs, mask):
@@ -172,27 +221,44 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     cols = [item_label(panel, e, table, style, short=True) for e in exprs]
     base = base_mask(panel, table)
     values = [evaluate(e, table) for e in exprs]
+    if panel.get('heat_norm') == 'particle':
+        stack = np.vstack([np.clip(np.nan_to_num(v, nan=0.0), 0, None) for v in values])
+        tot = stack.sum(axis=0)
+        values = [np.divide(row, tot, out=np.full_like(row, np.nan), where=tot > 0) * 100 for row in stack]
+    spread_kind = panel.get('heat_spread', 'none')
+    spreads = []
 
     def summarise(mask):
-        out = []
+        out, spr = [], []
         for v in values:
             vv = v[mask & np.isfinite(v)]
             if agg == 'detect':
                 out.append(100.0 * np.count_nonzero(vv > 0) / vv.size if vv.size else np.nan)
+                spr.append(None)
                 continue
             if agg == 'count':
                 out.append(float(np.count_nonzero(vv > 0)))
+                spr.append(None)
                 continue
-            if drop and agg in ('mean', 'median'):
+            if drop and agg in ('mean', 'median', 'gmean', 'mode'):
                 vv = vv[vv != 0]
             if vv.size == 0:
                 out.append(np.nan)
-            elif agg == 'median':
+                spr.append(None)
+                continue
+            if agg == 'median':
                 out.append(float(np.median(vv)))
             elif agg == 'sum':
                 out.append(float(np.sum(vv)))
+            elif agg == 'gmean':
+                pos = vv[vv > 0]
+                out.append(float(10 ** np.mean(np.log10(pos))) if pos.size else np.nan)
+            elif agg == 'mode':
+                out.append(_mode_estimate(vv))
             else:
                 out.append(float(np.mean(vv)))
+            spr.append(_spread(vv, spread_kind))
+        spreads.append(spr)
         return out
 
     if rows_mode == 'particles':
@@ -216,7 +282,18 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     elif rows_mode == 'combinations':
         keys, _v = combination_keys(table, exprs, base)
         uniq, counts = np.unique(keys[base], return_counts=True)
-        order = np.argsort(-counts)[:max(1, int(panel.get('top_n') or 15))]
+        ok = counts >= int(panel.get('min_count') or 0)
+        uniq, counts = uniq[ok], counts[ok]
+        if panel.get('heat_sort') == 'amount':
+            amount = np.array([sum(float(np.nansum(np.clip(v[base & (keys == u)], 0, None))) for v in values)
+                               for u in uniq])
+            rank = -amount
+            shares = 100 * amount / amount.sum() if amount.sum() > 0 else amount
+            report.stats.append('Heatmap rows by share of the summed amount: ' + ', '.join(
+                f'{uniq[i]} {shares[i]:.1f}%' for i in np.argsort(rank)[:8]))
+        else:
+            rank = -counts
+        order = np.argsort(rank, kind='stable')[:max(1, int(panel.get('top_n') or 15))]
         rows = [f'{uniq[i]} (n={counts[i]})' if panel.get('show_n', True) else str(uniq[i])
                 for i in order]
         M = np.array([summarise(base & (keys == uniq[i])) for i in order], dtype=float)
@@ -231,6 +308,8 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     if M.size == 0:
         raise ExpressionError('Nothing to show')
     norm_mode = panel.get('heat_norm', 'none')
+    S = np.array([[x if x is not None else '' for x in row] for row in spreads], dtype=object) \
+        if spreads and len(spreads) == M.shape[0] else None
     with np.errstate(all='ignore'):
         if norm_mode == 'row':
             M = M / np.nanmax(np.abs(M), axis=1, keepdims=True)
@@ -239,7 +318,9 @@ def draw_heatmap(fig, ax, panel, table, report, style):
         elif norm_mode == 'zscore':
             M = (M - np.nanmean(M, axis=0, keepdims=True)) / np.nanstd(M, axis=0, keepdims=True)
     label = {'mean': 'Mean', 'median': 'Median', 'sum': 'Sum', 'detect': 'Detected in (%)',
-             'count': 'Particles detected'}.get(agg, agg)
+             'count': 'Particles detected', 'gmean': 'Geometric mean', 'mode': 'Mode'}.get(agg, agg)
+    if norm_mode == 'particle' and agg not in ('detect', 'count'):
+        label += ' (% of particle)'
     if rows_mode == 'particles':
         label = unit
     if norm_mode == 'row':
@@ -251,6 +332,7 @@ def draw_heatmap(fig, ax, panel, table, report, style):
     transpose = bool(panel.get('transpose'))
     if transpose:
         M = M.T
+        S = S.T if S is not None else None
         rows, cols = cols, rows
     cmap = cmap_name(panel)
     finite = M[np.isfinite(M)]
@@ -293,6 +375,8 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                     v = M[i, j]
                     if np.isfinite(v):
                         txt = f'{v:.0f}' if abs(v) >= 100 else f'{v:.3g}'
+                        if S is not None and norm_mode in ('none', 'particle') and S[i, j]:
+                            txt += S[i, j]
                         shade = v if norm is None else (np.log10(max(v, 1e-300)) if v > 0 else vmin)
                         lo = vmin if norm is None else np.log10(max(norm.vmin, 1e-300))
                         hi = vmax if norm is None else np.log10(norm.vmax)
@@ -300,6 +384,42 @@ def draw_heatmap(fig, ax, panel, table, report, style):
                                    cell_fontsize(fig, ax, M.shape[1], M.shape[0]))
     _colorbar(fig, ax, img, panel, report, label)
     report.counts[panel['id']] = int(base.sum())
+
+
+HEAT_SPREADS = {'none': 'None', 'sd': '± SD', 'sem': '± SEM', 'iqr': 'IQR (Q1–Q3)',
+                'minmax': 'Min – max', 'cv': 'CV %'}
+"""Spread written under each heatmap value."""
+
+
+def _mode_estimate(v):
+    """Midpoint of the densest histogram bin (bins = √n, between 5 and 50)."""
+    if v.size < 2 or np.ptp(v) == 0:
+        return float(v[0]) if v.size else np.nan
+    counts, edges = np.histogram(v, bins=int(np.clip(np.sqrt(v.size), 5, 50)))
+    k = int(np.argmax(counts))
+    return float((edges[k] + edges[k + 1]) / 2)
+
+
+def _fmt(v):
+    return f'{v:.0f}' if abs(v) >= 100 else f'{v:.2g}'
+
+
+def _spread(v, kind):
+    """Text of one cell's spread (starting with a line break), or None."""
+    if kind == 'none' or v.size < 2:
+        return None
+    if kind in ('sd', 'sem'):
+        sd = float(np.std(v, ddof=1))
+        return f'\n± {_fmt(sd if kind == "sd" else sd / np.sqrt(v.size))}'
+    if kind == 'iqr':
+        q1, q3 = np.percentile(v, [25, 75])
+        return f'\n({_fmt(q1)}–{_fmt(q3)})'
+    if kind == 'minmax':
+        return f'\n({_fmt(v.min())}–{_fmt(v.max())})'
+    if kind == 'cv':
+        m = float(np.mean(v))
+        return f'\n({100 * np.std(v, ddof=1) / m:.0f}%)' if m else None
+    return None
 
 
 def draw_cooccurrence(fig, ax, panel, table, report, style):

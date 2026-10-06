@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout)
 
 from results.figure_builder.core import engine as E
+from results.figure_builder.core.recipes import RECIPES, recipe_panel
 
 THUMB = QSize(232, 174)
 
@@ -19,7 +20,8 @@ GALLERY_GROUPS = {
     'Distributions': ['histogram', 'ecdf', 'box', 'violin', 'strip', 'ridgeline'],
     'Composition': ['combinations', 'composition', 'pie', 'treemap', 'radar',
                     'ternary', 'lollipop', 'bar'],
-    'Matrices and more': ['corr_matrix', 'cooccurrence', 'heatmap', 'parallel', 'timeline'],
+    'Matrices and more': ['corr_matrix', 'cooccurrence', 'heatmap', 'network', 'pca', 'parallel',
+                          'timeline'],
 }
 """How chart types are grouped in the gallery."""
 
@@ -65,7 +67,8 @@ class ChartGallery(QDialog):
         self.prepare = prepare
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
-        hint = QLabel('Every chart below is drawn with your own data. Double-click one to add it.')
+        hint = QLabel('Every chart below is drawn with your own data — the first ones recreate the '
+                      "app's nodes. Double-click one to add it.")
         hint.setObjectName('fbHint')
         top.addWidget(hint, 1)
         self.search = QLineEdit()
@@ -87,12 +90,15 @@ class ChartGallery(QDialog):
         self.list.itemDoubleClicked.connect(lambda _it: self._use(False))
         lay.addWidget(self.list, 1)
         self.items: dict[str, QListWidgetItem] = {}
-        order = [k for ks in GALLERY_GROUPS.values() for k in ks if k in E.PANEL_KINDS]
+        order = [f'recipe:{k}' for k in RECIPES]
+        order += [k for ks in GALLERY_GROUPS.values() for k in ks if k in E.PANEL_KINDS]
         order += [k for k in E.PANEL_KINDS if k not in order and k not in ('text', 'code')]
         for kind in order:
-            item = QListWidgetItem(_placeholder('drawing…'), E.PANEL_KINDS[kind])
+            name = RECIPES[kind[7:]] if kind.startswith('recipe:') else E.PANEL_KINDS[kind]
+            item = QListWidgetItem(_placeholder('drawing…'), name.split(' — ')[0])
             item.setData(Qt.UserRole, kind)
-            item.setToolTip(self._group_of(kind))
+            item.setToolTip(f'{name}\n{self._group_of(kind)}')
+            item.setData(Qt.UserRole + 1, name)
             self.list.addItem(item)
             self.items[kind] = item
         buttons = QHBoxLayout()
@@ -118,6 +124,8 @@ class ChartGallery(QDialog):
 
     @staticmethod
     def _group_of(kind: str) -> str:
+        if kind.startswith('recipe:'):
+            return "Like the app's nodes"
         for name, kinds in GALLERY_GROUPS.items():
             if kind in kinds:
                 return name
@@ -129,7 +137,10 @@ class ChartGallery(QDialog):
         figure.update(width=4.0, height=3.0, title='', panel_letters=False,
                       font_size=min(9, float(figure.get('font_size') or 9)), title_size=0,
                       label_size=0, tick_size=0)
-        panel = self.prepare(E.make_panel(kind=kind, rect=[0.0, 0.0, 1.0, 1.0]))
+        if kind.startswith('recipe:'):
+            panel = recipe_panel(kind[7:], self.table, rect=[0.0, 0.0, 1.0, 1.0])
+        else:
+            panel = self.prepare(E.make_panel(kind=kind, rect=[0.0, 0.0, 1.0, 1.0]))
         return {'data_type': self.spec.get('data_type', 'Counts'),
                 'variables': copy.deepcopy(self.spec.get('variables') or []),
                 'figure': figure, 'panels': [panel]}
@@ -155,7 +166,7 @@ class ChartGallery(QDialog):
     def _filter(self, text: str):
         text = text.strip().lower()
         for kind, item in self.items.items():
-            hay = f'{kind} {item.text()} {self._group_of(kind)}'.lower()
+            hay = f'{kind} {item.data(Qt.UserRole + 1)} {self._group_of(kind)}'.lower()
             item.setHidden(bool(text) and text not in hay)
 
     def _use(self, replace: bool):

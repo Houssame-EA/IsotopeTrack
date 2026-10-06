@@ -24,7 +24,7 @@ KIND_GLYPHS = {
     'corr_matrix': '▚', 'heatmap': '▦', 'cooccurrence': '◫', 'combinations': '☰',
     'composition': '▤', 'pairs': '⊞', 'strip': '⁞', 'ridgeline': '≋', 'hexbin': '⬢',
     'contour': '◎', 'radar': '✳', 'parallel': '⫴', 'ecdf': '⌐',
-    'lollipop': '⊸', 'treemap': '▣', 'timeline': '⏱',
+    'lollipop': '⊸', 'treemap': '▣', 'timeline': '⏱', 'network': '⬡', 'pca': '↗',
 }
 
 

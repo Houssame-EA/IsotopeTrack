@@ -7,8 +7,9 @@ import warnings
 import numpy as np
 
 from results.figure_builder.core.common import (
-    add_colorbar, add_legend, base_mask, cmap_name, draw_summary_box, finite_mask, handles, ink,
-    item_exprs, item_label, label_n, nonzero_mask, resolve_groups, style_axes, value_groups)
+    add_colorbar, add_legend, base_mask, cmap_name, draw_marks, draw_summary_box, finite_mask,
+    handles, ink, item_exprs, item_label, label_n, nonzero_mask, resolve_groups, style_axes,
+    value_groups)
 from results.figure_builder.core.expressions import ExpressionError, evaluate
 from results.figure_builder.core.stats import draw_brackets, run_tests
 
@@ -54,7 +55,15 @@ def draw_strip(fig, ax, panel, table, report, style):
         ax.scatter(xs, v, s=size, color=g.color, alpha=alpha, rasterized=True, zorder=2, **edge)
         if summary == 'none':
             continue
-        if summary == 'median_iqr':
+        if summary == 'gmean':
+            pos_v = v[v > 0]
+            if not pos_v.size:
+                continue
+            lt = np.log10(pos_v)
+            centre = 10 ** np.mean(lt)
+            gsd = 10 ** (np.std(lt, ddof=1) if lt.size > 1 else 0.0)
+            lo, hi = centre / gsd, centre * gsd
+        elif summary == 'median_iqr':
             centre = np.median(v)
             lo, hi = np.percentile(v, [25, 75])
         elif summary == 'mean_ci':
@@ -71,6 +80,12 @@ def draw_strip(fig, ax, panel, table, report, style):
                 centre, lo, hi = gm, gm / gsd, gm * gsd
         ax.vlines(pos, lo, hi, color=ink('#111827'), lw=1.6, zorder=4)
         ax.hlines(centre, pos - width * 0.7, pos + width * 0.7, color=ink('#111827'), lw=2.2, zorder=4)
+        if panel.get('strip_values'):
+            t = ax.annotate(f'{centre:.3g}', (pos + width * 0.75, centre), xytext=(3, 0),
+                            textcoords='offset points', ha='left', va='center', fontsize='x-small',
+                            color=ink('#111827'), zorder=6,
+                            bbox={'boxstyle': 'round,pad=0.15', 'fc': 'white', 'ec': 'none', 'alpha': 0.8})
+            t._fb_cell = True
     ax.set_xticks(positions)
     ax.set_xticklabels([f'{g.label}\n(n={v.size})' if panel.get('show_n', True) else g.label
                         for g, v in groups])
@@ -81,6 +96,7 @@ def draw_strip(fig, ax, panel, table, report, style):
     pairs, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
     style_axes(ax, panel, table, style, '', panel['value'])
+    draw_marks(ax, panel, [v for _g, v in groups], vertical=False)
     draw_brackets(ax, pairs, positions, panel)
     draw_summary_box(ax, panel, [(g.label, v) for g, v in groups])
 
@@ -129,6 +145,7 @@ def draw_ridgeline(fig, ax, panel, table, report, style):
     _, lines = run_tests([(g.label, v) for g, v in groups], panel)
     report.stats.extend(lines)
     style_axes(ax, panel, table, style, panel['value'], '')
+    draw_marks(ax, panel, [v for _g, v in groups], vertical=True)
     for side in ('left', 'right', 'top'):
         ax.spines[side].set_visible(False)
     ax.tick_params(axis='y', which='both', left=False, right=False)

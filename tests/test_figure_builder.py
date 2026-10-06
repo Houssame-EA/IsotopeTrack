@@ -963,7 +963,8 @@ def test_gallery_renders_thumbnails(dialog):
     from results.figure_builder.ui.dialog import render_to_pixmap
     from results.figure_builder.ui.gallery import ChartGallery
     g = ChartGallery(dialog.spec, dialog.table, render_to_pixmap, dialog._kind_defaults, True, dialog)
-    assert set(g.items) == set(E.PANEL_KINDS) - {'text', 'code'}
+    from results.figure_builder.core.recipes import RECIPES
+    assert set(g.items) == (set(E.PANEL_KINDS) - {'text', 'code'}) | {f'recipe:{k}' for k in RECIPES}
     for kind in ('lollipop', 'treemap', 'ecdf'):
         _pix, report, _fig = render_to_pixmap(g.thumbnail_spec(kind), dialog.table, 40)
         assert report.errors == {}, kind
@@ -1011,3 +1012,248 @@ def test_scatter_extras_menu(dialog):
     assert p0['ellipse'] == '2sd'
     dialog._render()
     assert dialog.last_report.errors == {}
+
+
+
+def _meta_table():
+    inp = make_input(classifier=True)
+    inp['concentration_meta'] = {'Blank': {'dilution_factor': 10, 'volume_ml': 0.5},
+                                 'Ag NP': {'dilution_factor': 100, 'volume_ml': 0.5},
+                                 'AgAu': {'dilution_factor': 1, 'volume_ml': 0.25}}
+    return ParticleTable.from_input(inp)
+
+
+def test_per_ml_and_max_counts_columns():
+    t = _meta_table()
+    per_ml = t.column('per_ml')
+    samples = t.column('sample')
+    assert np.allclose(per_ml[samples == 'Blank'], 20.0)
+    assert np.allclose(per_ml[samples == 'Ag NP'], 200.0)
+    assert np.allclose(per_ml[samples == 'AgAu'], 4.0)
+    assert t.has_per_ml()
+    assert not ParticleTable.from_input(make_input()).has_per_ml()
+    mx = t.column('max_counts')
+    assert np.allclose(mx, np.maximum.reduce([t.column(l) for l in t.labels]))
+
+
+def _one(table, **panel):
+    spec = E.normalise_spec({'panels': [E.make_panel(**panel)]})
+    fig, report = _draw(spec, table)
+    return spec['panels'][0], fig, report, report.artists.get(spec['panels'][0]['id'], {})
+
+
+def test_histogram_per_ml_bin_width_and_marks():
+    t = _meta_table()
+    p, _fig, report, hd = _one(t, kind='histogram', value='Ag', group_by='sample', per_ml=True,
+                               log_x=True, bin_mode='width', bin_width=0.1, mark_stats='all',
+                               stat_band='iqr', dl_value='30')
+    assert report.errors == {}
+    edges = hd['hist'][0][1]
+    assert np.allclose(np.diff(np.log10(edges)), 0.1)
+    blank = next(h for h in hd['hist'] if h[0] == 'Blank')
+    assert np.isclose(blank[2].sum(), 200 * 20.0)
+    ax = hd['ax']
+    assert ax.get_ylabel() == 'Particles/mL'
+    assert any(t.get_text().startswith(' mode:') for t in ax.texts) is False
+    texts = ' '.join(t.get_text() for t in ax.texts)
+    assert 'DL: 30' in texts
+
+
+def test_saturation_trim_min_count_and_sort(table):
+    from results.figure_builder.core.common import value_groups
+    base = E.make_panel(kind='box', value='Ag', group_by='sample')
+    full = {g.label: v.size for g, v in value_groups(base, table)}
+    sat = dict(base, saturation=100)
+    assert all(v.size <= full[g.label] for g, v in value_groups(sat, table))
+    assert sum(v.size for _g, v in value_groups(sat, table)) < sum(full.values())
+    trimmed = dict(base, trim_pct=90)
+    for g, v in value_groups(trimmed, table):
+        assert v.size < full[g.label]
+    few = dict(base, filter='sample != "Blank" or index < 20', min_count=50)
+    sizes = {g.label: v.size for g, v in value_groups(few, table)}
+    assert sizes['Blank'] == 0 and sizes['AgAu'] == 200
+    order = [g.label for g, _v in value_groups(dict(base, sort_groups='median_desc'), table)]
+    meds = {g.label: np.median(v) for g, v in value_groups(base, table)}
+    assert order == sorted(meds, key=lambda k: -meds[k])
+
+
+def test_raincloud_violin_and_outliers(table):
+    p, _fig, report, hd = _one(table, kind='violin', value='Ag', group_by='sample', violin_style='half',
+                               show_points=True, bandwidth=0.3, dl_value='50', stat_band='sd1')
+    assert report.errors == {}
+    p, _fig, report, hd = _one(table, kind='box', value='Ag', group_by='sample', show_outliers=False)
+    assert report.errors == {}
+    assert all(len(line.get_xdata()) == 0 for line in hd['ax'].lines if line.get_marker() == 'o')
+
+
+def test_bar_detection_layout_values_and_sort(table):
+    p, _fig, report, hd = _one(table, kind='bar', value='Ag, Au, Fe', agg='detect', group_by='sample',
+                               bar_swap=True, bar_values=True, sort_items='asc')
+    assert report.errors == {}
+    ax = hd['ax']
+    assert [t.get_text() for t in ax.get_xticklabels()][0].startswith('$^{197}$Au') or 'Au' in \
+        ax.get_xticklabels()[0].get_text()
+    heights = sorted({round(r.get_height()) for r in ax.patches if r.get_height() > 0})
+    assert heights == [100, 200]
+    assert any(t.get_text() == '200' for t in ax.texts)
+    assert 'bar_info' in hd
+    p, _fig, report, hd = _one(table, kind='bar', value='Au', agg='detect_pct', group_by='sample')
+    assert sorted(round(r.get_height()) for r in hd['ax'].patches) == [50, 50, 50]
+
+
+@pytest.mark.parametrize('mode', ['detect', 'combinations', 'single_multi'])
+def test_pie_node_modes(table, mode):
+    p, _fig, report, hd = _one(table, kind='pie', pie_mode=mode, pie_labels='all', pie_label_pos='outside',
+                               other_pct=5, donut=True, donut_text='{n}', start_angle=0, pie_explode=0.05)
+    assert report.errors == {}
+    labels = [w[1] for w in hd['wedges']]
+    if mode == 'single_multi':
+        assert labels == ['Multiple elements']
+    elif mode == 'combinations':
+        assert set(labels) == {'Ag + Fe', 'Ag + Au + Fe'}
+    else:
+        assert len(labels) == 3
+    assert any(t.get_text() == '600' for t in hd['ax'].texts)
+
+
+def test_pie_merges_small_slices(table):
+    from results.figure_builder.charts.categorical import _merge_small
+    labels, sizes, _c = _merge_small(['a', 'b', 'c'], [90, 6, 4], ['r', 'g', 'b'], 5)
+    assert labels == ['a', 'b', 'Others'] and sizes[-1] == 4
+
+
+def test_heatmap_node_options(table):
+    p, _fig, report, hd = _one(table, kind='heatmap', heat_rows='combinations', heat_value='gmean',
+                               heat_spread='sd', heat_sort='amount', min_count=10)
+    assert report.errors == {}
+    assert any('± ' in t.get_text() for t in hd['ax'].texts)
+    p, _fig, report, hd = _one(table, kind='heatmap', heat_norm='particle', heat_value='mean')
+    vals = hd['matrix']['values']
+    assert np.nanmax(vals) <= 100 + 1e-9
+    p, _fig, report, hd = _one(table, kind='heatmap', heat_value='mode')
+    assert report.errors == {}
+
+
+def test_corr_matrix_node_options(table):
+    p, _fig, report, hd = _one(table, kind='corr_matrix', zero_handling='all', cell_label='n')
+    n = hd['matrix']['n']
+    assert n[0, 1] == 600
+    p, _fig, report, hd = _one(table, kind='corr_matrix', zero_handling='both')
+    assert hd['matrix']['n'][0, 1] == 300
+    p, _fig, report, hd = _one(table, kind='corr_matrix', group_by='sample', corr_diff=True)
+    assert report.errors == {} and any('Difference matrix' in line for line in report.stats)
+    p, _fig, report, hd = _one(table, kind='corr_matrix', r_threshold=0.5)
+    vals = hd['matrix']['values']
+    off = vals[~np.eye(vals.shape[0], dtype=bool)]
+    assert np.all(np.isnan(off) | (np.abs(off) >= 0.5))
+
+
+def test_scatter_ratio_tools(table):
+    p, _fig, report, hd = _one(table, kind='scatter', x='Fe', y='Ag/Fe', poisson_band=2, log_x=True,
+                               show_fit=True, sd_band=True, natural_line=True)
+    assert report.errors == {}
+    assert any('counting-statistics band' in line for line in report.stats)
+    from results.figure_builder.core.isotopes import natural_ratio, ratio_parts
+    assert ratio_parts('counts:107Ag/counts:109Ag') == ('107Ag', '109Ag')
+    r = natural_ratio('107Ag', '109Ag')
+    if r is not None:
+        assert abs(r - 1.0764) < 0.01
+
+
+def test_find_top_correlations(table):
+    from results.figure_builder.ui.interact import top_correlations
+    pairs = top_correlations(table)
+    assert pairs and all(len(p) == 4 for p in pairs)
+    assert abs(pairs[0][0]) >= abs(pairs[-1][0])
+
+
+def test_ternary_node_options(table):
+    p, _fig, report, hd = _one(table, kind='ternary', a='Ag', b='Au', c='Fe', tern_filter='all',
+                               tern_mean=True, color_by='total')
+    assert report.errors == {}
+    assert report.counts[p['id']] == 300
+    assert hd.get('cbar') is not None
+    assert any('mean composition' in line for line in report.stats)
+    p, _fig, report, hd = _one(table, kind='ternary', a='Ag', b='Au', c='Fe', tern_filter='exact')
+    assert report.counts[p['id']] == 300
+
+
+def test_network_and_pca(table):
+    p, _fig, report, hd = _one(table, kind='network', net_r_min=0.0)
+    assert report.errors == {}
+    assert len(hd['network']['edges']) == 3
+    p, _fig, report, hd = _one(table, kind='pca', group_by='sample')
+    assert report.errors == {}
+    assert any('PC1 explains' in line for line in report.stats)
+    assert hd['ax'].get_xlabel().startswith('PC1')
+
+
+def test_facets_one_plot_per_group(table):
+    p, fig, report, hd = _one(table, kind='histogram', value='Ag', group_by='sample', facet='groups')
+    assert report.errors == {}
+    assert len(hd['facets']) == 3
+    axes = [f['ax'] for f in hd['facets']]
+    assert len({a.get_xlim() for a in axes}) == 1 and len({a.get_ylim() for a in axes}) == 1
+    assert [a.get_title() for a in axes] == ['Blank', 'Ag NP', 'AgAu']
+    assert report.counts[p['id']] == 600
+    p, fig, report, hd = _one(table, kind='box', value='Ag', group_by='sample', facet='groups',
+                              facet_cols=3)
+    tops = {round(f['ax'].get_position().y1, 3) for f in hd['facets']}
+    assert len(tops) == 1
+
+
+@pytest.mark.parametrize('key', list(__import__('results.figure_builder.core.recipes',
+                                                fromlist=['RECIPES']).RECIPES))
+def test_node_recipes_render(table, key):
+    from results.figure_builder.core.recipes import recipe_panel
+    panel = recipe_panel(key, table, rect=[0, 0, 1, 1])
+    spec = E.normalise_spec({'panels': [panel]})
+    _fig, report = _draw(spec, table)
+    assert report.errors == {}, report.errors
+
+
+def test_recipe_menu_and_replace(dialog):
+    from results.figure_builder.ui import interact
+    before = len(dialog.spec['panels'])
+    dialog.add_recipe('ternary')
+    assert len(dialog.spec['panels']) == before + 1
+    panel = dialog.spec['panels'][-1]
+    assert panel['kind'] == 'ternary' and panel['tern_mean']
+    pid, rect = panel['id'], list(panel['rect'])
+    dialog.add_recipe('box', replace=panel)
+    assert panel['id'] == pid and panel['rect'] == rect and panel['kind'] == 'box'
+    dialog._render()
+    assert dialog.last_report.errors == {}
+    plot = next(h for h in dialog._hits if h.panel_id == pid and h.element == 'plot')
+    menu = interact.build_menu(dialog, plot, 0.5, 0.5)
+    turn = next(a for a in menu.actions() if a.text() == 'Turn into a node figure').menu()
+    next(a for a in turn.actions() if a.text().startswith('Network node')).trigger()
+    assert panel['kind'] == 'network'
+
+
+def test_shape_label_written_on_plot(table):
+    p, _fig, report, hd = _one(table, kind='scatter', x='Ag', y='Fe',
+                               shapes=[{'type': 'hline', 'y1': '20', 'label': 'Limit', 'text': True}])
+    assert any(t.get_text().strip() == 'Limit' for t in hd['ax'].texts)
+
+
+def test_colour_range_is_applied(table):
+    p, _fig, report, hd = _one(table, kind='scatter', x='Ag', y='Fe', color_by='total', c_min='0', c_max='500')
+    assert hd['cbar'].mappable.get_clim() == (0.0, 500.0)
+
+
+def test_editor_shows_node_fields(dialog):
+    p0 = dialog.spec['panels'][0]
+    ed = dialog.editor
+    p0['kind'] = 'pie'
+    p0['pie_mode'] = 'combinations'
+    ed.set_panel(p0)
+    assert ed._visible('isotopes', ed._kinds('isotopes')) and ed._visible('top_n', ed._kinds('top_n'))
+    p0['pie_mode'] = 'groups'
+    assert not ed._visible('top_n', ed._kinds('top_n'))
+    p0['kind'] = 'histogram'
+    p0['bin_mode'] = 'width'
+    assert ed._visible('bin_width', ed._kinds('bin_width')) and not ed._visible('bins', ed._kinds('bins'))
+    assert not ed._visible('per_ml', ed._kinds('per_ml'))
+    p0['group_by'] = 'sample'
+    assert ed._visible('facet', ed._kinds('facet'))
