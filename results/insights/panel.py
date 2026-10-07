@@ -2,7 +2,7 @@
 
 The panel searches every loaded sample on its own with the engine in
 :mod:`results.insights.engine`, lists what it finds under section headings,
-explains each finding, and builds the plot or the four-panel figure a finding
+explains each finding, and builds the plot or the explained figure a finding
 calls for, behind a selector holding only the samples and elements involved.
 
 Public entry points for the canvas dialog are :func:`integrate_insights_panel`
@@ -371,7 +371,7 @@ class _Card(QFrame):
             s: The suggestion to display.
             on_add: Callback invoked with *s* when the add button is pressed.
             samples_text: Short description of the samples the finding covers.
-            on_figure: Callback invoked with *s* to add the four-panel figure,
+            on_figure: Callback invoked with *s* to add the explained figure,
                 or ``None`` when the finding has no figure design.
             parent: Optional parent widget.
         """
@@ -459,12 +459,13 @@ class _Card(QFrame):
         if self._on_figure is not None:
             figure_row = QHBoxLayout()
             figure_row.addStretch()
-            self._figure_btn = QPushButton("Add figure a–d")
+            self._figure_btn = QPushButton("Add explained figure")
             self._figure_btn.setObjectName("iFigureBtn")
             self._figure_btn.setCursor(Qt.PointingHandCursor)
             self._figure_btn.setToolTip(
-                "Adds a four-panel Figure Builder figure that shows the evidence behind this "
-                "finding, in counts, mass and size, with the detection limit marked")
+                "Adds a Figure Builder figure, panels a to f with a legend, that walks through "
+                "this finding in the order of its explanation: what was found, how, how to "
+                "read it and what to check")
             self._figure_btn.clicked.connect(self._figure_clicked)
             figure_row.addWidget(self._figure_btn)
             root.addLayout(figure_row)
@@ -515,7 +516,7 @@ class _Card(QFrame):
         self._details_btn.setText("Hide details" if shown else "Show details")
 
     def _figure_clicked(self):
-        """Add the four-panel figure, and confirm on the button."""
+        """Add the explained figure, and confirm on the button."""
         self._on_figure(self._s)
         original = self._figure_btn.text()
         self._figure_btn.setText("Figure added")
@@ -629,46 +630,32 @@ def describe_scope(scope: AnalysisScope) -> tuple[str, str]:
     return first, f"Replicates: {shown}, from {origin}."
 
 
-_SETTINGS_KEY = "insights/node_types"
+_FILTER_KEY = "insights/plot_filter"
 
 
-def _load_enabled_types() -> set[str]:
-    """Read the node types the user last chose to search for.
-
-    Returns:
-        The saved node types, or every node type when nothing is saved.
-    """
+def _load_filter() -> str | None:
+    """Read the plot type the user last chose to show, or ``None`` for all."""
     try:
         from PySide6.QtCore import QSettings
-        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_SETTINGS_KEY, None)
+        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_FILTER_KEY, "")
     except Exception:
-        raw = None
-    if raw is None:
-        return set(NODE_TYPE_META)
-    if isinstance(raw, str):
-        raw = [r for r in raw.split(",") if r]
-    return {str(r) for r in (raw or [])} & set(NODE_TYPE_META)
+        return None
+    raw = str(raw or "")
+    return raw if raw in NODE_TYPE_META else None
 
 
-def _save_enabled_types(types) -> None:
-    """Remember which node types the user chose to search for."""
+def _save_filter(node_type: str | None) -> None:
+    """Remember which plot type the user chose to show."""
     try:
         from PySide6.QtCore import QSettings
-        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_SETTINGS_KEY, ",".join(sorted(types)))
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_FILTER_KEY, node_type or "")
     except Exception:
-        _itk_log.debug("[Insights] could not save node type choice")
+        _itk_log.debug("[Insights] could not save the plot type filter")
 
 
-class _StayOpenMenu(QMenu):
-    """A menu that stays open while checkable items are toggled."""
-
-    def mouseReleaseEvent(self, event):
-        """Toggle a checkable item without closing the menu."""
-        action = self.activeAction()
-        if action is not None and action.isCheckable() and action.isEnabled():
-            action.trigger()
-            return
-        super().mouseReleaseEvent(event)
+def card_key(s: Suggestion) -> tuple:
+    """Identity of a finding's card, so a card can be kept across refreshes."""
+    return (s.node_type, s.category, s.title, tuple(s.samples), tuple(s.elements))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -713,7 +700,9 @@ class SmartInsightsPanel(QWidget):
         self._pending: set[str] = set()
         self._scope: AnalysisScope | None = None
         self._retired: list[_AnalysisWorker] = []
-        self._enabled: set[str] = _load_enabled_types()
+        self._filter: str | None = _load_filter()
+        self._cards: dict[tuple, _Card] = {}
+        self._held = False
         self.setMinimumWidth(270)
 
         self._build_ui()
@@ -776,17 +765,23 @@ class SmartInsightsPanel(QWidget):
         self._types_btn.setPopupMode(QToolButton.InstantPopup)
         self._types_btn.setCursor(Qt.PointingHandCursor)
         self._types_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self._types_menu = _StayOpenMenu(self._types_btn)
-        self._type_actions = {}
-        self._types_menu.addAction("Pick all", self._select_all)
-        self._types_menu.addAction("Pick none", self._select_none)
+        from PySide6.QtGui import QActionGroup
+        self._types_menu = QMenu(self._types_btn)
+        group = QActionGroup(self._types_menu)
+        group.setExclusive(True)
+        self._all_action = self._types_menu.addAction("All plot types")
+        self._all_action.setCheckable(True)
+        group.addAction(self._all_action)
+        self._all_action.triggered.connect(lambda: self._set_filter(None))
         self._types_menu.addSeparator()
+        self._type_actions = {}
         for key in node_type_keys():
             action = self._types_menu.addAction(NODE_TYPE_META[key])
             action.setCheckable(True)
-            action.setChecked(key in self._enabled)
-            action.toggled.connect(lambda checked, k=key: self._toggle_type(k, checked))
+            group.addAction(action)
+            action.triggered.connect(lambda _checked=False, k=key: self._set_filter(k))
             self._type_actions[key] = action
+        self._sync_filter_actions()
         self._types_btn.setMenu(self._types_menu)
         types_row = QHBoxLayout()
         types_row.addWidget(self._types_btn)
@@ -808,6 +803,13 @@ class SmartInsightsPanel(QWidget):
         self._status.setVisible(False)
         root.addWidget(self._status)
 
+        self._new_bar = QPushButton("")
+        self._new_bar.setObjectName("iNewBar")
+        self._new_bar.setCursor(Qt.PointingHandCursor)
+        self._new_bar.setVisible(False)
+        self._new_bar.clicked.connect(self._release_held)
+        root.addWidget(self._new_bar)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -819,6 +821,8 @@ class SmartInsightsPanel(QWidget):
         self._card_layout.addStretch()
         scroll.setWidget(self._card_w)
         root.addWidget(scroll, 1)
+        self._scroll = scroll
+        scroll.viewport().installEventFilter(self)
 
         self._chips = self._type_actions
         self._update_types_label()
@@ -871,6 +875,10 @@ class SmartInsightsPanel(QWidget):
             QToolButton#iDetailsBtn {{ background: transparent; color: {p.accent}; border: none;
                                       padding: 0; font-size: 11px; }}
             QToolButton#iDetailsBtn:hover {{ text-decoration: underline; }}
+            QPushButton#iNewBar {{ background: {p.accent_soft}; color: {p.accent}; border: none;
+                                  border-bottom: 1px solid {p.border_subtle}; padding: 6px 14px;
+                                  font-size: 11px; font-weight: 600; text-align: left; }}
+            QPushButton#iNewBar:hover {{ background: {p.accent}; color: {p.text_inverse}; }}
             QFrame#iDetails {{ background: {p.bg_primary}; border: 1px solid {p.border_subtle};
                               border-radius: 6px; }}
             QLabel#iDetailKey {{ color: {p.text_muted}; font-size: 10px; }}
@@ -888,69 +896,47 @@ class SmartInsightsPanel(QWidget):
             self._rebuild_cards()
 
     def _update_types_label(self):
-        """Say on the plot types button how many types are being searched."""
-        n, total = len(self._enabled), len(NODE_TYPE_META)
-        if n == total:
-            text = f"Plot types: all {total}  ▾"
-        elif n == 0:
-            text = "Plot types: none  ▾"
-        elif n == 1:
-            text = f"Plot types: {NODE_TYPE_META[next(iter(self._enabled))].lower()}  ▾"
+        """Say on the plot types button what is being shown."""
+        if self._filter is None:
+            text = "Showing: all plot types  ▾"
         else:
-            text = f"Plot types: {n} of {total}  ▾"
+            text = f"Showing: {NODE_TYPE_META[self._filter].lower()}  ▾"
         self._types_btn.setText(text)
 
-    def enabled_node_types(self) -> set[str]:
-        """Return the node types currently picked."""
-        return set(self._enabled)
-
-    def _toggle_type(self, key: str, checked: bool):
-        """Pick or drop one plot type and search for it if needed.
-
-        Args:
-            key: The node type.
-            checked: Whether it is now picked.
-        """
-        if checked:
-            self._enabled.add(key)
-        else:
-            self._enabled.discard(key)
-        _save_enabled_types(self._enabled)
-        self._update_types_label()
-        if self.isVisible():
-            self.scan()
-
-    def _set_enabled(self, types):
-        """Pick exactly *types*, updating the menu without a search per item.
-
-        Args:
-            types: Node types to pick.
-        """
-        self._enabled = set(types)
+    def _sync_filter_actions(self):
+        """Tick the menu item matching the current filter."""
+        self._all_action.setChecked(self._filter is None)
         for key, action in self._type_actions.items():
-            action.blockSignals(True)
-            action.setChecked(key in self._enabled)
-            action.blockSignals(False)
-        _save_enabled_types(self._enabled)
+            action.setChecked(key == self._filter)
         self._update_types_label()
-        if self.isVisible():
-            self.scan()
 
-    def _select_all(self):
-        """Pick every plot type."""
-        self._set_enabled(NODE_TYPE_META)
+    def current_filter(self) -> str | None:
+        """Return the plot type being shown, or ``None`` for all of them."""
+        return self._filter
 
-    def _select_none(self):
-        """Drop every plot type."""
-        self._set_enabled(())
+    def _set_filter(self, node_type: str | None):
+        """Show one plot type, or all of them.
+
+        The search always covers every plot type, so changing what is shown
+        never starts or stops a search.
+
+        Args:
+            node_type: The plot type to show, or ``None`` for all.
+        """
+        self._filter = node_type if node_type in NODE_TYPE_META else None
+        _save_filter(self._filter)
+        self._sync_filter_actions()
+        self._held = False
+        self._new_bar.setVisible(False)
+        self._render(force=True)
 
     def _show_only(self, key: str):
-        """Pick one plot type and drop the rest.
+        """Show one plot type only.
 
         Args:
-            key: The node type to keep.
+            key: The node type to show.
         """
-        self._set_enabled({key})
+        self._set_filter(key)
 
     def _set_status(self, text: str):
         """Show a short progress line under the header, or hide it when empty."""
@@ -985,7 +971,7 @@ class SmartInsightsPanel(QWidget):
             self._show_empty()
             return
 
-        needed = set(analysers_for(self._enabled)) - self._ran
+        needed = set(category_keys()) - self._ran
         if not needed or needed <= self._pending:
             self._render()
             return
@@ -1029,7 +1015,7 @@ class SmartInsightsPanel(QWidget):
         analyser = _ANALYSERS.get(key)
         if analyser is None:
             return
-        self._set_enabled(analyser.node_types)
+        self._set_filter(next(iter(sorted(analyser.node_types)), None))
         self.scan(force=force)
 
     def _check_scope(self):
@@ -1121,52 +1107,118 @@ class SmartInsightsPanel(QWidget):
             return
         self._ran |= set(keys)
         self._render()
-        missing = set(analysers_for(self._enabled)) - self._ran
-        if missing:
+        if set(category_keys()) - self._ran:
             self.scan()
 
     def visible_suggestions(self) -> list[Suggestion]:
         """Return the cards for the picked plot types, ranked and de-duplicated."""
-        wanted = [s for s in self._found if s.node_type in self._enabled]
-        limit = FOCUSED_CARD_LIMIT if len(self._enabled) == 1 else None
-        return _dedupe_suggestions(wanted, limit)
+        if self._filter is None:
+            return _dedupe_suggestions(self._found)
+        wanted = [s for s in self._found if s.node_type == self._filter]
+        return _dedupe_suggestions(wanted, FOCUSED_CARD_LIMIT)
 
     def _update_chip_counts(self):
-        """Write how many findings each plot type has into the plot types menu."""
+        """Write how many findings each plot type has into the menu.
+
+        Once the search is over, plot types with nothing to show are greyed
+        out, so picking one never leads to an empty list.
+        """
+        finished = self._worker is None and self._scope is not None and bool(self._ran)
+        total = len(_dedupe_suggestions(self._found))
+        self._all_action.setText(f"All plot types  ({total})" if self._ran else "All plot types")
         for key, action in self._type_actions.items():
             label = NODE_TYPE_META[key]
             searched = set(analysers_for({key})) <= self._ran and self._scope is not None
             if not searched:
                 action.setText(label)
+                action.setEnabled(True)
                 continue
             count = len(_dedupe_suggestions(
                 [s for s in self._found if s.node_type == key], FOCUSED_CARD_LIMIT))
             action.setText(f"{label}  ({count})" if count else f"{label}  (none)")
+            action.setEnabled(bool(count) or not finished or key == self._filter)
 
-    def _render(self, searching: bool = False):
-        """Show the cards for the picked plot types, under their section headings.
+    def _render(self, searching: bool = False, force: bool = False):
+        """Show the findings for the current filter, under their section headings.
+
+        While a search is still delivering findings and the pointer is over
+        the list, new findings are held back behind a bar instead of moving
+        the cards the user is about to click.
 
         Args:
-            searching: Whether detectors are still running, which changes the
-                count line and keeps an empty list from reading as final.
+            searching: Whether detectors are still running.
+            force: Redraw now even if the pointer is over the list.
         """
         self._suggestions = self.visible_suggestions()
         self._update_chip_counts()
         n = len(self._suggestions)
-        if searching or self._worker is not None:
+        busy = searching or self._worker is not None
+        if busy:
             self._count_lbl.setText(f"Searching… {n} finding{'s' if n != 1 else ''} so far")
         else:
             self._count_lbl.setText(f"{n} finding{'s' if n != 1 else ''}" if n
                                     else "No findings")
+        if not force and self._cards and self._pointer_over_list():
+            shown = set(self._cards)
+            new = sum(1 for s in self._suggestions if card_key(s) not in shown)
+            if new:
+                self._held = True
+                self._new_bar.setText(f"Show {new} new finding{'s' if new != 1 else ''}")
+                self._new_bar.setVisible(True)
+                return
+        self._apply_render(busy)
+
+    def _apply_render(self, busy: bool = False):
+        """Lay out the current findings, keeping cards that are already shown."""
+        self._held = False
+        self._new_bar.setVisible(False)
         if self._suggestions:
             self._rebuild_cards()
-        elif not (searching or self._worker is not None):
+        else:
             self._clear_cards()
-            self._show_empty()
+            if not busy:
+                self._show_empty()
+            else:
+                self._show_placeholder("Searching every sample and element. Findings appear "
+                                       "here as each check finishes.")
+
+    def _release_held(self):
+        """Show findings that were held back while the pointer was over the list."""
+        self._apply_render(self._worker is not None)
+
+    def _pointer_over_list(self) -> bool:
+        """Whether the mouse is over the list of findings."""
+        try:
+            return self._scroll.viewport().underMouse()
+        except RuntimeError:
+            return False
+
+    def eventFilter(self, watched, event):
+        """Show held-back findings once the pointer leaves the list."""
+        from PySide6.QtCore import QEvent
+        if event.type() == QEvent.Leave and self._held:
+            QTimer.singleShot(150, lambda: self._held and not self._pointer_over_list()
+                              and self._release_held())
+        return super().eventFilter(watched, event)
 
     def _rebuild_cards(self):
-        """Replace the list with section headings and one card per finding."""
-        self._clear_cards()
+        """Lay out section headings and cards, reusing the cards already on screen.
+
+        A reused card keeps its open details and its place under the pointer;
+        only headings are recreated, and cards for findings that are no longer
+        shown are deleted.
+        """
+        wanted = {card_key(s): s for s in self._suggestions}
+        while self._card_layout.count() > 1:
+            item = self._card_layout.takeAt(0)
+            widget = item.widget()
+            if widget is None:
+                continue
+            if isinstance(widget, _Card) and card_key(widget._s) in wanted:
+                continue
+            if isinstance(widget, _Card):
+                self._cards.pop(card_key(widget._s), None)
+            widget.deleteLater()
         by_section: dict[str, list[Suggestion]] = {}
         for s in self._suggestions:
             by_section.setdefault(section_of(s.category), []).append(s)
@@ -1188,12 +1240,19 @@ class SmartInsightsPanel(QWidget):
             holder.setLayout(row)
             self._card_layout.insertWidget(self._card_layout.count() - 1, holder)
             for s in items:
-                has_figure = (s.explain_key or s.category) in _figures.DESIGNS or \
-                    s.category in _figures.DESIGNS
-                card = _Card(s, on_add=self._add_suggestion,
-                             samples_text=describe_samples(s, self._scope),
-                             on_figure=self._add_figure if has_figure else None)
+                key = card_key(s)
+                card = self._cards.get(key)
+                if card is None:
+                    has_figure = ((s.explain_key or s.category) in _figures.DESIGNS
+                                  or s.category in _figures.DESIGNS)
+                    card = _Card(s, on_add=self._add_suggestion,
+                                 samples_text=describe_samples(s, self._scope),
+                                 on_figure=self._add_figure if has_figure else None)
+                    self._cards[key] = card
                 self._card_layout.insertWidget(self._card_layout.count() - 1, card)
+                card.setVisible(True)
+        for key in [k for k in self._cards if k not in wanted]:
+            self._cards.pop(key).deleteLater()
 
     def _empty_message(self) -> str:
         """Explain why there are no cards, and what to do about it.
@@ -1205,12 +1264,12 @@ class SmartInsightsPanel(QWidget):
         if scope is None or not scope.sample_names:
             return ("Load a sample to start. Insights searches every sample and element on "
                     "its own.")
-        if not self._enabled:
-            return "No plot types picked. Choose some under Plot types."
         if scope.total_particles < 5:
             return f"Only {scope.total_particles} particles are loaded, too few to search."
-        return ("Nothing stands out for the plot types you picked. Pick more plot types, or "
-                "load more samples to compare.")
+        if self._filter is not None:
+            return (f"Nothing to show as a {NODE_TYPE_META[self._filter].lower()} plot. "
+                    "Choose All plot types to see every finding.")
+        return "Nothing stands out yet. Load more samples to compare."
 
     def _show_empty(self):
         """Show the empty-state message in place of the cards."""
@@ -1230,13 +1289,14 @@ class SmartInsightsPanel(QWidget):
 
     def _clear_cards(self):
         """Remove every card and heading, leaving the trailing stretch in place."""
+        self._cards.clear()
         while self._card_layout.count() > 1:
             item = self._card_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
     def _add_figure(self, s: Suggestion):
-        """Add the four-panel figure explaining a finding.
+        """Add the figure that walks through a finding, panels a to f with a legend.
 
         The figure is a Figure Builder node behind a selector holding the
         finding's samples with every element kept, because several panels

@@ -20,14 +20,14 @@ Plain-language explanations of each kind of finding.
 **1** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **0** methods
 
 ### [`figures.py`](figures.md)
-Four-panel figures that explain a finding.
+Figures that tell the story behind a finding.
 
-**1** classes &nbsp;·&nbsp; **27** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **30** functions &nbsp;·&nbsp; **0** methods
 
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**5** classes &nbsp;·&nbsp; **16** functions &nbsp;·&nbsp; **47** methods
+**4** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **48** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.

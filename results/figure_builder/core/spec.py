@@ -306,6 +306,7 @@ PANEL_DEFAULTS = {
     'panel_bg': '#ffffff',
     'text': '',
     'text_size': 0,
+    'caption': False,
     'code': '',
 }
 

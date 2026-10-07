@@ -27,6 +27,7 @@ the extra detectors in :mod:`results.insights.discovery`.
 from __future__ import annotations
 import copy
 import math
+import warnings
 import re
 import threading
 from dataclasses import dataclass, field
@@ -1562,7 +1563,9 @@ def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]
                 _stat, p_value = _stats.f_oneway(*[r for _g, r, _p in summaries])
                 method = "ANOVA on replicate medians"
             else:
-                _stat, p_value = _stats.kruskal(*[pooled for _g, _r, pooled in summaries])
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    _stat, p_value = _stats.kruskal(*[pooled for _g, _r, pooled in summaries])
                 method = "Kruskal-Wallis on particles"
         except Exception:
             continue

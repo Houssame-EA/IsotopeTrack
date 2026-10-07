@@ -1,4 +1,4 @@
-"""Tests for the explanations and four-panel figures behind each Insights finding.
+"""Tests for the explanations and explained figures behind each Insights finding.
 
 Every explanation key a detector can emit must have an explanation and a
 figure design, and every design must draw without errors on realistic data.
@@ -115,7 +115,7 @@ ELEMENTS = {
 
 @pytest.mark.parametrize("key", sorted(F.DESIGNS))
 def test_every_design_draws(app, stream, key):
-    """Each four-panel design draws without a panel error."""
+    """Each story draws without a panel error and ends with its legend."""
     from results.insights.discovery import _figure_spec
     parts, table = stream
     config = {}
@@ -129,7 +129,11 @@ def test_every_design_draws(app, stream, key):
     ctx = F.context_from(parts, s.elements, {"56Fe": 2.0}, multi_sample=True)
     spec = F.figure_for(s, ctx)
     assert spec is not None
-    assert 2 <= len(spec["panels"]) <= 4
+    plots, caption = spec["panels"][:-1], spec["panels"][-1]
+    assert 2 <= len(plots) <= F.MAX_PANELS
+    assert caption["kind"] == "text" and caption["caption"]
+    assert caption["text"].count("(") >= len(plots)
+    assert "(a) What Insights found" in caption["text"]
     assert spec["figure"]["panel_letters"]
     assert af.render_problems(spec, table) == []
 
@@ -176,3 +180,104 @@ def test_card_shows_details_and_figure_action(app):
     assert not card._details.isHidden()
     card._figure_btn.click()
     assert added == [s]
+
+
+def test_story_panels_follow_the_explanation_order():
+    """Captions run found, how it was found, how to read it, then checks."""
+    s = rr.Suggestion("156Gd looks like CeO⁺ from 140Ce", "r", "interference", 0.9,
+                      "correlation_plot", elements=("140Ce", "156Gd"), explain_key="interference",
+                      details=[("Median suspect/parent", "2.0 %"), ("Likely species", "CeO⁺")])
+    story = F._interference(s, F.FigureContext())
+    starts = [caption.split(":")[0] for _panel, caption in story]
+    assert starts == ["What Insights found", "How it was found", "How to read it", "Check"]
+    assert "2.0 %" in story[1][1]
+
+
+def test_story_layout_fits_six_panels_and_the_legend():
+    """Six panels sit in three columns above a legend sized to its text."""
+    rects, caption, width, height = F.story_layout(6, "x" * 400)
+    assert len(rects) == 6 and width > 15
+    assert caption[1] == pytest.approx(rects[-1][1] + rects[-1][3])
+    assert caption[1] + caption[3] == pytest.approx(1.0)
+
+
+def test_caption_panel_has_no_letter(app, stream):
+    """The legend is not lettered, so the plots keep a to f."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+    from results.figure_builder.core.engine import render
+    parts, table = stream
+    s = rr.Suggestion("t", "r", "quality", 0.5, "x", elements=("56Fe",), explain_key="quality")
+    spec = F.figure_for(s, F.context_from(parts, s.elements))
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    render(fig, spec, table)
+    letters = sorted(t.get_text() for t in fig.texts
+                     if getattr(t, "_fb_element", ("", ""))[1] == "letters")
+    assert letters == [chr(ord("a") + i) for i in range(len(spec["panels"]) - 1)]
+
+
+class _Scene:
+    """Bare canvas scene for the panel."""
+
+    workflow_nodes = []
+    node_items = {}
+
+    def selectedItems(self):
+        """Return no selection."""
+        return []
+
+
+def _finished_panel(app, pool):
+    """Run a panel to the end of its search over *pool*."""
+    import time
+
+    class Window:
+        sample_particle_data = pool
+
+    rr.invalidate_context_cache()
+    panel = ip.SmartInsightsPanel(_Scene(), Window())
+    panel._set_filter(None)
+    panel.show()
+    end = time.time() + 60
+    while time.time() < end and not (panel._worker is None and panel._ran):
+        app.processEvents()
+        time.sleep(0.01)
+    return panel
+
+
+def test_filter_shows_exactly_the_picked_type(app):
+    """Picking a plot type shows that type; picking all brings everything back."""
+    pool = {"liver_1": particles(1, 1.18, ""), "liver_2": particles(2, 1.18, ""),
+            "kidney_1": particles(3, 1.15, ""), "kidney_2": particles(4, 1.15, "")}
+    panel = _finished_panel(app, pool)
+    everything = len(panel._suggestions)
+    types = {s.node_type for s in panel._suggestions}
+    assert len(types) > 2
+    for node_type in types:
+        panel._type_actions[node_type].trigger()
+        assert {s.node_type for s in panel._suggestions} == {node_type}
+        assert panel.current_filter() == node_type
+    panel._all_action.trigger()
+    assert len(panel._suggestions) == everything
+    assert all(a.isEnabled() == bool(len([s for s in panel._found if s.node_type == k]))
+               for k, a in panel._type_actions.items())
+    panel._teardown()
+
+
+def test_new_findings_wait_while_the_pointer_is_over_the_list(app, monkeypatch):
+    """Cards do not move under the pointer; new ones wait behind a bar."""
+    pool = {"S1": particles(5, 1.18, ""), "S2": particles(6, 1.15, "")}
+    panel = _finished_panel(app, pool)
+    shown = dict(panel._cards)
+    extra = rr.Suggestion("New finding", "r", "rare", 0.99, "heatmap_plot", elements=("56Fe",))
+    monkeypatch.setattr(panel, "_pointer_over_list", lambda: True)
+    panel._found.append(extra)
+    panel._render(searching=True)
+    assert panel._held and not panel._new_bar.isHidden()
+    assert panel._cards == shown
+    panel._release_held()
+    assert not panel._held
+    assert ip.card_key(extra) in panel._cards
+    assert all(panel._cards[k] is card for k, card in shown.items() if k in panel._cards)
+    panel._teardown()

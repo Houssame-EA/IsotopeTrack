@@ -339,7 +339,7 @@ def _share_limits(hds, panel):
 def _panel_letter(fig, index, panel, spec, fw, fh):
     """The bold panel letter in the top-left corner of the panel's rectangle."""
     figcfg = spec['figure']
-    if not (figcfg.get('panel_letters') and len(spec['panels']) > 1):
+    if not (figcfg.get('panel_letters') and len(spec['panels']) > 1) or panel.get('caption'):
         return
     rect = panel.get('rect') or [0, 0, 1, 1]
     size = float(figcfg.get('letter_size') or 0) or float(figcfg.get('font_size') or 11) + 3

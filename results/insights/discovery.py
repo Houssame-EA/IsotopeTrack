@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import math
+import warnings
 import re
 from fractions import Fraction
 
@@ -1693,7 +1694,9 @@ def analyse_isotope_groups(ctx, progress=None) -> list:
                 p = float(_stats.f_oneway(*[m for _g, m, _p in summaries])[1])
                 method = "ANOVA on replicate medians"
             else:
-                p = float(_stats.kruskal(*[pl for _g, _m, pl in summaries])[1])
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    p = float(_stats.kruskal(*[pl for _g, _m, pl in summaries])[1])
                 method = "Kruskal-Wallis on particles"
         except Exception:
             continue
