@@ -60,7 +60,9 @@ def run_tests(samples: list[tuple[str, np.ndarray]], panel: dict):
 
     Args:
         samples: ``[(name, values), ...]`` in display order.
-        panel: Panel dict carrying ``test``, ``pairs`` and ``correction``.
+        panel: Panel dict carrying ``test``, ``pairs``, ``correction`` and
+            ``test_log``. With ``test_log`` the test runs on log10 of the
+            positive values, which suits log-normal particle signals.
 
     Returns:
         tuple: ``(pairs, lines)`` where ``pairs`` is a list of ``(i, j, p)``
@@ -69,19 +71,23 @@ def run_tests(samples: list[tuple[str, np.ndarray]], panel: dict):
     """
     from scipy import stats
     test = panel.get('test', 'none')
-    data = [(n, np.asarray(v, dtype=float)[np.isfinite(v)]) for n, v in samples]
+    data = [(n, np.asarray(v, dtype=float)) for n, v in samples]
+    data = [(n, v[np.isfinite(v)]) for n, v in data]
+    if panel.get('test_log'):
+        data = [(n, np.log10(v[v > 0])) for n, v in data]
     data = [(n, v) for n, v in data if v.size >= 2]
     lines: list[str] = []
+    label = STAT_TESTS.get(test, test) + (' on log10 values' if panel.get('test_log') else '')
     if test == 'none' or len(data) < 2:
         if test != 'none':
-            lines.append(f'{STAT_TESTS[test]}: needs at least two groups with 2+ values')
+            lines.append(f'{label}: needs at least two groups with 2+ values')
         return [], lines
     if test in ('anova', 'kruskal'):
         fn = stats.f_oneway if test == 'anova' else stats.kruskal
         res = fn(*[v for _, v in data])
         name = 'F' if test == 'anova' else 'H'
         ns = ', '.join(f'{n} (n={v.size})' for n, v in data)
-        lines.append(f'{STAT_TESTS[test]}: {name} = {res.statistic:.3g}, '
+        lines.append(f'{label}: {name} = {res.statistic:.3g}, '
                      f'p = {res.pvalue:.3g} — {ns}')
         return [(-1, -1, float(res.pvalue))], lines
     if panel.get('pairs') == 'first':
@@ -106,7 +112,7 @@ def run_tests(samples: list[tuple[str, np.ndarray]], panel: dict):
     pairs = []
     for (i, j, stat, p), padj in zip(raw, adjusted):
         extra = f', adjusted ({CORRECTIONS[method]}) p = {padj:.3g}' if method != 'none' else ''
-        lines.append(f'{STAT_TESTS[test]}: {data[i][0]} (n={data[i][1].size}) vs '
+        lines.append(f'{label}: {data[i][0]} (n={data[i][1].size}) vs '
                      f'{data[j][0]} (n={data[j][1].size}): statistic = {stat:.3g}, '
                      f'p = {p:.3g}{extra}')
         pairs.append((names.index(data[i][0]), names.index(data[j][0]), padj))

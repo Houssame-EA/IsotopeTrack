@@ -22,12 +22,12 @@ Plain-language explanations of each kind of finding.
 ### [`figures.py`](figures.md)
 Figures that tell the story behind a finding.
 
-**1** classes &nbsp;·&nbsp; **30** functions &nbsp;·&nbsp; **0** methods
+**1** classes &nbsp;·&nbsp; **32** functions &nbsp;·&nbsp; **0** methods
 
 ### [`panel.py`](panel.md)
 The Insights side panel of the results canvas.
 
-**4** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **48** methods
+**5** classes &nbsp;·&nbsp; **17** functions &nbsp;·&nbsp; **50** methods
 
 ### [`replicates.py`](replicates.md)
 Work out which samples are replicates of one another.

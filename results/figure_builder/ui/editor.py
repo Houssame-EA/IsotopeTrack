@@ -367,6 +367,7 @@ FIELDS = [
     ('Stats', 'Compare groups', 'p_format', 'Show p as', 'combo', set(),
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
     ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
+    ('Stats', 'Compare groups', 'test_log', 'Test on log values', 'check', set(), None),
     ('Shapes', 'Grey areas, rectangles and lines', 'shapes', '', 'shapes', SHAPED, None),
     ('Notes', 'Text and arrows on this panel', 'annotations', '', 'annotations',
      ALL - {'text'}, None),
@@ -728,6 +729,8 @@ class PanelEditor(QWidget):
             return group == 'rules' and grouped
         if key == 'groups':
             return group != 'none' and grouped
+        if key == 'test_log':
+            return kind in TESTABLE and p.get('test', 'none') != 'none'
         if key in ('pairs', 'correction', 'p_format', 'hide_ns'):
             if kind not in TESTABLE or p.get('test') not in E.PAIRWISE_TESTS:
                 return False

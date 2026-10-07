@@ -288,6 +288,7 @@ PANEL_DEFAULTS = {
     'correction': 'none',
     'p_format': 'stars',
     'hide_ns': False,
+    'test_log': False,
     'legend': True,
     'legend_loc': 'best',
     'legend_cols': 1,

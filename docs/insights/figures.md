@@ -4,11 +4,12 @@ Figures that tell the story behind a finding.
 
 Besides the single plot a card proposes, every finding can be opened as a
 Figure Builder figure with panels a to f and a legend underneath. The panels
-follow the finding's explanation in order: what Insights found, how it was
-found, how to read it, and what to check before relying on it. Wherever it helps, the panels show the element in counts, mass and size,
-with the detection threshold marked on count axes and the smallest detected
-particle marked on mass and size axes, so it is plain how much of a pattern
-sits near the detection limit.
+tell the finding's story in order: the pattern itself, the evidence behind
+it, what it means, and the limits to keep in mind. Wherever it helps, the
+panels show the element in counts, mass and size, with the detection
+threshold marked on count axes and the smallest detected particle marked on
+mass and size axes, so it is plain how much of a pattern sits near the
+detection limit. Panels comparing samples carry a significance test.
 
 :func:`figure_for` builds the design; the panel adds it to the canvas as a
 Figure Builder node fed by a selector holding the finding's samples.
@@ -39,6 +40,7 @@ Attributes:
     smallest: ``(prefix, label)`` to the smallest detected value, used to
         mark the practical detection limit on mass and size axes.
     multi_sample: Whether the figure covers more than one sample.
+    groups: How many samples or replicate groups the figure compares.
 
 ## Functions
 
@@ -53,6 +55,8 @@ Attributes:
 | `_by_sample` | `(ctx: FigureContext) → dict` | Group by sample when there is more than one. |
 | `_detail` | `(s, label: str, default: str='') → str` | Return one of a finding's numbers by its label, or *default*. |
 | `_ratio_lines` | `(natural, axis: str) → dict` | A reference line at the natural ratio on the given axis (``"x"`` or ``"y"``). |
+| `_test` | `(groups: int, log_values: bool=True) → dict` | Significance test settings for a panel comparing *groups* groups. |
+| `_test_sentence` | `(groups: int, what: str, log_values: bool=True) → str` | One sentence naming the test a panel shows and how to read it. |
 | `_interference` | `(s, ctx)` |  |
 | `_isotope_pair` | `(s, ctx, natural=None)` |  |
 | `_isotope_track` | `(s, ctx, natural=None)` |  |

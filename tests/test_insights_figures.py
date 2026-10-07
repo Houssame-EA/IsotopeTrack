@@ -133,7 +133,7 @@ def test_every_design_draws(app, stream, key):
     assert 2 <= len(plots) <= F.MAX_PANELS
     assert caption["kind"] == "text" and caption["caption"]
     assert caption["text"].count("(") >= len(plots)
-    assert "(a) What Insights found" in caption["text"]
+    assert caption["text"].startswith("t. (a) ")
     assert spec["figure"]["panel_letters"]
     assert af.render_problems(spec, table) == []
 
@@ -182,15 +182,55 @@ def test_card_shows_details_and_figure_action(app):
     assert added == [s]
 
 
-def test_story_panels_follow_the_explanation_order():
-    """Captions run found, how it was found, how to read it, then checks."""
+def test_story_captions_explain_without_headings():
+    """Captions are plain explanations carrying the finding's numbers, with no headings."""
     s = rr.Suggestion("156Gd looks like CeO⁺ from 140Ce", "r", "interference", 0.9,
                       "correlation_plot", elements=("140Ce", "156Gd"), explain_key="interference",
                       details=[("Median suspect/parent", "2.0 %"), ("Likely species", "CeO⁺")])
     story = F._interference(s, F.FigureContext())
-    starts = [caption.split(":")[0] for _panel, caption in story]
-    assert starts == ["What Insights found", "How it was found", "How to read it", "Check"]
+    for _panel, caption in story:
+        assert not caption.startswith(("What Insights", "How it was", "How to read", "Check"))
+        assert caption[0].isupper() or caption[0].isdigit()
     assert "2.0 %" in story[1][1]
+
+
+@pytest.mark.parametrize("groups, test, extra", [
+    (2, "welch", {"p_format": "p"}),
+    (3, "welch", {"correction": "holm", "p_format": "stars"}),
+    (6, "anova", {}),
+])
+def test_comparison_panels_carry_a_significance_test(groups, test, extra):
+    """Boxes comparing samples get Welch's t-test, Holm-corrected pairs, or ANOVA."""
+    s = rr.Suggestion("t", "r", "comparison", 0.8, "box_plot", elements=("56Fe",),
+                      explain_key="comparison", details=[("Fold difference in median", "3×")])
+    ctx = F.FigureContext(quantities={"counts", "mass"}, multi_sample=True, groups=groups)
+    story = F._comparison(s, ctx)
+    boxes = [p for p, _c in story if p["kind"] == "box"]
+    assert len(boxes) == 2
+    for box in boxes:
+        assert box["test"] == test and box["test_log"]
+        for key, value in extra.items():
+            assert box[key] == value
+    assert "log10 counts" in story[0][1]
+
+
+def test_single_group_has_no_test():
+    """One sample has nothing to compare, so no test is attached."""
+    assert F._test(1) == {}
+    assert F._test_sentence(1, "counts") == ""
+
+
+def test_run_tests_on_log_values():
+    """With test_log the test sees log10 of the positive values and says so."""
+    from results.figure_builder.core.stats import run_tests
+    import numpy as np
+    rng = np.random.default_rng(1)
+    a = 10 ** rng.normal(1.0, 0.2, 300)
+    b = 10 ** rng.normal(1.3, 0.2, 300)
+    pairs, lines = run_tests([("A", np.append(a, 0.0)), ("B", b)],
+                             {"test": "welch", "test_log": True})
+    assert pairs and pairs[0][2] < 1e-10
+    assert "on log10 values" in lines[0] and "(n=300)" in lines[0]
 
 
 def test_story_layout_fits_six_panels_and_the_legend():
@@ -281,3 +321,71 @@ def test_new_findings_wait_while_the_pointer_is_over_the_list(app, monkeypatch):
     assert ip.card_key(extra) in panel._cards
     assert all(panel._cards[k] is card for k, card in shown.items() if k in panel._cards)
     panel._teardown()
+
+
+def _splitter_with_panel(total_width):
+    """A splitter like the canvas dialog's: palette, canvas, then the panel."""
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QSplitter, QWidget
+
+    class Panel(QWidget):
+        """Stand-in carrying the panel's width settings."""
+        MIN_WIDTH = ip.SmartInsightsPanel.MIN_WIDTH
+        DEFAULT_WIDTH = ip.SmartInsightsPanel.DEFAULT_WIDTH
+        MIN_CANVAS = ip.SmartInsightsPanel.MIN_CANVAS
+
+    splitter = QSplitter()
+    palette = QWidget()
+    palette.setFixedWidth(240)
+    splitter.addWidget(palette)
+    splitter.addWidget(QWidget())
+    panel = Panel()
+    panel.setVisible(False)
+    splitter.addWidget(panel)
+    splitter.resize(total_width, 600)
+    splitter.show()
+    splitter.setSizes([240, total_width - 240, 0])
+    dialog = SimpleNamespace(insights_panel=panel)
+    return splitter, panel, ip.make_insights_toggle_button(dialog, splitter), dialog
+
+
+@pytest.mark.parametrize("total", [1400, 900])
+def test_insights_panel_opens_at_a_usable_width(app, total):
+    """The panel opens wide enough to read and leaves the canvas room."""
+    splitter, panel, btn, _d = _splitter_with_panel(total)
+    btn.click()
+    app.processEvents()
+    sizes = splitter.sizes()
+    assert panel.isVisible()
+    assert sizes[-1] >= panel.MIN_WIDTH
+    if total >= 240 + panel.DEFAULT_WIDTH + panel.MIN_CANVAS:
+        assert sizes[-1] == pytest.approx(panel.DEFAULT_WIDTH, abs=3)
+    assert sizes[1] >= min(panel.MIN_CANVAS, total - 240 - panel.MIN_WIDTH) - 3
+    splitter.close()
+
+
+def test_insights_panel_reopens_at_its_last_width(app):
+    """A width the user dragged to is restored; a sliver is not."""
+    splitter, panel, btn, dialog = _splitter_with_panel(1400)
+    btn.click()
+    app.processEvents()
+    splitter.setSizes([240, 700, 460])
+    btn.click()
+    assert dialog._insights_prev_w == pytest.approx(460, abs=6)
+    btn.click()
+    app.processEvents()
+    assert splitter.sizes()[-1] == pytest.approx(460, abs=6)
+    splitter.close()
+
+
+def test_refresh_button_draws_without_a_font_glyph(app):
+    """The refresh button has no text and paints its own arrow."""
+    from PySide6.QtGui import QImage
+    btn = ip._RefreshButton()
+    btn.setFixedSize(28, 28)
+    assert btn.text() == ""
+    image = QImage(28, 28, QImage.Format_ARGB32)
+    image.fill(0)
+    btn.render(image)
+    painted = sum(1 for x in range(28) for y in range(28) if image.pixelColor(x, y).alpha())
+    assert painted > 20

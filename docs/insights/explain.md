@@ -3,13 +3,11 @@
 Plain-language explanations of each kind of finding.
 
 Every card in the Insights panel can open a details section with three short
-paragraphs:
-
-* **How it was found**: exactly what was measured and tested, with the
-  thresholds the code applies, so the claim can be checked.
-* **How to read it**: what the pattern usually means physically.
-* **Check before relying on it**: the common ways the same pattern arises for
-  other reasons, and what to look at to tell them apart.
+paragraphs, shown as plain prose without headings: first exactly what was
+measured and tested, with the thresholds the code applies, so the claim can
+be checked; then what the pattern usually means physically; last, the common
+ways the same pattern arises for other reasons and what to look at to tell
+them apart.
 
 The texts describe the method and its known pitfalls only. They never claim
 more than the statistics support: a finding is a pattern in the data, and the

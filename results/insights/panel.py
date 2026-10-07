@@ -333,6 +333,52 @@ class _IsotopeTile(QWidget):
         painter.end()
 
 
+class _RefreshButton(QPushButton):
+    """Square button drawing its own circular arrow.
+
+    The arrow is painted rather than typed as a glyph, because the "↻"
+    character is missing from some system fonts and then shows as a
+    placeholder.
+    """
+
+    def __init__(self, parent=None):
+        """Create the button without text; the arrow is drawn in :meth:`paintEvent`."""
+        super().__init__("", parent)
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def paintEvent(self, event):
+        """Draw the frame from the style sheet, then the arrow in the theme colour."""
+        super().paintEvent(event)
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+        p = _theme.palette
+        if not self.isEnabled():
+            colour = p.disabled
+        elif self.underMouse():
+            colour = p.text_primary
+        else:
+            colour = p.text_secondary
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        side = min(self.width(), self.height())
+        r = side * 0.26
+        cx, cy = self.width() / 2, self.height() / 2
+        box = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+        pen = QPen(QColor(colour), max(1.6, side / 16))
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawArc(box, 60 * 16, 290 * 16)
+        tip = QPointF(cx + r * 0.5, cy - r * 0.866)
+        head = r * 0.75
+        arrow = QPainterPath()
+        arrow.moveTo(tip + QPointF(-head * 0.95, -head * 0.55))
+        arrow.lineTo(tip)
+        arrow.lineTo(tip + QPointF(-head * 0.2, head * 1.05))
+        painter.drawPath(arrow)
+        painter.end()
+
+
 class _StrengthDots(QWidget):
     """Three dots, filled to show how strong a finding is."""
 
@@ -497,10 +543,8 @@ class _Card(QFrame):
             grid.setColumnStretch(1, 1)
             lay.addLayout(grid)
         if explanation is not None:
-            for heading, text in (("How it was found", explanation.found),
-                                  ("How to read it", explanation.meaning),
-                                  ("Check before relying on it", explanation.check)):
-                para = QLabel(f"<b>{heading}.</b> {isotope_markup(text)}")
+            for text in (explanation.found, explanation.meaning, explanation.check):
+                para = QLabel(isotope_markup(text))
                 para.setObjectName("iDetailText")
                 para.setTextFormat(Qt.RichText)
                 para.setWordWrap(True)
@@ -680,6 +724,9 @@ class SmartInsightsPanel(QWidget):
     """
 
     SCOPE_POLL_MS = 2500
+    MIN_WIDTH = 320
+    DEFAULT_WIDTH = 380
+    MIN_CANVAS = 320
     """How often a visible panel checks whether the loaded data changed."""
 
     def __init__(self, scene, parent_window, parent=None):
@@ -703,7 +750,7 @@ class SmartInsightsPanel(QWidget):
         self._filter: str | None = _load_filter()
         self._cards: dict[tuple, _Card] = {}
         self._held = False
-        self.setMinimumWidth(270)
+        self.setMinimumWidth(self.MIN_WIDTH)
 
         self._build_ui()
         self._apply_theme()
@@ -742,7 +789,7 @@ class SmartInsightsPanel(QWidget):
         titles.addWidget(self._count_lbl)
         top.addLayout(titles)
         top.addStretch()
-        self._refresh_btn = QPushButton("↻")
+        self._refresh_btn = _RefreshButton()
         self._refresh_btn.setObjectName("iRefreshBtn")
         self._refresh_btn.setFixedSize(28, 28)
         self._refresh_btn.setToolTip("Search again from scratch")
@@ -851,8 +898,7 @@ class SmartInsightsPanel(QWidget):
             QToolButton#iTypesBtn:hover {{ border-color: {p.accent}; }}
             QToolButton#iTypesBtn::menu-indicator {{ image: none; width: 0; }}
             QPushButton#iRefreshBtn {{ background: transparent; color: {p.text_secondary};
-                                      border: 1px solid {p.border_subtle}; border-radius: 6px;
-                                      font-size: 15px; }}
+                                      border: 1px solid {p.border_subtle}; border-radius: 6px; }}
             QPushButton#iRefreshBtn:hover {{ color: {p.text_primary}; border-color: {p.accent}; }}
             QPushButton#iRefreshBtn:disabled {{ color: {p.disabled}; }}
             QFrame#insightCard {{ background: {p.bg_secondary}; border: 1px solid {p.border_subtle};
@@ -1312,7 +1358,7 @@ class SmartInsightsPanel(QWidget):
         ctx = _figures.context_from(
             particles, s.elements,
             detection_thresholds(self._pw, samples, s.elements),
-            multi_sample=len(units) > 1)
+            multi_sample=len(units) > 1, groups=len(units))
         spec = _figures.figure_for(s, ctx)
         if spec is None:
             self._flash_status("No figure is available for this finding")
@@ -1528,6 +1574,7 @@ def integrate_insights_panel(canvas_dialog, splitter: QSplitter) -> SmartInsight
     )
     panel.setVisible(False)
     splitter.addWidget(panel)
+    splitter.setCollapsible(splitter.indexOf(panel), False)
 
     if hasattr(canvas_dialog, "finished"):
         canvas_dialog.finished.connect(lambda *_: panel._teardown())
@@ -1551,21 +1598,45 @@ def make_insights_toggle_button(canvas_dialog, splitter: QSplitter) -> QPushButt
     def _toggle():
         """Show or hide the panel, resizing the splitter to match."""
         panel = canvas_dialog.insights_panel
-        sizes = splitter.sizes()
         if panel.isVisible():
-            canvas_dialog._insights_prev_w = sizes[-1] or 300
+            width = splitter.sizes()[-1]
+            if width >= panel.MIN_WIDTH:
+                canvas_dialog._insights_prev_w = width
             panel.setVisible(False)
             btn.setText("✦  Insights")
             btn.setToolTip("Open Insights")
         else:
             panel.setVisible(True)
-            w = getattr(canvas_dialog, "_insights_prev_w", 300)
-            new_sizes = list(sizes)
-            new_sizes[-1] = w
-            new_sizes[-2] = max(100, new_sizes[-2] - w)
-            splitter.setSizes(new_sizes)
+            _open_sizes()
+            QTimer.singleShot(0, _open_sizes)
             btn.setText("✦  Insights  ‹")
             btn.setToolTip("Close Insights")
+
+    def _open_sizes():
+        """Give the open panel a usable width, taken from the canvas.
+
+        The remembered width is used when there is one, never less than the
+        panel's minimum, and the canvas keeps at least
+        :attr:`SmartInsightsPanel.MIN_CANVAS` pixels. Run once straight away
+        and once after Qt has laid out the newly shown panel, because the
+        splitter can otherwise squeeze it back to a sliver.
+        """
+        panel = canvas_dialog.insights_panel
+        if not panel.isVisible():
+            return
+        sizes = splitter.sizes()
+        total = sum(sizes) or splitter.width()
+        fixed = sum(sizes[:-2])
+        room = max(0, total - fixed - panel.MIN_CANVAS)
+        wanted = max(panel.MIN_WIDTH,
+                     getattr(canvas_dialog, "_insights_prev_w", 0) or panel.DEFAULT_WIDTH)
+        width = max(panel.MIN_WIDTH, min(wanted, room)) if room else panel.MIN_WIDTH
+        if abs(sizes[-1] - width) <= 2:
+            return
+        new_sizes = list(sizes)
+        new_sizes[-1] = width
+        new_sizes[-2] = max(1, total - fixed - width)
+        splitter.setSizes(new_sizes)
 
     def _style():
         """Apply the current theme palette to the button."""

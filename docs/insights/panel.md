@@ -33,6 +33,19 @@ A small periodic-table tile: mass number above the element symbol.
 | `__init__` | `(self, label: str, parent=None)` | Create a tile for an isotope label such as ``"56Fe"``. |
 | `paintEvent` | `(self, event)` | Draw the tile in the current theme. |
 
+### `_RefreshButton` *(extends `QPushButton`)*
+
+Square button drawing its own circular arrow.
+
+The arrow is painted rather than typed as a glyph, because the "↻"
+character is missing from some system fonts and then shows as a
+placeholder.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `__init__` | `(self, parent=None)` | Create the button without text; the arrow is drawn in :meth:`paintEvent`. |
+| `paintEvent` | `(self, event)` | Draw the frame from the style sheet, then the arrow in the theme colour. |
+
 ### `_StrengthDots` *(extends `QWidget`)*
 
 Three dots, filled to show how strong a finding is.
