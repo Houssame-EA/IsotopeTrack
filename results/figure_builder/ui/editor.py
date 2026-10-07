@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from results.figure_builder.core import engine as E
 from results.figure_builder.charts.categorical import BAR_SORTS, PIE_LABELS, PIE_MODES
 from results.figure_builder.charts.distributions import MARKS
+from results.figure_builder.charts.extra import STRIP_COLORS, STRIP_SIZES
 from results.figure_builder.charts.matrices import HEAT_SPREADS, ZERO_HANDLING
 from results.figure_builder.charts.more import LOLLI_STATS, SHARE_MODES, TIME_MODES
 from results.figure_builder.charts.network import NODE_SIZES, PCA_TRANSFORMS
@@ -116,7 +117,7 @@ FIELDS = [
     ('Data', 'What to plot', 'y', 'Y', 'expr', XLINE, 'e.g. Fe/Cu'),
     ('Data', 'What to plot', 'y2', 'Right Y axis', 'expr', {'scatter'}, 'optional, e.g. mass:Fe'),
     ('Data', 'What to plot', 'value', 'Value', 'expr', VALUED, 'e.g. mass:Ag'),
-    ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
+    ('Data', 'What to plot', 'isotopes', 'Isotopes', 'expr', ITEMS | {'strip'}, 'blank = all, or e.g. Ag, Au, Fe/Cu'),
     ('Data', 'What to plot', 'a', 'Top corner (A)', 'expr', {'ternary'}, 'e.g. Ag'),
     ('Data', 'What to plot', 'b', 'Left corner (B)', 'expr', {'ternary'}, 'e.g. Au'),
     ('Data', 'What to plot', 'c', 'Right corner (C)', 'expr', {'ternary'}, 'e.g. Cu'),
@@ -154,7 +155,7 @@ FIELDS = [
     ('Data', 'What to plot', 'share_mode', 'Share out', 'combo', SHARES, SHARE_MODES),
     ('Data', 'What to plot', 'combo_filter', 'Combinations', 'combo', COMBOS,
      {'all': 'All', 'single': 'Single-element only', 'multi': 'Multi-element only'}),
-    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap', 'pie'}, (1, 500)),
+    ('Data', 'What to plot', 'top_n', 'Show the top', 'int', COMBOS | {'heatmap', 'pie', 'strip'}, (1, 500)),
     ('Data', 'What to plot', 'as_percent', 'As % of particles', 'check', {'combinations'}, None),
     ('Data', 'What to plot', 'pairs_upper', 'Upper triangle', 'combo', {'pairs'},
      {'r': 'Correlation value', 'scatter': 'Scatter (mirror)', 'empty': 'Empty'}),
@@ -262,6 +263,7 @@ FIELDS = [
     ('Style', 'Chart options', 'pie_label_pos', 'Labels', 'combo', {'pie'},
      {'inside': 'Inside the slices', 'outside': 'Outside, with lines'}),
     ('Style', 'Chart options', 'other_pct', 'Group slices below (%) as Others', 'float', {'pie'}, (0, 50, 0.5)),
+    ('Style', 'Chart options', 'sun_outer', 'Companion sets shown per element', 'int', {'pie'}, (1, 20)),
     ('Style', 'Chart options', 'start_angle', 'Start angle (°)', 'float', {'pie'}, (0, 360, 15)),
     ('Style', 'Chart options', 'pie_explode', 'Gap between slices', 'float', {'pie'}, (0, 0.3, 0.02)),
     ('Style', 'Chart options', 'donut_text', 'Text in the centre', 'text', {'pie'}, '{n} = particle count'),
@@ -270,6 +272,9 @@ FIELDS = [
       'median_iqr': 'Median and IQR', 'mean_ci': 'Mean ± 95% CI', 'none': 'Dots only'}),
     ('Style', 'Chart options', 'jitter', 'Spread width', 'float', {'strip'}, (0.05, 0.48, 0.05)),
     ('Style', 'Chart options', 'sina', 'Spread by density (sina)', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'strip_horizontal', 'Values along the horizontal axis', 'check', {'strip'}, None),
+    ('Style', 'Chart options', 'strip_color', 'Colour dots by', 'combo', {'strip'}, STRIP_COLORS),
+    ('Style', 'Chart options', 'strip_size', 'Dot size shows', 'combo', {'strip'}, STRIP_SIZES),
     ('Style', 'Chart options', 'overlap', 'Overlap', 'float', {'ridgeline'}, (0, 2.5, 0.1)),
     ('Style', 'Chart options', 'levels', 'Contour levels', 'int', {'contour'}, (2, 20)),
     ('Style', 'Chart options', 'filled', 'Filled contours', 'check', {'contour'}, None),
@@ -368,6 +373,20 @@ FIELDS = [
      {'stars': 'Stars (*, **, ns)', 'p': 'Numbers (p = …)'}),
     ('Stats', 'Compare groups', 'hide_ns', 'Hide non-significant', 'check', set(), None),
     ('Stats', 'Compare groups', 'test_log', 'Test on log values', 'check', set(), None),
+    ('Stats', 'Could a minor element be seen?', 'ptl_minor', 'Minor elements', 'text',
+     {'box', 'violin', 'strip', 'scatter'}, 'e.g. Ti, Nb (needs element masses)'),
+    ('Stats', 'Could a minor element be seen?', 'ptl_ratio', 'Minor : major mass ratio', 'text',
+     {'box', 'violin', 'strip', 'scatter'}, 'blank = upper crust'),
+    ('Stats', 'Could a minor element be seen?', 'crust_line', 'Upper-crust Y : X line', 'check',
+     {'scatter'}, None),
+    ('Stats', 'Could a minor element be seen?', 'refs_button_ptl', '', 'button',
+     {'box', 'violin', 'strip', 'scatter'}, 'Reference values…'),
+    ('Stats', 'Reference points', 'tern_refs', 'Minerals', 'text', {'ternary'},
+     'e.g. kaolinite, illite, upper crust, my clay: K0.6Al2.3Si3.4O10(OH)2'),
+    ('Stats', 'Reference points', 'tern_bulk', 'Bulk value (A, B, C)', 'text', {'ternary'},
+     'optional, e.g. 8.2, 31.1, 3.9'),
+    ('Stats', 'Reference points', 'tern_ref_color', 'Colour', 'color', {'ternary'}, None),
+    ('Stats', 'Reference points', 'refs_button', '', 'button', {'ternary'}, 'Reference values…'),
     ('Shapes', 'Grey areas, rectangles and lines', 'shapes', '', 'shapes', SHAPED, None),
     ('Notes', 'Text and arrows on this panel', 'annotations', '', 'annotations',
      ALL - {'text'}, None),
@@ -551,7 +570,10 @@ class PanelEditor(QWidget):
             w.changed.connect(self._groups_changed)
         elif kind == 'button':
             w = QPushButton(opts)
-            w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
+            if key in ('refs_button', 'refs_button_ptl'):
+                w.clicked.connect(self._edit_references)
+            else:
+                w.clicked.connect(self.styles_requested if key == 'styles_button' else self.rename_requested)
         elif kind == 'longtext':
             w = QPlainTextEdit()
             w.setMinimumHeight(120)
@@ -567,6 +589,12 @@ class PanelEditor(QWidget):
                 + E.CODE_EXAMPLE)
             w.textChanged.connect(lambda ww=w: self._set('code', ww.toPlainText()))
         return w
+
+    def _edit_references(self):
+        """Open the reference values window and redraw when they changed."""
+        from results.figure_builder.ui.references_dialog import ReferencesDialog
+        if ReferencesDialog(self).exec():
+            self.changed.emit()
 
     def _remember_expr(self, w):
         self._last_expr = w
@@ -739,9 +767,17 @@ class PanelEditor(QWidget):
             return kind in kinds and (group == 'none' or not grouped)
         if key == 'value' and kind == 'pie':
             return p.get('pie_mode') == 'values'
+        if kind == 'strip' and key in ('isotopes', 'top_n'):
+            return p.get('strip_color') == 'combination'
         if kind == 'pie' and key in ('isotopes', 'top_n'):
             mode = p.get('pie_mode', 'groups')
-            return mode in ('detect', 'combinations', 'single_multi') and (key == 'isotopes' or mode == 'combinations')
+            return mode in ('detect', 'combinations', 'single_multi', 'sunburst') and (
+                key == 'isotopes' or mode in ('combinations', 'sunburst'))
+        if key == 'sun_outer':
+            return kind == 'pie' and p.get('pie_mode') == 'sunburst'
+        if kind == 'pie' and p.get('pie_mode') == 'sunburst' and key in (
+                'other_pct', 'donut', 'donut_text', 'pie_labels', 'pie_label_pos', 'pie_explode'):
+            return False
         if key == 'per_ml':
             if self.table is None or not self.table.has_per_ml():
                 return False

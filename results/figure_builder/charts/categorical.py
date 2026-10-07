@@ -204,6 +204,7 @@ PIE_MODES = {
     'detect': 'Particles containing each isotope',
     'combinations': 'Element combinations',
     'single_multi': 'Single- vs multi-element particles',
+    'sunburst': 'Main element, then what it comes with (sunburst)',
 }
 """What the slices of a pie chart represent."""
 
@@ -289,6 +290,9 @@ def draw_pie(fig, ax, panel, table, report, style):
     (or particles per mL) and percentages, inside the slices or outside with
     leader lines.
     """
+    if panel.get('pie_mode') == 'sunburst':
+        draw_sunburst(ax, panel, table, report)
+        return
     labels, sizes, colors, n, counted = _pie_items(panel, table, style)
     report.counts[panel['id']] = n
     keep = [i for i, sz in enumerate(sizes) if sz > 0]
@@ -522,3 +526,132 @@ def draw_composition(fig, ax, panel, table, report, style):
         ax.set_title(panel['title'])
     report.counts[panel['id']] = int(sum(int(g.mask.sum()) for g in groups))
     add_legend(ax, panel, default_loc='outside right', min_items=1)
+
+
+def _lighter(color: str, amount: float) -> str:
+    """Mix *color* with white by *amount* (0 keeps it, 1 gives white)."""
+    from matplotlib.colors import to_hex, to_rgb
+    r, g, b = to_rgb(color)
+    return to_hex((r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount))
+
+
+def sunburst_items(panel, table):
+    """Group particles by main element, then by the elements they come with.
+
+    The main element of a particle is the one with the largest mass when the
+    data carry masses, otherwise the largest amount in the panel's quantity.
+    Counts depend on each isotope's sensitivity, so mass is the fairer basis.
+
+    Returns:
+        ``(inner, outer, basis, n)``: ``inner`` is ``[(element, weight)]``
+        largest first, ``outer`` maps each element to
+        ``[(companions, weight)]`` largest first, ``basis`` names the
+        quantity used and ``n`` is the number of particles counted.
+    """
+    from results.figure_builder.charts.matrices import combination_keys
+    from results.figure_builder.core.expressions import split_symbol
+    exprs = item_exprs(panel, table)
+    if not exprs:
+        raise ExpressionError('List the elements to include')
+    base = np.zeros(len(table), dtype=bool)
+    for g in resolve_groups(panel, table):
+        base |= g.mask
+    _keys, values = combination_keys(table, exprs, base)
+    basis = 'the figure\'s quantity'
+    mass_values = []
+    for e in exprs:
+        try:
+            mass_values.append(np.nan_to_num(evaluate(f'mass:{e}', table), nan=0.0))
+        except ExpressionError:
+            mass_values = []
+            break
+    amounts = np.vstack(values)
+    if mass_values and np.any(np.vstack(mass_values) > 0):
+        amounts = np.vstack(mass_values)
+        basis = 'mass'
+    detected = np.vstack(values) > 0
+    names = [split_symbol(e)[0] or e for e in exprs]
+    has_any = base & detected.any(axis=0)
+    main = np.argmax(np.where(detected, amounts, -np.inf), axis=0)
+    w = particle_weights(panel, table)
+    inner_totals: dict[str, float] = {}
+    outer: dict[str, dict[str, float]] = {}
+    for i in np.flatnonzero(has_any):
+        m = int(main[i])
+        el = names[m]
+        mates = [names[c] for c in range(len(names)) if c != m and detected[c, i]]
+        key = ('+ ' + ' + '.join(mates)) if mates else 'alone'
+        inner_totals[el] = inner_totals.get(el, 0.0) + w[i]
+        outer.setdefault(el, {})
+        outer[el][key] = outer[el].get(key, 0.0) + w[i]
+    inner = sorted(inner_totals.items(), key=lambda kv: -kv[1])
+    ordered = {el: sorted(parts.items(), key=lambda kv: -kv[1]) for el, parts in outer.items()}
+    return inner, ordered, basis, int(has_any.sum())
+
+
+def draw_sunburst(ax, panel, table, report):
+    """Two-ring pie: each particle's main element inside, its companions outside.
+
+    The inner ring keeps the largest ``top_n`` main elements and merges the
+    rest into "Others"; each outer ring keeps the ``sun_outer`` most common
+    companion sets of that element and merges the rest into "other".
+    """
+    from matplotlib import patheffects
+    from matplotlib.patches import Wedge
+    inner, outer, basis, n = sunburst_items(panel, table)
+    report.counts[panel['id']] = n
+    if not inner:
+        raise ExpressionError('No particle carries the listed elements')
+    pal = panel_palette(panel)
+    top = max(1, int(panel.get('top_n') or 8))
+    keep_outer = max(1, int(panel.get('sun_outer') or 4))
+    total = float(sum(v for _e, v in inner))
+    shown = inner[:top]
+    rest = float(sum(v for _e, v in inner[top:]))
+    halo = [patheffects.withStroke(linewidth=2.5, foreground='white')]
+    edge = {'edgecolor': 'white', 'linewidth': max(1.5, float(panel.get('edge_width') or 0))}
+    start = float(panel.get('start_angle', 90) or 0)
+    lines = []
+    records = []
+    for k, (el, weight) in enumerate(shown + ([('Others', rest)] if rest > 0 else [])):
+        color = pal[k % len(pal)] if el != 'Others' else '#c4c8cf'
+        span = 360.0 * weight / total
+        w_in = Wedge((0, 0), 0.58, start - span, start, width=0.32, facecolor=color, **edge)
+        ax.add_patch(w_in)
+        records.append((w_in, el, weight, 100 * weight / total))
+        mid = np.deg2rad(start - span / 2)
+        if span >= 12:
+            t = ax.text(0.42 * np.cos(mid), 0.42 * np.sin(mid), f'{el}\n{100 * weight / total:.0f}%',
+                        ha='center', va='center', fontsize='small', fontweight='bold',
+                        color='#1f2937', path_effects=halo)
+            t._fb_cell = True
+        parts = outer.get(el, []) if el != 'Others' else []
+        kept = parts[:keep_outer]
+        other = float(sum(v for _p, v in parts[keep_outer:]))
+        if other > 0:
+            kept = kept + [('other', other)]
+        s2 = start
+        for j, (mates, w2) in enumerate(kept):
+            span2 = 360.0 * w2 / total
+            shade = 0.25 + 0.5 * j / max(1, len(kept) - 1) if mates != 'other' else 0.85
+            w_out = Wedge((0, 0), 1.0, s2 - span2, s2, width=0.4, facecolor=_lighter(color, shade), **edge)
+            ax.add_patch(w_out)
+            records.append((w_out, f'{el} {mates}', w2, 100 * w2 / total))
+            m2 = np.deg2rad(s2 - span2 / 2)
+            if span2 >= 9:
+                t = ax.text(0.8 * np.cos(m2), 0.8 * np.sin(m2), mates, ha='center', va='center',
+                            fontsize='x-small', color='#1f2937', path_effects=halo)
+                t._fb_cell = True
+            s2 -= span2
+        if parts:
+            lines.append(f'{el} {100 * weight / total:.1f}% (' + ', '.join(
+                f'{mates} {100 * w2 / weight:.0f}%' for mates, w2 in parts[:keep_outer]) + ')')
+        start -= span
+    handles(report, panel)['wedges'] = records
+    ax.set_xlim(-1.08, 1.08)
+    ax.set_ylim(-1.08, 1.08)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    if panel.get('title'):
+        ax.set_title(panel['title'])
+    report.stats.append(f'Sunburst, main element by {basis}: ' + '; '.join(lines))

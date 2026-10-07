@@ -138,9 +138,6 @@ instantiating this directly.
 | `_occupied_rects` | `(scene) → list[tuple[float, float, float, float]]` | List the space every node on the canvas already takes up. |
 | `_free_position` | `(scene, preferred)` | Find a spot for a new node that no existing node is sitting on. |
 | `_raw_pool_for` | `(scene, parent_window) → dict` | Every loaded particle by sample, as the engine reads it. |
-| `_mean_value` | `(value) → float \| None` | Mean of a stored number or time series, or ``None`` when it is not usable. |
-| `_conversion_factors` | `(parent_window) → dict[str, float]` | Counts-per-femtogram factors the main window uses to turn counts into mass. |
-| `detection_limits` | `(parent_window, samples, labels) → dict[str, dict[str, dict[str, float` | Read each element's detection limits per sample, as the calibration reports them. |
 | `_isotope_entries` | `(parent_window, scene, labels) → list[dict]` | Resolve element labels into the isotope records a selector expects. |
 | `isotope_markup` | `(text: str) → str` | Write isotope labels in text with a superscript mass number. |
 | `section_of` | `(category: str) → str` | Return the section heading a finding of *category* is listed under. |

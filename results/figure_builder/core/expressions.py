@@ -95,8 +95,26 @@ FUNCTIONS = {
     'sum': _agg(np.sum),
     'percentile': _agg(np.percentile),
     'count': lambda v: float(np.count_nonzero(np.asarray(v))),
+    'crust': lambda a, b: _crust(a, b, 'mass'),
+    'crust_mol': lambda a, b: _crust(a, b, 'moles'),
 }
-"""Functions an expression may call."""
+"""Functions an expression may call.
+
+``crust("Ti", "Fe")`` is the upper-crust Ti/Fe mass ratio and ``crust_mol``
+the molar one (see :mod:`results.figure_builder.core.references`), so an
+enrichment factor reads ``(mass:Ti / mass:Fe) / crust("Ti", "Fe")``.
+"""
+
+
+def _crust(a, b, basis):
+    """Upper-crust ratio of two elements named as text, for :data:`FUNCTIONS`."""
+    if not isinstance(a, str) or not isinstance(b, str):
+        raise ExpressionError('crust() takes two element names in quotes, e.g. crust("Ti", "Fe")')
+    from results.figure_builder.core.references import crust_ratio
+    try:
+        return crust_ratio(a, b, basis)
+    except ValueError as exc:
+        raise ExpressionError(str(exc)) from exc
 
 CONSTANTS = {'pi': np.pi, 'e': np.e, 'nan': np.nan, 'inf': np.inf,
              'True': True, 'False': False}

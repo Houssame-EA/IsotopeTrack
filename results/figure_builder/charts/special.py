@@ -82,6 +82,7 @@ def draw_ternary(fig, ax, panel, table, report, style):
             report.stats.append(f'{g.label}: mean composition ' + ', '.join(
                 f'{n} {100 * mu:.1f} ± {100 * sdv:.1f}%' for n, mu, sdv in zip(names, mean, sd))
                 + f' (n = {ta.size}){cover}')
+    _draw_references(ax, panel, table, report)
     for g, mean in stars:
         ax.scatter([mean[0]], [mean[1]], [mean[2]], marker='*', s=size * 14 + 120, color=g.color,
                    edgecolors=ink('#111827'), linewidths=1.0, zorder=10)
@@ -98,6 +99,86 @@ def draw_ternary(fig, ax, panel, table, report, style):
     if mappable is not None:
         add_colorbar(fig, ax, mappable, panel, report, pretty(panel['color_by'], table, style))
     add_legend(ax, panel, default_loc='ternary')
+
+
+def corner_basis(panel, table) -> str | None:
+    """``'moles'`` or ``'mass'`` when all three corners are single elements in that basis.
+
+    Reference points are only comparable with particles plotted in moles or
+    mass; counts depend on each isotope's sensitivity.
+    """
+    import re
+    from results.figure_builder.core.expressions import QUANTITY_PREFIXES
+    from results.figure_builder.core.references import symbol_of
+    bases = set()
+    for k in 'abc':
+        expr = (panel.get(k) or '').strip()
+        m = re.match(r'^(\w+):', expr)
+        prefix = m.group(1) if m and m.group(1) in QUANTITY_PREFIXES else table.default_prefix
+        try:
+            symbol_of(expr)
+        except ValueError:
+            return None
+        bases.add({'moles': 'moles', 'pmoles': 'moles', 'mass': 'mass', 'pmass': 'mass'}.get(prefix))
+    return bases.pop() if len(bases) == 1 and None not in bases else None
+
+
+def _halo():
+    """White outline that keeps a label readable over dense points."""
+    from matplotlib import patheffects
+    return [patheffects.withStroke(linewidth=2.6, foreground='white')]
+
+
+def _draw_references(ax, panel, table, report):
+    """Mark reference minerals, the upper crust and a bulk value on a ternary.
+
+    Each reference is placed from its formula (or the crust table) in the
+    same basis as the corners, so the points sit where a particle of that
+    composition would. Nothing is drawn, and the report says why, when the
+    corners are not single elements in moles or mass.
+    """
+    from results.figure_builder.core import references as R
+    entries = R.split_entries(panel.get('tern_refs') or '')
+    bulk_text = (panel.get('tern_bulk') or '').strip()
+    if not entries and not bulk_text:
+        return
+    basis = corner_basis(panel, table)
+    color = panel.get('tern_ref_color') or '#1f2937'
+    if entries:
+        if basis is None:
+            report.stats.append('Reference minerals need the three corners as single elements '
+                                'in moles or mass (e.g. moles:Al), so they were not drawn')
+        else:
+            symbols = [R.symbol_of(panel[k]) for k in 'abc']
+            placed = []
+            for label, ref in entries:
+                try:
+                    t, l, r = R.composition(ref, symbols, basis)
+                except ValueError as exc:
+                    report.stats.append(f'Reference {label}: {exc}')
+                    continue
+                ax.scatter([t], [l], [r], marker='D', s=46, color=color, edgecolors='white',
+                           linewidths=0.8, zorder=11)
+                txt = ax.text(t, l, r, f'  {label}', fontsize='small', color=color, ha='left',
+                              va='center', zorder=12, path_effects=_halo())
+                txt._fb_cell = True
+                placed.append(f'{label} ({100 * t:.0f}/{100 * l:.0f}/{100 * r:.0f} %)')
+            if placed:
+                report.stats.append(f'Reference points ({basis} basis): ' + ', '.join(placed))
+    if bulk_text:
+        try:
+            parts = [float(x) for x in bulk_text.replace(';', ',').split(',')]
+            if len(parts) != 3 or min(parts) < 0 or sum(parts) <= 0:
+                raise ValueError
+        except ValueError:
+            report.stats.append('Bulk value: give three non-negative numbers, A, B, C')
+            return
+        t, l, r = (x / sum(parts) for x in parts)
+        ax.plot([t], [l], [r], marker='o', ms=11, fillstyle='left', color='#dc2626',
+                markeredgecolor=ink('#111827'), markerfacecoloralt='white', linestyle='none', zorder=12)
+        txt = ax.text(t, l, r, '   bulk', fontsize='small', color='#dc2626', ha='left', va='center',
+                      zorder=12, path_effects=_halo())
+        txt._fb_cell = True
 
 
 def draw_text(fig, ax, panel, table, report, style):

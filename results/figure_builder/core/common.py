@@ -477,13 +477,15 @@ def sort_pairs(pairs, how):
     return list(pairs)
 
 
-def value_groups(panel, table, with_weights=False):
+def value_groups(panel, table, with_weights=False, with_masks=False):
     """Evaluate ``value`` and split it by group, dropping non-finite values.
 
     The panel's percentile trim, minimum group size and automatic order are
     applied here, so every chart built on it behaves the same way. With
     ``with_weights`` each item is ``(group, values, weights)``, the weights
-    being particles per mL when the panel counts in that unit.
+    being particles per mL when the panel counts in that unit. With
+    ``with_masks`` each item is ``(group, values, mask)``, the mask picking
+    those values' particles out of the table.
     """
     if not (panel.get('value') or '').strip():
         raise ExpressionError('Set the Value expression')
@@ -500,7 +502,10 @@ def value_groups(panel, table, with_weights=False):
             m &= (v >= b[0]) & (v <= b[1])
         if min_n and int(m.sum()) < min_n:
             m = np.zeros_like(m)
-        out.append((g, v[m], w_all[m]) if with_weights else (g, v[m]))
+        if with_masks:
+            out.append((g, v[m], m))
+        else:
+            out.append((g, v[m], w_all[m]) if with_weights else (g, v[m]))
     return sort_pairs(out, panel.get('sort_groups') or 'none')
 
 

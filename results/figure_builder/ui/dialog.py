@@ -98,6 +98,10 @@ class FigureBuilderNode(QObject):
         """Return the particle table for the current data and quantity."""
         table = ParticleTable.from_input(self.input_data, self.config.get('data_type', 'Counts'))
         table.set_variables(self.config.get('variables'))
+        window = self.parent_window or (self.input_data or {}).get('parent_window')
+        if window is not None:
+            from results.figure_builder.core.limits import attach_limits
+            attach_limits(table, window)
         return table
 
     @property

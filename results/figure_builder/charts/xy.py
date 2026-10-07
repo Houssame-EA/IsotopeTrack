@@ -113,6 +113,8 @@ def draw_scatter(fig, ax, panel, table, report, style):
     hd['table'] = table
     style_axes(ax, panel, table, style, panel['x'], panel['y'])
     draw_marks(ax, panel, [yy for _g, _xx, yy in drawn], vertical=False)
+    from results.figure_builder.charts.detectability import draw_on_scatter
+    draw_on_scatter(ax, panel, table, report, panel['x'], panel['y'])
     add_legend(ax, panel, [extra] if extra is not None else None)
     add_marginals(fig, ax, panel, drawn, log_x, log_y, report)
     add_zoom_inset(ax, panel, report)
