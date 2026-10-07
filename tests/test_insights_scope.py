@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for the Insights engine in ``results.results_reader``.
+"""Tests for the Insights engine in ``results.insights.engine`` and ``results.insights.panel``.
 
 Covers:
 
@@ -26,7 +26,8 @@ import random
 import numpy as np
 import pytest
 
-from results import results_reader as rr
+from results.insights import engine as rr
+from results.insights import panel as ip
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -864,7 +865,7 @@ def iso_win():
 
 def test_isotope_entries_resolve_to_full_records(iso_win):
     """Labels become records carrying the symbol and mass the dialog needs."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["56Fe", "55Mn"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["56Fe", "55Mn"])
     assert [e["label"] for e in entries] == ["56Fe", "55Mn"]
     assert all({"symbol", "mass", "key", "label"} <= set(e) for e in entries)
     assert entries[0]["symbol"] == "Fe"
@@ -872,26 +873,26 @@ def test_isotope_entries_resolve_to_full_records(iso_win):
 
 def test_isotope_entries_preserve_request_order(iso_win):
     """Records come back in the order the insight named them."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["55Mn", "56Fe"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["55Mn", "56Fe"])
     assert [e["label"] for e in entries] == ["55Mn", "56Fe"]
 
 
 def test_isotope_entries_skip_unknown_labels(iso_win):
     """An element the app never measured is dropped rather than faked."""
-    entries = rr._isotope_entries(iso_win, FakeScene([]), ["56Fe", "999Xx"])
+    entries = ip._isotope_entries(iso_win, FakeScene([]), ["56Fe", "999Xx"])
     assert [e["label"] for e in entries] == ["56Fe"]
 
 
 def test_isotope_entries_empty_without_an_isotope_list(win):
     """With nothing to resolve against, no records are invented."""
-    assert rr._isotope_entries(win, FakeScene([]), ["56Fe"]) == []
+    assert ip._isotope_entries(win, FakeScene([]), ["56Fe"]) == []
 
 
 def test_isotope_entries_prefer_a_batch_node(iso_win):
     """A batch node's isotope list takes precedence over the window's."""
     batch = FakeNode("batch_sample_selector",
                      batch_available_isotopes={"Zr": [89.9047]})
-    entries = rr._isotope_entries(iso_win, FakeScene([batch]), ["56Fe", "90Zr"])
+    entries = ip._isotope_entries(iso_win, FakeScene([batch]), ["56Fe", "90Zr"])
     assert [e["label"] for e in entries] == ["90Zr"]
 
 
@@ -1321,7 +1322,7 @@ def _overlaps(a, b, width=130, height=105):
 def test_empty_canvas_uses_the_preferred_position():
     """With nothing placed, the caller's choice is honoured."""
     from PySide6.QtCore import QPointF
-    point = rr._free_position(PlacementScene(), QPointF(7, 9))
+    point = ip._free_position(PlacementScene(), QPointF(7, 9))
     assert (point.x(), point.y()) == (7, 9)
 
 
@@ -1331,7 +1332,7 @@ def test_placement_never_overlaps():
     scene = PlacementScene()
     placed = []
     for i in range(12):
-        point = rr._free_position(scene, QPointF(300, 200))
+        point = ip._free_position(scene, QPointF(300, 200))
         scene.node_items[i] = PlacedItem(point)
         placed.append((point.x(), point.y()))
 
@@ -1345,8 +1346,8 @@ def test_placement_wraps_to_a_new_row():
     from PySide6.QtCore import QPointF
     scene = PlacementScene()
     rows = set()
-    for i in range(rr._SLOT_SPAN + 2):
-        point = rr._free_position(scene, QPointF(0, 0))
+    for i in range(ip._SLOT_SPAN + 2):
+        point = ip._free_position(scene, QPointF(0, 0))
         scene.node_items[i] = PlacedItem(point)
         rows.add(point.y())
     assert len(rows) > 1

@@ -25,7 +25,7 @@ from results.results_pie_charts import (
     PieChartDisplayDialog, PieChartPlotNode,
     ElementCompositionDisplayDialog, ElementCompositionPlotNode,
 )
-from results.results_reader import (      
+from results.insights.panel import (      
     integrate_insights_panel,
     make_insights_toggle_button,
 )

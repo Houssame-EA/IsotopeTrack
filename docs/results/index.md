@@ -69,11 +69,6 @@ Network / Chord Diagram Node – circular element correlation network.
 
 **12** classes &nbsp;·&nbsp; **1** functions &nbsp;·&nbsp; **82** methods
 
-### [`results_reader.py`](results-reader.md)
-Smart Insights for the Workflow Builder canvas.
-
-**7** classes &nbsp;·&nbsp; **38** functions &nbsp;·&nbsp; **45** methods
-
 ### [`results_single_multiple.py`](results-single-multiple.md)
 Single vs Multiple Element Analysis Node – Pie charts & heatmaps.
 

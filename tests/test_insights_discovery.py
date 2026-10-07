@@ -16,7 +16,8 @@ import random
 import numpy as np
 import pytest
 
-from results import results_reader as rr
+from results.insights import engine as rr
+from results.insights import panel as ip
 from results.insights import discovery as disc
 from results.insights.replicates import (
     ReplicateGroup, auto_group_map, describe_grouping, replicate_root, resolve_groups,
@@ -429,8 +430,8 @@ def test_selection_units_pool_groups_and_keep_singles():
     s = rr.Suggestion("t", "r", "comparison", 0.5, "concentration_comparison",
                       samples=("k_1", "k_2", "blank"),
                       sample_groups={"k_1": "k", "k_2": "k", "blank": ""})
-    assert rr.selection_units(s, None) == [("k", ("k_1", "k_2")), ("blank", ("blank",))]
-    assert "k (2 replicates)" in rr.describe_samples(s, None)
+    assert ip.selection_units(s, None) == [("k", ("k_1", "k_2")), ("blank", ("blank",))]
+    assert "k (2 replicates)" in ip.describe_samples(s, None)
 
 
 def test_selection_units_fall_back_to_the_scope():
@@ -438,7 +439,7 @@ def test_selection_units_fall_back_to_the_scope():
     scope = rr.resolve_scope(FakeScene(), FakeWindow({"alpha_1": tissue(30, 2, 1),
                                                       "alpha_2": tissue(30, 2, 2)}))
     s = rr.Suggestion("t", "r", "composition", 0.5, "pie_chart_plot")
-    assert rr.selection_units(s, scope) == [("alpha", ("alpha_1", "alpha_2"))]
+    assert ip.selection_units(s, scope) == [("alpha", ("alpha_1", "alpha_2"))]
 
 
 def test_merge_keeps_strongest_wording():
@@ -577,20 +578,20 @@ def test_an_interference_is_not_reported_as_a_correlation():
 
 def test_section_order_and_strength_words():
     """Data quality comes first; strength is described in words."""
-    titles = [t for t, _c in rr.SECTIONS]
+    titles = [t for t, _c in ip.SECTIONS]
     assert titles[0] == "Data quality"
-    assert rr.section_of("isotope_groups") == "Isotope ratios"
-    assert rr.section_of("unknown") == titles[-1]
-    assert rr.strength_label(0.9) == ("Strong", 3)
-    assert rr.strength_label(0.5) == ("Moderate", 2)
-    assert rr.strength_label(0.2) == ("Weak", 1)
+    assert ip.section_of("isotope_groups") == "Isotope ratios"
+    assert ip.section_of("unknown") == titles[-1]
+    assert ip.strength_label(0.9) == ("Strong", 3)
+    assert ip.strength_label(0.5) == ("Moderate", 2)
+    assert ip.strength_label(0.2) == ("Weak", 1)
 
 
 def test_scope_and_isotope_text():
     """The scope reads as plain sentences and isotopes get superscript masses."""
     scope = rr.resolve_scope(FakeScene(), FakeWindow(replicated_pool()))
-    first, second = rr.describe_scope(scope)
+    first, second = ip.describe_scope(scope)
     assert first.startswith("6 samples and 2,400 particles")
     assert "liver (3)" in second and "sample names" in second
-    assert rr.isotope_markup("206Pb/207Pb, 3 replicates") == \
+    assert ip.isotope_markup("206Pb/207Pb, 3 replicates") == \
         "<sup>206</sup>Pb/<sup>207</sup>Pb, 3 replicates"

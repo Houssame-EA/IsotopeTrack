@@ -1,10 +1,10 @@
 """Detectors that search particle data for findings worth a plot node.
 
-Each detector takes an :class:`~results.results_reader.AnalysisContext` and
-returns :class:`~results.results_reader.Suggestion` cards. Detectors that look
+Each detector takes an :class:`~results.insights.engine.AnalysisContext` and
+returns :class:`~results.insights.engine.Suggestion` cards. Detectors that look
 *inside* a material (interferences, stoichiometry, co-occurrence, rare
 particles, composition shape) are run once per replicate group by the engine
-in :mod:`results.results_reader`; detectors that look *across* samples handle
+in :mod:`results.insights.engine`; detectors that look *across* samples handle
 the groups themselves.
 
 The statistics favour being quiet over being wrong. Every detector applies an
@@ -88,13 +88,13 @@ _SUPERSCRIPT_TWO_PLUS = "²⁺"
 
 
 def _rr():
-    """Return :mod:`results.results_reader`, imported on first use.
+    """Return :mod:`results.insights.engine`, imported on first use.
 
     The engine module imports this one, so importing it back at module level
     would be circular.
     """
-    from results import results_reader
-    return results_reader
+    from results.insights import engine
+    return engine
 
 
 def mass_symbol(label: str) -> tuple[int | None, str | None]:
@@ -287,6 +287,13 @@ def analyse_interference(ctx, progress=None) -> list:
             ),
             category="interference",
             confidence=min(st["score"], 0.95),
+            explain_key="interference",
+            details=[("Suspect mass", child), ("Parent", parent), ("Likely species", species),
+                     ("Particles with both", f"{st['n']:,}"),
+                     ("Share of suspect detections with parent", f"{st['share']:.0%}"),
+                     ("Median suspect/parent", f"{st['ratio'] * 100:.3g} %"),
+                     ("Spread of the ratio", f"×{10 ** st['spread']:.2f}"),
+                     ("Slope on log axes", "n/a" if st["slope"] is None else f"{st['slope']:.2f}")],
             node_type="correlation_plot",
             config={"x_element": parent, "y_element": child, "log_x": True, "log_y": True},
             elements=(parent, child),
@@ -437,6 +444,12 @@ def analyse_stoichiometry(ctx, progress=None) -> list:
             ),
             category="stoichiometry",
             confidence=min(0.6 + (STOICHIOMETRY_MAX_COUPLING - coupling) * 0.75, 0.92),
+            explain_key="stoichiometry",
+            details=[("Ratio", f"{a}/{b} = {ratio:.3g} ({unit})"),
+                     ("Closest simple ratio", simple or "none within 8 %"),
+                     ("Particles with both", f"{n:,}"),
+                     ("Spread of the ratio", f"×{10 ** spread:.2f}"),
+                     ("Spread if independent", f"×{10 ** independent:.2f}")],
             node_type=node_type,
             config=config,
             elements=(a, b),
@@ -530,6 +543,12 @@ def analyse_cooccurrence(ctx, progress=None) -> list:
             reasoning=reasoning,
             category="cooccurrence",
             confidence=conf,
+            explain_key=f"cooccurrence_{kind}",
+            details=[("Particles with both", f"{nab:,}"),
+                     (f"Particles with {rare}", f"{n_rare:,}"),
+                     ("Expected by chance", f"{expected:.1f}"),
+                     ("Lift over chance", f"{lift:.2f}×"),
+                     ("Fisher q", rr._fmt_q(q).replace("q ", "", 1).lstrip("= "))],
             node_type="heatmap_plot",
             config={"search_element": rare, "highlight_matches": True},
             elements=(rare, common),
@@ -603,6 +622,9 @@ def analyse_rare(ctx, progress=None) -> list:
             ),
             category="rare",
             confidence=min(0.45 + 0.25 * consistency, 0.72),
+            explain_key="rare",
+            details=[("Particles", f"{count} of {ctx.n:,}")]
+            + [(f"With {c}", f"{k} of {count}") for k, c in companions],
             node_type="heatmap_plot",
             config={"search_element": el, "highlight_matches": True},
             elements=tuple([el] + [c for _, c in companions]),
@@ -669,6 +691,8 @@ def analyse_network(ctx, progress=None) -> list:
         ),
         category="correlation",
         confidence=min(0.6 + 0.05 * len(members), 0.88),
+        explain_key="network",
+        details=[("Elements", ", ".join(members)), ("Significant links", str(n_edges))],
         node_type="network_diagram",
         config={"r_threshold": rr.MIN_ABS_CORRELATION},
         elements=tuple(members[:10]),
@@ -721,6 +745,9 @@ def analyse_ternary(ctx, progress=None) -> list:
         ),
         category="composition",
         confidence=min(0.5 + n / ctx.n, 0.8),
+        explain_key="composition",
+        details=[("Particles with all three", f"{n:,} ({n / ctx.n:.0%})"),
+                 ("Largest spread of a share", f"{spread:.2f}")],
         node_type="triangle_plot",
         config={"element_a": a, "element_b": b, "element_c": c},
         elements=(a, b, c),
@@ -759,6 +786,9 @@ def analyse_single_multi(ctx, progress=None) -> list:
         ),
         category="composition",
         confidence=min(0.5 + (high - low) * 0.4, 0.85),
+        explain_key="composition",
+        details=[(f"{high_el} alone", f"{high:.0%} of its particles"),
+                 (f"{low_el} with others", f"{1 - low:.0%} of its particles")],
         node_type="single_multiple_element_plot",
         config={},
         elements=(high_el, low_el),
@@ -820,6 +850,10 @@ def analyse_detection_limit(ctx, progress=None) -> list:
             ),
             category="quality",
             confidence=min(0.5 + bottom, 0.85),
+            explain_key="quality",
+            details=[("Measured as", noun), ("Lowest value", f"{low_value:.3g} {unit}"),
+                     ("Particles in the bottom 5 % of the range", f"{bottom:.0%}"),
+                     ("Particles", f"{n:,}")],
             node_type="histogram_plot",
             config={"element": el, "data_type_display": label, "show_det_limit": True},
             elements=(el,),
@@ -901,6 +935,9 @@ def analyse_size_composition(ctx, progress=None) -> list:
             ),
             category="composition",
             confidence=min(0.5 + abs(rho) * 0.5, 0.88),
+            explain_key="size",
+            details=[("Element", el), ("Rank correlation with size", f"{rho:+.2f}"),
+                     ("Multi-element particles", f"{n:,}"), ("False discovery", rr._fmt_q(q))],
             node_type="figure_builder",
             config=spec,
             elements=(),
@@ -991,7 +1028,14 @@ def _rate_finding(name: str, t: np.ndarray):
     spec = _figure_spec("Counts", kind="timeline", time_mode="rate", bins=40,
                         title=f"Particle rate, {name}", group_by="sample")
     return rr.Suggestion(title=title, reasoning=reasoning, category="time", confidence=conf,
-                         node_type="figure_builder", config=spec, elements=(), **sample_cfg)
+                         node_type="figure_builder", config=spec, elements=(),
+                         explain_key="time_rate",
+                         details=[("Sample", name), ("Particles", f"{len(t):,}"),
+                                  ("Dispersion (variance / mean)", f"{dispersion:.1f}"),
+                                  ("Trend over time (ρ)", f"{rho:+.2f}"),
+                                  ("Last / first bins", f"{fold:.2f}×"),
+                                  ("χ² p", f"{p:.1g}")],
+                         **sample_cfg)
 
 
 def _signal_drift(ctx, name: str, in_sample: np.ndarray, t_all: np.ndarray):
@@ -1042,6 +1086,9 @@ def _signal_drift(ctx, name: str, in_sample: np.ndarray, t_all: np.ndarray):
             ),
             category="time",
             confidence=min(0.6 + 0.05 * len(drifting), 0.88),
+            explain_key="time_signal",
+            details=[("Sample", name)] + [(f"{d[1]} change", f"{d[2]:.2f}× (ρ = {d[3]:+.2f})")
+                                          for d in drifting[:5]],
             node_type="figure_builder",
             config=spec,
             elements=(),
@@ -1057,6 +1104,9 @@ def _signal_drift(ctx, name: str, in_sample: np.ndarray, t_all: np.ndarray):
         ),
         category="time",
         confidence=min(0.5 + rho_abs * 0.3, 0.8),
+        explain_key="time_signal",
+        details=[("Sample", name), ("Element", el), ("Change start to end", f"{fold:.2f}×"),
+                 ("Trend (ρ)", f"{rho:+.2f}")],
         node_type="figure_builder",
         config=spec,
         elements=(),
@@ -1233,6 +1283,8 @@ def _replicate_flag_card(rr, group, members, flags, flagged_elements, sample_cfg
         reasoning=reasoning,
         category="replicate",
         confidence=min(0.6 + 0.08 * len(flags), 0.92),
+        explain_key="replicate_flag",
+        details=[(f[1], _describe_gap(f[2], f[3][1])) for f in flags[:6]],
         node_type=node_type,
         config=config,
         elements=elements,
@@ -1261,6 +1313,10 @@ def _replicate_agree_card(rr, group, members, metrics, elements, sample_cfg):
         ),
         category="replicate",
         confidence=0.5,
+        explain_key="replicate_agree",
+        details=[("Replicates", ", ".join(members)),
+                 ("Largest gap in median signal", f"{worst_fold:.2f}×"),
+                 ("Largest gap in detection rate", f"{worst_share * 100:.0f} points")],
         node_type="box_plot",
         config={"elements": list(elements[:4])},
         elements=tuple(elements[:4]),
@@ -1329,6 +1385,9 @@ def merge_group_findings(items, scope_order, n_groups: int) -> list:
             elements=best.elements,
             samples=tuple(samples) if groups else best.samples,
             sample_groups=sample_groups if groups else dict(best.sample_groups),
+            explain_key=best.explain_key,
+            details=list(best.details) + ([("Seen in", ", ".join(g.name for g in groups))]
+                                          if n_groups > 1 and groups else []),
         ))
     return merged
 
@@ -1487,6 +1546,10 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
             ),
             category="isotope",
             confidence=0.4,
+            explain_key="isotope",
+            details=[("Element", symbol), ("Ratio", f"{num}/{den}"), ("Median", f"{median:.4g}"),
+                     ("Natural", f"{natural:.4g}" if natural else "unknown"),
+                     ("Particles used", f"{n:,}")],
             node_type="isotopic_ratio_plot",
             config=_ratio_config(num, den, den),
             elements=(num, den),
@@ -1505,6 +1568,9 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                     ),
                     category="isotope",
                     confidence=min(0.6 + min(abs(gap), 1.0) * 0.3, 0.9),
+                    explain_key="isotope_abundance",
+                    details=[("Measured median", f"{median:.4g}"), ("Natural", f"{natural:.4g}"),
+                             ("Difference", f"{gap:+.1%}"), ("Particles used", f"{n:,}")],
                     node_type="isotopic_ratio_plot",
                     config=_ratio_config(num, den, den),
                     elements=(num, den),
@@ -1523,6 +1589,10 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                 ),
                 category="isotope",
                 confidence=min(0.6 + split["valley_depth"] * 0.3, 0.9),
+                explain_key="isotope_two",
+                details=[("Lower population", f"{low:.4g}"), ("Upper population", f"{high:.4g}"),
+                         ("Smaller group", f"{split['minor_share']:.0%}"),
+                         ("Particles used", f"{n:,}")],
                 node_type="isotopic_ratio_plot",
                 config=_ratio_config(num, den, den),
                 elements=(num, den),
@@ -1565,6 +1635,10 @@ def analyse_isotope_ratios(ctx, progress=None) -> list:
                 ),
                 category="isotope",
                 confidence=min(0.55 + abs(rho) * 0.4, 0.92),
+                explain_key="isotope_track",
+                details=[("Ratio", f"{num}/{den}"), ("Compared with", other),
+                         ("Rank correlation (ρ)", f"{rho:+.2f}"), ("Particles", f"{n:,}"),
+                         ("False discovery", rr._fmt_q(q))],
                 node_type="isotopic_ratio_plot",
                 config=_ratio_config(num, den, other),
                 elements=(num, den, other),
@@ -1652,6 +1726,12 @@ def analyse_isotope_groups(ctx, progress=None) -> list:
             ),
             category="isotope",
             confidence=min(0.6 + (10 ** gap - 1) * 3.0, 0.93),
+            explain_key="isotope_groups",
+            details=[(f"Median in {hi_g.name}", f"{hi_v:.4g}"),
+                     (f"Median in {lo_g.name}", f"{lo_v:.4g}"),
+                     ("Difference", f"{10 ** gap - 1:.2%}"),
+                     ("Spread between replicates", f"{10 ** spread - 1:.2%}" if spread else "no replicates"),
+                     ("Test", method), ("False discovery", rr._fmt_q(q))],
             node_type="isotopic_ratio_plot",
             config=_ratio_config(num, den, den),
             elements=(num, den),

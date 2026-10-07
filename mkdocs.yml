@@ -151,9 +151,16 @@ nav:
     - "results_network.py": results/results-network.md
     - "results_periodic.py": results/results-periodic.md
     - "results_pie_charts.py": results/results-pie-charts.md
-    - "results_reader.py": results/results-reader.md
     - "results_single_multiple.py": results/results-single-multiple.md
     - "results_triangle.py": results/results-triangle.md
+- Insights:
+    - Overview: insights/index.md
+    - "discovery.py": insights/discovery.md
+    - "engine.py": insights/engine.md
+    - "explain.py": insights/explain.md
+    - "figures.py": insights/figures.md
+    - "panel.py": insights/panel.md
+    - "replicates.py": insights/replicates.md
 - Clustering:
     - Overview: cluster/index.md
     - "detail.py": cluster/detail.md
