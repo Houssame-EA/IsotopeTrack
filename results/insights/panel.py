@@ -149,41 +149,107 @@ def _raw_pool_for(scene, parent_window) -> dict:
     return _raw_pool(scene, parent_window)
 
 
-def detection_thresholds(parent_window, samples, labels) -> dict[str, float]:
-    """Read the detection thresholds, in counts, that processing recorded.
+def _mean_value(value) -> float | None:
+    """Mean of a stored number or time series, or ``None`` when it is not usable."""
+    import numpy as np
+    try:
+        out = float(np.mean(value))
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
 
-    Thresholds are stored per sample and per isotope key such as
-    ``"Fe-55.9349"``; a time-resolved threshold is averaged over the run, and
-    the samples are averaged together.
+
+def _conversion_factors(parent_window) -> dict[str, float]:
+    """Counts-per-femtogram factors the main window uses to turn counts into mass.
+
+    They come from the ionic calibration slope of each isotope's preferred
+    method and the average transport rate, exactly as the particle masses
+    were computed.
+    """
+    build = getattr(parent_window, "_build_element_conversion_cache", None)
+    if not callable(build):
+        return {}
+    try:
+        cache = build()
+    except Exception:
+        _itk_log.debug("[Insights] Could not read the calibration conversion factors")
+        return {}
+    return {label: entry["conversion_factor"] for label, entry in (cache or {}).items()
+            if isinstance(entry, dict) and entry.get("conversion_factor")}
+
+
+def detection_limits(parent_window, samples, labels) -> dict[str, dict[str, dict[str, float]]]:
+    """Read each element's detection limits per sample, as the calibration reports them.
+
+    * Counts: the net detection limit ``LOD_MDL`` that peak detection stored
+      for the sample and isotope (threshold minus background, averaged over
+      the run when it is time-resolved). Particle counts are background
+      subtracted, so this is the limit on the same scale as the plotted
+      counts.
+    * Mass: the MDL in fg, that net limit divided by the calibration's
+      counts-per-femtogram factor, the same formula and factor the main
+      window uses for its calibration table and for every particle's mass.
+      Where no factor is available, the MDL stored in ``element_limits`` is
+      used instead.
+    * Size: the SDL in nm, the diameter of a sphere of the pure element with
+      that mass, using the same element density as the particle sizes.
 
     Args:
-        parent_window: Main window holding ``element_thresholds``.
+        parent_window: Main window holding ``element_thresholds``,
+            ``element_limits`` and the calibration.
         samples: Samples to read.
         labels: Isotope labels to resolve, such as ``"56Fe"``.
 
     Returns:
-        Label to mean threshold in counts, for the labels that have one.
+        ``{label: {"counts" | "mass" | "d": {sample: value}}}`` holding only
+        the limits that could be found.
     """
     import numpy as np
-    stored = getattr(parent_window, "element_thresholds", None)
-    if not isinstance(stored, dict) or not labels:
+    thresholds = getattr(parent_window, "element_thresholds", None)
+    stored_limits = getattr(parent_window, "element_limits", None)
+    if not isinstance(thresholds, dict) or not labels:
         return {}
+    stored_limits = stored_limits if isinstance(stored_limits, dict) else {}
     keys = {e["label"]: e["key"] for e in _isotope_entries(parent_window, None, labels)}
-    out: dict[str, float] = {}
+    factors = _conversion_factors(parent_window)
+    table = getattr(parent_window, "periodic_table_info", None)
+    to_diameter = getattr(parent_window, "mass_to_diameter", None)
+    out: dict[str, dict[str, dict[str, float]]] = {}
     for label, key in keys.items():
-        values = []
-        for sample in samples:
-            entry = (stored.get(sample) or {}).get(key)
-            if not isinstance(entry, dict):
-                continue
+        found: dict[str, dict[str, float]] = {}
+        density = None
+        if table is not None and hasattr(table, "get_density_by_element"):
             try:
-                value = float(np.mean(entry.get("threshold", 0)))
-            except (TypeError, ValueError):
-                continue
-            if value > 0 and np.isfinite(value):
-                values.append(value)
-        if values:
-            out[label] = float(np.mean(values))
+                density = table.get_density_by_element(str(key).split("-")[0])
+            except Exception:
+                density = None
+        for sample in samples:
+            entry = (thresholds.get(sample) or {}).get(key)
+            net = None
+            if isinstance(entry, dict):
+                net = _mean_value(entry.get("LOD_MDL"))
+                if not net:
+                    threshold = _mean_value(entry.get("threshold", 0)) or 0.0
+                    background = _mean_value(entry.get("background", 0)) or 0.0
+                    net = max(0.0, threshold - background)
+            if net and net > 0:
+                found.setdefault("counts", {})[sample] = net
+            mdl = None
+            factor = factors.get(label)
+            if net and factor and factor > 0:
+                mdl = net / factor
+            else:
+                saved = (stored_limits.get(sample) or {}).get(key)
+                if isinstance(saved, dict):
+                    mdl = _mean_value(saved.get("MDL"))
+            if mdl and mdl > 0:
+                found.setdefault("mass", {})[sample] = mdl
+                if density and density > 0 and callable(to_diameter):
+                    sdl = to_diameter(mdl, density)
+                    if sdl and np.isfinite(sdl) and sdl > 0:
+                        found.setdefault("d", {})[sample] = float(sdl)
+        if found:
+            out[label] = found
     return out
 
 
@@ -1357,7 +1423,7 @@ class SmartInsightsPanel(QWidget):
         particles = [p for name in samples for p in pool.get(name, ())]
         ctx = _figures.context_from(
             particles, s.elements,
-            detection_thresholds(self._pw, samples, s.elements),
+            detection_limits(self._pw, samples, s.elements),
             multi_sample=len(units) > 1, groups=len(units))
         spec = _figures.figure_for(s, ctx)
         if spec is None:

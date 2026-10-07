@@ -4,10 +4,11 @@ Besides the single plot a card proposes, every finding can be opened as a
 Figure Builder figure with panels a to f and a legend underneath. The panels
 tell the finding's story in order: the pattern itself, the evidence behind
 it, what it means, and the limits to keep in mind. Wherever it helps, the
-panels show the element in counts, mass and size, with the detection
-threshold marked on count axes and the smallest detected particle marked on
-mass and size axes, so it is plain how much of a pattern sits near the
-detection limit. Panels comparing samples carry a significance test.
+panels show the element in counts, mass and size, with the element's own
+detection limit from the calibration marked on each axis (LOD in net counts,
+MDL in fg, SDL in nm), so it is plain how much of a pattern sits near the
+detection limit, and the legend quotes the values. Panels comparing samples
+carry a significance test.
 
 :func:`figure_for` builds the design; the panel adds it to the canvas as a
 Figure Builder node fed by a selector holding the finding's samples.
@@ -31,19 +32,23 @@ class FigureContext:
 
     Attributes:
         quantities: Quantity prefixes present: ``counts``, ``mass``, ``d``.
-        thresholds: Isotope label to its detection threshold in counts, where
-            the processing recorded one.
-        smallest: ``(prefix, label)`` to the smallest detected value, used to
-            mark the practical detection limit on mass and size axes.
+        limits: ``(prefix, label)`` to ``{sample: value}``, each element's
+            detection limit per sample from the calibration: net LOD in
+            counts, MDL in fg and SDL in nm.
+        smallest: ``(prefix, label)`` to the smallest detected value, used
+            only where no calibrated limit is available.
         multi_sample: Whether the figure covers more than one sample.
         groups: How many samples or replicate groups the figure compares.
+        used: ``(prefix, label)`` pairs whose limit a panel drew, filled while
+            the story is built so the legend can quote their values.
     """
 
     quantities: set = field(default_factory=lambda: {"counts"})
-    thresholds: dict = field(default_factory=dict)
+    limits: dict = field(default_factory=dict)
     smallest: dict = field(default_factory=dict)
     multi_sample: bool = False
     groups: int = 1
+    used: set = field(default_factory=set)
 
 
 def _panel(kind: str, title: str, **settings) -> dict:
@@ -56,14 +61,76 @@ def _expr(prefix: str, label: str) -> str:
     return label if prefix == "counts" else f"{prefix}:{label}"
 
 
+LIMIT_NAMES = {"counts": "LOD", "mass": "MDL", "d": "SDL"}
+"""What each quantity's detection limit is called in the calibration table."""
+
+LIMIT_UNITS = {"counts": "net counts", "mass": "fg", "d": "nm"}
+
+LIMIT_SPREAD = 1.10
+"""Largest ratio between samples' limits that still reads as one shared value."""
+
+
 def _limit(ctx: FigureContext, prefix: str, label: str) -> dict:
-    """Detection-limit line settings for a panel showing *label* in *prefix*."""
-    if prefix == "counts" and label in ctx.thresholds:
-        return {"dl_value": f"{ctx.thresholds[label]:.4g}", "dl_label": "Detection threshold"}
+    """Detection-limit line settings for a panel showing *label* in *prefix*.
+
+    The line sits at the element's calibrated limit. When the samples in the
+    figure share it within :data:`LIMIT_SPREAD` the mean is drawn; otherwise
+    the highest, the level above which every sample detects the element.
+    Without a calibrated limit, mass and size axes fall back to the
+    smallest particle detected.
+    """
+    values = list((ctx.limits.get((prefix, label)) or {}).values())
+    if values:
+        ctx.used.add((prefix, label))
+        lo, hi = min(values), max(values)
+        name = LIMIT_NAMES.get(prefix, "Detection limit")
+        if hi <= lo * LIMIT_SPREAD:
+            return {"dl_value": f"{sum(values) / len(values):.4g}", "dl_label": name}
+        return {"dl_value": f"{hi:.4g}", "dl_label": f"{name} (highest sample)"}
     value = ctx.smallest.get((prefix, label))
     if value:
+        ctx.used.add((prefix, label))
         return {"dl_value": f"{value:.4g}", "dl_label": "Smallest detected"}
     return {}
+
+
+def limits_sentence(ctx: FigureContext) -> str:
+    """Legend sentence quoting the detection limits drawn in the figure.
+
+    Each element's limits are listed per quantity, as one value when the
+    samples share it and as a range across samples otherwise.
+    """
+    by_label: dict[str, list[str]] = {}
+    fallback = False
+    for prefix in ("counts", "mass", "d"):
+        for p, label in sorted(ctx.used):
+            if p != prefix:
+                continue
+            values = list((ctx.limits.get((prefix, label)) or {}).values())
+            if not values:
+                fallback = True
+                continue
+            lo, hi = min(values), max(values)
+            unit = LIMIT_UNITS[prefix]
+            amount = (f"{_fmt(sum(values) / len(values))} {unit}" if hi <= lo * LIMIT_SPREAD
+                      else f"{_fmt(lo)}–{_fmt(hi)} {unit} across samples, line at the highest")
+            by_label.setdefault(label, []).append(f"{LIMIT_NAMES[prefix]} {amount}")
+    parts = []
+    if by_label:
+        listed = "; ".join(f"{label}: {'; '.join(items)}" for label, items in by_label.items())
+        parts.append("Dashed lines mark each element's detection limit from the calibration "
+                     f"({listed}). LOD is the net-count limit from peak detection, MDL that "
+                     "limit converted to mass with the calibration sensitivity and transport "
+                     "rate, and SDL the matching diameter of a sphere of the pure element.")
+    if fallback:
+        parts.append("Where no calibrated limit was available, the dashed line marks the "
+                     "smallest particle detected instead.")
+    return " ".join(parts)
+
+
+def _fmt(value: float) -> str:
+    """Short number for a legend."""
+    return f"{value:.3g}"
 
 
 def _histogram(ctx: FigureContext, prefix: str, label: str, title: str = "", **extra) -> dict:
@@ -171,8 +238,8 @@ def _interference(s, ctx):
          f"Particles with {child} (orange) are the ones with the largest {parent} signal. "
          f"{species} is a small fraction of {parent}, so it only clears the detection "
          f"threshold when there is a lot of {parent}."),
-        (_histogram(ctx, "counts", child, f"{child} counts and detection threshold"),
-         f"The {child} counts sit just above the detection threshold (dashed line); in these "
+        (_histogram(ctx, "counts", child, f"{child} counts and detection limit"),
+         f"The {child} counts sit just above the detection limit (dashed line); in these "
          f"particles {child} is best read as {species}, not as a separate element."),
     ]
 
@@ -202,8 +269,8 @@ def _isotope_pair(s, ctx, natural=None):
                 x_label=f"{den} counts", y_label=f"{num}/{den}", **_ratio_lines(natural, "y")),
          "Small particles scatter more because they produce fewer ions; the running median "
          "shows whether the ratio itself changes with particle size."),
-        (_histogram(ctx, "counts", den, f"{den} counts and detection threshold"),
-         f"{den} counts against the detection threshold (dashed line). Near the threshold the "
+        (_histogram(ctx, "counts", den, f"{den} counts and detection limit"),
+         f"{den} counts against the detection limit (dashed line). Near the threshold the "
          "minor isotope reads high, so the median above was taken from the upper half of the "
          "signal only."),
     ]
@@ -240,8 +307,8 @@ def _isotope_track(s, ctx, natural=None):
                 x_label=f"{den} counts", y_label=f"{num}/{den}", **_ratio_lines(natural, "y")),
          f"If the ratio also drifts with signal, part of the trend comes from counting "
          f"statistics in small particles rather than from {other}."),
-        (_histogram(ctx, "counts", other, f"{other} counts and detection threshold"),
-         f"Particles whose {other} is below its detection threshold (dashed line) are counted "
+        (_histogram(ctx, "counts", other, f"{other} counts and detection limit"),
+         f"Particles whose {other} is below its detection limit (dashed line) are counted "
          "as without it, so the two groups overlap a little."),
     ]
 
@@ -301,8 +368,7 @@ def _comparison(s, ctx):
                           (f"The same comparison in {name}, which no longer depends on the "
                            "instrument's sensitivity on the day." if prefix == "mass" else
                            f"And as equivalent particle size (nm).")
-                          + (" The dashed line is the smallest particle detected." if
-                             _limit(ctx, prefix, el) else "")))
+))
     story.append((_panel("bar", f"Share of particles with {el}", value=el, agg="detect_pct",
                          group_by="sample", y_label="Particles with it (%)", error="none"),
                   f"How often {el} is detected at all in each sample; a sample can carry more "
@@ -430,7 +496,7 @@ def _cooccurrence(s, ctx):
         (_panel("histogram", f"{rare} with and without {common}", value=rare, log_x=True,
                 bins=40, **_with_without(rare, common)),
          f"{rare} particles with and without {common}, by signal."),
-        (_histogram(ctx, "counts", rare, f"{rare} counts and detection threshold"),
+        (_histogram(ctx, "counts", rare, f"{rare} counts and detection limit"),
          f"If {rare} is only detectable in large particles, it will seem to avoid elements "
          "found in small ones; the dashed line shows how close it sits to its threshold."),
     ]
@@ -443,7 +509,7 @@ def _rare(s, ctx):
          f"Only a few particles carry {el}; these are the element combinations they come in."),
         (_panel("strip", f"{el} in each particle", value=el, log_y=True,
                 **_limit(ctx, "counts", el)),
-         f"Each dot is one {el} particle; the dashed line is the detection threshold."),
+         f"Each dot is one {el} particle; the dashed line is the detection limit."),
         (_panel("timeline", f"When {el} particles arrive", time_mode="signal", value=el,
                 log_y=True, filter=f"{el} > 0"),
          "Particles arriving together in time point to one contamination event; spread "
@@ -461,18 +527,18 @@ def _distribution(s, ctx):
     story = []
     lead = {
         "quality": f"The {el} distribution piles up at its lowest values, so part of the "
-                   "population likely continues below the detection threshold (dashed line).",
+                   "population likely continues below the detection limit (dashed line).",
         "distribution_two": f"The {el} signal splits into two populations of particles.",
     }.get(s.explain_key, f"{el} varies widely from particle to particle.")
     for i, prefix in enumerate(q for q in ("counts", "mass", "d") if q in ctx.quantities):
         name = QUANTITY_NAMES[prefix]
         caption = lead if i == 0 else (
-            f"The same particles in {name}; the dashed line is the smallest particle detected.")
+            f"The same particles in {name}, with the detection limit as a dashed line.")
         story.append((_histogram(ctx, prefix, el), caption))
     story.append((_panel("ecdf", f"{el} cumulative distribution", value=el, log_x=True,
                          **_limit(ctx, "counts", el)),
                   "The cumulative curve shows what share of particles sits close to the "
-                  "detection threshold; a curve that starts steeply at the threshold means "
+                  "detection limit; a curve that starts steeply at the threshold means "
                   "the population continues below it."))
     if ctx.multi_sample:
         story.append((_histogram(ctx, "counts", el, f"{el} counts by sample", group_by="sample"),
@@ -522,8 +588,8 @@ def _time(s, ctx):
                     log_y=True),
              "A steady trend in several elements points to instrument sensitivity; in one "
              "element only, to the particles themselves."),
-            (_histogram(ctx, "counts", lead, f"{lead} counts and detection threshold"),
-             "A falling signal pushes more particles below the detection threshold (dashed "
+            (_histogram(ctx, "counts", lead, f"{lead} counts and detection limit"),
+             "A falling signal pushes more particles below the detection limit (dashed "
              "line), which also lowers the rate."),
         ]
     return story
@@ -699,6 +765,9 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     if not story:
         return None
     legend = caption_text(s.title, [c for _p, c in story])
+    note = limits_sentence(ctx)
+    if note:
+        legend = f"{legend} {note}"
     rects, caption_rect, width, height = story_layout(len(story), legend)
     spec = default_spec()
     spec["figure"].update({"width": width, "height": height, "panel_letters": True})
@@ -711,14 +780,16 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     return normalise_spec(spec)
 
 
-def context_from(particles: list[dict], labels, thresholds: dict | None = None,
+def context_from(particles: list[dict], labels, limits: dict | None = None,
                  multi_sample: bool = False, groups: int | None = None) -> FigureContext:
     """Work out what a figure can show from the particles it will draw.
 
     Args:
         particles: The particles of the finding's samples.
         labels: The isotopes the finding is about.
-        thresholds: Isotope label to detection threshold in counts.
+        limits: ``{label: {"counts" | "mass" | "d": {sample: value}}}``, the
+            calibrated detection limits from
+            :func:`results.insights.panel.detection_limits`.
         multi_sample: Whether more than one sample is involved.
         groups: How many samples or replicate groups are compared; defaults
             to two when *multi_sample* is set and one otherwise.
@@ -745,7 +816,9 @@ def context_from(particles: list[dict], labels, thresholds: dict | None = None,
                     continue
                 if v > 0 and (smallest.get((prefix, label)) is None or v < smallest[(prefix, label)]):
                     smallest[(prefix, label)] = v
+    flat = {(prefix, label): dict(per_sample)
+            for label, by_prefix in (limits or {}).items()
+            for prefix, per_sample in (by_prefix or {}).items() if per_sample}
     if groups is None:
         groups = 2 if multi_sample else 1
-    return FigureContext(quantities or {"counts"}, dict(thresholds or {}), smallest, multi_sample,
-                         groups)
+    return FigureContext(quantities or {"counts"}, flat, smallest, multi_sample, groups)

@@ -295,8 +295,8 @@ EXPLANATIONS: dict[str, Explanation] = {
             "measured: means and medians are biased upward and particle numbers underestimated."
         ),
         check=(
-            "Compare the lowest values with the detection threshold shown in the figure. Size "
-            "and mass detection limits scale with the counts threshold through the calibration."
+            "Compare the lowest values with the detection limits shown in the figure: the LOD "
+            "in net counts and, from the calibration, the MDL in mass and SDL in size."
         ),
     ),
     "time_rate": Explanation(

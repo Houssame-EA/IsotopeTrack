@@ -126,7 +126,11 @@ def test_every_design_draws(app, stream, key):
         config = _figure_spec("Counts", kind="timeline", time_mode="signal", value="56Fe")
     s = rr.Suggestion("t", "r", key.split("_")[0], 0.5, "x", config=config,
                       elements=ELEMENTS[key], explain_key=key)
-    ctx = F.context_from(parts, s.elements, {"56Fe": 2.0}, multi_sample=True)
+    ctx = F.context_from(parts, s.elements,
+                         {"56Fe": {"counts": {"S1": 2.0, "S2": 2.1},
+                                   "mass": {"S1": 0.02, "S2": 0.021},
+                                   "d": {"S1": 17.0, "S2": 17.2}}},
+                         multi_sample=True)
     spec = F.figure_for(s, ctx)
     assert spec is not None
     plots, caption = spec["panels"][:-1], spec["panels"][-1]
@@ -141,31 +145,75 @@ def test_every_design_draws(app, stream, key):
 def test_context_records_quantities_and_smallest_values():
     """The figure context sees counts, mass and size and the smallest detected values."""
     parts = particles(3, 1.18, "S")
-    ctx = F.context_from(parts, ["56Fe"], {"56Fe": 2.5})
+    ctx = F.context_from(parts, ["56Fe"], {"56Fe": {"counts": {"S": 2.5}}})
     assert {"counts", "mass", "d"} <= ctx.quantities
     smallest = min(p["element_mass_fg"]["56Fe"] for p in parts if "56Fe" in p["element_mass_fg"])
     assert ctx.smallest[("mass", "56Fe")] == pytest.approx(smallest)
-    assert F._limit(ctx, "counts", "56Fe") == {"dl_value": "2.5",
-                                              "dl_label": "Detection threshold"}
+    assert F._limit(ctx, "counts", "56Fe") == {"dl_value": "2.5", "dl_label": "LOD"}
     assert F._limit(ctx, "mass", "56Fe")["dl_label"] == "Smallest detected"
+    note = F.limits_sentence(ctx)
+    assert "56Fe: LOD 2.5 net counts" in note and "smallest particle detected" in note
 
 
-def test_detection_thresholds_are_read_per_isotope_key():
-    """Stored thresholds are matched to labels and averaged over time and samples."""
-    class Window:
-        selected_isotopes = {"Gd": [155.9221], "Pb": [206.9759]}
-        element_thresholds = {"A": {"Gd-155.9221": {"threshold": [1.0, 2.0]}},
-                              "B": {"Gd-155.9221": {"threshold": 2.5},
-                                    "Pb-206.9759": {"threshold": 3.0}}}
+def test_limit_line_uses_the_highest_when_samples_differ():
+    """Samples sharing a limit get its mean; differing samples get the highest and a range."""
+    ctx = F.FigureContext(limits={("mass", "56Fe"): {"A": 0.020, "B": 0.021},
+                                  ("d", "56Fe"): {"A": 15.0, "B": 25.0}})
+    assert F._limit(ctx, "mass", "56Fe") == {"dl_value": "0.0205", "dl_label": "MDL"}
+    assert F._limit(ctx, "d", "56Fe") == {"dl_value": "25", "dl_label": "SDL (highest sample)"}
+    note = F.limits_sentence(ctx)
+    assert "MDL 0.0205 fg" in note and "SDL 15–25 nm across samples" in note
+    assert "Smallest" not in note
 
-        def get_formatted_label(self, key):
-            """Label isotopes as mass number then symbol."""
-            symbol, mass = key.split("-")
-            return f"{round(float(mass))}{symbol}"
 
-    out = ip.detection_thresholds(Window(), ["A", "B"], ["156Gd", "207Pb", "56Fe"])
-    assert out == {"156Gd": pytest.approx(2.0), "207Pb": pytest.approx(3.0)}
-    assert ip.detection_thresholds(object(), ["A"], ["156Gd"]) == {}
+class _Window:
+    """Main-window stand-in with thresholds, a calibration and stored limits."""
+
+    selected_isotopes = {"Fe": [55.9349], "Gd": [155.9221]}
+    element_thresholds = {
+        "A": {"Fe-55.9349": {"threshold": [9.0, 11.0], "background": 4.0, "LOD_MDL": [5.0, 7.0]},
+              "Gd-155.9221": {"threshold": 3.0, "background": 1.0}},
+        "B": {"Fe-55.9349": {"threshold": 12.0, "background": 4.0, "LOD_MDL": 8.0}},
+    }
+    element_limits = {"A": {"Gd-155.9221": {"MDL": 0.5}}}
+
+    class periodic_table_info:
+        """Element densities in g/cm³."""
+
+        @staticmethod
+        def get_density_by_element(symbol):
+            """Density of the pure element."""
+            return {"Fe": 7.874, "Gd": 7.90}.get(symbol)
+
+    def get_formatted_label(self, key):
+        """Label isotopes as mass number then symbol."""
+        symbol, mass = key.split("-")
+        return f"{round(float(mass))}{symbol}"
+
+    def _build_element_conversion_cache(self):
+        """Counts per fg, as the main window derives it from the calibration."""
+        return {"56Fe": {"element_key": "Fe-55.9349", "conversion_factor": 200.0},
+                "156Gd": {"element_key": "Gd-155.9221", "conversion_factor": None}}
+
+    @staticmethod
+    def mass_to_diameter(mass_fg, density):
+        """Sphere diameter in nm, as the main window computes it."""
+        import math
+        return ((6 * mass_fg * 1e-15) / (math.pi * density)) ** (1 / 3) * 1e7
+
+
+def test_detection_limits_follow_the_calibration_per_sample():
+    """Net LOD per sample, MDL through the calibration factor, SDL from the element density."""
+    out = ip.detection_limits(_Window(), ["A", "B"], ["56Fe", "156Gd", "207Pb"])
+    fe = out["56Fe"]
+    assert fe["counts"] == {"A": pytest.approx(6.0), "B": pytest.approx(8.0)}
+    assert fe["mass"] == {"A": pytest.approx(6.0 / 200), "B": pytest.approx(8.0 / 200)}
+    assert fe["d"]["A"] == pytest.approx(_Window.mass_to_diameter(0.03, 7.874))
+    gd = out["156Gd"]
+    assert gd["counts"] == {"A": pytest.approx(2.0)}
+    assert gd["mass"] == {"A": pytest.approx(0.5)}
+    assert "207Pb" not in out
+    assert ip.detection_limits(object(), ["A"], ["56Fe"]) == {}
 
 
 def test_card_shows_details_and_figure_action(app):
