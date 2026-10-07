@@ -29,6 +29,7 @@ and :func:`make_insights_toggle_button`.
 """
 
 from __future__ import annotations
+import copy
 import math
 import re
 import threading
@@ -42,6 +43,10 @@ from PySide6.QtWidgets import (
 )
 
 from tools.theme import theme as _theme
+from results.insights import discovery as _disc
+from results.insights.replicates import (
+    ReplicateGroup, describe_grouping, resolve_groups, user_group_map,
+)
 import logging
 _itk_log = logging.getLogger("IsotopeTrack.results.results_reader")
 
@@ -59,7 +64,41 @@ _CAT_META: dict[str, dict] = {
     "comparison":   {"icon": "⇄", "label": "Comparison"},
     "signature":    {"icon": "⌘", "label": "Signature"},
     "outlier":      {"icon": "↑", "label": "Outlier"},
+    "interference": {"icon": "⚡", "label": "Interference"},
+    "stoichiometry": {"icon": "⚖", "label": "Stoichiometry"},
+    "cooccurrence": {"icon": "⊕", "label": "Co-occurrence"},
+    "rare":         {"icon": "✧", "label": "Rare find"},
+    "quality":      {"icon": "⚠", "label": "Data quality"},
+    "time":         {"icon": "⏱", "label": "Time"},
+    "replicate":    {"icon": "≡", "label": "Replicates"},
+    "network":      {"icon": "⋈", "label": "Network"},
+    "ternary":      {"icon": "△", "label": "Ternary"},
+    "single_multi": {"icon": "◐", "label": "Single vs multiple"},
+    "size":         {"icon": "⤢", "label": "Size trend"},
 }
+
+NODE_TYPE_META: dict[str, str] = {
+    "correlation_plot": "Correlation",
+    "correlation_matrix": "Correlation matrix",
+    "network_diagram": "Network",
+    "isotopic_ratio_plot": "Isotopic ratio",
+    "molar_ratio_plot": "Molar ratio",
+    "histogram_plot": "Histogram",
+    "box_plot": "Box plot",
+    "concentration_comparison": "Concentration",
+    "heatmap_plot": "Heatmap",
+    "element_bar_chart_plot": "Element bar chart",
+    "pie_chart_plot": "Pie chart",
+    "element_composition_plot": "Element composition",
+    "triangle_plot": "Ternary",
+    "single_multiple_element_plot": "Single vs multiple",
+    "figure_builder": "Figure Builder",
+}
+"""Plot nodes Insights can propose, in the order the panel lists them.
+
+Clustering is deliberately absent: Insights looks at the data directly and
+never groups particles with a clustering algorithm.
+"""
 
 MIN_CORR_OVERLAP = 25
 """Co-detected particles a pair needs before its correlation is reported."""
@@ -167,6 +206,11 @@ class Suggestion:
             carries only the relevant data. Left empty for insights that need
             the full element set to mean anything, such as the composition
             breakdown or the full correlation matrix.
+        samples: The samples where the finding holds. Adding the card builds a
+            selector over these samples only. Empty means every sample in scope.
+        sample_groups: Sample to replicate group label for *samples*. A label
+            makes the new selector pool that sample with the rest of its group;
+            an empty label keeps it separate, as replicate checks need.
     """
 
     title: str
@@ -176,6 +220,8 @@ class Suggestion:
     node_type: str
     config: dict = field(default_factory=dict)
     elements: tuple[str, ...] = ()
+    samples: tuple[str, ...] = ()
+    sample_groups: dict = field(default_factory=dict)
 
     @property
     def confidence_label(self) -> str:
@@ -331,6 +377,47 @@ def _correlate_pair(a: np.ndarray, b: np.ndarray,
         "spearman_p": float(spear[1]),
         "overlap": overlap,
     }
+
+
+def _fmt_q(q: float) -> str:
+    """Write a corrected p-value for a card, without printing a bare zero.
+
+    Args:
+        q: The adjusted p-value.
+
+    Returns:
+        Text such as ``"q = 0.003"`` or ``"q < 1e-300"``.
+    """
+    if not np.isfinite(q) or q <= 0:
+        return "q < 1e-300"
+    return f"q = {q:.2g}"
+
+
+def _proportionality(a: np.ndarray, b: np.ndarray) -> float | None:
+    """Measure how close two elements are to a fixed ratio.
+
+    Uses the proportionality coefficient of Lovell et al. (2015) on log values
+    of particles carrying both elements: one minus the variance of the log
+    ratio over the summed variances of the two logs. It is 1 for a perfectly
+    fixed ratio and falls towards 0, or below, when the elements merely rise
+    together, as any two elements do in particles of varying size.
+
+    Args:
+        a: Concentration array for the first element.
+        b: Concentration array for the second element, aligned to *a*.
+
+    Returns:
+        The coefficient, or ``None`` with fewer than ten co-detections or no
+        variation.
+    """
+    both = (a > 0) & (b > 0)
+    if int(both.sum()) < 10:
+        return None
+    la, lb = np.log10(a[both]), np.log10(b[both])
+    denominator = float(la.var() + lb.var())
+    if denominator <= 1e-12:
+        return None
+    return float(1.0 - (la - lb).var() / denominator)
 
 
 def _benjamini_hochberg(pvalues: list[float], q: float = FDR_Q) -> tuple[np.ndarray, np.ndarray]:
@@ -782,35 +869,44 @@ def _raw_pool(scene, parent_window) -> dict[str, list[dict]]:
 
 @dataclass(frozen=True)
 class AnalysisScope:
-    """Which samples the Insights engine should look at, and why.
+    """Which samples the Insights engine looks at, and how they group.
+
+    Insights always searches every loaded sample and every element, whatever
+    is selected on the canvas, so that a finding can surface anywhere. Each
+    card then narrows the node it builds to the samples and elements the
+    finding is about.
 
     Attributes:
-        sample_names: The samples to analyse, in display order.
-        origin: How the scope was arrived at. ``"selection"`` means it came
-            from the sample node the user has selected, ``"canvas"`` from the
-            union of every sample node present, and ``"all"`` from everything
-            loaded because the canvas offered no sample nodes.
+        sample_names: The samples to analyse, in load order.
+        origin: Where the samples came from. ``"all"`` for the loaded pool;
+            ``"batch"`` when a batch node supplies them.
         counts: Particle count per entry in *sample_names*, index aligned.
         pool_ids: Identity of each sample's particle list, index aligned. Two
             different datasets can share a name and a particle count, so the
             counts alone are not enough to tell cached contexts apart.
+        groups: Replicate groups covering *sample_names*, see
+            :mod:`results.insights.replicates`.
     """
 
     sample_names: tuple[str, ...]
     origin: str
     counts: tuple[int, ...]
     pool_ids: tuple[int, ...] = ()
+    groups: tuple[ReplicateGroup, ...] = ()
 
     @property
     def key(self) -> str:
         """Return the cache fingerprint for this scope.
 
-        Covers the samples, their particle counts and the identity of the
-        underlying lists, so reloading or replacing data invalidates any
-        context cached against the same sample names.
+        Covers the samples, their particle counts, the identity of the
+        underlying lists and the replicate grouping, so reloading data or
+        regrouping replicates invalidates any context cached against the same
+        sample names.
         """
         ids = ",".join(str(i) for i in self.pool_ids)
-        return f"{self.origin}|{'|'.join(self.sample_names)}|{sum(self.counts)}|{ids}"
+        grouping = ";".join(f"{g.name}={','.join(g.members)}" for g in self.groups)
+        return (f"{self.origin}|{'|'.join(self.sample_names)}|{sum(self.counts)}|{ids}"
+                f"|{grouping}")
 
     @property
     def total_particles(self) -> int:
@@ -823,63 +919,59 @@ class AnalysisScope:
         return len(self.sample_names) > 1
 
     @property
+    def has_several_groups(self) -> bool:
+        """Return whether there is more than one group to compare."""
+        return len(self.groups) > 1
+
+    @property
     def origin_label(self) -> str:
         """Return a human-readable form of :attr:`origin` for the panel."""
         return {
-            "selection": "selected node",
-            "canvas": "canvas",
             "all": "all loaded samples",
+            "batch": "batch samples",
         }.get(self.origin, self.origin)
+
+    @property
+    def grouping_label(self) -> str:
+        """Return a short description of the replicate grouping."""
+        return describe_grouping(self.groups)
+
+    def group_of(self, sample: str) -> ReplicateGroup | None:
+        """Return the replicate group holding *sample*, if any."""
+        for group in self.groups:
+            if sample in group.members:
+                return group
+        return None
 
 
 def resolve_scope(scene, parent_window) -> AnalysisScope:
-    """Decide which samples to analyse.
+    """Collect every loaded sample and work out its replicate groups.
 
-    Three levels are tried in order: the samples of whichever sample node the
-    user has selected, then the union of every sample node on the canvas, then
-    every loaded sample. Samples with no particle data are dropped at the end,
-    so a node pointing at something unloaded cannot skew the result.
-
-    Element selection is never consulted at any level. That is what allows a
-    card to surface a pattern in an element the user has not picked.
+    Canvas selection and the element choices of selector nodes are never
+    consulted, so the search always covers everything. Replicate groups come
+    from the user's own grouping on the canvas when there is any, and are
+    otherwise guessed from sample names.
 
     Args:
-        scene: The canvas scene, read for both selection and node list.
+        scene: The canvas scene, read for a batch node and for the user's
+            replicate groups.
         parent_window: Main window holding the loaded particle data.
 
     Returns:
         The resolved scope, with empty ``sample_names`` when nothing is loaded.
     """
     pool = _raw_pool(scene, parent_window)
-
-    selected: list[str] = []
-    try:
-        for item in scene.selectedItems():
-            node = getattr(item, "workflow_node", None)
-            if node is not None and getattr(node, "node_type", "") in _SAMPLE_NODE_TYPES:
-                selected.extend(_samples_of_node(node))
-    except Exception:
-        _itk_log.exception("[Insights] Could not read canvas selection")
-
-    origin = "selection"
-    names = _dedupe(selected)
-
-    if not names:
-        origin = "canvas"
-        on_canvas: list[str] = []
-        for node in getattr(scene, "workflow_nodes", []):
-            if getattr(node, "node_type", "") in _SAMPLE_NODE_TYPES:
-                on_canvas.extend(_samples_of_node(node))
-        names = _dedupe(on_canvas)
-
-    if not names:
-        origin = "all"
-        names = _dedupe(pool.keys())
-
-    names = [n for n in names if pool.get(n)]
+    origin = "batch" if _find_batch_node(scene) is not None and pool else "all"
+    names = [n for n in _dedupe(pool.keys()) if pool.get(n)]
     counts = tuple(len(pool.get(n, ())) for n in names)
     pool_ids = tuple(id(pool.get(n)) for n in names)
-    return AnalysisScope(tuple(names), origin, counts, pool_ids)
+    try:
+        user_map = user_group_map(scene, names)
+    except Exception:
+        _itk_log.exception("[Insights] could not read replicate groups")
+        user_map = {}
+    groups = tuple(resolve_groups(names, user_map))
+    return AnalysisScope(tuple(names), origin, counts, pool_ids, groups)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -907,6 +999,10 @@ class AnalysisContext:
         unit_matrices: Matrices for measurements other than raw counts, built
             on first use and keyed by data key. Scanning sizes costs nothing
             until something actually asks for them.
+        cache: Scratch space detectors use to share derived arrays, such as
+            the number of elements per particle.
+        label: Which part of the scope this context covers: empty for the
+            whole scope, or a replicate group's name for a group subset.
     """
 
     scope: AnalysisScope
@@ -916,6 +1012,8 @@ class AnalysisContext:
     det_counts: dict[str, int]
     sample_idx: np.ndarray
     unit_matrices: dict = field(default_factory=dict)
+    cache: dict = field(default_factory=dict)
+    label: str = ""
 
     @property
     def n(self) -> int:
@@ -998,6 +1096,50 @@ class AnalysisContext:
             if len(seen) == len(_DATA_KEY_LABELS):
                 break
         return [k for k in _DATA_KEY_LABELS if k in seen]
+
+    def subset(self, mask: np.ndarray, label: str = "") -> "AnalysisContext":
+        """Return a context over the particles where *mask* is true.
+
+        Columns are sliced rather than rebuilt from the particle dicts, and
+        elements with no detection left in the subset are dropped.
+
+        Args:
+            mask: Boolean array of length ``n``.
+            label: Name for the subset, such as a replicate group.
+
+        Returns:
+            A new context sharing this one's scope.
+        """
+        idx = np.flatnonzero(mask)
+        matrix, det_mask, det_counts = {}, {}, {}
+        for el, column in self.matrix.items():
+            detected = self.det_mask[el][idx]
+            hits = int(detected.sum())
+            if hits:
+                matrix[el] = column[idx]
+                det_mask[el] = detected
+                det_counts[el] = hits
+        units = {
+            key: ({el: col[idx] for el, col in mat.items()},
+                  {el: m[idx] for el, m in msk.items()})
+            for key, (mat, msk) in self.unit_matrices.items()
+        }
+        return AnalysisContext(
+            scope=self.scope,
+            particles=[self.particles[i] for i in idx],
+            matrix=matrix,
+            det_mask=det_mask,
+            det_counts=det_counts,
+            sample_idx=self.sample_idx[idx],
+            unit_matrices=units,
+            label=label,
+        )
+
+    def group_mask(self, group: ReplicateGroup) -> np.ndarray:
+        """Mark the particles belonging to the samples of *group*."""
+        names = self.sample_names
+        indices = [names.index(m) for m in group.members if m in names]
+        return np.isin(self.sample_idx, indices)
 
     def particle_mask_for(self, elements) -> np.ndarray:
         """Mark the particles carrying at least one of *elements*.
@@ -1197,16 +1339,26 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
             rho = res["spearman"]
             direction = "positive" if rho > 0 else "negative"
             strength = "Strong" if abs(rho) >= 0.80 else "Moderate"
+            rho_p = _proportionality(ctx.matrix[ea], ctx.matrix[eb]) if rho > 0 else None
+            note, penalty = "", 0.0
+            if rho_p is not None and rho_p >= 0.75:
+                note = (f" Their ratio is nearly constant (proportionality ρp = {rho_p:.2f}), "
+                        "consistent with one phase.")
+            elif rho_p is not None and rho_p < 0.4:
+                note = (f" They are not proportional (ρp = {rho_p:.2f}): the ratio shifts "
+                        "with particle size, so the link may be shared size rather than a "
+                        "fixed composition.")
+                penalty = 0.10
             out.append(Suggestion(
                 title=f"{ea} vs {eb}",
                 reasoning=(
                     f"{strength} {direction} rank correlation "
                     f"(ρ = {rho:+.2f}, log Pearson r = {res['pearson']:+.2f}). "
                     f"{res['overlap']:,} of {ctx.n:,} particles carry both. "
-                    f"q = {q_value:.2g} after correcting {len(pairs)} tests."
+                    f"{_fmt_q(q_value)} after correcting {len(pairs)} tests.{note}"
                 ),
                 category="correlation",
-                confidence=min(abs(rho), 1.0),
+                confidence=max(min(abs(rho), 1.0) - penalty, 0.05),
                 node_type="correlation_plot",
                 config={"x_element": ea, "y_element": eb},
                 elements=(ea, eb),
@@ -1227,20 +1379,33 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
     return out
 
 
+ISOTOPE_ABUNDANCE_GAP = 0.25
+"""Relative gap from the natural ratio that earns an abundance card."""
+
+
 def _analyse_isotope(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
-    """Find isotope pairs worth plotting as a ratio.
+    """Find isotope pairs worth plotting as a ratio, and ratios that look wrong.
 
     For each element measured at two or more masses, the lightest and heaviest
     are paired. Every other element is then tested against that ratio, and the
     strongest association becomes the suggested x-axis, since a ratio that
     tracks another element usually indicates mixing between two sources.
 
+    Each measured ratio is also compared with natural abundance. Only
+    particles in the upper half of the more abundant isotope's signal are
+    used, because near the detection limit the minor isotope is only seen in
+    particles where it happens to read high, which biases the ratio. Mass bias
+    moves a ratio by a few percent; a gap of :data:`ISOTOPE_ABUNDANCE_GAP` or
+    more points to an interference on one mass, a threshold cutting one
+    isotope, or a real isotopic difference.
+
     Args:
         ctx: The shared analysis context.
         progress: Optional callable receiving status strings.
 
     Returns:
-        One suggestion per isotope group, for at most four groups.
+        One ratio suggestion per isotope group, for at most eight groups, plus
+        an abundance suggestion for each ratio far from its natural value.
     """
     out: list[Suggestion] = []
     mat = ctx.matrix
@@ -1253,8 +1418,11 @@ def _analyse_isotope(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
     _say(progress, "Pairing isotopes…")
     non_isotopic = [e for e in frequent if _isotope_symbol(e) is None]
+    if not non_isotopic:
+        symbols_with_pairs = set(groups)
+        non_isotopic = [e for e in frequent if _isotope_symbol(e) not in symbols_with_pairs]
 
-    for _symbol, isotopes in list(groups.items())[:4]:
+    for _symbol, isotopes in list(groups.items())[:8]:
         ordered = sorted(isotopes, key=lambda x: int(re.match(r"^(\d+)", x).group(1)))
         num, den = ordered[0], ordered[-1]
         if num not in mat or den not in mat:
@@ -1308,7 +1476,62 @@ def _analyse_isotope(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
             config=config,
             elements=tuple(elements),
         ))
+
+        abundance_card = _isotope_abundance_card(ctx, num, den)
+        if abundance_card is not None:
+            out.append(abundance_card)
     return out
+
+
+def _isotope_abundance_card(ctx: AnalysisContext, num: str, den: str) -> Suggestion | None:
+    """Compare one measured isotope ratio with its natural value.
+
+    Args:
+        ctx: The shared analysis context.
+        num: Numerator isotope label.
+        den: Denominator isotope label.
+
+    Returns:
+        A suggestion when the ratio is far from natural, else ``None``.
+    """
+    try:
+        from results.figure_builder.core.isotopes import natural_ratio
+        natural = natural_ratio(num, den)
+    except Exception:
+        _itk_log.debug("[Insights] natural abundances unavailable")
+        return None
+    if not natural:
+        return None
+
+    joint = ctx.det_mask[num] & ctx.det_mask[den]
+    major = num if natural >= 1 else den
+    major_values = ctx.matrix[major][ctx.det_mask[major]]
+    if len(major_values) < 20:
+        return None
+    cut = float(np.median(major_values))
+    use = joint & (ctx.matrix[major] >= cut)
+    n = int(use.sum())
+    if n < 20:
+        return None
+    measured = float(np.median(ctx.matrix[num][use] / ctx.matrix[den][use]))
+    gap = measured / natural - 1.0
+    if abs(gap) < ISOTOPE_ABUNDANCE_GAP:
+        return None
+    return Suggestion(
+        title=f"{num}/{den} is {gap:+.0%} off natural",
+        reasoning=(
+            f"Median {num}/{den} is {measured:.3g} against {natural:.3g} for natural "
+            f"abundance, from {n:,} particles with a strong {major} signal. Mass bias "
+            "moves this by a few percent; a gap this large points to an interference on "
+            "one mass, a threshold cutting one isotope, or a real isotopic difference."
+        ),
+        category="isotope",
+        confidence=min(0.6 + min(abs(gap), 1.0) * 0.3, 0.9),
+        node_type="isotopic_ratio_plot",
+        config={"element1": num, "element2": den, "x_axis_element": den,
+                "show_natural_line": True},
+        elements=(num, den),
+    )
 
 
 def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
@@ -1492,84 +1715,194 @@ def _analyse_composition(ctx: AnalysisContext, progress=None) -> list[Suggestion
     return out
 
 
-def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
-    """Find elements whose concentrations differ between samples.
+MIN_GROUP_FOLD = 1.5
+"""Smallest fold difference between groups worth a comparison card."""
 
-    Each element is compared across samples with a Kruskal-Wallis test, which
-    assumes nothing about the shape of the distributions, and the family of
-    tests is corrected for false discovery. Surviving elements are ranked by
-    how far apart the sample means actually sit, so the card leads with size of
-    difference rather than significance alone.
+
+def _comparison_groups(ctx: AnalysisContext) -> list[tuple[ReplicateGroup, list[int]]]:
+    """List the replicate groups available for a between-group comparison.
+
+    Args:
+        ctx: Context over the whole scope.
+
+    Returns:
+        ``(group, sample_indices)`` pairs, keeping only samples with enough
+        particles to summarise. Groups left with no sample are dropped.
+    """
+    names = ctx.sample_names
+    groups = ctx.scope.groups or tuple(ReplicateGroup(n, (n,)) for n in names)
+    out = []
+    for group in groups:
+        indices = [names.index(m) for m in group.members if m in names]
+        indices = [i for i in indices
+                   if int((ctx.sample_idx == i).sum()) >= _disc.MIN_GROUP_PARTICLES]
+        if indices:
+            out.append((group, indices))
+    return out
+
+
+def _group_selection(groups) -> dict:
+    """Samples and selector grouping for a card about some replicate groups.
+
+    Args:
+        groups: The :class:`ReplicateGroup` objects the card is about.
+
+    Returns:
+        Keyword arguments for :class:`Suggestion`: ``samples`` and
+        ``sample_groups``.
+    """
+    samples: list[str] = []
+    sample_groups: dict[str, str] = {}
+    for g in groups:
+        for m in g.members:
+            if m not in sample_groups:
+                samples.append(m)
+                sample_groups[m] = g.name if g.is_replicated else ""
+    return {"samples": tuple(samples), "sample_groups": sample_groups}
+
+
+def _analyse_comparison(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
+    """Find elements whose signal differs between replicate groups.
+
+    Groups are compared, never the replicates inside one group. When every
+    compared group has at least two replicates, each replicate's median is one
+    observation and the groups are compared with a one-way ANOVA on log
+    medians, which is the honest test: the replicate, not the particle, is the
+    unit that was repeated. Otherwise the particles of each group are pooled
+    and compared with a Kruskal-Wallis test.
+
+    Either way a difference must also be at least :data:`MIN_GROUP_FOLD` and,
+    where replicates exist, more than :data:`~results.insights.discovery.REPLICATE_MARGIN`
+    times the spread between replicates. The family of tests is corrected for
+    false discovery, and survivors are ranked by fold difference.
 
     Args:
         ctx: The shared analysis context.
         progress: Optional callable receiving status strings.
 
     Returns:
-        Up to two comparison suggestions, or nothing for a single-sample scope.
+        Up to two comparison suggestions, or nothing with fewer than two groups.
     """
     out: list[Suggestion] = []
-    if not ctx.is_multi:
+    groups = _comparison_groups(ctx)
+    if len(groups) < 2:
         return out
 
-    _say(progress, "Comparing samples…")
-    tests: list[tuple[str, float, float, int]] = []
+    _say(progress, "Comparing sample groups…")
+    tests = []
     for el in ctx.frequent_elements():
         column, detected = ctx.matrix[el], ctx.det_mask[el]
-        groups = []
-        for i in range(len(ctx.sample_names)):
-            selected = detected & (ctx.sample_idx == i)
-            if int(selected.sum()) >= 5:
-                groups.append(column[selected])
-        if len(groups) < 2:
+        summaries = []
+        for group, indices in groups:
+            rep_medians, pooled = [], []
+            for i in indices:
+                values = column[detected & (ctx.sample_idx == i)]
+                if len(values) >= 5:
+                    rep_medians.append(float(np.log10(np.median(values))))
+                    pooled.append(np.log10(values))
+            if pooled:
+                summaries.append((group, rep_medians, np.concatenate(pooled)))
+        if len(summaries) < 2:
             continue
+
+        replicated = all(len(r) >= 2 for _g, r, _p in summaries)
         try:
-            _stat, p_value = _stats.kruskal(*groups)
+            if replicated:
+                _stat, p_value = _stats.f_oneway(*[r for _g, r, _p in summaries])
+                method = "ANOVA on replicate medians"
+            else:
+                _stat, p_value = _stats.kruskal(*[pooled for _g, _r, pooled in summaries])
+                method = "Kruskal-Wallis on particles"
         except Exception:
             continue
         if not np.isfinite(p_value):
             continue
-        means = [float(g.mean()) for g in groups]
-        spread = (max(means) - min(means)) / (max(means) + 1e-30)
-        tests.append((el, float(p_value), spread, len(groups)))
+
+        centres = [(float(np.median(r)) if r else float(np.median(pooled)), g)
+                   for g, r, pooled in summaries]
+        centres.sort(key=lambda c: c[0])
+        (lo_c, lo_g), (hi_c, hi_g) = centres[0], centres[-1]
+        gap = hi_c - lo_c
+        spreads = [max(r) - min(r) for _g, r, _p in summaries if len(r) >= 2]
+        spread = max(spreads) if spreads else 0.0
+        tests.append((el, float(p_value), gap, spread, hi_g, lo_g, method, len(summaries)))
 
     if not tests:
         return out
 
     significant, adjusted = _benjamini_hochberg([t[1] for t in tests])
-    kept = [(t, float(adjusted[k])) for k, t in enumerate(tests) if significant[k]]
+    kept = [
+        (t, float(adjusted[k])) for k, t in enumerate(tests)
+        if significant[k]
+        and 10 ** t[2] >= MIN_GROUP_FOLD
+        and t[2] > _disc.REPLICATE_MARGIN * t[3]
+    ]
     kept.sort(key=lambda x: -x[0][2])
 
-    for (el, _p, spread, group_count), q_value in kept[:2]:
+    for (el, _p, gap, spread, hi_g, lo_g, method, n_groups), q_value in kept[:2]:
+        fold = 10 ** gap
+        if spread > 0:
+            rep_text = f", well beyond the ×{10 ** spread:.2f} spread between replicates"
+        else:
+            rep_text = " (no replicates, so particle-level only)"
+        title = (f"{el}: {hi_g.name} vs {lo_g.name}" if n_groups == 2
+                 else f"{el} highest in {hi_g.name}, lowest in {lo_g.name}")
         out.append(Suggestion(
-            title=f"{el} differs across {group_count} samples",
+            title=title,
             reasoning=(
-                f"Mean {el} varies {spread * 100:.0f}% between samples "
-                f"(Kruskal-Wallis q = {q_value:.2g} across {len(tests)} elements)."
+                f"Median {el} is {fold:.1f}× higher in {hi_g.name} than in {lo_g.name}"
+                f"{rep_text}. {method}, {_fmt_q(q_value)} across {len(tests)} elements."
             ),
             category="comparison",
-            confidence=min(spread + 0.3, 0.90),
+            confidence=min(0.5 + math.log10(fold) * 0.4, 0.92),
             node_type="concentration_comparison",
             config={"element": el},
             elements=(el,),
+            **_group_selection([hi_g, lo_g]),
         ))
     return out
 
 
+def _group_rates(ctx: AnalysisContext, mask: np.ndarray, indices: list[int]) -> tuple[float, float, int, int]:
+    """Summarise how often *mask* is true across one group's replicates.
+
+    Args:
+        ctx: Context over the whole scope.
+        mask: Per-particle boolean, such as a detection mask.
+        indices: Sample indices of the group's replicates.
+
+    Returns:
+        ``(mean_rate, rate_spread, hits, size)``: the mean of the per-replicate
+        rates, the gap between the highest and lowest replicate, and the pooled
+        hit and particle counts for an exact test.
+    """
+    rates, hits, size = [], 0, 0
+    for i in indices:
+        in_sample = ctx.sample_idx == i
+        n = int(in_sample.sum())
+        h = int((mask & in_sample).sum())
+        rates.append(h / n if n else 0.0)
+        hits += h
+        size += n
+    spread = (max(rates) - min(rates)) if len(rates) >= 2 else 0.0
+    return float(np.mean(rates)), spread, hits, size
+
+
 def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
-    """Find what one sample contains that another does not.
+    """Find what one group of samples contains that another does not.
 
     This asks a different question from the comparison analysis. Comparison
-    asks how *much* of an element a sample carries; signature asks whether the
-    element is there at all. An element found in a third of one sample's
+    asks how *much* of an element a group carries; signature asks whether the
+    element is there at all. An element found in a third of one group's
     particles and in none of another's is a fingerprint, however similar the
     concentrations happen to be where both are present.
 
-    Presence rates are compared with Fisher's exact test between the samples
-    holding the most and least of each element, and the family of tests is
-    corrected for false discovery. The same is then done for whole element
-    combinations, which is what makes a card like "Al+Fe+Si+Pb is 18% of S1 and
-    absent from S2" possible.
+    Presence rates are averaged over each group's replicates and compared with
+    Fisher's exact test between the groups holding the most and least of each
+    element; the family of tests is corrected for false discovery. Where
+    replicates exist, the gap must also exceed the spread between them. The
+    same is then done for whole element combinations, which is what makes a
+    card like "Al+Fe+Si+Pb is 18% of S1 and absent from S2" possible.
 
     Args:
         ctx: The shared analysis context.
@@ -1577,29 +1910,26 @@ def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
     Returns:
         Up to two element suggestions and one combination suggestion, or
-        nothing for a single-sample scope.
+        nothing with fewer than two groups.
     """
     out: list[Suggestion] = []
-    if not ctx.is_multi:
+    groups = _comparison_groups(ctx)
+    if len(groups) < 2:
         return out
 
-    _say(progress, "Comparing sample signatures…")
-    names = ctx.sample_names
-    sizes = [int((ctx.sample_idx == i).sum()) for i in range(len(names))]
-    usable = [i for i, size in enumerate(sizes) if size >= 20]
-    if len(usable) < 2:
-        return out
-
+    _say(progress, "Comparing group signatures…")
     tests: list[tuple] = []
     for el, mask in ctx.det_mask.items():
         rates = []
-        for i in usable:
-            in_sample = ctx.sample_idx == i
-            hits = int((mask & in_sample).sum())
-            rates.append((hits / sizes[i], hits, sizes[i], i))
+        for group, indices in groups:
+            mean_rate, spread, hits, size = _group_rates(ctx, mask, indices)
+            rates.append((mean_rate, hits, size, group, spread))
         rates.sort(key=lambda r: -r[0])
         top, bottom = rates[0], rates[-1]
-        if top[0] < 0.05 or top[0] - bottom[0] < 0.15:
+        gap = top[0] - bottom[0]
+        if top[0] < 0.05 or gap < 0.15:
+            continue
+        if gap <= _disc.REPLICATE_MARGIN * max(top[4], bottom[4]):
             continue
         try:
             _odds, p_value = _stats.fisher_exact([
@@ -1618,56 +1948,62 @@ def _analyse_signature(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
         for (el, _p, top, bottom), q_value in kept[:2]:
             absent = bottom[1] == 0
             distinctive = bottom[0] <= top[0] * SIGNATURE_ABSENCE_RATIO
+            top_name, bottom_name = top[3].name, bottom[3].name
             out.append(Suggestion(
-                title=(f"{el} marks {names[top[3]]}" if distinctive
-                       else f"{el} is enriched in {names[top[3]]}"),
+                title=(f"{el} marks {top_name}" if distinctive
+                       else f"{el} is enriched in {top_name}"),
                 reasoning=(
-                    f"{el} appears in {top[0] * 100:.0f}% of {names[top[3]]} particles "
-                    + (f"and in none of {names[bottom[3]]}." if absent
-                       else f"but only {bottom[0] * 100:.1f}% of {names[bottom[3]]}.")
-                    + f" Fisher q = {q_value:.2g}."
+                    f"{el} appears in {top[0] * 100:.0f}% of {top_name} particles "
+                    + (f"and in none of {bottom_name}." if absent
+                       else f"but only {bottom[0] * 100:.1f}% of {bottom_name}.")
+                    + f" Fisher {_fmt_q(q_value)}."
                 ),
                 category="signature",
                 confidence=min(0.5 + (top[0] - bottom[0]) * 0.5, 0.95),
                 node_type="element_composition_plot",
                 config={},
                 elements=(el,),
+                **_group_selection([top[3], bottom[3]]),
             ))
 
-    combo_card = _signature_combination(ctx, usable, sizes, names)
+    combo_card = _signature_combination(ctx, groups)
     if combo_card is not None:
         out.append(combo_card)
     return out
 
 
-def _signature_combination(ctx: AnalysisContext, usable, sizes, names) -> Suggestion | None:
-    """Find an element combination that belongs to one sample alone.
+def _signature_combination(ctx: AnalysisContext, groups) -> Suggestion | None:
+    """Find an element combination that belongs to one group alone.
 
     Args:
         ctx: The shared analysis context.
-        usable: Indices of samples large enough to draw conclusions from.
-        sizes: Particle count per sample, indexed as ``ctx.sample_names``.
-        names: Sample names.
+        groups: ``(group, sample_indices)`` pairs from :func:`_comparison_groups`.
 
     Returns:
         A suggestion naming the most distinctive combination, or ``None`` when
-        no combination is common in one sample and rare in the rest.
+        no combination is common in one group and rare in the rest.
     """
-    counts: dict[tuple, dict[int, int]] = {}
+    combo_ids = np.full(ctx.n, -1, dtype=np.int64)
+    ids: dict[tuple, int] = {}
     for position, p in enumerate(ctx.particles):
         detected = tuple(sorted(
             el for el, v in (p.get("elements") or {}).items()
             if _safe_float(v) is not None
         ))
-        if len(detected) < 2:
-            continue
-        counts.setdefault(detected, {})
-        sample = int(ctx.sample_idx[position])
-        counts[detected][sample] = counts[detected].get(sample, 0) + 1
+        if len(detected) >= 2:
+            combo_ids[position] = ids.setdefault(detected, len(ids))
+    counts = np.bincount(combo_ids[combo_ids >= 0], minlength=len(ids))
 
+    floor = max(5, int(0.01 * ctx.n))
     best = None
-    for combo, per_sample in counts.items():
-        shares = [(per_sample.get(i, 0) / sizes[i], i) for i in usable]
+    for combo, combo_id in ids.items():
+        if counts[combo_id] < floor:
+            continue
+        mask = combo_ids == combo_id
+        shares = []
+        for group, indices in groups:
+            mean_rate, spread, _hits, _size = _group_rates(ctx, mask, indices)
+            shares.append((mean_rate, group, spread))
         shares.sort(key=lambda s: -s[0])
         top, bottom = shares[0], shares[-1]
         if top[0] < 0.05:
@@ -1676,6 +2012,8 @@ def _signature_combination(ctx: AnalysisContext, usable, sizes, names) -> Sugges
         if gap < SIGNATURE_MIN_COMBO_GAP:
             continue
         if bottom[0] > top[0] * SIGNATURE_ABSENCE_RATIO:
+            continue
+        if gap <= _disc.REPLICATE_MARGIN * max(top[2], bottom[2]):
             continue
         if best is None or gap > best[0]:
             best = (gap, combo, top, bottom)
@@ -1686,20 +2024,22 @@ def _signature_combination(ctx: AnalysisContext, usable, sizes, names) -> Sugges
     gap, combo, top, bottom = best
     absent = bottom[0] == 0
     shown = " + ".join(combo[:5])
+    top_name, bottom_name = top[1].name, bottom[1].name
     return Suggestion(
-        title=f"{names[top[1]]} signature: {shown}",
+        title=f"{top_name} signature: {shown}",
         reasoning=(
             f"Particles carrying {shown} make up {top[0] * 100:.0f}% of "
-            f"{names[top[1]]} "
-            + (f"and are absent from {names[bottom[1]]}."
+            f"{top_name} "
+            + (f"and are absent from {bottom_name}."
                if absent else
-               f"against {bottom[0] * 100:.1f}% of {names[bottom[1]]}.")
+               f"against {bottom[0] * 100:.1f}% of {bottom_name}.")
         ),
         category="signature",
         confidence=min(0.5 + gap * 0.5, 0.92),
         node_type="pie_chart_plot",
         config={},
         elements=tuple(combo[:5]),
+        **_group_selection([top[1], bottom[1]]),
     )
 
 
@@ -1839,19 +2179,26 @@ def _analyse_joint_outlier(ctx: AnalysisContext, progress=None) -> list[Suggesti
 
 @dataclass(frozen=True)
 class InsightCategory:
-    """One family of tests the user can run from the panel.
+    """One detector in the discovery engine.
 
     Attributes:
-        key: Identifier, also the ``category`` on suggestions it produces.
-        label: Text for the chip.
-        icon: Glyph shown beside the label.
+        key: Identifier, and the default ``category`` of its suggestions.
+        label: Human-readable name.
+        icon: Glyph shown on cards of this kind.
         run: Callable taking ``(ctx, progress)`` and returning suggestions.
+        kind: ``"within"`` for detectors that look inside one material and are
+            run once per replicate group; ``"across"`` for detectors that
+            compare samples or groups and see the whole scope.
+        node_types: Plot nodes the detector can propose. Ticking a node type
+            in the panel runs every detector that can feed it.
     """
 
     key: str
     label: str
     icon: str
     run: object
+    kind: str = "within"
+    node_types: frozenset = frozenset()
 
 
 def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
@@ -1867,32 +2214,78 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     return _analyse_outlier(ctx, progress) + _analyse_joint_outlier(ctx, progress)
 
 
+_REGISTRY = (
+    ("correlation", _analyse_correlation, "within", {"correlation_plot", "correlation_matrix"}),
+    ("network", _disc.analyse_network, "within", {"network_diagram"}),
+    ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
+    ("interference", _disc.analyse_interference, "within", {"correlation_plot"}),
+    ("stoichiometry", _disc.analyse_stoichiometry, "within",
+     {"molar_ratio_plot", "correlation_plot"}),
+    ("distribution", _analyse_distribution, "within", {"histogram_plot", "box_plot"}),
+    ("quality", _disc.analyse_detection_limit, "within", {"histogram_plot"}),
+    ("composition", _analyse_composition, "within",
+     {"element_bar_chart_plot", "pie_chart_plot"}),
+    ("ternary", _disc.analyse_ternary, "within", {"triangle_plot"}),
+    ("single_multi", _disc.analyse_single_multi, "within", {"single_multiple_element_plot"}),
+    ("cooccurrence", _disc.analyse_cooccurrence, "within", {"heatmap_plot"}),
+    ("rare", _disc.analyse_rare, "within", {"heatmap_plot"}),
+    ("outlier", _analyse_anomaly, "within", {"heatmap_plot", "correlation_plot"}),
+    ("size", _disc.analyse_size_composition, "within", {"figure_builder"}),
+    ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
+    ("signature", _analyse_signature, "across",
+     {"element_composition_plot", "pie_chart_plot"}),
+    ("replicate", _disc.analyse_replicates, "across",
+     {"concentration_comparison", "box_plot", "figure_builder"}),
+    ("time", _disc.analyse_time, "across", {"figure_builder"}),
+)
+
 _ANALYSERS: dict[str, InsightCategory] = {
-    key: InsightCategory(key, meta["label"], meta["icon"], fn)
-    for key, meta, fn in (
-        ("correlation", _CAT_META["correlation"], _analyse_correlation),
-        ("isotope", _CAT_META["isotope"], _analyse_isotope),
-        ("distribution", _CAT_META["distribution"], _analyse_distribution),
-        ("composition", _CAT_META["composition"], _analyse_composition),
-        ("comparison", _CAT_META["comparison"], _analyse_comparison),
-        ("signature", _CAT_META["signature"], _analyse_signature),
-        ("outlier", _CAT_META["outlier"], _analyse_anomaly),
-    )
+    key: InsightCategory(key, _CAT_META[key]["label"], _CAT_META[key]["icon"], fn,
+                         kind, frozenset(types))
+    for key, fn, kind, types in _REGISTRY
 }
 
 
 def category_keys() -> list[str]:
-    """List the analysis categories in the order the panel shows them.
+    """List the detectors in the order they run.
 
     Returns:
-        Category keys, suitable for indexing :data:`_ANALYSERS`.
+        Detector keys, suitable for indexing :data:`_ANALYSERS`.
     """
     return list(_ANALYSERS)
 
 
+def node_type_keys() -> list[str]:
+    """List the plot nodes Insights can propose, in panel order."""
+    return list(NODE_TYPE_META)
+
+
+def analysers_for(node_types) -> list[str]:
+    """Return the detectors needed to fill the given node types.
+
+    Args:
+        node_types: Node type keys, or ``None`` for all of them.
+
+    Returns:
+        Detector keys, in run order.
+    """
+    if node_types is None:
+        return category_keys()
+    wanted = set(node_types)
+    return [k for k, a in _ANALYSERS.items() if a.node_types & wanted]
+
+
 _NODE_TYPE_CARD_LIMITS: dict[str, int] = {
-    "correlation_plot": 2,
+    "correlation_plot": 4,
     "histogram_plot": 3,
+    "heatmap_plot": 3,
+    "concentration_comparison": 4,
+    "figure_builder": 4,
+    "isotopic_ratio_plot": 3,
+    "molar_ratio_plot": 3,
+    "box_plot": 2,
+    "element_composition_plot": 2,
+    "pie_chart_plot": 2,
 }
 """Node types allowed more than one card, because each says something new.
 
@@ -1902,19 +2295,25 @@ is a different element or a different unit. Everything else repeats itself.
 
 _DEFAULT_CARD_LIMIT = 1
 
+FOCUSED_CARD_LIMIT = 12
+"""Cards allowed per node type when the panel shows a single node type."""
+
 _MULTI_SAMPLE_CATEGORIES = ("comparison", "signature")
-"""Categories that need at least two samples in scope to say anything."""
+"""Detectors that need at least two groups in scope to say anything."""
 
 
-def _dedupe_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
+def _dedupe_suggestions(suggestions: list[Suggestion], per_type_limit: int | None = None
+                        ) -> list[Suggestion]:
     """Rank suggestions and drop the ones that repeat each other.
 
     Two cards are treated as the same idea when they would build the same node
-    over the same elements in the same unit. Beyond that, each node type is
+    over the same elements, samples and unit. Beyond that, each node type is
     capped so that one prolific analysis cannot crowd out the rest.
 
     Args:
         suggestions: Suggestions from one or more analysers.
+        per_type_limit: Cap applied to every node type instead of the defaults,
+            used when the panel focuses on a single node type.
 
     Returns:
         The surviving suggestions, most confident first.
@@ -1924,38 +2323,120 @@ def _dedupe_suggestions(suggestions: list[Suggestion]) -> list[Suggestion]:
     out: list[Suggestion] = []
 
     for s in sorted(suggestions, key=lambda x: -x.confidence):
-        signature = (s.node_type, tuple(sorted(s.elements)),
-                     s.config.get("data_type_display", ""))
-        if signature in seen:
+        signature = (s.node_type, tuple(sorted(s.elements)), tuple(s.samples),
+                     s.config.get("data_type_display", ""), s.category,
+                     "" if s.elements else s.title)
+        loose = (s.node_type, tuple(sorted(s.elements)), tuple(s.samples),
+                 s.config.get("data_type_display", ""))
+        if signature in seen or (s.elements and loose in seen):
             continue
-        limit = _NODE_TYPE_CARD_LIMITS.get(s.node_type, _DEFAULT_CARD_LIMIT)
+        limit = (per_type_limit if per_type_limit is not None
+                 else _NODE_TYPE_CARD_LIMITS.get(s.node_type, _DEFAULT_CARD_LIMIT))
         if counts.get(s.node_type, 0) >= limit:
             continue
         seen.add(signature)
+        seen.add(loose)
         counts[s.node_type] = counts.get(s.node_type, 0) + 1
         out.append(s)
     return out
 
 
+MIN_WITHIN_GROUP_PARTICLES = 20
+"""Particles a replicate group needs before within-group detectors search it."""
+
+
+def _within_units(ctx: AnalysisContext) -> list[tuple[AnalysisContext, ReplicateGroup | None]]:
+    """Split the scope into the per-group contexts within-group detectors search.
+
+    Searching each group on its own keeps a pattern that exists in one
+    material from being diluted by the others, and keeps a difference between
+    materials from masquerading as a pattern inside one. With a single group
+    the whole context is searched as it is.
+
+    The split is cached on the context, so every detector reuses it.
+
+    Args:
+        ctx: Context over the whole scope.
+
+    Returns:
+        ``(context, group)`` pairs; *group* is ``None`` when the scope has no
+        grouping at all.
+    """
+    cached = ctx.cache.get("within_units")
+    if cached is not None:
+        return cached
+    groups = list(ctx.scope.groups)
+    if len(groups) <= 1:
+        units = [(ctx, groups[0] if groups else None)]
+    else:
+        units = []
+        for group in groups:
+            mask = ctx.group_mask(group)
+            if int(mask.sum()) >= MIN_WITHIN_GROUP_PARTICLES:
+                units.append((ctx.subset(mask, group.name), group))
+    ctx.cache["within_units"] = units
+    return units
+
+
+def _run_detector(ctx: AnalysisContext, analyser: InsightCategory, progress=None,
+                  should_stop=None) -> list[Suggestion]:
+    """Run one detector the way its kind requires.
+
+    Within-group detectors run once per replicate group and their findings are
+    merged, so a card records every sample where it held. Across-group
+    detectors run once over the whole scope.
+
+    Args:
+        ctx: Context over the whole scope.
+        analyser: The detector to run.
+        progress: Optional callable receiving status strings.
+        should_stop: Optional callable returning ``True`` to abandon the run.
+
+    Returns:
+        The detector's suggestions, each carrying its samples.
+    """
+    if analyser.kind != "within":
+        return list(analyser.run(ctx, progress))
+    units = _within_units(ctx)
+    items = []
+    for sub, group in units:
+        if should_stop is not None and should_stop():
+            return []
+        for s in analyser.run(sub, progress):
+            items.append((s, group))
+    if all(group is None for _s, group in items):
+        return [s for s, _g in items]
+    return _disc.merge_group_findings(items, ctx.sample_names, len(units))
+
+
 def analyse(ctx: AnalysisContext, categories=None, progress=None,
-            should_stop=None) -> list[Suggestion]:
-    """Run one or more categories of analysis over *ctx*.
+            should_stop=None, node_types=None, dedupe: bool = True,
+            per_type_limit: int | None = None) -> list[Suggestion]:
+    """Run detectors over *ctx* and collect their suggestions.
 
     Args:
         ctx: The shared analysis context.
-        categories: Category keys to run. All of them when omitted.
+        categories: Detector keys to run. All of them when omitted.
         progress: Optional callable receiving status strings.
         should_stop: Optional callable returning ``True`` to abandon the run
-            between categories.
+            between detectors.
+        node_types: Only keep suggestions for these plot nodes, and only run
+            the detectors able to produce them. Every node type when omitted.
+        dedupe: Rank and de-duplicate the result. The panel turns this off and
+            de-duplicates itself, because its limits depend on the view.
+        per_type_limit: Passed to :func:`_dedupe_suggestions`.
 
     Returns:
-        The deduplicated suggestions, most confident first. Empty if the
+        The suggestions, most confident first when deduplicated. Empty if the
         context is too small to analyse or the run was stopped.
     """
     if ctx.n < 5 or not ctx.matrix:
         return []
 
     keys = list(categories) if categories else category_keys()
+    if node_types is not None:
+        allowed = set(analysers_for(node_types))
+        keys = [k for k in keys if k in allowed]
     found: list[Suggestion] = []
     for key in keys:
         if should_stop is not None and should_stop():
@@ -1965,10 +2446,15 @@ def analyse(ctx: AnalysisContext, categories=None, progress=None,
             _itk_log.debug(f"[Insights] unknown category: {key}")
             continue
         try:
-            found.extend(analyser.run(ctx, progress))
+            found.extend(_run_detector(ctx, analyser, progress, should_stop))
         except Exception:
             _itk_log.exception(f"[Insights] {key} analysis failed")
-    return _dedupe_suggestions(found)
+    if should_stop is not None and should_stop():
+        return []
+    if node_types is not None:
+        wanted = set(node_types)
+        found = [s for s in found if s.node_type in wanted]
+    return _dedupe_suggestions(found, per_type_limit) if dedupe else found
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1993,20 +2479,26 @@ class _AnalysisWorker(QThread):
     progress = Signal(str)
 
     def __init__(self, scope: AnalysisScope, particles: list[dict],
-                 sample_idx: np.ndarray, categories=None):
+                 sample_idx: np.ndarray, categories=None, node_types=None,
+                 dedupe: bool = True):
         """Prepare an analysis run.
 
         Args:
             scope: The resolved scope these particles were gathered for.
             particles: Particle dicts to analyse.
             sample_idx: Index into ``scope.sample_names`` for each particle.
-            categories: Category keys to run. All of them when omitted.
+            categories: Detector keys to run. All of them when omitted.
+            node_types: Plot nodes to search for. All of them when omitted.
+            dedupe: De-duplicate before emitting. The panel passes ``False``
+                and de-duplicates for whichever view is showing.
         """
         super().__init__()
         self._scope = scope
         self._particles = particles
         self._sample_idx = sample_idx
         self._categories = tuple(categories) if categories else None
+        self._node_types = tuple(node_types) if node_types is not None else None
+        self._dedupe = dedupe
         self._abort = False
 
     def cancel(self) -> None:
@@ -2045,6 +2537,8 @@ class _AnalysisWorker(QThread):
         found = analyse(
             ctx,
             categories=self._categories,
+            node_types=self._node_types,
+            dedupe=self._dedupe,
             progress=self.progress.emit,
             should_stop=self._stop,
         )
@@ -2061,23 +2555,25 @@ class _AnalysisWorker(QThread):
 class _Card(QFrame):
     """One suggestion rendered as a card in the panel.
 
-    Shows the category tag, title, reasoning and a confidence bar, with an Add
-    button that hands the suggestion back to the panel. Colours come from the
-    active theme palette rather than per-category accents, so a list of cards
-    reads as one surface.
+    Shows the finding's kind, title, reasoning, the samples it covers and a
+    confidence bar, with an Add button that hands the suggestion back to the
+    panel. Colours come from the active theme palette rather than per-category
+    accents, so a list of cards reads as one surface.
     """
 
-    def __init__(self, s: Suggestion, on_add, parent=None):
+    def __init__(self, s: Suggestion, on_add, samples_text: str = "", parent=None):
         """Build a card for one suggestion.
 
         Args:
             s: The suggestion to display.
             on_add: Callback invoked with *s* when Add is pressed.
+            samples_text: Short description of the samples the finding covers.
             parent: Optional parent widget.
         """
         super().__init__(parent)
         self._s = s
         self._on_add = on_add
+        self._samples_text = samples_text
         self._build()
 
     def _build(self):
@@ -2107,7 +2603,8 @@ class _Card(QFrame):
         root.setContentsMargins(10, 8, 10, 8)
         root.setSpacing(4)
 
-        tag = QLabel(f"{meta['icon']}  {meta['label'].upper()}")
+        node_label = NODE_TYPE_META.get(self._s.node_type, self._s.node_type)
+        tag = QLabel(f"{meta['icon']}  {meta['label'].upper()}  ·  {node_label}")
         tag.setStyleSheet(f"""
             color: {p.text_muted}; font-size: 9px; font-weight: 700;
             font-family: '{_FONT}'; background: transparent; letter-spacing: 0.5px;
@@ -2129,6 +2626,15 @@ class _Card(QFrame):
             font-family: '{_FONT}'; background: transparent;
         """)
         root.addWidget(reason)
+
+        if self._samples_text:
+            samples = QLabel(f"📂  {self._samples_text}")
+            samples.setWordWrap(True)
+            samples.setStyleSheet(f"""
+                color: {p.text_muted}; font-size: 10px;
+                font-family: '{_FONT}'; background: transparent;
+            """)
+            root.addWidget(samples)
 
         footer = QHBoxLayout()
         footer.setSpacing(8)
@@ -2164,6 +2670,7 @@ class _Card(QFrame):
         btn = QPushButton("+ Add")
         btn.setFixedSize(52, 24)
         btn.setCursor(Qt.PointingHandCursor)
+        btn.setToolTip("Add this plot with a selector holding only these samples and elements")
         btn.setStyleSheet(f"""
             QPushButton {{
                 background: {p.accent}; color: {p.text_inverse};
@@ -2191,30 +2698,145 @@ class _Card(QFrame):
         QTimer.singleShot(450, lambda: self.setStyleSheet(orig))
 
 
+def selection_units(s: Suggestion, scope: AnalysisScope | None) -> list[tuple[str, tuple[str, ...]]]:
+    """Group a suggestion's samples the way its selector will treat them.
+
+    Args:
+        s: The suggestion.
+        scope: The scope it was found in, used when the suggestion names no
+            samples of its own.
+
+    Returns:
+        ``(label, members)`` pairs. A label shared by several members is a
+        replicate group the selector pools; a lone member keeps its own name.
+    """
+    if s.samples:
+        samples = list(s.samples)
+        groups = dict(s.sample_groups)
+    elif scope is not None:
+        samples = list(scope.sample_names)
+        groups = {}
+        for g in scope.groups:
+            for m in g.members:
+                groups[m] = g.name if g.is_replicated else ""
+    else:
+        return []
+    units: dict[str, list[str]] = {}
+    for m in samples:
+        label = groups.get(m) or m
+        units.setdefault(label, []).append(m)
+    return [(label, tuple(members)) for label, members in units.items()]
+
+
+def describe_samples(s: Suggestion, scope: AnalysisScope | None) -> str:
+    """Describe the samples a card covers in a few words.
+
+    Args:
+        s: The suggestion.
+        scope: The scope it was found in.
+
+    Returns:
+        Text such as ``"liver (3 replicates) · kidney"``.
+    """
+    units = selection_units(s, scope)
+    if not units:
+        return ""
+    parts = []
+    for label, members in units[:4]:
+        if len(members) > 1:
+            parts.append(f"{label} ({len(members)} replicates)")
+        elif label != members[0]:
+            parts.append(f"{members[0]}")
+        else:
+            parts.append(label)
+    text = "  ·  ".join(parts)
+    if len(units) > 4:
+        text += f"  +{len(units) - 4} more"
+    return text
+
+
+_SETTINGS_KEY = "insights/node_types"
+
+
+def _load_enabled_types() -> set[str]:
+    """Read the node types the user last chose to search for.
+
+    Returns:
+        The saved node types, or every node type when nothing is saved.
+    """
+    try:
+        from PySide6.QtCore import QSettings
+        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_SETTINGS_KEY, None)
+    except Exception:
+        raw = None
+    if raw is None:
+        return set(NODE_TYPE_META)
+    if isinstance(raw, str):
+        raw = [r for r in raw.split(",") if r]
+    chosen = {str(r) for r in (raw or [])} & set(NODE_TYPE_META)
+    return chosen if raw is not None else set(NODE_TYPE_META)
+
+
+def _save_enabled_types(types) -> None:
+    """Remember which node types the user chose to search for."""
+    try:
+        from PySide6.QtCore import QSettings
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_SETTINGS_KEY, ",".join(sorted(types)))
+    except Exception:
+        _itk_log.debug("[Insights] could not save node type choice")
+
+
+_PICKER_KEY = "insights/picker_open"
+
+
+def _load_picker_open() -> bool:
+    """Read whether the plot type list was left open. Open by default."""
+    try:
+        from PySide6.QtCore import QSettings
+        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_PICKER_KEY, True)
+    except Exception:
+        return True
+    return str(raw).lower() not in ("false", "0")
+
+
+def _save_picker_open(is_open: bool) -> None:
+    """Remember whether the plot type list is open."""
+    try:
+        from PySide6.QtCore import QSettings
+        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_PICKER_KEY, bool(is_open))
+    except Exception:
+        _itk_log.debug("[Insights] could not save picker state")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # The integrated panel
 # ──────────────────────────────────────────────────────────────────────────────
 
 class SmartInsightsPanel(QWidget):
-    """Resizable pane holding the suggestion cards.
+    """Resizable pane that searches the data and lists what it finds.
 
     Embedded as the rightmost pane of the canvas splitter and hidden by default,
     toggled by the button from :func:`make_insights_toggle_button`.
 
-    Analysis runs on a background worker and refreshes when the panel becomes
-    visible or when the user presses the re-analyse button. Because the scope
-    follows the canvas selection, selecting a different sample node updates the
-    header strip immediately, though it does not re-run the analysis on its own.
+    The panel searches on its own: when it is shown, when the loaded samples or
+    their replicate groups change, and when another plot node type is ticked.
+    Every loaded sample and every element is searched, whatever is selected on
+    the canvas. The node type chips choose which kinds of plot to search for;
+    each card then builds its node with only the samples and elements the
+    finding is about.
 
     Use :func:`integrate_insights_panel` to construct and attach one rather than
     instantiating this directly.
     """
 
+    SCOPE_POLL_MS = 2500
+    """How often a visible panel checks whether the loaded data changed."""
+
     def __init__(self, scene, parent_window, parent=None):
         """Build the panel and subscribe it to theme and selection changes.
 
         Args:
-            scene: The canvas scene to analyse and watch for selection changes.
+            scene: The canvas scene to analyse and watch for changes.
             parent_window: Main window holding the loaded particle data.
             parent: Optional parent widget.
         """
@@ -2223,24 +2845,29 @@ class SmartInsightsPanel(QWidget):
         self._pw = parent_window
         self._worker: _AnalysisWorker | None = None
         self._suggestions: list[Suggestion] = []
+        self._found: list[Suggestion] = []
+        self._ran: set[str] = set()
+        self._pending: set[str] = set()
         self._scope: AnalysisScope | None = None
         self._retired: list[_AnalysisWorker] = []
-        self._active_category: str | None = None
-        self._results: dict[tuple[str, str], list[Suggestion]] = {}
+        self._enabled: set[str] = _load_enabled_types()
         self.setMinimumWidth(250)
 
         self._build_ui()
         self._apply_theme()
         self._theme_dc = _theme.connect_theme(lambda _: self._apply_theme())
 
+        self._poll = QTimer(self)
+        self._poll.setInterval(self.SCOPE_POLL_MS)
+        self._poll.timeout.connect(self._check_scope)
+
         try:
             scene.node_selection_changed.connect(self._on_scene_selection)
         except Exception:
             _itk_log.debug("[Insights] scene has no node_selection_changed signal")
 
-
     def _build_ui(self):
-        """Assemble the header, sample strip, card scroll area and footer."""
+        """Assemble the header, scope strip, node type chips, cards and footer."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -2266,7 +2893,7 @@ class SmartInsightsPanel(QWidget):
         self._refresh_btn = QPushButton("↺")
         self._refresh_btn.setObjectName("iRefreshBtn")
         self._refresh_btn.setFixedSize(26, 26)
-        self._refresh_btn.setToolTip("Re-analyse")
+        self._refresh_btn.setToolTip("Search again from scratch")
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
         self._refresh_btn.clicked.connect(self.refresh)
 
@@ -2277,34 +2904,73 @@ class SmartInsightsPanel(QWidget):
 
         self._strip = QFrame()
         self._strip.setObjectName("iStrip")
-        self._strip.setFixedHeight(26)
-        sl = QHBoxLayout(self._strip)
-        sl.setContentsMargins(12, 0, 12, 0)
+        sl = QVBoxLayout(self._strip)
+        sl.setContentsMargins(12, 4, 12, 4)
+        sl.setSpacing(1)
         self._sample_lbl = QLabel("")
         self._sample_lbl.setObjectName("iSampleLbl")
+        self._sample_lbl.setWordWrap(True)
+        self._group_lbl = QLabel("")
+        self._group_lbl.setObjectName("iSampleLbl")
+        self._group_lbl.setWordWrap(True)
         sl.addWidget(self._sample_lbl)
+        sl.addWidget(self._group_lbl)
         root.addWidget(self._strip)
 
         self._chips_frame = QFrame()
         self._chips_frame.setObjectName("iChips")
-        chip_grid = QGridLayout(self._chips_frame)
-        chip_grid.setContentsMargins(8, 8, 8, 8)
+        chips_v = QVBoxLayout(self._chips_frame)
+        chips_v.setContentsMargins(8, 6, 8, 8)
+        chips_v.setSpacing(4)
+
+        chips_head = QHBoxLayout()
+        chips_head.setSpacing(4)
+        self._pick_btn = QPushButton("")
+        self._pick_btn.setObjectName("iPickBtn")
+        self._pick_btn.setCursor(Qt.PointingHandCursor)
+        self._pick_btn.setFlat(True)
+        self._pick_btn.setToolTip("Show or hide the plot types Insights searches for")
+        self._pick_btn.clicked.connect(self._toggle_picker)
+        chips_head.addWidget(self._pick_btn)
+        chips_head.addStretch()
+        for text, slot in (("All", self._select_all), ("None", self._select_none)):
+            link = QPushButton(text)
+            link.setObjectName("iLink")
+            link.setCursor(Qt.PointingHandCursor)
+            link.setFlat(True)
+            link.clicked.connect(slot)
+            chips_head.addWidget(link)
+        chips_v.addLayout(chips_head)
+
+        self._chip_box = QWidget()
+        self._chip_box.setObjectName("iChipBox")
+        chip_grid = QGridLayout(self._chip_box)
+        chip_grid.setContentsMargins(0, 0, 0, 0)
         chip_grid.setHorizontalSpacing(6)
         chip_grid.setVerticalSpacing(6)
-
         self._chips: dict[str, QPushButton] = {}
-        for i, key in enumerate(category_keys()):
-            meta = _CAT_META[key]
-            chip = QPushButton(f"{meta['icon']}  {meta['label']}")
+        for i, key in enumerate(node_type_keys()):
+            chip = QPushButton(NODE_TYPE_META[key])
             chip.setObjectName("iChip")
             chip.setCheckable(True)
+            chip.setChecked(key in self._enabled)
             chip.setCursor(Qt.PointingHandCursor)
             chip.setFixedHeight(26)
-            chip.setToolTip(f"Scan for {meta['label'].lower()} insights")
-            chip.clicked.connect(lambda _checked=False, k=key: self.run_category(k))
+            chip.setToolTip(
+                f"Search for findings shown as {NODE_TYPE_META[key].lower()} plots.\n"
+                "Right-click to show only this type."
+            )
+            chip.setContextMenuPolicy(Qt.CustomContextMenu)
+            chip.customContextMenuRequested.connect(
+                lambda _pos, k=key: self._show_only(k))
+            chip.toggled.connect(lambda checked, k=key: self._toggle_type(k, checked))
             chip_grid.addWidget(chip, i // 2, i % 2)
             self._chips[key] = chip
+        chips_v.addWidget(self._chip_box)
         root.addWidget(self._chips_frame)
+        self._picker_open = _load_picker_open()
+        self._chip_box.setVisible(self._picker_open)
+        self._update_pick_label()
 
         self._bar = QProgressBar()
         self._bar.setObjectName("iBar")
@@ -2337,7 +3003,7 @@ class SmartInsightsPanel(QWidget):
         self._ftr.setFixedHeight(24)
         fl = QHBoxLayout(self._ftr)
         fl.setContentsMargins(12, 0, 12, 0)
-        self._hint_lbl = QLabel("+ Add auto-connects and pre-configures the node")
+        self._hint_lbl = QLabel("+ Add builds the node with only the finding's samples and elements")
         self._hint_lbl.setObjectName("iHintLbl")
         fl.addStretch()
         fl.addWidget(self._hint_lbl)
@@ -2373,10 +3039,18 @@ class SmartInsightsPanel(QWidget):
                 background: {p.accent_soft}; color: {p.accent};
                 border: 1px solid {p.accent};
             }}
-            QPushButton#iChip:disabled {{
-                color: {p.disabled}; border-color: {p.border_subtle};
-                background: transparent;
+            QPushButton#iLink {{
+                background: transparent; color: {p.accent}; border: none;
+                font-size: 10px; font-family: '{_FONT}'; padding: 0 4px;
             }}
+            QPushButton#iLink:hover {{ color: {p.accent_hover}; }}
+            QPushButton#iPickBtn {{
+                background: transparent; color: {p.text_muted}; border: none;
+                font-size: 9px; font-weight: 700; font-family: '{_FONT}';
+                letter-spacing: 0.5px; text-align: left; padding: 0;
+            }}
+            QPushButton#iPickBtn:hover {{ color: {p.text_primary}; }}
+            QWidget#iChipBox {{ background: transparent; }}
             QFrame#iStrip {{
                 background: {p.bg_tertiary};
                 border-bottom: 1px solid {p.border_subtle};
@@ -2431,121 +3105,154 @@ class SmartInsightsPanel(QWidget):
         if self._suggestions:
             self._rebuild_cards()
 
-    def run_category(self, key: str, force: bool = False):
-        """Scan one category of insights and show the result.
+    def _update_pick_label(self):
+        """Show how many plot types are ticked, and whether the list is open."""
+        arrow = "▾" if self._picker_open else "▸"
+        self._pick_btn.setText(
+            f"{arrow}  SEARCH FOR  ·  {len(self._enabled)} of {len(NODE_TYPE_META)} plot types")
 
-        Nothing is computed until this is called, which is what keeps opening
-        the panel free. Results are remembered per scope and category, so
-        returning to a category already scanned is instant. Any run still in
-        flight is cancelled first, so clicking through several chips quickly
-        cannot leave an older worker delivering into the panel.
+    def _toggle_picker(self):
+        """Open or fold the list of plot types."""
+        self._picker_open = not self._picker_open
+        self._chip_box.setVisible(self._picker_open)
+        _save_picker_open(self._picker_open)
+        self._update_pick_label()
+
+    def enabled_node_types(self) -> set[str]:
+        """Return the node types currently ticked."""
+        return set(self._enabled)
+
+    def _toggle_type(self, key: str, checked: bool):
+        """Tick or untick one node type and search for it if needed.
 
         Args:
-            key: Category to run, from :func:`category_keys`.
-            force: Discard any remembered result and rescan.
+            key: The node type.
+            checked: Whether it is now ticked.
+        """
+        if checked:
+            self._enabled.add(key)
+        else:
+            self._enabled.discard(key)
+        _save_enabled_types(self._enabled)
+        self._update_pick_label()
+        if self.isVisible():
+            self.scan()
+
+    def _set_enabled(self, types):
+        """Tick exactly *types*, updating the chips without a search per chip.
+
+        Args:
+            types: Node types to tick.
+        """
+        self._enabled = set(types)
+        for key, chip in self._chips.items():
+            chip.blockSignals(True)
+            chip.setChecked(key in self._enabled)
+            chip.blockSignals(False)
+        _save_enabled_types(self._enabled)
+        self._update_pick_label()
+        if self.isVisible():
+            self.scan()
+
+    def _select_all(self):
+        """Tick every node type."""
+        self._set_enabled(NODE_TYPE_META)
+
+    def _select_none(self):
+        """Untick every node type."""
+        self._set_enabled(())
+
+    def _show_only(self, key: str):
+        """Tick one node type and untick the rest.
+
+        Args:
+            key: The node type to keep.
+        """
+        self._set_enabled({key})
+
+    def scan(self, force: bool = False):
+        """Search for whatever the ticked node types still need.
+
+        Detectors already run against the current scope are not run again, so
+        ticking another node type only pays for the detectors it adds. A change
+        of loaded samples or replicate groups discards everything found so far.
+
+        Args:
+            force: Discard everything found so far and search again.
         """
         scope = resolve_scope(self._scene, self._pw)
-        if self._scope is None or scope.key != self._scope.key:
-            self._forget_results()
+        if force or self._scope is None or scope.key != self._scope.key:
+            self._stop_worker()
+            self._found, self._ran, self._pending = [], set(), set()
         self._scope = scope
-        self._active_category = key
-
         self._update_sample_strip(scope)
-        self._sync_chips(scope)
-        self._stop_worker()
-        self._clear_cards()
 
         if not scope.sample_names:
+            self._stop_worker()
             self._bar.setVisible(False)
             self._status.setText("")
             self._count_lbl.setText("")
+            self._suggestions = []
+            self._update_chip_counts()
+            self._clear_cards()
             self._show_empty()
             return
 
-        remembered = self._results.get((scope.key, key))
-        if remembered is not None and not force:
-            self._on_done(remembered, remember=False)
+        needed = set(analysers_for(self._enabled)) - self._ran
+        if not needed or needed <= self._pending:
+            self._render()
             return
 
+        self._stop_worker()
+        self._pending = needed
         self._bar.setVisible(True)
         self._bar.setRange(0, 0)
         self._refresh_btn.setEnabled(False)
-        self._count_lbl.setText("")
+        if not self._found:
+            self._clear_cards()
+            self._show_placeholder("Searching every sample and element…")
 
         particles, sample_idx = gather_scope_data(self._scene, self._pw, scope)
-        self._worker = _AnalysisWorker(scope, particles, sample_idx, categories=[key])
+        order = [k for k in category_keys() if k in needed]
+        self._worker = _AnalysisWorker(scope, particles, sample_idx,
+                                       categories=order, dedupe=False)
         self._worker.progress.connect(self._status.setText)
-        self._worker.results_ready.connect(self._on_done)
+        self._worker.results_ready.connect(
+            lambda found, keys=frozenset(needed), key=scope.key: self._on_done(found, keys, key))
         self._worker.start()
 
     def refresh(self):
-        """Rescan the active category, discarding anything remembered.
-
-        With no category active there is nothing to rescan, so this just brings
-        the scope display up to date.
-        """
-        active = self._active_category
-        self._forget_results()
+        """Search everything again from scratch."""
         invalidate_context_cache()
-        self._scope = resolve_scope(self._scene, self._pw)
-        self._update_sample_strip(self._scope)
-        self._sync_chips(self._scope)
+        self.scan(force=True)
 
-        if active:
-            self.run_category(active, force=True)
-        else:
-            self._clear_cards()
-            self._show_idle()
+    def run_category(self, key: str, force: bool = False):
+        """Show only the node types one detector feeds, and search for them.
 
-    def _forget_results(self):
-        """Drop remembered results and reset the chips to their idle labels."""
-        self._results.clear()
-        self._active_category = None
-        for key, chip in self._chips.items():
-            meta = _CAT_META[key]
-            chip.setText(f"{meta['icon']}  {meta['label']}")
-            chip.setChecked(False)
-
-    def _sync_chips(self, scope: AnalysisScope | None = None):
-        """Update which chip reads as active and which are worth offering.
-
-        Comparison and Signature are disabled for a single-sample scope, where
-        neither has anything to compare against.
+        Kept for callers of the earlier, category-driven panel.
 
         Args:
-            scope: Scope the chips describe. Resolved when omitted.
+            key: Detector key from :func:`category_keys`.
+            force: Search again from scratch.
         """
-        if scope is None:
-            scope = resolve_scope(self._scene, self._pw)
-        for key, chip in self._chips.items():
-            chip.setChecked(key == self._active_category)
-            if key in _MULTI_SAMPLE_CATEGORIES:
-                chip.setEnabled(scope.is_multi)
-                chip.setToolTip(
-                    f"Scan for {_CAT_META[key]['label'].lower()} insights"
-                    if scope.is_multi
-                    else "Needs more than one sample in scope"
-                )
+        analyser = _ANALYSERS.get(key)
+        if analyser is None:
+            return
+        self._set_enabled(analyser.node_types)
+        self.scan(force=force)
 
-    def _on_scene_selection(self, *_):
-        """React to the canvas selection changing the scope.
-
-        The strip and chips update immediately; the cards do not, since nothing
-        rescans until a category is clicked. When the scope has genuinely moved
-        the remembered results are dropped, because they describe other samples.
-        """
+    def _check_scope(self):
+        """Search again when the loaded samples or replicate groups have changed."""
         if not self.isVisible():
             return
         scope = resolve_scope(self._scene, self._pw)
-        if self._scope is not None and scope.key != self._scope.key:
-            self._stop_worker()
-            self._forget_results()
-            self._clear_cards()
-            self._count_lbl.setText("")
-            self._show_idle()
-        self._scope = scope
-        self._update_sample_strip(scope)
-        self._sync_chips(scope)
+        if self._scope is None or scope.key != self._scope.key:
+            self.scan()
+
+    def _on_scene_selection(self, *_):
+        """Re-check the scope soon after the canvas changes."""
+        if self.isVisible():
+            QTimer.singleShot(400, self._check_scope)
 
     def _stop_worker(self):
         """Cancel any in-flight analysis and stop listening to it.
@@ -2559,6 +3266,7 @@ class SmartInsightsPanel(QWidget):
         crashes the interpreter.
         """
         w = self._worker
+        self._pending = set()
         if w is None:
             return
         try:
@@ -2574,11 +3282,7 @@ class SmartInsightsPanel(QWidget):
                                if w in self._retired else None)
 
     def _update_sample_strip(self, scope: AnalysisScope | None = None):
-        """Show which samples will be analysed, and why those.
-
-        Naming the origin matters because the scope is implicit: without it
-        there is no way to tell a deliberate single-sample scope from an
-        accidental one.
+        """Show which samples are searched and how they group into replicates.
 
         Args:
             scope: Scope to describe. Resolved from the scene when omitted.
@@ -2588,59 +3292,79 @@ class SmartInsightsPanel(QWidget):
         names = list(scope.sample_names)
         if not names:
             self._sample_lbl.setText("No samples loaded")
+            self._group_lbl.setText("")
             return
-        text = "  ·  ".join(names[:4])
-        if len(names) > 4:
-            text += f"  +{len(names)-4} more"
         self._sample_lbl.setText(
-            f"📂  {text}   ({scope.total_particles:,} particles · {scope.origin_label})"
+            f"📂  {len(names)} sample{'s' if len(names) != 1 else ''} · "
+            f"{scope.total_particles:,} particles · every element"
         )
+        self._group_lbl.setText(f"≡  {scope.grouping_label}")
 
-    def _on_done(self, suggestions: list[Suggestion], remember: bool = True):
-        """Render a finished scan and record its result on the chip.
+    def _on_done(self, suggestions: list[Suggestion], keys=frozenset(), scope_key: str = ""):
+        """Store a finished search and show the cards.
 
         Args:
-            suggestions: Cards to display, or an empty list if the scan found
-                nothing worth surfacing.
-            remember: Store the result against the current scope and category.
-                False when replaying something already remembered.
+            suggestions: Everything the detectors found, not yet de-duplicated.
+            keys: The detectors that ran.
+            scope_key: The scope the search was for. Results for a scope that
+                is no longer current are dropped.
         """
+        self._worker = None
+        self._pending = set()
         self._bar.setVisible(False)
         self._status.setText("")
         self._refresh_btn.setEnabled(True)
-        self._suggestions = suggestions
+        if self._scope is None or (scope_key and scope_key != self._scope.key):
+            return
+        self._found.extend(suggestions)
+        self._ran |= set(keys)
+        self._render()
+        missing = set(analysers_for(self._enabled)) - self._ran
+        if missing:
+            self.scan()
 
-        key = self._active_category
-        if remember and key and self._scope is not None:
-            self._results[(self._scope.key, key)] = suggestions
+    def visible_suggestions(self) -> list[Suggestion]:
+        """Return the cards for the ticked node types, ranked and de-duplicated."""
+        wanted = [s for s in self._found if s.node_type in self._enabled]
+        limit = FOCUSED_CARD_LIMIT if len(self._enabled) == 1 else None
+        return _dedupe_suggestions(wanted, limit)
 
-        if key and key in self._chips:
-            meta = _CAT_META[key]
-            count = len(suggestions)
-            self._chips[key].setText(
-                f"{meta['icon']}  {meta['label']}   {count}" if count
-                else f"{meta['icon']}  {meta['label']}   –"
-            )
+    def _update_chip_counts(self):
+        """Write how many findings each node type has on its chip."""
+        for key, chip in self._chips.items():
+            label = NODE_TYPE_META[key]
+            searched = set(analysers_for({key})) <= self._ran and self._scope is not None
+            if not searched:
+                chip.setText(label)
+                continue
+            count = len(_dedupe_suggestions(
+                [s for s in self._found if s.node_type == key], FOCUSED_CARD_LIMIT))
+            chip.setText(f"{label}   {count}" if count else f"{label}   –")
 
-        n = len(suggestions)
+    def _render(self):
+        """Show the cards for the ticked node types."""
+        self._suggestions = self.visible_suggestions()
+        self._update_chip_counts()
+        n = len(self._suggestions)
         self._count_lbl.setText(
-            f"{n} insight{'s' if n != 1 else ''}" if n else "Nothing found"
+            f"{n} finding{'s' if n != 1 else ''}" if n else "Nothing found"
         )
-        self._rebuild_cards() if suggestions else self._show_empty()
+        if self._suggestions:
+            self._rebuild_cards()
+        else:
+            self._clear_cards()
+            self._show_empty()
 
     def _rebuild_cards(self):
         """Replace the card list with one card per current suggestion."""
         self._clear_cards()
         for s in self._suggestions:
-            card = _Card(s, on_add=self._add_suggestion)
+            card = _Card(s, on_add=self._add_suggestion,
+                         samples_text=describe_samples(s, self._scope))
             self._card_layout.insertWidget(self._card_layout.count() - 1, card)
 
     def _empty_message(self) -> str:
-        """Explain why a scan produced no cards.
-
-        Distinguishes the three cases that would otherwise look identical: no
-        data loaded at all, data too sparse to analyse, and a scan that ran
-        properly but found nothing strong enough to report.
+        """Explain why there are no cards.
 
         Returns:
             A two-line message for the empty-state label.
@@ -2648,41 +3372,19 @@ class SmartInsightsPanel(QWidget):
         scope = self._scope
         if scope is None or not scope.sample_names:
             return "No sample data loaded.\nLoad a sample to generate insights."
+        if not self._enabled:
+            return "No plot type ticked.\nTick the plots you want Insights to search for."
         if scope.total_particles < 5:
-            return (
-                f"Only {scope.total_particles} particle(s) in "
-                f"{scope.origin_label}.\nToo few to analyse."
-            )
-        label = (_CAT_META.get(self._active_category or "", {})
-                 .get("label", "This scan").lower())
+            return f"Only {scope.total_particles} particle(s) loaded.\nToo few to analyse."
         return (
-            f"Scanned {scope.total_particles:,} particles across "
+            f"Searched {scope.total_particles:,} particles across "
             f"{len(scope.sample_names)} sample(s).\n"
-            f"Nothing stood out under {label}."
-        )
-
-    def _idle_message(self) -> str:
-        """Describe what a scan would cover, before any category is picked.
-
-        Returns:
-            A two-line prompt for the idle-state label.
-        """
-        scope = self._scope
-        if scope is None or not scope.sample_names:
-            return "No sample data loaded.\nLoad a sample to generate insights."
-        return (
-            f"{scope.total_particles:,} particles across "
-            f"{len(scope.sample_names)} sample(s) in scope.\n"
-            "Pick a category above to scan them."
+            "Nothing stood out for the ticked plot types."
         )
 
     def _show_empty(self):
         """Display the empty-state message in place of the cards."""
         self._show_placeholder(self._empty_message())
-
-    def _show_idle(self):
-        """Display the idle prompt shown before anything has been scanned."""
-        self._show_placeholder(self._idle_message())
 
     def _show_placeholder(self, text: str):
         """Put a centred muted message where the cards would go.
@@ -2710,15 +3412,13 @@ class SmartInsightsPanel(QWidget):
     def _add_suggestion(self, s: Suggestion):
         """Build the branch a suggestion describes and wire it into the canvas.
 
-        Where the insight names the elements it is about, a fresh sample
-        selector is created for the same samples but narrowed to just those
-        elements, and the plot node hangs off that. This is what lets a card
-        for an element the user never selected still produce a working branch,
-        and it keeps the new branch carrying only the relevant data.
-
-        Insights that need the full element set to mean anything, such as the
-        composition breakdown, name no elements and simply attach to the
-        existing source node instead.
+        A fresh sample selector is created holding only the samples where the
+        finding held, and, when the finding names elements, only those
+        elements. One sample gets a single selector; one replicate group gets a
+        single selector summing its replicates; anything wider gets a
+        multi-sample selector with replicates pooled into their groups. The
+        plot node hangs off that selector, so the new branch shows exactly what
+        the card describes.
 
         Args:
             s: The suggestion whose Add button was pressed.
@@ -2739,7 +3439,7 @@ class SmartInsightsPanel(QWidget):
         scene = self._scene
         plot_node = factory(self._pw)
         if s.config and isinstance(getattr(plot_node, "config", None), dict):
-            plot_node.config.update(s.config)
+            plot_node.config.update(copy.deepcopy(s.config))
 
         selector = self._build_scoped_selector(s, _NODE_FACTORIES)
         source = selector or _find_source_node(scene)
@@ -2764,42 +3464,40 @@ class SmartInsightsPanel(QWidget):
             scene.add_link(source, "output", plot_node, "input")
 
         if selector is not None:
+            units = selection_units(s, self._scope)
             self._flash_status(
-                f"Added {len(s.elements)}-element selector + plot"
+                f"Added selector ({len(units)} sample group{'s' if len(units) != 1 else ''}"
+                + (f", {len(s.elements)} element{'s' if len(s.elements) != 1 else ''}"
+                   if s.elements else "") + ") + plot"
             )
 
     def _build_scoped_selector(self, s: Suggestion, factories: dict):
-        """Create a sample selector holding the insight's elements only.
-
-        The selector covers the same samples the insight was computed over, so
-        the new branch says the same thing the card does. Its type follows the
-        scope: a single-sample scope gets a single selector, several samples get
-        a multi-sample one with every sample included.
+        """Create a sample selector holding only what the finding is about.
 
         Args:
             s: The suggestion being added.
             factories: The canvas node factory mapping.
 
         Returns:
-            The configured selector node, or ``None`` when the suggestion names
-            no elements, no scope is known, or the elements cannot be resolved
-            to isotopes the selector would understand.
+            The configured selector node, or ``None`` when there is no scope or
+            the selector type is unavailable.
         """
-        scope = self._scope
-        if not s.elements or scope is None or not scope.sample_names:
+        units = selection_units(s, self._scope)
+        if not units:
             return None
 
-        entries = _isotope_entries(self._pw, self._scene, s.elements)
-        if not entries:
-            _itk_log.warning(
-                f"[Insights] could not resolve isotopes for {list(s.elements)}; "
-                "falling back to the existing source node"
-            )
-            self._flash_status("Could not scope elements — using existing node")
-            return None
+        entries = []
+        if s.elements:
+            entries = _isotope_entries(self._pw, self._scene, s.elements)
+            if not entries:
+                _itk_log.warning(
+                    f"[Insights] could not resolve isotopes for {list(s.elements)}; "
+                    "the selector keeps every element"
+                )
+                self._flash_status("Could not narrow the elements — keeping all of them")
 
-        node_type = ("multiple_sample_selector" if scope.is_multi
-                     else "sample_selector")
+        single = len(units) == 1
+        node_type = "sample_selector" if single else "multiple_sample_selector"
         factory = factories.get(node_type)
         if factory is None:
             return None
@@ -2807,18 +3505,27 @@ class SmartInsightsPanel(QWidget):
         selector = factory(self._pw)
         selector.selected_isotopes = entries
 
-        if scope.is_multi:
-            selector.selected_samples = list(scope.sample_names)
-            selector.sample_config = {
-                name: {"included": True, "sum_group": "", "custom_name": name}
-                for name in scope.sample_names
-            }
+        if single:
+            label, members = units[0]
+            selector.selected_sample = members[0]
+            if len(members) > 1:
+                selector.sum_replicates = True
+                selector.replicate_samples = list(members)
         else:
-            selector.selected_sample = scope.sample_names[0]
+            samples = [m for _label, members in units for m in members]
+            selector.selected_samples = samples
+            selector.sample_config = {
+                m: {"included": True,
+                    "sum_group": label if len(members) > 1 else "",
+                    "custom_name": m}
+                for label, members in units for m in members
+            }
 
         title = getattr(selector, "title", None)
         if isinstance(title, str):
-            selector.title = f"{', '.join(s.elements[:3])}"
+            where = units[0][0] if single else f"{len(units)} groups"
+            what = ", ".join(s.elements[:3]) if s.elements else "all elements"
+            selector.title = f"{where}: {what}"
         return selector
 
     def _flash_status(self, message: str, msec: int = 2600):
@@ -2833,24 +3540,16 @@ class SmartInsightsPanel(QWidget):
             self._status.setText("") if self._status.text() == message else None
         ))
 
-
     def showEvent(self, event):
-        """Show what is in scope without analysing anything.
-
-        Opening the panel costs nothing: the scope strip and chips update, and
-        the first scan waits for the user to choose a category.
-        """
+        """Start searching as soon as the panel is shown."""
         super().showEvent(event)
-        QTimer.singleShot(0, self._show_scope_only)
+        self._poll.start()
+        QTimer.singleShot(0, self.scan)
 
-    def _show_scope_only(self):
-        """Refresh the scope display and prompt for a category."""
-        self._scope = resolve_scope(self._scene, self._pw)
-        self._update_sample_strip(self._scope)
-        self._sync_chips(self._scope)
-        if self._active_category is None:
-            self._clear_cards()
-            self._show_idle()
+    def hideEvent(self, event):
+        """Stop watching for data changes while hidden."""
+        self._poll.stop()
+        super().hideEvent(event)
 
     def closeEvent(self, event):
         """Release resources if the panel is ever closed directly."""
@@ -2866,6 +3565,7 @@ class SmartInsightsPanel(QWidget):
         if getattr(self, "_torn_down", False):
             return
         self._torn_down = True
+        self._poll.stop()
         try:
             self._theme_dc()
         except Exception:
