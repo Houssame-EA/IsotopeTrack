@@ -161,6 +161,15 @@ mass, then raw counts as a fallback when nothing has been calibrated.
 MIN_BIMODALITY_PARTICLES = 60
 """Particles an element needs before its distribution shape is worth testing."""
 
+BIMODALITY_KDE_SAMPLE = 4000
+"""Most values the density curve is fitted to; larger sets are subsampled.
+
+Locating two modes needs a few thousand values at most, and fitting the curve
+to every particle of a large run costs seconds for no change in the answer.
+The subsample is drawn with a fixed seed, so a scan always gives the same
+result.
+"""
+
 MIN_MODE_SEPARATION = 0.30
 """Minimum gap between two modes, in log10 units, so about a factor of two."""
 
@@ -393,6 +402,33 @@ def _fmt_q(q: float) -> str:
     return f"q = {q:.2g}"
 
 
+def correlated_pairs(ctx, elements) -> list[tuple[str, str, dict]]:
+    """Correlate every pair of *elements*, reusing results already computed.
+
+    The correlation and network detectors both need every pairwise
+    correlation; caching them on the context means the work is done once.
+
+    Args:
+        ctx: Analysis context.
+        elements: Element labels, in the order pairs should be listed.
+
+    Returns:
+        ``(a, b, stats)`` for every pair with enough co-detections, in the
+        order the elements were given.
+    """
+    cache = ctx.cache.setdefault("pair_stats", {})
+    out = []
+    for i in range(len(elements)):
+        for j in range(i + 1, len(elements)):
+            a, b = elements[i], elements[j]
+            key = (a, b)
+            if key not in cache:
+                cache[key] = _correlate_pair(ctx.matrix[a], ctx.matrix[b])
+            if cache[key] is not None:
+                out.append((a, b, cache[key]))
+    return out
+
+
 def _proportionality(a: np.ndarray, b: np.ndarray) -> float | None:
     """Measure how close two elements are to a fixed ratio.
 
@@ -532,8 +568,11 @@ def _detect_bimodality(values: np.ndarray) -> dict | None:
     if bc < 0.555:
         return None
 
+    fit_on = logged
+    if len(logged) > BIMODALITY_KDE_SAMPLE:
+        fit_on = np.random.default_rng(0).choice(logged, BIMODALITY_KDE_SAMPLE, replace=False)
     try:
-        density = _stats.gaussian_kde(logged)
+        density = _stats.gaussian_kde(fit_on)
     except Exception:
         _itk_log.exception("[Insights] KDE failed")
         return None
@@ -1317,12 +1356,7 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
         return out
 
     _say(progress, "Correlating element pairs…")
-    pairs: list[tuple[str, str, dict]] = []
-    for i in range(len(els)):
-        for j in range(i + 1, len(els)):
-            stats_ = _correlate_pair(ctx.matrix[els[i]], ctx.matrix[els[j]])
-            if stats_ is not None:
-                pairs.append((els[i], els[j], stats_))
+    pairs = correlated_pairs(ctx, els)
 
     if pairs:
         _say(progress, f"Correcting {len(pairs)} pairwise tests…")
@@ -2215,29 +2249,31 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 
 
 _REGISTRY = (
-    ("correlation", _analyse_correlation, "within", {"correlation_plot", "correlation_matrix"}),
-    ("network", _disc.analyse_network, "within", {"network_diagram"}),
-    ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
     ("interference", _disc.analyse_interference, "within", {"correlation_plot"}),
-    ("stoichiometry", _disc.analyse_stoichiometry, "within",
-     {"molar_ratio_plot", "correlation_plot"}),
-    ("distribution", _analyse_distribution, "within", {"histogram_plot", "box_plot"}),
-    ("quality", _disc.analyse_detection_limit, "within", {"histogram_plot"}),
-    ("composition", _analyse_composition, "within",
-     {"element_bar_chart_plot", "pie_chart_plot"}),
-    ("ternary", _disc.analyse_ternary, "within", {"triangle_plot"}),
-    ("single_multi", _disc.analyse_single_multi, "within", {"single_multiple_element_plot"}),
-    ("cooccurrence", _disc.analyse_cooccurrence, "within", {"heatmap_plot"}),
-    ("rare", _disc.analyse_rare, "within", {"heatmap_plot"}),
-    ("outlier", _analyse_anomaly, "within", {"heatmap_plot", "correlation_plot"}),
-    ("size", _disc.analyse_size_composition, "within", {"figure_builder"}),
+    ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
     ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
     ("signature", _analyse_signature, "across",
      {"element_composition_plot", "pie_chart_plot"}),
     ("replicate", _disc.analyse_replicates, "across",
      {"concentration_comparison", "box_plot", "figure_builder"}),
     ("time", _disc.analyse_time, "across", {"figure_builder"}),
+    ("stoichiometry", _disc.analyse_stoichiometry, "within",
+     {"molar_ratio_plot", "correlation_plot"}),
+    ("cooccurrence", _disc.analyse_cooccurrence, "within", {"heatmap_plot"}),
+    ("rare", _disc.analyse_rare, "within", {"heatmap_plot"}),
+    ("quality", _disc.analyse_detection_limit, "within", {"histogram_plot"}),
+    ("ternary", _disc.analyse_ternary, "within", {"triangle_plot"}),
+    ("single_multi", _disc.analyse_single_multi, "within", {"single_multiple_element_plot"}),
+    ("composition", _analyse_composition, "within",
+     {"element_bar_chart_plot", "pie_chart_plot"}),
+    ("size", _disc.analyse_size_composition, "within", {"figure_builder"}),
+    ("outlier", _analyse_anomaly, "within", {"heatmap_plot", "correlation_plot"}),
+    ("correlation", _analyse_correlation, "within", {"correlation_plot", "correlation_matrix"}),
+    ("network", _disc.analyse_network, "within", {"network_diagram"}),
+    ("distribution", _analyse_distribution, "within", {"histogram_plot", "box_plot"}),
 )
+"""Detectors in run order, fastest and most specific first, so the panel fills
+with interference, isotope and group findings before the slower passes finish."""
 
 _ANALYSERS: dict[str, InsightCategory] = {
     key: InsightCategory(key, _CAT_META[key]["label"], _CAT_META[key]["icon"], fn,
@@ -2457,6 +2493,65 @@ def analyse(ctx: AnalysisContext, categories=None, progress=None,
     return _dedupe_suggestions(found, per_type_limit) if dedupe else found
 
 
+def context_for_stream(data: dict | None) -> AnalysisContext | None:
+    """Build an analysis context from a canvas data stream.
+
+    Used by nodes that receive particles over a link, such as the AI
+    assistant, rather than reading the loaded pool. Particles are grouped by
+    their ``source_sample``, and replicate groups are guessed from the sample
+    names.
+
+    Args:
+        data: A ``sample_data`` or ``multiple_sample_data`` stream.
+
+    Returns:
+        The context, or ``None`` when the stream holds too few particles.
+    """
+    if not isinstance(data, dict):
+        return None
+    particles = list(data.get("particle_data") or [])
+    if len(particles) < 5:
+        return None
+    fallback = data.get("sample_name") or "Sample"
+    by_sample: dict[str, list[dict]] = {}
+    for p in particles:
+        by_sample.setdefault(p.get("source_sample") or fallback, []).append(p)
+    listed = list(data.get("sample_names") or [])
+    names = [n for n in listed if n in by_sample] + [n for n in by_sample if n not in listed]
+    flat: list[dict] = []
+    index: list[int] = []
+    for i, name in enumerate(names):
+        flat.extend(by_sample[name])
+        index.extend([i] * len(by_sample[name]))
+    scope = AnalysisScope(
+        tuple(names), "stream", tuple(len(by_sample[n]) for n in names),
+        tuple(id(by_sample[n]) for n in names), tuple(resolve_groups(names)),
+    )
+    matrix, det_mask = _build_matrix(flat)
+    return AnalysisContext(
+        scope=scope, particles=flat, matrix=matrix, det_mask=det_mask,
+        det_counts={el: int(m.sum()) for el, m in det_mask.items()},
+        sample_idx=np.asarray(index, dtype=np.int32),
+    )
+
+
+def findings_for_stream(data: dict | None, limit: int = 12, should_stop=None) -> list[Suggestion]:
+    """Run every Insights detector over a canvas data stream.
+
+    Args:
+        data: A ``sample_data`` or ``multiple_sample_data`` stream.
+        limit: Most findings to return.
+        should_stop: Optional callable returning ``True`` to abandon the run.
+
+    Returns:
+        The strongest findings, most confident first.
+    """
+    ctx = context_for_stream(data)
+    if ctx is None:
+        return []
+    return analyse(ctx, should_stop=should_stop)[:limit]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Analysis worker (runs in a QThread)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2472,10 +2567,13 @@ class _AnalysisWorker(QThread):
         results_ready: Emitted once with the final list of suggestions. Named
             to avoid shadowing ``QThread.finished``, which the panel relies on
             to know when a cancelled thread has actually exited.
+        partial: Emitted after each detector with its suggestions and its
+            key, so the panel can show findings as soon as they exist.
         progress: Emitted with a short status string as each stage begins.
     """
 
     results_ready = Signal(list)
+    partial = Signal(list, str)
     progress = Signal(str)
 
     def __init__(self, scope: AnalysisScope, particles: list[dict],
@@ -2534,18 +2632,38 @@ class _AnalysisWorker(QThread):
         if self._stop():
             return
 
-        found = analyse(
-            ctx,
-            categories=self._categories,
-            node_types=self._node_types,
-            dedupe=self._dedupe,
-            progress=self.progress.emit,
-            should_stop=self._stop,
-        )
+        if ctx.n < 5 or not ctx.matrix:
+            self.results_ready.emit([])
+            return
+
+        keys = list(self._categories) if self._categories else category_keys()
+        wanted = set(self._node_types) if self._node_types is not None else None
+        if wanted is not None:
+            allowed = set(analysers_for(wanted))
+            keys = [k for k in keys if k in allowed]
+
+        found: list[Suggestion] = []
+        for key in keys:
+            if self._stop():
+                return
+            analyser = _ANALYSERS.get(key)
+            if analyser is None:
+                continue
+            try:
+                result = _run_detector(ctx, analyser, self.progress.emit, self._stop)
+            except Exception:
+                _itk_log.exception(f"[Insights] {key} analysis failed")
+                result = []
+            if wanted is not None:
+                result = [s for s in result if s.node_type in wanted]
+            found.extend(result)
+            if self._stop():
+                return
+            self.partial.emit(result, key)
 
         if self._stop():
             return
-        self.results_ready.emit(found)
+        self.results_ready.emit(_dedupe_suggestions(found) if self._dedupe else found)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3217,8 +3335,10 @@ class SmartInsightsPanel(QWidget):
         self._worker = _AnalysisWorker(scope, particles, sample_idx,
                                        categories=order, dedupe=False)
         self._worker.progress.connect(self._status.setText)
+        self._worker.partial.connect(
+            lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
         self._worker.results_ready.connect(
-            lambda found, keys=frozenset(needed), key=scope.key: self._on_done(found, keys, key))
+            lambda _found, keys=frozenset(needed), key=scope.key: self._on_done(keys, key))
         self._worker.start()
 
     def refresh(self):
@@ -3269,11 +3389,11 @@ class SmartInsightsPanel(QWidget):
         self._pending = set()
         if w is None:
             return
-        try:
-            w.progress.disconnect()
-            w.results_ready.disconnect()
-        except (RuntimeError, TypeError):
-            pass
+        for signal in (w.progress, w.partial, w.results_ready):
+            try:
+                signal.disconnect()
+            except (RuntimeError, TypeError):
+                pass
         self._worker = None
         if w.isRunning():
             w.cancel()
@@ -3300,14 +3420,27 @@ class SmartInsightsPanel(QWidget):
         )
         self._group_lbl.setText(f"≡  {scope.grouping_label}")
 
-    def _on_done(self, suggestions: list[Suggestion], keys=frozenset(), scope_key: str = ""):
-        """Store a finished search and show the cards.
+    def _on_partial(self, suggestions: list[Suggestion], detector: str, scope_key: str):
+        """Show one detector's findings as soon as it finishes.
 
         Args:
-            suggestions: Everything the detectors found, not yet de-duplicated.
-            keys: The detectors that ran.
+            suggestions: What the detector found.
+            detector: The detector's key.
             scope_key: The scope the search was for. Results for a scope that
                 is no longer current are dropped.
+        """
+        if self._scope is None or scope_key != self._scope.key or detector in self._ran:
+            return
+        self._found.extend(suggestions)
+        self._ran.add(detector)
+        self._render()
+
+    def _on_done(self, keys=frozenset(), scope_key: str = ""):
+        """Finish a search and start another if more plot types were ticked meanwhile.
+
+        Args:
+            keys: The detectors that ran.
+            scope_key: The scope the search was for.
         """
         self._worker = None
         self._pending = set()
@@ -3316,7 +3449,6 @@ class SmartInsightsPanel(QWidget):
         self._refresh_btn.setEnabled(True)
         if self._scope is None or (scope_key and scope_key != self._scope.key):
             return
-        self._found.extend(suggestions)
         self._ran |= set(keys)
         self._render()
         missing = set(analysers_for(self._enabled)) - self._ran

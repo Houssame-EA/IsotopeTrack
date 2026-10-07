@@ -460,3 +460,30 @@ def test_mass_helpers():
     assert disc.mass_related("140Ce", "156Gd")
     assert disc.mass_related("138Ba", "69Ga")
     assert not disc.mass_related("56Fe", "48Ti")
+
+
+def test_worker_reports_each_detector_as_it_finishes():
+    """The worker emits one partial result per detector before its final list."""
+    pool = replicated_pool()
+    scene, window = FakeScene(), FakeWindow(pool)
+    scope = rr.resolve_scope(scene, window)
+    particles, idx = rr.gather_scope_data(scene, window, scope)
+    worker = rr._AnalysisWorker(scope, particles, idx, categories=["comparison", "replicate"],
+                                dedupe=False)
+    partials, finals = [], []
+    worker.partial.connect(lambda found, key: partials.append(key))
+    worker.results_ready.connect(finals.append)
+    worker.run()
+    assert partials == ["comparison", "replicate"]
+    assert len(finals) == 1 and finals[0]
+
+
+def test_stream_context_groups_by_source_sample():
+    """A canvas stream is split back into its samples and their replicate groups."""
+    data = {"type": "multiple_sample_data", "sample_names": ["liver_1", "liver_2"],
+            "particle_data": [dict(p, source_sample="liver_1") for p in tissue(50, 2, 1)]
+            + [dict(p, source_sample="liver_2") for p in tissue(50, 2, 2)]}
+    ctx = rr.context_for_stream(data)
+    assert ctx.sample_names == ["liver_1", "liver_2"]
+    assert [g.name for g in ctx.scope.groups] == ["liver"]
+    assert rr.context_for_stream({"particle_data": []}) is None

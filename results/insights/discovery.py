@@ -598,14 +598,8 @@ def analyse_network(ctx, progress=None) -> list:
     if len(els) < 4:
         return []
     rr._say(progress, "Linking correlated elements…")
-    pairs = []
-    for i in range(len(els)):
-        for j in range(i + 1, len(els)):
-            if _same_symbol(els[i], els[j]):
-                continue
-            res = rr._correlate_pair(ctx.matrix[els[i]], ctx.matrix[els[j]])
-            if res is not None:
-                pairs.append((els[i], els[j], res))
+    pairs = [(a, b, res) for a, b, res in rr.correlated_pairs(ctx, els)
+             if not _same_symbol(a, b)]
     if not pairs:
         return []
     significant, _adj = rr._benjamini_hochberg([p[2]["pearson_p"] for p in pairs])
