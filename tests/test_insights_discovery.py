@@ -487,3 +487,110 @@ def test_stream_context_groups_by_source_sample():
     assert ctx.sample_names == ["liver_1", "liver_2"]
     assert [g.name for g in ctx.scope.groups] == ["liver"]
     assert rr.context_for_stream({"particle_data": []}) is None
+
+
+def lead(n, r67, seed, zinc_source=False):
+    """Pb particles at a given 206Pb/207Pb; optionally half from a Zn-rich source at a lower ratio."""
+    rng = random.Random(seed)
+    out = []
+    for _ in range(n):
+        pb207 = math.exp(rng.gauss(4, 0.7))
+        ratio = r67
+        elements = {}
+        if zinc_source and rng.random() < 0.5:
+            elements["66Zn"] = math.exp(rng.gauss(5, 0.5))
+            ratio = r67 - 0.06
+        elif rng.random() < 0.3:
+            elements["66Zn"] = math.exp(rng.gauss(2, 0.5))
+        pb206 = pb207 * ratio * math.exp(rng.gauss(0, 0.03))
+        elements.update({"206Pb": pb206, "207Pb": pb207,
+                         "208Pb": pb206 * 2.1 * math.exp(rng.gauss(0, 0.03))})
+        if rng.random() < 0.6:
+            elements["56Fe"] = math.exp(rng.gauss(3, 1))
+        out.append({"elements": elements})
+    return out
+
+
+def test_isotope_pairs_stay_within_one_element():
+    """Ratios pair isotopes of the same element only, in conventional order."""
+    pairs = disc.isotope_pairs(context({"S": lead(600, 1.18, 1)}))
+    assert pairs == [("Pb", "206Pb", "207Pb"), ("Pb", "208Pb", "206Pb")]
+    assert all(disc.same_element(n, d) for _s, n, d in pairs)
+
+
+def test_isotope_ratio_differs_between_sites():
+    """A 2.6 % difference in 206Pb/207Pb between replicated sites is reported."""
+    pool = {"siteA_1": lead(500, 1.18, 1), "siteA_2": lead(500, 1.18, 2),
+            "siteB_1": lead(500, 1.15, 3), "siteB_2": lead(500, 1.15, 4)}
+    cards = disc.analyse_isotope_groups(context(pool))
+    assert len(cards) == 1
+    assert cards[0].elements == ("206Pb", "207Pb")
+    assert "ANOVA on replicate medians" in cards[0].reasoning
+    assert "isotope signature" in cards[0].reasoning
+
+
+def test_isotope_ratio_is_not_compared_within_one_material():
+    """Replicates of one site give no between-group isotope card."""
+    pool = {"siteA_1": lead(500, 1.18, 1), "siteA_2": lead(500, 1.18, 2)}
+    assert disc.analyse_isotope_groups(context(pool)) == []
+
+
+def test_isotope_ratio_tracks_a_different_element_only():
+    """A ratio set by a Zn-rich source is reported against Zn, never against another Pb isotope."""
+    cards = disc.analyse_isotope_ratios(context({"S": lead(1500, 1.18, 5, zinc_source=True)}))
+    tracking = [c for c in cards if "with" in c.title]
+    assert tracking and tracking[0].config["x_axis_element"] == "66Zn"
+    assert "different element" in tracking[0].reasoning
+    for card in cards:
+        x_axis = card.config["x_axis_element"]
+        assert x_axis in (card.config["element2"], "66Zn", "56Fe")
+
+
+def test_two_isotope_ratio_populations():
+    """Two sources with ratios 10 % apart in one sample show as two populations."""
+    rng = random.Random(9)
+    particles = []
+    for i in range(1200):
+        pb207 = math.exp(rng.gauss(5, 0.5))
+        ratio = 1.20 if i % 3 else 1.08
+        particles.append({"elements": {"206Pb": pb207 * ratio * math.exp(rng.gauss(0, 0.01)),
+                                       "207Pb": pb207}})
+    titles = [c.title for c in disc.analyse_isotope_ratios(context({"S": particles}))]
+    assert "Two 206Pb/207Pb ratio populations" in titles
+    one = [c.title for c in disc.analyse_isotope_ratios(context({"S": lead(1200, 1.18, 9)}))]
+    assert not any(t.startswith("Two") for t in one)
+
+
+def test_isotopes_of_one_element_are_never_a_correlation():
+    """206Pb and 208Pb rise together trivially, so no correlation card names them."""
+    cards = rr._analyse_correlation(context({"S": lead(800, 1.18, 2)}))
+    for card in cards:
+        if card.node_type == "correlation_plot":
+            assert not disc.same_element(*card.elements)
+
+
+def test_an_interference_is_not_reported_as_a_correlation():
+    """CeO+ on mass 156 is an interference card, not a correlation card."""
+    cards = rr._analyse_correlation(context({"S": cerium(1500, True)}))
+    assert not [c for c in cards if set(c.elements) == {"140Ce", "156Gd"}]
+
+
+def test_section_order_and_strength_words():
+    """Data quality comes first; strength is described in words."""
+    titles = [t for t, _c in rr.SECTIONS]
+    assert titles[0] == "Data quality"
+    assert rr.section_of("isotope_groups") == "Isotope ratios"
+    assert rr.section_of("unknown") == titles[-1]
+    assert rr.strength_label(0.9) == ("Strong", 3)
+    assert rr.strength_label(0.5) == ("Moderate", 2)
+    assert rr.strength_label(0.2) == ("Weak", 1)
+
+
+def test_scope_and_isotope_text():
+    """The scope reads as plain sentences and isotopes get superscript masses."""
+    scope = rr.resolve_scope(FakeScene(), FakeWindow(replicated_pool()))
+    first, second = rr.describe_scope(scope)
+    assert first.startswith("6 samples and 2,400 particles")
+    assert "liver (3)" in second and "sample names" in second
+    assert rr.isotope_markup("206Pb/207Pb, 3 replicates") == \
+        "<sup>206</sup>Pb/<sup>207</sup>Pb, 3 replicates"

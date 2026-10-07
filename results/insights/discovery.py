@@ -118,10 +118,19 @@ def mass_symbol(label: str) -> tuple[int | None, str | None]:
     return int(b), a
 
 
-def _same_symbol(a: str, b: str) -> bool:
-    """Return whether two labels are isotopes of one element."""
+def same_element(a: str, b: str) -> bool:
+    """Return whether two labels are isotopes of one element.
+
+    Isotopes of one element always rise and fall together, so a pair like
+    ²⁰⁶Pb and ²⁰⁸Pb is never reported as a correlation, a co-occurrence or a
+    fixed ratio. It is an isotope ratio, handled by
+    :func:`analyse_isotope_ratios`.
+    """
     sa, sb = mass_symbol(a)[1], mass_symbol(b)[1]
     return sa is not None and sa == sb
+
+
+_same_symbol = same_element
 
 
 def mass_related(a: str, b: str) -> bool:
@@ -271,7 +280,8 @@ def analyse_interference(ctx, progress=None) -> list:
             reasoning=(
                 f"{st['share']:.0%} of {child} detections ({st['n']:,} particles) arrive with "
                 f"{parent}, at a near-constant {child}/{parent} of {st['ratio'] * 100:.2g}% "
-                f"(spread ×{10 ** st['spread']:.2f}{slope}). That is the pattern of a {kind} "
+                f"(spread ×{10 ** st['spread']:.2f}{slope}). That is the pattern of "
+                f"{'an' if kind[0] in 'aeiou' else 'a'} {kind} "
                 f"interference rather than a second element, so {child} in these particles "
                 "should be treated with caution."
             ),
@@ -282,6 +292,28 @@ def analyse_interference(ctx, progress=None) -> list:
             elements=(parent, child),
         ))
     return out
+
+
+def interference_pair(ctx, a: str, b: str) -> bool:
+    """Return whether one of two masses behaves like an interference from the other.
+
+    Args:
+        ctx: Analysis context.
+        a: One isotope label.
+        b: The other.
+
+    Returns:
+        True when the heavier mass sits at +16 or +17, or the lighter at half
+        the mass, and passes every test in :func:`analyse_interference`.
+    """
+    ma, mb = mass_symbol(a)[0], mass_symbol(b)[0]
+    if not ma or not mb or not mass_related(a, b):
+        return False
+    if mb - ma in (16, 17) or ma == 2 * mb:
+        parent, child = a, b
+    else:
+        parent, child = b, a
+    return _interference_stats(ctx, parent, child) is not None
 
 
 def _interference_stats(ctx, parent: str, child: str) -> dict | None:
@@ -1299,3 +1331,330 @@ def merge_group_findings(items, scope_order, n_groups: int) -> list:
             sample_groups=sample_groups if groups else dict(best.sample_groups),
         ))
     return merged
+
+
+CONVENTIONAL_RATIOS: dict[str, tuple[tuple[str, str], ...]] = {
+    "Pb": (("206Pb", "207Pb"), ("208Pb", "206Pb"), ("206Pb", "204Pb")),
+    "Sr": (("87Sr", "86Sr"),),
+    "Nd": (("143Nd", "144Nd"),),
+    "U": (("235U", "238U"),),
+    "Os": (("187Os", "188Os"),),
+    "Hf": (("176Hf", "177Hf"),),
+    "B": (("11B", "10B"),),
+    "Li": (("7Li", "6Li"),),
+    "Cu": (("65Cu", "63Cu"),),
+    "Zn": (("66Zn", "64Zn"),),
+    "Ag": (("107Ag", "109Ag"),),
+    "Hg": (("202Hg", "200Hg"),),
+}
+"""Ratios written the way the literature writes them, used when both isotopes are measured."""
+
+ISOTOPE_MIN_PARTICLES = 20
+"""Particles carrying both isotopes before a ratio is worth reporting."""
+
+ISOTOPE_ABUNDANCE_GAP = 0.25
+"""Relative gap from the natural ratio that earns an abundance card."""
+
+ISOTOPE_GROUP_MIN_GAP = 0.02
+"""Smallest relative difference in a ratio between groups worth a card."""
+
+ISOTOPE_MODE_SEPARATION = 0.01
+"""Smallest gap between two ratio populations, in log10 units (about 2.3 %)."""
+
+ISOTOPE_TRACK_MIN_RHO = 0.40
+"""Rank correlation between a ratio and another element needed for a card."""
+
+
+def isotope_pairs(ctx, max_per_element: int = 3) -> list[tuple[str, str, str]]:
+    """List the isotope ratios to examine: two isotopes of the same element.
+
+    A ratio between two different elements is never listed here; that is a
+    fixed or molar ratio, not an isotope ratio. Conventional ratios are used
+    where both isotopes are measured (²⁰⁶Pb/²⁰⁷Pb, ⁸⁷Sr/⁸⁶Sr…); otherwise each
+    isotope is put over the element's most often detected isotope.
+
+    Args:
+        ctx: Analysis context.
+        max_per_element: Most ratios per element.
+
+    Returns:
+        ``(symbol, numerator, denominator)`` triples.
+    """
+    by_symbol: dict[str, list[str]] = {}
+    for label in ctx.elements_by_abundance():
+        mass, symbol = mass_symbol(label)
+        if mass and ctx.det_counts.get(label, 0) >= ISOTOPE_MIN_PARTICLES:
+            by_symbol.setdefault(symbol, []).append(label)
+    pairs = []
+    for symbol, labels in by_symbol.items():
+        if len(labels) < 2:
+            continue
+        present = set(labels)
+        chosen = [(n, d) for n, d in CONVENTIONAL_RATIOS.get(symbol, ())
+                  if n in present and d in present]
+        if not chosen:
+            reference = labels[0]
+            ordered = sorted(labels[1:], key=lambda x: mass_symbol(x)[0])
+            chosen = [(other, reference) for other in ordered]
+        pairs.extend((symbol, n, d) for n, d in chosen[:max_per_element])
+    return pairs
+
+
+def ratio_values(ctx, num: str, den: str) -> tuple[np.ndarray, np.ndarray]:
+    """Return the particles usable for a ratio, and the ratio in each.
+
+    Only particles carrying both isotopes count, and of those only the ones in
+    the upper half of the more abundant isotope's signal. Near the detection
+    limit the minor isotope is only seen when it happens to read high, which
+    would bias the ratio upward.
+
+    Args:
+        ctx: Analysis context.
+        num: Numerator isotope.
+        den: Denominator isotope.
+
+    Returns:
+        ``(mask, ratios)``: a boolean mask over the context's particles, and
+        the ratio for the particles it selects.
+    """
+    joint = ctx.det_mask[num] & ctx.det_mask[den]
+    major = num if ctx.det_counts[num] >= ctx.det_counts[den] else den
+    if int(joint.sum()) < 2:
+        return joint, np.zeros(0)
+    cut = float(np.median(ctx.matrix[major][joint]))
+    use = joint & (ctx.matrix[major] >= cut)
+    return use, ctx.matrix[num][use] / ctx.matrix[den][use]
+
+
+def _natural_ratio(num: str, den: str) -> float | None:
+    """Natural abundance ratio of two isotopes, or ``None`` when unknown."""
+    try:
+        from results.figure_builder.core.isotopes import natural_ratio
+        return natural_ratio(num, den)
+    except Exception:
+        return None
+
+
+def _ratio_config(num: str, den: str, x_axis: str) -> dict:
+    """Isotopic ratio plot settings for one ratio."""
+    return {"element1": num, "element2": den, "x_axis_element": x_axis,
+            "show_natural_line": _natural_ratio(num, den) is not None}
+
+
+def analyse_isotope_ratios(ctx, progress=None) -> list:
+    """Examine every isotope ratio within one material.
+
+    Four questions are asked of each ratio between two isotopes of the same
+    element:
+
+    * what the ratio is, and how many particles it rests on;
+    * whether it sits far from natural abundance, which points to an
+      interference on one mass or a real isotopic difference;
+    * whether the particles split into two ratio populations, the mark of two
+      sources mixed in one sample;
+    * whether the ratio tracks a *different* element, which points to mixing
+      between sources with different signatures. Isotopes of the same element
+      are never used for this comparison, and the family of tests is corrected
+      for false discovery.
+
+    Args:
+        ctx: Analysis context for one replicate group.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Ratio suggestions, at most three per element.
+    """
+    rr = _rr()
+    pairs = isotope_pairs(ctx)
+    if not pairs:
+        return []
+    rr._say(progress, "Examining isotope ratios…")
+    out = []
+    tracking_tests = []
+    for symbol, num, den in pairs:
+        use, ratios = ratio_values(ctx, num, den)
+        n = len(ratios)
+        if n < ISOTOPE_MIN_PARTICLES:
+            continue
+        median = float(np.median(ratios))
+        natural = _natural_ratio(num, den)
+        natural_text = f", against {natural:.4g} for natural {symbol}" if natural else ""
+        out.append(rr.Suggestion(
+            title=f"{num}/{den} isotope ratio",
+            reasoning=(
+                f"Both are {symbol} isotopes. The median {num}/{den} is {median:.4g} over "
+                f"{n:,} particles with a strong signal{natural_text}."
+            ),
+            category="isotope",
+            confidence=0.4,
+            node_type="isotopic_ratio_plot",
+            config=_ratio_config(num, den, den),
+            elements=(num, den),
+        ))
+        if natural:
+            gap = median / natural - 1.0
+            if abs(gap) >= ISOTOPE_ABUNDANCE_GAP:
+                out.append(rr.Suggestion(
+                    title=f"{num}/{den} is {gap:+.0%} off natural {symbol}",
+                    reasoning=(
+                        f"The median {num}/{den} is {median:.4g} against {natural:.4g} for "
+                        f"natural abundance, from {n:,} particles. Mass bias moves this by a "
+                        "few percent; a gap this large points to an interference on one mass, "
+                        "a detection threshold cutting one isotope, or a real isotopic "
+                        "difference."
+                    ),
+                    category="isotope",
+                    confidence=min(0.6 + min(abs(gap), 1.0) * 0.3, 0.9),
+                    node_type="isotopic_ratio_plot",
+                    config=_ratio_config(num, den, den),
+                    elements=(num, den),
+                ))
+        split = (rr._detect_bimodality(ratios, ISOTOPE_MODE_SEPARATION)
+                 if n >= rr.MIN_BIMODALITY_PARTICLES else None)
+        if split is not None:
+            low, high = split["modes"]
+            out.append(rr.Suggestion(
+                title=f"Two {num}/{den} ratio populations",
+                reasoning=(
+                    f"The {symbol} isotope ratio splits into groups near {low:.4g} and "
+                    f"{high:.4g}; the smaller holds {split['minor_share']:.0%} of {n:,} "
+                    "particles. Two ratios in one sample usually means two sources of "
+                    f"{symbol}."
+                ),
+                category="isotope",
+                confidence=min(0.6 + split["valley_depth"] * 0.3, 0.9),
+                node_type="isotopic_ratio_plot",
+                config=_ratio_config(num, den, den),
+                elements=(num, den),
+            ))
+        log_ratio_all = np.full(ctx.n, np.nan)
+        log_ratio_all[use] = np.log10(ratios)
+        for other in ctx.frequent_elements():
+            if mass_symbol(other)[1] == symbol:
+                continue
+            both = use & ctx.det_mask[other]
+            if int(both.sum()) < rr.MIN_CORR_OVERLAP:
+                continue
+            x = np.log10(ctx.matrix[other][both])
+            y = log_ratio_all[both]
+            if x.std() < 1e-9 or y.std() < 1e-9:
+                continue
+            rho, p = _stats.spearmanr(x, y)
+            if np.isfinite(rho) and np.isfinite(p):
+                tracking_tests.append((symbol, num, den, other, float(rho), float(p),
+                                       int(both.sum())))
+
+    if tracking_tests:
+        significant, adjusted = rr._benjamini_hochberg([t[5] for t in tracking_tests])
+        best: dict[tuple, tuple] = {}
+        for k, test in enumerate(tracking_tests):
+            if not significant[k] or abs(test[4]) < ISOTOPE_TRACK_MIN_RHO:
+                continue
+            key = (test[1], test[2])
+            if key not in best or abs(test[4]) > abs(best[key][0][4]):
+                best[key] = (test, float(adjusted[k]))
+        for (symbol, num, den, other, rho, _p, n), q in best.values():
+            direction = "rises" if rho > 0 else "falls"
+            out.append(rr.Suggestion(
+                title=f"{num}/{den} ratio {direction} with {other}",
+                reasoning=(
+                    f"The {symbol} isotope ratio {num}/{den} {direction} as {other} increases "
+                    f"(ρ = {rho:+.2f}, {rr._fmt_q(q)}, {n:,} particles). {other} is a different "
+                    f"element, so this points to mixing between sources whose {symbol} carries "
+                    f"different isotope signatures, one of them rich in {other}."
+                ),
+                category="isotope",
+                confidence=min(0.55 + abs(rho) * 0.4, 0.92),
+                node_type="isotopic_ratio_plot",
+                config=_ratio_config(num, den, other),
+                elements=(num, den, other),
+            ))
+    return out
+
+
+def analyse_isotope_groups(ctx, progress=None) -> list:
+    """Compare each isotope ratio between replicate groups.
+
+    Two materials can carry the same amount of an element with different
+    isotope signatures, which a concentration comparison cannot see. Each
+    replicate's median ratio is one observation; with every group replicated
+    the groups are compared with a one-way ANOVA on those medians, otherwise
+    with a Kruskal-Wallis test on particle ratios. A difference must be at
+    least :data:`ISOTOPE_GROUP_MIN_GAP` relative, and more than
+    :data:`REPLICATE_MARGIN` times the spread between replicates.
+
+    Args:
+        ctx: Analysis context over every sample in scope.
+        progress: Optional callable receiving status strings.
+
+    Returns:
+        Up to three suggestions, or nothing with fewer than two groups.
+    """
+    rr = _rr()
+    groups = rr._comparison_groups(ctx)
+    pairs = isotope_pairs(ctx)
+    if len(groups) < 2 or not pairs:
+        return []
+    rr._say(progress, "Comparing isotope ratios between groups…")
+    tests = []
+    for symbol, num, den in pairs:
+        use, _ratios = ratio_values(ctx, num, den)
+        log_ratio = np.full(ctx.n, np.nan)
+        log_ratio[use] = np.log10(ctx.matrix[num][use] / ctx.matrix[den][use])
+        summaries = []
+        for group, indices in groups:
+            medians, pooled = [], []
+            for i in indices:
+                values = log_ratio[use & (ctx.sample_idx == i)]
+                if len(values) >= 10:
+                    medians.append(float(np.median(values)))
+                    pooled.append(values)
+            if pooled:
+                summaries.append((group, medians, np.concatenate(pooled)))
+        if len(summaries) < 2:
+            continue
+        replicated = all(len(m) >= 2 for _g, m, _p in summaries)
+        try:
+            if replicated:
+                p = float(_stats.f_oneway(*[m for _g, m, _p in summaries])[1])
+                method = "ANOVA on replicate medians"
+            else:
+                p = float(_stats.kruskal(*[pl for _g, _m, pl in summaries])[1])
+                method = "Kruskal-Wallis on particles"
+        except Exception:
+            continue
+        if not np.isfinite(p):
+            continue
+        centres = sorted(((float(np.median(m)) if m else float(np.median(pl)), g)
+                          for g, m, pl in summaries), key=lambda c: c[0])
+        (lo_c, lo_g), (hi_c, hi_g) = centres[0], centres[-1]
+        spreads = [max(m) - min(m) for _g, m, _p in summaries if len(m) >= 2]
+        tests.append((symbol, num, den, p, hi_c - lo_c, max(spreads) if spreads else 0.0,
+                      hi_g, lo_g, 10 ** hi_c, 10 ** lo_c, method))
+    if not tests:
+        return []
+    significant, adjusted = rr._benjamini_hochberg([t[3] for t in tests])
+    kept = [(t, float(adjusted[k])) for k, t in enumerate(tests)
+            if significant[k] and 10 ** t[4] - 1 >= ISOTOPE_GROUP_MIN_GAP
+            and t[4] > REPLICATE_MARGIN * t[5]]
+    kept.sort(key=lambda x: -x[0][4])
+    out = []
+    for (symbol, num, den, _p, gap, spread, hi_g, lo_g, hi_v, lo_v, method), q in kept[:3]:
+        rep = (f", more than the {10 ** spread - 1:.1%} spread between replicates"
+               if spread > 0 else "")
+        out.append(rr.Suggestion(
+            title=f"{num}/{den}: {hi_g.name} vs {lo_g.name}",
+            reasoning=(
+                f"The median {num}/{den} is {hi_v:.4g} in {hi_g.name} and {lo_v:.4g} in "
+                f"{lo_g.name}, {10 ** gap - 1:.1%} apart{rep}. Both are {symbol} isotopes, so "
+                f"this is a difference in isotope signature, not in how much {symbol} there "
+                f"is. {method}, {rr._fmt_q(q)}."
+            ),
+            category="isotope",
+            confidence=min(0.6 + (10 ** gap - 1) * 3.0, 0.93),
+            node_type="isotopic_ratio_plot",
+            config=_ratio_config(num, den, den),
+            elements=(num, den),
+            **rr._group_selection([hi_g, lo_g]),
+        ))
+    return out

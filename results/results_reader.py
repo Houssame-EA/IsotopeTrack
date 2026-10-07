@@ -38,8 +38,8 @@ import numpy as np
 from scipy import stats as _stats
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPointF
 from PySide6.QtWidgets import (
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QProgressBar,
-    QPushButton, QScrollArea, QVBoxLayout, QWidget, QSplitter,
+    QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar,
+    QPushButton, QScrollArea, QToolButton, QVBoxLayout, QWidget, QSplitter,
 )
 
 from tools.theme import theme as _theme
@@ -75,6 +75,7 @@ _CAT_META: dict[str, dict] = {
     "ternary":      {"icon": "△", "label": "Ternary"},
     "single_multi": {"icon": "◐", "label": "Single vs multiple"},
     "size":         {"icon": "⤢", "label": "Size trend"},
+    "isotope_groups": {"icon": "⚛", "label": "Isotope ratio between groups"},
 }
 
 NODE_TYPE_META: dict[str, str] = {
@@ -530,7 +531,8 @@ def _bimodality_coefficient(values: np.ndarray) -> float:
     return (skew ** 2 + 1.0) / (kurtosis + correction)
 
 
-def _detect_bimodality(values: np.ndarray) -> dict | None:
+def _detect_bimodality(values: np.ndarray, min_separation: float = MIN_MODE_SEPARATION
+                       ) -> dict | None:
     """Look for two separated populations in one element's measurements.
 
     The test runs on log10 values, because particle measurements span orders of
@@ -549,6 +551,8 @@ def _detect_bimodality(values: np.ndarray) -> dict | None:
 
     Args:
         values: Positive measurements for a single element.
+        min_separation: Smallest gap between the modes, in log10 units.
+            Isotope ratios use a much smaller gap than sizes or masses.
 
     Returns:
         A dict describing the split, with ``modes`` in the original units,
@@ -592,7 +596,7 @@ def _detect_bimodality(values: np.ndarray) -> dict | None:
         return None
 
     separation = float(grid[second] - grid[first])
-    if separation < MIN_MODE_SEPARATION:
+    if separation < min_separation:
         return None
 
     valley_index = first + int(np.argmin(curve[first:second + 1]))
@@ -1335,7 +1339,8 @@ def _say(progress, message: str) -> None:
 def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
     """Find element pairs that vary together.
 
-    Every pair of sufficiently detected elements is tested, then the whole
+    Every pair of different, sufficiently detected elements is tested, then the
+    whole
     family is put through a false discovery rate correction. Running hundreds
     of tests guarantees some will clear a fixed threshold by chance, so a pair
     has to survive correction *and* clear an effect-size floor before it earns
@@ -1356,7 +1361,8 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
         return out
 
     _say(progress, "Correlating element pairs…")
-    pairs = correlated_pairs(ctx, els)
+    pairs = [(a, b, res) for a, b, res in correlated_pairs(ctx, els)
+             if not _disc.same_element(a, b) and not _disc.interference_pair(ctx, a, b)]
 
     if pairs:
         _say(progress, f"Correcting {len(pairs)} pairwise tests…")
@@ -1413,159 +1419,13 @@ def _analyse_correlation(ctx: AnalysisContext, progress=None) -> list[Suggestion
     return out
 
 
-ISOTOPE_ABUNDANCE_GAP = 0.25
-"""Relative gap from the natural ratio that earns an abundance card."""
-
-
 def _analyse_isotope(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
-    """Find isotope pairs worth plotting as a ratio, and ratios that look wrong.
+    """Examine isotope ratios within one material.
 
-    For each element measured at two or more masses, the lightest and heaviest
-    are paired. Every other element is then tested against that ratio, and the
-    strongest association becomes the suggested x-axis, since a ratio that
-    tracks another element usually indicates mixing between two sources.
-
-    Each measured ratio is also compared with natural abundance. Only
-    particles in the upper half of the more abundant isotope's signal are
-    used, because near the detection limit the minor isotope is only seen in
-    particles where it happens to read high, which biases the ratio. Mass bias
-    moves a ratio by a few percent; a gap of :data:`ISOTOPE_ABUNDANCE_GAP` or
-    more points to an interference on one mass, a threshold cutting one
-    isotope, or a real isotopic difference.
-
-    Args:
-        ctx: The shared analysis context.
-        progress: Optional callable receiving status strings.
-
-    Returns:
-        One ratio suggestion per isotope group, for at most eight groups, plus
-        an abundance suggestion for each ratio far from its natural value.
+    Kept under its old name for callers of the earlier engine; the work is
+    done by :func:`results.insights.discovery.analyse_isotope_ratios`.
     """
-    out: list[Suggestion] = []
-    mat = ctx.matrix
-    all_els = ctx.elements_by_abundance()
-    frequent = ctx.frequent_elements()
-
-    groups = _group_isotopes(all_els)
-    if not groups:
-        return out
-
-    _say(progress, "Pairing isotopes…")
-    non_isotopic = [e for e in frequent if _isotope_symbol(e) is None]
-    if not non_isotopic:
-        symbols_with_pairs = set(groups)
-        non_isotopic = [e for e in frequent if _isotope_symbol(e) not in symbols_with_pairs]
-
-    for _symbol, isotopes in list(groups.items())[:8]:
-        ordered = sorted(isotopes, key=lambda x: int(re.match(r"^(\d+)", x).group(1)))
-        num, den = ordered[0], ordered[-1]
-        if num not in mat or den not in mat:
-            continue
-
-        joint = ctx.det_mask[num] & ctx.det_mask[den]
-        joint_n = int(joint.sum())
-        if joint_n < 5:
-            continue
-
-        ratio = np.where(joint, mat[num] / (mat[den] + 1e-30), np.nan)
-
-        best_element: str | None = None
-        best_r = 0.0
-        for other in non_isotopic:
-            if other in (num, den):
-                continue
-            mask = joint & ctx.det_mask[other]
-            if mask.sum() < MIN_CORR_OVERLAP:
-                continue
-            ratio_values, other_values = ratio[mask], mat[other][mask]
-            if ratio_values.std() < 1e-10 or other_values.std() < 1e-10:
-                continue
-            try:
-                r = float(np.corrcoef(np.log1p(ratio_values),
-                                      np.log1p(other_values))[0, 1])
-            except Exception:
-                _itk_log.exception("[Insights] isotope ratio correlation failed")
-                continue
-            if abs(r) > abs(best_r):
-                best_r, best_element = r, other
-
-        config = {"element1": num, "element2": den, "x_axis_element": den}
-        elements = [num, den]
-        extra = ""
-        if best_element and abs(best_r) >= 0.40:
-            config["x_axis_element"] = best_element
-            elements.append(best_element)
-            extra = (
-                f" The ratio tracks {best_element} "
-                f"({'positively' if best_r > 0 else 'negatively'}, "
-                f"r = {best_r:+.2f}), so it is set as the x-axis."
-            )
-
-        out.append(Suggestion(
-            title=f"{num} / {den} ratio",
-            reasoning=f"{joint_n:,} particles carry both isotopes.{extra}",
-            category="isotope",
-            confidence=min(joint_n / ctx.n * 2, 0.93),
-            node_type="isotopic_ratio_plot",
-            config=config,
-            elements=tuple(elements),
-        ))
-
-        abundance_card = _isotope_abundance_card(ctx, num, den)
-        if abundance_card is not None:
-            out.append(abundance_card)
-    return out
-
-
-def _isotope_abundance_card(ctx: AnalysisContext, num: str, den: str) -> Suggestion | None:
-    """Compare one measured isotope ratio with its natural value.
-
-    Args:
-        ctx: The shared analysis context.
-        num: Numerator isotope label.
-        den: Denominator isotope label.
-
-    Returns:
-        A suggestion when the ratio is far from natural, else ``None``.
-    """
-    try:
-        from results.figure_builder.core.isotopes import natural_ratio
-        natural = natural_ratio(num, den)
-    except Exception:
-        _itk_log.debug("[Insights] natural abundances unavailable")
-        return None
-    if not natural:
-        return None
-
-    joint = ctx.det_mask[num] & ctx.det_mask[den]
-    major = num if natural >= 1 else den
-    major_values = ctx.matrix[major][ctx.det_mask[major]]
-    if len(major_values) < 20:
-        return None
-    cut = float(np.median(major_values))
-    use = joint & (ctx.matrix[major] >= cut)
-    n = int(use.sum())
-    if n < 20:
-        return None
-    measured = float(np.median(ctx.matrix[num][use] / ctx.matrix[den][use]))
-    gap = measured / natural - 1.0
-    if abs(gap) < ISOTOPE_ABUNDANCE_GAP:
-        return None
-    return Suggestion(
-        title=f"{num}/{den} is {gap:+.0%} off natural",
-        reasoning=(
-            f"Median {num}/{den} is {measured:.3g} against {natural:.3g} for natural "
-            f"abundance, from {n:,} particles with a strong {major} signal. Mass bias "
-            "moves this by a few percent; a gap this large points to an interference on "
-            "one mass, a threshold cutting one isotope, or a real isotopic difference."
-        ),
-        category="isotope",
-        confidence=min(0.6 + min(abs(gap), 1.0) * 0.3, 0.9),
-        node_type="isotopic_ratio_plot",
-        config={"element1": num, "element2": den, "x_axis_element": den,
-                "show_natural_line": True},
-        elements=(num, den),
-    )
+    return _disc.analyse_isotope_ratios(ctx, progress)
 
 
 def _scan_bimodality(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
@@ -2251,6 +2111,7 @@ def _analyse_anomaly(ctx: AnalysisContext, progress=None) -> list[Suggestion]:
 _REGISTRY = (
     ("interference", _disc.analyse_interference, "within", {"correlation_plot"}),
     ("isotope", _analyse_isotope, "within", {"isotopic_ratio_plot"}),
+    ("isotope_groups", _disc.analyse_isotope_groups, "across", {"isotopic_ratio_plot"}),
     ("comparison", _analyse_comparison, "across", {"concentration_comparison"}),
     ("signature", _analyse_signature, "across",
      {"element_composition_plot", "pie_chart_plot"}),
@@ -2670,13 +2531,127 @@ class _AnalysisWorker(QThread):
 # Suggestion card  — muted, theme-aware, no vivid category colours
 # ──────────────────────────────────────────────────────────────────────────────
 
-class _Card(QFrame):
-    """One suggestion rendered as a card in the panel.
+SECTIONS: tuple[tuple[str, frozenset], ...] = (
+    ("Data quality", frozenset({"quality", "time"})),
+    ("Interferences", frozenset({"interference"})),
+    ("Isotope ratios", frozenset({"isotope", "isotope_groups"})),
+    ("Differences between groups", frozenset({"comparison", "signature"})),
+    ("Replicates", frozenset({"replicate"})),
+    ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "cooccurrence"})),
+    ("Correlations", frozenset({"correlation", "network"})),
+    ("Composition", frozenset({"composition", "ternary", "single_multi", "size"})),
+    ("Distributions and rare particles", frozenset({"distribution", "outlier", "rare"})),
+)
+"""Card sections in the order the panel lists them.
 
-    Shows the finding's kind, title, reasoning, the samples it covers and a
-    confidence bar, with an Add button that hands the suggestion back to the
-    panel. Colours come from the active theme palette rather than per-category
-    accents, so a list of cards reads as one surface.
+Findings that affect whether the data can be trusted come first, then what
+the data says about isotopes, groups and composition.
+"""
+
+
+_ISOTOPE_IN_TEXT = re.compile(r"(?<![\w.])(\d{1,3})([A-Z][a-z]?)(?![a-z])")
+
+
+def isotope_markup(text: str) -> str:
+    """Write isotope labels in text with a superscript mass number.
+
+    ``"206Pb/207Pb"`` becomes ``"<sup>206</sup>Pb/<sup>207</sup>Pb"``; the rest
+    of the text is escaped so it displays as written.
+
+    Args:
+        text: Plain text from a finding.
+
+    Returns:
+        Rich text for a ``QLabel``.
+    """
+    import html
+    escaped = html.escape(text, quote=False)
+    return _ISOTOPE_IN_TEXT.sub(r"<sup>\1</sup>\2", escaped)
+
+
+def section_of(category: str) -> str:
+    """Return the section heading a finding of *category* is listed under."""
+    for title, categories in SECTIONS:
+        if category in categories:
+            return title
+    return SECTIONS[-1][0]
+
+
+def strength_label(confidence: float) -> tuple[str, int]:
+    """Word and number of filled dots describing how strong a finding is."""
+    if confidence >= 0.75:
+        return "Strong", 3
+    if confidence >= 0.45:
+        return "Moderate", 2
+    return "Weak", 1
+
+
+class _IsotopeTile(QWidget):
+    """A small periodic-table tile: mass number above the element symbol."""
+
+    def __init__(self, label: str, parent=None):
+        """Create a tile for an isotope label such as ``"56Fe"``."""
+        super().__init__(parent)
+        mass, symbol = _disc.mass_symbol(label)
+        self._mass = str(mass) if mass else ""
+        self._symbol = symbol or label
+        self.setToolTip(label)
+        width = 30 if len(self._symbol) <= 2 else 36
+        self.setFixedSize(width, 32)
+
+    def paintEvent(self, event):
+        """Draw the tile in the current theme."""
+        from PySide6.QtGui import QColor, QFont, QPainter, QPen
+        p = _theme.palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect().adjusted(0, 0, -1, -1)
+        painter.setPen(QPen(QColor(p.border), 1))
+        painter.setBrush(QColor(p.bg_primary))
+        painter.drawRoundedRect(rect, 4, 4)
+        small = QFont(self.font())
+        small.setPixelSize(8)
+        painter.setFont(small)
+        painter.setPen(QColor(p.text_muted))
+        painter.drawText(rect.adjusted(4, 2, 0, 0), Qt.AlignLeft | Qt.AlignTop, self._mass)
+        big = QFont(self.font())
+        big.setPixelSize(13)
+        big.setBold(True)
+        painter.setFont(big)
+        painter.setPen(QColor(p.text_primary))
+        painter.drawText(rect.adjusted(0, 8, 0, 0), Qt.AlignHCenter | Qt.AlignVCenter,
+                         self._symbol)
+        painter.end()
+
+
+class _StrengthDots(QWidget):
+    """Three dots, filled to show how strong a finding is."""
+
+    def __init__(self, filled: int, parent=None):
+        """Create the dots with *filled* of three filled."""
+        super().__init__(parent)
+        self._filled = filled
+        self.setFixedSize(26, 10)
+
+    def paintEvent(self, event):
+        """Draw the dots in the theme's accent colour."""
+        from PySide6.QtGui import QColor, QPainter
+        p = _theme.palette
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        for i in range(3):
+            painter.setBrush(QColor(p.accent if i < self._filled else p.border))
+            painter.drawEllipse(i * 9, 2, 6, 6)
+        painter.end()
+
+
+class _Card(QFrame):
+    """One finding in the panel.
+
+    The isotopes the finding is about lead the card as periodic-table tiles,
+    followed by the headline, the evidence, the samples it covers, how strong
+    it is, and a button naming the plot it adds.
     """
 
     def __init__(self, s: Suggestion, on_add, samples_text: str = "", parent=None):
@@ -2684,7 +2659,7 @@ class _Card(QFrame):
 
         Args:
             s: The suggestion to display.
-            on_add: Callback invoked with *s* when Add is pressed.
+            on_add: Callback invoked with *s* when the add button is pressed.
             samples_text: Short description of the samples the finding covers.
             parent: Optional parent widget.
         """
@@ -2692,128 +2667,85 @@ class _Card(QFrame):
         self._s = s
         self._on_add = on_add
         self._samples_text = samples_text
+        self.setObjectName("insightCard")
         self._build()
 
     def _build(self):
-        """Lay out and style the card's contents."""
-        p = _theme.palette
-        meta = _CAT_META.get(self._s.category, _CAT_META["correlation"])
-        conf_col = {
-            "high": p.success, "medium": p.warning, "low": p.disabled
-        }[self._s.confidence_label]
-
-        self.setObjectName("insightCard")
-        self.setStyleSheet(f"""
-            QFrame#insightCard {{
-                background: {p.bg_secondary};
-                border: 1px solid {p.border_subtle};
-                border-left: 3px solid {p.accent};
-                border-radius: 6px;
-            }}
-            QFrame#insightCard:hover {{
-                background: {p.bg_hover};
-                border-color: {p.border};
-                border-left: 3px solid {p.accent_hover};
-            }}
-        """)
-
+        """Lay out the card's contents."""
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 8)
-        root.setSpacing(4)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(5)
 
-        node_label = NODE_TYPE_META.get(self._s.node_type, self._s.node_type)
-        tag = QLabel(f"{meta['icon']}  {meta['label'].upper()}  ·  {node_label}")
-        tag.setStyleSheet(f"""
-            color: {p.text_muted}; font-size: 9px; font-weight: 700;
-            font-family: '{_FONT}'; background: transparent; letter-spacing: 0.5px;
-        """)
-        root.addWidget(tag)
+        if self._s.elements:
+            tiles = QHBoxLayout()
+            tiles.setSpacing(4)
+            for label in self._s.elements[:6]:
+                tiles.addWidget(_IsotopeTile(label))
+            if len(self._s.elements) > 6:
+                more = QLabel(f"+{len(self._s.elements) - 6}")
+                more.setObjectName("iMuted")
+                tiles.addWidget(more)
+            tiles.addStretch()
+            root.addLayout(tiles)
 
-        title = QLabel(self._s.title)
+        title = QLabel(isotope_markup(self._s.title))
+        title.setTextFormat(Qt.RichText)
+        title.setObjectName("iCardTitle")
         title.setWordWrap(True)
-        title.setStyleSheet(f"""
-            color: {p.text_primary}; font-size: 12px; font-weight: 600;
-            font-family: '{_FONT}'; background: transparent;
-        """)
         root.addWidget(title)
 
-        reason = QLabel(self._s.reasoning)
+        reason = QLabel(isotope_markup(self._s.reasoning))
+        reason.setTextFormat(Qt.RichText)
+        reason.setObjectName("iCardBody")
         reason.setWordWrap(True)
-        reason.setStyleSheet(f"""
-            color: {p.text_secondary}; font-size: 11px;
-            font-family: '{_FONT}'; background: transparent;
-        """)
+        reason.setTextInteractionFlags(Qt.TextSelectableByMouse)
         root.addWidget(reason)
 
         if self._samples_text:
-            samples = QLabel(f"📂  {self._samples_text}")
+            samples = QLabel(self._samples_text)
+            samples.setObjectName("iMuted")
             samples.setWordWrap(True)
-            samples.setStyleSheet(f"""
-                color: {p.text_muted}; font-size: 10px;
-                font-family: '{_FONT}'; background: transparent;
-            """)
             root.addWidget(samples)
 
         footer = QHBoxLayout()
-        footer.setSpacing(8)
-
-        cf_w = QWidget()
-        cf_w.setStyleSheet("background: transparent;")
-        cf_vl = QVBoxLayout(cf_w)
-        cf_vl.setContentsMargins(0, 0, 0, 0)
-        cf_vl.setSpacing(2)
-
-        cf_lbl = QLabel(
-            f"{self._s.confidence_label.upper()}  {int(self._s.confidence * 100)}%"
-        )
-        cf_lbl.setStyleSheet(
-            f"color: {conf_col}; font-size: 9px; font-family: '{_FONT}';"
-            " background: transparent;"
-        )
-
-        bar = QProgressBar()
-        bar.setRange(0, 100)
-        bar.setValue(int(self._s.confidence * 100))
-        bar.setFixedHeight(3)
-        bar.setTextVisible(False)
-        bar.setStyleSheet(f"""
-            QProgressBar {{ background: {p.border_subtle}; border: none; border-radius: 1px; }}
-            QProgressBar::chunk {{ background: {conf_col}; border-radius: 1px; }}
-        """)
-
-        cf_vl.addWidget(cf_lbl)
-        cf_vl.addWidget(bar)
-        footer.addWidget(cf_w, 1)
-
-        btn = QPushButton("+ Add")
-        btn.setFixedSize(52, 24)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setToolTip("Add this plot with a selector holding only these samples and elements")
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {p.accent}; color: {p.text_inverse};
-                border: none; border-radius: 4px;
-                font-size: 10px; font-weight: 600; font-family: '{_FONT}';
-            }}
-            QPushButton:hover  {{ background: {p.accent_hover}; }}
-            QPushButton:pressed {{ background: {p.accent_pressed}; }}
-        """)
-        btn.clicked.connect(self._clicked)
-        footer.addWidget(btn)
+        footer.setSpacing(6)
+        word, filled = strength_label(self._s.confidence)
+        dots = _StrengthDots(filled)
+        dots.setToolTip(f"Ranking score {self._s.confidence:.2f}")
+        footer.addWidget(dots)
+        strength = QLabel(word)
+        strength.setObjectName("iMuted")
+        footer.addWidget(strength)
+        footer.addStretch()
+        plot_name = NODE_TYPE_META.get(self._s.node_type, "plot")
+        self._add_btn = QPushButton(f"Add {plot_name.lower()}"
+                                    + ("" if plot_name.lower().endswith(("plot", "builder",
+                                                                         "chart", "matrix"))
+                                       else " plot"))
+        self._add_btn.setObjectName("iAddBtn")
+        self._add_btn.setCursor(Qt.PointingHandCursor)
+        self._add_btn.setToolTip("Adds the plot with a selector holding only these samples "
+                                 "and elements")
+        self._add_btn.clicked.connect(self._clicked)
+        footer.addWidget(self._add_btn)
         root.addLayout(footer)
 
     def _clicked(self):
-        """Hand the suggestion to the panel and flash the card as feedback."""
+        """Add the plot, and confirm on the button."""
         self._on_add(self._s)
-        p = _theme.palette
-        orig = self.styleSheet()
-        self.setStyleSheet(
-            orig.replace(
-                f"background: {p.bg_secondary}",
-                f"background: {p.bg_selected}",
-            )
-        )
-        QTimer.singleShot(450, lambda: self.setStyleSheet(orig))
+        original = self._add_btn.text()
+        self._add_btn.setText("Added")
+        self._add_btn.setEnabled(False)
+
+        def restore():
+            """Put the button back as it was."""
+            try:
+                self._add_btn.setText(original)
+                self._add_btn.setEnabled(True)
+            except RuntimeError:
+                pass
+
+        QTimer.singleShot(1400, restore)
 
 
 def selection_units(s: Suggestion, scope: AnalysisScope | None) -> list[tuple[str, tuple[str, ...]]]:
@@ -2854,7 +2786,7 @@ def describe_samples(s: Suggestion, scope: AnalysisScope | None) -> str:
         scope: The scope it was found in.
 
     Returns:
-        Text such as ``"liver (3 replicates) · kidney"``.
+        Text such as ``"liver (3 replicates), kidney"``.
     """
     units = selection_units(s, scope)
     if not units:
@@ -2863,14 +2795,37 @@ def describe_samples(s: Suggestion, scope: AnalysisScope | None) -> str:
     for label, members in units[:4]:
         if len(members) > 1:
             parts.append(f"{label} ({len(members)} replicates)")
-        elif label != members[0]:
-            parts.append(f"{members[0]}")
         else:
-            parts.append(label)
-    text = "  ·  ".join(parts)
+            parts.append(members[0])
+    text = ", ".join(parts)
     if len(units) > 4:
-        text += f"  +{len(units) - 4} more"
+        text += f" and {len(units) - 4} more"
     return text
+
+
+def describe_scope(scope: AnalysisScope) -> tuple[str, str]:
+    """Two plain sentences describing what Insights searches.
+
+    Args:
+        scope: The resolved scope.
+
+    Returns:
+        ``(samples_sentence, replicates_sentence)``.
+    """
+    n = len(scope.sample_names)
+    first = (f"{n} sample{'s' if n != 1 else ''} and {scope.total_particles:,} particles, "
+             "every element.")
+    replicated = [g for g in scope.groups if g.is_replicated]
+    if not replicated:
+        return first, "No replicates found."
+    shown = ", ".join(f"{g.name} ({len(g.members)})" for g in replicated[:4])
+    if len(replicated) > 4:
+        shown += f" and {len(replicated) - 4} more"
+    sources = {g.source for g in replicated}
+    origin = ("your selector groups" if sources == {"user"}
+              else "sample names" if sources == {"auto"}
+              else "your groups and sample names")
+    return first, f"Replicates: {shown}, from {origin}."
 
 
 _SETTINGS_KEY = "insights/node_types"
@@ -2891,8 +2846,7 @@ def _load_enabled_types() -> set[str]:
         return set(NODE_TYPE_META)
     if isinstance(raw, str):
         raw = [r for r in raw.split(",") if r]
-    chosen = {str(r) for r in (raw or [])} & set(NODE_TYPE_META)
-    return chosen if raw is not None else set(NODE_TYPE_META)
+    return {str(r) for r in (raw or [])} & set(NODE_TYPE_META)
 
 
 def _save_enabled_types(types) -> None:
@@ -2904,26 +2858,16 @@ def _save_enabled_types(types) -> None:
         _itk_log.debug("[Insights] could not save node type choice")
 
 
-_PICKER_KEY = "insights/picker_open"
+class _StayOpenMenu(QMenu):
+    """A menu that stays open while checkable items are toggled."""
 
-
-def _load_picker_open() -> bool:
-    """Read whether the plot type list was left open. Open by default."""
-    try:
-        from PySide6.QtCore import QSettings
-        raw = QSettings("IsotopeTrack", "IsotopeTrack").value(_PICKER_KEY, True)
-    except Exception:
-        return True
-    return str(raw).lower() not in ("false", "0")
-
-
-def _save_picker_open(is_open: bool) -> None:
-    """Remember whether the plot type list is open."""
-    try:
-        from PySide6.QtCore import QSettings
-        QSettings("IsotopeTrack", "IsotopeTrack").setValue(_PICKER_KEY, bool(is_open))
-    except Exception:
-        _itk_log.debug("[Insights] could not save picker state")
+    def mouseReleaseEvent(self, event):
+        """Toggle a checkable item without closing the menu."""
+        action = self.activeAction()
+        if action is not None and action.isCheckable() and action.isEnabled():
+            action.trigger()
+            return
+        super().mouseReleaseEvent(event)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2937,11 +2881,11 @@ class SmartInsightsPanel(QWidget):
     toggled by the button from :func:`make_insights_toggle_button`.
 
     The panel searches on its own: when it is shown, when the loaded samples or
-    their replicate groups change, and when another plot node type is ticked.
-    Every loaded sample and every element is searched, whatever is selected on
-    the canvas. The node type chips choose which kinds of plot to search for;
-    each card then builds its node with only the samples and elements the
-    finding is about.
+    their replicate groups change, and when another plot type is picked. Every
+    loaded sample and every element is searched, whatever is selected on the
+    canvas. The plot types menu chooses which kinds of plot to search for;
+    findings are listed under section headings, and each card builds its plot
+    with only the samples and elements the finding is about.
 
     Use :func:`integrate_insights_panel` to construct and attach one rather than
     instantiating this directly.
@@ -2969,7 +2913,7 @@ class SmartInsightsPanel(QWidget):
         self._scope: AnalysisScope | None = None
         self._retired: list[_AnalysisWorker] = []
         self._enabled: set[str] = _load_enabled_types()
-        self.setMinimumWidth(250)
+        self.setMinimumWidth(270)
 
         self._build_ui()
         self._apply_theme()
@@ -2985,110 +2929,69 @@ class SmartInsightsPanel(QWidget):
             _itk_log.debug("[Insights] scene has no node_selection_changed signal")
 
     def _build_ui(self):
-        """Assemble the header, scope strip, node type chips, cards and footer."""
+        """Assemble the header, scope summary, plot type menu and finding list."""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         self._hdr = QFrame()
         self._hdr.setObjectName("iHdr")
-        self._hdr.setFixedHeight(52)
-        hl = QHBoxLayout(self._hdr)
-        hl.setContentsMargins(12, 0, 8, 0)
-        hl.setSpacing(6)
+        head = QVBoxLayout(self._hdr)
+        head.setContentsMargins(14, 12, 10, 10)
+        head.setSpacing(6)
 
-        self._title_lbl = QLabel("✦  Insights")
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        self._title_lbl = QLabel("Insights")
         self._title_lbl.setObjectName("iTitleLbl")
-
         self._count_lbl = QLabel("")
         self._count_lbl.setObjectName("iCountLbl")
-
-        tleft = QVBoxLayout()
-        tleft.setSpacing(1)
-        tleft.addWidget(self._title_lbl)
-        tleft.addWidget(self._count_lbl)
-
-        self._refresh_btn = QPushButton("↺")
+        titles.addWidget(self._title_lbl)
+        titles.addWidget(self._count_lbl)
+        top.addLayout(titles)
+        top.addStretch()
+        self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setObjectName("iRefreshBtn")
-        self._refresh_btn.setFixedSize(26, 26)
+        self._refresh_btn.setFixedSize(28, 28)
         self._refresh_btn.setToolTip("Search again from scratch")
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
         self._refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_btn, 0, Qt.AlignTop)
+        head.addLayout(top)
 
-        hl.addLayout(tleft)
-        hl.addStretch()
-        hl.addWidget(self._refresh_btn)
-        root.addWidget(self._hdr)
-
-        self._strip = QFrame()
-        self._strip.setObjectName("iStrip")
-        sl = QVBoxLayout(self._strip)
-        sl.setContentsMargins(12, 4, 12, 4)
-        sl.setSpacing(1)
         self._sample_lbl = QLabel("")
-        self._sample_lbl.setObjectName("iSampleLbl")
+        self._sample_lbl.setObjectName("iScopeLbl")
         self._sample_lbl.setWordWrap(True)
         self._group_lbl = QLabel("")
-        self._group_lbl.setObjectName("iSampleLbl")
+        self._group_lbl.setObjectName("iScopeLbl")
         self._group_lbl.setWordWrap(True)
-        sl.addWidget(self._sample_lbl)
-        sl.addWidget(self._group_lbl)
-        root.addWidget(self._strip)
+        head.addWidget(self._sample_lbl)
+        head.addWidget(self._group_lbl)
 
-        self._chips_frame = QFrame()
-        self._chips_frame.setObjectName("iChips")
-        chips_v = QVBoxLayout(self._chips_frame)
-        chips_v.setContentsMargins(8, 6, 8, 8)
-        chips_v.setSpacing(4)
-
-        chips_head = QHBoxLayout()
-        chips_head.setSpacing(4)
-        self._pick_btn = QPushButton("")
-        self._pick_btn.setObjectName("iPickBtn")
-        self._pick_btn.setCursor(Qt.PointingHandCursor)
-        self._pick_btn.setFlat(True)
-        self._pick_btn.setToolTip("Show or hide the plot types Insights searches for")
-        self._pick_btn.clicked.connect(self._toggle_picker)
-        chips_head.addWidget(self._pick_btn)
-        chips_head.addStretch()
-        for text, slot in (("All", self._select_all), ("None", self._select_none)):
-            link = QPushButton(text)
-            link.setObjectName("iLink")
-            link.setCursor(Qt.PointingHandCursor)
-            link.setFlat(True)
-            link.clicked.connect(slot)
-            chips_head.addWidget(link)
-        chips_v.addLayout(chips_head)
-
-        self._chip_box = QWidget()
-        self._chip_box.setObjectName("iChipBox")
-        chip_grid = QGridLayout(self._chip_box)
-        chip_grid.setContentsMargins(0, 0, 0, 0)
-        chip_grid.setHorizontalSpacing(6)
-        chip_grid.setVerticalSpacing(6)
-        self._chips: dict[str, QPushButton] = {}
-        for i, key in enumerate(node_type_keys()):
-            chip = QPushButton(NODE_TYPE_META[key])
-            chip.setObjectName("iChip")
-            chip.setCheckable(True)
-            chip.setChecked(key in self._enabled)
-            chip.setCursor(Qt.PointingHandCursor)
-            chip.setFixedHeight(26)
-            chip.setToolTip(
-                f"Search for findings shown as {NODE_TYPE_META[key].lower()} plots.\n"
-                "Right-click to show only this type."
-            )
-            chip.setContextMenuPolicy(Qt.CustomContextMenu)
-            chip.customContextMenuRequested.connect(
-                lambda _pos, k=key: self._show_only(k))
-            chip.toggled.connect(lambda checked, k=key: self._toggle_type(k, checked))
-            chip_grid.addWidget(chip, i // 2, i % 2)
-            self._chips[key] = chip
-        chips_v.addWidget(self._chip_box)
-        root.addWidget(self._chips_frame)
-        self._picker_open = _load_picker_open()
-        self._chip_box.setVisible(self._picker_open)
-        self._update_pick_label()
+        self._types_btn = QToolButton()
+        self._types_btn.setObjectName("iTypesBtn")
+        self._types_btn.setPopupMode(QToolButton.InstantPopup)
+        self._types_btn.setCursor(Qt.PointingHandCursor)
+        self._types_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._types_menu = _StayOpenMenu(self._types_btn)
+        self._type_actions = {}
+        self._types_menu.addAction("Pick all", self._select_all)
+        self._types_menu.addAction("Pick none", self._select_none)
+        self._types_menu.addSeparator()
+        for key in node_type_keys():
+            action = self._types_menu.addAction(NODE_TYPE_META[key])
+            action.setCheckable(True)
+            action.setChecked(key in self._enabled)
+            action.toggled.connect(lambda checked, k=key: self._toggle_type(k, checked))
+            self._type_actions[key] = action
+        self._types_btn.setMenu(self._types_menu)
+        types_row = QHBoxLayout()
+        types_row.addWidget(self._types_btn)
+        types_row.addStretch()
+        head.addLayout(types_row)
+        root.addWidget(self._hdr)
 
         self._bar = QProgressBar()
         self._bar.setObjectName("iBar")
@@ -3100,199 +3003,151 @@ class SmartInsightsPanel(QWidget):
 
         self._status = QLabel("")
         self._status.setObjectName("iStatus")
-        self._status.setAlignment(Qt.AlignCenter)
+        self._status.setWordWrap(True)
+        self._status.setVisible(False)
         root.addWidget(self._status)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
         self._card_w = QWidget()
         self._card_w.setObjectName("iCardW")
         self._card_layout = QVBoxLayout(self._card_w)
-        self._card_layout.setContentsMargins(8, 8, 8, 8)
-        self._card_layout.setSpacing(6)
+        self._card_layout.setContentsMargins(10, 6, 10, 12)
+        self._card_layout.setSpacing(8)
         self._card_layout.addStretch()
         scroll.setWidget(self._card_w)
         root.addWidget(scroll, 1)
 
-        self._ftr = QFrame()
-        self._ftr.setObjectName("iFtr")
-        self._ftr.setFixedHeight(24)
-        fl = QHBoxLayout(self._ftr)
-        fl.setContentsMargins(12, 0, 12, 0)
-        self._hint_lbl = QLabel("+ Add builds the node with only the finding's samples and elements")
-        self._hint_lbl.setObjectName("iHintLbl")
-        fl.addStretch()
-        fl.addWidget(self._hint_lbl)
-        root.addWidget(self._ftr)
+        self._chips = self._type_actions
+        self._update_types_label()
 
     def _apply_theme(self):
-        """Restyle the panel chrome from the current theme palette."""
+        """Restyle the panel from the current theme palette."""
         p = _theme.palette
         self.setStyleSheet(f"""
-            SmartInsightsPanel {{
-                background: {p.bg_primary};
-                border-left: 1px solid {p.border};
-            }}
-            QFrame#iHdr {{
-                background: {p.bg_secondary};
-                border-bottom: 1px solid {p.border};
-            }}
-            QFrame#iChips {{
-                background: {p.bg_secondary};
-                border-bottom: 1px solid {p.border};
-            }}
-            QPushButton#iChip {{
-                background: {p.bg_primary}; color: {p.text_secondary};
-                border: 1px solid {p.border_subtle}; border-radius: 13px;
-                padding: 0 10px; font-size: 10px; font-weight: 600;
-                font-family: '{_FONT}'; text-align: left;
-            }}
-            QPushButton#iChip:hover {{
-                background: {p.bg_hover}; color: {p.text_primary};
-                border-color: {p.border};
-            }}
-            QPushButton#iChip:checked {{
-                background: {p.accent_soft}; color: {p.accent};
-                border: 1px solid {p.accent};
-            }}
-            QPushButton#iLink {{
-                background: transparent; color: {p.accent}; border: none;
-                font-size: 10px; font-family: '{_FONT}'; padding: 0 4px;
-            }}
-            QPushButton#iLink:hover {{ color: {p.accent_hover}; }}
-            QPushButton#iPickBtn {{
-                background: transparent; color: {p.text_muted}; border: none;
-                font-size: 9px; font-weight: 700; font-family: '{_FONT}';
-                letter-spacing: 0.5px; text-align: left; padding: 0;
-            }}
-            QPushButton#iPickBtn:hover {{ color: {p.text_primary}; }}
-            QWidget#iChipBox {{ background: transparent; }}
-            QFrame#iStrip {{
-                background: {p.bg_tertiary};
-                border-bottom: 1px solid {p.border_subtle};
-            }}
-            QFrame#iFtr {{
-                background: {p.bg_secondary};
-                border-top: 1px solid {p.border};
-            }}
-            QLabel#iTitleLbl {{
-                color: {p.text_primary}; font-size: 13px; font-weight: 700;
-                font-family: '{_FONT}'; background: transparent;
-            }}
-            QLabel#iCountLbl {{
-                color: {p.text_muted}; font-size: 10px;
-                font-family: '{_FONT}'; background: transparent;
-            }}
-            QLabel#iSampleLbl {{
-                color: {p.text_secondary}; font-size: 10px;
-                font-family: '{_FONT}'; background: transparent;
-            }}
-            QLabel#iStatus {{
-                color: {p.text_muted}; font-size: 10px;
-                font-family: '{_FONT}'; background: transparent; padding: 2px;
-            }}
-            QLabel#iHintLbl {{
-                color: {p.text_muted}; font-size: 9px;
-                font-family: '{_FONT}'; background: transparent;
-            }}
-            QPushButton#iRefreshBtn {{
-                background: transparent; color: {p.text_muted};
-                border: 1px solid {p.border}; border-radius: 4px;
-                font-size: 13px;
-            }}
-            QPushButton#iRefreshBtn:hover {{
-                color: {p.text_primary}; border-color: {p.accent};
-            }}
-            QProgressBar#iBar {{
-                background: {p.bg_secondary}; border: none;
-            }}
+            SmartInsightsPanel {{ background: {p.bg_primary}; border-left: 1px solid {p.border}; }}
+            QFrame#iHdr {{ background: {p.bg_primary}; border-bottom: 1px solid {p.border_subtle}; }}
+            QLabel#iTitleLbl {{ color: {p.text_primary}; font-size: 15px; font-weight: 600;
+                               background: transparent; }}
+            QLabel#iCountLbl {{ color: {p.text_muted}; font-size: 11px; background: transparent; }}
+            QLabel#iScopeLbl {{ color: {p.text_secondary}; font-size: 11px; background: transparent; }}
+            QLabel#iStatus {{ color: {p.text_muted}; font-size: 11px; background: transparent;
+                             padding: 6px 14px 0 14px; }}
+            QLabel#iSection {{ color: {p.text_primary}; font-size: 12px; font-weight: 600;
+                              background: transparent; padding: 10px 2px 0 2px; }}
+            QLabel#iSectionCount {{ color: {p.text_muted}; font-size: 11px; background: transparent;
+                                   padding: 10px 2px 0 2px; }}
+            QLabel#iPlaceholder {{ color: {p.text_secondary}; font-size: 12px; background: transparent;
+                                  padding: 28px 12px; }}
+            QToolButton#iTypesBtn {{ background: {p.bg_secondary}; color: {p.text_primary};
+                                    border: 1px solid {p.border}; border-radius: 6px;
+                                    padding: 4px 10px; font-size: 11px; }}
+            QToolButton#iTypesBtn:hover {{ border-color: {p.accent}; }}
+            QToolButton#iTypesBtn::menu-indicator {{ image: none; width: 0; }}
+            QPushButton#iRefreshBtn {{ background: transparent; color: {p.text_secondary};
+                                      border: 1px solid {p.border_subtle}; border-radius: 6px;
+                                      font-size: 15px; }}
+            QPushButton#iRefreshBtn:hover {{ color: {p.text_primary}; border-color: {p.accent}; }}
+            QPushButton#iRefreshBtn:disabled {{ color: {p.disabled}; }}
+            QFrame#insightCard {{ background: {p.bg_secondary}; border: 1px solid {p.border_subtle};
+                                 border-radius: 8px; }}
+            QFrame#insightCard:hover {{ border-color: {p.border_strong}; }}
+            QFrame#insightCard QLabel {{ background: transparent; }}
+            QLabel#iCardTitle {{ color: {p.text_primary}; font-size: 13px; font-weight: 600; }}
+            QLabel#iCardBody {{ color: {p.text_secondary}; font-size: 11px; }}
+            QLabel#iMuted {{ color: {p.text_muted}; font-size: 10px; }}
+            QPushButton#iAddBtn {{ background: transparent; color: {p.accent};
+                                  border: 1px solid {p.accent}; border-radius: 6px;
+                                  padding: 3px 10px; font-size: 11px; font-weight: 600; }}
+            QPushButton#iAddBtn:hover {{ background: {p.accent}; color: {p.text_inverse}; }}
+            QPushButton#iAddBtn:disabled {{ color: {p.success}; border-color: {p.success}; }}
+            QProgressBar#iBar {{ background: {p.bg_primary}; border: none; }}
             QProgressBar#iBar::chunk {{ background: {p.accent}; }}
-            QWidget#iCardW {{ background: transparent; }}
-            QScrollArea {{ border: none; background: transparent; }}
-            QScrollBar:vertical {{
-                background: {p.bg_secondary}; width: 5px; border-radius: 2px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {p.border}; border-radius: 2px; min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{ background: {p.text_muted}; }}
+            QWidget#iCardW {{ background: {p.bg_primary}; }}
+            QScrollArea {{ border: none; background: {p.bg_primary}; }}
+            QScrollBar:vertical {{ background: transparent; width: 6px; }}
+            QScrollBar::handle:vertical {{ background: {p.border}; border-radius: 3px; min-height: 24px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
         """)
         if self._suggestions:
             self._rebuild_cards()
 
-    def _update_pick_label(self):
-        """Show how many plot types are ticked, and whether the list is open."""
-        arrow = "▾" if self._picker_open else "▸"
-        self._pick_btn.setText(
-            f"{arrow}  SEARCH FOR  ·  {len(self._enabled)} of {len(NODE_TYPE_META)} plot types")
-
-    def _toggle_picker(self):
-        """Open or fold the list of plot types."""
-        self._picker_open = not self._picker_open
-        self._chip_box.setVisible(self._picker_open)
-        _save_picker_open(self._picker_open)
-        self._update_pick_label()
+    def _update_types_label(self):
+        """Say on the plot types button how many types are being searched."""
+        n, total = len(self._enabled), len(NODE_TYPE_META)
+        if n == total:
+            text = f"Plot types: all {total}  ▾"
+        elif n == 0:
+            text = "Plot types: none  ▾"
+        elif n == 1:
+            text = f"Plot types: {NODE_TYPE_META[next(iter(self._enabled))].lower()}  ▾"
+        else:
+            text = f"Plot types: {n} of {total}  ▾"
+        self._types_btn.setText(text)
 
     def enabled_node_types(self) -> set[str]:
-        """Return the node types currently ticked."""
+        """Return the node types currently picked."""
         return set(self._enabled)
 
     def _toggle_type(self, key: str, checked: bool):
-        """Tick or untick one node type and search for it if needed.
+        """Pick or drop one plot type and search for it if needed.
 
         Args:
             key: The node type.
-            checked: Whether it is now ticked.
+            checked: Whether it is now picked.
         """
         if checked:
             self._enabled.add(key)
         else:
             self._enabled.discard(key)
         _save_enabled_types(self._enabled)
-        self._update_pick_label()
+        self._update_types_label()
         if self.isVisible():
             self.scan()
 
     def _set_enabled(self, types):
-        """Tick exactly *types*, updating the chips without a search per chip.
+        """Pick exactly *types*, updating the menu without a search per item.
 
         Args:
-            types: Node types to tick.
+            types: Node types to pick.
         """
         self._enabled = set(types)
-        for key, chip in self._chips.items():
-            chip.blockSignals(True)
-            chip.setChecked(key in self._enabled)
-            chip.blockSignals(False)
+        for key, action in self._type_actions.items():
+            action.blockSignals(True)
+            action.setChecked(key in self._enabled)
+            action.blockSignals(False)
         _save_enabled_types(self._enabled)
-        self._update_pick_label()
+        self._update_types_label()
         if self.isVisible():
             self.scan()
 
     def _select_all(self):
-        """Tick every node type."""
+        """Pick every plot type."""
         self._set_enabled(NODE_TYPE_META)
 
     def _select_none(self):
-        """Untick every node type."""
+        """Drop every plot type."""
         self._set_enabled(())
 
     def _show_only(self, key: str):
-        """Tick one node type and untick the rest.
+        """Pick one plot type and drop the rest.
 
         Args:
             key: The node type to keep.
         """
         self._set_enabled({key})
 
+    def _set_status(self, text: str):
+        """Show a short progress line under the header, or hide it when empty."""
+        self._status.setText(text)
+        self._status.setVisible(bool(text))
+
     def scan(self, force: bool = False):
-        """Search for whatever the ticked node types still need.
+        """Search for whatever the picked plot types still need.
 
         Detectors already run against the current scope are not run again, so
-        ticking another node type only pays for the detectors it adds. A change
+        picking another plot type only pays for the detectors it adds. A change
         of loaded samples or replicate groups discards everything found so far.
 
         Args:
@@ -3308,7 +3163,7 @@ class SmartInsightsPanel(QWidget):
         if not scope.sample_names:
             self._stop_worker()
             self._bar.setVisible(False)
-            self._status.setText("")
+            self._set_status("")
             self._count_lbl.setText("")
             self._suggestions = []
             self._update_chip_counts()
@@ -3326,15 +3181,17 @@ class SmartInsightsPanel(QWidget):
         self._bar.setVisible(True)
         self._bar.setRange(0, 0)
         self._refresh_btn.setEnabled(False)
+        self._count_lbl.setText("Searching…")
         if not self._found:
             self._clear_cards()
-            self._show_placeholder("Searching every sample and element…")
+            self._show_placeholder("Searching every sample and element. Findings appear "
+                                   "here as each check finishes.")
 
         particles, sample_idx = gather_scope_data(self._scene, self._pw, scope)
         order = [k for k in category_keys() if k in needed]
         self._worker = _AnalysisWorker(scope, particles, sample_idx,
                                        categories=order, dedupe=False)
-        self._worker.progress.connect(self._status.setText)
+        self._worker.progress.connect(self._set_status)
         self._worker.partial.connect(
             lambda found, detector, key=scope.key: self._on_partial(found, detector, key))
         self._worker.results_ready.connect(
@@ -3347,7 +3204,7 @@ class SmartInsightsPanel(QWidget):
         self.scan(force=True)
 
     def run_category(self, key: str, force: bool = False):
-        """Show only the node types one detector feeds, and search for them.
+        """Show only the plot types one detector feeds, and search for them.
 
         Kept for callers of the earlier, category-driven panel.
 
@@ -3402,23 +3259,22 @@ class SmartInsightsPanel(QWidget):
                                if w in self._retired else None)
 
     def _update_sample_strip(self, scope: AnalysisScope | None = None):
-        """Show which samples are searched and how they group into replicates.
+        """Describe which samples are searched and how they group into replicates.
 
         Args:
             scope: Scope to describe. Resolved from the scene when omitted.
         """
         if scope is None:
             scope = resolve_scope(self._scene, self._pw)
-        names = list(scope.sample_names)
-        if not names:
-            self._sample_lbl.setText("No samples loaded")
+        if not scope.sample_names:
+            self._sample_lbl.setText("No samples loaded yet.")
             self._group_lbl.setText("")
+            self._group_lbl.setVisible(False)
             return
-        self._sample_lbl.setText(
-            f"📂  {len(names)} sample{'s' if len(names) != 1 else ''} · "
-            f"{scope.total_particles:,} particles · every element"
-        )
-        self._group_lbl.setText(f"≡  {scope.grouping_label}")
+        first, second = describe_scope(scope)
+        self._sample_lbl.setText(first)
+        self._group_lbl.setText(second)
+        self._group_lbl.setVisible(True)
 
     def _on_partial(self, suggestions: list[Suggestion], detector: str, scope_key: str):
         """Show one detector's findings as soon as it finishes.
@@ -3433,10 +3289,10 @@ class SmartInsightsPanel(QWidget):
             return
         self._found.extend(suggestions)
         self._ran.add(detector)
-        self._render()
+        self._render(searching=True)
 
     def _on_done(self, keys=frozenset(), scope_key: str = ""):
-        """Finish a search and start another if more plot types were ticked meanwhile.
+        """Finish a search and start another if more plot types were picked meanwhile.
 
         Args:
             keys: The detectors that ran.
@@ -3445,7 +3301,7 @@ class SmartInsightsPanel(QWidget):
         self._worker = None
         self._pending = set()
         self._bar.setVisible(False)
-        self._status.setText("")
+        self._set_status("")
         self._refresh_btn.setEnabled(True)
         if self._scope is None or (scope_key and scope_key != self._scope.key):
             return
@@ -3456,86 +3312,107 @@ class SmartInsightsPanel(QWidget):
             self.scan()
 
     def visible_suggestions(self) -> list[Suggestion]:
-        """Return the cards for the ticked node types, ranked and de-duplicated."""
+        """Return the cards for the picked plot types, ranked and de-duplicated."""
         wanted = [s for s in self._found if s.node_type in self._enabled]
         limit = FOCUSED_CARD_LIMIT if len(self._enabled) == 1 else None
         return _dedupe_suggestions(wanted, limit)
 
     def _update_chip_counts(self):
-        """Write how many findings each node type has on its chip."""
-        for key, chip in self._chips.items():
+        """Write how many findings each plot type has into the plot types menu."""
+        for key, action in self._type_actions.items():
             label = NODE_TYPE_META[key]
             searched = set(analysers_for({key})) <= self._ran and self._scope is not None
             if not searched:
-                chip.setText(label)
+                action.setText(label)
                 continue
             count = len(_dedupe_suggestions(
                 [s for s in self._found if s.node_type == key], FOCUSED_CARD_LIMIT))
-            chip.setText(f"{label}   {count}" if count else f"{label}   –")
+            action.setText(f"{label}  ({count})" if count else f"{label}  (none)")
 
-    def _render(self):
-        """Show the cards for the ticked node types."""
+    def _render(self, searching: bool = False):
+        """Show the cards for the picked plot types, under their section headings.
+
+        Args:
+            searching: Whether detectors are still running, which changes the
+                count line and keeps an empty list from reading as final.
+        """
         self._suggestions = self.visible_suggestions()
         self._update_chip_counts()
         n = len(self._suggestions)
-        self._count_lbl.setText(
-            f"{n} finding{'s' if n != 1 else ''}" if n else "Nothing found"
-        )
+        if searching or self._worker is not None:
+            self._count_lbl.setText(f"Searching… {n} finding{'s' if n != 1 else ''} so far")
+        else:
+            self._count_lbl.setText(f"{n} finding{'s' if n != 1 else ''}" if n
+                                    else "No findings")
         if self._suggestions:
             self._rebuild_cards()
-        else:
+        elif not (searching or self._worker is not None):
             self._clear_cards()
             self._show_empty()
 
     def _rebuild_cards(self):
-        """Replace the card list with one card per current suggestion."""
+        """Replace the list with section headings and one card per finding."""
         self._clear_cards()
+        by_section: dict[str, list[Suggestion]] = {}
         for s in self._suggestions:
-            card = _Card(s, on_add=self._add_suggestion,
-                         samples_text=describe_samples(s, self._scope))
-            self._card_layout.insertWidget(self._card_layout.count() - 1, card)
+            by_section.setdefault(section_of(s.category), []).append(s)
+        for title, _cats in SECTIONS:
+            items = by_section.get(title)
+            if not items:
+                continue
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            heading = QLabel(title)
+            heading.setObjectName("iSection")
+            count = QLabel(str(len(items)))
+            count.setObjectName("iSectionCount")
+            row.addWidget(heading)
+            row.addStretch()
+            row.addWidget(count)
+            holder = QWidget()
+            holder.setObjectName("iSectionRow")
+            holder.setLayout(row)
+            self._card_layout.insertWidget(self._card_layout.count() - 1, holder)
+            for s in items:
+                card = _Card(s, on_add=self._add_suggestion,
+                             samples_text=describe_samples(s, self._scope))
+                self._card_layout.insertWidget(self._card_layout.count() - 1, card)
 
     def _empty_message(self) -> str:
-        """Explain why there are no cards.
+        """Explain why there are no cards, and what to do about it.
 
         Returns:
-            A two-line message for the empty-state label.
+            A short message for the empty list.
         """
         scope = self._scope
         if scope is None or not scope.sample_names:
-            return "No sample data loaded.\nLoad a sample to generate insights."
+            return ("Load a sample to start. Insights searches every sample and element on "
+                    "its own.")
         if not self._enabled:
-            return "No plot type ticked.\nTick the plots you want Insights to search for."
+            return "No plot types picked. Choose some under Plot types."
         if scope.total_particles < 5:
-            return f"Only {scope.total_particles} particle(s) loaded.\nToo few to analyse."
-        return (
-            f"Searched {scope.total_particles:,} particles across "
-            f"{len(scope.sample_names)} sample(s).\n"
-            "Nothing stood out for the ticked plot types."
-        )
+            return f"Only {scope.total_particles} particles are loaded, too few to search."
+        return ("Nothing stands out for the plot types you picked. Pick more plot types, or "
+                "load more samples to compare.")
 
     def _show_empty(self):
-        """Display the empty-state message in place of the cards."""
+        """Show the empty-state message in place of the cards."""
         self._show_placeholder(self._empty_message())
 
     def _show_placeholder(self, text: str):
-        """Put a centred muted message where the cards would go.
+        """Put a short message where the cards would go.
 
         Args:
             text: Message to display.
         """
-        p = _theme.palette
         lbl = QLabel(text)
+        lbl.setObjectName("iPlaceholder")
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet(
-            f"color: {p.text_muted}; font-size: 11px; font-family: '{_FONT}';"
-            " padding: 24px; background: transparent;"
-        )
         self._card_layout.insertWidget(self._card_layout.count() - 1, lbl)
 
     def _clear_cards(self):
-        """Remove every card, leaving the trailing stretch in place."""
+        """Remove every card and heading, leaving the trailing stretch in place."""
         while self._card_layout.count() > 1:
             item = self._card_layout.takeAt(0)
             if item.widget():
@@ -3626,7 +3503,7 @@ class SmartInsightsPanel(QWidget):
                     f"[Insights] could not resolve isotopes for {list(s.elements)}; "
                     "the selector keeps every element"
                 )
-                self._flash_status("Could not narrow the elements — keeping all of them")
+                self._flash_status("Could not narrow the elements, so the selector keeps all of them")
 
         single = len(units) == 1
         node_type = "sample_selector" if single else "multiple_sample_selector"
@@ -3667,9 +3544,9 @@ class SmartInsightsPanel(QWidget):
             message: Text to show.
             msec: How long to leave it up.
         """
-        self._status.setText(message)
+        self._set_status(message)
         QTimer.singleShot(msec, lambda: (
-            self._status.setText("") if self._status.text() == message else None
+            self._set_status("") if self._status.text() == message else None
         ))
 
     def showEvent(self, event):
