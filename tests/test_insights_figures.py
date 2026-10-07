@@ -113,7 +113,11 @@ ELEMENTS = {
 }
 
 
-@pytest.mark.parametrize("key", sorted(F.DESIGNS))
+TYPE_KEYS = ("types_overview", "particle_type")
+"""Stories drawn from a type card's own definition, tested in test_insights_types."""
+
+
+@pytest.mark.parametrize("key", sorted(k for k in F.DESIGNS if k not in TYPE_KEYS))
 def test_every_design_draws(app, stream, key):
     """Each story draws without a panel error and ends with its legend."""
     from results.insights.discovery import _figure_spec
@@ -437,3 +441,30 @@ def test_refresh_button_draws_without_a_font_glyph(app):
     btn.render(image)
     painted = sum(1 for x in range(28) for y in range(28) if image.pixelColor(x, y).alpha())
     assert painted > 20
+
+
+def test_new_panels_join_the_stories_when_the_data_allows(app, stream):
+    """Detectability, bubble strips, sunbursts and mineral ternaries appear only with the data they need."""
+    parts, table = stream
+    sig = rr.Suggestion("t", "r", "signature", 0.8, "x", elements=("140Ce",), explain_key="signature")
+    plain = F.context_from(parts, ["140Ce"], {}, multi_sample=True)
+    kinds = [p["kind"] for p, _c in F._signature(sig, plain)]
+    assert not any(p.get("ptl_minor") for p, _c in F._signature(sig, plain))
+    limits = {"140Ce": {"mass": {"S1": 0.02, "S2": 0.02}}}
+    ctx = F.context_from(parts, ["140Ce"], limits, multi_sample=True)
+    assert ctx.main in ("206Pb", "207Pb", "56Fe")
+    story = F._signature(sig, ctx)
+    checks = [p for p, _c in story if p.get("ptl_minor")]
+    assert checks and checks[0]["ptl_minor"] == "140Ce" and len(story) == len(kinds) + 1
+    comp = rr.Suggestion("t", "r", "comparison", 0.8, "x", elements=("56Fe",), explain_key="comparison")
+    assert any(p["kind"] == "strip" for p, _c in F._comparison(comp, ctx))
+    mix = rr.Suggestion("t", "r", "composition", 0.8, "x", elements=("56Fe", "48Ti", "140Ce"),
+                        explain_key="composition")
+    pies = [p for p, _c in F._composition(mix, ctx) if p["kind"] == "pie"]
+    assert pies[0]["pie_mode"] == "sunburst"
+    tern = [p for p, _c in F._composition(mix, ctx) if p["kind"] == "ternary"]
+    assert tern[0]["a"] == "moles:56Fe" and "ilmenite" in tern[0]["tern_refs"]
+    spec = F.figure_for(sig, ctx)
+    table.detection_limits = {"140Ce": {"mass": {"S1": 0.02, "S2": 0.02}}}
+    table.sample_members = {"S1": ["S1"], "S2": ["S2"]}
+    assert af.render_problems(spec, table) == []

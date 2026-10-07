@@ -41,6 +41,7 @@ class FigureContext:
         groups: How many samples or replicate groups the figure compares.
         used: ``(prefix, label)`` pairs whose limit a panel drew, filled while
             the story is built so the legend can quote their values.
+        main: The element detected in most of the figure's particles.
     """
 
     quantities: set = field(default_factory=lambda: {"counts"})
@@ -49,6 +50,7 @@ class FigureContext:
     multi_sample: bool = False
     groups: int = 1
     used: set = field(default_factory=set)
+    main: str = ""
 
 
 def _panel(kind: str, title: str, **settings) -> dict:
@@ -215,6 +217,72 @@ def _test_sentence(groups: int, what: str, log_values: bool = True) -> str:
             "much as p.")
 
 
+def _crust_known(minor: str, major: str) -> bool:
+    """Whether the upper crust gives a ratio for *minor* to *major*."""
+    from results.figure_builder.core.references import crust_ratio
+    try:
+        crust_ratio(minor, major)
+    except ValueError:
+        return False
+    return True
+
+
+def _can_check(ctx: FigureContext, major: str, minor: str) -> bool:
+    """Whether a detectability check of *minor* in *major* particles can be drawn.
+
+    It needs element masses, a calibrated mass detection limit for the minor
+    element and an upper-crust value for both elements.
+    """
+    return ("mass" in ctx.quantities and ("mass", minor) in ctx.limits and bool(major)
+            and major != minor and _crust_known(minor, major))
+
+
+def _detect_box(ctx: FigureContext, major: str, minor: str, title: str, **grouping) -> dict:
+    """Box plot of the major element's mass with the mass needed to see *minor*."""
+    return _panel("box", title, value=f"mass:{major}", log_y=True, ptl_minor=minor,
+                  y_label=f"{major} mass (fg)", **grouping)
+
+
+def _detect_caption(major: str, minor: str) -> str:
+    """Sentence explaining a detectability panel."""
+    return (f"The dashed line is the {major} mass a particle needs before {minor}, present at the "
+            f"upper-crust {minor}:{major} ratio, would clear its detection limit. Particles below "
+            f"it may hold {minor} unseen, so a missing {minor} there says nothing.")
+
+
+def _strip(ctx: FigureContext, el: str, title: str, by: str = "sample") -> dict:
+    """Every particle as a dot per sample, coloured by its element combination."""
+    prefix = "mass" if "mass" in ctx.quantities else "counts"
+    return _panel("strip", title, value=_expr(prefix, el), group_by=by, log_y=True,
+                  strip_horizontal=True, strip_color="combination", strip_size="n_elements",
+                  strip_summary="median_iqr", top_n=5, marker_size=10, alpha=0.6,
+                  x_label=f"{el} {QUANTITY_NAMES[prefix]}")
+
+
+def _strip_caption(el: str) -> str:
+    """Sentence explaining a bubble dot plot."""
+    return (f"Every {el} particle as a dot, coloured by the elements found with it and larger "
+            "when it carries more elements; the bar marks the median and quartiles.")
+
+
+def _minerals_for(elements) -> list[str]:
+    """Reference minerals holding at least two of *elements*, for a ternary."""
+    from results.figure_builder.core import references as R
+    try:
+        symbols = [R.symbol_of(e) for e in elements]
+    except ValueError:
+        return []
+    out = []
+    for name, formula in R.minerals().items():
+        try:
+            atoms = R.parse_formula(formula)
+        except ValueError:
+            continue
+        if sum(1 for sym in symbols if atoms.get(sym)) >= 2:
+            out.append(name)
+    return out[:6]
+
+
 def _interference(s, ctx):
     parent, child = s.elements[0], s.elements[1]
     species = _detail(s, "Likely species", f"an ion of {parent}")
@@ -373,6 +441,8 @@ def _comparison(s, ctx):
                          group_by="sample", y_label="Particles with it (%)", error="none"),
                   f"How often {el} is detected at all in each sample; a sample can carry more "
                   f"{el} per particle and still have fewer particles with it."))
+    story.append((_strip(ctx, el, f"Every {el} particle by sample"), _strip_caption(el)
+                  + " A shift carried by one colour points to one particle type changing."))
     return story
 
 
@@ -401,6 +471,8 @@ def _replicates(s, ctx):
          "transport or dilution rather than to the particles."),
         (_histogram(ctx, "counts", el, f"{el} counts by replicate", group_by="sample"),
          "Replicates should share the shape of the distribution, not only its middle."),
+        (_strip(ctx, el, f"Every {el} particle by replicate"), _strip_caption(el)
+         + " Replicates should show the same mix of colours."),
     ]
 
 
@@ -422,6 +494,12 @@ def _signature(s, ctx):
                           f"{el} particles against the detection limit (dashed line); if most "
                           "sit close to it, the sample with fewer may simply have smaller "
                           f"{el} particles that fall below it."))
+    host = ctx.main
+    if _can_check(ctx, host, el):
+        story.append((_detect_box(ctx, host, el, f"Could {el} be seen in {host} particles?",
+                                  group_by="sample"),
+                      _detect_caption(host, el) + f" A sample whose {host} particles mostly sit "
+                      f"below the line cannot show whether they carry {el}."))
     return story
 
 
@@ -483,7 +561,7 @@ def _correlation(s, ctx):
 def _cooccurrence(s, ctx):
     rare, common = s.elements[0], s.elements[1]
     together = s.explain_key == "cooccurrence_with"
-    return [
+    story = [
         (_panel("combinations", f"Combinations in particles with {rare}", top_n=12,
                 filter=f"{rare} > 0"),
          f"{rare} and {common} "
@@ -500,6 +578,12 @@ def _cooccurrence(s, ctx):
          f"If {rare} is only detectable in large particles, it will seem to avoid elements "
          "found in small ones; the dashed line shows how close it sits to its threshold."),
     ]
+    if not together and _can_check(ctx, common, rare):
+        story.append((_detect_box(ctx, common, rare, f"Could {rare} be seen in {common} particles?",
+                                  **_with_without(common, rare)),
+                      _detect_caption(common, rare) + f" If the {common} particles without "
+                      f"{rare} sit mostly below the line, the two may not truly avoid each other."))
+    return story
 
 
 def _rare(s, ctx):
@@ -609,13 +693,29 @@ def _composition(s, ctx):
          "Elements that often share particles belong to the same particle type."),
     ]
     if len(els) == 3:
-        story.append((_panel("ternary", f"{els[0]}–{els[1]}–{els[2]}", a=els[0], b=els[1],
-                             c=els[2]),
-                      "One tight cluster means one composition; points along a line between "
-                      "corners mean mixing."))
-    story.append((_panel("pie", "Particle types", pie_mode="combinations", top_n=8),
-                  "Which elements are detected depends on each element's detection limit, so "
-                  "small particles may appear to lack their minor elements."))
+        refs = _minerals_for(els) if "moles" in ctx.quantities else []
+        if refs:
+            story.append((_panel("ternary", f"{els[0]}–{els[1]}–{els[2]} (moles)",
+                                 a=f"moles:{els[0]}", b=f"moles:{els[1]}", c=f"moles:{els[2]}",
+                                 tern_refs=", ".join(refs + ["upper crust"])),
+                          "One tight cluster means one composition; points along a line between "
+                          "corners mean mixing. Diamonds mark ideal mineral formulas and the "
+                          "upper crust, for orientation: real minerals vary."))
+        else:
+            story.append((_panel("ternary", f"{els[0]}–{els[1]}–{els[2]}", a=els[0], b=els[1],
+                                 c=els[2]),
+                          "One tight cluster means one composition; points along a line between "
+                          "corners mean mixing."))
+    if "mass" in ctx.quantities:
+        story.append((_panel("pie", "Main element and its companions", pie_mode="sunburst",
+                             top_n=6, sun_outer=4),
+                      "Inside: each particle's main element by mass; outside: what it comes with. "
+                      "Which elements are detected depends on each element's detection limit, so "
+                      "small particles may appear to lack their minor elements."))
+    else:
+        story.append((_panel("pie", "Particle types", pie_mode="combinations", top_n=8),
+                      "Which elements are detected depends on each element's detection limit, so "
+                      "small particles may appear to lack their minor elements."))
     return story
 
 
@@ -656,6 +756,112 @@ def _outlier(s, ctx):
     return story
 
 
+def _type_definition(s) -> dict:
+    """The particle-type definition carried by a types card."""
+    for panel in (s.config or {}).get("panels") or []:
+        if (panel.get("types") or {}).get("types"):
+            return panel["types"]
+    return {}
+
+
+def _type_panels(s, definition, title):
+    """The card's own PCA panel, retitled for the story."""
+    base = dict(((s.config or {}).get("panels") or [{}])[0])
+    for k in ("id", "rect"):
+        base.pop(k, None)
+    base["title"] = title
+    return base
+
+
+def _types_overview(s, ctx):
+    definition = _type_definition(s)
+    if not definition:
+        return []
+    basis = "mass" if definition.get("prefix") == "mass" else "counts"
+    els = ", ".join(f"{definition['prefix']}:{e}" for e in definition["elements"])
+    common = {"group_by": "types", "types": definition, "show_other": False}
+    return [
+        (_type_panels(s, definition, "Compositions on two principal components"),
+         "Each dot is a particle with two or more elements, placed by its composition as centred "
+         "log-ratios, so its size does not matter; arrows show which elements pull particles "
+         "apart. Colours are the types that passed every check."),
+        (_panel("composition", "Average make-up of each type", isotopes=els, horizontal=True,
+                **common),
+         f"The average share of each element in a particle of each type, by {basis}."),
+        (_panel("strip", "Particle size by type, coloured by sample", value="total",
+                strip_horizontal=True, strip_color="sample", log_y=True, strip_summary="median_iqr",
+                marker_size=8, alpha=0.55, filter="n_elements >= 2", **common),
+         f"The total {basis} of every typed particle, coloured by the sample it came from: which "
+         "samples hold each type, and whether its particles are large or small."),
+        (_panel("pie", "Share of each type", pie_mode="groups", pie_labels="name_pct",
+                filter="n_elements >= 2", **common),
+         "How the typed particles split between the types; particles too far from every type "
+         "are left out."),
+    ]
+
+
+def _particle_type(s, ctx):
+    definition = _type_definition(s)
+    name = _detail(s, "Type")
+    if not definition or not name:
+        return []
+    prefix = definition.get("prefix") or "mass"
+    basis = "mass" if prefix == "mass" else "counts"
+    main = s.elements[0]
+    only = {"types": definition, "type_only": name}
+    entry = next((t for t in definition["types"] if t.get("name") == name), {})
+    present = entry.get("present") or {}
+    inside = [e for e in definition["elements"] if present.get(e, 1.0) >= 0.1]
+    els = ", ".join(f"{prefix}:{e}" for e in definition["elements"])
+    story = [
+        (_type_panels(s, definition, f"{name} among all particle types"),
+         f"The {name} particles (coloured) against the other types (grey) on the first two "
+         "principal components of composition."),
+        (_panel("composition", "Average make-up of each type", isotopes=els, horizontal=True,
+                group_by="types", types=definition, show_other=False),
+         f"The make-up of {name} next to the other types, by {basis}."),
+        (_panel("corr_matrix", f"Which elements move together in {name}",
+                isotopes=", ".join(f"{prefix}:{e}" for e in inside),
+                corr_method="spearman", log_values=True, **only),
+         f"Rank correlations inside this type only. Elements that rise together here belong to "
+         "the same phase; inside a type, correlations are no longer driven by mixing different "
+         "kinds of particles."),
+    ]
+    if ctx.multi_sample:
+        tests = _test(ctx.groups)
+        story.append((_panel("box", f"{main} per particle of {name}, by sample",
+                             value=f"{prefix}:{main}", group_by="sample", log_y=True, **only,
+                             **tests),
+                      f"How much {main} a {name} particle holds in each sample."
+                      + _test_sentence(ctx.groups, f"{main} {basis}")))
+    else:
+        story.append((_panel("histogram", f"{main} per particle of {name}", value=f"{prefix}:{main}",
+                             log_x=True, bins=40, **only),
+                      f"How much {main} a {name} particle holds."))
+    partial = sorted((e for e in inside if e != main and 0.1 <= present.get(e, 1.0) < 0.95),
+                     key=lambda e: present[e])
+    minor = next((m for m in partial if _can_check(ctx, main, m)), None)
+    if minor:
+        story.append((_detect_box(ctx, main, minor, f"Could {minor} be seen in {name}?",
+                                  **_with_without(main, minor), **only),
+                      f"Only {100 * present[minor]:.0f}% of {name} particles show {minor}. "
+                      + _detect_caption(main, minor)
+                      + f" If the {name} particles without {minor} sit below the line, they are "
+                        f"probably the same type with {minor} too small to detect."))
+    if len(s.elements) >= 3:
+        a, b, c = s.elements[:3]
+        molar = "moles" in ctx.quantities
+        refs = _minerals_for([a, b, c]) if molar else []
+        corner = (lambda e: f"moles:{e}") if molar else (lambda e: e)
+        story.append((_panel("ternary", f"{a}–{b}–{c} in {name}" + (" (moles)" if molar else ""),
+                             a=corner(a), b=corner(b), c=corner(c),
+                             tern_refs=", ".join(refs + ["upper crust"]) if refs else "", **only),
+                      f"The {a}–{b}–{c} make-up of each {name} particle"
+                      + ("; diamonds mark ideal mineral formulas and the upper crust, for "
+                         "orientation." if refs else ".")))
+    return story
+
+
 DESIGNS = {
     "interference": _interference,
     "isotope": _isotope_pair,
@@ -681,6 +887,8 @@ DESIGNS = {
     "composition": _composition,
     "network": _network,
     "outlier": _outlier,
+    "types_overview": _types_overview,
+    "particle_type": _particle_type,
 }
 """Figure stories keyed by a finding's explain key.
 
@@ -771,7 +979,8 @@ def figure_for(s, ctx: FigureContext) -> dict | None:
     rects, caption_rect, width, height = story_layout(len(story), legend)
     spec = default_spec()
     spec["figure"].update({"width": width, "height": height, "panel_letters": True})
-    spec["data_type"] = "Counts"
+    spec["data_type"] = ((s.config or {}).get("data_type") or "Counts"
+                         if design in (_types_overview, _particle_type) else "Counts")
     panels = [make_panel(rect=list(rects[i]), **panel) for i, (panel, _c) in enumerate(story)]
     panels.append(make_panel(rect=list(caption_rect), kind="text", caption=True,
                              text=legend,
@@ -816,9 +1025,18 @@ def context_from(particles: list[dict], labels, limits: dict | None = None,
                     continue
                 if v > 0 and (smallest.get((prefix, label)) is None or v < smallest[(prefix, label)]):
                     smallest[(prefix, label)] = v
+    seen_count: dict = {}
+    for p in particles:
+        for label, v in (p.get("elements") or {}).items():
+            try:
+                if float(v) > 0:
+                    seen_count[label] = seen_count.get(label, 0) + 1
+            except (TypeError, ValueError):
+                continue
+    main = max(seen_count, key=seen_count.get) if seen_count else ""
     flat = {(prefix, label): dict(per_sample)
             for label, by_prefix in (limits or {}).items()
             for prefix, per_sample in (by_prefix or {}).items() if per_sample}
     if groups is None:
         groups = 2 if multi_sample else 1
-    return FigureContext(quantities or {"counts"}, flat, smallest, multi_sample, groups)
+    return FigureContext(quantities or {"counts"}, flat, smallest, multi_sample, groups, main=main)

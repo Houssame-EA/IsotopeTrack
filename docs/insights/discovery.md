@@ -47,6 +47,15 @@ that two replicates of one material are never reported as different samples.
 | `ISOTOPE_GROUP_MIN_GAP` | `0.02` |
 | `ISOTOPE_MODE_SEPARATION` | `0.01` |
 | `ISOTOPE_TRACK_MIN_RHO` | `0.4` |
+| `TYPES_MIN_PARTICLES` | `300` |
+| `TYPES_MAX_ELEMENTS` | `10` |
+| `TYPES_FIT_SIZE` | `4000` |
+| `TYPES_MIN_SILHOUETTE` | `0.25` |
+| `TYPES_BOOTSTRAP` | `20` |
+| `TYPES_MIN_JACCARD` | `0.75` |
+| `TYPES_MIN_SHARE` | `0.03` |
+| `TYPES_PCA_FACTOR` | `1.5` |
+| `TYPE_COLORS` | `('#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '…` |
 
 ## Functions
 
@@ -89,3 +98,10 @@ that two replicates of one material are never reported as different samples.
 | `_ratio_config` | `(num: str, den: str, x_axis: str) → dict` | Isotopic ratio plot settings for one ratio. |
 | `analyse_isotope_ratios` | `(ctx, progress=None) → list` | Examine every isotope ratio within one material. |
 | `analyse_isotope_groups` | `(ctx, progress=None) → list` | Compare each isotope ratio between replicate groups. |
+| `_type_elements` | `(ctx, matrix, det, multi) → list[str]` | One isotope per element, detected in at least 5 % of the multi-element particles. |
+| `_bootstrap_jaccard` | `(X, labels, k, rng) → np.ndarray` | Mean Jaccard similarity of each cluster with its best match over bootstrap refits. |
+| `_type_name` | `(det_rows: np.ndarray, shares: np.ndarray, elements: list[str]) → str` | Name a type by the elements most of its particles carry, largest share first. |
+| `find_particle_types` | `(ctx, progress=None)` | Look for stable particle types among the multi-element particles. |
+| `_types_spec` | `(found, title, highlight=None) → dict` | Figure Builder design: PCA of the compositions, particles coloured by type. |
+| `_share_text` | `(stat, groups) → list[tuple[str, str]]` | Share of the type in each sample group, as detail rows. |
+| `analyse_particle_types` | `(ctx, progress=None) → list` | Report stable particle types, if the multi-element particles fall into any. |

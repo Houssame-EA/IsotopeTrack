@@ -167,6 +167,8 @@ FIELDS = [
     ('Data', 'What to plot', 'max_lines', 'Max lines per group', 'int', {'parallel'}, (20, 100000)),
     ('Data', 'Which particles', 'filter', 'Only where', 'mask', ALL - {'text'},
      'e.g. Ag > 0 and Au > 0'),
+    ('Data', 'Which particles', 'type_only', 'Only particle type', 'text', ALL - {'text', 'code'},
+     'name of an Insights particle type'),
     ('Data', 'Which particles', 'saturation', 'Drop saturated particles (counts ≥, 0 = off)', 'float',
      ALL - {'text', 'code'}, (0, 1e9, 1000)),
     ('Data', 'Which particles', 'trim_pct', 'Trim outliers: keep up to percentile (0 = off)', 'float',
@@ -753,7 +755,11 @@ class PanelEditor(QWidget):
         kind = p.get('kind')
         group = p.get('group_by', 'none')
         grouped = kind in GROUPING
-        if key in ('rules', 'show_other', 'other_label'):
+        if key == 'type_only':
+            return kind in kinds and bool((p.get('types') or {}).get('types'))
+        if key in ('show_other', 'other_label'):
+            return group in ('rules', 'types') and grouped
+        if key == 'rules':
             return group == 'rules' and grouped
         if key == 'groups':
             return group != 'none' and grouped

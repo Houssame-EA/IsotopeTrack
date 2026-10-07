@@ -212,6 +212,7 @@ SECTIONS: tuple[tuple[str, frozenset], ...] = (
     ("Fixed ratios and co-occurrence", frozenset({"stoichiometry", "cooccurrence"})),
     ("Correlations", frozenset({"correlation", "network"})),
     ("Composition", frozenset({"composition", "ternary", "single_multi", "size"})),
+    ("Particle types", frozenset({"types"})),
     ("Distributions and rare particles", frozenset({"distribution", "outlier", "rare"})),
 )
 """Card sections in the order the panel lists them.
@@ -373,7 +374,7 @@ class _Card(QFrame):
     """
 
     def __init__(self, s: Suggestion, on_add, samples_text: str = "", on_figure=None,
-                 parent=None):
+                 parent=None, on_cluster=None):
         """Build a card for one suggestion.
 
         Args:
@@ -383,11 +384,15 @@ class _Card(QFrame):
             on_figure: Callback invoked with *s* to add the explained figure,
                 or ``None`` when the finding has no figure design.
             parent: Optional parent widget.
+            on_cluster: Callback invoked with *s* to explore a particle-type
+                finding in the Clustering node; only particle-type cards
+                show the button.
         """
         super().__init__(parent)
         self._s = s
         self._on_add = on_add
         self._on_figure = on_figure
+        self._on_cluster = on_cluster if s.category == "types" else None
         self._samples_text = samples_text
         self._details: QWidget | None = None
         self.setObjectName("insightCard")
@@ -472,10 +477,18 @@ class _Card(QFrame):
             self._figure_btn.setObjectName("iFigureBtn")
             self._figure_btn.setCursor(Qt.PointingHandCursor)
             self._figure_btn.setToolTip(
-                "Adds a Figure Builder figure, panels a to f with a legend, that walks through "
-                "this finding in the order of its explanation: what was found, how, how to "
-                "read it and what to check")
+                "Adds a Figure Builder figure, panels a to f with a legend, that tells this "
+                "finding's story: the pattern, the evidence, what it means and its limits")
             self._figure_btn.clicked.connect(self._figure_clicked)
+            if self._on_cluster is not None:
+                self._cluster_btn = QPushButton("Explore in Clustering")
+                self._cluster_btn.setObjectName("iFigureBtn")
+                self._cluster_btn.setCursor(Qt.PointingHandCursor)
+                self._cluster_btn.setToolTip(
+                    "Adds a Clustering node fed by a selector with these samples and elements, "
+                    "to explore the particle types further with your own settings")
+                self._cluster_btn.clicked.connect(lambda: self._on_cluster(self._s))
+                figure_row.addWidget(self._cluster_btn)
             figure_row.addWidget(self._figure_btn)
             root.addLayout(figure_row)
 
@@ -1256,7 +1269,8 @@ class SmartInsightsPanel(QWidget):
                                   or s.category in _figures.DESIGNS)
                     card = _Card(s, on_add=self._add_suggestion,
                                  samples_text=describe_samples(s, self._scope),
-                                 on_figure=self._add_figure if has_figure else None)
+                                 on_figure=self._add_figure if has_figure else None,
+                                 on_cluster=self._add_clustering)
                     self._cards[key] = card
                 self._card_layout.insertWidget(self._card_layout.count() - 1, card)
                 card.setVisible(True)
@@ -1318,15 +1332,32 @@ class SmartInsightsPanel(QWidget):
         samples = [m for _label, members in units for m in members]
         pool = _raw_pool_for(self._scene, self._pw)
         particles = [p for name in samples for p in pool.get(name, ())]
+        labels = list(s.elements)
+        for panel in (s.config or {}).get("panels") or []:
+            for label in (panel.get("types") or {}).get("elements") or ():
+                if label not in labels:
+                    labels.append(label)
         ctx = _figures.context_from(
-            particles, s.elements,
-            detection_limits(self._pw, samples, s.elements),
+            particles, labels,
+            detection_limits(self._pw, samples, labels),
             multi_sample=len(units) > 1, groups=len(units))
         spec = _figures.figure_for(s, ctx)
         if spec is None:
             self._flash_status("No figure is available for this finding")
             return
         self._add_suggestion(s, node_type="figure_builder", config=spec, narrow_elements=False)
+
+    def _add_clustering(self, s: Suggestion):
+        """Add a Clustering node over a particle-type finding's samples and elements.
+
+        The node starts with its own default settings; Insights' types are
+        shown in the card's figures, while the Clustering node is for
+        exploring them with other methods and parameters.
+
+        Args:
+            s: A particle-type finding.
+        """
+        self._add_suggestion(s, node_type="clustering_plot", config={})
 
     def _add_suggestion(self, s: Suggestion, node_type: str | None = None,
                         config: dict | None = None, narrow_elements: bool = True):

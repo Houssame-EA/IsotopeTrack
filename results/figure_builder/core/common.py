@@ -94,6 +94,14 @@ def candidate_groups(panel: dict, table: ParticleTable) -> list[Group]:
     saturation = float_or_none(panel.get('saturation'))
     if saturation and saturation > 0 and n:
         base &= table.column('max_counts') < saturation
+    only = str(panel.get('type_only') or '').strip()
+    if only and n:
+        from results.figure_builder.core.types import table_types
+        definition = panel.get('types') or {}
+        names = [str(t.get('name')) for t in definition.get('types') or []]
+        if only not in names:
+            raise ExpressionError(f"Particle type '{only}' is not defined for this panel")
+        base &= table_types(table, definition) == names.index(only)
     pal = panel_palette(panel)
     mode = panel.get('group_by', 'none')
     groups: list[Group] = []
@@ -120,6 +128,19 @@ def candidate_groups(panel: dict, table: ParticleTable) -> list[Group]:
         if panel.get('show_other', True):
             other = panel.get('other_label') or 'Other'
             groups.append(Group('__other__', other, remaining, OTHER_COLOR))
+    elif mode == 'types':
+        from results.figure_builder.core.types import table_types
+        definition = panel.get('types') or {}
+        if not definition.get('types'):
+            raise ExpressionError('No particle types are defined for this panel; they come from '
+                                  'an Insights particle-type card')
+        which = table_types(table, definition)
+        for i, t in enumerate(definition['types']):
+            name = str(t.get('name') or f'Type {i + 1}')
+            groups.append(Group(name, name, base & (which == i), t.get('color') or pal[i % len(pal)]))
+        if panel.get('show_other', True):
+            other = panel.get('other_label') or 'No type'
+            groups.append(Group('__other__', other, base & (which < 0), OTHER_COLOR))
     else:
         groups.append(Group('__all__', 'All particles', base, panel.get('color') or pal[0]))
     return groups

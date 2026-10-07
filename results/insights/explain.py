@@ -381,6 +381,52 @@ EXPLANATIONS: dict[str, Explanation] = {
             "limit; small particles may lose their minor elements."
         ),
     ),
+    "types_overview": Explanation(
+        found=(
+            "Only particles with two or more elements were used, each described by the shares "
+            "of its elements (masses when calibrated) as centred log-ratios; elements not "
+            "detected were set to 0.65 of that element's smallest detected amount. Insights "
+            "went on only if the first two principal components carry at least half of the "
+            "variation, k-means (2 to 6 groups) reached a silhouette of at least 0.25, every "
+            "group kept a bootstrap Jaccard of at least 0.75 over 20 resamples and held at "
+            "least 3 % of the particles, and, where replicates exist, appeared in at least two "
+            "replicates of one sample group."
+        ),
+        meaning=(
+            "The multi-element particles are not a continuum but a few distinct kinds, each "
+            "with its own make-up. Types usually match a mineral, an alloy or a single source; "
+            "how much of each type a sample holds is often more telling than its bulk "
+            "composition."
+        ),
+        check=(
+            "A type is defined by the elements that were detected, so small particles that lost "
+            "their minor elements can fall into a simpler type; the detectability panel on each "
+            "type card shows how many. Names list the elements most particles of the type "
+            "carry, by share, and are not mineral identifications. Single-element particles are "
+            "not part of any type."
+        ),
+    ),
+    "particle_type": Explanation(
+        found=(
+            "Particles were given to the nearest type in centred log-ratio space, if they lay "
+            "within the distance that holds 95 % of the type's own particles. The share in each "
+            "sample group counts that group's multi-element particles. Stability is the mean "
+            "Jaccard similarity of the type with its best match when the data are resampled and "
+            "clustered again (Hennig 2007): 1 means it came back identical every time."
+        ),
+        meaning=(
+            "The particles of this type share a composition, so they likely share an origin or "
+            "a phase. A type found in one sample group and not in others points to a source "
+            "specific to it; correlations inside the type show which elements are bound "
+            "together."
+        ),
+        check=(
+            "Compare the make-up with a known phase before naming it, for example with the "
+            "ternary and reference minerals. Check how many of its particles are too small to "
+            "show the type's minor elements, and whether the type's share differs between "
+            "replicates as much as between groups."
+        ),
+    ),
 }
 """Explanations keyed by a finding's ``explain_key`` (or its category)."""
 

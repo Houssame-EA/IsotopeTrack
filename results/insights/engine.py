@@ -68,6 +68,7 @@ _CAT_META: dict[str, dict] = {
     "single_multi": {"icon": "◐", "label": "Single vs multiple"},
     "size":         {"icon": "⤢", "label": "Size trend"},
     "isotope_groups": {"icon": "⚛", "label": "Isotope ratio between groups"},
+    "types":        {"icon": "◈", "label": "Particle types"},
 }
 
 NODE_TYPE_META: dict[str, str] = {
@@ -89,8 +90,10 @@ NODE_TYPE_META: dict[str, str] = {
 }
 """Plot nodes Insights can propose, in the order the panel lists them.
 
-Clustering is deliberately absent: Insights looks at the data directly and
-never groups particles with a clustering algorithm.
+The Clustering node is not proposed. Particle types are found inside Insights
+with strict checks (see :func:`results.insights.discovery.find_particle_types`)
+and shown in a Figure Builder figure; exploring them further is the
+Clustering node's job.
 """
 
 MIN_CORR_OVERLAP = 25
@@ -2011,6 +2014,7 @@ _REGISTRY = (
     ("correlation", _analyse_correlation, "within", {"correlation_plot", "correlation_matrix"}),
     ("network", _disc.analyse_network, "within", {"network_diagram"}),
     ("distribution", _analyse_distribution, "within", {"histogram_plot", "box_plot"}),
+    ("types", _disc.analyse_particle_types, "across", {"figure_builder"}),
 )
 """Detectors in run order, fastest and most specific first, so the panel fills
 with interference, isotope and group findings before the slower passes finish."""

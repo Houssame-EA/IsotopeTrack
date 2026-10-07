@@ -48,6 +48,7 @@ Attributes:
     groups: How many samples or replicate groups the figure compares.
     used: ``(prefix, label)`` pairs whose limit a panel drew, filled while
         the story is built so the legend can quote their values.
+    main: The element detected in most of the figure's particles.
 
 ## Functions
 
@@ -66,6 +67,13 @@ Attributes:
 | `_ratio_lines` | `(natural, axis: str) → dict` | A reference line at the natural ratio on the given axis (``"x"`` or ``"y"``). |
 | `_test` | `(groups: int, log_values: bool=True) → dict` | Significance test settings for a panel comparing *groups* groups. |
 | `_test_sentence` | `(groups: int, what: str, log_values: bool=True) → str` | One sentence naming the test a panel shows and how to read it. |
+| `_crust_known` | `(minor: str, major: str) → bool` | Whether the upper crust gives a ratio for *minor* to *major*. |
+| `_can_check` | `(ctx: FigureContext, major: str, minor: str) → bool` | Whether a detectability check of *minor* in *major* particles can be drawn. |
+| `_detect_box` | `(ctx: FigureContext, major: str, minor: str, title: str, **grouping) →` | Box plot of the major element's mass with the mass needed to see *minor*. |
+| `_detect_caption` | `(major: str, minor: str) → str` | Sentence explaining a detectability panel. |
+| `_strip` | `(ctx: FigureContext, el: str, title: str, by: str='sample') → dict` | Every particle as a dot per sample, coloured by its element combination. |
+| `_strip_caption` | `(el: str) → str` | Sentence explaining a bubble dot plot. |
+| `_minerals_for` | `(elements) → list[str]` | Reference minerals holding at least two of *elements*, for a ternary. |
 | `_interference` | `(s, ctx)` |  |
 | `_isotope_pair` | `(s, ctx, natural=None)` |  |
 | `_isotope_track` | `(s, ctx, natural=None)` |  |
@@ -83,6 +91,10 @@ Attributes:
 | `_composition` | `(s, ctx)` |  |
 | `_network` | `(s, ctx)` |  |
 | `_outlier` | `(s, ctx)` |  |
+| `_type_definition` | `(s) → dict` | The particle-type definition carried by a types card. |
+| `_type_panels` | `(s, definition, title)` | The card's own PCA panel, retitled for the story. |
+| `_types_overview` | `(s, ctx)` |  |
+| `_particle_type` | `(s, ctx)` |  |
 | `story_layout` | `(n: int, caption: str='') → tuple[list[list[float]], list[float], floa` | Place *n* panels above a caption sized to its text. |
 | `caption_text` | `(title: str, captions: list[str]) → str` | Write the figure legend: the title, then one sentence per panel letter. |
 | `figure_for` | `(s, ctx: FigureContext) → dict \| None` | Build the figure that tells a finding's story, panels a to f with a legend. |

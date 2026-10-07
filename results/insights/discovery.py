@@ -1741,3 +1741,331 @@ def analyse_isotope_groups(ctx, progress=None) -> list:
             **rr._group_selection([hi_g, lo_g]),
         ))
     return out
+
+
+TYPES_MIN_PARTICLES = 300
+"""Multi-element particles needed before looking for particle types."""
+
+TYPES_MAX_ELEMENTS = 10
+"""Most elements a type search uses, the most often detected first."""
+
+TYPES_FIT_SIZE = 4000
+"""Particles the types are fitted on; larger sets are subsampled."""
+
+TYPES_MIN_SILHOUETTE = 0.25
+"""Silhouette below which the data has no substantial grouping (Kaufman & Rousseeuw 1990)."""
+
+TYPES_BOOTSTRAP = 20
+"""Resamples used to test whether each type is stable."""
+
+TYPES_MIN_JACCARD = 0.75
+"""Mean bootstrap Jaccard a type needs to count as stable (Hennig 2007)."""
+
+TYPES_MIN_SHARE = 0.03
+"""Smallest share of the multi-element particles a type may hold."""
+
+TYPES_PCA_FACTOR = 1.5
+"""How far the first two components must beat their share under no structure."""
+
+TYPE_COLORS = ("#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#06B6D4")
+"""Colours given to the types, in order of size."""
+
+
+def _type_elements(ctx, matrix, det, multi) -> list[str]:
+    """One isotope per element, detected in at least 5 % of the multi-element particles."""
+    n_multi = int(multi.sum())
+    best: dict[str, tuple[int, str]] = {}
+    for el in ctx.elements_by_abundance():
+        if el not in matrix:
+            continue
+        hits = int((det[el] & multi).sum())
+        if hits < max(10, 0.05 * n_multi):
+            continue
+        _mass, symbol = mass_symbol(el)
+        key = symbol or el
+        if key not in best or hits > best[key][0]:
+            best[key] = (hits, el)
+    ranked = sorted(best.values(), key=lambda v: -v[0])
+    return [el for _h, el in ranked[:TYPES_MAX_ELEMENTS]]
+
+
+def _bootstrap_jaccard(X, labels, k, rng) -> np.ndarray:
+    """Mean Jaccard similarity of each cluster with its best match over bootstrap refits.
+
+    Clusterwise stability after Hennig (2007): the data are resampled with
+    replacement, clustered again, and each original cluster is compared with
+    the most similar new cluster on the particles the resample contains.
+    """
+    from sklearn.cluster import KMeans
+    n = X.shape[0]
+    scores = np.zeros((TYPES_BOOTSTRAP, k))
+    for b in range(TYPES_BOOTSTRAP):
+        pick = rng.integers(0, n, n)
+        fit = KMeans(n_clusters=k, n_init=4, random_state=int(rng.integers(1 << 30))).fit(X[pick])
+        uniq, first = np.unique(pick, return_index=True)
+        new = fit.labels_[first]
+        old = labels[uniq]
+        for c in range(k):
+            a = old == c
+            if not a.any():
+                continue
+            best = 0.0
+            for d in range(k):
+                bset = new == d
+                union = int((a | bset).sum())
+                if union:
+                    best = max(best, int((a & bset).sum()) / union)
+            scores[b, c] = best
+    return scores.mean(axis=0)
+
+
+def _type_name(det_rows: np.ndarray, shares: np.ndarray, elements: list[str]) -> str:
+    """Name a type by the elements most of its particles carry, largest share first."""
+    present = det_rows.mean(axis=0) >= 0.5
+    order = np.argsort(-shares)
+    names = []
+    for j in order:
+        if present[j]:
+            _m, symbol = mass_symbol(elements[j])
+            names.append(symbol or elements[j])
+    return "–".join(names[:4]) or "Mixed"
+
+
+def find_particle_types(ctx, progress=None):
+    """Look for stable particle types among the multi-element particles.
+
+    Each particle's composition (element masses when calibrated, counts
+    otherwise) is closed and CLR transformed, zeros replaced from each
+    element's smallest detected amount. The search stops early when the data
+    shows no structure:
+
+    1. The first two principal components must explain clearly more than
+       they would with no structure (at least half the variance, and 1.5
+       times their share under equal variance).
+    2. k-means on the leading components (2 to 6 groups) must reach a
+       silhouette of at least 0.25.
+    3. Each group must be stable: a mean bootstrap Jaccard of at least 0.75
+       over 20 resamples, and hold at least 3 % of the particles.
+    4. Each group must show up in at least two replicates of one sample
+       group, when replicates exist.
+
+    Returns:
+        ``None`` when no structure passes, or a dict with the type
+        definition (see :mod:`results.figure_builder.core.types`), the
+        per-type statistics and the PCA summary.
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+    from results.figure_builder.core.types import assign, clr_rows
+    rr = _rr()
+    rr._say(progress, "Looking for particle types…")
+    keys = ctx.available_data_keys()
+    use_mass = "element_mass_fg" in keys
+    matrix, det = ctx.matrix_for("element_mass_fg" if use_mass else "elements")
+    if not det:
+        return None
+    n_el = np.zeros(ctx.n, dtype=int)
+    for el in det:
+        n_el += det[el].astype(int)
+    multi = n_el >= 2
+    if int(multi.sum()) < TYPES_MIN_PARTICLES:
+        return None
+    elements = _type_elements(ctx, matrix, det, multi)
+    if len(elements) < 3:
+        return None
+    M = np.column_stack([np.where(det[e], matrix[e], 0.0) for e in elements])
+    D = M > 0
+    rows = np.flatnonzero(D.sum(axis=1) >= 2)
+    if rows.size < TYPES_MIN_PARTICLES:
+        return None
+    floor = np.array([M[D[:, j], j].min() if D[:, j].any() else 1.0 for j in range(M.shape[1])])
+    rng = np.random.default_rng(7)
+    fit_rows = rows if rows.size <= TYPES_FIT_SIZE else np.sort(rng.choice(rows, TYPES_FIT_SIZE, replace=False))
+    C = clr_rows(M[fit_rows], floor)
+    Cc = C - C.mean(axis=0)
+    U, S, _Vt = np.linalg.svd(Cc, full_matrices=False)
+    var = S ** 2 / max(float(np.sum(S ** 2)), 1e-300)
+    rank = max(1, len(elements) - 1)
+    two = float(var[:2].sum())
+    if len(elements) >= 4 and (two < 0.5 or two < TYPES_PCA_FACTOR * 2 / rank):
+        return None
+    q = int(min(5, max(2, np.searchsorted(np.cumsum(var), 0.9) + 1)))
+    X = U[:, :q] * S[:q]
+    sil_rows = np.arange(X.shape[0]) if X.shape[0] <= 2500 else rng.choice(X.shape[0], 2500, replace=False)
+    best = None
+    for k in range(2, 7):
+        km = KMeans(n_clusters=k, n_init=6, random_state=11).fit(X)
+        if len(np.unique(km.labels_[sil_rows])) < 2:
+            continue
+        sil = float(silhouette_score(X[sil_rows], km.labels_[sil_rows]))
+        if best is None or sil > best[0]:
+            best = (sil, k, km.labels_.copy())
+    if best is None or best[0] < TYPES_MIN_SILHOUETTE:
+        return None
+    sil, k, labels = best
+    jaccard = _bootstrap_jaccard(X, labels, k, rng)
+    kept = []
+    for c in range(k):
+        members = labels == c
+        share = float(members.mean())
+        if jaccard[c] < TYPES_MIN_JACCARD or share < TYPES_MIN_SHARE:
+            continue
+        centroid = C[members].mean(axis=0)
+        dist = np.sqrt(((C[members] - centroid) ** 2).sum(axis=1))
+        kept.append({"centroid": centroid, "radius": float(np.percentile(dist, 95)),
+                     "jaccard": float(jaccard[c]), "fit_share": share})
+    if not kept:
+        return None
+    definition = {"prefix": "mass" if use_mass else "counts", "elements": list(elements),
+                  "floor": [float(f) for f in floor], "min_elements": 2,
+                  "types": [{"name": "", "color": "", "centroid": [float(v) for v in t["centroid"]],
+                             "radius": t["radius"]} for t in kept]}
+    which = np.full(ctx.n, -1, dtype=int)
+    which[rows] = assign(M[rows], definition)
+    names = ctx.sample_names
+    groups = list(ctx.scope.groups)
+    replicated = [g for g in groups if g.is_replicated]
+    stats_out = []
+    for t_i, t in enumerate(kept):
+        members = which == t_i
+        n_t = int(members.sum())
+        if n_t == 0:
+            continue
+        closed = M[members] / M[members].sum(axis=1, keepdims=True)
+        shares = closed.mean(axis=0)
+        name = _type_name(D[members], shares, elements)
+        per_sample = {}
+        for i, s in enumerate(names):
+            in_s = (ctx.sample_idx == i) & (n_el >= 2)
+            n_s = int(in_s.sum())
+            if n_s:
+                per_sample[s] = (int((members & (ctx.sample_idx == i)).sum()), n_s)
+        confirmed_in = []
+        for g in replicated:
+            hits = [m for m in g.members
+                    if m in per_sample and per_sample[m][0] >= 5 and per_sample[m][0] >= 0.01 * per_sample[m][1]]
+            if len(hits) >= 2:
+                confirmed_in.append(g.name)
+        if replicated and not confirmed_in:
+            continue
+        if not replicated and n_t < 30:
+            continue
+        stats_out.append({"index": t_i, "name": name, "n": n_t, "shares": shares,
+                          "jaccard": t["jaccard"], "per_sample": per_sample,
+                          "confirmed_in": confirmed_in,
+                          "present": D[members].mean(axis=0)})
+    if not stats_out:
+        return None
+    stats_out.sort(key=lambda s: -s["n"])
+    seen: dict[str, int] = {}
+    for s in stats_out:
+        seen[s["name"]] = seen.get(s["name"], 0) + 1
+        if seen[s["name"]] > 1:
+            s["name"] = f"{s['name']} ({seen[s['name']]})"
+    final_types = []
+    for i, s in enumerate(stats_out):
+        t = definition["types"][s["index"]]
+        final_types.append({**t, "name": s["name"], "color": TYPE_COLORS[i % len(TYPE_COLORS)],
+                            "present": {el: round(float(f), 3)
+                                        for el, f in zip(elements, s["present"])}})
+        s["index"] = i
+    definition["types"] = final_types
+    return {"definition": definition, "types": stats_out, "pc_two": two, "pc": var[:2].tolist(),
+            "silhouette": sil, "k": k, "n_multi": int(rows.size), "use_mass": use_mass,
+            "elements": elements, "groups": groups}
+
+
+def _types_spec(found, title, highlight=None) -> dict:
+    """Figure Builder design: PCA of the compositions, particles coloured by type."""
+    from results.figure_builder.core.spec import default_spec, make_panel, normalise_spec
+    definition = json.loads(json.dumps(found["definition"]))
+    if highlight is not None:
+        for t in definition["types"]:
+            if t["name"] != highlight:
+                t["color"] = "#cbd5e1"
+    spec = default_spec()
+    spec["data_type"] = "Element Mass (fg)" if found["use_mass"] else "Counts"
+    spec["panels"] = [make_panel(rect=[0.0, 0.0, 1.0, 1.0], kind="pca", title=title,
+                                 isotopes=", ".join(found["elements"]), pca_transform="clr",
+                                 group_by="types", types=definition, show_other=False,
+                                 filter="n_elements >= 2")]
+    return normalise_spec(spec)
+
+
+def _share_text(stat, groups) -> list[tuple[str, str]]:
+    """Share of the type in each sample group, as detail rows."""
+    rows = []
+    for g in groups:
+        n_t = sum(stat["per_sample"].get(m, (0, 0))[0] for m in g.members)
+        n_all = sum(stat["per_sample"].get(m, (0, 0))[1] for m in g.members)
+        if n_all:
+            rows.append((f"Share in {g.name}", f"{100 * n_t / n_all:.1f}% ({n_t:,} of {n_all:,})"))
+    return rows
+
+
+def analyse_particle_types(ctx, progress=None) -> list:
+    """Report stable particle types, if the multi-element particles fall into any.
+
+    One overview card shows every type on a PCA of the compositions; one card
+    per type (the five largest) describes its make-up, where it is found and
+    how stable it is. Nothing is reported when the data shows no structure
+    that survives the checks in :func:`find_particle_types`.
+    """
+    rr = _rr()
+    found = find_particle_types(ctx, progress)
+    if found is None:
+        return []
+    types = found["types"]
+    groups = found["groups"]
+    basis = "mass" if found["use_mass"] else "counts"
+    summary = ", ".join(f"{t['name']} ({100 * t['n'] / found['n_multi']:.0f}%)" for t in types)
+    out = [rr.Suggestion(
+        title=f"{len(types)} stable particle type{'s' if len(types) != 1 else ''} among the "
+              f"multi-element particles",
+        reasoning=(
+            f"The {found['n_multi']:,} particles carrying two or more elements fall into "
+            f"{len(types)} type{'s' if len(types) != 1 else ''} by composition ({basis}): {summary}. "
+            f"The first two principal components carry {100 * found['pc_two']:.0f}% of the "
+            f"variation, and each type survived resampling."
+        ),
+        category="types",
+        confidence=min(0.55 + 0.4 * (found["silhouette"] - TYPES_MIN_SILHOUETTE) / 0.5, 0.9),
+        explain_key="types_overview",
+        details=[("Types", summary),
+                 ("Composition basis", f"{basis}, centred log-ratio"),
+                 ("PC1 + PC2", f"{100 * found['pc'][0]:.0f}% + {100 * found['pc'][1]:.0f}%"),
+                 ("Silhouette", f"{found['silhouette']:.2f}"),
+                 ("Elements used", ", ".join(found["elements"]))],
+        node_type="figure_builder",
+        config=_types_spec(found, "Particle types"),
+        elements=tuple(found["elements"][:6]),
+    )]
+    for t in types[:5]:
+        order = np.argsort(-t["shares"])
+        make_up = ", ".join(f"{found['elements'][j]} {100 * t['shares'][j]:.0f}%"
+                            for j in order if t["shares"][j] >= 0.01)
+        minor = [found["elements"][j] for j in order
+                 if 0.1 <= t["present"][j] < 0.5]
+        where = (f" It is found in more than one replicate of {', '.join(t['confirmed_in'])}."
+                 if t["confirmed_in"] else "")
+        main = [found["elements"][j] for j in order if t["present"][j] >= 0.5][:4]
+        out.append(rr.Suggestion(
+            title=f"Particle type {t['name']}: {100 * t['n'] / found['n_multi']:.0f}% of the "
+                  f"multi-element particles",
+            reasoning=(
+                f"{t['n']:,} particles share this composition, on average {make_up} by {basis}."
+                + (f" Some also carry {', '.join(minor)}." if minor else "")
+                + where
+            ),
+            category="types",
+            confidence=min(0.45 + 0.5 * (t["jaccard"] - TYPES_MIN_JACCARD) / 0.25, 0.9),
+            explain_key="particle_type",
+            details=[("Type", t["name"]), ("Particles", f"{t['n']:,}"),
+                     ("Average make-up", make_up),
+                     ("Stability (bootstrap Jaccard)", f"{t['jaccard']:.2f}")]
+                    + _share_text(t, groups),
+            node_type="figure_builder",
+            config=_types_spec(found, f"Particle type {t['name']}", highlight=t["name"]),
+            elements=tuple(main or found["elements"][:2]),
+        ))
+    return out

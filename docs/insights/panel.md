@@ -122,6 +122,7 @@ instantiating this directly.
 | `_show_placeholder` | `(self, text: str)` | Put a short message where the cards would go. |
 | `_clear_cards` | `(self)` | Remove every card and heading, leaving the trailing stretch in place. |
 | `_add_figure` | `(self, s: Suggestion)` | Add the figure that walks through a finding, panels a to f with a legend. |
+| `_add_clustering` | `(self, s: Suggestion)` | Add a Clustering node over a particle-type finding's samples and elements. |
 | `_add_suggestion` | `(self, s: Suggestion, node_type: str \| None=None, config: dict \| None=` | Build the branch a suggestion describes and wire it into the canvas. |
 | `_build_scoped_selector` | `(self, s: Suggestion, factories: dict, narrow_elements: bool=True)` | Create a sample selector holding only what the finding is about. |
 | `_flash_status` | `(self, message: str, msec: int=2600)` | Show a transient message in the status line. |

@@ -68,6 +68,7 @@ GROUP_MODES = {
     'sample': 'By sample',
     'class': 'By classifier class',
     'rules': 'By my rules',
+    'types': 'By particle type (from Insights)',
 }
 
 
@@ -297,6 +298,8 @@ PANEL_DEFAULTS = {
     'ptl_minor': '',
     'ptl_ratio': '',
     'crust_line': False,
+    'types': {},
+    'type_only': '',
     'tern_bulk': '',
     'tern_ref_color': '#1f2937',
     'legend': True,
