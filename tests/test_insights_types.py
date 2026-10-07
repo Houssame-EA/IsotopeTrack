@@ -208,3 +208,34 @@ def test_type_cards_offer_clustering():
     other = rr.Suggestion("t", "r", "comparison", 0.8, "box_plot", elements=("56Fe",))
     plain = ip._Card(other, on_add=lambda *_: None, on_figure=lambda *_: None, on_cluster=seen.append)
     assert not hasattr(plain, "_cluster_btn")
+
+
+def test_switching_plot_type_replaces_the_cards_at_once():
+    """Picking another plot type shows only its cards, before Qt deletes the old ones."""
+    import time
+    from PySide6.QtWidgets import QApplication
+    from tests.test_insights_discovery import FakeScene, FakeWindow
+    from results.insights import panel as ip
+    app = QApplication.instance() or QApplication([])
+    panel = ip.SmartInsightsPanel(FakeScene(), FakeWindow(replicated_pool()))
+    panel.resize(380, 900)
+    panel.show()
+    panel.scan()
+    start = time.time()
+    while panel._worker is not None and time.time() - start < 120:
+        app.processEvents()
+        time.sleep(0.01)
+
+    def visible_types():
+        return {c._s.node_type for c in panel.findChildren(ip._Card) if c.isVisible()}
+
+    assert len(visible_types()) > 2
+    for key, action in panel._type_actions.items():
+        if not action.isEnabled():
+            continue
+        action.trigger()
+        assert visible_types() == {key}, key
+    panel._all_action.trigger()
+    assert len(visible_types()) > 2
+    panel._teardown()
+    panel.close()

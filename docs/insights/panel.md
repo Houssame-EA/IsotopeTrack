@@ -148,6 +148,7 @@ instantiating this directly.
 | `describe_scope` | `(scope: AnalysisScope) → tuple[str, str]` | Two plain sentences describing what Insights searches. |
 | `_load_filter` | `() → str \| None` | Read the plot type the user last chose to show, or ``None`` for all. |
 | `_save_filter` | `(node_type: str \| None) → None` | Remember which plot type the user chose to show. |
+| `_discard` | `(widget: QWidget)` | Take a widget off the screen now and delete it once Qt is idle. |
 | `card_key` | `(s: Suggestion) → tuple` | Identity of a finding's card, so a card can be kept across refreshes. |
 | `integrate_insights_panel` | `(canvas_dialog, splitter: QSplitter) → SmartInsightsPanel` | Append a :class:`SmartInsightsPanel` as the rightmost pane of *splitter*. |
 | `make_insights_toggle_button` | `(canvas_dialog, splitter: QSplitter) → QPushButton` | Create the header button that shows and hides the insights panel. |

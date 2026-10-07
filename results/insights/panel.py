@@ -673,6 +673,18 @@ def _save_filter(node_type: str | None) -> None:
         _itk_log.debug("[Insights] could not save the plot type filter")
 
 
+def _discard(widget: QWidget):
+    """Take a widget off the screen now and delete it once Qt is idle.
+
+    ``deleteLater`` alone leaves the widget drawn where it was until the
+    event loop gets round to deleting it, which after a menu click can be
+    long enough for old cards to stay on screen next to the new ones.
+    """
+    widget.hide()
+    widget.setParent(None)
+    widget.deleteLater()
+
+
 def card_key(s: Suggestion) -> tuple:
     """Identity of a finding's card, so a card can be kept across refreshes."""
     return (s.node_type, s.category, s.title, tuple(s.samples), tuple(s.elements))
@@ -1236,13 +1248,18 @@ class SmartInsightsPanel(QWidget):
             widget = item.widget()
             if widget is None:
                 continue
-            if isinstance(widget, _Card) and card_key(widget._s) in wanted:
+            if (isinstance(widget, _Card) and card_key(widget._s) in wanted
+                    and self._cards.get(card_key(widget._s)) is widget):
                 continue
-            if isinstance(widget, _Card):
-                self._cards.pop(card_key(widget._s), None)
-            widget.deleteLater()
+            if isinstance(widget, _Card) and self._cards.get(card_key(widget._s)) is widget:
+                self._cards.pop(card_key(widget._s))
+            _discard(widget)
         by_section: dict[str, list[Suggestion]] = {}
+        placed: set = set()
         for s in self._suggestions:
+            if card_key(s) in placed:
+                continue
+            placed.add(card_key(s))
             by_section.setdefault(section_of(s.category), []).append(s)
         for title, _cats in SECTIONS:
             items = by_section.get(title)
@@ -1275,7 +1292,7 @@ class SmartInsightsPanel(QWidget):
                 self._card_layout.insertWidget(self._card_layout.count() - 1, card)
                 card.setVisible(True)
         for key in [k for k in self._cards if k not in wanted]:
-            self._cards.pop(key).deleteLater()
+            _discard(self._cards.pop(key))
 
     def _empty_message(self) -> str:
         """Explain why there are no cards, and what to do about it.
@@ -1316,7 +1333,7 @@ class SmartInsightsPanel(QWidget):
         while self._card_layout.count() > 1:
             item = self._card_layout.takeAt(0)
             if item.widget():
-                item.widget().deleteLater()
+                _discard(item.widget())
 
     def _add_figure(self, s: Suggestion):
         """Add the figure that walks through a finding, panels a to f with a legend.
